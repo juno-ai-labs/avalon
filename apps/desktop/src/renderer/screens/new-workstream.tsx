@@ -63,9 +63,10 @@ interface LaunchingWorkstream {
  * screen paints instead of loading.
  *
  * Both launchers seed through here. They differ only in what they can say about
- * the transcript — a typed create authored its opening turn, suggested work's is
- * the agent's — and if they differed in the detail as well, one of them would be
- * the path whose work timer silently stopped surviving the navigation.
+ * the transcript — a typed create holds the text of its opening turn, while
+ * suggested work's turn is expanded server-side and is not on the client at
+ * all — and if they differed in the detail as well, one of them would be the
+ * path whose work timer silently stopped surviving the navigation.
  */
 function launchedWorkstreamDetail(
   created: CreatedWorkstream,
@@ -434,8 +435,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     : `${workspace.currentUser.name} +${participants.length - 1}`;
   // Text or files: `submit` accepts a create carrying only attachments, and
   // that turn is a bubble of tiles rather than an empty one. Suggested work is
-  // the only launch with no turn at all — its opening message is the agent's,
-  // written from the expanded prompt, and nothing here could stand in for it.
+  // the only launch with no turn at all — its opening turn is the selecting
+  // member's, but the brief it carries is expanded server-side and the client
+  // holds only the one-line suggestion, which is not the same text.
   const openingTurn: Message | null = launching?.origin === 'composer'
     ? {
       id: 'launching-opening-message',

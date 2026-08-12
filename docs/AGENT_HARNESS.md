@@ -24,6 +24,8 @@ The generic Workflow creates one replay-stable attempt identity, reaps expired a
 
 A launch is never split across the response that asked for it. The `harness_runs` row, the work stream's `running` status, and the Workflows start all complete before `launchWorkstreamHarness` returns, because `attempt_id` and `lease_expires_at` stay NULL until the Workflow admits the run and nothing reaps that shape — a row claiming `running` with no Workflow behind it is a work stream `stop` cannot terminalize and `retry` refuses. Deferring the start to `waitUntil` was tried and reverted for exactly that reason; see [`workstream-creation.md`](workstream-creation.md). A start that fails marks the run failed, publishes `harness_status_changed`, and answers `503`.
 
+A run records the message it was triggered by in `harness_runs.trigger_message_id`, because that id is what fences the transcript the run may see — everything up to and including the trigger, nothing after. `retry` creates a new run for a failed one and inherits that stored id rather than reconstructing it: a run with no message behind it (a scheduled wakeup, an activity, a digest) stores NULL and replays the whole available transcript, and so does a row written before the column existed. Reconstructing the trigger as "the latest human message" — which is what `retry` did before the column existed — is right only while nothing has happened since, and fences finished work out of the replay whenever it has.
+
 After admission Avalon validates the execution principal and persists an immutable, canonically hashed run scope: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A replay must reproduce that scope. Connections installed or expanded later cannot enter it; subsequent membership, ownership, grant, health, and policy checks may only remove authority.
 
 ## Context and stable prompts
@@ -238,6 +240,39 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
+
+### 2026-08-12 — A run records what triggered it, so a retry stops guessing
+
+**What changed:** `harness_runs` gained `trigger_message_id`, written by
+`launchWorkstreamHarness` and by the automation run insert that builds its row
+by hand. `retry` reads it from the run it is retrying instead of resolving "the
+latest human message in this work stream".
+
+**Why:** The trigger fences the transcript — the projection loads up to and
+including it and nothing after — so guessing it wrong does not merely mislabel a
+run, it deletes context from the replay. The guess was right only when nothing
+had happened since the trigger. Retrying a run that never had a message trigger
+at all resolved to whatever human message happened to be closest, which for a
+work stream started from suggested work is the opening brief at sequence 1: the
+retry re-executed the original request with every subsequent turn fenced out,
+and re-ran side-effecting tools against a transcript it could no longer see.
+Making the suggested-work brief a human turn is what exposed this; the same
+shape was already reachable for any work stream whose last human message was
+older than the run being retried.
+
+**Considered and rejected:** *Deriving the trigger from the failed run's
+`origin`* — no migration, but `manual_retry` has no origin of its own to derive
+from, so retrying a retry has to walk backwards through runs to find the last
+one that meant something. *Leaving `retry` alone and special-casing
+suggested-work work streams* — the wrong shape was reachable without them.
+
+**Consequences:** NULL keeps its existing meaning, which is what makes the
+absent backfill safe: a legacy row replays the whole transcript rather than
+silently less of it. Any new path that inserts a `harness_runs` row directly
+rather than through `launchWorkstreamHarness` has to write this column too, or
+its runs become unretryable-in-place in the same quiet way — the sub-agent,
+hypersight, activity, and scheduler inserts leave it NULL correctly, because
+none of them has a trigger message.
 
 ### 2026-08-11 — The automation architect narrates its research
 

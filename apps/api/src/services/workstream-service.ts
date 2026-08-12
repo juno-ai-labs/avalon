@@ -188,8 +188,8 @@ export async function launchWorkstreamHarness(
     env.DB.prepare(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
-        status, started_at, model, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+        status, started_at, model, created_at, trigger_message_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
     ).bind(
       id,
       input.workspaceId,
@@ -200,6 +200,10 @@ export async function launchWorkstreamHarness(
       at,
       model,
       at,
+      // Stored, not merely passed to the Workflow: it is what `retry` replays
+      // against, and reconstructing it later is a guess that gets the answer
+      // wrong for every run whose trigger was not the newest human message.
+      input.triggerMessageId,
     ),
     env.DB.prepare(
       `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
@@ -1736,21 +1740,24 @@ export class WorkstreamService {
       throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
     }
     const latest = await this.env.DB.prepare(
-      `SELECT status FROM harness_runs
+      `SELECT status, trigger_message_id FROM harness_runs
        WHERE workspace_id = ? AND workstream_id = ?
          AND parent_tool_call_id IS NULL
          AND origin != 'hypersight_block'
        ORDER BY created_at DESC LIMIT 1`,
-    ).bind(this.auth.workspaceId, id).first<{ status: string }>();
+    ).bind(this.auth.workspaceId, id).first<{ status: string; trigger_message_id: string | null }>();
     if (!latest || (latest.status !== "failed" && latest.status !== "stopped")) {
       throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
     }
-    const trigger = await this.env.DB.prepare(
-      `SELECT id FROM messages
-       WHERE workspace_id = ? AND workstream_id = ? AND author_type = 'human'
-       ORDER BY sequence_number DESC LIMIT 1`,
-    ).bind(this.auth.workspaceId, id).first<{ id: string }>();
-    return { harnessRunId: await this.launchHarness(id, trigger?.id ?? null, "manual_retry") };
+    // The failed run's own trigger, not the newest human message. The two agree
+    // only when nothing has happened since, and the transcript is fenced at the
+    // trigger — so guessing it fenced days of finished work out of the replay
+    // whenever the run being retried had no message trigger of its own, or had
+    // one older than the last thing somebody said. A run written before that id
+    // was stored, and a run that genuinely had no trigger, both read as NULL
+    // here and replay the whole available transcript, which is the safe
+    // direction: more context than the attempt had, never less.
+    return { harnessRunId: await this.launchHarness(id, latest.trigger_message_id, "manual_retry") };
   }
 
   async socketTicket(id: string) {

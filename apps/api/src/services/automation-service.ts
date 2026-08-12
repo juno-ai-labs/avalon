@@ -1259,9 +1259,12 @@ export class AutomationService {
         statements.push(this.env.DB.prepare(
           `INSERT INTO harness_runs
            (id, workspace_id, workstream_id, origin, execution_principal_json,
-            status, started_at, model, created_at)
-           VALUES (?, ?, ?, 'automation_run', ?, 'scheduled', NULL, ?, ?)`,
-        ).bind(harnessRunId, this.auth.workspaceId, workstreamId, JSON.stringify(principal), model, at));
+            status, started_at, model, created_at, trigger_message_id)
+           VALUES (?, ?, ?, 'automation_run', ?, 'scheduled', NULL, ?, ?, ?)`,
+          // The same id the workflow is launched with below. A run that records
+          // a different trigger than it ran against is one `retry` replays
+          // against the wrong window.
+        ).bind(harnessRunId, this.auth.workspaceId, workstreamId, JSON.stringify(principal), model, at, triggerMessageId));
       }
       await this.env.DB.batch(statements);
     } catch (error) {
