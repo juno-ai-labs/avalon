@@ -31,10 +31,20 @@ function sources(directory: string): string[] {
  * notice until a rule written for the first one fails to reach it.
  */
 describe('markdown renderer', () => {
+  // Matching the quoted module name rather than `from '…'` covers a dynamic
+  // `import()` and a `require()` as well as a static import — the same reason
+  // the stylesheet guard reads selectors instead of searching for one spelling
+  // of a rule. The cost is that this file's own mention of the names would count
+  // as a use, so it excludes itself by path.
+  const specifier = /['"](react-markdown|remark-gfm)['"]/u;
+  const self = 'renderer/components/markdown-renderer.node.test.ts';
+
   it('is mounted in exactly one place', () => {
     const importers = sources(root)
-      .filter((path) => /from '(react-markdown|remark-gfm)'/u.test(readFileSync(path, 'utf8')))
-      .map((path) => relative(root, path).replaceAll('\\', '/'));
+      .map((path) => [relative(root, path).replaceAll('\\', '/'), path] as const)
+      .filter(([name]) => name !== self)
+      .filter(([, path]) => specifier.test(readFileSync(path, 'utf8')))
+      .map(([name]) => name);
 
     expect(importers).toEqual(['renderer/components/workstream-blocks.tsx']);
   });
