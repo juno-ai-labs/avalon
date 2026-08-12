@@ -11,7 +11,7 @@ import { ApiError } from "./api-error";
  * a TypeScript interface only. Those interfaces are erased at build time, so an
  * argument arriving over the binding was whatever the caller happened to send.
  *
- * That matters most on the Global/EU pair. `REGIONALIZATION.md` treats the
+ * That matters most on the Global/EU pair. `regionalization.md` treats the
  * boundary as the line a workspace's data must not cross, and the value that
  * decides which side a record lands on — `region`, `workspaceId` — was reaching
  * the data plane unchecked. Same account is not the same thing as same

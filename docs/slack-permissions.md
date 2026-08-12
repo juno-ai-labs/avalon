@@ -1,50 +1,60 @@
 # Slack permissions
 
-This document explains every Slack OAuth scope configured for Avalon and the
-product behavior and model tools that use it. Slack's current definitions are
-available in the [OAuth scope reference](https://docs.slack.dev/reference/scopes/),
-with the installation model described in
+Every Slack OAuth scope Avalon configures, and the product behavior and model tool
+that uses it. Avalon has two independent authorization paths — an
+administrator-approved workspace bot installation and an optional per-person
+connection — and **neither ever stands in for the other**. This document is the
+inventory that keeps those two grants honest against the checked-in manifest.
+
+Read it before adding, removing, or repurposing a scope. Slack's own definitions
+are in the [OAuth scope reference](https://docs.slack.dev/reference/scopes/), with
+the installation model in
 [Installing with OAuth](https://docs.slack.dev/authentication/installing-with-oauth/)
-and the granular search scopes described in the
+and the granular search scopes in the
 [Real-time Search API documentation](https://docs.slack.dev/apis/web-api/real-time-search-api/).
-The thread-follow-up behavior follows Slack's current
+Thread follow-up follows Slack's
 [`message.channels`](https://docs.slack.dev/reference/events/message.channels),
 [`message.groups`](https://docs.slack.dev/reference/events/message.groups),
 [`thread_broadcast`](https://docs.slack.dev/reference/events/message/thread_broadcast/),
 and
 [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/)
-contracts. Activation acknowledgement follows Slack's
-[`reactions.add`](https://docs.slack.dev/reference/methods/reactions.add/)
-contract.
+contracts; activation acknowledgement follows
+[`reactions.add`](https://docs.slack.dev/reference/methods/reactions.add/).
 
-## Permission model
+## Where the code lives
 
-Avalon has two independent Slack authorization paths:
+| Path | Responsibility |
+| --- | --- |
+| [`config/provider-apps/slack.json`](../config/provider-apps/slack.json) | The checked-in manifest — the scopes and event subscriptions that are actually registered. |
+| [`packages/connectors/src/slack.ts`](../packages/connectors/src/slack.ts) | Runtime bot-scope health checks, the capability mapping, and every tool's required scopes. |
+| `apps/api/src/services/slack-agent-service.ts` | The Agent surface, tool execution, and the event-scoped search token. |
+| `apps/api/src/routes/slack.ts` | The ingress the subscribed events arrive at. |
 
-- **Workspace bot installation:** a Slack administrator installs the Avalon app.
-  All workspace bot scopes below are required for the in-Slack Agent experience
-  and the fixed workspace model-tool bundle. Avalon checks that the installation
+## How it works
+
+### The permission model
+
+- **Workspace bot installation** — a Slack administrator installs the Avalon app.
+  All workspace bot scopes below are required for the in-Slack Agent experience and
+  the fixed workspace model-tool bundle, and Avalon checks that the installation
   still has the complete set.
-- **Personal Slack connection:** an individual connects Slack to Avalon for
+- **Personal Slack connection** — an individual connects Slack to Avalon for
   user-attributed tools. These scopes are optional. The **Connect for me** button
   and the Slack account link both request the full personal set, so a member who
   connects from either place grants the same capabilities; only a connection made
-  before that convergence carries a narrower grant. A personal token does not necessarily
-  contain every supported scope below.
+  before that convergence carries a narrower grant. A personal token does not
+  necessarily contain every supported scope below.
 
-Workspace tools never inherit a member's personal Slack authority. Personal
-tools never substitute for a workspace installation when processing Slack
-Agent events or delivering workspace-bot messages. An OAuth scope is only the
-outer boundary: Avalon also applies workspace membership, identity-linking,
-surface-policy, conversation-membership, session, confirmation, and audit
-checks.
+An OAuth scope is only the outer boundary. Avalon also applies workspace
+membership, identity-linking, surface-policy, conversation-membership, session,
+confirmation, and audit checks.
 
-## Workspace model tools
+### Workspace model tools
 
-Model-facing names add the `slack_` prefix to the connector tool names below.
-For example, `search_messages` is exposed as `slack_search_messages`.
+Model-facing names add the `slack_` prefix to the connector tool names below. For
+example, `search_messages` is exposed as `slack_search_messages`.
 
-### Read tools
+**Read tools**
 
 | Tool | Slack API | Required bot scopes | Workspace boundary |
 | --- | --- | --- | --- |
@@ -59,12 +69,12 @@ For example, `search_messages` is exposed as `slack_search_messages`.
 | `read_message_context` | `conversations.history` or `conversations.replies` | `channels:history`, `groups:history`, `im:history`, `mpim:history` | Reads only a bounded window: at most 50 messages before and 50 after the requested timestamp. |
 | `read_file` | `files.info` plus an authenticated private-file download | `files:read` | Returns metadata for an accessible file. Text files are downloaded only from trusted Slack HTTPS hosts and only up to 512 KiB; binary or larger content is omitted. |
 
-The workspace bot joins current and newly created public channels so mentions
-and bounded reads work there. Avalon does not poll channel history or mirror
-Slack content. Private channels, DMs, MPIMs, and files remain limited by the
-bot's actual Slack membership and visibility.
+The workspace bot joins current and newly created public channels so mentions and
+bounded reads work there. Avalon does not poll channel history or mirror Slack
+content. Private channels, DMs, MPIMs, and files remain limited by the bot's actual
+Slack membership and visibility.
 
-### Write tools
+**Write tools**
 
 | Tool | Slack API | Required bot scopes | Behavior |
 | --- | --- | --- | --- |
@@ -72,15 +82,14 @@ bot's actual Slack membership and visibility.
 | `add_reaction` | `reactions.add` | `reactions:write` | Adds a bot reaction. Slack's `already_reacted` response is treated as a successful retry. |
 | `create_conversation` | `conversations.create` or `conversations.open` | `channels:manage`, `groups:write`, `im:write`, `mpim:write` | Creates a public/private channel by name or opens a DM/MPIM for one to eight user IDs. |
 
-These tools use Avalon's normal external-write confirmation, authorization,
-audit, and durable-receipt policies. A workspace Slack task can use them without
-the initiating member creating a personal Slack connection, but only through
-the installation belonging to the same Slack team and Avalon workspace.
+These tools use Avalon's normal external-write confirmation, authorization, audit,
+and durable-receipt policies. A workspace Slack task can use them without the
+initiating member creating a personal Slack connection, but only through the
+installation belonging to the same Slack team and Avalon workspace.
 
-## Workspace bot scopes
+### Workspace bot scopes
 
-The production manifest requests these scopes as one administrator-approved
-bundle.
+The production manifest requests these scopes as one administrator-approved bundle.
 
 | Permission | What Avalon uses it for |
 | --- | --- |
@@ -127,18 +136,11 @@ slack.agent
 slack.notifications.write
 ```
 
-Existing workspace installations must reconnect after this expanded permission
-set is deployed. Until Slack returns all expected bot scopes, Avalon reports the
-installation as reconnect-required. It still offers the tools: the report is a
-diagnosis, not a gate, and a call that needs a missing scope fails on Slack's
-answer rather than on Avalon's record of it — see [Stored status is a belief, not
-a gate](CONNECTORS.md#stored-status-is-a-belief-not-a-gate).
+### Personal user scopes
 
-## Personal user scopes
-
-Personal scopes preserve the connected user's own Slack visibility and
-attribution. Slack's hosted MCP server or the Slack Web API remains the
-enforcement point for what that user can see or do.
+Personal scopes preserve the connected user's own Slack visibility and attribution.
+Slack's hosted MCP server or the Slack Web API remains the enforcement point for
+what that user can see or do.
 
 | Permission | What Avalon uses it for |
 | --- | --- |
@@ -169,13 +171,12 @@ enforcement point for what that user can see or do.
 | `chat:write` | Send a message or thread reply as the connected user. |
 
 Unlike workspace search, personal search does not use the Slack event
-`action_token`; Slack evaluates it against the connected user's granted scopes
-and current visibility.
+`action_token`; Slack evaluates it against the connected user's granted scopes and
+current visibility.
 
-## Related event subscriptions
+### Related event subscriptions
 
-Event subscriptions are not additional OAuth scopes. The manifest subscribes
-to:
+Event subscriptions are not additional OAuth scopes. The manifest subscribes to:
 
 | Event | What Avalon uses it for |
 | --- | --- |
@@ -195,9 +196,11 @@ to:
 | `reaction_removed` | Offer bounded emoji-reaction removal activity to explicitly configured automations. |
 | `tokens_revoked` | Mark affected credentials unhealthy and require reconnection. |
 
-Avalon intentionally does not subscribe to `message.mpim` or broad file lifecycle events. `file_shared` carries only bounded trigger evidence; it does not import file content.
+Avalon intentionally does not subscribe to `message.mpim` or broad file lifecycle
+events. `file_shared` carries only bounded trigger evidence; it does not import file
+content.
 
-## Event data and model context
+### Event data and model context
 
 A Slack-originated task receives this source provenance in its system prompt:
 
@@ -209,26 +212,105 @@ A Slack-originated task receives this source provenance in its system prompt:
 - bounded active-view entity metadata supplied by Slack; and
 - attachment metadata from the triggering interaction.
 
-Avalon does not durably copy surrounding Slack messages. Active-view and
-attachment metadata are labeled as untrusted evidence, not system instructions.
-The short-lived search `action_token` is hidden runtime
-authorization: it is never placed in the system prompt, workstream transcript,
-model tool arguments, tool output, or inference-payload logs. Search results are
-transient model context and are excluded from durable tool-result replay.
+## Invariants
 
-## Source of truth and maintenance
+- **Workspace tools never inherit a member's personal Slack authority**, and
+  personal tools never substitute for a workspace installation when processing Slack
+  Agent events or delivering workspace-bot messages. These are two grants, not one
+  with two sources.
+- **A workspace write goes only through the installation belonging to the same
+  Slack team and Avalon workspace.**
+- **A scope is the outer boundary, never the authorization.** Membership,
+  identity-linking, surface policy, conversation membership, session, confirmation,
+  and audit checks all still apply.
+- **The manifest and the runtime scope and capability declarations change
+  together.** A scope requested but not declared is a permission nobody can explain;
+  a scope declared but not requested is a tool that fails at Slack.
+- **Avalon does not durably copy surrounding Slack messages.** Reads are bounded and
+  transient; there is no mirror.
+- **Active-view and attachment metadata are labeled as untrusted evidence, not
+  system instructions.**
+- **Notification lookup never silently links or authenticates an account**, even
+  though `users:read.email` makes the match possible.
+- **`groups:read` does not grant access to private channels the bot has not
+  joined.** Membership is Slack's to enforce and Avalon does not work around it.
 
-The checked-in manifest is
-[`config/provider-apps/slack.json`](../config/provider-apps/slack.json). Runtime
-bot-scope health checks and capability mappings are in
-[`packages/connectors/src/slack.ts`](../packages/connectors/src/slack.ts).
-Lifecycle and data handling are described in
-[`docs/SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md).
+## Boundary
 
-When adding, removing, or repurposing a Slack scope:
+This document owns the scope inventory and what each scope buys. It does not own
+the Slack product surface, the ingress, or the registration:
 
-1. update the manifest and runtime scope/capability declarations together;
-2. update this document and the integration data-flow description;
-3. add or update tests that keep the manifest and runtime declarations aligned;
-4. determine whether existing workspace installations or personal connections
-   must complete OAuth again for the changed grant.
+| For | Read |
+| --- | --- |
+| Lifecycle, data handling, App Home, user linking, acceptance | [`slack-integration.md`](slack-integration.md) |
+| The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
+| The unfurl card and its audience rules | [`workstream-links.md`](workstream-links.md) |
+| Connector scope kinds, capabilities, and health semantics | [`connectors.md`](connectors.md) |
+| Why a stored status is not a gate | [`connectors.md`](connectors.md#stored-status-is-a-belief-not-a-gate) |
+
+### Changing a scope
+
+1. Update the manifest and the runtime scope and capability declarations together.
+2. Update this document and the integration data-flow description in
+   [`slack-integration.md`](slack-integration.md).
+3. Add or update tests that keep the manifest and runtime declarations aligned.
+4. Determine whether existing workspace installations or personal connections must
+   complete OAuth again for the changed grant.
+
+## Failure modes and limits
+
+- **Existing workspace installations must reconnect after an expanded permission
+  set is deployed.** Until Slack returns all expected bot scopes, Avalon reports the
+  installation as reconnect-required. **It still offers the tools**: the report is a
+  diagnosis, not a gate, and a call that needs a missing scope fails on Slack's
+  answer rather than on Avalon's record of it.
+- **A personal token may be missing scopes this document lists.** Connections made
+  before **Connect for me** and the account link converged on the full set carry a
+  narrower grant, and the tool fails at Slack rather than being hidden.
+- **A provider-side acknowledgement failure does not discard an admitted request.**
+  The `eyes` reaction is logged when it fails; the work still runs.
+- **Read bounds are hard**: 100 messages per `read_channel` or `read_thread` call,
+  a 50-before/50-after window for `read_message_context`, five pages and 200 matches
+  for `find_users`, one to eight user IDs for a DM or MPIM, and 512 KiB of text for
+  `read_file` — binary or larger content is omitted rather than truncated.
+- **Workspace search needs the event-scoped `action_token`** and is therefore only
+  available on a user-initiated message or app mention, and only over public
+  channels.
+
+## Testing
+
+`apps/api/test/slack-agent-ingress.test.ts` reads
+`config/provider-apps/slack.json` directly and is the suite that keeps the manifest
+and the runtime declarations from drifting. `packages/connectors/src/slack.test.ts`
+covers the capability mapping and each tool's declared scopes, and
+`apps/api/test/slack-connection-health.test.ts` covers the reconnect-required
+diagnosis and that it does not gate.
+
+Run one with
+`pnpm --filter @avalon/api exec vitest run test/slack-agent-ingress.test.ts` — the
+path is package-relative.
+
+`slack manifest validate` reads the same manifest through the checked-in `.slack`
+hook, and is what catches a scope Slack itself rejects. Nothing in Vitest can tell
+you that a scope was actually granted; only the acceptance flows in
+[`e2e.md`](e2e.md) can.
+
+## Security and trust model
+
+The short-lived search `action_token` is **hidden runtime authorization**: it is
+never placed in the system prompt, the work-stream transcript, model tool arguments,
+tool output, or inference-payload logs. Search results are transient model context
+and are excluded from durable tool-result replay.
+
+Everything Slack supplies — active-view metadata, attachment metadata, message
+content — is untrusted evidence. [`security.md`](security.md) owns the boundary this
+sits inside.
+
+## Changelog
+
+No entries yet. This document predates the changelog rule in
+[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
+the scope selection — beyond the per-scope justifications above, which are the point
+of the document — was not recorded as dated entries and was not reconstructed. The
+next scope added, removed, or repurposed starts the record, and that entry is that
+change, written in full.

@@ -138,10 +138,10 @@ may not write through to, inserts a new automation exactly as it always did.
 This module owns the draft's lifecycle: its row, its saved conversation, its
 promotion, and its archival. It owns nothing about what the compiler decides —
 the automation architect, its prompts, its tools, and the shape of an
-`AutomationDraft` belong to [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
+`AutomationDraft` belong to [`agent-harness.md`](agent-harness.md).
 
 It does not own an automation that runs. Once promoted, the row belongs to the
-automation surfaces described in [`DATA_MODEL.md`](DATA_MODEL.md) — schedules,
+automation surfaces described in [`data-model.md`](data-model.md) — schedules,
 runs, delivery, and the overview screen — and there is no path back to draft.
 
 It does not own the composer's own draft text or attachment bytes, which are
@@ -222,7 +222,7 @@ One column beyond what an automation subscription already had:
 
 `status = 'draft'` and `lifecycle_state = 'visible'` together identify a live
 draft; `lifecycle_state = 'archived'` is a dismissed one.
-[`DATA_MODEL.md`](DATA_MODEL.md) stays authoritative for both enums.
+[`data-model.md`](data-model.md) stays authoritative for both enums.
 
 ## Security and trust model
 
@@ -234,7 +234,7 @@ use the difference between "not yours" and "does not exist" to enumerate other
 people's automations.
 
 The draft's contents are user-authored context and stay user-role in every
-prompt, as [`AGENT_HARNESS.md`](AGENT_HARNESS.md) requires. Nothing in a saved
+prompt, as [`agent-harness.md`](agent-harness.md) requires. Nothing in a saved
 conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
@@ -320,7 +320,7 @@ will wipe a conversation that has not finished naming itself. Creation is no
 longer atomic end to end: a claim that succeeds and a batch that then fails
 leaves an automation active with no schedules, which does not run — chosen over
 the alternative, which was running twice. And `draftVersionUpdate` is the only
-in-place writer of a table `DATA_MODEL.md` calls immutable; its guard parameter
+in-place writer of a table `data-model.md` calls immutable; its guard parameter
 is what keeps that exception to a draft's own private version.
 
 Shipped in #99.

@@ -131,7 +131,7 @@ string and an optional `mentions` array.
 
 It does not own the markdown itself. Where a briefing's text comes from is
 [`meeting-notes.md`](meeting-notes.md); a HyperSight block's is
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md); an automation overview's is
+[`agent-harness.md`](agent-harness.md); an automation overview's is
 [`automation-drafts.md`](automation-drafts.md). It does not own the surrounding
 screen either — a note's page geometry belongs to the note screen, and this
 document has an opinion only about the part of it that is markdown.
@@ -139,12 +139,12 @@ document has an opinion only about the part of it that is markdown.
 It renders untrusted text: everything it is given was written by a model, a
 meeting participant, or an inbound email. `react-markdown` does not evaluate HTML
 in its input and no `rehype-raw` is configured, so markup in the source is text.
-[`SECURITY.md`](SECURITY.md) owns the wider trust model.
+[`security.md`](security.md) owns the wider trust model.
 
 Markdown rendered anywhere other than the desktop renderer is a different
 problem with different constraints, and is deliberately not shared with this:
 the digest email has its own converter, for the reason
-[`DIGESTS.md`](DIGESTS.md) records — a general markdown library emits far more
+[`digests.md`](digests.md) records — a general markdown library emits far more
 than an email client will honour.
 
 ## Failure modes and limits

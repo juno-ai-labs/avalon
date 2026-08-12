@@ -345,7 +345,7 @@ export class AutomationService {
 
   /**
    * Rewrites a template version in place — the one exception to the immutability
-   * `DATA_MODEL.md` states for `automation_template_versions`, and the reason
+   * `data-model.md` states for `automation_template_versions`, and the reason
    * this is the only method that writes that table.
    *
    * It exists because a draft's version is private to the conversation writing

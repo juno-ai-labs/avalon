@@ -510,7 +510,7 @@ describe("prompt renderers", () => {
     // a permanent `# Narration` section that the 8 KB figure predates. The
     // bound is here to catch prose creeping in unnoticed, not to force the
     // next author to delete a rule to fit a new one: raising it deliberately,
-    // with the reason in the AGENT_HARNESS.md changelog, is a valid move and
+    // with the reason in the agent-harness.md changelog, is a valid move and
     // usually the better one. See that entry before cutting policy to fit.
     expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(9_000);
   });
