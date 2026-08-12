@@ -377,6 +377,24 @@ describe("a work stream started from a suggestion", () => {
     })]);
   });
 
+  it("leaves out a source the activity itself restricts, whatever the connection", async () => {
+    // The case that matters: a message in a private Slack channel arrives on the
+    // *workspace* connection and carries its restriction in `visibility`. The
+    // work stream a suggestion creates is workspace-visible and broadcasts every
+    // attachment, so an activity the rest of the pipeline withheld must not
+    // become one here.
+    const database = seededDatabase();
+    seedOpportunity(database);
+    database.prepare(
+      "UPDATE activities SET visibility_json = ? WHERE id = ?",
+    ).run(JSON.stringify({ workspaceAutomationAllowed: false, allowedUserIds: [memberId] }), activityId);
+    const service = new WorkstreamService(environment(database), auth(), () => undefined);
+
+    const created = await service.createFromOpportunity(opportunityRequest());
+
+    expect(attachments(database, created.workstream.id)).toEqual([]);
+  });
+
   it("leaves out a source held through somebody else's personal connection", async () => {
     // A resource row is listed to everyone the work stream is, so an origin is
     // held to the same rule a manual attach is: a personal connection reaches
@@ -589,6 +607,13 @@ function seedOpportunity(database: DatabaseSync, options: {
   }
   database.prepare("UPDATE connector_connections SET connector_type = 'linear' WHERE id = ?").run(connectionId);
   seedActivity(database);
+  if (options.connectionScope === "personal") {
+    // The activity records the scope of the connection it arrived on; a fixture
+    // where the two disagree tests nothing that can happen.
+    database.prepare(
+      "UPDATE activities SET connection_scope = 'personal', connection_owner_user_id = ? WHERE id = ?",
+    ).run(options.connectionOwnerUserId ?? strangerId, activityId);
+  }
   database.exec(`
     INSERT INTO work_opportunities
       (id, workspace_id, audience_scope, audience_user_id, display_prompt, execution_prompt,
