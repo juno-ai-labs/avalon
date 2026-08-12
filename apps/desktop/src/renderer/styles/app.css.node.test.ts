@@ -96,6 +96,11 @@ describe('member picker controls', () => {
     expect(copy).toContain('flex: 1;');
     expect(rule('.member-checkbox')).toContain('flex: 0 0 16px;');
   });
+
+  it('mirrors focus from the transparent native input onto the visible checkbox', () => {
+    expect(rule('.member-picker-row:has(input:focus-visible) .member-checkbox'))
+      .toContain('outline: 2px solid #6a7f95;');
+  });
 });
 
 /**
