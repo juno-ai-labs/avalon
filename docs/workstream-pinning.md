@@ -78,13 +78,17 @@ it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
 
 Holding Command overlays `⌘1` through `⌘9` on the first nine pinned rows, and
-pressing one of those number keys while Command remains down opens the pin at
-that visible position. Automations, primary actions, recent work streams, and a
-tenth or later pin are not numbered. The hint is absolutely positioned over the
-row, with a short gradient into the row's current normal, hover, or selected
-background; long copy disappears underneath it instead of shrinking the row or
-touching the pill. Each numbered link also declares its `Meta+<number>` shortcut
-to assistive technology when the visual hint is hidden.
+pressing one of those physical number-row keys while Command remains down opens
+the pin at that visible position. Reading the physical key keeps the mapping
+true on symbol-first layouts such as AZERTY. Automations, primary actions,
+recent work streams, and a tenth or later pin are not numbered. An auto-repeated
+keydown is ignored so one press creates one history entry, and shortcuts pause
+while a modal dialog is open rather than changing the route underneath it. The
+hint is absolutely positioned over the row, with a short gradient into the
+row's current normal, hover, or selected background; long copy disappears
+underneath it instead of shrinking the row or touching the pill. Each numbered
+link also declares its `Meta+<number>` shortcut to assistive technology when the
+visual hint is hidden.
 
 A drag is committed only when something accepted the drop. `dragend` fires
 whatever ended the drag, so the handler reads `dataTransfer.dropEffect`: `none`
@@ -270,6 +274,8 @@ the ordinary sidebar pay for a state it is not showing.
 mapping follows rendered order. Pins after the ninth stay unnumbered. The pills
 overlay row content behind a gradient matched to the row's normal, hover, or
 selected background, so future row backgrounds must keep that gradient in step.
+The handler follows physical `Digit1`–`Digit9` codes, ignores repeated keydowns,
+and yields whenever a modal dialog owns interaction.
 
 ### 2026-08-12 — The sidebar follows the cursor it was throwing away
 

@@ -1207,7 +1207,7 @@ describe('pinned work streams', () => {
     expect(section.querySelectorAll('.pinned-shortcut-pill')).toHaveLength(0);
   });
 
-  it('opens the correspondingly ordered pin with Command and its number', () => {
+  it('opens the correspondingly ordered pin from the physical number row', () => {
     renderWith([
       pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
       pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
@@ -1217,9 +1217,33 @@ describe('pinned work streams', () => {
     const bravo = screen.getByRole('link', { name: /Bravo/u });
     expect(bravo).not.toHaveClass('is-active');
 
-    fireEvent.keyDown(window, { key: '2', metaKey: true });
+    // Symbol-first layouts such as French AZERTY do not report `key: '2'` for
+    // this physical key, but it is still the second key in the advertised row.
+    fireEvent.keyDown(window, { code: 'Digit2', key: 'é', metaKey: true });
 
     expect(bravo).toHaveClass('is-active');
+
+    // Holding the key produces repeated keydowns. A repeat for any digit is
+    // ignored rather than pushing another route onto history.
+    fireEvent.keyDown(window, { code: 'Digit3', key: '"', metaKey: true, repeat: true });
+    expect(bravo).toHaveClass('is-active');
+    expect(screen.getByRole('link', { name: /Charlie/u })).not.toHaveClass('is-active');
+  });
+
+  it('does not navigate behind an open modal dialog', async () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+    ]);
+
+    const bravo = screen.getByRole('link', { name: /Bravo/u });
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Alpha/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    expect(screen.getByRole('dialog', { name: 'Rename work stream' })).toBeVisible();
+
+    fireEvent.keyDown(window, { code: 'Digit2', key: '2', metaKey: true });
+
+    expect(bravo).not.toHaveClass('is-active');
   });
 
   it('offers Pin on a recent row and Unpin on a pinned one', async () => {
