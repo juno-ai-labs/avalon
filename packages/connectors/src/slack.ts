@@ -1741,27 +1741,16 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
     call,
   );
-  const personalMcpCapabilities = [
-    SlackCapabilities.personalMcp,
-    SlackCapabilities.search,
-    SlackCapabilities.messagesRead,
-    SlackCapabilities.filesRead,
-    SlackCapabilities.usersRead,
-    SlackCapabilities.messagesWrite,
-    SlackCapabilities.conversationsWrite,
-    SlackCapabilities.reactionsWrite,
-    SlackCapabilities.canvasesRead,
-    SlackCapabilities.canvasesWrite,
-  ] as const;
   const personalMcp = createHostedMcpPassthrough({
     providerName: "Slack",
     serverUrl: SLACK_MCP,
-    capabilities: personalMcpCapabilities,
+    capabilities: [SlackCapabilities.personalMcp],
     connectionScopes: ["personal"],
     capabilityForConnection(connection) {
-      const granted = personalMcpCapabilities.find((capability) => connection.grantedScopes.includes(capability));
-      if (!granted) throw new ConnectorError("unsupported_capability", "Slack personal MCP access is not granted");
-      return granted;
+      if (!connection.grantedScopes.includes(SlackCapabilities.personalMcp)) {
+        throw new ConnectorError("unsupported_capability", "Slack personal MCP access is not granted");
+      }
+      return SlackCapabilities.personalMcp;
     },
     withAccessToken: (connection, signal, operation) => reauthorizing(
       connection,
@@ -2116,7 +2105,8 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
     async executeTool(name, rawArgs, context) {
       assertPrincipalAccess(context.connection, context.principal);
-      if (context.connection.scope === "personal") {
+      if (context.connection.scope === "personal"
+        && context.connection.grantedScopes.includes(SlackCapabilities.personalMcp)) {
         return personalMcp.execute(context.connection, name, rawArgs, context.signal);
       }
       const definition = slackTools.find((candidate) => candidate.name === name);

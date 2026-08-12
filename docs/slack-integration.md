@@ -8,8 +8,8 @@ attribution. Neither substitutes for the other.
 
 Read this before changing the ingress, the identity-linking flow, what a
 Slack-originated run may read, or how a result is delivered. Every configured bot
-and personal OAuth scope, with its concrete use and model-tool mapping, is listed
-in [`slack-permissions.md`](slack-permissions.md) rather than here.
+and personal OAuth scope, with its concrete provider-feature justification, is
+listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 
 ## Where the code lives
 
@@ -73,9 +73,9 @@ Slack's hosted MCP server is the user tool plane. Avalon initializes a JSON-RPC 
 
 Personal authorization requests one `slack.personal.mcp` Avalon capability whose
 provider scope set covers Slack's hosted user-tool plane. Existing personal rows
-that carry the older per-tool capability grants remain loadable as a migration
-bridge, but new code must not infer the server's current tool list from those
-legacy names. Workspace Agent scopes remain a separate
+that carry the older per-tool capability grants remain on Avalon's reviewed
+static Web API tools as a migration bridge; they never authorize the live MCP
+catalog. Reconnecting replaces them with the umbrella grant. Workspace Agent scopes remain a separate
 administrator-controlled installation with one reviewed capability bundle,
 including `reactions:read` for activity triggers and `reactions:write` for the
 deterministic activation acknowledgement and workspace reaction tool. Existing
@@ -434,8 +434,8 @@ not own:
   when streaming is unavailable.
 - **Message-context reads are bounded** — up to eight nearby messages on a prompt,
   and the per-tool bounds in [`slack-permissions.md`](slack-permissions.md).
-- **SSE responses from Slack's MCP server are rejected**, because Slack does not
-  support them.
+- **SSE responses on Slack's Streamable HTTP MCP endpoint are parsed**, but
+  Avalon never falls back to a separate legacy SSE endpoint.
 - **Revoked Gmail or Slack authorization marks the run or destination
   `needs_input`**; transient Slack delivery errors remain retryable and do not
   disable the destination.
@@ -512,9 +512,8 @@ For a Global-only local acceptance pass:
 8. Open the app's Home tab in Slack, choose **Connect Avalon**, and let the local
    site hand off the one-time fragment token to the signed-in desktop. Reopen
    Home and confirm the linked member view.
-9. Optionally choose **Slack knowledge** and/or **Slack actions → Connect for
-   me** in Avalon Settings to incrementally authorize the personal hosted-MCP
-   tool plane.
+9. Optionally choose **Slack → Connect for me** in Avalon Settings to authorize
+   the personal hosted-MCP tool plane.
 
 The local site is required for account-link handoff because development sets
 `PUBLIC_WEB_BASE_URL=http://127.0.0.1:5174`. The browser and desktop must run on
@@ -559,8 +558,9 @@ was not recorded and is not reconstructed here.
 **What changed:** Personal Slack connections now request one
 `slack.personal.mcp` Avalon grant and expose the live `tools/list` response at
 plugin activation through the shared hosted-MCP abstraction. Legacy personal
-capability grants remain accepted for already-connected rows. Workspace bot and
-Agent tools stay code-authored Web API operations.
+capability grants remain accepted for already-connected rows through the
+reviewed static Web API surface, never as an umbrella for live tools. Workspace
+bot and Agent tools stay code-authored Web API operations.
 
 **Why:** Slack's MCP tool surface is provider-owned and can change without an
 Avalon release. The previous connector definitions were a snapshot, so they
@@ -576,8 +576,8 @@ activation when Slack changes the server. Marketplace scope review remains tied
 to the requested OAuth scopes, not to a pasted tool catalog. Every live tool is
 confirmed as a write even when Slack sends `readOnlyHint`; a lower-friction read
 path requires an independent Avalon policy source. The legacy grants are
-compatibility only and should be removed with an explicit reconnection migration
-rather than extended.
+compatibility-only static grants and should be removed with an explicit
+reconnection migration rather than extended or mapped onto provider-owned tools.
 
 Shipped in the pull request for this change.
 
