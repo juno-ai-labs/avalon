@@ -82,8 +82,9 @@ export interface Env {
   WORKSTREAM_EMAIL_ADDRESS_KEY?: string;
   WORKSTREAM_EMAIL_DOMAIN?: string;
 
-  GOOGLE_OAUTH_CLIENT_ID: string;
-  GOOGLE_OAUTH_CLIENT_SECRET: string;
+  /** Global only. `productionOnlySecrets` enforces them there; EU never carries them. */
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
   GOOGLE_CONNECTOR_OAUTH_CLIENT_ID?: string;
   GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET?: string;
   GITHUB_APP_ID?: string;
@@ -260,24 +261,35 @@ const EnvContractSchema = z.object({
 });
 
 /**
- * Typed required on `Env`, but routinely absent from `.dev.vars`, so local
- * development has always run without them. Requiring them outright would break
- * `pnpm dev:api:local` rather than catch a real misconfiguration, so they are
- * enforced only where their absence is genuinely a deployment fault.
+ * Secrets routinely absent from `.dev.vars`, so local development has always run
+ * without them. Requiring them outright would break `pnpm dev:api:local` rather
+ * than catch a real misconfiguration, so they are enforced only where their
+ * absence is genuinely a deployment fault — which is a question of region as
+ * well as of environment.
  *
- * `OPENROUTER_API_KEY` belongs here for a second reason: the app already models
- * its absence as a supported state rather than a fault — `/health` reports
- * `openRouter: not configured` — and `scripts/seed-sandbox-env.mjs` leaves it
- * empty whenever no real key is available, which is every sandbox session.
- * Enforcing it at the entrypoint turned that into a 503 on every route of both
- * regions, `/health` included, so the one endpoint whose job is to report which
- * key is missing was the one endpoint that could not answer.
+ * **Google identity OAuth is a Global-only surface.** Every user signs in through
+ * the Global endpoint (`REGIONALIZATION.md`), `AuthService.beginIdentity` refuses
+ * a non-Global region before it reads either key, and `sync-dev-env.mjs` lists
+ * both under `globalOnlyKeys`. Requiring them in every region made the deployed
+ * EU Worker fail its own contract on every request, every queue batch, and every
+ * cron tick — while `/health`, exempt so that it can report the fault, went on
+ * answering `ok`. A contract that demands what the architecture forbids does not
+ * catch a misconfiguration; it manufactures one, silently.
+ *
+ * `OPENROUTER_API_KEY` is required in both regions, and belongs here for a second
+ * reason: the app already models its absence as a supported state rather than a
+ * fault — `/health` reports `openRouter: not configured` — and
+ * `scripts/seed-sandbox-env.mjs` leaves it empty whenever no real key is
+ * available, which is every sandbox session. Enforcing it at the entrypoint
+ * turned that into a 503 on every route of both regions, `/health` included, so
+ * the one endpoint whose job is to report which key is missing was the one
+ * endpoint that could not answer.
  */
 const productionOnlySecrets = [
-  "GOOGLE_OAUTH_CLIENT_ID",
-  "GOOGLE_OAUTH_CLIENT_SECRET",
-  "OPENROUTER_API_KEY",
-] as const;
+  { key: "GOOGLE_OAUTH_CLIENT_ID", regions: ["global"] },
+  { key: "GOOGLE_OAUTH_CLIENT_SECRET", regions: ["global"] },
+  { key: "OPENROUTER_API_KEY", regions: ["global", "eu"] },
+] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**
  * Drift guard. If a key is required by the schema but optional on `Env` — or
@@ -305,8 +317,15 @@ const validated = new WeakSet<object>();
 export function assertEnvContract(env: Env): void {
   if (validated.has(env)) return;
   const result = EnvContractSchema.safeParse(env);
+  // An unrecognized region cannot select a region-scoped rule, so it is held to
+  // all of them. The schema reports the bad region separately; relaxing a secret
+  // requirement because the region was unreadable would fail open.
+  const knownRegion = env.AVALON_REGION === "global" || env.AVALON_REGION === "eu";
   const missingSecrets = env.APP_ENV === "production" || env.APP_ENV === "staging"
-    ? productionOnlySecrets.filter((key) => !env[key])
+    ? productionOnlySecrets
+        .filter((secret) => (!knownRegion || (secret.regions as readonly Region[]).includes(env.AVALON_REGION))
+          && !env[secret.key])
+        .map((secret) => secret.key)
     : [];
   if (result.success && missingSecrets.length === 0) {
     validated.add(env);

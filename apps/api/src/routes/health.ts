@@ -74,10 +74,21 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL),
     message: c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL ? "configured" : "not configured",
   };
-  checks.googleLoginOAuth = {
-    ok: Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET),
-    message: c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET ? "configured" : "not configured",
-  };
+  // Identity sign-in is a Global-only surface, so EU reporting "not configured"
+  // forever was a permanent false negative — noise that a real fault would have
+  // had to be spotted inside.
+  const googleLoginConfigured = Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET);
+  checks.googleLoginOAuth = c.env.AVALON_REGION === "global"
+    ? {
+        ok: googleLoginConfigured,
+        message: googleLoginConfigured ? "configured" : "not configured",
+      }
+    : {
+        ok: true,
+        message: googleLoginConfigured
+          ? "configured; not used outside Global"
+          : "not required outside Global",
+      };
   checks.googleConnectorOAuth = {
     ok: Boolean(c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET),
     message: c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET
