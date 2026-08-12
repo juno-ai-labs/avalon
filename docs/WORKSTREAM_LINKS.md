@@ -1,57 +1,85 @@
 # Work-stream links
 
-How Avalon links to a work stream from outside the desktop app, and why the
-shareable form is an HTTPS URL rather than the `avalon://` deep link.
+Every surface that points at a work stream from outside the desktop app emits one
+shape: `https://with-avalon.com/app/workstreams/<uuid>`. The `avalon://` deep link
+is still what actually opens a work stream, but it is now the last hop of that
+HTTPS page rather than the thing Avalon hands out — because a custom scheme cannot
+be unfurled by Slack, is not linkified by mail clients, and is dead for anyone
+without the app installed.
 
-## The two forms
+Read this before emitting or parsing a work-stream link anywhere, and before
+changing the Slack unfurl card or the sweep that keeps it current.
+
+## Where the code lives
+
+| Concern | Location |
+| --- | --- |
+| Mint, parse, and validate both forms | `packages/contracts/src/workstream-links.ts` |
+| Serve `/app/workstreams/<uuid>` | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
+| Make the dynamic path resolve | `apps/site/public/_redirects` |
+| Slack unfurl | `unfurlAvalonLinks` in `apps/api/src/services/slack-agent-service.ts` |
+| The card's blocks and its one status table | `slack-workstream-card.ts` |
+| The refresh sweep | `refreshSlackWorkstreamUnfurls`, wired into `scheduled` in `apps/api/src/index.ts` |
+| Slack blocks, DMs, and mention email | `slack-agent-service.ts`, `slack-mention-service.ts`, `mention-email-service.ts` |
+| Copy work-stream link | `apps/desktop/src/renderer/screens/workstream.tsx`, `apps/desktop/src/renderer/components/sidebar.tsx` |
+| Open the deep link | `emitDeepLink` in `apps/desktop/src/main/index.ts`, `apps/desktop/src/renderer/lib/app-session.tsx` |
+| The registered unfurl domains | `config/provider-apps/slack.json` |
+
+## How it works
+
+### The two forms
 
 | Form | Shape | Who mints it |
 | --- | --- | --- |
 | **Canonical link** | `https://with-avalon.com/app/workstreams/<uuid>` | Every surface that emits a work-stream link |
 | **Deep link** | `avalon://workstreams/<uuid>` | The canonical page, in the browser, as the last hop |
 
-`avalon://workstreams/<uuid>` is still the protocol the desktop client
-registers, and it is still what actually opens a work stream. It stopped being
-what Avalon *hands out*, for three reasons:
+`avalon://workstreams/<uuid>` is still the protocol the desktop client registers,
+and it is still what actually opens a work stream. It stopped being what Avalon
+*hands out*, for three reasons:
 
-- **Slack cannot unfurl it.** Slack emits `link_shared` only for URLs whose
-  domain matches one of the app's registered `unfurl_domains`
-  (`config/provider-apps/slack.json`). A custom scheme has no registrable
-  domain, so no event is ever delivered and no preview can be attached — Slack
-  renders the text as a link and nothing more.
+- **Slack cannot unfurl it.** Slack emits `link_shared` only for URLs whose domain
+  matches one of the app's registered `unfurl_domains`. A custom scheme has no
+  registrable domain, so no event is ever delivered and no preview can be attached
+  — Slack renders the text as a link and nothing more.
 - **Mail clients do not linkify it.** A recipient reading a mention email on a
   phone got an unclickable string and no way to reach the work stream.
-- **It is dead for anyone without the app.** The canonical page can at least
-  say what happened and point at the download.
+- **It is dead for anyone without the app.** The canonical page can at least say
+  what happened and point at the download.
 
-## Why the id is in the path
+### Why the id is in the path
 
-The canonical link puts the work-stream id in its **path**, not in a
-`#fragment`. This is the difference between the canonical link and the older
-`/open#target=avalon://workstreams/<uuid>` handoff it replaces: a fragment is
-never sent to a server, which is exactly right for the OAuth ticket handoffs in
+The canonical link puts the work-stream id in its **path**, not in a `#fragment`.
+This is the difference between the canonical link and the older
+`/open#target=avalon://workstreams/<uuid>` handoff it replaces: a fragment is never
+sent to a server, which is exactly right for the OAuth ticket handoffs in
 [`SECURITY.md`](SECURITY.md), and exactly wrong for a link that a server has to
-recognize. Slack's unfurl handler has to read the id off the shared URL, so the
-id has to be somewhere a reader can see it.
+recognize. Slack's unfurl handler has to read the id off the shared URL, so the id
+has to be somewhere a reader can see it.
 
 A work-stream id is not a secret and is not a capability: opening the canonical
-link grants nothing on its own. The desktop app applies the viewer's own
-workspace permissions after the handoff.
+link grants nothing on its own. The desktop app applies the viewer's own workspace
+permissions after the handoff.
 
-## What the Slack unfurl shows
+No asset can exist per work-stream id, so the site — a pure static-assets Worker —
+serves every id under the prefix from one page through a 200 rewrite in
+`_redirects`. The URL is preserved, and the page reads the id back out of
+`window.location.pathname`.
+
+### What the Slack unfurl shows
 
 The card carries the work stream's **title, last activity, and automation
 origin**, plus a **status badge only while it is `running`, `needs_input`, or
-`failed`** — enough to know whether the link is worth opening and whether the
-agent is blocked.
+`failed`** — enough to know whether the link is worth opening and whether the agent
+is blocked.
 
-`completed`, `scheduled`, and `idle` render no badge. "Completed" is not
-something a reader can act on, and a settled work stream stops producing the
-changes that rewrite its card, so that label would sit there indefinitely. The
-badge is an emoji leading the title, with the word repeated in the detail line
-so the emoji is never the only carrier of meaning; both come from one table in
-`slack-workstream-card.ts` so they cannot drift apart, and the running and
-needs-input marks match App Home's task rows.
+`completed`, `scheduled`, and `idle` render no badge. "Completed" is not something
+a reader can act on, and a settled work stream stops producing the changes that
+rewrite its card, so that label would sit there indefinitely. The badge is an emoji
+leading the title, with the word repeated in the detail line so the emoji is never
+the only carrier of meaning; both come from one table in `slack-workstream-card.ts`
+so they cannot drift apart, and the running and needs-input marks match App Home's
+task rows.
 
 The card carries no work-stream *contents*: no objective, no messages, no
 resources. Those still need the reader to open Avalon and pass its own
@@ -70,50 +98,142 @@ deliberately permissive, because the alternative blocks nearly every real link:
 | Audience lookup (`conversations.info`) failed | Anonymous when posting; **no rewrite at all** when refreshing |
 | Anything else — public, private, DM, group DM | Summary |
 
-The two paths treat an unconfirmed audience differently on purpose. Posting a
-new card fails closed, because nothing is lost by withholding detail. Rewriting
-an existing one must not, because a five-second timeout would otherwise redact a
+The two paths treat an unconfirmed audience differently on purpose. Posting a new
+card fails closed, because nothing is lost by withholding detail. Rewriting an
+existing one must not, because a five-second timeout would otherwise redact a
 correct card and persist that as the truth — so a failed lookup leaves the row
 completely untouched and the next sweep retries.
 
-The workspace check is the one that is not a matter of taste: naming another
-Avalon workspace's work stream inside this Slack team is a cross-tenant leak.
-The Slack Connect check is about people from other companies. Everything else
-inside the workspace sees the summary, on the same reasoning that lets any
-internal tool unfurl a title into an internal channel. **A failed check degrades
-the card; it never drops the unfurl.**
+The workspace check is the one that is not a matter of taste: naming another Avalon
+workspace's work stream inside this Slack team is a cross-tenant leak. The Slack
+Connect check is about people from other companies. Everything else inside the
+workspace sees the summary, on the same reasoning that lets any internal tool
+unfurl a title into an internal channel.
 
 Last activity is a Slack `<!date^…>` token rather than a baked "24m ago", so it
 renders in each reader's timezone and cannot rot between refreshes.
 
-## Keeping a posted card current
+### Keeping a posted card current
 
-A card would otherwise be frozen at the moment the link was pasted: a work
-stream shared while `running` would still read `running` after it completed.
-`chat.unfurl` accepts the same `channel` + `ts` + `url` again and "will modify
-the same attachments," so the fix is to rewrite the card when the work stream
-moves on.
+A card would otherwise be frozen at the moment the link was pasted: a work stream
+shared while `running` would still read `running` after it completed. `chat.unfurl`
+accepts the same `channel` + `ts` + `url` again and "will modify the same
+attachments," so the fix is to rewrite the card when the work stream moves on.
 
-Doing that needs the exact `(channel, message_ts, url)` of every message a link
-was pasted into, and **Slack only ever reports that once**, in `link_shared` —
-it permits `chat.unfurl` only for a URL whose event the app acknowledged, and
-offers no way to re-enumerate past events. `slack_unfurled_links` records those
-triples as each card is posted. Rows exist only from the moment recording
-shipped; anything shared earlier is permanently frozen and cannot be backfilled.
+Doing that needs the exact `(channel, message_ts, url)` of every message a link was
+pasted into, and **Slack only ever reports that once**, in `link_shared` — it
+permits `chat.unfurl` only for a URL whose event the app acknowledged, and offers no
+way to re-enumerate past events. `slack_unfurled_links` records those triples as
+each card is posted.
 
-Only cards that showed a summary are recorded. An anonymous card has nothing to
-keep current, and a work stream that resolved outside the connection's workspace
-must never give the sweep a row it would act on.
+Only cards that showed a summary are recorded. An anonymous card has nothing to keep
+current, and a work stream that resolved outside the connection's workspace must
+never give the sweep a row it would act on.
 
-The rewrite runs from the five-minute maintenance sweep
-(`refreshSlackWorkstreamUnfurls`, wired into `scheduled` in `apps/api/src/index.ts`)
-rather than from the status writes. `harness_status` is written from seven
-places across the runtime, the scheduler, and the tool layer; hooking each would
-be seven chances to miss a transition and no cheaper. A sweep is one place, it
-coalesces a burst of transitions into a single rewrite, and a failed refresh is
-retried next pass instead of lost. The cost is up to five minutes of staleness.
+The rewrite runs from the five-minute maintenance sweep rather than from the status
+writes. `harness_status` is written from seven places across the runtime, the
+scheduler, and the tool layer; hooking each would be seven chances to miss a
+transition and no cheaper. A sweep is one place, it coalesces a burst of transitions
+into a single rewrite, and a failed refresh is retried next pass instead of lost.
+The cost is up to five minutes of staleness.
 
-Its bounds, all deliberate:
+The audience is re-checked once per channel per sweep, which is also the redaction
+path: a channel that became externally shared after its card was posted is rewritten
+back to the anonymous form. That check runs on its own 24-hour clock rather than
+only when the status moves, because otherwise a channel could go externally shared
+and the card would keep naming the work stream until some unrelated status change
+happened to fire. A row selected only by the audience clock whose verdict has not
+changed records the check and posts nothing — `rendered_anonymous` tracks which form
+is currently on the message, so an identical card is never rewritten.
+
+### What the hash does and does not promise
+
+`rendered_hash` decides whether a **selected** row is rewritten; the selection query
+decides which rows are looked at. Those are different, and the gap is worth stating
+plainly.
+
+Selection matches on status drift, an edit to the work stream itself, the 24-hour
+audience clock, or a missing hash. The edit arm is what covers a rename: the title
+renders but no status moves, so `updated_at > refreshed_at` is the only thing that
+would notice. **A card therefore catches up with an edit on the next five-minute
+sweep, not a day later.**
+
+Selecting a row is not the same as rewriting it. An edit that never reaches the card
+— changing the objective, which `updated_at` bumps but the card never shows —
+selects the row, matches on hash, and posts nothing. That is why every field the
+selection query reads is advanced when a card is marked current: leave `refreshed_at`
+behind and that row is re-selected on every sweep for 30 days, comparing hashes
+forever.
+
+What is still bounded by the daily clock is a change that neither moves the status
+nor touches the work stream row — the channel becoming externally shared is the real
+case, and redaction there is worth the 24-hour worst case rather than a
+`conversations.info` call per card per sweep.
+
+A row with no hash is one recorded before hashing shipped. Null never matches a
+freshly computed hash, so each such card is rewritten exactly once and then settles —
+which is what carries an existing card across a change to the card's own layout,
+with no version constant for a future change to remember to bump.
+
+## Invariants
+
+- **The canonical HTTPS link is the only form Avalon hands out.** Never emit
+  `avalon://` into anything a human can copy; it cannot be unfurled, linkified, or
+  opened without the app.
+- **The work-stream id lives in the path, never in a fragment.** A server has to be
+  able to read it, which is the exact opposite of what the OAuth handoffs need.
+- **Every link is minted by `workstreamCanonicalUrl` and read by
+  `parseWorkstreamLink`.** A URL built by hand is a URL that drifts from the site's
+  rewrite rule.
+- **`workstreamCanonicalUrl` throws on anything that is not a work-stream UUID.**
+  Deliberate — a link surface should fail loudly rather than emit a URL that 404s
+  for the recipient.
+- **The `_redirects` rewrite is load-bearing.** Deleting it turns every shared link
+  into a 404, which no test of the page's markup alone would catch;
+  `apps/site/test/site.test.ts` asserts the rule is present.
+- **A `slack_unfurled_links` row is written as the card is posted, or never.** Slack
+  reports a shared link exactly once and offers no way to re-enumerate past events,
+  so a missed write is permanent.
+- **Only summary cards are recorded.** Recording an anonymous card, or one that
+  resolved outside the connection's workspace, hands the sweep a row it must not act
+  on.
+- **A failed check degrades the card; it never drops the unfurl.**
+- **A failed audience lookup never redacts an existing card.** Posting fails closed;
+  refreshing fails untouched, or a five-second timeout persists a redaction as the
+  truth.
+- **Every field the selection query reads is advanced when a card is marked
+  current**, including when nothing was posted — otherwise the row is re-selected on
+  every sweep for 30 days.
+
+## Boundary
+
+This module owns the two link forms, the page that serves them, and the Slack
+unfurl card and its refresh. It does not own the Slack connector's ingress, its
+scopes, or its other surfaces — [`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md) and
+[`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) do — and it does not own the OAuth
+handoff the fragment form is reserved for, which is [`SECURITY.md`](SECURITY.md).
+The row it stores is described in [`DATA_MODEL.md`](DATA_MODEL.md).
+
+### Adding a surface that links to a work stream
+
+1. Call `workstreamCanonicalUrl(webBaseUrl, workstreamId)`. Do not build either URL
+   by hand.
+2. If the surface *reads* links rather than writing them, use `parseWorkstreamLink`.
+   It accepts the canonical link, the raw deep link, and the legacy `/open#target=`
+   handoff still sitting in Slack and mail history, and it rejects look-alike
+   origins.
+
+### Deep links that have no canonical form
+
+`avalon://settings/workspace`, `avalon://settings/connections`, and
+`avalon://automations/new` still go through the `/open#target=` handoff, whose
+allowlist lives in `apps/site/src/desktop-open.ts`. They address no shareable
+object, so they need neither a stable URL nor an unfurl. Give a new deep link a
+canonical HTTPS form only when someone would reasonably paste it somewhere else.
+
+## Failure modes and limits
+
+The refresh sweep's bounds, all deliberate:
 
 | Bound | Value | Why |
 | --- | --- | --- |
@@ -123,90 +243,43 @@ Its bounds, all deliberate:
 | Per sweep | 100 rows | Bounds the work; the overflow is logged, never silently dropped |
 | Per workspace | 20 rows | `chat.unfurl` is Tier 3 (50+/min per method per workspace) and live `link_shared` unfurls, which someone is waiting on, spend the same budget |
 
-The audience is re-checked once per channel per sweep, which is also the
-redaction path: a channel that became externally shared after its card was
-posted is rewritten back to the anonymous form. That check runs on its own
-24-hour clock rather than only when the status moves, because otherwise a
-channel could go externally shared and the card would keep naming the work
-stream until some unrelated status change happened to fire. A row selected only
-by the audience clock whose verdict has not changed records the check and posts
-nothing — `rendered_anonymous` tracks which form is currently on the message, so
-an identical card is never rewritten.
+- **Cards shared before recording shipped are permanently frozen** and cannot be
+  backfilled, because Slack will not re-report the `link_shared` events behind them.
+- **Redaction is bounded by the same 30-day window** as the status refresh: a card
+  older than that is never revisited. That is a deliberate limit rather than an
+  oversight — an external party added to a channel can read its message history
+  anyway, so the marginal exposure of an old card's title is small next to what
+  Slack already showed them.
+- **A refresh that fails with a terminal Slack reason** — the message or channel is
+  gone — deletes the row rather than retrying forever. Anything else leaves
+  `rendered_status` untouched so the next sweep tries again.
+- **Up to five minutes of staleness** is the accepted cost of sweeping rather than
+  hooking the seven `harness_status` writers.
 
-Redaction is still bounded by the same 30-day window as the status refresh: a
-card older than that is never revisited. That is a deliberate limit rather than
-an oversight — an external party added to a channel can read its message history
-anyway, so the marginal exposure of an old card's title is small next to what
-Slack already showed them.
+## Testing
 
-### What the hash does and does not promise
-
-`rendered_hash` decides whether a **selected** row is rewritten; the selection
-query decides which rows are looked at. Those are different, and the gap is
-worth stating plainly.
-
-Selection matches on status drift, an edit to the work stream itself, the
-24-hour audience clock, or a missing hash. The edit arm is what covers a rename:
-the title renders but no status moves, so `updated_at > refreshed_at` is the only
-thing that would notice. **A card therefore catches up with an edit on the next
-five-minute sweep, not a day later.**
-
-Selecting a row is not the same as rewriting it. An edit that never reaches the
-card — changing the objective, which `updated_at` bumps but the card never shows
-— selects the row, matches on hash, and posts nothing. That is why every field
-the selection query reads is advanced when a card is marked current: leave
-`refreshed_at` behind and that row is re-selected on every sweep for 30 days,
-comparing hashes forever.
-
-What is still bounded by the daily clock is a change that neither moves the
-status nor touches the work stream row — the channel becoming externally shared
-is the real case, and redaction there is worth the 24-hour worst case rather
-than a `conversations.info` call per card per sweep.
-
-A row with no hash is one recorded before hashing shipped. Null never matches a
-freshly computed hash, so each such card is rewritten exactly once and then
-settles — which is what carries an existing card across a change to the card's
-own layout, with no version constant for a future change to remember to bump.
-
-A refresh that fails with a terminal Slack reason — the message or channel is
-gone — deletes the row rather than retrying forever; anything else leaves
-`rendered_status` untouched so the next sweep tries again.
-
-## Where it is implemented
-
-| Concern | Location |
+| Suite | Covers |
 | --- | --- |
-| Mint, parse, and validate both forms | `packages/contracts/src/workstream-links.ts` |
-| Serve `/app/workstreams/<uuid>` | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
-| Make the dynamic path resolve | `apps/site/public/_redirects` |
-| Slack unfurl | `unfurlAvalonLinks` in `apps/api/src/services/slack-agent-service.ts` |
-| Slack blocks, DMs, and mention email | `slack-agent-service.ts`, `slack-mention-service.ts`, `mention-email-service.ts` |
-| Copy work-stream link | `apps/desktop/src/renderer/screens/workstream.tsx`, `apps/desktop/src/renderer/components/sidebar.tsx` |
-| Open the deep link | `emitDeepLink` in `apps/desktop/src/main/index.ts`, `apps/desktop/src/renderer/lib/app-session.tsx` |
+| `packages/contracts/src/workstream-links.test.ts` | Minting, parsing all three accepted forms, look-alike origin rejection, and the throw on a non-UUID. |
+| `apps/site/test/site.test.ts` | That the `_redirects` rewrite rule is present — the one thing markup tests cannot see. |
+| `apps/api/test/slack-unfurl-refresh.test.ts` | Selection, the hash gate, the audience clock, redaction, the per-sweep and per-workspace bounds, and terminal-reason deletion. |
+| `apps/api/test/slack-agent-ingress.test.ts` | `link_shared` handling and the card posted in response. |
 
-No asset can exist per work-stream id, so the site — a pure static-assets
-Worker — serves every id under the prefix from one page through a 200 rewrite in
-`_redirects`. The URL is preserved, and the page reads the id back out of
-`window.location.pathname`. **Deleting that rewrite turns every shared link into
-a 404**, which no test of the page's markup alone would catch; `apps/site/test/site.test.ts`
-asserts the rule is present.
+The trap is that the sweep's rules are all relative-time comparisons
+(`updated_at > refreshed_at`, the 24-hour clock, the 30-day window). Stub the clock;
+a test that leans on real time either passes by accident or fails on a slow machine.
 
-## Adding a new surface that links to a work stream
+## Data model
 
-1. Call `workstreamCanonicalUrl(webBaseUrl, workstreamId)`. Do not build either
-   URL by hand, and do not emit `avalon://` into anything a human can copy.
-2. If the surface *reads* links rather than writing them, use
-   `parseWorkstreamLink`. It accepts the canonical link, the raw deep link, and
-   the legacy `/open#target=` handoff still sitting in Slack and mail history,
-   and it rejects look-alike origins.
-3. `workstreamCanonicalUrl` throws on anything that is not a work-stream UUID.
-   That is deliberate — a link surface should fail loudly rather than emit a URL
-   that 404s for the recipient.
+`slack_unfurled_links` records which Slack message carries which work-stream link,
+plus `rendered_status`, `rendered_anonymous`, `rendered_hash`, and `refreshed_at` —
+the four fields the selection query and the rewrite gate read.
+[`DATA_MODEL.md`](DATA_MODEL.md) is authoritative for the columns.
 
-## Deep links that have no canonical form
+## Changelog
 
-`avalon://settings/workspace`, `avalon://settings/connections`, and
-`avalon://automations/new` still go through the `/open#target=` handoff, whose
-allowlist lives in `apps/site/src/desktop-open.ts`. They address no shareable
-object, so they need neither a stable URL nor an unfurl. Give a new deep link a
-canonical HTTPS form only when someone would reasonably paste it somewhere else.
+No entries yet. This document predates the changelog rule in
+[`module-documents.md`](module-documents.md#starting-one). Much of the reasoning
+above is recorded inline, but not as dated entries, and it was not reconstructed
+into them. The next substantial change to the link forms, the card, or the sweep
+starts the record, and that entry is that change, written in full.
