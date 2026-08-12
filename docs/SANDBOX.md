@@ -93,25 +93,20 @@ sudo -E apt-get install -y --no-install-recommends \
 # to the same host succeeds because the proxy CA is trusted. HTTPS_PROXY stays
 # set, so everything else keeps the proxy and its injected auth. See
 # docs/sandbox-proxy.md before adding a host.
-#
-# GLOBAL_AGENT_NO_PROXY is in the list because the image sets
-# ELECTRON_GET_USE_PROXY=1, which routes @electron/get through `global-agent`,
-# and `global-agent` reads only its own GLOBAL_AGENT_* variables. Persisting
-# just the conventional pair leaves the Electron download on the tunnel, which
-# is the one client this file exists for.
 sudo tee /etc/profile.d/zz-avalon-noproxy.sh >/dev/null <<'PROFILE'
 # Append only if absent, so nested shells re-sourcing this file do not grow the
 # lists with duplicate entries.
 for host in github.com objects.githubusercontent.com; do
-  for name in no_proxy NO_PROXY GLOBAL_AGENT_NO_PROXY; do
-    eval "current=\$$name"
-    case ",$current," in
-      *",$host,"*) ;;
-      *) export "$name=${current:+$current,}$host" ;;
-    esac
-  done
+  case ",$no_proxy," in
+    *",$host,"*) ;;
+    *) export no_proxy="${no_proxy:+$no_proxy,}$host" ;;
+  esac
+  case ",$NO_PROXY," in
+    *",$host,"*) ;;
+    *) export NO_PROXY="${NO_PROXY:+$NO_PROXY,}$host" ;;
+  esac
 done
-unset host name current
+unset host
 PROFILE
 sudo chmod 0644 /etc/profile.d/zz-avalon-noproxy.sh
 
