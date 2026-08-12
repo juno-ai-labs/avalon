@@ -112,6 +112,19 @@ export const SAVED_QUERY_DEFINITIONS = Object.freeze([
       filter("error_name", "eq", "string", "ZodError"),
     ],
   ),
+  savedQuery(
+    "Avalon · Harness run outcomes",
+    "Terminal root-run summaries from ordinary work streams and HyperSight.",
+    [filter("event", "eq", "string", "harness_run_finished")],
+  ),
+  savedQuery(
+    "Avalon · Slow root runs",
+    "Terminal root runs whose end-to-end harness time exceeded one minute.",
+    [
+      filter("event", "eq", "string", "harness_run_finished"),
+      filter("duration_ms", "gt", "number", 60_000),
+    ],
+  ),
 ]);
 
 function sortObject(value) {

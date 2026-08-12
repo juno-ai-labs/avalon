@@ -111,6 +111,9 @@
   "r2_buckets": [
     { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" }
   ],
+  "analytics_engine_datasets": [
+    { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" }
+  ],
   "images": { "binding": "IMAGES" },
   "durable_objects": {
     "bindings": [

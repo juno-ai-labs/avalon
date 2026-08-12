@@ -86,6 +86,7 @@ import {
   FirecrawlClient,
   FirecrawlError,
 } from "../lib/firecrawl";
+import { recordHarnessRunObservation } from "../observability/harness-run-observability";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
@@ -1476,6 +1477,7 @@ export async function runWorkstreamHarness(
   onEvent?: (event: Record<string, unknown>) => void | Promise<void>,
   runtime?: { lease: AttemptLease },
 ): Promise<WorkstreamHarnessResult> {
+  const runStartedAtMs = Date.now();
   const database = createDatabase(env.DB);
   const workstream = await database.workstreams.get(input.workspaceId, input.workstreamId);
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
@@ -1608,7 +1610,7 @@ export async function runWorkstreamHarness(
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
   let suppressInferencePayloadLogging = false;
-  const runLimits = workstreamRunLimits(Boolean(hyperSightRun));
+  const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
@@ -2245,9 +2247,12 @@ export async function runWorkstreamHarness(
   const submitted = hyperSightRun
     ? hyperSightBlock.markdown ?? await readHyperSightBlockMarkdown(env, input, hyperSightRun.id)
     : null;
+  const finalTerminalResult = hyperSightRun
+    ? hyperSightBlockOutcome(terminalResult, submitted)
+    : terminalResult;
   if (hyperSightRun) {
     const at = nowIso();
-    const { status: blockStatus, error } = hyperSightBlockOutcome(terminalResult, submitted);
+    const { status: blockStatus, error } = finalTerminalResult;
     const result = await env.DB.prepare(
       `UPDATE hypersight_block_runs
           SET status = ?, markdown = ?, error_json = ?, completed_at = ?
@@ -2297,8 +2302,17 @@ export async function runWorkstreamHarness(
     liveness.lease.attemptId,
     liveness.lease.owner,
   ).run();
-  if (!hyperSightRun) return terminalResult;
-  return hyperSightBlockOutcome(terminalResult, submitted);
+  recordHarnessRunObservation(env, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    harnessRunId: input.harnessRunId,
+    source: hyperSightRun ? "hypersight" : "workstream",
+    status: finalTerminalResult.status,
+    ...(finalTerminalResult.error ? { failureCode: finalTerminalResult.error.code } : {}),
+    durationMs: Date.now() - runStartedAtMs,
+    outcome,
+  });
+  return finalTerminalResult;
 }
 
 /**

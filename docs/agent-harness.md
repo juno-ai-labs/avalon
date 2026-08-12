@@ -197,10 +197,12 @@ Its output is a tool call. The block is exactly the `markdown` argument passed t
 
 A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `hypersight_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
 
-Because these refreshes are scheduled background work with nobody present to
-cancel a looping run, they retain separate ceilings of 8 model turns, 24 tool
-calls, four minutes, and 500 cents. The expanded ordinary work-stream policy
-does not apply to HyperSight.
+HyperSight shares the root run policy: 1,000 routed model attempts, no aggregate
+tool-call, cost, or task-scale wall-time ceiling, and a one-year Workflow step
+deadline. Its read-only tool policy and inability to pause remain independent
+of resource policy. Each terminal refresh contributes one aggregate summary to
+the root-run Analytics Engine dataset, so future ceilings can be selected from
+the measured distributions rather than assumed in advance.
 
 ### Durable inline subagents
 
@@ -357,7 +359,7 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`runbook.md`](runbook.md).
 
@@ -406,6 +408,41 @@ pass locally and fail `pnpm lint`.
 This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
+
+### 2026-08-12 — HyperSight shares the root policy and records terminal analytics
+
+**What changed:** HyperSight no longer supplies its separate 8-iteration,
+24-tool, four-minute, and 500-cent ceilings or a five-minute Workflow timeout.
+It uses the same 1,000-iteration root policy and one-year Workflow deadline as
+an ordinary work stream. After the harness has made its terminal product and
+usage metadata durable, the API emits one `harness_run_finished` structured log
+and one versioned Analytics Engine datapoint containing only operational
+dimensions and numeric run totals.
+
+**Why:** The earlier HyperSight bounds were not backed by the service's actual
+latency, tool-call, token, and cost distributions. They could cut off useful
+scheduled work before it submitted its block. Terminal summaries establish the
+data needed to choose a product threshold later without using prompts,
+transcripts, tool arguments, tool results, or connector content as telemetry.
+
+**Considered and rejected:** Writing every model turn or generic loop event and
+deriving the final run in Analytics Engine was rejected. Analytics Engine
+adaptively samples at write and query time, does not guarantee individual-row
+retrieval, cannot reconstruct exact sequences, and supports no joins. A
+terminal summary is cheaper, directly queryable, and uses Bind's already
+computed totals. Exact per-run investigation stays in D1, Workers Logs, and
+Workers Traces; a future per-tool latency dataset must use one fixed-schema
+point per completed tool execution rather than mixing event shapes here.
+
+**Consequences:** HyperSight can now run far longer and spend more than before;
+1,000 routed model attempts is its final loop guard. Per-tool and provider
+watchdogs, read-only enforcement, cancellation, lease fencing, and
+ambiguous-write handling still apply. Analytics writes are non-blocking,
+best-effort, and never change the durable outcome. The positional schema and
+sampling-aware queries are documented in
+[`runbook.md`](runbook.md#root-run-analytics).
+
+Shipped in #130.
 
 ### 2026-08-12 — Ordinary work-stream runs get 1,000 turns and no spend or duration ceilings
 
