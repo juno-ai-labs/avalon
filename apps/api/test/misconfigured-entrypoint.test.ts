@@ -96,4 +96,38 @@ describe("the health probe under a misconfigured environment", () => {
       checks: { d1: { ok: true } },
     });
   });
+
+  it("reports the Global-only login secrets as required in every region but EU", async () => {
+    // The exemption `/health` relies on cuts both ways: it is the one endpoint
+    // still answering when `AVALON_REGION` is wrong, so it must not report the
+    // key the entrypoint is failing on as fine. Only EU — the region the
+    // architecture says never carries this pair — takes the relaxed reading.
+    const app = new Hono<HonoAppEnv>();
+    app.route("/health", healthRoutes);
+    const report = async (region: string, configured = false) => {
+      const response = await app.request("/health", undefined, {
+        DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
+        PAYLOADS: { list: async () => ({ objects: [] }) },
+        AVALON_REGION: region,
+        APP_ENV: "production",
+        ...(configured
+          ? { GOOGLE_OAUTH_CLIENT_ID: "login-client", GOOGLE_OAUTH_CLIENT_SECRET: "login-secret" }
+          : {}),
+      } as unknown as Env);
+      const body = await response.json() as { checks: { googleLoginOAuth: { ok: boolean; message: string } } };
+      return body.checks.googleLoginOAuth;
+    };
+
+    expect(await report("global")).toEqual({ ok: false, message: "not configured" });
+    expect(await report("eu")).toEqual({ ok: true, message: "not required outside Global" });
+    // A typo'd region is the case this exists for: it must read like Global,
+    // not like EU, or the probe reassures an operator about the exact key
+    // `env_contract_failed` is naming.
+    expect(await report("gobal")).toEqual({ ok: false, message: "not configured" });
+    expect(await report("eu-west-1")).toEqual({ ok: false, message: "not configured" });
+    // And EU holding the pair is a secret outside its blast radius, not a pass.
+    expect(await report("eu", true))
+      .toEqual({ ok: false, message: "configured outside Global; remove it from this region" });
+    expect(await report("global", true)).toEqual({ ok: true, message: "configured" });
+  });
 });
