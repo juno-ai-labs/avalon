@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
@@ -81,9 +82,9 @@ class ToolSelectionDatabase {
       row.model_plugin_id ??= count === 1 ? base : `${base}_${count}`;
       return row;
     });
-    this.binding = {
-      prepare: (sql: string) => new ToolSelectionStatement(this, sql) as unknown as D1PreparedStatement,
-    } as unknown as D1Database;
+    this.binding = createTestD1Database({
+      prepare: (sql: string) => createTestD1PreparedStatement(new ToolSelectionStatement(this, sql)),
+    });
   }
 }
 
@@ -123,7 +124,7 @@ class ToolSelectionStatement {
     } else {
       throw new Error(`Unexpected tool-selection query: ${sql}`);
     }
-    return { success: true, results } as unknown as D1Result<T>;
+    return createTestD1Result<T>({ success: true, results });
   }
 
   async first<T>(): Promise<T | null> {
@@ -189,14 +190,14 @@ afterEach(() => {
 });
 
 function env(database: ToolSelectionDatabase): Env {
-  return {
+  return createTestEnv({
     DB: database.binding,
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-connector-client",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-connector-secret",
     CONNECTOR_CREDENTIALS_KEY: "must-not-be-used-after-revocation",
     AVALON_REGION: "global",
-  } as Env;
+  });
 }
 
 function workflowInput(automationSubscriptionId: string | null = null): WorkstreamWorkflowInput {
@@ -287,10 +288,10 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools({
+    const selected = await __integrationTesting.loadHarnessTools(createTestEnv({
       ...env(database),
       FIRECRAWL_API_KEY: "firecrawl-test-key",
-    } as Env, workflowInput());
+    }), workflowInput());
 
     const listPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
       pluginId: "avalon:discovery",
@@ -479,10 +480,10 @@ describe("connector tools selected for harness runs", () => {
       connection(OWNER_CONNECTION_ID, "personal", USER_ID),
     ]);
     const parentInput = workflowInput();
-    const runtimeEnv = {
+    const runtimeEnv = createTestEnv({
       ...env(database),
       FIRECRAWL_API_KEY: "firecrawl-test-key",
-    } as Env;
+    });
     const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
     expect(parentTools.plugins).toHaveLength(4);
     expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
@@ -543,10 +544,10 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([]);
     const parentInput = workflowInput();
     parentInput.reason = "inbound_email";
-    const runtimeEnv = {
+    const runtimeEnv = createTestEnv({
       ...env(database),
       FIRECRAWL_API_KEY: "firecrawl-test-key",
-    } as Env;
+    });
     const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
 
     const childTools = await __integrationTesting.createInlineChildHarnessSurface({

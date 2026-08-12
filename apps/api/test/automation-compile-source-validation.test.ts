@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import type * as IntegrationsModule from "../src/services/integrations";
 
 const compileAutomationDraft = vi.hoisted(() => vi.fn());
@@ -11,6 +11,7 @@ vi.mock("../src/services/integrations", async (importOriginal) => ({
 }));
 
 import { AutomationService } from "../src/services/automation-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const auth: AuthContext = {
   sessionId: "session-1",
@@ -55,7 +56,7 @@ describe("automation compile activity-source validation", () => {
       })),
     }));
     const batch = vi.fn(async () => []);
-    const service = new AutomationService({ DB: { prepare, batch } } as unknown as Env, auth);
+    const service = new AutomationService(createTestEnv({ DB: { prepare, batch } }), auth);
 
     const result = await service.compile({
       messages: [{ role: "user", content: "When a GitHub issue opens, prepare a response." }],

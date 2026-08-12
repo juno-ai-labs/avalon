@@ -12,6 +12,7 @@ import {
   createGitHubInstallState,
   githubRegionFromInstallState,
 } from "../src/lib/github-install-state";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const SECRET = "shared-github-webhook-secret";
 const NOW = Date.parse("2026-08-01T18:00:00.000Z");
@@ -48,7 +49,7 @@ class FakeStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return this.database.all(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.all(this.sql, this.values));
   }
 
   async first<T>(): Promise<T | null> {
@@ -56,7 +57,7 @@ class FakeStatement {
   }
 
   async run<T>(): Promise<D1Result<T>> {
-    return this.database.run(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.run(this.sql, this.values));
   }
 }
 
@@ -365,14 +366,14 @@ describe("shared GitHub App routing", () => {
 });
 
 function environment(database: FakeDatabase, bucket: FakeBucket): Env {
-  return {
+  return createTestEnv({
     AVALON_REGION: "global",
     GITHUB_INGRESS_BASE_URL: "https://github.with-avalon.com",
     GITHUB_WEBHOOK_SECRET: SECRET,
     PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
-    DB: database as unknown as D1Database,
-    PAYLOADS: bucket as unknown as R2Bucket,
-  } as Env;
+    DB: createTestD1Database(database),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
+  });
 }
 
 async function signedDelivery(
@@ -405,9 +406,9 @@ function result<T>(
   changes: number,
   results: T[] = [],
 ): D1Result<T> {
-  return {
+  return createTestD1Result<T>({
     success: true,
     results,
     meta: { changes },
-  } as D1Result<T>;
+  });
 }

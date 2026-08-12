@@ -90,6 +90,7 @@ update it in the same change.
 | [`e2e.md`](e2e.md) | The local smoke check and the manual desktop acceptance flows for the sidebar, signup, invitations, settings, realtime recovery, and dictation. |
 | [`runbook.md`](runbook.md) | Operations: hosted resources per region, secrets, migrations, health verification, deployment, and provider acceptance. |
 | [`pull-requests.md`](pull-requests.md) | The required shape of every pull request description, plus the repository's merge style and its no-draft rule. Read before opening a PR; `.github/pull_request_template.md` is its layout and changes with it. |
+| [`type-safety-boundaries.md`](type-safety-boundaries.md) | Where runtime parsing, capability-typed mocks, production assertion rules, and centralized Cloudflare test builders keep TypeScript contracts from being asserted past. Read before adding a type escape or platform test double. |
 | [`desktop-icons.md`](desktop-icons.md) | The native adaptive icon, the selectable icon set, and the generation pipeline. Read before changing the artwork. |
 
 ## Related material outside this folder

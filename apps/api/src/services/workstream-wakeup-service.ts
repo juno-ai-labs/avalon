@@ -15,6 +15,7 @@
 import type { ExecutionPrincipal } from "@avalon/contracts";
 import { ExecutionPrincipalSchema } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
+import { z } from "zod";
 
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -35,17 +36,19 @@ export const MAXIMUM_WAKEUP_DELAY_SECONDS = 365 * 24 * 60 * 60;
 export const MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM = 20;
 export const MAXIMUM_WAKEUP_PROMPT_LENGTH = 4_000;
 
-export interface WorkstreamWakeupRow {
-  id: string;
-  workspace_id: string;
-  workstream_id: string;
-  execution_principal_json: string;
-  prompt: string;
-  due_at: string;
-  status: "pending" | "fired" | "cancelled";
-  version: number;
-  created_at: string;
-}
+export const WorkstreamWakeupRowSchema = z.object({
+  id: z.string().min(1),
+  workspace_id: z.string().min(1),
+  workstream_id: z.string().min(1),
+  execution_principal_json: z.string(),
+  prompt: z.string(),
+  due_at: z.string(),
+  status: z.enum(["pending", "fired", "cancelled"]),
+  version: z.number().int().nonnegative(),
+  created_at: z.string(),
+});
+
+export type WorkstreamWakeupRow = z.infer<typeof WorkstreamWakeupRowSchema>;
 
 export interface PendingWakeup {
   wakeupId: string;
@@ -598,12 +601,13 @@ export async function loadWorkstreamWakeup(
   workspaceId: string,
   wakeupId: string,
 ): Promise<WorkstreamWakeupRow | null> {
-  return await env.DB.prepare(
+  const row = await env.DB.prepare(
     `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
             due_at, status, version, created_at
        FROM workstream_wakeups
       WHERE id = ? AND workspace_id = ?`,
-  ).bind(wakeupId, workspaceId).first<WorkstreamWakeupRow>();
+  ).bind(wakeupId, workspaceId).first<unknown>();
+  return row === null ? null : WorkstreamWakeupRowSchema.parse(row);
 }
 
 export function wakeupExecutionPrincipal(row: WorkstreamWakeupRow): ExecutionPrincipal {

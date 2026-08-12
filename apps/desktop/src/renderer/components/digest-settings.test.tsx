@@ -3,11 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DigestSettings,
+  type DigestSettingsApi,
   digestSummaryText,
   inputValueToMinutes,
   minutesToLabel,
 } from './digest-settings';
-import type { AvalonApi } from '../lib/api';
 import type { DigestSchedule, WorkstreamConnection } from '../lib/types';
 
 const savedSchedule: DigestSchedule = {
@@ -23,11 +23,11 @@ const savedSchedule: DigestSchedule = {
   lastDeliveredAt: null,
 };
 
-function apiWith(overrides: Partial<AvalonApi> = {}): {
-  api: AvalonApi;
+function apiWith(overrides: Partial<DigestSettingsApi> = {}): {
+  api: DigestSettingsApi;
   updateDigestSchedule: ReturnType<typeof vi.fn>;
 } {
-  const updateDigestSchedule = vi.fn(async (input: Parameters<AvalonApi['updateDigestSchedule']>[0]) => ({
+  const updateDigestSchedule = vi.fn(async (input: Parameters<DigestSettingsApi['updateDigestSchedule']>[0]) => ({
     ...savedSchedule,
     ...input,
     deliveryTargets: input.deliveryTargets.map((target) => ({
@@ -43,14 +43,14 @@ function apiWith(overrides: Partial<AvalonApi> = {}): {
       getDigestSchedule: async () => savedSchedule,
       updateDigestSchedule,
       ...overrides,
-    } as unknown as AvalonApi,
+    } satisfies DigestSettingsApi,
   };
 }
 
 const onEditTimezone = vi.fn();
 
 function renderSettings(
-  api: AvalonApi,
+  api: DigestSettingsApi,
   connections: WorkstreamConnection[] = [],
 ): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -220,9 +220,9 @@ describe('DigestSettings', () => {
   });
 
   it('surfaces a failed load instead of loading for ever', async () => {
-    renderSettings({
+    renderSettings(apiWith({
       getDigestSchedule: async () => { throw new Error('Digest is unavailable.'); },
-    } as unknown as AvalonApi);
+    }).api);
 
     expect(await screen.findByText('Digest is unavailable.')).toBeInTheDocument();
   });

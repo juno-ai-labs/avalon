@@ -17,6 +17,7 @@ import {
 } from "../src/services/workstream-description-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const USER_ID = "00000000-0000-4000-8000-000000000000";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -92,7 +93,7 @@ function fixture(options: {
   };
   vi.stubGlobal("fetch", fetcher);
 
-  const env = {
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -101,7 +102,7 @@ function fixture(options: {
     OPENROUTER_STRUCTURED_MODEL: "test/structured",
     OPENROUTER_FALLBACK_MODELS: "",
     PUBLIC_API_BASE_URL: "https://api.example.com",
-  } as unknown as Env;
+  });
   return { database, env, prompts };
 }
 

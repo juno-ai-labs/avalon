@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { shouldRunAtLocalHour } from "../src/index";
 import { planRetention, runRetention } from "../src/retention";
+import { createTestR2Bucket } from "./helpers/cloudflare-test";
 
 interface StoredObject {
   content: Uint8Array;
@@ -121,15 +122,15 @@ class MockBucket {
 
 function bindings(active: MockBucket, archive = new MockBucket()) {
   return {
-    ACTIVE_RELEASES: active as unknown as R2Bucket,
-    ARCHIVED_RELEASES: archive as unknown as R2Bucket,
+    ACTIVE_RELEASES: createTestR2Bucket(active),
+    ARCHIVED_RELEASES: createTestR2Bucket(archive),
   };
 }
 
 describe("release retention", () => {
   it("keeps the five highest semantic versions", async () => {
     const active = new MockBucket(inventory(["1.8.0", "1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]));
-    const plan = await planRetention(active as unknown as R2Bucket, 5);
+    const plan = await planRetention(createTestR2Bucket(active), 5);
     expect(plan.archiveVersions).toEqual(["1.8.0"]);
     expect(plan.retainedVersions).toEqual(["1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]);
   });

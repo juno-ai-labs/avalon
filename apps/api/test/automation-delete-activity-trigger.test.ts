@@ -6,6 +6,7 @@ import type * as AgentModelFlags from "../src/services/agent-model-flags";
 import { __testing } from "../src/queues/activity-consumer";
 import { AutomationService } from "../src/services/automation-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const createWorkflow = vi.hoisted(() => vi.fn(async () => ({ id: "workflow-instance" })));
 
@@ -82,16 +83,16 @@ afterEach(() => {
 });
 
 function envFor(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
-      idFromName: () => "scheduler",
+      idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
     },
     WORKSTREAM_LOOP_WORKFLOW: { create: createWorkflow },
-  } as unknown as Env;
+  });
 }
 
 describe("activity triggers after an automation is deleted", () => {

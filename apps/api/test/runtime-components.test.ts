@@ -18,6 +18,7 @@ import {
   workstreamRoomName,
 } from "../src/durable-objects/workstream-room";
 import { durableObjectNamespaceForRegion } from "../src/lib/durable-object-namespace";
+import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 
 function timing(overrides: Partial<ScheduleTiming> = {}): ScheduleTiming {
   return {
@@ -49,9 +50,9 @@ describe("runtime component invariants", () => {
   });
 
   it("pins EU Durable Object IDs to the EU jurisdiction namespace", () => {
-    const euNamespace = {} as DurableObjectNamespace;
+    const euNamespace = createCloudflareTestBinding<DurableObjectNamespace>({});
     const jurisdiction = vi.fn(() => euNamespace);
-    const namespace = { jurisdiction } as unknown as DurableObjectNamespace;
+    const namespace = createCloudflareTestBinding<DurableObjectNamespace>({ jurisdiction });
 
     expect(durableObjectNamespaceForRegion(namespace, "eu")).toBe(euNamespace);
     expect(jurisdiction).toHaveBeenCalledWith("eu");
@@ -244,13 +245,13 @@ describe("runtime component invariants", () => {
     };
     const values = new Map<string, unknown>([["workspaceId", workspaceId]]);
     const setAlarm = vi.fn(async (at: number) => { void at; });
-    const storage = {
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
       get: async <T>(key: string) => values.get(key) as T | undefined,
       put: async (key: string, value: unknown) => { values.set(key, value); },
       delete: async (key: string) => values.delete(key),
       setAlarm,
       deleteAlarm: vi.fn(async () => undefined),
-    } as unknown as DurableObjectStorage;
+    });
     let auditWrites = 0;
     const prepare = vi.fn((sql: string) => ({
       bind: vi.fn(() => ({
@@ -280,7 +281,7 @@ describe("runtime component invariants", () => {
       })),
     }));
     const scheduler = new WorkspaceScheduler(
-      { storage } as unknown as DurableObjectState,
+      createCloudflareTestBinding<DurableObjectState>({ storage }),
       { DB: { prepare } } as never,
     );
 
@@ -318,14 +319,14 @@ describe("runtime component invariants", () => {
       get: async <T>(key: string) => values.get(key) as T | undefined,
       put: async (key: string, value: unknown) => { values.set(key, value); },
     };
-    const storage = {
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
       transaction: async (callback: (value: Transaction) => Promise<boolean>) => callback(transaction),
       list: async () => new Map(values) as Map<string, number>,
       delete: async (keys: string[]) => {
         for (const key of keys) values.delete(key);
         return true;
       },
-    } as unknown as DurableObjectStorage;
+    });
 
     await expect(consumeSocketTicket(storage, "ticket-1", 2_000, 1_000)).resolves.toBe(true);
     await expect(consumeSocketTicket(storage, "ticket-1", 2_000, 1_000)).resolves.toBe(false);

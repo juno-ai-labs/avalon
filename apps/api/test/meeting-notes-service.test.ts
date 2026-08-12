@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RunHarnessInput } from "@avalon/agent-harness";
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { MeetingNotesService } from "../src/services/meeting-notes-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const auth: AuthContext = {
   sessionId: "session-1",
@@ -11,12 +12,12 @@ const auth: AuthContext = {
   role: "member",
 };
 
-const env = {
+const env = createTestEnv({
   OPENROUTER_API_KEY: "test-key",
   OPENROUTER_PRIMARY_MODEL: "test/model",
   OPENROUTER_FALLBACK_MODELS: "fallback/one, fallback/two",
   PUBLIC_API_BASE_URL: "https://api.example.com",
-} as Env;
+});
 
 function completed(content: string) {
   return {
@@ -105,7 +106,7 @@ describe("MeetingNotesService", () => {
       captured = input;
       return completed("## Right now\n\n- Still discussing launch timing.");
     });
-    const flaggedEnv = {
+    const flaggedEnv = createTestEnv({
       ...env,
       FLAGS: {
         getNumberDetails: vi.fn(async (flagKey: string) => ({
@@ -115,7 +116,7 @@ describe("MeetingNotesService", () => {
           reason: "TARGETING_MATCH",
         })),
       },
-    } as unknown as Env;
+    });
 
     await new MeetingNotesService(flaggedEnv, auth, runner).generate({
       mode: "live",
@@ -147,7 +148,7 @@ describe("MeetingNotesService", () => {
       variant: "slower",
       reason: "TARGETING_MATCH",
     }));
-    const flaggedEnv = { ...env, FLAGS: { getNumberDetails: resolver } } as unknown as Env;
+    const flaggedEnv = createTestEnv({ ...env, FLAGS: { getNumberDetails: resolver } });
 
     await new MeetingNotesService(flaggedEnv, auth, runner).generate({
       mode: "live",

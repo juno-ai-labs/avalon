@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 
 import type * as envModule from "../src/env";
-import { EnvContractError, type Env, type HonoAppEnv } from "../src/env";
+import { EnvContractError, type HonoAppEnv } from "../src/env";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * The probe reports a failing environment contract as a check. It must not do
@@ -25,12 +26,12 @@ const { healthRoutes } = await import("../src/routes/health");
 async function probe(): Promise<Response> {
   const app = new Hono<HonoAppEnv>();
   app.route("/health", healthRoutes);
-  return app.request("/health", undefined, {
+  return app.request("/health", undefined, createTestEnv({
     DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
     PAYLOADS: { list: async () => ({ objects: [] }) },
     AVALON_REGION: "global",
     APP_ENV: "production",
-  } as unknown as Env);
+  }));
 }
 
 describe("the health probe's environment-contract check", () => {

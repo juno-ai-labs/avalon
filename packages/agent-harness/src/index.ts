@@ -77,7 +77,7 @@ export interface OpenRouterInferencePayload {
   messages: ModelMessage[];
   stream: true;
   stream_options: { include_usage: true };
-  tools?: Array<Record<string, unknown>>;
+  tools?: ModelRequestTool[];
   tool_choice?: "auto";
   plugins?: Array<Record<string, unknown>>;
   reasoning?: { effort: "low" | "medium" | "high" };
@@ -132,9 +132,26 @@ export type ModelMessageContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
   | { type: "file"; file: { filename: string; file_data: string } }
-  | { type: "input_audio"; input_audio: { data: string; format: string } };
+  | { type: "input_audio"; input_audio: { data: string; format: "wav" | "mp3" } };
 
 export type ModelMessageContent = string | ModelMessageContentPart[] | null;
+
+/** OpenRouter/OpenAI-compatible wire tool definition used by the shared client. */
+export interface ModelToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+    strict?: boolean;
+  };
+}
+
+export type ModelRequestTool = ModelToolDefinition | {
+  type: "openrouter:web_search";
+  search_context_size: "medium";
+  max_total_results: number;
+};
 
 export type StructuredModelDiagnostic = {
   stage: "model_request" | "model_response" | "normalize" | "validate" | "repair" | "complete";
@@ -181,7 +198,7 @@ interface StreamChunk {
 
 interface ChatRequest {
   messages: ModelMessage[];
-  tools?: Array<Record<string, unknown>>;
+  tools?: ModelRequestTool[];
   toolChoice?: "auto" | "none";
   includeWebSearch?: boolean | undefined;
   maxWebResults?: number | undefined;

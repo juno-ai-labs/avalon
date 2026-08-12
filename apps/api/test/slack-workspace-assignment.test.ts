@@ -8,6 +8,7 @@ import { encryptString, sha256 } from "../src/lib/crypto";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const databases: DatabaseSync[] = [];
@@ -77,7 +78,7 @@ describe("Slack workspace workstream assignment", () => {
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }));
-    const env = {
+    const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
@@ -86,7 +87,7 @@ describe("Slack workspace workstream assignment", () => {
       SLACK_CLIENT_ID: "client",
       SLACK_CLIENT_SECRET: "secret",
       SLACK_SIGNING_SECRET: "signing",
-    } as unknown as Env;
+    });
 
     await expect(new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
       "workspace-slack",
@@ -166,7 +167,7 @@ describe("Slack workspace workstream assignment", () => {
         profile: { email: "taylor@example.com" },
       },
     }), { status: 200, headers: { "content-type": "application/json" } })));
-    const env = {
+    const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
@@ -175,7 +176,7 @@ describe("Slack workspace workstream assignment", () => {
       SLACK_CLIENT_ID: "client",
       SLACK_CLIENT_SECRET: "secret",
       SLACK_SIGNING_SECRET: "signing",
-    } as unknown as Env;
+    });
 
     await expect(new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
       "workspace-slack",
@@ -197,7 +198,7 @@ describe("Slack workspace workstream assignment", () => {
       displayName: "Taylor",
       avatarUrl: null,
     }));
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
 
     await expect(new SlackWorkspaceWorkstreamService(env, "workspace-slack").answerOpenElicitation(
       "workstream-retry",
@@ -237,7 +238,7 @@ describe("Slack workspace workstream assignment", () => {
   it("does not answer another user elicitation when a client response is retried", async () => {
     const database = migratedDatabase();
     seedElicitationRetry(database, "human", "user-taylor", null);
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
     const service = new WorkstreamService(env, {
       sessionId: "slack:T123:U456",
       userId: "user-taylor",
@@ -264,7 +265,7 @@ describe("Slack workspace workstream assignment", () => {
   it("changes authority only after an explicit eligible claim", async () => {
     const database = migratedDatabase();
     seedClaimableSession(database, "user-taylor");
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
     const session = database.prepare(
       "SELECT * FROM slack_agent_sessions WHERE id = 'session-claim'",
     ).get();
@@ -403,7 +404,7 @@ describe("Slack workspace workstream assignment", () => {
       JSON.stringify({ ok: true }),
       { status: 200, headers: { "content-type": "application/json" } },
     )));
-    const env = {
+    const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
@@ -413,7 +414,7 @@ describe("Slack workspace workstream assignment", () => {
       SLACK_CLIENT_ID: "client",
       SLACK_CLIENT_SECRET: "secret",
       SLACK_SIGNING_SECRET: "signing",
-    } as unknown as Env;
+    });
 
     await expect(new SlackAgentService(env).linkUser({
       sessionId: "session-taylor",
@@ -444,7 +445,7 @@ describe("Slack workspace workstream assignment", () => {
   it("makes a claimer who did not start the Slack task a participant, not its creator", async () => {
     const database = migratedDatabase();
     seedClaimableSession(database, null);
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
     const session = database.prepare(
       "SELECT * FROM slack_agent_sessions WHERE id = 'session-claim'",
     ).get();
@@ -702,13 +703,13 @@ describe("Slack public channel membership", () => {
       }), { status: 200, headers: { "content-type": "application/json" } });
       throw new Error(`Unexpected Slack request ${url}`);
     }));
-    const env = {
+    const env = createTestEnv({
       ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
       WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
-    } as unknown as Env;
+    });
 
     await new SlackAgentService(env).processQueuedIngress("event:acknowledge");
 
@@ -731,13 +732,13 @@ describe("Slack public channel membership", () => {
     const { fetcher, methods } = slackTaskApiFetcher(database, { ok: false, error: reactionError });
     vi.stubGlobal("fetch", fetcher);
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const env = {
+    const env = createTestEnv({
       ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
       WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
-    } as unknown as Env;
+    });
 
     await new SlackAgentService(env).processQueuedIngress(`event:${reactionError}`);
 
@@ -806,13 +807,13 @@ describe("Slack public channel membership", () => {
     insertSlackEventJob(database, "event:linked", appMention("EvLinked"));
     const { fetcher, methods } = slackTaskApiFetcher(database, { ok: true });
     vi.stubGlobal("fetch", fetcher);
-    const env = {
+    const env = createTestEnv({
       ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
       WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
-    } as unknown as Env;
+    });
 
     await new SlackAgentService(env).processQueuedIngress("event:linked");
 
@@ -1433,9 +1434,9 @@ function slackMembershipEnvironment(
   credentialsKey: string,
   send: (body: unknown) => Promise<void>,
 ): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
-    ACTIVITY_QUEUE: { send } as unknown as Queue,
+    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send }),
     AVALON_REGION: "global",
     CONNECTOR_CREDENTIALS_KEY: credentialsKey,
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -1449,7 +1450,7 @@ function slackMembershipEnvironment(
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
-  } as unknown as Env;
+  });
 }
 
 function seedClaimableSession(database: DatabaseSync, elicitationTargetUserId: string | null): void {
@@ -1523,25 +1524,25 @@ function sqliteD1(database: DatabaseSync): D1Database {
         return (database.prepare(sql).get(...values as SQLInputValue[]) as T | undefined) ?? null;
       },
       async all<T>() {
-        return {
+        return createTestD1Result<T>({
           success: true,
           results: database.prepare(sql).all(...values as SQLInputValue[]) as T[],
           meta: { changes: 0 },
-        } as unknown as D1Result<T>;
+        });
       },
       async run<T>() {
         const result = database.prepare(sql).run(...values as SQLInputValue[]);
-        return { success: true, results: [], meta: { changes: Number(result.changes) } } as unknown as D1Result<T>;
+        return createTestD1Result<T>({ success: true, results: [], meta: { changes: Number(result.changes) } });
       },
     };
-    return statement as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(statement);
   };
-  return {
+  return createTestD1Database({
     prepare,
     async batch<T>(statements: D1PreparedStatement[]) {
       const results: D1Result<unknown>[] = [];
       for (const statement of statements) results.push(await statement.run());
-      return results as D1Result<T>[];
+      return createTestD1Results<T>(results);
     },
-  } as unknown as D1Database;
+  });
 }

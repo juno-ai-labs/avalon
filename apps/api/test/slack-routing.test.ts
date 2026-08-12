@@ -7,6 +7,7 @@ import {
   serializeSlackRpcResult,
   SlackRoutingService,
 } from "../src/services/slack-routing-service";
+import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 interface Route {
   teamId: string;
@@ -102,7 +103,7 @@ function route(teamId: string, workspaceId: string, connectionId: string) {
 }
 
 function environment(database: FakeDatabase): Env {
-  return { DB: database as unknown as D1Database, AVALON_REGION: "global", SLACK_INGRESS_BASE_URL: "https://slack.with-avalon.com" } as Env;
+  return createTestEnv({ DB: createTestD1Database(database), AVALON_REGION: "global", SLACK_INGRESS_BASE_URL: "https://slack.with-avalon.com" });
 }
 
 function result<T = unknown>(changes: number): D1Result<T> {
