@@ -115,8 +115,10 @@ describe("starting a suggestion", () => {
   });
 
   it("does not fence a later trigger-less run's retry back onto the brief", async () => {
-    // A scheduled wakeup, an activity, or a digest run carries no trigger, and
-    // the transcript is fenced at the trigger — so resolving one for it would
+    // A scheduled wakeup carries no trigger, and neither does an activity run or
+    // an automation run with no opening message. A digest is not in that set: it
+    // appends a brief and launches against it. The transcript is fenced at the
+    // trigger, so resolving one for a run that never had one would
     // discard everything that happened after the brief and re-execute the
     // original request against days of work it can no longer see.
     const database = seededDatabase();
