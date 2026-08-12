@@ -324,7 +324,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         emit: async () => {},
         primaryModel: compactionPrimaryModel,
         fallbackModels,
-        reasoningEffort: "low",
+        // The run's configured effort, not a reduced one. This call produces the
+        // only record the rest of the run will have, so it is the last place to
+        // economize: a summary that drops an instruction or garbles an
+        // identifier costs more than the reasoning tokens it saved, and the
+        // damage is invisible until a later turn acts on what is missing.
         suppressStreamOutput: true,
       });
       const summary = routed.result.content.trim();

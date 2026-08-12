@@ -1416,7 +1416,10 @@ describe("agent harness", () => {
   });
 
   it("compacts after 80% into a single synthetic message carrying only the summary", async () => {
-    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+      reasoning?: { effort?: string };
+    }> = [];
     const responses = [
       streamResponse([{
         model: "test/model",
@@ -1444,8 +1447,10 @@ describe("agent harness", () => {
     const persist = vi.fn();
     const events: HarnessEvent[] = [];
 
+    const baseInput = runInput(fetcher);
     const outcome = await runHarness({
-      ...runInput(fetcher),
+      ...baseInput,
+      config: { ...baseInput.config, reasoningEffort: "high" as const },
       corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
       compaction: {
         contextWindowTokensByModel: { "test/model": 100 },
@@ -1496,6 +1501,9 @@ describe("agent harness", () => {
     expect(compactionRequest[0]).toMatchObject({ role: "system" });
     expect(String(compactionRequest[compactionRequest.length - 1]?.content ?? ""))
       .toContain("Write the handoff summary for a context checkpoint.");
+    // And it runs at the run's own reasoning effort: this call writes the only
+    // record the rest of the run gets, so it is not the one to economize on.
+    expect(requestBodies[1]?.reasoning).toEqual({ effort: "high" });
     expect(events.filter((event) => event.type === "stream_delta").map((event) =>
       event.type === "stream_delta" ? event.delta : ""
     ).join("")).toBe("done");
