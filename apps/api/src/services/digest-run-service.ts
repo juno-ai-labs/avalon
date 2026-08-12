@@ -10,6 +10,7 @@ import {
   type ActivityEventRow,
 } from "./activity-event-service";
 import { publishWorkstreamEvent } from "./integrations";
+import { workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { launchWorkstreamHarness } from "./workstream-service";
 
 /**
@@ -41,7 +42,6 @@ interface DigestScheduleRow {
   user_id: string;
   timezone: string;
   enabled: number;
-  system_workstream_id: string | null;
   execution_principal_json: string;
   user_name: string;
   workspace_name: string;
@@ -71,7 +71,7 @@ export async function fireDigestSchedule(
 ): Promise<DigestFireOutcome> {
   const schedule = await env.DB.prepare(
     `SELECT d.id, d.workspace_id, d.user_id, u.timezone, d.enabled,
-            d.system_workstream_id, d.execution_principal_json,
+            d.execution_principal_json,
             u.name AS user_name, w.name AS workspace_name
        FROM digest_schedules d
        JOIN users u ON u.id = d.user_id
@@ -149,15 +149,20 @@ export async function fireDigestSchedule(
   if (!claimed) return { started: false, reason: "already_planned" };
   if (events.length === 0) return { started: false, reason: "empty" };
 
+  let workstreamId: string | null = null;
+  let harnessRunId: string | null = null;
   try {
-    const workstreamId = await ensureDigestWorkstream(env, schedule);
+    workstreamId = await createDigestWorkstream(env, schedule, {
+      deliveryId,
+      plannedFor: input.plannedFor,
+    });
     const messageId = await appendDigestBriefMessage(env, {
       workspaceId: schedule.workspace_id,
       workstreamId,
       deliveryId,
       brief: renderDigestBrief(schedule, events),
     });
-    const harnessRunId = await launchWorkstreamHarness(env, {
+    harnessRunId = await launchWorkstreamHarness(env, {
       workspaceId: schedule.workspace_id,
       workstreamId,
       triggerMessageId: messageId,
@@ -171,14 +176,33 @@ export async function fireDigestSchedule(
     ).bind(harnessRunId, nowIso(), deliveryId).run();
     return { started: true, deliveryId, harnessRunId };
   } catch (error) {
-    // Only a claim that never reached a harness is released, so the scheduler's
-    // retry gets another attempt at this occurrence. A `running` row is left
-    // alone deliberately: if the launch succeeded and only the status write
-    // failed, deleting it would strand the live run — settlement would find no
-    // delivery, drop the digest, and the retry would start a second run with no
-    // uniqueness left to catch it.
-    await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned'")
-      .bind(deliveryId).run().catch(() => undefined);
+    // An attempt that started nothing undoes itself completely — the claim, so
+    // the scheduler's retry gets another go at this occurrence, and the work
+    // stream with it, since it belongs to this occurrence alone and a retry
+    // makes its own. Otherwise every launch outage would leave an empty
+    // transcript behind, and those are never reaped.
+    //
+    // An attempt that *did* start something undoes nothing. `launchWorkstreamHarness`
+    // inserts the run row, creates the Cloudflare Workflow instance, and only
+    // then records the instance id, so a failure in that last write throws with
+    // a live run already executing. Releasing the claim there would let a retry
+    // digest the same window twice with no uniqueness left to catch it, and
+    // deleting the work stream would cascade the transcript, run row and frozen
+    // memory context away beneath the run still reading them.
+    //
+    // Which of the two happened is asked of the error rather than inferred from
+    // a row: the launcher marks its own run `failed` in both cases, so neither
+    // `harness_runs.status` nor the row's existence can answer it. `harnessRunId`
+    // covers the failures that happen before the launcher is reached at all.
+    if (harnessRunId === null && !workflowInstanceWasCreated(error)) {
+      await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned'")
+        .bind(deliveryId).run().catch(() => undefined);
+      // Messages, the run row and the memory context cascade with it.
+      if (workstreamId) {
+        await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
+          .bind(workstreamId).run().catch(() => undefined);
+      }
+    }
     throw error;
   }
 }
@@ -211,17 +235,61 @@ async function previousCursor(env: Env, scheduleId: string): Promise<ActivityEve
 }
 
 /**
- * The hidden work stream a person's digest runs execute in.
+ * What one occurrence's work stream is called.
+ *
+ * Deliberately not `occurrenceLabel`, which the email uses: that renders
+ * "Tuesday 11 August · 5:00 PM", which is right above a message somebody is
+ * reading and far too long for a sidebar row. A row title is ellipsized to
+ * roughly thirty characters, and the clipped end is the *time* — the one part
+ * that tells two occurrences on the same day apart. So the weekday goes and the
+ * month abbreviates, leaving both distinguishing parts inside the box.
+ *
+ * The recipient's name is not in it either. It would sit in front of the date,
+ * so it would be the part that survives truncation, and it identifies nobody to
+ * the only person who can open one: a digest work stream is `personal` with its
+ * recipient as its sole participant.
+ */
+function digestWorkstreamTitle(plannedFor: string, timezone: string): string {
+  const at = new Date(plannedFor);
+  if (Number.isNaN(at.getTime())) return "Digest";
+  try {
+    const day = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric", month: "short", timeZone: timezone,
+    }).format(at);
+    const time = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric", minute: "2-digit", timeZone: timezone,
+    }).format(at);
+    return `Digest · ${day} · ${time}`;
+  } catch {
+    // A stored timezone this runtime does not know must not stop the digest.
+    return "Digest";
+  }
+}
+
+/**
+ * The hidden work stream one digest occurrence executes in.
  *
  * The agent loop is work-stream shaped end to end — transcript, compaction, tool
  * invocations, artifacts and the realtime room all key off `workstream_id` — so
  * running the *normal* loop rather than a bespoke one means having a work
- * stream. `system_kind` keeps it out of every listing surface, and it is created
- * once per person rather than once per run, so the sidebar gains nothing and a
- * later digest can see what earlier ones already said.
+ * stream. `system_kind` keeps it out of every listing surface.
+ *
+ * One per occurrence, not one per person. A digest run is a pure function from a
+ * frozen window to a summary, and the only thing that has to survive between
+ * occurrences is the cursor, which lives on `digest_deliveries`. Sharing one
+ * work stream instead gave every run the previous months of digests as replayed
+ * assistant history — unlabelled, and uncheckable against the windows it came
+ * from, which the protocol projector drops as UI state. A fresh work stream is
+ * what makes each occurrence's context exactly its own window.
+ *
+ * No claim race to resolve: the caller reaches this only after winning the
+ * `digest_deliveries` insert, so exactly one attempt per occurrence gets here.
  */
-async function ensureDigestWorkstream(env: Env, schedule: DigestScheduleRow): Promise<string> {
-  if (schedule.system_workstream_id) return schedule.system_workstream_id;
+async function createDigestWorkstream(
+  env: Env,
+  schedule: DigestScheduleRow,
+  occurrence: { deliveryId: string; plannedFor: string },
+): Promise<string> {
   const workstreamId = newId();
   const at = nowIso();
   await env.DB.batch([
@@ -233,7 +301,11 @@ async function ensureDigestWorkstream(env: Env, schedule: DigestScheduleRow): Pr
     ).bind(
       workstreamId,
       schedule.workspace_id,
-      `Digest · ${schedule.user_name}`,
+      // The occurrence is the title because these are no longer one row per
+      // person: a listing with Debug enabled is a list of occurrences, and a
+      // column of identical names would say nothing about which is which. In
+      // their own timezone, because a digest is a time of *their* day.
+      digestWorkstreamTitle(occurrence.plannedFor, schedule.timezone),
       "Write this person's scheduled digest of what changed since the last one.",
       schedule.user_id,
       at, at, at,
@@ -245,19 +317,13 @@ async function ensureDigestWorkstream(env: Env, schedule: DigestScheduleRow): Pr
          (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
        VALUES (?, ?, ?, 'creator', ?, NULL)`,
     ).bind(workstreamId, schedule.user_id, schedule.user_id, at),
+    // Linked from the occurrence that owns it. Settlement reads this rather than
+    // joining back through `harness_runs`, so the note it writes lands even when
+    // the run never recorded itself on the delivery.
     env.DB.prepare(
-      "UPDATE digest_schedules SET system_workstream_id = ?, updated_at = ? WHERE id = ? AND system_workstream_id IS NULL",
-    ).bind(workstreamId, at, schedule.id),
+      "UPDATE digest_deliveries SET workstream_id = ?, updated_at = ? WHERE id = ?",
+    ).bind(workstreamId, at, occurrence.deliveryId),
   ]);
-  const stored = await env.DB.prepare(
-    "SELECT system_workstream_id FROM digest_schedules WHERE id = ?",
-  ).bind(schedule.id).first<{ system_workstream_id: string | null }>();
-  // A concurrent firing may have won the claim; its work stream is canonical.
-  if (stored?.system_workstream_id && stored.system_workstream_id !== workstreamId) {
-    await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
-      .bind(workstreamId).run();
-    return stored.system_workstream_id;
-  }
   return workstreamId;
 }
 
@@ -315,15 +381,18 @@ async function appendDigestBriefMessage(
  * carries its canonical link so the digest can point at the real thing instead
  * of describing it.
  *
- * The window is the only thing it is told to write from. An earlier version
- * asked the model to skip what a previous digest had already sent and to cover
- * again what one had not, judged by a delivery note in the transcript — but that
- * note is a `system` row, and the protocol projector drops those, so from the
- * second occurrence onward every earlier digest would read as undelivered and be
- * restated. The rule was also unnecessary: `cursor_from` already guarantees the
- * windows do not overlap, and a delivery that failed leaves its window
- * unconsumed, so its events are in *this* brief rather than only in the older
- * summary. Nothing has to be inferred from the transcript.
+ * The window is the only thing it is told to write from, and since each
+ * occurrence runs in its own work stream there is nothing else there to write
+ * from. Two earlier versions of this instruction tried to reconcile the brief
+ * with a shared transcript: one asked the model to skip what a previous digest
+ * had already sent, judged by a delivery note that is a `system` row the
+ * protocol projector drops, so every earlier digest read as undelivered and was
+ * restated; the next told it that earlier digests above were for continuity of
+ * voice only. Both were reasoning about a transcript the run no longer has. What
+ * made them unnecessary in the first place still holds: `cursor_from` guarantees
+ * the windows do not overlap, and a failed delivery leaves its window
+ * unconsumed, so its events are in *this* brief rather than only in an older
+ * summary.
  *
  * The output contract is Markdown rather than a structured schema, because the
  * run is the ordinary agent loop and its product is a message. The instructions
@@ -372,7 +441,7 @@ export function renderDigestBrief(
     "- Where an item below carries a `link:`, link its name with `[name](url)` the first time it appears in that section. Never invent a URL.",
     "- Lead a bullet with a single emoji only where it earns its place — a decision needed, a blocker, something shipped. Most bullets take none.",
     "- Bold the few phrases that carry the decision. Use `> ` for a quote worth reading verbatim.",
-    "- Write this digest from the source material below and nothing else. Earlier digests are above it in this transcript; they are there for continuity of voice and detail, never to be copied forward or summarized again.",
+    "- Write this digest from the source material below and nothing else. This work stream holds this occurrence alone — there is no earlier digest above it, and nothing else to draw on.",
     "- If an item below is only a fragment and the detail matters, use your tools to read the full context before summarizing it.",
     "- No sign-off, no restating these instructions, no commentary about being an assistant.",
     "",

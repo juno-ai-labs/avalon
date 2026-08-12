@@ -25,6 +25,12 @@ vi.mock("../src/services/workstream-service", () => ({ launchWorkstreamHarness }
 vi.mock("../src/services/integrations", () => ({ publishWorkstreamEvent: vi.fn(async () => undefined) }));
 
 const { fireDigestSchedule, renderDigestBrief } = await import("../src/services/digest-run-service");
+const { markWorkflowInstanceCreated } = await import("../src/lib/workflow-launch-signal");
+
+/** The shape `launchWorkstreamHarness` throws when its instance is already live. */
+function harnessLaunchLeftRunExecutingError(): Error {
+  return markWorkflowInstanceCreated(new Error("workflow_unavailable"));
+}
 const { recordActivityEventOrThrow } = await import("../src/services/activity-event-service");
 
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
@@ -61,9 +67,9 @@ function seededDatabase(enabled = 1): DatabaseSync {
     VALUES ('${WORKSPACE}', '${OWNER}', 'owner', 'active', '2026-01-01'),
            ('${WORKSPACE}', '${OTHER}', 'member', 'active', '2026-01-01');
     INSERT INTO digest_schedules
-      (id, workspace_id, user_id, day_mask, enabled, system_workstream_id,
+      (id, workspace_id, user_id, day_mask, enabled,
        execution_principal_json, version, created_at, updated_at)
-    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, ${enabled}, NULL,
+    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, ${enabled},
             '{"type":"user","userId":"${OWNER}"}', 1, '2026-01-01', '2026-01-01');
   `);
   return database;
@@ -191,7 +197,7 @@ describe("firing a digest occurrence", () => {
     ).all()).toEqual([{ user_id: OWNER }]);
   });
 
-  it("reuses the same hidden work stream on the next occurrence", async () => {
+  it("gives the next occurrence a work stream of its own", async () => {
     const database = seededDatabase();
     const env = envFor(database);
     await recordEvent(env, "message:1");
@@ -203,7 +209,77 @@ describe("firing a digest occurrence", () => {
       scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: "2026-08-11T20:00:00.000Z",
     });
 
+    // Nothing carries between occurrences but the cursor. A shared work stream
+    // would hand this run the previous digest as replayed assistant history,
+    // unlabelled and uncheckable against a window the projector drops.
+    const workstreams = database.prepare(
+      "SELECT id, title FROM workstreams ORDER BY created_at",
+    ).all() as Array<{ id: string; title: string }>;
+    expect(workstreams).toHaveLength(2);
+    expect(workstreams[0]!.id).not.toBe(workstreams[1]!.id);
+    // Titled by occurrence alone, in the recipient's own timezone, and short
+    // enough that the sidebar's ellipsis does not eat the time — which is the
+    // only thing telling two occurrences on the same day apart.
+    expect(workstreams.map((row) => row.title)).toEqual([
+      "Digest · 11 Aug · 5:00 PM",
+      "Digest · 11 Aug · 9:00 PM",
+    ]);
+    // Each occurrence owns its own, so settlement and the reaper-less growth
+    // story both have one place to look.
+    const deliveries = database.prepare(
+      "SELECT workstream_id FROM digest_deliveries ORDER BY planned_for",
+    ).all() as Array<{ workstream_id: string | null }>;
+    expect(deliveries.map((row) => row.workstream_id)).toEqual(workstreams.map((row) => row.id));
+  });
+
+  it("leaves the occurrence alone when the launch left a run executing", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await recordEvent(env, "message:1");
+    // `launchWorkstreamHarness` creates the Workflow instance before it records
+    // the instance id, so this failure arrives with a live run already reading
+    // the transcript. It marks its own run row `failed` on the way out, which
+    // is exactly why the row cannot be what decides this.
+    launchWorkstreamHarness.mockImplementationOnce(async (
+      launchEnv: { DB: D1Database },
+      input: { workspaceId: string; workstreamId: string },
+    ) => {
+      await launchEnv.DB.prepare(
+        `INSERT INTO harness_runs
+           (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+         VALUES (?, ?, ?, 'scheduled_digest', '{"type":"user","userId":"${OWNER}"}',
+                 'failed', '2026-08-11')`,
+      ).bind(crypto.randomUUID(), input.workspaceId, input.workstreamId).run();
+      throw harnessLaunchLeftRunExecutingError();
+    });
+
+    await expect(fireDigestSchedule(env, {
+      scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR,
+    })).rejects.toThrow();
+
+    // Releasing the claim would let a retry digest this window a second time,
+    // and deleting the work stream would cascade the transcript away beneath
+    // the run still reading it.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 1 });
+  });
+
+  it("releases the work stream with the claim when the launch never happened", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await recordEvent(env, "message:1");
+    launchWorkstreamHarness.mockRejectedValueOnce(new Error("queue unavailable"));
+
+    await expect(fireDigestSchedule(env, {
+      scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR,
+    })).rejects.toThrow("queue unavailable");
+
+    // The scheduler's retry re-fires this occurrence, so a failed attempt must
+    // leave neither a claim nor the empty transcript it had already created.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 0 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 0 });
   });
 
   it("digests each event exactly once across consecutive occurrences", async () => {

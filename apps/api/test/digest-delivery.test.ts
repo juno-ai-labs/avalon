@@ -11,6 +11,8 @@ const OWNER = "00000000-0000-7000-8000-000000000002";
 const SCHEDULE = "00000000-0000-7000-8000-000000000005";
 const DELIVERY = "00000000-0000-7000-8000-000000000006";
 const TARGET = "00000000-0000-7000-8000-000000000007";
+const WORKSTREAM = "00000000-0000-7000-8000-000000000008";
+const RUN = "00000000-0000-7000-8000-000000000009";
 
 const databases: DatabaseSync[] = [];
 afterEach(() => {
@@ -53,11 +55,17 @@ function seededDatabase(status = "running"): DatabaseSync {
        status, created_at, updated_at)
     VALUES ('${TARGET}', '${WORKSPACE}', '${SCHEDULE}', '${OWNER}', 'email', 'owner@example.com',
             'active', '2026-01-01', '2026-01-01');
+    INSERT INTO workstreams
+      (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+       next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
+    VALUES ('${WORKSTREAM}', '${WORKSPACE}', 'Digest · Owner · Tuesday 11 August · 9:00 AM', '',
+            'ad_hoc', '${OWNER}', 'running', 2, '2026-08-11', '2026-08-11', '2026-08-11',
+            'digest', 'personal');
     INSERT INTO digest_deliveries
       (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_from,
-       cursor_through, event_count, highlight_count, status, created_at, updated_at)
+       cursor_through, event_count, highlight_count, workstream_id, status, created_at, updated_at)
     VALUES ('${DELIVERY}', '${WORKSPACE}', '${SCHEDULE}', '${OWNER}', '2026-08-11T08:00:00.000Z',
-            NULL, 12, 4, 2, '${status}', '2026-01-01', '2026-01-01');
+            NULL, 12, 4, 2, '${WORKSTREAM}', '${status}', '2026-01-01', '2026-01-01');
   `);
   return database;
 }
@@ -165,6 +173,50 @@ describe("settling a digest run", () => {
     expect(deliveryStatus(database).status).toBe("delivered");
     expect(database.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
       .toEqual({ summary_markdown: "## Launch\n\n- Shipped it" });
+  });
+
+  it("notes the delivery in the occurrence's own work stream", async () => {
+    const database = seededDatabase();
+    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+
+    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+
+    // Resolved through the delivery's own `workstream_id`, so it lands whether
+    // or not the launch recorded a `harness_run_id` to join back through. A
+    // transcript whose summary carries no note is a digest nobody received,
+    // which is what somebody chasing a missing email is looking for.
+    expect(database.prepare(
+      "SELECT workstream_id, text_content FROM messages WHERE client_message_id = ?",
+    ).get(`digest-delivered:${DELIVERY}`)).toEqual({
+      workstream_id: WORKSTREAM,
+      text_content: "Delivered to 1 destination.",
+    });
+    expect(database.prepare("SELECT next_sequence_number FROM workstreams WHERE id = ?").get(WORKSTREAM))
+      .toEqual({ next_sequence_number: 3 });
+  });
+
+  it("notes a delivery the previous Worker claimed without the new column", async () => {
+    const database = seededDatabase();
+    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+    // Migrations land before either Worker deploys, so the Worker running
+    // during that window claims deliveries into the new schema without writing
+    // `workstream_id`. Resolving through the column alone would drop the note
+    // and invert its meaning: the digest went out, and the transcript would say
+    // it did not.
+    database.exec(`
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('${RUN}', '${WORKSPACE}', '${WORKSTREAM}', 'scheduled_digest',
+              '{"type":"user","userId":"${OWNER}"}', 'completed', '2026-08-11');
+      UPDATE digest_deliveries
+         SET workstream_id = NULL, harness_run_id = '${RUN}' WHERE id = '${DELIVERY}';
+    `);
+
+    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+
+    expect(database.prepare(
+      "SELECT workstream_id FROM messages WHERE client_message_id = ?",
+    ).get(`digest-delivered:${DELIVERY}`)).toEqual({ workstream_id: WORKSTREAM });
   });
 
   it("sends nothing when the run finished without writing a digest", async () => {
