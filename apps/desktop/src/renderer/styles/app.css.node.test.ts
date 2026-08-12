@@ -58,3 +58,41 @@ describe('work-stream launch surface geometry', () => {
     expect(rule('.launch-home-layer.is-leaving')).toContain('animation: launch-home-leave 190ms');
   });
 });
+
+/**
+ * The five-line cap on a system row exists only here. `SystemMessageBlock`
+ * renders the whole string and sets one attribute; the clamp, and therefore the
+ * feature, is the stylesheet. A component test cannot see it — jsdom lays
+ * nothing out, so the height stubs those tests rely on describe this rule
+ * rather than check it, and deleting it would leave every test green while the
+ * app laid out a digest brief in full with a decorative "more" beside it.
+ */
+describe('system message clamp', () => {
+  it('clamps a closed system row to the line count the row declares', () => {
+    expect(rule('.system-message')).toContain('--system-message-lines: 5;');
+
+    const closed = rule('.system-message-text:not([data-expanded])');
+    expect(closed).toContain('display: -webkit-box;');
+    expect(closed).toContain('-webkit-line-clamp: var(--system-message-lines);');
+    expect(closed).toContain('overflow: hidden;');
+  });
+
+  // A line count is only a useful measure of a row if the row's own newlines
+  // survive. These messages are written with structure — an inbound email leads
+  // with an untrusted-content warning, then the sender, then the subject, each
+  // on its own line — and under the inherited `white-space: normal` all of it
+  // collapsed onto two wrapped lines. That is short enough never to reach the
+  // clamp, so the row this feature most exists for was the one it skipped.
+  it('keeps the newlines a system message was written with', () => {
+    expect(rule('.system-message-text')).toContain('white-space: pre-wrap;');
+  });
+
+  // The open row is bounded too. Without a ceiling, opening a 120,000-character
+  // run prompt restores the wall of text the clamp exists to remove, and puts
+  // the control that closes it a screen or more below the reader's pointer.
+  it('bounds an open system row instead of letting it run', () => {
+    const open = rule('.system-message-text[data-expanded]');
+    expect(open).toContain('max-height: 320px;');
+    expect(open).toContain('overflow-y: auto;');
+  });
+});
