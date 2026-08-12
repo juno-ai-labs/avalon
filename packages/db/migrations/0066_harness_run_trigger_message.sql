@@ -6,9 +6,10 @@
 -- creates a *new* run for a failed one — reconstructed it as "the latest human
 -- message in this work stream". That guess is right only when nothing has
 -- happened since. Retrying a run that never had a message trigger at all (a
--- scheduled wakeup, an activity, a digest) resolved to whatever human message
--- happened to be closest, fencing days of completed work out of the replay and
--- re-executing an old request from scratch.
+-- scheduled wakeup, an activity, an automation run with no opening message)
+-- resolved to whatever human message happened to be closest, fencing days of
+-- completed work out of the replay and re-executing an old request from
+-- scratch.
 --
 -- NULL keeps its existing meaning — a run with no message trigger replays the
 -- whole available transcript — which is also what every row written before this

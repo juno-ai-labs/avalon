@@ -755,11 +755,13 @@ export class WorkstreamService {
       // The person who selected the suggestion, not the agent that expanded it.
       // Selecting is the request; the brief is that request written out. Under
       // agent authorship the transcript opened with Avalon instructing itself,
-      // and the work stream held no human turn at all — which `retryHarness`,
-      // whose trigger is the latest human message, resolved to nothing, leaving
-      // a retry to replay the run with the brief projected away. The structured
-      // content below is what keeps the distinction honest: the turn is theirs,
-      // the words are Avalon's, and the label says so.
+      // and the work stream held no human turn at all — which mattered because
+      // `retry` used to resolve its trigger as the latest human message, found
+      // none here, and replayed the run with the brief projected away. `retry`
+      // now inherits the failed run's stored trigger instead, so that particular
+      // hazard is gone either way; the attribution is what this line is for. The
+      // structured content below keeps the distinction honest: the turn is
+      // theirs, the words are Avalon's, and the label says so.
       openingAuthor: { type: "human", userId: this.auth.userId },
       openingMessage: input.executionPrompt,
       openingStructuredContent: {
