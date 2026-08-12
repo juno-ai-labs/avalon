@@ -454,6 +454,43 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 
 ## Changelog
 
+### 2026-08-12 — The schedule's work-stream pointer is dropped, now that the window it was waiting on has closed
+
+**What changed:** `0070_drop_digest_schedule_workstream.sql` drops
+`digest_schedules.system_workstream_id`. Nothing else — no code, no other
+schema, and none of the work streams it named.
+
+**Why:** This is the second half of the two-phase drop the entry below left open,
+and the only thing it was ever waiting on was a deployment. The rule is that a
+migration lands before either Worker deploys, so a column may only be dropped
+once every *live* Worker already ignores it. `0068` shipped in #119 and both
+regional Workers went live behind it — Global at 05:51:53 UTC, EU nine seconds
+earlier — so the Worker running while this migration lands is one that never
+touches the column. The condition is met, and the phasing has no further purpose.
+
+Leaving it indefinitely was the alternative and is worse than it looks. A column
+the code no longer maintains still reads as *the current work stream* to whoever
+finds it next, and it points at work streams that were real when they were
+written and are now just the ones a person's earliest digests happened to run in.
+`digest_deliveries.workstream_id` is the answer to "where did this run", and two
+answers to one question is the thing this document keeps arguing against.
+
+**Considered and rejected:** Deleting the work streams the column pointed at
+along with it, on the reasoning that nothing links to them any more. They are
+real transcripts their owners can open, and the same argument that keeps
+per-occurrence work streams unreaped keeps these: a pointer being dropped is not
+a reason to delete somebody's history. They are reachable by URL and, with Debug
+enabled, in the sidebar.
+
+**Consequences:** SQLite refuses `DROP COLUMN` for a column that is indexed or
+named in a CHECK, a UNIQUE constraint, or a partial-index predicate; this one was
+none of those, so the drop is the whole migration and no table rebuild was
+needed. That matters for the next person who tries to drop something here —
+`activity_events.digestible` would not go the same way, for the reasons in the
+entry two below. The migration test now applies `0068` and `0069` in sequence
+against the same fixture, so the pair is exercised as the phased change it is
+rather than as two unrelated statements.
+
 ### 2026-08-12 — A digest run has nowhere to put its summary except the message it ends with
 
 **What changed:** `renderDigestBrief` now opens by telling the run that its final
