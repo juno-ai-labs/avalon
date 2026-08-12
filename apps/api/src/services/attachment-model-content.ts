@@ -213,20 +213,43 @@ async function persistModelImage(
     },
   });
   try {
-    const result = await database.prepare(
+    const at = new Date().toISOString();
+    const statements = [database.prepare(
       `UPDATE resources
-          SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?, model_metadata_json = ?, updated_at = ?
+          SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?,
+              model_metadata_json = ?, model_index_ref = NULL,
+              model_content_status = 'ready', model_content_extractor_version = 'image-v1',
+              model_content_character_count = NULL, model_content_extracted_at = ?,
+              model_content_error_code = NULL, updated_at = ?
         WHERE id = ? AND content_ref = ?`,
     ).bind(
       contentRef,
       normalized.mimeType,
       sha256,
       normalized.metadata ? JSON.stringify(normalized.metadata) : null,
-      new Date().toISOString(),
+      at,
+      at,
       attachment.id,
       attachment.contentRef,
-    ).run();
-    if ((result.meta.changes ?? 0) === 0) await payloads.delete(contentRef);
+    ), database.prepare(
+      `INSERT INTO resource_model_objects
+        (resource_id, object_ref, object_kind, lifecycle_status, created_at)
+       VALUES (?, ?, 'derivative', 'active', ?)
+       ON CONFLICT(resource_id, object_ref) DO UPDATE SET lifecycle_status = 'active'`,
+    ).bind(attachment.id, contentRef, at)];
+    if (attachment.modelContentRef && attachment.modelContentRef !== contentRef) {
+      statements.push(database.prepare(
+        `INSERT OR IGNORE INTO resource_object_deletion_outbox
+          (object_ref, resource_id, object_kind, created_at, updated_at)
+         VALUES (?, ?, 'derivative', ?, ?)`,
+      ).bind(attachment.modelContentRef, attachment.id, at, at));
+      statements.push(database.prepare(
+        `UPDATE resource_model_objects SET lifecycle_status = 'superseded'
+         WHERE resource_id = ? AND object_ref = ?`,
+      ).bind(attachment.id, attachment.modelContentRef));
+    }
+    const results = await database.batch(statements);
+    if ((results[0]?.meta.changes ?? 0) === 0) await payloads.delete(contentRef);
   } catch (error) {
     await payloads.delete(contentRef).catch(() => undefined);
     throw error;

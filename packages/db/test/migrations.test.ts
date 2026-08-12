@@ -54,6 +54,63 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("tracks attachment derivative lifecycle and enqueues every regional object before resource deletion", () => {
+    const database = migrateFreshDatabase();
+    const resourceColumns = database.prepare("PRAGMA table_info(resources)").all() as Array<{ name: string }>;
+    expect(resourceColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "content_sha256",
+      "model_content_status",
+      "model_content_extractor_version",
+      "model_content_character_count",
+      "model_content_extracted_at",
+      "model_content_error_code",
+      "model_index_ref",
+    ]));
+    const compactionColumns = database.prepare("PRAGMA table_info(workstream_context_compactions)").all() as Array<{ name: string }>;
+    expect(compactionColumns.map((column) => column.name)).toContain("checkpoint_template_version");
+
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('attachment-owner', 'attachment-subject', 'attachment@example.com', 'Attachment Owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('attachment-workspace', 'Attachment Workspace', 'attachment-workspace', 'global', 'attachment-owner', '2026-08-12', '2026-08-12');
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         content_sha256, model_content_ref, model_index_ref, model_content_status,
+         model_content_extractor_version, model_content_character_count,
+         model_content_extracted_at, created_at, updated_at)
+      VALUES
+        ('attachment-resource', 'attachment-workspace', 'uploaded_file', 'avalon_upload',
+         'brief.md', 'text/markdown', 'original-ref', '${"a".repeat(64)}',
+         'active-model-ref', 'active-index-ref', 'ready', 'markdown-v1', 120,
+         '2026-08-12', '2026-08-12', '2026-08-12');
+      INSERT INTO resource_model_objects
+        (resource_id, object_ref, object_kind, lifecycle_status, created_at)
+      VALUES
+        ('attachment-resource', 'active-model-ref', 'derivative', 'active', '2026-08-12'),
+        ('attachment-resource', 'active-index-ref', 'index', 'active', '2026-08-12'),
+        ('attachment-resource', 'old-model-ref', 'derivative', 'superseded', '2026-08-12');
+      DELETE FROM resources WHERE id = 'attachment-resource';
+    `);
+
+    expect(database.prepare(
+      `SELECT object_ref, object_kind FROM resource_object_deletion_outbox
+       WHERE resource_id = 'attachment-resource' ORDER BY object_ref`,
+    ).all()).toEqual([
+      { object_ref: "active-index-ref", object_kind: "index" },
+      { object_ref: "active-model-ref", object_kind: "derivative" },
+      { object_ref: "old-model-ref", object_kind: "derivative" },
+      { object_ref: "original-ref", object_kind: "original" },
+    ]);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM resource_model_objects WHERE resource_id = 'attachment-resource'",
+    ).get()).toEqual({ count: 0 });
+    expect(() => database.exec(
+      "INSERT INTO resources (id, workspace_id, resource_type, provider, title, model_content_status, created_at, updated_at) VALUES ('bad-status', 'attachment-workspace', 'file', 'test', 'bad', 'empty', '2026-08-12', '2026-08-12')",
+    )).toThrow(/CHECK constraint failed/iu);
+    database.close();
+  });
+
   it("persists normalized activity targets independently from provider visibility metadata", () => {
     const database = migrateFreshDatabase();
     const columns = database.prepare("PRAGMA table_info(activities)").all() as Array<{ name: string }>;

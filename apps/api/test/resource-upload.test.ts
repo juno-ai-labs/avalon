@@ -45,6 +45,12 @@ describe('uploaded attachment drafts', () => {
       sizeBytes: 5,
     });
     expect(stored).toEqual(new Set([`global/${workspaceId}/resources/${draftId}`]));
+    expect(database.prepare(
+      "SELECT content_sha256, model_content_status FROM resources WHERE id = ?",
+    ).get(draftId)).toEqual({
+      content_sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      model_content_status: "pending",
+    });
     await expect(service.list({ limit: 10 })).resolves.toMatchObject({ items: [] });
 
     await service.deleteDraft(draftId);
@@ -83,6 +89,9 @@ function attachmentDatabase(): DatabaseSync {
       resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
       title TEXT NOT NULL, mime_type TEXT, canonical_url TEXT, content_ref TEXT,
       model_content_ref TEXT, model_mime_type TEXT, model_content_sha256 TEXT, model_metadata_json TEXT,
+      content_sha256 TEXT, model_content_status TEXT, model_content_extractor_version TEXT,
+      model_content_character_count INTEGER, model_content_extracted_at TEXT,
+      model_content_error_code TEXT, model_index_ref TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}', last_hydrated_at TEXT,
       uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL DEFAULT 'attached',
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL

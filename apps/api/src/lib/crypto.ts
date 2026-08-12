@@ -27,6 +27,12 @@ export async function sha256(value: string | Uint8Array): Promise<string> {
   return bytesToBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", asArrayBuffer(bytes))));
 }
 
+export async function sha256Hex(value: string | Uint8Array): Promise<string> {
+  const bytes = typeof value === "string" ? encoder.encode(value) : value;
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", asArrayBuffer(bytes)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 async function importAesKey(secret: string): Promise<CryptoKey> {
   if (!secret) throw new Error("An encryption key is not configured");
   let keyBytes: Uint8Array;

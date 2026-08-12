@@ -19,10 +19,13 @@ those boundaries move.
 | `packages/contracts/src/attachment-contracts.ts` | Single registry for attachment kinds, MIME/extension classification, strict tool argument schemas, exact success-output schemas, and the complete list-tool description. |
 | `packages/contracts/src/index.ts` | Sanitizes bounded structured recovery data before Bind puts it in a model-visible failed tool result. |
 | `apps/api/src/lib/attachment-cursor.ts` | Signs, verifies, scopes, expires, and bounds opaque attachment continuations. |
+| `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
+| `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/services/attachment-model-content.ts` | Current upload-to-model extraction and image normalization path; it remains eager until the derivative cutover. |
 | `apps/api/src/services/integrations.ts` | Current message projection and work-stream resource-tool registration. |
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects and current model image derivatives. |
+| `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, model-object catalog, deletion outbox, and checkpoint-template version. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
 ## How it works
@@ -65,6 +68,21 @@ new contracts are intentionally inert until the regional derivative lifecycle
 and authorized tools can replace that behavior without making attachments
 invisible.
 
+### Regional lifecycle
+
+Uploads hash the exact bounded bytes before the resource row commits. Connector
+hydration hashes a serialized result, writes a hash-versioned R2 object, then
+atomically advances the resource and invalidates older model state. A legacy row
+with a valid model-native image remains ready; another historical row with
+original bytes becomes pending on first authorized use, while a missing original
+is failed rather than an empty success.
+
+`resource_model_objects` records active and superseded derivatives and indexes.
+Deleting a resource—not merely detaching one relationship—copies every known
+object reference into `resource_object_deletion_outbox` before cascading the
+catalog. Scheduled cleanup reaps at most 100 references per pass. A failed R2
+deletion increments bounded retry metadata and remains queued.
+
 ## Invariants
 
 - A verified MIME type outranks a filename extension, so renamed hostile bytes
@@ -84,6 +102,11 @@ invisible.
 - Runtime eager projection is removed only after replacement tools exist on both
   work-stream and automation-draft surfaces, so an intermediate deployment
   cannot strand a file behind a manifest the model cannot hydrate.
+- Relationship detachment revokes discovery and access but does not delete shared
+  objects; resource deletion, expiry, or orphan ownership ends the object
+  lifecycle.
+- Original content identity describes the exact selected R2 bytes, so a cursor or
+  derivative version cannot silently cross into newly hydrated content.
 
 ## Boundary
 
@@ -119,6 +142,8 @@ generic tool execution/receipt loop is owned by
 - The current runtime still has the legacy eager extraction limits documented in
   [`agent-harness.md`](agent-harness.md). Those limits are not evidence that the
   entire attachment was inspected.
+- Object cleanup reads at most 100 outbox rows per pass. Failures keep their row
+  and store only a bounded machine error code.
 
 ## Testing
 
@@ -132,6 +157,12 @@ generic tool execution/receipt loop is owned by
   attachment tool wire name.
 - Existing eager projection behavior remains covered by
   `apps/api/test/attachment-model-content.test.ts` until its replacement phase.
+- `packages/db/test/migrations.test.ts`,
+  `apps/api/test/resource-upload.test.ts`,
+  `apps/api/test/attachment-derivative-state.test.ts`, and
+  `apps/api/test/resource-object-cleanup.test.ts` cover lifecycle schema,
+  exact-byte hashing, legacy interpretation, deletion enqueue, retry, and
+  convergence.
 
 Run focused suites from their package directories through `pnpm --filter`, then
 run the repository-wide lint, typecheck, and test gates before committing. Cursor
@@ -139,20 +170,23 @@ tests use an explicit clock value; do not replace it with sleeps or retries.
 
 ## Data model
 
-The current data model is unchanged by the contract phase. `resources` owns the
-original `content_ref` and optional current `model_content_ref`,
-`model_mime_type`, `model_content_sha256`, and `model_metadata_json` fields.
-`message_attachments` and `workstream_resources` provide message and sidebar
-relationships. Derivative lifecycle state is added in the next implementation
-phase; [`data-model.md`](data-model.md) and migrations remain authoritative.
+`resources` owns original and current model refs plus original SHA-256,
+derivative status, extractor version, readable-character count, extraction time,
+bounded error code, and current index ref. `resource_model_objects` catalogs
+active or superseded model objects, while `resource_object_deletion_outbox`
+survives resource deletion long enough to remove R2 objects.
+`message_attachments` and `workstream_resources` remain relationship and
+visibility authorities. [`data-model.md`](data-model.md) and migrations are
+authoritative.
 
 ## Regional impact
 
-Contracts execute identically in both regions and contain no file data. Cursor
+Contracts and lifecycle execute identically in both regions. Cursor
 signing happens inside the Worker that handles the owning regional run. Existing
 originals and image derivatives remain in that region's R2 bucket and
-relationship rows in its D1 database. No new Global-plane storage or bridge
-payload is introduced by this phase.
+relationship, lifecycle, and outbox rows in its D1 database. Scheduled cleanup
+uses the same regional R2 binding. No new Global-plane storage or bridge payload
+is introduced by this phase.
 
 ## Security and trust model
 
@@ -173,8 +207,10 @@ resource bytes.
 An unexpected raw tool name in a transcript points first to
 `packages/agent-harness/src/tool-activity.ts`. Repeated `invalid_cursor` failures
 should be split into schema/length, signature, expiry, and authorization metrics
-without logging the cursor itself. This phase adds no background extraction,
-queue, or deletion operation.
+without logging the cursor itself. The scheduled Worker drains
+`resource_object_deletion_outbox`; a growing oldest `created_at` or
+`attempt_count` means R2 cleanup is unhealthy. Inspect bounded events by resource
+ID and object kind, never object key.
 
 ## Performance and cost
 
@@ -184,6 +220,32 @@ do not add a provider call or read file bytes. Later phases must preserve those
 cheap discovery and continuation paths even when extraction itself is expensive.
 
 ## Changelog
+
+### 2026-08-12 — Derivative state and cleanup follow the resource lifecycle
+
+**What changed:** Regional resources now identify exact original content and
+carry explicit pending, processing, ready, failed, or unsupported model state.
+Active and superseded model objects are cataloged, and resource deletion durably
+enqueues every original, derivative, and index reference for bounded cleanup.
+Historical resources are interpreted lazily without a backfill.
+
+**Why:** Paging and compaction recovery need a stable derivative version, while
+the old image-only columns could not distinguish “not converted yet” from
+“conversion failed” or prove which original produced them. Deleting only current
+columns also leaves superseded conversions behind in regional R2.
+
+**Considered and rejected:** A workspace-wide eager conversion backfill and
+object deletion on relationship detachment. The former creates unbounded regional
+load before anyone asks to read the files; the latter mistakes a many-to-many
+visibility edge for ownership and can destroy a resource still in use.
+
+**Consequences:** Every ingestion path that stores bytes must maintain their
+SHA-256 or let the first authorized derivative request calculate it. Derivative
+writers register objects and advance rows atomically; resource owners delete the
+row to end storage, while detachment only changes authorization.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Attachment contracts are centralized before runtime cutover
 
