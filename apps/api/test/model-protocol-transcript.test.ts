@@ -137,8 +137,11 @@ describe("durable UI-to-model transcript projection", () => {
     const projection = await __integrationTesting.projectModelProtocolTranscript(
       projectionEnv([], {}),
       { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: messageId },
+      // Stored as the selecting member's own turn. The label, not the author, is
+      // what routes it here — an ordinary human turn would be replayed as plain
+      // instruction, dropping the caveat around the evidence quoted inside it.
       [message(messageId, 1, {
-        author: "agent",
+        author: "human",
         textContent: "Trace the failed release, identify the owner, and prepare the fix.",
         structuredContent: {
           kind: "suggested_work_expansion",
@@ -151,6 +154,7 @@ describe("durable UI-to-model transcript projection", () => {
       role: "user",
       content: expect.stringContaining("USER-SELECTED AVALON SUGGESTED-WORK BRIEF"),
     }]);
+    expect(projection.messages[0]?.content).toContain("untrusted evidence");
     expect(projection.messages[0]?.content).toContain("Trace the failed release");
   });
 

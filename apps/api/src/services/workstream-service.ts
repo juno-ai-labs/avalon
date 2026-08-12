@@ -748,7 +748,15 @@ export class WorkstreamService {
       objective: input.displayPrompt,
       emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
-      openingAuthor: { type: "agent" },
+      // The person who selected the suggestion, not the agent that expanded it.
+      // Selecting is the request; the brief is that request written out. Under
+      // agent authorship the transcript opened with Avalon instructing itself,
+      // and the work stream held no human turn at all — which `retryHarness`,
+      // whose trigger is the latest human message, resolved to nothing, leaving
+      // a retry to replay the run with the brief projected away. The structured
+      // content below is what keeps the distinction honest: the turn is theirs,
+      // the words are Avalon's, and the label says so.
+      openingAuthor: { type: "human", userId: this.auth.userId },
       openingMessage: input.executionPrompt,
       openingStructuredContent: {
         kind: "suggested_work_expansion",

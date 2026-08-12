@@ -339,9 +339,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       opportunityKeys.current.set(opportunity.id, key);
       return api!.startWorkOpportunity(opportunity.id, opportunity.version, key);
     },
-    // Suggested work opens onto the same surface, minus the opening turn: that
-    // one is written by the agent from the expanded prompt, so there is nothing
-    // here that could stand in for it without inventing what it says.
+    // Suggested work opens onto the same surface, minus the opening turn. That
+    // turn is attributed to the person selecting the suggestion, but its text is
+    // the expanded brief, which the server holds and this list has never seen —
+    // only the one-line `displayPrompt`. Standing that line in for the brief
+    // would show them a turn that is replaced by a different, much longer one
+    // the moment the refetch lands.
     onMutate: () => {
       const createdAt = new Date().toISOString();
       opportunityStartedAt.current = createdAt;
@@ -359,8 +362,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       // Seeded for the same reason the typed path is: without it the work-stream
       // screen has neither query and shows its full-screen `Opening work stream…`
       // state, cutting away from a surface that was already showing this work
-      // stream. The transcript is seeded empty rather than invented — the opening
-      // turn here is the agent's, and it arrives with the refetch a moment later.
+      // stream. The transcript is seeded empty rather than invented — the brief
+      // that opening turn carries is written server-side, and it arrives with the
+      // refetch a moment later.
       const detail = launchedWorkstreamDetail(created, {
         creator: workspace.currentUser,
         origin: 'suggested_work',
