@@ -159,6 +159,11 @@ export async function launchWorkstreamHarness(
     workspaceId: string;
     workstreamId: string;
     triggerMessageId: string | null;
+    /**
+     * The newest message the run may see, when that is not the trigger. Only
+     * `retry` sets it; see the field's contract for why the two come apart.
+     */
+    transcriptFenceMessageId?: string | null;
     origin: string;
     executionPrincipal: ExecutionPrincipal;
     slackOrigin?: SlackOriginContext;
@@ -219,6 +224,9 @@ export async function launchWorkstreamHarness(
     automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: input.executionPrincipal,
+    ...(input.transcriptFenceMessageId
+      ? { transcriptFenceMessageId: input.transcriptFenceMessageId }
+      : {}),
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
     ...(input.digestDeliveryId ? { digestDeliveryId: input.digestDeliveryId } : {}),
     ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
@@ -1752,14 +1760,40 @@ export class WorkstreamService {
       throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
     }
     // The failed run's own trigger, not the newest human message. The two agree
-    // only when nothing has happened since, and the transcript is fenced at the
-    // trigger — so guessing it fenced days of finished work out of the replay
-    // whenever the run being retried had no message trigger of its own, or had
-    // one older than the last thing somebody said. A run written before that id
-    // was stored, and a run that genuinely had no trigger, both read as NULL
-    // here and replay the whole available transcript, which is the safe
-    // direction: more context than the attempt had, never less.
-    return { harnessRunId: await this.launchHarness(id, latest.trigger_message_id, "manual_retry") };
+    // only when nothing has happened since, so guessing sent the replay after
+    // whatever message happened to be closest whenever the run being retried
+    // had no message trigger of its own, or had one older than the last thing
+    // somebody said. A run written before that id was stored, and a run that
+    // genuinely had no trigger, both read as NULL here.
+    //
+    // The fence is separate, and has to be: the trigger is also the transcript's
+    // upper bound, so replaying against it alone would hide anything said since
+    // the run failed — including the correction somebody posts *because* it
+    // failed, which starts no run of its own when the work stream has other
+    // participants and the message was not for the agent. A retry therefore
+    // keeps the identity and moves the bound to the newest message there is.
+    const newest = await this.env.DB.prepare(
+      `SELECT id FROM messages
+       WHERE workspace_id = ? AND workstream_id = ?
+       ORDER BY sequence_number DESC LIMIT 1`,
+    ).bind(this.auth.workspaceId, id).first<{ id: string }>();
+    // Launched through the module function rather than the private wrapper: the
+    // wrapper's tail is positional, and a fence passed behind three `undefined`
+    // Slack arguments is a call nobody can read.
+    return {
+      harnessRunId: await launchWorkstreamHarness(this.env, {
+        workspaceId: this.auth.workspaceId,
+        workstreamId: id,
+        triggerMessageId: latest.trigger_message_id,
+        origin: "manual_retry",
+        executionPrincipal: { type: "user", userId: this.auth.userId },
+        // Only when it actually moves the bound. Passing the trigger back as its
+        // own fence is a no-op the projection would have to reason about.
+        ...(newest && newest.id !== latest.trigger_message_id
+          ? { transcriptFenceMessageId: newest.id }
+          : {}),
+      }),
+    };
   }
 
   async socketTicket(id: string) {

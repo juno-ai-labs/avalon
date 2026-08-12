@@ -298,6 +298,93 @@ describe("durable UI-to-model transcript projection", () => {
     expect(stored.map((entry) => entry.textContent)).not.toContain(queued.textContent);
   });
 
+  it("extends the window to an explicit fence while keeping the trigger's identity", async () => {
+    // What a `retry` asks for: replay the failed run's trigger, but see the
+    // messages that arrived after it — a correction that started no run of its
+    // own is exactly the thing the old fence hid.
+    const trigger = message("00000000-0000-4000-8000-000000000041", 1, {
+      author: "human",
+      textContent: "Reconcile the July invoices",
+    });
+    const correction = message("00000000-0000-4000-8000-000000000042", 2, {
+      author: "human",
+      textContent: "You used the wrong account",
+    });
+    const allMessages = [trigger, correction];
+    const sequences: Record<string, number> = {
+      [trigger.id]: trigger.sequenceNumber,
+      [correction.id]: correction.sequenceNumber,
+    };
+    const bound: string[] = [];
+    const prepare = vi.fn(() => ({
+      bind: (messageId: string) => {
+        bound.push(messageId);
+        return { first: async () => ({ sequence_number: sequences[messageId] }) };
+      },
+    }));
+    const listMessages = vi.fn(async (
+      _workspaceId: string,
+      _workstreamId: string,
+      limit: number,
+      beforeSequence?: number,
+    ) => allMessages.filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
+
+    const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
+      { DB: { prepare } as unknown as D1Database },
+      {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        triggerMessageId: trigger.id,
+        transcriptFenceMessageId: correction.id,
+      },
+      listMessages,
+    );
+
+    expect(bound).toEqual([trigger.id, correction.id]);
+    expect(listMessages).toHaveBeenCalledWith(WORKSPACE_ID, WORKSTREAM_ID, 250, 3);
+    expect(stored.map((entry) => entry.id)).toEqual([trigger.id, correction.id]);
+  });
+
+  it("never lets a fence pull the window in behind the trigger", async () => {
+    // A fence below the trigger would drop the trigger itself, which the window
+    // check then reports as a missing trigger — a confusing way to fail for
+    // what is really a caller asking for something incoherent.
+    const earlier = message("00000000-0000-4000-8000-000000000043", 1, {
+      author: "human",
+      textContent: "Earlier",
+    });
+    const trigger = message("00000000-0000-4000-8000-000000000044", 2, {
+      author: "human",
+      textContent: "The trigger",
+    });
+    const sequences: Record<string, number> = {
+      [earlier.id]: earlier.sequenceNumber,
+      [trigger.id]: trigger.sequenceNumber,
+    };
+    const prepare = vi.fn(() => ({
+      bind: (messageId: string) => ({ first: async () => ({ sequence_number: sequences[messageId] }) }),
+    }));
+    const listMessages = vi.fn(async (
+      _workspaceId: string,
+      _workstreamId: string,
+      limit: number,
+      beforeSequence?: number,
+    ) => [earlier, trigger].filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
+
+    const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
+      { DB: { prepare } as unknown as D1Database },
+      {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        triggerMessageId: trigger.id,
+        transcriptFenceMessageId: earlier.id,
+      },
+      listMessages,
+    );
+
+    expect(stored.map((entry) => entry.id)).toEqual([earlier.id, trigger.id]);
+  });
+
   it("fails closed when the immutable trigger message cannot be resolved", async () => {
     const first = vi.fn(async () => null);
     const bind = vi.fn(() => ({ first }));

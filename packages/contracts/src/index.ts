@@ -1493,6 +1493,19 @@ export const WorkstreamWorkflowInputSchema = z.object({
   workstreamId: IdSchema,
   harnessRunId: IdSchema,
   triggerMessageId: IdSchema.nullable(),
+  /**
+   * The newest message this run may see, when that is not the trigger.
+   *
+   * The trigger doubles as the transcript's upper bound, which is right for a
+   * run a message started and wrong for a `retry`: the failed run's trigger has
+   * to stay the trigger — it is what admits a suggested-work brief or an
+   * inbound email to the model — while the replay still needs to see anything
+   * said since, including a correction that started no run of its own. Resolved
+   * at launch rather than at projection time so a replayed attempt reads the
+   * same window. Optional rather than nullable so every existing producer keeps
+   * parsing unchanged.
+   */
+  transcriptFenceMessageId: IdSchema.nullable().optional(),
   automationSubscriptionId: IdSchema.nullable(),
   activityId: IdSchema.nullable(),
   /**
