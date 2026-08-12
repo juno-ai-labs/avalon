@@ -33,7 +33,7 @@ violate. Read the owning documents for the areas the diff touches before reviewi
 
 ### Backend Engineer
 
-A staff-level backend engineer working on a Cloudflare Worker. Below are things reviews have missed previously; it is not an exhaustive list. You MUST still look for general backend edge-cases, bad code, sloppy implementation, in-elegant abstractions, over-engineering, missing error handling, bad assumptions, and anything else a staff-level engineer would flag in a code review.
+A staff-level backend engineer working on a Cloudflare Worker. Below are things reviews have missed previously; it is not an exhaustive list. You MUST still look for general backend edge-cases, bad code, sloppy implementation, inelegant abstractions, over-engineering, missing error handling, bad assumptions, and anything else a staff-level engineer would flag in a code review.
 
 **D1 migrations.** Migrations live in `packages/db/migrations/` as `NNNN_name.sql`
 and are applied by `wrangler d1 migrations apply DB` **once per region**, in
@@ -63,18 +63,21 @@ migration change to these bars:
 - **Both regions apply the same file.** A migration may not assume Global-only or
   EU-only data, and anything region-specific belongs in code reading `AVALON_REGION`,
   not in SQL.
-- **Idempotency where SQLite allows it.** Prefer `CREATE TABLE/INDEX IF NOT EXISTS`,
-  `DROP … IF EXISTS`, and `INSERT … ON CONFLICT DO NOTHING/UPDATE` so a re-run after a
-  partial apply does not error. SQLite has **no** `ALTER TABLE … ADD COLUMN IF NOT
-  EXISTS` and no transactional multi-statement DDL through D1 — so do not ask for a
-  guard that does not exist; instead flag a file whose statements would leave the
-  schema half-migrated with no way forward, and any backfill that double-counts,
-  re-increments, or re-sends when applied twice.
-- **New tables and columns.** Every product table carries `workspace_id` and the
-  indexes the reads actually use; a `CHECK` belongs on a closed set and deliberately
-  *not* on a set that is a moving product decision (see `workstreams.model_override`
-  in `docs/DATA_MODEL.md`). A new column's default must fail closed unless there is a
-  stated reason it cannot.
+- **Do not impose an idempotency bar the repository does not hold.** A migration is
+  recorded by name and applied once per region, and the tree is mixed on guards — bare
+  `CREATE TABLE`/`CREATE INDEX` outnumber the `IF NOT EXISTS` forms roughly four to one,
+  and no document asks for the guarded style. So do **not** flag a bare `CREATE` on
+  sight, and never ask for `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, which SQLite does
+  not have. What is worth flagging is a **backfill or data transform that corrupts if
+  it runs twice** (double-counting, re-incrementing, re-sending), since that is the
+  case a retry or a hand-run actually reaches.
+- **New tables and columns.** A workspace-owned table carries `workspace_id` and the
+  indexes its reads actually use — but identity, control-plane, and cross-region
+  routing tables (`users`, `workspaces`, `sessions`, `oauth_states`,
+  `desktop_login_tickets`) legitimately do not, so check what the table *is* before
+  flagging. A `CHECK` belongs on a closed set and deliberately *not* on a set that is a
+  moving product decision (see `workstreams.model_override` in `docs/DATA_MODEL.md`).
+  A new column's default must fail closed unless there is a stated reason it cannot.
 
 **Boundary validation (Zod).** Everything entering the Worker from outside the
 process is parsed:
@@ -159,12 +162,16 @@ Electron client, the regional Workers, D1/R2, connectors, and the model surface.
 policy-engine authorization service**: authorization is the layered server-side
 resolution below, and a violation is a P0/P1 finding, not a style note.
 
-- **Every operation resolves session → workspace → role → execution principal →
-  connection scope → capability, server-side.** Routes use `requireAuth` and
-  `getAuth`/`requireWorkspaceAdmin` from `apps/api/src/middleware/auth.ts`;
-  role-gated actions (`owner`/`admin`) are enforced in the service. Flag a handler
-  that authenticates but never authorizes, and a role comparison hand-rolled where the
-  helper exists.
+- **Authorization is resolved server-side, in layers that apply to different things**
+  (`docs/SECURITY.md`, "Authentication and authorization"). Every API resource query
+  resolves session and workspace; a **mutation** additionally resolves membership role;
+  the execution-principal → connection-scope → granted-capability → resource-visibility
+  chain is what a **connector tool** checks. Do not demand the connector chain on an
+  ordinary route — that is a false finding. Routes use `requireAuth` and
+  `getAuth`/`requireWorkspaceAdmin` from `apps/api/src/middleware/auth.ts`; role-gated
+  actions (`owner`/`admin`) are enforced in the service. Flag a handler that
+  authenticates but never authorizes, a mutation that never resolves role, and a role
+  comparison hand-rolled where the helper exists.
 - **Every resource query includes `workspace_id`, and work-stream readability comes
   from `workstreamVisibilitySql`** (`apps/api/src/lib/workstream-visibility.ts`).
   That helper exists because the rule was written out three times and the third copy
@@ -177,11 +184,15 @@ resolution below, and a violation is a P0/P1 finding, not a style note.
   namespaces, session-signing key, and credential-encryption key. Flag anything that
   crosses regions outside a bridge, or that assumes one region's key material.
 - **Socket admission.** Exact-match `ALLOWED_ORIGINS`, a one-time ticket bound to
-  user/workspace/work-stream/region carried in `Sec-WebSocket-Protocol` (not the query
-  string — whole URLs land in Cloudflare logs), atomic ticket consumption, and a room
-  that re-authorizes against D1 rather than trusting the ticket. A change that widens
-  who may read must also reach sockets already open (the retraction sweep in
-  `docs/realtime-sockets.md`).
+  user/workspace/work-stream/region carried in `Sec-WebSocket-Protocol` — kept out of
+  the URL because Cloudflare records whole request URLs into logs and traces — atomic
+  ticket consumption, and a room that re-authorizes against D1 rather than trusting the
+  ticket. The query-string transport is **deliberately still accepted**, and the
+  issuing endpoints still return a URL containing it, so desktop builds released before
+  the subprotocol scheme keep connecting (`docs/realtime-sockets.md`): flag a *new*
+  path that puts a ticket in a URL, not the documented compatibility path, whose
+  removal is a separate decision about which builds are still in the field. A change
+  that widens who may read must also reach sockets already open (the retraction sweep).
 - **Connector credentials and provider ingress.** Refresh tokens use the versioned
   AES-GCM envelope with connection-bound additional authenticated data; plaintext keys
   and signing secrets never appear in configuration, responses, identifiers, audit
@@ -403,9 +414,14 @@ two configurations must stay in step.
   where a deliberately Global-only secret is recorded. Flag a one-region binding, a
   Global-only value (`EU_PUBLIC_API_BASE_URL` is the legitimate case) used
   unconditionally, and a secret proposed as a plaintext var.
-- Cross-region traffic goes only through the named RPC service bindings — the identity,
-  GitHub, Linear, Notion, Slack, and inbound-email bridges. Flag a new public internal
-  route, a direct fetch to the other region, or a read of another region's data.
+- Cross-region traffic goes only through the named RPC service bindings. Read the
+  current set off `Env` in `apps/api/src/env.ts` rather than from a list that ages —
+  today it is the identity, GitHub, Linear, Notion, Slack, and inbound-email bridges
+  going Global→EU, plus the EU→Global routers, including `GLOBAL_EMAIL_ROUTER`
+  (`WorkstreamEmailRoutingBridge`), which is how EU reserves a globally unique
+  work-stream address in the Global registry (`docs/REGIONALIZATION.md`). Flag a new
+  public internal route, a direct fetch to the other region, or a read of another
+  region's data.
 - Identity is Global-only; workspace region is immutable; a session belongs to its
   workspace's region. Flag anything that assumes one region, or that would need a
   workspace to move.
@@ -420,9 +436,14 @@ contract is optional and must degrade locally rather than break the deployment.
 - Optional integrations — Firecrawl web search, Resend invitations and inbound email,
   Azure realtime dictation, the provider apps, and the `FLAGS` Flagship binding — must
   disable, hide, no-op, or return a clear "not configured" answer. Note the Flagship
-  case specifically: the binding may be **absent**, and under `wrangler dev --local`
-  it is present but every call throws, so a reader must handle both and fall back to
-  the `OPENROUTER_*_MODEL` variables (`docs/FEATURE_FLAGS.md`).
+  case specifically, because it is optional in two different senses: at **runtime** the
+  binding may be absent, and under `wrangler dev --local` it is present but every call
+  throws, so a reader must handle both and fall back to the `OPENROUTER_*_MODEL`
+  variables — while in **production** `GET /health` counts `featureFlags` as required,
+  so a Worker deployed without a working `FLAGS` binding fails the release health gate
+  rather than quietly running every agent on the Worker variables
+  (`docs/FEATURE_FLAGS.md`). Preserve both: a change that drops the runtime fallback
+  and a Wrangler change that would ship without the binding are each findings.
 - Flag a top-level `throw` for a missing optional key, a non-null assertion on an
   optional binding, and a new key added to the required environment contract without a
   deliberate decision — that promotes an integration from degradable to boot-blocking
@@ -498,10 +519,14 @@ which area, and each row states what to read and update it for.
 variable reference the README points at, and it is the file a new contributor
 configures from.
 
-- A new value read from `Env` or `process.env` must appear in `.env.example` with the
-  short comment its neighbours carry — what it does, whether it is server-only, and
-  what degrades when it is absent. Flag a new read with no entry, and an entry whose
-  described default or required-ness no longer matches `assertEnvContract`.
+- A new **environment variable or secret** read from `Env` or `process.env` must appear
+  in `.env.example` with the short comment its neighbours carry — what it does, whether
+  it is server-only, and what degrades when it is absent. Flag a new read with no
+  entry, and an entry whose described default or required-ness no longer matches
+  `assertEnvContract`. This does **not** apply to Cloudflare **bindings** — `DB`,
+  `PAYLOADS`, `IMAGES`, `AI`, `MEMORY_INDEX`, `FLAGS`, the Durable Object namespaces,
+  queues, workflows, and the RPC service bindings are declared in the Wrangler configs,
+  not in `.env.example`, so a new binding needs no entry there.
 - **Where it goes next depends on what it is, and conflating the three is itself a
   finding.** Non-secret Worker configuration belongs in `vars` in **both**
   `wrangler.global.jsonc` and `wrangler.eu.jsonc`. A Worker **secret** never appears in
