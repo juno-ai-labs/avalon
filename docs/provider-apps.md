@@ -198,7 +198,7 @@ both regions:
 | Name | Avalon |
 | Installation scope | Any workspace |
 | Redirect URI | `https://notion.with-avalon.com/connections/notion/callback` |
-| Webhook URL | `https://notion.with-avalon.com/ingest/notion?setup=<Global setup token>` |
+| Webhook URL | Run `pnpm notion:webhook:prepare` and paste the URL it copies |
 
 A Notion connection accepts one redirect URI and delivers to one webhook URL, and
 it has no way to know which region a Notion workspace belongs to — so unlike Linear
@@ -212,10 +212,18 @@ upload `assets/brand/avalon-mark.png`. A public Notion connection can be install
 into any workspace permitted by its immutable installation scope. Marketplace
 publication is a separate, optional review.
 
-When the webhook subscription is created, Notion sends a one-time
-`verification_token`. Avalon accepts it only when the Global setup token matches,
-encrypts it in D1, replicates it to the EU Worker so that region can verify
-signatures for itself, and uses it for every later `X-Notion-Signature` check.
+Apply migration `0071_notion_webhook_setup_nonces.sql` and deploy the API before
+preparing the URL. `pnpm notion:webhook:prepare` writes only a SHA-256 nonce hash
+to Global D1 and copies a URL whose plaintext nonce expires after 30 minutes. The
+newest prepared URL invalidates any earlier unconsumed one.
+
+Create the subscription with that URL. Notion sends a one-time
+`verification_token`; the ingress atomically binds the nonce to that token,
+encrypts the token in D1, and replicates it to EU so that region can verify
+signatures for itself. Run `pnpm notion:webhook:copy-token` to decrypt the Global
+row locally and copy the plaintext directly to the clipboard, then paste it into
+Notion's **Verify subscription** dialog. Neither command prints the nonce, URL,
+or verification token. The token then signs every later `X-Notion-Signature`.
 
 ### Slack app
 
@@ -259,9 +267,9 @@ secret:
 Global and EU share the same single public Notion connection identity:
 
 - `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_INTEGRATION_ID` —
-  identical in both regions, because there is one connection.
-  `NOTION_WEBHOOK_SETUP_TOKEN` stays region-specific; only Global's guards the live
-  subscription.
+  identical in both regions, because there is one connection. Webhook setup has
+  no long-lived Worker secret; the operator command stores a short-lived nonce
+  hash in Global D1.
 
 Both regions need `TWITTER_API_IO_API_KEY` to expose the read-only X connector, and
 `FIRECRAWL_API_KEY` for the agent's web search and page fetch tools.
@@ -293,8 +301,10 @@ Both regions need `TWITTER_API_IO_API_KEY` to expose the read-only X connector, 
 - **Do not publish broader Google scopes than the two presets request.** The
   capability mapping matches the scopes approved for the production client; adding
   one re-opens verification.
-- **The Notion `verification_token` is accepted only when the Global setup token
-  matches**, is encrypted in D1, and never appears in logs or source control.
+- **The Notion `verification_token` is accepted only by an unexpired one-time
+  setup nonce**, is encrypted in D1, and never appears in logs or source control.
+  A consumed nonce is bound to the first token it sees, and a superseded nonce
+  cannot restore an earlier signing secret.
 - **`notion.with-avalon.com` exists as a custom domain on `avalon-api-global`
   before the connection is registered**, or the one redirect URI Notion accepts
   points at nothing.
@@ -361,9 +371,22 @@ repository. What can be:
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the registrations above — beyond the reasons already written inline — was not
-recorded here and was not reconstructed. `git log` and the PRDs under `docs/PRDs/`
-are what exist. The next substantial change to a provider registration starts the
-record, and that entry is that change, written in full.
+### 2026-08-12 — Notion setup secrets leave the webhook URL and Cloudflare logs
+
+**What changed:** Notion's reusable `NOTION_WEBHOOK_SETUP_TOKEN` was replaced by
+a 30-minute, single-use nonce prepared in Global D1. Two operator commands copy
+the subscription URL and the captured verification token directly to the local
+clipboard without printing either. Recreating a subscription prepares a new
+nonce; its first challenge supersedes every older nonce.
+
+**Why:** Cloudflare records full request URLs independently of Avalon's logger,
+so a reusable query-string guard became a 90-day credential in Workers Logs and
+Logpush. Logging the verification token instead would be worse: it is the HMAC
+secret for every later delivery. A public reveal endpoint was rejected because
+it would add a remotely reachable secret-reading surface solely for a one-time
+operator action. The D1-and-local-clipboard path keeps the only plaintext handoff
+on the operator's machine, while token-binding and supersession retain safe
+retries without letting an old URL rotate the active secret.
+
+Earlier registration reasoning was not recorded in a changelog; the prose above,
+`git log`, and the PRDs under `docs/PRDs/` are the surviving record.

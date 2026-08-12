@@ -281,8 +281,8 @@ describe("shared Notion connection routing", () => {
       storeChallengeInRegion: async (region, token) => {
         replicated.push({ region, token });
       },
-      captureChallenge: async (token, setupToken) => {
-        captured.push(setupToken);
+      captureChallenge: async (token, setupNonce) => {
+        captured.push(setupNonce);
         expect(token).toBe(SECRET);
         return { accepted: true, duplicate: false, activityCount: 0 };
       },
@@ -403,7 +403,6 @@ function environment(database: FakeDatabase): Env {
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
     NOTION_INTEGRATION_ID: INTEGRATION_ID,
-    NOTION_WEBHOOK_SETUP_TOKEN: "setup-token",
     PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
   } as Env;
 }

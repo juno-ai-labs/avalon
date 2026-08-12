@@ -97,7 +97,7 @@ interface NotionRoutingServiceOptions {
   verificationToken?: () => Promise<string>;
   captureChallenge?: (
     verificationToken: string,
-    setupToken: string | null,
+    setupNonce: string | null,
     rawBody: Uint8Array,
     headers: Record<string, string>,
   ) => Promise<ProviderWebhookIngestionResult>;
@@ -140,8 +140,8 @@ export class NotionRoutingService {
     this.verificationToken = options.verificationToken
       ?? (() => new ProviderWebhookService(this.env).notionVerificationToken());
     this.captureChallenge = options.captureChallenge
-      ?? ((_token, setupToken, rawBody, headers) =>
-        new ProviderWebhookService(this.env).ingestNotion(rawBody, headers, setupToken));
+      ?? ((_token, setupNonce, rawBody, headers) =>
+        new ProviderWebhookService(this.env).ingestNotion(rawBody, headers, setupNonce));
   }
 
   /** Completes an authorization that began in whichever region the state names. */
@@ -231,7 +231,7 @@ export class NotionRoutingService {
   async ingestNotion(
     rawBody: Uint8Array | ArrayBuffer,
     inputHeaders: Headers | HeadersInit,
-    setupToken: string | null = null,
+    setupNonce: string | null = null,
   ): Promise<ProviderWebhookIngestionResult> {
     this.assertGlobalControlPlane();
     const bytes = copyBytes(rawBody);
@@ -243,7 +243,7 @@ export class NotionRoutingService {
     // left to an operator step that would fail silently much later.
     const verificationToken = readNotionWebhookVerificationToken(rawText, this.maxBytes());
     if (verificationToken !== null) {
-      const captured = await this.captureChallenge(verificationToken, setupToken, bytes, headers);
+      const captured = await this.captureChallenge(verificationToken, setupNonce, bytes, headers);
       await this.storeChallengeInRegion("eu", verificationToken);
       return captured;
     }
