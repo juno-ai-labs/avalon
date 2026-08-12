@@ -40,6 +40,7 @@ import {
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
 } from "./integrations";
+import { markWorkflowInstanceCreated, workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
@@ -275,7 +276,14 @@ export async function launchWorkstreamHarness(
       type: "harness_status_changed",
       status: "failed",
     });
-    throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+    // Carried onto the member-safe error so a caller that cleans up after a
+    // failed launch can tell "nothing started" from "started, and only the
+    // record of it failed". The run row above is `failed` either way, so it
+    // cannot answer that question and must not be read as if it could.
+    // The member-safe error carries forward whether an instance is live, so a
+    // caller undoing its own preparation is answering the right question.
+    const memberSafe = new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+    throw workflowInstanceWasCreated(error) ? markWorkflowInstanceCreated(memberSafe) : memberSafe;
   }
   await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
     type: "harness_status_changed",
@@ -593,6 +601,14 @@ export class WorkstreamService {
     // Two different questions. `system_kind` says this is machinery, which
     // decides whether it is listed at all; `scope` says who may read it, and is
     // enforced below whatever the caller asked to see.
+    //
+    // Machinery is paged with everything else rather than lifted out and
+    // bounded. Digest work streams accumulate one per occurrence and nothing
+    // reaps them, so with Debug enabled they do take the newest pages — but the
+    // sidebar follows `nextCursor` as it scrolls, so that costs a scroll rather
+    // than the rows themselves, and the alternative was a second population
+    // inside this method with its own cap and its own ordering rules. One list,
+    // one order.
     const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
     // A pinned work stream leaves the recency order altogether rather than
     // being paged with everything else, which is the same thing the sidebar
@@ -628,8 +644,15 @@ export class WorkstreamService {
     // many a person has — which is why `nextCursor` comes from the paged rows
     // rather than from the last item returned.
     if (!before) rows.push(...await this.loadPinnedWorkstreamRows(includeSystem));
+    // Machinery is never given an inbound address. Reserving one activates a
+    // route in the global registry — a cross-region RPC from the EU — and
+    // nothing reclaims it, so with one work stream per digest occurrence this
+    // would mint a permanent mailbox per occurrence, hundreds a year per person.
+    // It would also make a work stream emailable whose entire point is that its
+    // context is exactly one frozen window. A digest work stream carries no
+    // address and needs none: nobody writes to a run.
     const unreconciledAddressRows = rows.filter((row) =>
-      row.email_address == null || row.email_route_status !== "active");
+      row.system_kind == null && (row.email_address == null || row.email_route_status !== "active"));
     if (unreconciledAddressRows.length > 0) {
       const routes = await new WorkstreamEmailRoutingService(this.env).backfillWorkstreamAddresses(
         unreconciledAddressRows.map((row) => ({
