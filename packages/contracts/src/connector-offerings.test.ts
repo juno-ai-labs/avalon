@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONNECTOR_CATEGORY_DESCRIPTIONS,
   CONNECTOR_CARDS_MAX,
   CONNECTOR_OFFERINGS,
   CONNECTOR_OFFERING_IDS,
   ConnectorCardsBlockSchema,
   ConnectorOfferingIdSchema,
   connectorCardsFallbackText,
+  ConnectorCategorySchema,
+  connectionMatchesOffering,
   connectorOffering,
   connectorOfferingCapabilities,
+  connectorOfferingsInCategory,
 } from "./connector-offerings";
 
 describe("connector offerings", () => {
@@ -80,5 +84,70 @@ describe("connector offerings", () => {
       heading: "Pick where your work lives",
       cards: [{ offeringId: "notion" }],
     })).toBe("Pick where your work lives — Notion");
+  });
+});
+
+describe("connector categories", () => {
+  it("describes every category it declares", () => {
+    expect(Object.keys(CONNECTOR_CATEGORY_DESCRIPTIONS).sort())
+      .toEqual([...ConnectorCategorySchema.options].sort());
+  });
+
+  it("puts every offering in at least one category", () => {
+    // An offering in no category cannot be found from a request that describes
+    // a need rather than a product name, which is how most requests arrive.
+    for (const offering of CONNECTOR_OFFERINGS) {
+      expect(offering.categories.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("leaves no category without an offering", () => {
+    for (const category of ConnectorCategorySchema.options) {
+      expect(connectorOfferingsInCategory(category).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("answers a request that spans two categories with the one authorization covering both", () => {
+    // "Email my boss three open slots from my calendar" — the case the whole
+    // category model exists for. One Google grant covers it, so the person is
+    // asked to connect once rather than twice.
+    const email = connectorOfferingsInCategory("email").map((offering) => offering.id);
+    const calendar = connectorOfferingsInCategory("calendar").map((offering) => offering.id);
+    expect(email).toContain("google-mail-calendar");
+    expect(calendar).toContain("google-mail-calendar");
+    // And the other Google offering answers neither, which is the distinction
+    // categories exist to keep.
+    expect([...email, ...calendar]).not.toContain("google-drive-workspace");
+  });
+});
+
+describe("connectionMatchesOffering", () => {
+  const gmail = {
+    connectorType: "google",
+    scope: "personal" as const,
+    grantedCapabilities: ["gmail.read", "calendar.read"],
+  };
+
+  it("tells two offerings of one connector type apart by capability", () => {
+    expect(connectionMatchesOffering(gmail, connectorOffering("google-mail-calendar"))).toBe(true);
+    expect(connectionMatchesOffering(gmail, connectorOffering("google-drive-workspace"))).toBe(false);
+  });
+
+  it("does not match a different connector type", () => {
+    expect(connectionMatchesOffering(gmail, connectorOffering("slack"))).toBe(false);
+  });
+
+  it("narrows to a scope when one is asked for", () => {
+    expect(connectionMatchesOffering(gmail, connectorOffering("google-mail-calendar"), "personal")).toBe(true);
+    expect(connectionMatchesOffering(gmail, connectorOffering("google-mail-calendar"), "workspace")).toBe(false);
+  });
+
+  it("matches an offering that asks for no capabilities on type alone", () => {
+    // The inbound webhook grants nothing, so there is nothing narrower to
+    // compare and a type match is the whole answer.
+    expect(connectionMatchesOffering(
+      { connectorType: "generic_webhook", scope: "workspace", grantedCapabilities: [] },
+      connectorOffering("generic-webhook"),
+    )).toBe(true);
   });
 });

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import {
   CONNECTOR_OFFERINGS,
+  connectionMatchesOffering as connectionMatchesOfferingIdentity,
   connectorOffering,
   connectorOfferingCapabilities,
   type ConnectorOffering,
@@ -90,27 +91,33 @@ export function offeringOAuthProvider(offering: ConnectorOffering): ConnectorOAu
 export type ConnectorCardState = 'connected' | 'needs_attention' | 'disconnected' | 'unknown';
 
 /**
- * Whether a connection is one of *this* offering's.
+ * Whether a connection is one of this offering's, in the renderer's vocabulary.
  *
- * Connector type alone is not enough: Google's two offerings share one type and
- * one OAuth client, so a Gmail connection would otherwise report Drive as
- * connected and hide the authorization that reads documents. The capability
- * overlap is what separates them. An offering that declares no capabilities —
- * the inbound webhook — matches on type alone, which is correct for it because
- * there is nothing narrower to compare.
+ * The rule itself is `connectionMatchesOffering` in `@avalon/contracts`, shared
+ * with the API so a card and the agent cannot disagree about what is connected.
+ * This adapts the two things that are local: the client says `you` where the
+ * wire says `personal`, and a connection carries its granted capabilities under
+ * a different field name.
+ *
+ * Note it compares against the registry's declared capabilities, not
+ * `offeringCapabilities` — the Linear native-agent grant this build may *ask*
+ * for is a decision about this build, while recognizing a connection somebody
+ * already has must not depend on a flag that was off when they made it.
  */
 export function connectionMatchesOffering(
   connection: WorkstreamConnection,
   offering: ConnectorOffering,
   scope?: Scope,
 ): boolean {
-  if (connection.connectorType !== offering.connectorType) return false;
-  if (scope && connection.scope !== scope) return false;
-  const capabilities = scope
-    ? offeringCapabilities(offering, scope)
-    : [...offering.personalCapabilities, ...offering.workspaceCapabilities];
-  if (capabilities.length === 0) return true;
-  return capabilities.some((capability) => connection.capabilities?.includes(capability));
+  return connectionMatchesOfferingIdentity(
+    {
+      connectorType: connection.connectorType,
+      scope: connection.scope === 'you' ? 'personal' : 'workspace',
+      grantedCapabilities: connection.capabilities ?? [],
+    },
+    offering,
+    scope === undefined ? undefined : scope === 'you' ? 'personal' : 'workspace',
+  );
 }
 
 export interface ConnectorCardStatus {

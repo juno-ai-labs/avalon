@@ -12,6 +12,8 @@ import {
   AddressingClassificationSchema,
   AutomationDraftSchema,
   CONNECTOR_CARDS_MAX,
+  CONNECTOR_CATEGORY_DESCRIPTIONS,
+  ConnectorCategorySchema,
   ConnectorOfferingIdSchema
 } from "@avalon/contracts";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
@@ -2194,6 +2196,38 @@ export const RequestElicitationInputSchema = z.object({
 });
 
 export type RequestElicitationInput = z.infer<typeof RequestElicitationInputSchema>;
+
+/**
+ * Finding a connector nobody has connected yet.
+ *
+ * Categories rather than free text alone, because a request arrives as a need —
+ * "email my boss", "check my calendar" — and a model that can only search by
+ * product name has to already know which products Avalon supports. The enum
+ * reaches it in the JSON schema, so the vocabulary is discoverable from the
+ * tool itself, and the descriptions are appended to the tool description
+ * because a bare category name does not say where its boundary is.
+ */
+export const FindConnectorsInputSchema = z.object({
+  categories: z.array(ConnectorCategorySchema).max(9).default([]),
+  query: z.string().max(120).nullable().default(null),
+  includeConnected: z.boolean().default(false),
+}).strict();
+
+export type FindConnectorsInput = z.infer<typeof FindConnectorsInputSchema>;
+
+export const AVALON_FIND_CONNECTORS_TOOL_DEFINITION = {
+  name: "find_connectors",
+  description: [
+    "Find connectors that could do something this run currently cannot, by category or by name. This is the opposite of the plugin catalog: it reports what is NOT connected, so use it the moment a request needs a system whose tools you do not have, instead of refusing the request or asking which product they use.",
+    "Each result carries a state — not_connected, needs_reconnect, or connected_not_yet_usable — and the connector id to pass straight to core_show_connector_cards. Finding a connector grants this run nothing and connects nothing; a person still has to authorize it.",
+    "Set includeConnected only when somebody asks what is already connected. Categories:",
+    ...Object.entries(CONNECTOR_CATEGORY_DESCRIPTIONS).map(([category, description]) => `- ${category}: ${description}`),
+  ].join("\n"),
+  capability: "connection.catalog.read",
+  mode: "read",
+  idempotency: "safe",
+  inputSchema: z.toJSONSchema(FindConnectorsInputSchema) as Record<string, unknown>,
+} as const satisfies ToolDefinition;
 
 /**
  * One card in a `show_connector_cards` call.

@@ -32,6 +32,11 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Checked the current time",
     failed: "Could not check the current time",
   },
+  core_find_connectors: {
+    started: "Looking for connectors",
+    settled: "Looked for connectors",
+    failed: "Could not look for connectors",
+  },
   core_show_connector_cards: {
     started: "Offering connections",
     settled: "Offered connections",

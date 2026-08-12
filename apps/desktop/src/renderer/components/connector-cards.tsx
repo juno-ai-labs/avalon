@@ -216,15 +216,21 @@ export function ConnectorCardsBlock({
 }
 
 /**
- * The block as the transcript renders it, wired to this member's connections.
+ * This member's connections and one authorization loop, for every surface that
+ * offers a connection.
  *
  * The query is keyed `['connections']` — the same key the Settings pane and the
- * authorization hook use — so every card in every open work stream shares one
- * fetch and one cache entry, and a connection made anywhere updates all of them
- * without a reload. That shared key is why a card's state is never stored in
- * the message it came from.
+ * authorization hook use — so every card, row, and inline chip in every open
+ * work stream shares one fetch and one cache entry, and a connection made
+ * anywhere updates all of them without a reload. That shared key is why a
+ * card's state is never stored in the message it came from.
  */
-export function ConnectorCardsMessage({ block }: { block: ConnectorCardsData }): React.JSX.Element {
+export function useConnectorCardSurface(): {
+  connections: WorkstreamConnection[] | undefined;
+  loading: boolean;
+  unavailable: boolean;
+  authorization: ConnectorAuthorization;
+} {
   const { api } = useAppSession();
   const authorization = useConnectorAuthorization(api);
   const connections = useQuery({
@@ -234,13 +240,130 @@ export function ConnectorCardsMessage({ block }: { block: ConnectorCardsData }):
     refetchOnWindowFocus: 'always',
     staleTime: 5_000,
   });
+  return {
+    connections: connections.data,
+    loading: connections.isLoading || !api,
+    unavailable: connections.isError,
+    authorization,
+  };
+}
+
+/** The block as the transcript renders it, wired to this member's connections. */
+export function ConnectorCardsMessage({ block }: { block: ConnectorCardsData }): React.JSX.Element {
+  const surface = useConnectorCardSurface();
   return (
     <ConnectorCardsBlock
-      authorization={authorization}
+      authorization={surface.authorization}
       block={block}
-      connections={connections.data}
-      loading={connections.isLoading || !api}
-      unavailable={connections.isError}
+      connections={surface.connections}
+      loading={surface.loading}
+      unavailable={surface.unavailable}
     />
+  );
+}
+
+/**
+ * Connect rows written into a message's own Markdown, rather than published as
+ * a block of their own.
+ *
+ * Same card, no section chrome: the sentence above them is already the heading,
+ * and a "Connections" label under a paragraph that just explained why would be
+ * the third time the reader is told.
+ */
+export function ConnectorConnectRows({ cards }: { cards: ConnectorCardData[] }): React.JSX.Element {
+  const surface = useConnectorCardSurface();
+  return (
+    <div className="connector-card-list connector-card-list-inline">
+      {cards.map((card) => (
+        <ConnectorCard
+          authorization={surface.authorization}
+          card={card}
+          connections={surface.connections}
+          key={`${card.offeringId}:${card.scope ?? 'any'}`}
+          loading={surface.loading || surface.unavailable}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One connector offered inside a sentence.
+ *
+ * The label is the author's, not the offering's, because the sentence around it
+ * is doing the explaining — "you'll need to [connect Gmail](…) first" reads as
+ * English, and a chip that overrode it with "Google Mail + Calendar" would not.
+ * A chip for something already connected stops being a button rather than
+ * disappearing: the sentence still refers to it, and removing it mid-paragraph
+ * would leave a gap where a word was.
+ */
+export function ConnectorConnectChip({
+  card,
+  label,
+}: {
+  card: ConnectorCardData;
+  label: React.ReactNode;
+}): React.JSX.Element {
+  const surface = useConnectorCardSurface();
+  const offering = connectorOffering(card.offeringId);
+  const scope = card.scope ?? offeringScopes(offering)[0] ?? 'you';
+  const status = connectorCardStatus(
+    offering,
+    card.scope,
+    surface.loading || surface.unavailable ? undefined : surface.connections,
+  );
+  const Icon = connectorOfferingIcon(offering);
+  const [busy, setBusy] = useState(false);
+  const waiting = surface.authorization.pending?.provider === offering.connectorType;
+
+  if (status.state === 'connected') {
+    return (
+      <span className="connector-connect-chip is-connected" data-offering={offering.id}>
+        <Check aria-hidden="true" size={12} />
+        {label}
+      </span>
+    );
+  }
+
+  const act = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      if (status.state === 'needs_attention' && status.connection) {
+        await surface.authorization.reconnect(status.connection.id);
+        return;
+      }
+      const provider = offeringOAuthProvider(offering);
+      if (!provider || !offeringSupportsOAuth(offering, scope)) {
+        openConnectionSettings();
+        return;
+      }
+      await surface.authorization.begin({
+        provider,
+        scope,
+        capabilities: offeringCapabilities(offering, scope),
+      });
+    } catch {
+      // The error belongs to the authorization, which reports it on the surface
+      // that owns it. A chip is one word inside a sentence; growing an error
+      // message out of it would reflow the paragraph around it.
+      openConnectionSettings();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      className="connector-connect-chip"
+      data-offering={offering.id}
+      disabled={busy || waiting || status.state === 'unknown'}
+      onClick={() => void act()}
+      type="button"
+    >
+      {busy || waiting
+        ? <LoaderCircle aria-hidden="true" className="spin" size={12} />
+        : <Icon aria-hidden="true" size={12} />}
+      {label}
+    </button>
   );
 }

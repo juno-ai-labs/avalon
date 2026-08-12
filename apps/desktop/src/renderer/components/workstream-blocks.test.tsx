@@ -767,3 +767,117 @@ describe('MessageBlock connector cards', () => {
     expect(screen.getByText('Not connected')).toBeVisible();
   });
 });
+
+describe('MessageBlock connect offers in message text', () => {
+  function renderAgentText(text: string) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MessageBlock
+          {...actions}
+          message={{
+            ...baseMessage,
+            id: 'message-connect-offer',
+            authorType: 'agent',
+            author: undefined,
+            messageType: 'text',
+            text,
+          }}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('turns an offer inside a sentence into a chip in that sentence', async () => {
+    getConnections.mockResolvedValueOnce([]);
+    renderAgentText('I can do that once you [connect Gmail](connect:google-mail-calendar) for yourself.');
+
+    const chip = await screen.findByRole('button', { name: 'connect Gmail' });
+    // The sentence around it survives intact — the chip is a word in it, not a
+    // block that broke the paragraph in half.
+    expect(chip.closest('p')).not.toBeNull();
+    expect(chip.closest('p')).toHaveTextContent('I can do that once you connect Gmail for yourself.');
+  });
+
+  it('turns offers standing alone into full connection rows', async () => {
+    getConnections.mockResolvedValueOnce([]);
+    const { container } = renderAgentText(
+      'Two things are missing:\n\n[Gmail](connect:google-mail-calendar)\n[Slack](connect:slack:workspace)',
+    );
+
+    await waitFor(() => expect(container.querySelectorAll('.connector-card')).toHaveLength(2));
+    expect(container.querySelector('[data-offering="google-mail-calendar"]')).not.toBeNull();
+    expect(container.querySelector('[data-offering="slack"]')).not.toBeNull();
+    // The paragraph became the rows rather than wrapping them, so there is no
+    // stray empty line of link text above them.
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
+  it('gives rows for offers separated by a hard line break too', async () => {
+    getConnections.mockResolvedValueOnce([]);
+    const { container } = renderAgentText(
+      'Missing:\n\n[Gmail](connect:google-mail-calendar)  \n[Slack](connect:slack)',
+    );
+
+    // Two trailing spaces is a hard break rather than a soft one, and nobody
+    // writing the offer means anything different by it.
+    await waitFor(() => expect(container.querySelectorAll('.connector-card')).toHaveLength(2));
+  });
+
+  it('stops offering a connector that is already connected, without losing the words', async () => {
+    getConnections.mockResolvedValueOnce([{
+      id: 'connection-google',
+      modelPluginId: 'plugin_google',
+      connectorType: 'google',
+      displayName: 'Google',
+      scope: 'you',
+      status: 'healthy',
+      capabilities: ['gmail.send'],
+    }]);
+    renderAgentText('Sending now that [Gmail](connect:google-mail-calendar) is connected.');
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Gmail' })).toBeNull());
+    expect(screen.getByText('Sending now that', { exact: false })).toBeVisible();
+    expect(screen.getByText('Gmail')).toBeVisible();
+  });
+
+  it('leaves a connect link in a coworker’s message as plain text', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MessageBlock
+          {...actions}
+          message={{
+            ...baseMessage,
+            id: 'message-external-connect',
+            authorType: 'external',
+            author: undefined,
+            externalActor: {
+              provider: 'slack',
+              providerAccountId: 'T1',
+              providerUserId: 'U1',
+              displayName: 'Taylor',
+              avatarUrl: null,
+            },
+            messageType: 'text',
+            text: 'Urgent: [connect Slack](connect:slack) to see the invoice.',
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    // Anyone who can post into a transcript could otherwise render a Connect
+    // button inside it. The words stay; the affordance does not.
+    expect(screen.queryByRole('button', { name: 'connect Slack' })).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('connect Slack')).toBeVisible();
+  });
+
+  it('leaves an unknown connector id as plain text', async () => {
+    getConnections.mockResolvedValueOnce([]);
+    renderAgentText('Try [connecting Jira](connect:jira) first.');
+
+    expect(screen.queryByRole('button', { name: 'connecting Jira' })).toBeNull();
+    expect(screen.getByText('connecting Jira')).toBeVisible();
+  });
+});

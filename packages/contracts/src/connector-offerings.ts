@@ -44,6 +44,52 @@ export const ConnectorTypeSchema = z.enum([
 ]);
 export type ConnectorType = z.infer<typeof ConnectorTypeSchema>;
 
+/**
+ * What a connector is *for*, in the words somebody describes a task in.
+ *
+ * These exist so a request can be turned into an offer. "Email my boss three
+ * open slots from my calendar" names two categories and no products, and
+ * without them the only way to answer it with a connection is for a model to
+ * already know that Gmail is Avalon's email connector. A category is a small
+ * closed set the model can enumerate from a schema, which is the difference
+ * between finding the right connector first try and guessing at product names.
+ *
+ * An offering belongs to as many as apply: Google's mail-and-calendar
+ * authorization is genuinely both, and a request for either should surface it.
+ * They are properties of the *offering* rather than the connector, because
+ * that is the granularity a person is asked to authorize — Google's other
+ * offering is `documents` and shares neither category.
+ */
+export const ConnectorCategorySchema = z.enum([
+  "email",
+  "calendar",
+  "messaging",
+  "meetings",
+  "documents",
+  "project_tracking",
+  "code",
+  "social",
+  "custom",
+]);
+export type ConnectorCategory = z.infer<typeof ConnectorCategorySchema>;
+
+/**
+ * What each category covers, written for a model choosing between them. Kept
+ * beside the enum because a category name without a boundary is guesswork:
+ * "documents" and "messaging" both sound right for a shared Slack canvas.
+ */
+export const CONNECTOR_CATEGORY_DESCRIPTIONS: Readonly<Record<ConnectorCategory, string>> = {
+  email: "Reading, drafting, and sending email.",
+  calendar: "Reading availability and creating or changing calendar events.",
+  messaging: "Team chat: reading conversations and posting messages.",
+  meetings: "Meeting recordings, transcripts, and the notes taken from them.",
+  documents: "Documents, files, notes, and knowledge bases.",
+  project_tracking: "Issues, tickets, roadmaps, and project status.",
+  code: "Repositories, pull requests, checks, and development activity.",
+  social: "Public social content and timelines.",
+  custom: "Systems with no native connector, delivering signed inbound events.",
+};
+
 export interface ConnectorOffering {
   /** Stable id. Stored in message payloads, so it is a name, not an index. */
   readonly id: string;
@@ -52,6 +98,13 @@ export interface ConnectorOffering {
   readonly name: string;
   readonly description: string;
   readonly icon: ConnectorOfferingIcon;
+  /**
+   * What this offering is for. At least one, enforced by
+   * `connector-offerings.test.ts`: an offering in no category is unreachable
+   * from a request that describes a need rather than a product name, which is
+   * the only way most requests arrive.
+   */
+  readonly categories: readonly ConnectorCategory[];
   /** The ownership scopes this offering can be connected in. */
   readonly scopes: readonly ("personal" | "workspace")[];
   /**
@@ -74,6 +127,7 @@ export interface ConnectorOffering {
 export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   {
     id: "google-mail-calendar",
+    categories: ["email", "calendar"],
     connectorType: "google",
     name: "Google Mail + Calendar",
     description: "Search Gmail, create drafts, send mail, and work with calendar events.",
@@ -85,6 +139,7 @@ export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   },
   {
     id: "google-drive-workspace",
+    categories: ["documents"],
     connectorType: "google",
     name: "Google Drive + Docs + Sheets",
     description: "Read Drive files and work with Google Docs and Sheets content.",
@@ -96,6 +151,7 @@ export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   },
   {
     id: "github",
+    categories: ["code", "project_tracking"],
     connectorType: "github",
     name: "GitHub",
     description: "Repositories, issues, pull requests, checks, and development events.",
@@ -125,6 +181,7 @@ export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   },
   {
     id: "granola",
+    categories: ["meetings", "documents"],
     connectorType: "granola",
     name: "Granola",
     description:
@@ -139,6 +196,7 @@ export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   },
   {
     id: "linear",
+    categories: ["project_tracking"],
     connectorType: "linear",
     name: "Linear",
     description:
@@ -151,6 +209,7 @@ export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   },
   {
     id: "slack",
+    categories: ["messaging"],
     connectorType: "slack",
     name: "Slack",
     description: "Messages, files, people, canvases, conversations, and the Avalon workspace Agent.",
@@ -172,6 +231,7 @@ export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   },
   {
     id: "notion",
+    categories: ["documents"],
     connectorType: "notion",
     name: "Notion",
     description: "Selected pages, data sources, comments, and change notifications.",
@@ -189,6 +249,7 @@ export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   },
   {
     id: "generic-webhook",
+    categories: ["custom"],
     connectorType: "generic_webhook",
     name: "Inbound webhook",
     description: "Receive signed activity from systems that do not have a native Avalon connector.",
@@ -202,6 +263,7 @@ export const CONNECTOR_OFFERINGS: readonly ConnectorOffering[] = [
   },
   {
     id: "x",
+    categories: ["social"],
     connectorType: "x",
     name: "Public X via TwitterAPI.io",
     description:
@@ -248,6 +310,50 @@ export function connectorOfferingCapabilities(
   scope: "personal" | "workspace",
 ): readonly string[] {
   return scope === "personal" ? offering.personalCapabilities : offering.workspaceCapabilities;
+}
+
+export function connectorOfferingsInCategory(
+  category: ConnectorCategory,
+): readonly ConnectorOffering[] {
+  return CONNECTOR_OFFERINGS.filter((offering) => offering.categories.includes(category));
+}
+
+/** The minimum an existing connection has to say for an offering to claim it. */
+export interface ConnectorConnectionIdentity {
+  connectorType: string;
+  scope: "personal" | "workspace";
+  grantedCapabilities: readonly string[];
+}
+
+/**
+ * Whether an existing connection is one of *this* offering's.
+ *
+ * Connector type alone is not enough, and this is the single subtlety the whole
+ * offering model exists for: Google's two offerings share one connector type
+ * and one OAuth client, so a Gmail connection matched by type would report
+ * Drive as connected and hide the authorization that actually reads documents.
+ * The capability overlap is what separates them.
+ *
+ * It lives in contracts rather than in either caller because both the desktop
+ * client (deciding what a card shows) and the API (deciding what an agent is
+ * told is missing) have to answer it identically. Two implementations drift
+ * into a card that says connected beside a model that says it is not.
+ *
+ * An offering that declares no capabilities — the inbound webhook — matches on
+ * type, which is correct for it because there is nothing narrower to compare.
+ */
+export function connectionMatchesOffering(
+  connection: ConnectorConnectionIdentity,
+  offering: ConnectorOffering,
+  scope?: "personal" | "workspace",
+): boolean {
+  if (connection.connectorType !== offering.connectorType) return false;
+  if (scope && connection.scope !== scope) return false;
+  const capabilities = scope
+    ? connectorOfferingCapabilities(offering, scope)
+    : [...offering.personalCapabilities, ...offering.workspaceCapabilities];
+  if (capabilities.length === 0) return true;
+  return capabilities.some((capability) => connection.grantedCapabilities.includes(capability));
 }
 
 /** The structured-content discriminator that makes a message a card block. */

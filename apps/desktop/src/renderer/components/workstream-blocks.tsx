@@ -34,9 +34,10 @@ import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { useTextClamped } from '../lib/use-text-clamped';
-import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
+import { ConnectorOfferingIdSchema } from '@avalon/contracts';
+import type { ActivitySuggestionData, ConnectorCardData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
-import { ConnectorCardsMessage } from './connector-cards';
+import { ConnectorCardsMessage, ConnectorConnectChip, ConnectorConnectRows } from './connector-cards';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Badge, Button, InlineError } from './primitives';
 
@@ -249,6 +250,88 @@ export function withConnectorMentionLinks(text: string, mentions: MessageMention
   return output + text.slice(cursor);
 }
 
+const CONNECT_LINK_PATTERN = /^connect:([a-z0-9-]+)(?::(you|workspace))?$/u;
+
+/**
+ * A connector offer written into a message's own Markdown.
+ *
+ * `[connect Gmail](connect:google-mail-calendar)`, optionally with a scope:
+ * `(connect:github:workspace)`. Avalon's answer to "I can't do that, go to
+ * Settings" is a thing you can press in the sentence that says it.
+ *
+ * Unlike a person mention this needs no per-render token, because the model is
+ * the intended author — a mention chip forged in message text would claim
+ * somebody said something, while a connect link can only ever start Avalon's
+ * own authorization for a connector in a closed set, which a person then has to
+ * complete in their own browser. What it does need is the caller's opt-in: see
+ * `offerConnections` on {@link MarkdownBody}.
+ */
+export function connectOfferFromHref(href: string | undefined): ConnectorCardData | undefined {
+  const match = href?.match(CONNECT_LINK_PATTERN);
+  if (!match) return undefined;
+  const offeringId = ConnectorOfferingIdSchema.safeParse(match[1]);
+  // An id outside the registry is not a connector, and rendering a button that
+  // cannot resolve one would be worse than leaving the words alone.
+  if (!offeringId.success) return undefined;
+  return {
+    offeringId: offeringId.data,
+    ...(match[2] ? { scope: match[2] as 'you' | 'workspace' } : {}),
+  };
+}
+
+function isConnectHref(href: string | undefined): boolean {
+  return href !== undefined && href.startsWith('connect:');
+}
+
+/**
+ * The connect offers in a paragraph that contains nothing else.
+ *
+ * This is the whole of how the model chooses between the two presentations: an
+ * offer inside a sentence is a chip in that sentence, and offers standing alone
+ * are rows. There is no second syntax to learn and no mode to set — the model
+ * writes where it wants the thing to appear, which is what it is already doing
+ * with every other line of its answer.
+ */
+function standaloneConnectOffers(node: ExtraProps['node']): ConnectorCardData[] | undefined {
+  const children = node?.children ?? [];
+  const offers: ConnectorCardData[] = [];
+  for (const child of children) {
+    if (child.type === 'text') {
+      if (child.value.trim() === '') continue;
+      return undefined;
+    }
+    // A soft line break between two offers arrives as whitespace and a hard one
+    // as a `br`. Both mean the same thing to the person who wrote them, so the
+    // two spaces at the end of a line must not be what decides whether they get
+    // rows or chips.
+    if (child.type === 'element' && child.tagName === 'br') continue;
+    if (child.type !== 'element' || child.tagName !== 'a') return undefined;
+    const href = child.properties?.['href'];
+    const offer = connectOfferFromHref(typeof href === 'string' ? href : undefined);
+    if (!offer) return undefined;
+    offers.push(offer);
+  }
+  return offers.length > 0 ? offers : undefined;
+}
+
+/**
+ * A paragraph that is nothing but connect offers, rendered as rows instead.
+ *
+ * At module scope on purpose. Defined inline in `MarkdownBody` it would be a
+ * fresh component type on every render, and React would unmount and remount
+ * every paragraph in every message body each time the transcript re-rendered —
+ * which it does on each streamed token.
+ */
+function ConnectOfferParagraph({
+  children,
+  node,
+  ...props
+}: React.ComponentProps<'p'> & ExtraProps): React.JSX.Element {
+  const offers = standaloneConnectOffers(node);
+  if (offers) return <ConnectorConnectRows cards={offers} />;
+  return <p {...props}>{children}</p>;
+}
+
 function mentionInitials(label: string): string {
   return label
     .replace(/^@/u, '')
@@ -289,7 +372,20 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
-export function MarkdownBody({ children, mentions = [] }: { children: string; mentions?: MessageMention[] }): React.JSX.Element {
+/**
+ * @param offerConnections Render `connect:` links as things a person can press.
+ *   Off by default and passed only for agent-authored text. Every author's
+ *   Markdown goes through this one component — a Slack member's message, an
+ *   inbound email, a quoted provider payload — and a connect affordance in text
+ *   that arrived from outside Avalon is somebody else's button in a transcript
+ *   this workspace trusts. Off, the words render as plain text, which is what
+ *   they are.
+ */
+export function MarkdownBody({ children, mentions = [], offerConnections = false }: {
+  children: string;
+  mentions?: MessageMention[];
+  offerConnections?: boolean;
+}): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
   const markdown = withConnectorMentionLinks(children, mentions, token);
@@ -299,6 +395,13 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
         components={{
           a: ({ children: linkChildren, href, node, ...props }) => {
             void node;
+            const connectOffer = offerConnections ? connectOfferFromHref(href) : undefined;
+            if (connectOffer) {
+              return <ConnectorConnectChip card={connectOffer} label={linkChildren} />;
+            }
+            if (isConnectHref(href)) {
+              return <span className="mention-text-fallback">{linkChildren}</span>;
+            }
             const personId = personIdFromHref(href);
             if (personId) {
               const mention = mentions.find((candidate) => (
@@ -324,6 +427,11 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
             return <a {...props} href={href} rel="noopener noreferrer" target="_blank">{linkChildren}</a>;
           },
           code: MarkdownCode,
+          // Only overridden where it can do something, and hoisted to module
+          // scope so it is the same component across renders: an inline one is
+          // a new component type each time, and React unmounts and remounts
+          // every paragraph in the body when that changes.
+          ...(offerConnections ? { p: ConnectOfferParagraph } : {}),
           pre: ({ children: preChildren }) => <>{preChildren}</>,
           table: MarkdownTable,
         }}
@@ -331,7 +439,8 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
         urlTransform={(url, key, node) => (
           // Both schemes reach the `a` component intact so it can decide there;
           // neither is ever rendered as a navigable link.
-          key === 'href' && node.tagName === 'a' && (personIdFromHref(url) || isConnectorHref(url))
+          key === 'href' && node.tagName === 'a'
+          && (personIdFromHref(url) || isConnectorHref(url) || isConnectHref(url))
             ? url
             : defaultUrlTransform(url)
         )}
@@ -355,7 +464,8 @@ export function AssistantMessageContent({
 }): React.JSX.Element {
   return (
     <>
-      {text ? <MarkdownBody mentions={mentions}>{text}</MarkdownBody> : null}
+      {/* The one caller that enables connect offers: this is Avalon's own turn. */}
+      {text ? <MarkdownBody mentions={mentions} offerConnections>{text}</MarkdownBody> : null}
       {showCopy && !streaming && text && (
         <footer className="agent-message-actions">
           <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(text)} type="button"><Clipboard size={12} /> Copy</button>

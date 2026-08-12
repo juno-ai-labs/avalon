@@ -11,7 +11,9 @@ import {
   AVALON_WEB_PLUGIN_ID,
   AVALON_WORKSTREAM_PLUGIN_ID,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
+  AVALON_FIND_CONNECTORS_TOOL_DEFINITION,
   BUILT_IN_SKILLS,
+  FindConnectorsInputSchema,
   RequestElicitationInputSchema,
   ShowConnectorCardsInputSchema,
   AutomationCompilerError,
@@ -80,6 +82,7 @@ import type { Env } from "../env";
 import { numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { connectionIsEligibleForRun } from "../lib/connector-run-eligibility";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
 import { ApiError } from "../lib/api-error";
@@ -100,6 +103,7 @@ import {
   invalidConnectorCardScopes,
   publishConnectorCards,
 } from "./connector-card-service";
+import { findConnectorOfferings } from "./connector-recommendation-service";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
   buildAttachmentModelParts,
@@ -2486,6 +2490,13 @@ async function createInlineChildHarnessSurface(options: {
     // anything, so its parent's wake-ups are context it can neither use nor act
     // on. The write half is already excluded by the read-only filter above.
     .filter((tool) => !tool.definition.capability.startsWith("workstream.wakeup."))
+    // Connector recommendation answers "what is missing from this run", and a
+    // sub-agent's run scope is deliberately narrower than its parent's — only
+    // the plugins it inherited. Asked here, a connection the parent holds and
+    // uses would come back as connected-but-unusable, which is true of this
+    // surface and false of the work. The sub-agent reports what it could not
+    // investigate; the parent, which knows its own scope, does the offering.
+    .filter((tool) => !tool.definition.capability.startsWith("connection."))
     .filter((tool) =>
       options.parentInput.reason !== "inbound_email"
       || !tool.definition.capability.startsWith("web."))
@@ -3728,10 +3739,7 @@ async function loadHarnessTools(
     if (row.workspace_id !== input.workspaceId) continue;
     const connectionId = String(row.id);
     const scope = row.scope === "workspace" ? "workspace" : "personal";
-    const eligible = scope === "workspace" ||
-      (input.executionPrincipal.type === "user" && scope === "personal" && row.owner_user_id === input.executionPrincipal.userId);
-    if (!eligible) continue;
-    if (scope === "personal" && (input.executionPrincipal.type !== "user" || row.owner_user_id !== input.executionPrincipal.userId)) continue;
+    if (!connectionIsEligibleForRun(row, input.executionPrincipal)) continue;
     const adapter = registry.get(String(row.connector_type));
     const grantedScopes = parseJson<string[]>(row.granted_scopes_json, []);
     const pluginId = `connection:${connectionId}`;
@@ -4871,6 +4879,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
   const coreTools = tools.filter((tool) =>
     tool.definition.name === "current_time"
     || tool.definition.name === "request_elicitation"
+    || tool.definition.name === "find_connectors"
     || tool.definition.name === "show_connector_cards");
   const memoryTools = tools.filter((tool) => tool.definition.capability.startsWith("memory."));
   const tableTools = tools.filter((tool) => tool.definition.capability.startsWith("table."));
@@ -4881,7 +4890,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           modelId: "avalon_core",
           shortWireName: "core",
           description: "Use Avalon's universally available core utilities.",
-          systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation for one structured blocking question that must pause the run for human input. Use core_show_connector_cards when a missing connection is what blocks the work, or when introducing what Avalon can reach: it shows an offer and returns, so the connection does not exist because you called it, and asking for one in prose instead leaves the reader to find the right place in Settings.",
+          systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation for one structured blocking question that must pause the run for human input. When a request needs a system whose tools this run does not have, call core_find_connectors before concluding anything: the plugin catalog lists only what is already connected, so its silence is not evidence that Avalon cannot reach something. Offer what it returns with core_show_connector_cards, or with an inline connect link when a sentence is the better place for it. Both show an offer and return, so a connection does not exist because you called them.",
           tools: coreTools,
           preload: true,
           explicit: true,
@@ -5394,6 +5403,38 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           output: { wakeupId: args.wakeupId, status: "cancelled" },
           summary: "Cancelled a scheduled wake-up",
           providerOperationId: args.wakeupId,
+        };
+      },
+    },
+    {
+      definition: AVALON_FIND_CONNECTORS_TOOL_DEFINITION,
+      execute: async (raw) => {
+        const args = FindConnectorsInputSchema.parse(raw);
+        const offerings = await findConnectorOfferings(env, {
+          workspaceId: input.workspaceId,
+          harnessRunId: input.harnessRunId,
+          executionPrincipal: input.executionPrincipal,
+          categories: args.categories,
+          ...(args.query ? { query: args.query } : {}),
+          includeConnected: args.includeConnected,
+        });
+        return {
+          output: {
+            connectors: offerings,
+            // Said explicitly, because an empty list has two very different
+            // meanings and a model that guesses wrong either invents a
+            // connector or gives up on one it already has.
+            ...(offerings.length === 0
+              ? {
+                  reason: args.includeConnected
+                    ? "No connector in this Avalon matches that search."
+                    : "Nothing to offer: every connector matching that search is already connected and usable in this run.",
+                }
+              : {}),
+          },
+          summary: offerings.length === 1
+            ? "Found 1 connector to offer"
+            : `Found ${offerings.length} connectors to offer`,
         };
       },
     },
