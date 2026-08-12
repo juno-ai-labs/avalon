@@ -15,16 +15,28 @@ export function notionCallbackUrl(env: Env): string {
 }
 
 /**
- * Matches on host rather than hostname alone, unlike the other shared ingresses.
- * They are only ever reached at a public name, but Notion's redirect URI is
- * derived from this same value, so development has to name a local address — and
- * there both regions are `127.0.0.1`, separated only by port. In production the
- * custom domain carries no port and the two comparisons are identical.
+ * Whether this request arrived at the shared ingress rather than at the Worker's
+ * own regional API.
+ *
+ * Two departures from the GitHub, Linear, and Slack equivalents, both forced by
+ * the fact that Notion's redirect URI is derived from this same value and so has
+ * to name a reachable address in development:
+ *
+ * - It matches on `host`, not `hostname`, because both local Workers are
+ *   `127.0.0.1` and only the port separates them. A production custom domain
+ *   carries no port, so the two comparisons are identical there.
+ * - A request to the region's **own** `PUBLIC_API_BASE_URL` is never the shared
+ *   ingress, even when the two are configured to the same address. The ingress
+ *   is a dedicated host precisely so it can be gated down to three routes;
+ *   without this, pointing the ingress at the regional API — which is exactly
+ *   what a local `.dev.vars` does — would apply that gate to the whole API and
+ *   404 every other route.
  */
 export function isSharedNotionIngress(env: Env, requestUrl: string | URL): boolean {
-  const configured = new URL(notionIngressBaseUrl(env));
   const request = new URL(requestUrl);
-  return request.host.toLowerCase() === configured.host.toLowerCase();
+  const host = request.host.toLowerCase();
+  if (host === regionalApiHost(env)) return false;
+  return host === new URL(notionIngressBaseUrl(env)).host.toLowerCase();
 }
 
 /**
@@ -40,4 +52,13 @@ export function isAllowedNotionIngressRoute(method: string, pathname: string): b
 
 function notionIngressBaseUrl(env: Env): string {
   return env.NOTION_INGRESS_BASE_URL || DEFAULT_NOTION_INGRESS_BASE_URL;
+}
+
+function regionalApiHost(env: Env): string | null {
+  if (!env.PUBLIC_API_BASE_URL) return null;
+  try {
+    return new URL(env.PUBLIC_API_BASE_URL).host.toLowerCase();
+  } catch {
+    return null;
+  }
 }

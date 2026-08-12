@@ -127,10 +127,6 @@ const safeDefaults = {
   PUBLIC_WEB_BASE_URL: "http://127.0.0.1:5174",
   ALLOWED_ORIGINS: "app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
   DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
-  // Notion derives its one redirect URI from this, so leaving it unset would
-  // point a local authorization at production. Both regions name the local
-  // Global Worker, exactly as they name the shared ingress in production.
-  NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787",
   OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
   OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
@@ -242,6 +238,15 @@ for (const region of ["global", "eu"]) {
     || local[`GITHUB_APP_PRIVATE_KEY_${region.toUpperCase()}`]
     || existing.GITHUB_APP_PRIVATE_KEY
     || "";
+  // Notion derives its one redirect URI from this, so leaving it unset would
+  // point a local authorization at production. Development names the region's
+  // own Worker rather than the shared host: a callback then completes in the
+  // region that started it, with no cross-region service binding to run, and
+  // `isSharedNotionIngress` declines the regional API so the ingress route gate
+  // never applies to the whole local surface. An explicit value in .env.local
+  // still wins, for exercising the shared path against a tunnel.
+  regional.NOTION_INGRESS_BASE_URL = local.NOTION_INGRESS_BASE_URL
+    || regional.PUBLIC_API_BASE_URL;
   // Keep generated development encryption/signing material stable per region.
   regional.SESSION_SIGNING_KEY ||= randomBytes(48).toString("base64url");
   regional.OAUTH_STATE_ENCRYPTION_KEY ||= randomBytes(32).toString("base64");

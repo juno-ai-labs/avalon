@@ -114,9 +114,37 @@ describe("shared Notion connection routing", () => {
   });
 
   it("separates local regional Workers that share a hostname but not a port", () => {
-    const env = { ...environment(new FakeDatabase()), NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787" } as Env;
+    const env = {
+      ...environment(new FakeDatabase()),
+      PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+      NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787",
+    } as Env;
     expect(isSharedNotionIngress(env, "http://127.0.0.1:8787/connections/notion/callback")).toBe(true);
     expect(isSharedNotionIngress(env, "http://127.0.0.1:8788/connections/notion/callback")).toBe(false);
+  });
+
+  it("never treats the Worker's own regional API as the shared ingress", () => {
+    // Development points the ingress at the Worker itself. Were that the shared
+    // host, the three-route gate would apply to the whole local API.
+    const env = {
+      ...environment(new FakeDatabase()),
+      PUBLIC_API_BASE_URL: "http://127.0.0.1:8787",
+      NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787",
+    } as Env;
+    expect(isSharedNotionIngress(env, "http://127.0.0.1:8787/connections/notion/callback")).toBe(false);
+    expect(isSharedNotionIngress(env, "http://127.0.0.1:8787/workspace")).toBe(false);
+  });
+
+  it("keeps the local API reachable when development points the ingress at itself", async () => {
+    const app = createApp();
+    const root = await app.request("http://127.0.0.1:8787/", undefined, developmentEnv());
+    expect(root.status).toBe(200);
+    await expect(root.json()).resolves.toMatchObject({ service: "avalon-api", region: "global" });
+
+    // A protected route must be refused by authentication, not swallowed by the
+    // ingress route gate.
+    const workspace = await app.request("http://127.0.0.1:8787/workspace", undefined, developmentEnv());
+    expect(workspace.status).not.toBe(404);
   });
 
   it("gives both regions the one redirect URI the connection was registered with", () => {
@@ -309,10 +337,19 @@ describe("shared Notion connection routing", () => {
   });
 });
 
+function developmentEnv(): Env {
+  return {
+    ...ingressEnv(),
+    PUBLIC_API_BASE_URL: "http://127.0.0.1:8787",
+    NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787",
+  } as Env;
+}
+
 function ingressEnv(): Env {
   return {
     ALLOWED_ORIGINS: "app://avalon",
     AVALON_REGION: "global",
+    PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
@@ -328,6 +365,7 @@ function environment(database: FakeDatabase): Env {
   return {
     DB: database as unknown as D1Database,
     AVALON_REGION: "global",
+    PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
     NOTION_INTEGRATION_ID: INTEGRATION_ID,
     NOTION_WEBHOOK_SETUP_TOKEN: "setup-token",
