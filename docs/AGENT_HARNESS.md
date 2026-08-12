@@ -284,7 +284,7 @@ live during a migration is the *previous* one — and it calls `loadArtifacts` o
 every `GET /workstreams/:id/context`. Dropping the table alongside this code
 removal would fail every context request in both regions for the length of the
 rollout, and indefinitely if the deploy failed after the migration step. So
-`0068_retire_artifact_messages.sql` retires only the message type, a later
+`0069_retire_artifact_messages.sql` retires only the message type, a later
 release owes the `DROP TABLE`, and the R2 objects under
 `<region>/<workspace>/artifacts/` have to be swept before that drop takes their
 only pointers with it. [The runbook](RUNBOOK.md#finishing-the-artifact-retirement)
