@@ -225,6 +225,26 @@ describe('MessageBlock human identity', () => {
     expect(screen.queryByText('Adam')).not.toBeInTheDocument();
   });
 
+  it('explains an own turn nobody typed, without naming the person back to themselves', () => {
+    // A suggested-work brief is stored as the selecting member's turn but is
+    // written by Avalon. The label is the only thing on screen that accounts for
+    // a long brief appearing under their own name, so it survives the header
+    // suppression that own turns otherwise get.
+    const briefMessage: Message = {
+      ...baseMessage,
+      id: 'message-brief',
+      contextLabel: 'Expanded by Avalon from suggested work',
+      text: 'Trace the failed release, identify the owner, and prepare the fix.',
+    };
+    render(<MessageBlock {...actions} currentUserId="user-adam" message={briefMessage} />);
+
+    expect(screen.getByText('Expanded by Avalon from suggested work'))
+      .toHaveClass('message-context-label');
+    expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
+    expect(screen.queryByText('Adam')).not.toBeInTheDocument();
+    expect(document.querySelector('.message-author-dot')).not.toBeInTheDocument();
+  });
+
   it('shows compact identity for a coworker prompt', () => {
     const coworkerMessage: Message = {
       ...baseMessage,

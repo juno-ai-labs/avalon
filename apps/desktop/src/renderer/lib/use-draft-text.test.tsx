@@ -139,6 +139,21 @@ describe('useDraftText', () => {
     expect(await readDraftText(draftKey)).toBeNull();
   });
 
+  it('commits a draft typed before the cache answered when the key changes, under the key it was typed in', async () => {
+    // The unmount case above, reached by the other exit. Nothing is awaited
+    // before the edit, so the read is still in flight: neither the save effect
+    // nor the hydration handler will write it, and the key it belongs to is the
+    // one being left rather than the one arriving.
+    const { result, rerender } = renderHook(({ key }) => useDraftText(key), { initialProps: { key: draftKey } });
+    act(() => result.current.setText('typed while the read was in flight'));
+
+    rerender({ key: 'workstream:other' });
+
+    await waitFor(async () =>
+      expect((await readDraftText(draftKey))?.text).toBe('typed while the read was in flight'));
+    expect(await readDraftText('workstream:other')).toBeNull();
+  });
+
   it('swaps drafts when the key changes and keeps each one separate', async () => {
     await writeDraftText('workstream:other', 'the other draft');
     const { result, rerender } = renderHook(({ key }) => useDraftText(key), { initialProps: { key: draftKey } });

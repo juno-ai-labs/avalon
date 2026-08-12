@@ -159,6 +159,11 @@ export async function launchWorkstreamHarness(
     workspaceId: string;
     workstreamId: string;
     triggerMessageId: string | null;
+    /**
+     * The newest message the run may see, when that is not the trigger. Only
+     * `retry` sets it; see the field's contract for why the two come apart.
+     */
+    transcriptFenceMessageId?: string | null;
     origin: string;
     executionPrincipal: ExecutionPrincipal;
     slackOrigin?: SlackOriginContext;
@@ -188,8 +193,8 @@ export async function launchWorkstreamHarness(
     env.DB.prepare(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
-        status, started_at, model, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+        status, started_at, model, created_at, trigger_message_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
     ).bind(
       id,
       input.workspaceId,
@@ -200,6 +205,10 @@ export async function launchWorkstreamHarness(
       at,
       model,
       at,
+      // Stored, not merely passed to the Workflow: it is what `retry` replays
+      // against, and reconstructing it later is a guess that gets the answer
+      // wrong for every run whose trigger was not the newest human message.
+      input.triggerMessageId,
     ),
     env.DB.prepare(
       `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
@@ -215,6 +224,9 @@ export async function launchWorkstreamHarness(
     automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: input.executionPrincipal,
+    ...(input.transcriptFenceMessageId
+      ? { transcriptFenceMessageId: input.transcriptFenceMessageId }
+      : {}),
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
     ...(input.digestDeliveryId ? { digestDeliveryId: input.digestDeliveryId } : {}),
     ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
@@ -748,7 +760,17 @@ export class WorkstreamService {
       objective: input.displayPrompt,
       emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
-      openingAuthor: { type: "agent" },
+      // The person who selected the suggestion, not the agent that expanded it.
+      // Selecting is the request; the brief is that request written out. Under
+      // agent authorship the transcript opened with Avalon instructing itself,
+      // and the work stream held no human turn at all — which mattered because
+      // `retry` used to resolve its trigger as the latest human message, found
+      // none here, and replayed the run with the brief projected away. `retry`
+      // now inherits the failed run's stored trigger instead, so that particular
+      // hazard is gone either way; the attribution is what this line is for. The
+      // structured content below keeps the distinction honest: the turn is
+      // theirs, the words are Avalon's, and the label says so.
+      openingAuthor: { type: "human", userId: this.auth.userId },
       openingMessage: input.executionPrompt,
       openingStructuredContent: {
         kind: "suggested_work_expansion",
@@ -1728,21 +1750,50 @@ export class WorkstreamService {
       throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
     }
     const latest = await this.env.DB.prepare(
-      `SELECT status FROM harness_runs
+      `SELECT status, trigger_message_id FROM harness_runs
        WHERE workspace_id = ? AND workstream_id = ?
          AND parent_tool_call_id IS NULL
          AND origin != 'hypersight_block'
        ORDER BY created_at DESC LIMIT 1`,
-    ).bind(this.auth.workspaceId, id).first<{ status: string }>();
+    ).bind(this.auth.workspaceId, id).first<{ status: string; trigger_message_id: string | null }>();
     if (!latest || (latest.status !== "failed" && latest.status !== "stopped")) {
       throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
     }
-    const trigger = await this.env.DB.prepare(
+    // The failed run's own trigger, not the newest human message. The two agree
+    // only when nothing has happened since, so guessing sent the replay after
+    // whatever message happened to be closest whenever the run being retried
+    // had no message trigger of its own, or had one older than the last thing
+    // somebody said. A run written before that id was stored, and a run that
+    // genuinely had no trigger, both read as NULL here.
+    //
+    // The fence is separate, and has to be: the trigger is also the transcript's
+    // upper bound, so replaying against it alone would hide anything said since
+    // the run failed — including the correction somebody posts *because* it
+    // failed, which starts no run of its own when the work stream has other
+    // participants and the message was not for the agent. A retry therefore
+    // keeps the identity and moves the bound to the newest message there is.
+    const newest = await this.env.DB.prepare(
       `SELECT id FROM messages
-       WHERE workspace_id = ? AND workstream_id = ? AND author_type = 'human'
+       WHERE workspace_id = ? AND workstream_id = ?
        ORDER BY sequence_number DESC LIMIT 1`,
     ).bind(this.auth.workspaceId, id).first<{ id: string }>();
-    return { harnessRunId: await this.launchHarness(id, trigger?.id ?? null, "manual_retry") };
+    // Launched through the module function rather than the private wrapper: the
+    // wrapper's tail is positional, and a fence passed behind three `undefined`
+    // Slack arguments is a call nobody can read.
+    return {
+      harnessRunId: await launchWorkstreamHarness(this.env, {
+        workspaceId: this.auth.workspaceId,
+        workstreamId: id,
+        triggerMessageId: latest.trigger_message_id,
+        origin: "manual_retry",
+        executionPrincipal: { type: "user", userId: this.auth.userId },
+        // Only when it actually moves the bound. Passing the trigger back as its
+        // own fence is a no-op the projection would have to reason about.
+        ...(newest && newest.id !== latest.trigger_message_id
+          ? { transcriptFenceMessageId: newest.id }
+          : {}),
+      }),
+    };
   }
 
   async socketTicket(id: string) {
