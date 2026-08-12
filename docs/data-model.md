@@ -130,12 +130,21 @@ includes it. Knowing an object ID is never sufficient authorization.
 - `messages` has a per-work-stream `sequence_number`;
   `workstreams.next_sequence_number` allocates ordered events.
 - `message_mentions` stores validated person and connector spans.
-- `resources` holds metadata while `content_ref` points at the immutable,
-  user-visible original in regional R2. Image attachments may also carry a
-  `model_content_ref`, `model_mime_type`, SHA-256, and bounded model metadata for
-  a signature-validated derivative used only for model input. Animated GIF
-  metadata records dimensions, frame count, duration, approximate frame rate, loop
-  behavior, and storyboard timestamps. `workstream_resources` owns
+- `resources` holds metadata while `content_ref` points at the user-visible
+  regional R2 object and `content_sha256` identifies the exact bytes selected for
+  model extraction. Uploads hash before the row commits; connector hydration
+  writes a hash-versioned object and atomically invalidates an older derivative.
+  `model_content_status`, extractor version, readable-character count,
+  extraction timestamp, bounded error code, and optional derivative/index refs
+  make pending, failed, unsupported, and ready states distinct. Existing image
+  attachments may also carry a signature-validated model derivative and bounded
+  metadata; animated GIF metadata records dimensions, frame count, duration,
+  approximate frame rate, loop behavior, and storyboard timestamps.
+  `resource_model_objects` catalogs active or superseded derivative/index
+  objects. Deleting a resource copies the original and every registered model
+  reference into `resource_object_deletion_outbox` before cascade cleanup, while
+  detaching one relationship leaves shared resource objects intact.
+  `workstream_resources` owns
   attachment/watch behavior; its `relationship_type` distinguishes an ordinary
   `attachment` from the `origin` a work stream was created from — see
   [work-stream origin attachments](workstream-origin-attachments.md).
@@ -406,6 +415,34 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-12 — Attachment derivatives have explicit regional lifecycle state
+
+**What changed:** Resources now identify exact original bytes and carry explicit
+model-derivative state, version, coverage metadata, and current index reference.
+Every original, current, or superseded model object is registered or copied into
+a retryable regional deletion outbox before its resource row disappears.
+Compaction rows also record the deterministic checkpoint template version.
+
+**Why:** Eager attachment projection treated a bounded prefix as though it were
+the file and offered no durable state that could distinguish pending extraction,
+conversion failure, or a reusable image. Adding lazy tools without lifecycle
+state would turn those cases into empty reads and leak derivative objects when a
+resource was replaced or deleted.
+
+**Considered and rejected:** Eagerly backfilling every historical resource and
+deleting objects when any relationship detaches. A backfill would create an
+unbounded regional conversion spike; relationship deletion is not object
+ownership and could destroy a resource still attached elsewhere.
+
+**Consequences:** Upload and hydration paths must maintain `content_sha256` for
+the exact stored object. New derivative writers atomically advance the resource
+row and catalog their objects, and new resource owners rely on row deletion—not
+relationship detachment—to initiate physical cleanup. Legacy rows remain valid
+and are classified lazily on first authorized use.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Notion scope migration follows credential dialect
 

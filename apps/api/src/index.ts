@@ -8,6 +8,7 @@ import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
 import { reconcileDigestDefaults } from "./services/digest-service";
 import { processMemoryIndexOutbox } from "./services/memory-service";
 import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
+import { reapDeletedResourceObjects } from "./services/resource-object-cleanup";
 import { processPendingNotePrivacyNotifications } from "./services/note-privacy-notification-service";
 import { SlackAgentService } from "./services/slack-agent-service";
 import { refreshSlackWorkstreamUnfurls } from "./services/slack-unfurl-refresh";
@@ -27,12 +28,12 @@ async function reapExpiredHarnessAttempts(env: Env): Promise<void> {
 async function reapExpiredDraftAttachments(env: Env): Promise<void> {
   const cutoff = new Date(Date.now() - DRAFT_ATTACHMENT_TTL_HOURS * 60 * 60 * 1_000).toISOString();
   const stale = await env.DB.prepare(
-    `SELECT id, content_ref, model_content_ref FROM resources
+    `SELECT id, content_ref, model_content_ref, model_index_ref FROM resources
      WHERE provider = 'avalon_upload' AND attachment_status = 'draft' AND created_at < ?
        AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
        AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)
      LIMIT 100`,
-  ).bind(cutoff).all<{ id: string; content_ref: string | null; model_content_ref: string | null }>();
+  ).bind(cutoff).all<{ id: string; content_ref: string | null; model_content_ref: string | null; model_index_ref: string | null }>();
   if (stale.results.length === 0) return;
   await env.DB.batch(stale.results.map((resource) => env.DB.prepare(
     `DELETE FROM resources WHERE id = ? AND provider = 'avalon_upload' AND attachment_status = 'draft'`,
@@ -40,6 +41,7 @@ async function reapExpiredDraftAttachments(env: Env): Promise<void> {
   await Promise.all(stale.results.flatMap((resource) => [
     ...(resource.content_ref ? [env.PAYLOADS.delete(resource.content_ref)] : []),
     ...(resource.model_content_ref ? [env.PAYLOADS.delete(resource.model_content_ref)] : []),
+    ...(resource.model_index_ref ? [env.PAYLOADS.delete(resource.model_index_ref)] : []),
   ]));
 }
 
@@ -121,6 +123,7 @@ export default {
       reapExpiredHarnessAttempts(env),
       reapExpiredDraftAttachments(env),
       reapDeletedNoteObjects(env),
+      reapDeletedResourceObjects(env),
       processPendingNotePrivacyNotifications(env),
       processMemoryIndexOutbox(env),
       new SlackAgentService(env).maintainIngress(),

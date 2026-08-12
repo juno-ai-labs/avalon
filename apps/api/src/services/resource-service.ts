@@ -8,7 +8,7 @@ import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
-import { encryptString } from "../lib/crypto";
+import { encryptString, sha256Hex } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 
 export interface ResolveResourceInput {
@@ -172,7 +172,9 @@ export class ResourceService {
     ).bind(id).first();
     if (existing) throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
     const key = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}`;
-    await this.env.PAYLOADS.put(key, file.stream(), {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const contentSha256 = await sha256Hex(bytes);
+    await this.env.PAYLOADS.put(key, bytes, {
       httpMetadata: { contentType: file.type || "application/octet-stream", contentDisposition: `attachment; filename="${safeFilename(file.name)}"` },
       customMetadata: { originalName: file.name, uploadedBy: this.auth.userId },
     });
@@ -181,8 +183,9 @@ export class ResourceService {
       await this.env.DB.prepare(
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
-          metadata_json, last_hydrated_at, uploaded_by_user_id, attachment_status, created_at, updated_at)
-         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+          content_sha256, model_content_status, metadata_json, last_hydrated_at,
+          uploaded_by_user_id, attachment_status, created_at, updated_at)
+         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?)`,
       ).bind(
         id,
         this.auth.workspaceId,
@@ -194,6 +197,7 @@ export class ResourceService {
         truncateUtf16Safe(title ?? file.name, 300),
         truncateUtf16Safe(file.type || "application/octet-stream", 160),
         key,
+        contentSha256,
         JSON.stringify({ originalName: file.name, size: file.size }),
         at,
         this.auth.userId,
@@ -214,14 +218,16 @@ export class ResourceService {
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
          AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
          AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)
-       RETURNING content_ref, model_content_ref`,
+       RETURNING content_ref, model_content_ref, model_index_ref`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<{
       content_ref: string | null;
       model_content_ref: string | null;
+      model_index_ref: string | null;
     }>();
     if (!resource) throw new ApiError(404, "attachment_draft_not_found", "The draft attachment is unavailable or already sent");
     if (resource.content_ref) await this.env.PAYLOADS.delete(resource.content_ref);
     if (resource.model_content_ref) await this.env.PAYLOADS.delete(resource.model_content_ref);
+    if (resource.model_index_ref) await this.env.PAYLOADS.delete(resource.model_index_ref);
   }
 
   async resolve(input: ResolveResourceInput) {
@@ -302,13 +308,48 @@ export class ResourceService {
     if (JSON.stringify(context.credentials) !== before) {
       await this.persistConnectionCredentials(connection, context.credentials);
     }
-    const idKey = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/hydrated.json`;
-    await this.env.PAYLOADS.put(idKey, JSON.stringify(hydrated), { httpMetadata: { contentType: "application/json" } });
+    const serialized = JSON.stringify(hydrated);
+    const contentSha256 = await sha256Hex(serialized);
+    const idKey = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/hydrated/${contentSha256}.json`;
     const at = nowIso();
-    await this.env.DB.prepare(
-      `UPDATE resources SET content_ref = ?, last_hydrated_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ?`,
-    ).bind(idKey, at, at, id, this.auth.workspaceId).run();
+    if (resource.content_sha256 === contentSha256) {
+      await this.env.DB.prepare(
+        `UPDATE resources SET last_hydrated_at = ?, updated_at = ?
+         WHERE id = ? AND workspace_id = ?`,
+      ).bind(at, at, id, this.auth.workspaceId).run();
+    } else {
+      await this.env.PAYLOADS.put(idKey, serialized, { httpMetadata: { contentType: "application/json" } });
+      try {
+        await this.env.DB.batch([
+          this.env.DB.prepare(
+            `INSERT OR IGNORE INTO resource_object_deletion_outbox
+              (object_ref, resource_id, object_kind, created_at, updated_at)
+             SELECT content_ref, id, 'original', ?, ? FROM resources
+             WHERE id = ? AND workspace_id = ? AND content_ref IS NOT NULL AND content_ref != ?`,
+          ).bind(at, at, id, this.auth.workspaceId, idKey),
+          this.env.DB.prepare(
+            `INSERT OR IGNORE INTO resource_object_deletion_outbox
+              (object_ref, resource_id, object_kind, created_at, updated_at)
+             SELECT object_ref, resource_id, object_kind, ?, ?
+             FROM resource_model_objects WHERE resource_id = ?`,
+          ).bind(at, at, id),
+          this.env.DB.prepare("DELETE FROM resource_model_objects WHERE resource_id = ?").bind(id),
+          this.env.DB.prepare(
+            `UPDATE resources
+             SET content_ref = ?, content_sha256 = ?, last_hydrated_at = ?, updated_at = ?,
+                 model_content_ref = NULL, model_mime_type = NULL, model_content_sha256 = NULL,
+                 model_metadata_json = NULL, model_index_ref = NULL,
+                 model_content_status = 'pending', model_content_extractor_version = NULL,
+                 model_content_character_count = NULL, model_content_extracted_at = NULL,
+                 model_content_error_code = NULL
+             WHERE id = ? AND workspace_id = ?`,
+          ).bind(idKey, contentSha256, at, at, id, this.auth.workspaceId),
+        ]);
+      } catch (error) {
+        await this.env.PAYLOADS.delete(idKey).catch(() => undefined);
+        throw error;
+      }
+    }
     return this.get(id);
   }
 
