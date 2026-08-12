@@ -1,22 +1,25 @@
 import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, renderHook } from '@testing-library/react';
+import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonApi } from './api';
 import type { HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import {
+  applyActiveStreamCheckpoints,
   applyStreamingSocketEvent,
   insertMessage,
   mergeCanonicalTranscript,
   mergeCanonicalTranscriptAfterConcurrentEvent,
   nextTranscriptSequence,
+  reconcileCanonicalTranscript,
   replaceWithCanonicalTranscript,
   SOCKET_STABLE_CONNECTION_MS,
   socketHeartbeatDelay,
   socketReconnectDelay,
   useWorkstreamSocket,
 } from './use-workstream-socket';
+import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
 
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
@@ -424,6 +427,107 @@ describe('useWorkstreamSocket', () => {
 
     expect(mergeCanonicalTranscript([older, staleLatest], [refreshedLatest])).toEqual([older, refreshedLatest]);
     expect(replaceWithCanonicalTranscript([older, staleLatest], [refreshedLatest])).toEqual([older, refreshedLatest]);
+  });
+
+  it('retains an active assistant stream across a canonical refresh', () => {
+    const streaming: Message = {
+      id: 'streaming-message',
+      workstreamId: 'workstream-one',
+      sequenceNumber: 9,
+      authorType: 'agent',
+      messageType: 'text',
+      text: 'The response so far',
+      createdAt: '2026-07-31T19:20:00.000Z',
+      streaming: true,
+      realtimeOrder: { anchorSequenceNumber: 9, eventSequence: 12, placement: 'at_anchor' },
+    };
+
+    expect(mergeCanonicalTranscript([streaming], [])).toEqual([streaming]);
+    expect(replaceWithCanonicalTranscript([streaming], [])).toEqual([]);
+    expect(reconcileCanonicalTranscript([streaming], [], 'running')).toEqual([streaming]);
+    expect(reconcileCanonicalTranscript([streaming], [], 'failed')).toEqual([]);
+  });
+
+  it('joins an unseen active stream at its checkpoint and appends only new chunks', () => {
+    const workstreamId = '00000000-0000-7000-8000-000000000071';
+    const messageId = '00000000-0000-7000-8000-000000000072';
+    const cursors = new Map();
+    let transcript = applyActiveStreamCheckpoints([], [{
+      messageId,
+      harnessRunId: '00000000-0000-7000-8000-000000000073',
+      turnId: 'turn-cold-join',
+      epoch: 0,
+      streamSeq: 2,
+      seenTurnIds: ['turn-cold-join'],
+      text: 'Already streamed',
+      turnStartOffset: 0,
+      roomSequence: 20,
+      createdAt: '2026-07-31T19:20:00.000Z',
+    }], workstreamId, cursors);
+
+    // Catch-up may overlap the checkpoint when a frame lands during snapshot
+    // loading. Its Bind cursor prevents the prefix being appended twice.
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 21,
+      occurredAt: '2026-07-31T19:20:01.000Z',
+      messageId,
+      turnId: 'turn-cold-join',
+      epoch: 0,
+      streamSeq: 2,
+      reset: false,
+      delta: ' streamed',
+    }, workstreamId, cursors);
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 22,
+      occurredAt: '2026-07-31T19:20:02.000Z',
+      messageId,
+      turnId: 'turn-cold-join',
+      epoch: 0,
+      streamSeq: 3,
+      reset: false,
+      delta: ' and live',
+    }, workstreamId, cursors);
+
+    expect(transcript).toHaveLength(1);
+    expect(transcript[0]).toMatchObject({
+      id: messageId,
+      text: 'Already streamed and live',
+      streaming: true,
+    });
+  });
+
+  it('reanchors a cold-join checkpoint after canonical history arrives', () => {
+    const workstreamId = '00000000-0000-7000-8000-000000000074';
+    const messageId = '00000000-0000-7000-8000-000000000075';
+    const cursors = new Map();
+    const checkpoint = applyActiveStreamCheckpoints([], [{
+      messageId,
+      harnessRunId: '00000000-0000-7000-8000-000000000076',
+      turnId: 'turn-cold-order',
+      epoch: 0,
+      streamSeq: 1,
+      seenTurnIds: ['turn-cold-order'],
+      text: 'Current response',
+      turnStartOffset: 0,
+      roomSequence: 40,
+      createdAt: '2026-07-31T19:20:02.000Z',
+    }], workstreamId, cursors);
+    const canonical: Message[] = [{
+      id: '00000000-0000-7000-8000-000000000077',
+      workstreamId,
+      sequenceNumber: 39,
+      authorType: 'human',
+      messageType: 'text',
+      text: 'Triggering message',
+      createdAt: '2026-07-31T19:20:01.000Z',
+    }];
+
+    const merged = mergeCanonicalTranscript(checkpoint, canonical);
+
+    expect(merged.map((message) => message.id)).toEqual([canonical[0]?.id, messageId]);
+    expect(merged[1]?.realtimeOrder?.anchorSequenceNumber).toBe(40);
   });
 
   it('drops synthetic realtime tool rows after a terminal canonical refresh', () => {
@@ -877,7 +981,7 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => [canonicalTool]),
-      getWorkstreams: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1043,7 +1147,7 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1087,7 +1191,7 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => canonicalWorkstream),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1128,7 +1232,7 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1195,7 +1299,7 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages,
-      getWorkstreams: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1263,7 +1367,7 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => [canonicalTool]),
-      getWorkstreams: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1309,6 +1413,131 @@ describe('useWorkstreamSocket', () => {
     act(() => FakeWebSocket.instances[1]?.open());
 
     expect(FakeWebSocket.instances[1]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0 }));
+  });
+
+  it('hands a running stream between foreground and background subscribers without gaps or duplicate text', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000401';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000402';
+    const messageId = '00000000-0000-7000-8000-000000000403';
+    const harnessRunId = '00000000-0000-7000-8000-000000000404';
+    const api = {
+      getSocketTicket: vi.fn(async (workstreamId: string) => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+      getWorkstream: vi.fn(async (workstreamId: string) => ({
+        id: workstreamId,
+        harnessStatus: 'running',
+      } as WorkstreamDetail)),
+      getMessages: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
+    } as unknown as AvalonApi;
+
+    function Socket({ workstreamId }: { workstreamId: string }): null {
+      useWorkstreamSocket(api, workstreamId, true);
+      return null;
+    }
+    function Tree({ view }: { view: 'first' | 'away' | 'returned' }): React.JSX.Element {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <WorkstreamSocketResumeProvider scope="user-one:workspace-one">
+            {view === 'away' ? (
+              <>
+                <Socket key="background-first" workstreamId={firstWorkstreamId} />
+                <Socket key="foreground-second" workstreamId={secondWorkstreamId} />
+              </>
+            ) : (
+              <Socket key={view} workstreamId={firstWorkstreamId} />
+            )}
+          </WorkstreamSocketResumeProvider>
+        </QueryClientProvider>
+      );
+    }
+    const latestSocketFor = (workstreamId: string): FakeWebSocket => {
+      const socket = FakeWebSocket.instances.filter((candidate) => candidate.url.endsWith(workstreamId)).at(-1);
+      if (!socket) throw new Error(`No socket for ${workstreamId}`);
+      return socket;
+    };
+
+    const rendered = render(<Tree view="first" />);
+    await flushPromises();
+    const firstSocket = latestSocketFor(firstWorkstreamId);
+    act(() => firstSocket.open());
+    expect(firstSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0 }));
+    act(() => firstSocket.message({
+      type: 'stream_started',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:21:00.000Z',
+      messageId,
+      harnessRunId,
+      turnId: 'turn-route-change',
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    act(() => firstSocket.message({
+      type: 'stream_delta',
+      sequence: 2,
+      occurredAt: '2026-07-31T19:21:01.000Z',
+      messageId,
+      turnId: 'turn-route-change',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'One',
+    }));
+
+    rendered.rerender(<Tree view="away" />);
+    await flushPromises();
+    const backgroundSocket = latestSocketFor(firstWorkstreamId);
+    act(() => backgroundSocket.open());
+    expect(backgroundSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2 }));
+    // A retried Bind frame can occupy a new room sequence. The stream cursor
+    // crossing the component handoff must reject it before the next real chunk.
+    act(() => backgroundSocket.message({
+      type: 'stream_delta',
+      sequence: 3,
+      occurredAt: '2026-07-31T19:21:02.000Z',
+      messageId,
+      turnId: 'turn-route-change',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'One',
+    }));
+    act(() => backgroundSocket.message({
+      type: 'stream_delta',
+      sequence: 4,
+      occurredAt: '2026-07-31T19:21:03.000Z',
+      messageId,
+      turnId: 'turn-route-change',
+      epoch: 0,
+      streamSeq: 2,
+      reset: false,
+      delta: ' two',
+    }));
+    await flushPromises();
+    expect(queryClient.getQueryData<Message[]>(['messages', firstWorkstreamId])?.[0]?.text).toBe('One two');
+
+    rendered.rerender(<Tree view="returned" />);
+    await flushPromises();
+    const returnedSocket = latestSocketFor(firstWorkstreamId);
+    act(() => returnedSocket.open());
+    expect(returnedSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 4 }));
+    act(() => returnedSocket.message({
+      type: 'stream_delta',
+      sequence: 5,
+      occurredAt: '2026-07-31T19:21:04.000Z',
+      messageId,
+      turnId: 'turn-route-change',
+      epoch: 0,
+      streamSeq: 3,
+      reset: false,
+      delta: ' three',
+    }));
+    expect(queryClient.getQueryData<Message[]>(['messages', firstWorkstreamId])?.[0]?.text).toBe('One two three');
   });
 
   it('keeps retrying ticket failures beyond the old four-attempt cutoff', async () => {
@@ -1420,25 +1649,34 @@ describe('useWorkstreamSocket', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
-    queryClient.setQueryData(['workstream', 'workstream-one'], { id: 'workstream-one', title: 'Stale' });
+    const messageId = '00000000-0000-7000-8000-000000000501';
+    const harnessRunId = '00000000-0000-7000-8000-000000000502';
+    queryClient.setQueryData(['workstream', 'workstream-one'], {
+      id: 'workstream-one',
+      title: 'Stale',
+      harnessStatus: 'completed',
+      latestHarnessRunId: '00000000-0000-7000-8000-000000000503',
+    });
     queryClient.setQueryData(['messages', 'workstream-one'], []);
     queryClient.setQueryData(['workstreams'], [{ id: 'workstream-one', title: 'Stale' }]);
     const getSocketTicket = vi.fn(async () => ({
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const canonicalWorkstream = { id: 'workstream-one', title: 'Canonical' };
-    const canonicalWorkstreams = [{ id: 'workstream-one', title: 'Canonical' }];
+    const canonicalWorkstream = {
+      id: 'workstream-one',
+      title: 'Canonical',
+      harnessStatus: 'running',
+      latestHarnessRunId: harnessRunId,
+    };
     const getWorkstream = vi.fn(async () => canonicalWorkstream);
     const getMessages = vi.fn()
       .mockRejectedValueOnce(new Error('transient D1 failure'))
       .mockResolvedValueOnce([]);
-    const getWorkstreams = vi.fn(async () => canonicalWorkstreams);
     const api = {
       getSocketTicket,
       getWorkstream,
       getMessages,
-      getWorkstreams,
     } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper(queryClient) });
 
@@ -1450,12 +1688,26 @@ describe('useWorkstreamSocket', () => {
       latestSequence: 14,
       occurredAt: '2026-07-31T20:00:00.000Z',
       reason: 'history_unavailable',
+      activeStreams: [{
+        messageId,
+        harnessRunId,
+        turnId: 'turn-resync',
+        epoch: 0,
+        streamSeq: 2,
+        seenTurnIds: ['turn-resync'],
+        text: 'Recovered partial',
+        turnStartOffset: 0,
+        roomSequence: 14,
+        createdAt: '2026-07-31T19:59:59.000Z',
+      }],
     }));
 
     await act(async () => { await vi.advanceTimersByTimeAsync(750); });
     expect(getMessages).toHaveBeenCalledOnce();
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Stale');
+    expect(queryClient.getQueryData<Message[]>(['messages', 'workstream-one'])?.[0]?.text)
+      .toBe('Recovered partial');
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
     expect(getMessages).toHaveBeenCalledTimes(2);
@@ -1465,6 +1717,20 @@ describe('useWorkstreamSocket', () => {
       JSON.stringify({ type: 'subscribe', afterSequence: 14 }),
     );
     expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Canonical');
-    expect(queryClient.getQueryData(['workstreams'])).toEqual(canonicalWorkstreams);
+    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
+    act(() => FakeWebSocket.instances[1]?.message({
+      type: 'stream_delta',
+      sequence: 15,
+      occurredAt: '2026-07-31T20:00:01.000Z',
+      messageId,
+      harnessRunId,
+      turnId: 'turn-resync',
+      epoch: 0,
+      streamSeq: 3,
+      reset: false,
+      delta: ' plus live',
+    }));
+    expect(queryClient.getQueryData<Message[]>(['messages', 'workstream-one'])?.[0]?.text)
+      .toBe('Recovered partial plus live');
   });
 });

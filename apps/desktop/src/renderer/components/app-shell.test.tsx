@@ -5,6 +5,7 @@ import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
+  backgroundRealtimeWorkstreamIds,
   openWorkstreamId,
   showsAutomation,
   staleHarnessStatusWorkstreamId,
@@ -53,6 +54,19 @@ describe('openWorkstreamId', () => {
     expect(openWorkstreamId('/workstreams/new')).toBeNull();
     expect(openWorkstreamId('/automations/abc')).toBeNull();
     expect(openWorkstreamId(`/workstreams/${workstreamId}/settings`)).toBeNull();
+  });
+});
+
+describe('backgroundRealtimeWorkstreamIds', () => {
+  it('keeps other running work streams live without opening sockets for scheduled or foreground work', () => {
+    const running = summary('running');
+    const scheduled = summary('scheduled', '00000000-0000-7000-8000-000000000002');
+    const completed = summary('completed', '00000000-0000-7000-8000-000000000003');
+
+    expect(backgroundRealtimeWorkstreamIds(running.id, [running, scheduled, completed]))
+      .toEqual([]);
+    expect(backgroundRealtimeWorkstreamIds(null, [running, scheduled, completed]))
+      .toEqual([running.id]);
   });
 });
 
