@@ -155,16 +155,15 @@ Finally, revoke a test provider grant and repeat an affected read. Confirm the c
 
 Pass evidence: two independently selectable preset connections, exact stored capability sets, bounded native Docs and Sheets operations, Mail/Calendar and Drive cursors, one Drive-derived Doc activity, one Drive-derived Sheet activity, one authorized automation run per tested connection, and a sanitized reconnect state. Sending email is not required for this flow.
 
-## PRD flow 4 — contextual routing
+## PRD flow 4 — contextual routing (paused)
 
 1. Create a long-lived **CFO of Calm** work stream with at least one participant.
 2. Create a signed generic-webhook connection and ingest a transcript activity mentioning Calm and the CFO search.
-3. Confirm deterministic filtering and the bounded classifier produce a suggestion card inside that work stream rather than silently attaching the activity.
-4. Confirm the suggestion moves the work stream up by activity time but merely opening it as another member does not add that viewer as a participant.
-5. Accept the suggestion. Confirm the transcript resource is hydrated, attached once, and available to a subsequently requested harness loop.
-6. Repeat the same signed delivery identifier and confirm ingestion reports a duplicate without creating a second activity, suggestion, or attachment.
+3. Confirm no Suggested context card appears inside that work stream and no pending `activity_suggestions` row is created.
+4. Confirm the unclaimed activity proceeds to suggested-work batching instead of buying the contextual-routing classifier inference.
+5. Repeat the same signed delivery identifier and confirm ingestion reports a duplicate without creating a second activity or work opportunity source.
 
-Pass evidence: one activity, one suggestion before acceptance, one attached resource after acceptance, stable participant membership, and idempotent webhook replay.
+Pass evidence: one activity, no work-stream suggestion or attachment, one batched suggested-work source, stable participant membership, and idempotent webhook replay.
 
 ## Flow 9 — inbound work-stream email
 
