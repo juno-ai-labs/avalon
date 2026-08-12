@@ -2437,5 +2437,3 @@ function toolTaskTitle(toolName: string): string {
   const leaf = toolName.split(".").at(-1) ?? toolName;
   return leaf.replaceAll("_", " ").replace(/\b\w/gu, (character) => character.toUpperCase());
 }
-
-

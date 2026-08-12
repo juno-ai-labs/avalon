@@ -458,7 +458,8 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 
 **What changed:** `renderDigestBrief` now opens by telling the run that its final
 message *is* the digest and is mailed verbatim — that no summary of it, report
-about it, or closing sentence may take its place. The `create_artifact` tool a
+about it, or closing sentence may take its place — and `settleDigestRun` refuses
+to settle on a final message too short to be one. The `create_artifact` tool a
 digest run could reach — every digest executes the ordinary work-stream loop, so
 it loaded `avalon_workstream` like any other run — no longer exists. See
 [`AGENT_HARNESS.md`](AGENT_HARNESS.md#changelog).
@@ -477,12 +478,31 @@ receipt and a real digest are both just text.
 like a receipt. It puts a heuristic between a run and what gets mailed, and every
 delivery surface would need its own copy of it.
 
-**Consequences:** `renderDigestBrief` is now the only place that establishes
-where a digest goes, and the sentence saying so has to stay. Removing the
-artifact tool closed the destination this run happened to find; it did not close
-the failure, because a run can still end on a sign-off and mail that instead.
-Keep the instruction whenever the brief is reworded, and treat any future tool
-that offers a run somewhere else to write as re-opening this.
+**Bounded rather than trusted.** The prompt alone would have left the expensive
+half of this open — a run can still end on a sign-off, and settlement cannot tell
+one from a digest — so `settleDigestRun` now refuses to settle on a final message
+shorter than `MINIMUM_DIGEST_CHARACTERS`. That is deliberately a floor on
+*implausibility*, not the "does this look like a digest" test rejected above: a
+run only reaches settlement when its window held an event, and the brief mandates
+an opening sentence, `## ` sections and `- ` bullets, so a real digest clears it
+by an order of magnitude. The asymmetry is the argument — rejecting a real digest
+costs one delayed occurrence and the events return in the next one, because a
+failed delivery does not move the cursor, while accepting a receipt costs the
+window permanently.
+
+**Consequences:** Three things now stand between a run and a consumed window,
+and they are not interchangeable. Removing the tool closed the destination this
+run happened to find. `renderDigestBrief` is the only place that establishes
+where a digest goes, so the sentence saying so has to stay whenever the brief is
+reworded. The floor in settlement is the only one that holds when the other two
+fail, which is why it is a hard refusal rather than a warning — and it is also
+the only one that can be wrong in the cheap direction. Treat any future tool that
+offers a run somewhere else to write as re-opening the first of the three.
+
+A digest genuinely shorter than the floor is now undeliverable rather than
+merely unlikely. If that ever becomes a real case — a workspace whose windows are
+routinely one line — the fix is to lower the floor deliberately, not to remove
+it: the branch it routes into is what keeps the events.
 
 ### 2026-08-12 — Each occurrence gets its own work stream, because a shared one was an unbounded context channel between digests
 
