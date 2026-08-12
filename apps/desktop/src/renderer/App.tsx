@@ -150,7 +150,7 @@ function WorkspaceApp(): React.JSX.Element {
     return (
       <HashRouter>
         <Routes>
-          <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
+          <Route element={<WorkspaceSettingsScreen standaloneWindow workspace={workspace.data} />} path="/settings" />
           <Route element={<Navigate replace to="/settings" />} path="*" />
         </Routes>
       </HashRouter>
