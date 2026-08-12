@@ -78,16 +78,20 @@ healthRoutes.get("/", async (c) => {
   // forever was a permanent false negative — noise that a real fault would have
   // had to be spotted inside.
   const googleLoginConfigured = Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET);
-  checks.googleLoginOAuth = c.env.AVALON_REGION === "global"
+  // Exempts EU by name rather than "not Global": an unreadable region is the
+  // case where this probe most needs to complain, and the env contract holds
+  // one to every rule. `/health` is reachable when the region is invalid
+  // precisely so it can say so, and it must not answer "not required" then.
+  checks.googleLoginOAuth = c.env.AVALON_REGION === "eu"
     ? {
-        ok: googleLoginConfigured,
-        message: googleLoginConfigured ? "configured" : "not configured",
-      }
-    : {
         ok: true,
         message: googleLoginConfigured
           ? "configured; not used outside Global"
           : "not required outside Global",
+      }
+    : {
+        ok: googleLoginConfigured,
+        message: googleLoginConfigured ? "configured" : "not configured",
       };
   checks.googleConnectorOAuth = {
     ok: Boolean(c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET),
