@@ -75,7 +75,8 @@ The participant picker sends initial focus to its first available member, or to
 Done when there are no available members. This keeps keyboard entry on the
 dialog's task instead of focusing the header's Close control and opening its
 tooltip as a side effect. The native checkboxes remain the interactive controls;
-the fixed 16px indicators at the end of each row are only their visual treatment.
+the fixed 16px indicators at the end of each row are only their visual treatment
+and mirror the native input's keyboard-visible focus.
 
 ### What the optimistic surface shows
 
@@ -286,13 +287,15 @@ with the backfill first. See [`regionalization.md`](regionalization.md).
 **What changed:** Opening Add people initially focuses the first available
 member, falling back to Done for an empty list. Each native checkbox's visual
 indicator is fixed at 16px instead of participating in the row's flexible copy
-layout.
+layout, and exposes keyboard-visible focus from the transparent native input.
 
 **Why:** The dialog's first focusable control was its header Close button, whose
 focus-accessible tooltip therefore appeared every time the picker opened even
 when the pointer was elsewhere. The selector intended to grow the member's name
 and email also matched the decorative checkbox span, turning each unchecked
-square into a long outlined bar.
+square into a long outlined bar. Because the native control is transparent,
+moving focus to it without mirroring `:focus-visible` also left keyboard users
+with no visible indication of their position.
 
 **Considered and rejected:** Disabling focus-triggered tooltips would remove
 their keyboard-accessible labels from every icon button. Changing the shared
@@ -300,9 +303,9 @@ modal's default focus would also override dialogs that deliberately autofocus a
 form field, so the picker supplies its own meaningful target instead.
 
 **Consequences:** Picker options remain native checkboxes for interaction and
-accessibility; the trailing span must stay decorative and excluded from flexible
-copy styling. Dialogs without an explicit initial-focus target keep Radix's
-default focus behavior.
+accessibility; the trailing span must stay decorative, excluded from flexible
+copy styling, and reflect the native input's focus state. Dialogs without an
+explicit initial-focus target keep Radix's default focus behavior.
 
 Shipped in #138.
 
