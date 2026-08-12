@@ -261,7 +261,7 @@ For ordinary releases after both entrypoints exist:
 4. Set the regional Worker secrets.
 5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
 6. Deploy the EU Worker, then the Global Worker. For the first inbound-email release and the first shared-Notion-ingress release, use the three-stage bootstrap order above instead.
-7. Call `GET /health` on both regional APIs with `pnpm health:regions`, which fails unless both regions report `ok`.
+7. Call `GET /health` on both regional APIs with `pnpm health:regions`, which fails unless both regions report `ok`. That now includes the Worker's own environment contract: a region missing a required secret answers `503` here and names the keys, rather than reporting healthy while every other route returns `service_misconfigured`.
 8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
 9. Complete one Google identity login in a provider test account.
 10. Connect **Google Mail + Calendar** and verify a Gmail read, Gmail draft, Calendar read, and Calendar test-event create/update. Delete the provider-side test fixture afterward.

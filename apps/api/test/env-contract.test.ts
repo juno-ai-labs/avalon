@@ -1,6 +1,8 @@
+import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
-import { assertEnvContract, EnvContractError, type Env } from "../src/env";
+import { assertEnvContract, EnvContractError, type Env, type HonoAppEnv } from "../src/env";
+import { healthRoutes } from "../src/routes/health";
 
 function binding(): never {
   return {} as never;
@@ -136,6 +138,21 @@ describe("environment contract", () => {
     delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
 
     expect(() => assertEnvContract(eu)).not.toThrow();
+  });
+
+  it("reports the contract as satisfied on the probe when it is", async () => {
+    // The other half of the probe's new required check. Only `envContract` is
+    // asserted: the binding-backed checks have no real bindings here.
+    const app = new Hono<HonoAppEnv>();
+    app.route("/health", healthRoutes);
+    const response = await app.request("/health", undefined, {
+      ...productionEnv(),
+      DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
+      PAYLOADS: { list: async () => ({ objects: [] }) },
+    } as unknown as Env);
+
+    const body = await response.json() as { checks: { envContract: { ok: boolean; message: string } } };
+    expect(body.checks.envContract).toEqual({ ok: true, message: "satisfied" });
   });
 
   it("holds an unrecognized region to every rule, including Global's", () => {

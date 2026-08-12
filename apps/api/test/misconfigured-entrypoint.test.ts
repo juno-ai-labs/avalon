@@ -97,6 +97,73 @@ describe("the health probe under a misconfigured environment", () => {
     });
   });
 
+  it("fails the probe on the contract alone, when every other required check passes", async () => {
+    // The discriminating case. Every other required check is satisfied here, so
+    // the 503 can only come from `envContract` — which is the property that
+    // matters and the one a partial-env test cannot pin, because such an env
+    // fails several checks and would answer 503 either way.
+    const app = new Hono<HonoAppEnv>();
+    app.route("/health", healthRoutes);
+    const room = { fetch: async () => new Response(null, { status: 200 }) };
+    const response = await app.request("/health", undefined, {
+      DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
+      PAYLOADS: { list: async () => ({ objects: [] }) },
+      WORKSTREAM_ROOMS: { idFromName: () => "id", get: () => room },
+      ACTIVITY_QUEUE: { send: () => undefined },
+      WORKSTREAM_LOOP_WORKFLOW: { create: () => undefined },
+      CONNECTOR_POLL_WORKFLOW: { create: () => undefined },
+      WORKSTREAM_EMAIL_ADDRESS_KEY: "a".repeat(48),
+      WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
+      AVALON_REGION: "global",
+      // Development, so the production-only checks stay out of `required` and
+      // the contract is the single remaining fault.
+      APP_ENV: "development",
+    } as unknown as Env);
+
+    const body = await response.json() as {
+      ok: boolean;
+      checks: Record<string, { ok: boolean; message: string }>;
+    };
+    // Every check the probe blocks on, other than the contract, is satisfied.
+    // The unsatisfied remainder — openRouter, the OAuth pairs, resend — are
+    // deliberately non-blocking and do not decide `ok`.
+    for (const name of ["d1", "r2", "durableObjects", "queue", "workflows", "workstreamEmailRegistry"]) {
+      expect(body.checks[name]).toEqual({ ok: true, message: expect.any(String) });
+    }
+    expect(body.checks.envContract?.ok).toBe(false);
+    // So this can only be the contract. Drop `envContract` from the required
+    // set and both of these become 200/true — which is the bug being fixed.
+    expect(body.ok).toBe(false);
+    expect(response.status).toBe(503);
+  });
+
+  it("fails on the one fault that stops every other route, and names its keys", async () => {
+    // The entrypoint refuses everything else on this and answers a body that
+    // deliberately names nothing, because the keys are secrets. This probe is
+    // the exemption to that refusal, so it is the place the names belong — and
+    // it has to go `ok: false` here, or `health:regions` reports a Worker that
+    // cannot serve a request as healthy. That is what let a real EU outage sit.
+    const app = new Hono<HonoAppEnv>();
+    app.route("/health", healthRoutes);
+    const response = await app.request("/health", undefined, {
+      DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
+      PAYLOADS: { list: async () => ({ objects: [] }) },
+      AVALON_REGION: "global",
+      APP_ENV: "production",
+    } as unknown as Env);
+
+    expect(response.status).toBe(503);
+    const body = await response.json() as {
+      ok: boolean;
+      checks: { envContract: { ok: boolean; message: string } };
+    };
+    expect(body.ok).toBe(false);
+    expect(body.checks.envContract.ok).toBe(false);
+    expect(body.checks.envContract.message).toContain("the Worker cannot serve requests");
+    // The Global-only login pair is required here, so the probe names it.
+    expect(body.checks.envContract.message).toContain("GOOGLE_OAUTH_CLIENT_ID is missing");
+  });
+
   it("reports the Global-only login secrets as required in every region but EU", async () => {
     // The exemption `/health` relies on cuts both ways: it is the one endpoint
     // still answering when `AVALON_REGION` is wrong, so it must not report the
