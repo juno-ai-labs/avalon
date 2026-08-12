@@ -49,31 +49,29 @@ UPDATE digest_deliveries
 -- from a delivery id and reads this column; nothing searches deliveries *by*
 -- work stream.
 
--- The sidebar's two lists become two index partitions, because they are now two
--- populations growing at different rates.
+-- The ordinary sidebar list gets a recency index of its own, because digest work
+-- streams now grow a population inside `workstreams` that it never wants to see.
 --
 -- `workstreams_sidebar_recency_idx` is keyed `(workspace_id, last_activity_at
--- DESC)`, so both listing queries seek to the workspace and then walk in recency
--- order, testing `system_kind` row by row. That was free when a workspace held
--- one digest work stream per person. With one per occurrence and nothing reaping
--- them, the ordinary list has to walk past every digest row newer than its last
--- result — a scan that grows with digest history for a query whose result set
--- never does. Hiding the accumulation from the sidebar while leaving it in that
--- query's path would only move the cost somewhere nobody looks.
+-- DESC)`, so the list seeks to the workspace and then walks in recency order,
+-- testing `system_kind` row by row. That was free when a workspace held one
+-- digest work stream per person. With one per occurrence and nothing reaping
+-- them, every ordinary listing — which is every listing outside Debug enabled,
+-- so very nearly all of them — has to step over each digest row newer than the
+-- last row it returns, a scan that grows with digest history for a result set
+-- that does not.
 --
 -- A partial index is usable only when the query's WHERE implies its predicate,
--- which is why these mirror the listing clauses exactly rather than being one
--- index on `system_kind`: `IS NULL` and `IS NOT NULL` are what the two queries
--- state. The general index above stays for readers that do not partition by
--- `system_kind` at all, so a row sits in it and in exactly one of these — two
--- index writes per `last_activity_at` update rather than one.
+-- which is why this mirrors the listing clause exactly. There is deliberately no
+-- matching index for the `system_kind IS NOT NULL` side: a listing that asks for
+-- machinery does not filter on it — it asks for everything and pages — so it has
+-- no predicate that could reach such an index, and it keeps using the general
+-- one above. That index stays for the same reason, so an unarchived row sits in
+-- it and, when it is ordinary, in this one too: two index writes per
+-- `last_activity_at` update rather than one.
 CREATE INDEX workstreams_sidebar_recency_ordinary_idx
   ON workstreams(workspace_id, last_activity_at DESC)
   WHERE archived_at IS NULL AND system_kind IS NULL;
-
-CREATE INDEX workstreams_sidebar_recency_system_idx
-  ON workstreams(workspace_id, last_activity_at DESC)
-  WHERE archived_at IS NULL AND system_kind IS NOT NULL;
 
 -- `digest_schedules.system_workstream_id` is deliberately NOT dropped here.
 --

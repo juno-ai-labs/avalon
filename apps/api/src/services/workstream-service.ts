@@ -82,16 +82,6 @@ interface AcknowledgeReadInput {
   observedManualUnreadGeneration: number;
 }
 
-/**
- * How many system work streams a listing that asked for them returns.
- *
- * They accumulate on their own — one per digest occurrence, and nothing reaps
- * them — so an unbounded set would swamp the surface that asked. This is a
- * debugging affordance, and debugging wants the recent ones; anything older is
- * still reachable by its URL.
- */
-const SYSTEM_WORKSTREAM_LIST_LIMIT = 25;
-
 const ACTIVITY_RESOURCE_LOOKUP_SQL = `SELECT id FROM resources
   WHERE workspace_id = ?
     AND ((connection_id = ?) OR (connection_id IS NULL AND ? IS NULL))
@@ -612,15 +602,14 @@ export class WorkstreamService {
     // decides whether it is listed at all; `scope` says who may read it, and is
     // enforced below whatever the caller asked to see.
     //
-    // Machinery is excluded from the paged query unconditionally and appended
-    // separately below, the same way a pin is. Digest work streams are created
-    // one per occurrence and nothing reaps them, so on recency alone they would
-    // fill the first page and push the work somebody is actually doing onto
-    // later ones — the sidebar pages as it scrolls, so nothing is unreachable,
-    // but a reader would be scrolling through months of machinery to find last
-    // week's work stream. Paging machinery against real work is the wrong
-    // contest to hold whether or not the loser is reachable.
-    const systemClause = "AND w.system_kind IS NULL";
+    // Machinery is paged with everything else rather than lifted out and
+    // bounded. Digest work streams accumulate one per occurrence and nothing
+    // reaps them, so with Debug enabled they do take the newest pages — but the
+    // sidebar follows `nextCursor` as it scrolls, so that costs a scroll rather
+    // than the rows themselves, and the alternative was a second population
+    // inside this method with its own cap and its own ordering rules. One list,
+    // one order.
+    const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
     // A pinned work stream leaves the recency order altogether rather than
     // being paged with everything else, which is the same thing the sidebar
     // does when it lifts one out of the recent list into the Pinned section.
@@ -655,7 +644,6 @@ export class WorkstreamService {
     // many a person has — which is why `nextCursor` comes from the paged rows
     // rather than from the last item returned.
     if (!before) rows.push(...await this.loadPinnedWorkstreamRows(includeSystem));
-    if (!before && includeSystem) rows.push(...await this.loadSystemWorkstreamRows());
     // Machinery is never given an inbound address. Reserving one activates a
     // route in the global registry — a cross-region RPC from the EU — and
     // nothing reclaims it, so with one work stream per digest occurrence this
@@ -1332,41 +1320,6 @@ export class WorkstreamService {
       ...workstreamViewerBindings(this.auth.userId),
       this.auth.workspaceId,
       ...workstreamVisibilityBindings(this.auth.userId),
-    ).all<Record<string, unknown>>();
-    return result.results ?? [];
-  }
-
-  /**
-   * The machinery a caller asked to see, as its own bounded set.
-   *
-   * System work streams are excluded from the paged query and appended here the
-   * way pins are, but not for the same reason — a pin leaves the recency order
-   * because it is rendered in a section of its own, and these are not: the
-   * desktop re-sorts everything it receives by `lastActivityAt` into recency
-   * buckets, so a digest occurrence still renders among the work of its own
-   * morning. What the append buys here is only the bound: they arrive on their
-   * own, one per occurrence and forever, so taking the newest
-   * {@link SYSTEM_WORKSTREAM_LIST_LIMIT} keeps them from filling the first page
-   * and pushing real work behind a scroll. Debugging wants the run that just
-   * happened, and everything older is still reachable by its URL.
-   *
-   * A pinned one is excluded, because `loadPinnedWorkstreamRows` has already
-   * returned it and a work stream must appear exactly once across the list.
-   */
-  private async loadSystemWorkstreamRows(): Promise<Record<string, unknown>[]> {
-    const result = await this.env.DB.prepare(
-      `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
-       FROM workstreams w
-       ${WORKSTREAM_VIEWER_JOINS_SQL}
-       WHERE w.workspace_id = ? AND w.archived_at IS NULL AND pin.user_id IS NULL
-         AND w.system_kind IS NOT NULL
-         AND ${WORKSTREAM_VISIBILITY_SQL}
-       ORDER BY w.last_activity_at DESC LIMIT ?`,
-    ).bind(
-      ...workstreamViewerBindings(this.auth.userId),
-      this.auth.workspaceId,
-      ...workstreamVisibilityBindings(this.auth.userId),
-      SYSTEM_WORKSTREAM_LIST_LIMIT,
     ).all<Record<string, unknown>>();
     return result.results ?? [];
   }
