@@ -26,7 +26,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import { formatRelative, groupActivityItems } from '../lib/format';
@@ -41,6 +41,12 @@ interface SidebarProps {
   automations: AutomationSummary[];
   notes?: NoteSummary[];
   workstreams: WorkstreamSummary[];
+  /** Whether a page of work streams remains beyond the ones listed. */
+  hasMoreWorkstreams?: boolean;
+  /** A further page is in flight, so the end of the list is not the end. */
+  loadingMoreWorkstreams?: boolean;
+  /** Ask for the next page. Called when the scroll approaches the bottom. */
+  onLoadMoreWorkstreams?: () => void;
   loading?: boolean;
   onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
@@ -70,6 +76,15 @@ type RecentSidebarItem =
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
 const EDGE_REVEAL_DISTANCE = 20;
+
+/**
+ * How near the bottom the scroll comes before the next page is asked for.
+ *
+ * Ahead of the end rather than at it, so the rows are usually already there by
+ * the time the reader arrives — roughly a screen of sidebar rows, which is what
+ * a fast flick covers between two scroll events.
+ */
+const LOAD_MORE_DISTANCE = 400;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
@@ -601,6 +616,9 @@ export function Sidebar({
   onRunAutomation,
   onOpenMeetingNotes,
   onSignOut,
+  hasMoreWorkstreams = false,
+  loadingMoreWorkstreams = false,
+  onLoadMoreWorkstreams,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
   const openDraftId = useOpenDraftId();
@@ -633,6 +651,20 @@ export function Sidebar({
   // reason does not scroll the reader again.
   const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
+  /**
+   * Ask for the next page as the scroll approaches the end of the list.
+   *
+   * Guarded on both flags rather than only on the pointer position: a scroll
+   * event fires for every frame of a flick, and the list is one cache entry
+   * that a second request would append to twice. `fetchMore` is itself a no-op
+   * without a cursor, so this is the cheap half of the same guard.
+   */
+  const loadMoreWhenNearBottom = useCallback((event: React.UIEvent<HTMLElement>): void => {
+    if (!hasMoreWorkstreams || loadingMoreWorkstreams || !onLoadMoreWorkstreams) return;
+    const { clientHeight, scrollHeight, scrollTop } = event.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight > LOAD_MORE_DISTANCE) return;
+    onLoadMoreWorkstreams();
+  }, [hasMoreWorkstreams, loadingMoreWorkstreams, onLoadMoreWorkstreams]);
   // The arrangement being dragged, held only for as long as the drag lasts.
   // The list renders from it while it exists, so rows move under the pointer
   // before anything is sent; the server's answer replaces it when the drag
@@ -980,7 +1012,12 @@ export function Sidebar({
           </IconButton>
         </div>
 
-        <nav className="sidebar-scroll" onClick={() => setSidebarOpen(false)} ref={scrollRef}>
+        <nav
+          className="sidebar-scroll"
+          onClick={() => setSidebarOpen(false)}
+          onScroll={loadMoreWhenNearBottom}
+          ref={scrollRef}
+        >
           <div className="sidebar-primary-actions">
             <NavLink className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')} to="/workstreams/new">
               <MessageSquarePlus aria-hidden="true" size={15} />
@@ -1118,6 +1155,12 @@ export function Sidebar({
                   </div>
                 </div>
               ))
+            )}
+            {/* Only while a page is actually in flight. A permanent "scroll for
+                more" would claim the list is incomplete every time it happens
+                to end exactly on a page boundary. */}
+            {loadingMoreWorkstreams && (
+              <p aria-live="polite" className="sidebar-empty">Loading more…</p>
             )}
           </section>
         </nav>

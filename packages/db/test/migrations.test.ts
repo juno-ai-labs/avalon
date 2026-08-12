@@ -1755,4 +1755,101 @@ describe("database migrations", () => {
     `)).toThrow();
     database.close();
   });
+
+  it("records where each past digest ran without breaking the Worker still reading the old column", () => {
+    const database = migrateDatabaseThrough("0067_harness_run_trigger_message.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-digest', 'google-digest', 'digest@example.com', 'Digest User', '2026-08-10', '2026-08-10');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-digest', 'Digest Workspace', 'digest-workspace', 'global',
+              'user-digest', '2026-08-10', '2026-08-10');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+         last_activity_at, created_at, updated_at, system_kind, scope)
+      VALUES ('workstream-digest-shared', 'workspace-digest', 'Digest · Digest User', '',
+              'ad_hoc', 'user-digest', 'idle', '2026-08-10', '2026-08-10', '2026-08-10',
+              'digest', 'personal');
+      INSERT INTO digest_schedules
+        (id, workspace_id, user_id, day_mask, enabled, system_workstream_id,
+         execution_principal_json, version, created_at, updated_at)
+      VALUES ('schedule-digest', 'workspace-digest', 'user-digest', 62, 1, 'workstream-digest-shared',
+              '{"type":"user","userId":"user-digest"}', 1, '2026-08-10', '2026-08-10');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('run-digest', 'workspace-digest', 'workstream-digest-shared', 'scheduled_digest',
+              '{"type":"user","userId":"user-digest"}', 'completed', '2026-08-10');
+      INSERT INTO digest_deliveries
+        (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_from, cursor_through,
+         event_count, highlight_count, harness_run_id, status, created_at, updated_at)
+      VALUES
+        ('delivery-ran', 'workspace-digest', 'schedule-digest', 'user-digest', '2026-08-10T08:00:00.000Z',
+         NULL, 12, 4, 1, 'run-digest', 'delivered', '2026-08-10', '2026-08-10'),
+        ('delivery-empty', 'workspace-digest', 'schedule-digest', 'user-digest', '2026-08-11T08:00:00.000Z',
+         12, 12, 0, 0, NULL, 'empty', '2026-08-11', '2026-08-11');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0068_digest_workstream_per_occurrence.sql", import.meta.url),
+      "utf8",
+    ));
+
+    // Where each one actually ran, which for everything before this migration
+    // is the shared work stream. An occurrence that never reached a harness has
+    // no work stream, and NULL is the accurate answer rather than a gap.
+    expect(database.prepare(
+      "SELECT id, workstream_id FROM digest_deliveries ORDER BY planned_for",
+    ).all()).toEqual([
+      { id: "delivery-ran", workstream_id: "workstream-digest-shared" },
+      { id: "delivery-empty", workstream_id: null },
+    ]);
+    // The old column survives this migration on purpose. Migrations land before
+    // either Worker deploys, so the previous Worker is still selecting and
+    // writing it while this schema is live; dropping it here would make digest
+    // firing, the reconciler and the settings read fail with `no such column`
+    // for the length of a deployment — hours if that deployment fails. A later
+    // migration drops it once nothing reads it.
+    const scheduleColumns = database.prepare("PRAGMA table_info(digest_schedules)")
+      .all() as Array<{ name: string }>;
+    expect(scheduleColumns.map((column) => column.name)).toContain("system_workstream_id");
+    // The two writes the previous Worker still performs against it.
+    expect(() => database.exec(
+      "UPDATE digest_schedules SET system_workstream_id = 'workstream-digest-shared' WHERE id = 'schedule-digest'",
+    )).not.toThrow();
+    expect(database.prepare(
+      "SELECT system_workstream_id FROM digest_schedules WHERE id = 'schedule-digest'",
+    ).get()).toEqual({ system_workstream_id: "workstream-digest-shared" });
+    // The transcripts themselves stay: their owners can still open them, and
+    // dropping a pointer is not a reason to delete somebody's history.
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM workstreams WHERE id = 'workstream-digest-shared'",
+    ).get()).toEqual({ count: 1 });
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
+  it("gives the ordinary sidebar list a recency index it can seek rather than filter", () => {
+    const database = migrateFreshDatabase();
+    // The list seeks `(workspace_id, last_activity_at DESC)` and then walks, so
+    // on the shared index every ordinary listing steps over each digest row
+    // newer than the last row it returns — and those accumulate one per
+    // occurrence. A partial index is only usable when the query's WHERE implies
+    // its predicate, so this asserts the exact clause the query states.
+    const planFor = (predicate: string): string =>
+      (database.prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT w.id FROM workstreams w
+          WHERE w.workspace_id = 'ws' AND w.archived_at IS NULL AND ${predicate}
+          ORDER BY w.last_activity_at DESC LIMIT 25`,
+      ).all() as Array<{ detail: string }>).map((row) => row.detail).join("\n");
+
+    expect(planFor("w.system_kind IS NULL")).toContain("workstreams_sidebar_recency_ordinary_idx");
+    expect(planFor("w.system_kind IS NULL")).not.toContain("SCAN");
+    // A listing that asks for machinery has no `system_kind` predicate at all —
+    // it asks for everything and pages — so it keeps the general index rather
+    // than reaching one it could never imply.
+    expect(planFor("1 = 1")).toContain("workstreams_sidebar_recency_idx");
+    expect(planFor("1 = 1")).not.toContain("SCAN");
+    database.close();
+  });
 });

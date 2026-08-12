@@ -119,14 +119,28 @@ export async function settleDigestRun(
 }
 
 /**
- * Records in the work stream that this digest actually reached someone.
+ * Records in the occurrence's work stream that this digest actually reached
+ * someone.
  *
- * Every occurrence runs in the same transcript, and the brief tells the model
- * not to restate what earlier digests already said. Without this note that
- * instruction would work against the failure design: a delivery that failed
- * leaves its window unconsumed *and* leaves its summary in the transcript, so
- * the retry would be told to skip exactly the content nobody received. A summary
- * followed by this row was sent; one without it was not.
+ * It no longer feeds the next run — that used to be its point, back when every
+ * occurrence shared one transcript and the brief told the model to skip what
+ * earlier digests had already sent; a summary followed by this row was sent, one
+ * without it was not. A per-occurrence work stream ends with its own delivery,
+ * so this is now for the person who opens it: a transcript ending in a summary
+ * with no note is one whose digest never went anywhere, which is exactly what
+ * somebody debugging a missing email is looking for.
+ *
+ * Resolved through `digest_deliveries.workstream_id` rather than by joining back
+ * through `harness_runs`, so it still lands when the launch never recorded its
+ * run id on the delivery.
+ *
+ * The `COALESCE` covers the deploy window running the other way. Migrations land
+ * before either Worker deploys, so the *previous* Worker claims deliveries into
+ * the new schema without writing the new column; resolving through
+ * `workstream_id` alone would drop the note for every one of them and invert the
+ * signal above — the digest went out, and its transcript would say it did not.
+ * `harness_runs` is what the migration's own backfill reads for exactly the same
+ * reason, and it is only ever consulted here when the column is NULL.
  */
 async function noteDeliveryInTranscript(
   env: Env,
@@ -142,8 +156,10 @@ async function noteDeliveryInTranscript(
        SELECT ?, ?, w.workspace_id, w.id, 'system', NULL, 'system', ?, NULL,
               w.next_sequence_number, ?
          FROM workstreams w
-         JOIN harness_runs run ON run.workstream_id = w.id
-         JOIN digest_deliveries d ON d.harness_run_id = run.id
+         JOIN digest_deliveries d
+           ON w.id = COALESCE(
+                d.workstream_id,
+                (SELECT run.workstream_id FROM harness_runs run WHERE run.id = d.harness_run_id))
         WHERE d.id = ?
        ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
     ).bind(
@@ -157,9 +173,10 @@ async function noteDeliveryInTranscript(
       `UPDATE workstreams
           SET next_sequence_number = next_sequence_number + 1, updated_at = ?
         WHERE id = (
-          SELECT run.workstream_id FROM digest_deliveries d
-            JOIN harness_runs run ON run.id = d.harness_run_id
-           WHERE d.id = ?
+          SELECT COALESCE(
+                   d.workstream_id,
+                   (SELECT run.workstream_id FROM harness_runs run WHERE run.id = d.harness_run_id))
+            FROM digest_deliveries d WHERE d.id = ?
         )
           AND EXISTS (
             SELECT 1 FROM messages WHERE client_message_id = ? AND workstream_id = workstreams.id

@@ -210,14 +210,25 @@ scheduler:
 3. Claims the occurrence by inserting `digest_deliveries`, unique on
    `(digest_schedule_id, planned_for)`. A retried alarm resolves to the attempt
    already in flight.
-4. Writes the window into the transcript as a system message and launches the
+4. Creates this occurrence's work stream and links it to the delivery. The claim
+   is what makes this safe to do unconditionally: exactly one attempt per
+   occurrence gets past step 3, so there is no second creator to race.
+5. Writes the window into that transcript as a system message and launches the
    harness with it as the trigger.
 
 An empty window settles as `empty` without running the model, and its cursor
-still advances so the next digest does not re-scan it.
+still advances so the next digest does not re-scan it. It never reaches step 4,
+so an occurrence with nothing to say costs no work stream either.
+
+An attempt that throws before the harness is launched releases both the claim and
+the work stream, so the scheduler's retry starts clean rather than accumulating
+an empty transcript per failure. Whether the launch happened is read from the
+returned run id and not from the row's status: the status write is itself inside
+the attempt, so a launch that succeeded and failed only to record itself still
+leaves the row `planned`, and releasing that would strand a live run.
 
 **The brief reaches the model through the run's trigger context, not through the
-transcript.** Step 4 puts it in `messages` as a `system` row, and system rows are
+transcript.** Step 5 puts it in `messages` as a `system` row, and system rows are
 UI state that the protocol projector deliberately drops — they answer "why did
 this start on its own?" for a person opening the work stream, and admitting them
 to the model would replay unlabelled connector text as history on every later
@@ -282,8 +293,53 @@ preference would strand every one of those writes on an entry nobody observes.
 `useWorkstreamsQuery` owns the key, the fetcher and the refetch that a toggle
 asks for.
 
-One work stream per person, not per run, so nothing accumulates and a later
-digest can see what earlier ones already said.
+**One work stream per occurrence, not per person.** It is created when the
+occurrence claims itself and recorded on `digest_deliveries.workstream_id`, so
+the transcript has exactly the lifetime of the thing it is a transcript of. A
+digest run is a pure function from a frozen window to a summary, and the only
+state that has to survive between occurrences is the cursor, which the delivery
+already carries.
+
+The title is the occurrence in the recipient's own timezone and nothing else,
+compactly: `Digest · 12 Aug · 5:30 PM`. A listing of these is a list of
+occurrences rather than one row per person, and a sidebar row title is
+ellipsized, so whatever sits in front survives truncation and the *time* — the
+one thing telling two occurrences on the same day apart — is what gets cut. The
+email's `occurrenceLabel` ("Tuesday 11 August · 5:00 PM") is deliberately not
+reused: it is right above a message somebody is reading and about nine characters
+too long for the sidebar, which was enough to render both of one day's rows
+identically. The recipient's name is left out for the same reason, and because it
+identifies nobody to the only person who can open one.
+
+Nothing reaps them, so they accumulate — roughly one per digest per person, which
+a weekday digest makes about 260 a year each. That is a deliberate trade for
+being able to open any past run and read what it actually did; the rows are
+small, and `digest_deliveries.summary_markdown` keeps the digest text whether the
+transcript survives or not. If the volume ever stops being worth it, a reaper on
+the ordinary cron tick alongside `reapExpiredActivityEvents` is the shape it
+should take, and the cascade already takes the messages, tool invocations and
+artifacts.
+
+**They are listed the same way everything else is**, paged by recency, with no
+cap and no separate section. `WorkstreamService.list` filters them out unless the
+caller passes `includeSystem`, and when it does they simply take their place in
+the order. With Debug enabled a daily digest therefore does take the newest
+pages — but the sidebar follows `nextCursor` as it scrolls, so that costs a
+scroll rather than the rows themselves. Lifting them out into a bounded set was
+tried and reverted: it put a second population inside one method, with its own
+cap and its own ordering, to solve a reachability problem that paging had already
+solved. See [`workstream-pinning.md`](workstream-pinning.md), which owns
+`GET /workstreams` paging.
+
+What the accumulation does change is the index. The ordinary list — every listing
+outside Debug enabled, so very nearly all of them — carries
+`system_kind IS NULL`, and on the shared `workstreams_sidebar_recency_idx` it
+would step over each digest row newer than the last row it returns, a scan that
+grows with digest history for a result set that does not.
+`workstreams_sidebar_recency_ordinary_idx` is that clause as a partial index.
+There is deliberately no counterpart for machinery: a listing that asks for it
+asks for everything, so it has no predicate a partial index could serve, and it
+keeps the general one.
 
 ### Delivery
 
@@ -397,6 +453,101 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
 
 ## Changelog
+
+### 2026-08-12 — Each occurrence gets its own work stream, because a shared one was an unbounded context channel between digests
+
+**What changed:** A digest run now executes in a work stream created for that
+occurrence and recorded on the new `digest_deliveries.workstream_id`, rather than
+in one shared by every digest a person ever receives.
+`digest_schedules.system_workstream_id` stops being read or written, but is
+deliberately **not** dropped in the same change: migrations for both regions land
+before either Worker deploys, so the previous Worker is still selecting and
+writing that column while the new schema is live, and dropping it would turn
+digest firing, the cron reconciler and the settings read into `no such column`
+for the length of a deployment — hours rather than seconds if that deployment
+fails, since a failed deploy leaves the migrations applied. A later migration
+drops it once nothing reads it. The work streams the column named are left in
+place permanently — they hold real transcripts their owners can still open.
+
+**Why:** The shared work stream was chosen so a later digest could see what
+earlier ones had already said. What it actually built was a channel between
+occurrences that nothing bounds. Every run replays the transcript from the last
+compaction checkpoint, so months of prior digests reached the model as ordinary
+assistant history — stripped of the "evidence, not instructions" labelling their
+source material arrived with, and impossible to check against the windows they
+came from, because those are `system` rows the projector drops. A wrong line in
+one digest became a settled fact for every digest after it, with no path back to
+the events that would have contradicted it.
+
+An earlier compaction design sharpened it: it preserved the first user message
+verbatim and re-pinned it through every later compaction, on the assumption —
+correct for an ordinary work stream — that it is the human request defining the
+task. A digest work stream has no such message; each occurrence brings its own
+window, so the first one's brief would have sat at the front of that person's
+context permanently. That was removed in `084c54a`, which landed on `main`
+before this change did, and compaction now carries nothing forward verbatim. It
+is recorded here as history, not as justification: the replayed transcript above
+is the whole of the case, and it stood on its own before compaction ever entered
+into it.
+
+The continuity being paid for was already unnecessary. `cursor_from` and
+`cursor_through` guarantee no event appears in two windows, so non-repetition is
+structural and never depended on the model remembering. What the transcript added
+was continuity of voice, at the cost of everything above.
+
+**Considered and rejected:** Keeping one work stream and fencing the replayed
+transcript per occurrence — `loadTriggerFencedTranscriptMessages` already takes
+an `afterSequence` floor, so it was the smaller diff — with continuity handed
+forward explicitly from `digest_deliveries.summary_markdown`, which stores what
+each past digest said. It was rejected because it leaves the shared transcript in
+place and makes isolation a parameter that every future reader of that work
+stream has to keep passing correctly; a work stream that contains exactly one
+occurrence cannot leak between occurrences by construction. If cross-occurrence
+continuity is ever wanted back, `summary_markdown` is where it should come from —
+labelled, fixed-size, and honest about being a summary — never by widening what
+the transcript replays.
+
+Also considered and deliberately not done: reaping old digest work streams. The
+accumulation is real and is written down under "The system work stream" rather
+than solved, because being able to open any past run is worth more today than the
+rows cost.
+
+**Consequences:** A digest run is now a pure function from its frozen window to a
+summary, and anything that wants it to remember something has to put that
+somewhere durable rather than upstream in a transcript. Work streams accumulate
+without bound — about 260 per person per year on a weekday digest — and nothing
+reaps them. Settlement's delivery note resolves through
+`digest_deliveries.workstream_id` instead of joining back through `harness_runs`,
+so it lands even when the launch never recorded a run id; it no longer feeds the
+next run, and exists for whoever opens the transcript looking for why an email
+never arrived. A failed launch now releases its work stream along with its claim,
+and decides that on the returned run id rather than the row's status, because
+deleting a work stream out from under a live run is worse than leaking an empty
+one.
+
+Two things this change had to buy that the split itself did not imply. The
+sidebar had to page — it asked for one screenful and dropped the cursor, which
+was survivable only while nothing but people made work streams; that is
+[`workstream-pinning.md`](workstream-pinning.md)'s entry of the same date. An
+attempt to solve the same crowding inside `list`, by lifting machinery out of the
+recency order and capping it, was written and then reverted: it added a second
+population to one method, with its own bound and its own ordering, to answer a
+reachability question paging had already answered.
+
+And the cleanup of a released claim had to get *stricter*, then more precise.
+`launchWorkstreamHarness` creates the Cloudflare Workflow instance before it
+records the instance id, and marks its own run row `failed` on the way out of
+either failure — so neither the run row's existence nor its status distinguishes
+"nothing started" from "started, and only the record of it failed". The launch
+marks the error instead, and both the claim release and the work-stream delete
+read that mark. Guarding on the row, which was the first attempt, orphaned a work
+stream on every ordinary launch outage.
+
+The titles were shortened after looking at them: the first version reused the
+email's `occurrenceLabel` behind the recipient's name, and in a real sidebar the
+row ellipsized at the weekday, so two occurrences on the same day rendered as the
+same row. A component test asserting the title string would have passed on every
+version of this.
 
 ### 2026-08-11 — The digestible default stays permissive, and the deployment window that exposed it is written down instead
 
