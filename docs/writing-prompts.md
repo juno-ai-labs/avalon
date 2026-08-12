@@ -4,7 +4,7 @@ This is the **authoring guide** for the prompt text Avalon sends to a model —
 the standing policy a run starts from, the classifier prompts that decide
 routing, and the catalogs rendered into the system prefix. For how a prompt is
 assembled, frozen, and cached across a run, read
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md); this document is the craft on top of it.
+[`agent-harness.md`](agent-harness.md); this document is the craft on top of it.
 
 It completes a set of three. [`agent-tools.md`](agent-tools.md) covers the
 *capabilities* a model calls, [`writing-skills.md`](writing-skills.md) covers
@@ -29,7 +29,7 @@ in front of the model on every turn of every run.
 strongest model in the routing stage.** This is the same target
 [`agent-tools.md`](agent-tools.md) sets for tool design, and it is not
 hypothetical: model routing is a flag with configured fallback stages
-([`FEATURE_FLAGS.md`](FEATURE_FLAGS.md)), classifier work already runs on a
+([`feature-flags.md`](feature-flags.md)), classifier work already runs on a
 small model, and a rule that only a frontier model can interpret becomes a
 silent behavior change the first time a run falls back.
 
@@ -315,7 +315,7 @@ staged rollout of the kind model routing gets. Before landing one:
   to ask, not only for the interactive case you had in mind.
 - Ask once more whether it belongs in policy at all (principle 5).
 - Update the document that owns the behavior — usually
-  [`AGENT_HARNESS.md`](AGENT_HARNESS.md) — in the same change, and leave
+  [`agent-harness.md`](agent-harness.md) — in the same change, and leave
   `pnpm lint`, `pnpm typecheck`, and `pnpm test` green.
 
 ## Checklist
@@ -342,9 +342,9 @@ staged rollout of the kind model routing gets. Before landing one:
 
 ## See also
 
-- [`AGENT_HARNESS.md`](AGENT_HARNESS.md) — prompt assembly, the frozen prompt
+- [`agent-harness.md`](agent-harness.md) — prompt assembly, the frozen prompt
   version, layered authority, context, and limits.
 - [`writing-skills.md`](writing-skills.md) — procedures loaded mid-run, and why
   they follow the opposite rule about naming tools.
 - [`agent-tools.md`](agent-tools.md) — the capabilities a prompt routes to.
-- [`SECURITY.md`](SECURITY.md) — the trust boundaries the layering enforces.
+- [`security.md`](security.md) — the trust boundaries the layering enforces.

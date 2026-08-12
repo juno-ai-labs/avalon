@@ -49,7 +49,7 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * from it stops new overrides naming it; work streams already pinned to it fall
  * back to the flag, because the API re-validates the stored value on read.
  *
- * See `docs/FEATURE_FLAGS.md` for how an override composes with the flags.
+ * See `docs/feature-flags.md` for how an override composes with the flags.
  */
 export const AGENT_MODEL_OVERRIDES = [
   "x-ai/grok-4.3",

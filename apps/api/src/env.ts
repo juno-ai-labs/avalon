@@ -268,7 +268,7 @@ const EnvContractSchema = z.object({
  * well as of environment.
  *
  * **Google identity OAuth is a Global-only surface.** Every user signs in through
- * the Global endpoint (`REGIONALIZATION.md`), `AuthService.beginIdentity` refuses
+ * the Global endpoint (`regionalization.md`), `AuthService.beginIdentity` refuses
  * a non-Global region before it reads either key, and `sync-dev-env.mjs` lists
  * both under `globalOnlyKeys`. Requiring them in every region made the deployed
  * EU Worker fail its own contract on every request, every queue batch, and every

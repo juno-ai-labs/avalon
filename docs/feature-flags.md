@@ -9,8 +9,10 @@ evaluated. One thing overrides a flag rather than being one — a work stream
 pinned to a single model — and it has [its own
 section](#a-work-streams-own-model) below.
 
-Two modules read the binding, one per kind, and nothing else calls `env.FLAGS`
-directly:
+## Where the code lives
+
+Three modules read the binding, one per kind, and **nothing else calls
+`env.FLAGS` directly**:
 
 | Module | Owns | Fails |
 | --- | --- | --- |
@@ -33,12 +35,24 @@ consulted server-side only when a request carries no cadence. A flag change
 therefore reaches a meeting at its next recording rather than mid-way through one
 — see [`meeting-notes.md`](meeting-notes.md).
 
-`apps/api/src/services/flag-targeting-attributes.ts` is the companion both of
-them evaluate through: it turns the ids a caller happens to hold into the
-attributes a targeting rule matches on, and it is where the line between a fact
-and a person's data is drawn.
+`apps/api/src/services/flag-targeting-attributes.ts` is the companion all of them
+evaluate through: it turns the ids a caller happens to hold into the attributes a
+targeting rule matches on, and it is where the line between a fact and a person's
+data is drawn.
 
-## Why a flag rather than a Worker variable
+The rest:
+
+| Path | Responsibility |
+| --- | --- |
+| `apps/api/src/services/flag-targeting-attributes.ts` | Loads the facts, caches them, and holds the line on what may leave the Worker. |
+| `apps/api/src/routes/feature-flags.ts` | `GET /feature-flags`, answered under identity auth. |
+| `packages/contracts` — `AGENT_MODEL_OVERRIDES`, `CONTROL_TOWER_REFRESH_SECONDS` | The closed set of pinnable models, and the one definition of the cadence both ends read. |
+| `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
+| `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | The `FLAGS` binding on each deployment. |
+
+## How it works
+
+### Why a flag rather than a Worker variable
 
 Model selection used to live entirely in `OPENROUTER_*` Worker variables, so
 moving one agent to a new model meant editing both regional Wrangler files and
@@ -50,7 +64,7 @@ The Worker variables stay. They are the checked-in default that every agent
 falls back to, so the deployed configuration remains readable in the repository
 and Avalon keeps running unchanged when Flagship is unreachable.
 
-## One flag per agent
+### One flag per agent
 
 Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 
@@ -108,7 +122,7 @@ That invariant is enforced in the resolver rather than left to the flag: a
 `agent_model_flag_fallbacks_ignored`, so the flag can retarget the model but
 cannot turn routing on.
 
-## Flag value
+### Flag value
 
 Each flag is a **JSON** flag whose variations carry one agent's whole route
 plan, using OpenRouter model ids exactly as OpenRouter publishes them:
@@ -129,7 +143,7 @@ flags on purpose. A route plan is only meaningful as a whole, so a variation
 change is atomic: an agent can never end up serving a new default model against
 the previous generation's fallbacks.
 
-## A work stream's own model
+### A work stream's own model
 
 One thing sits above the flags: a work stream may be pinned to a single model,
 recorded in `workstreams.model_override`. The pin wins, and the flag is not
@@ -180,14 +194,14 @@ retired from the list without a migration: the work streams still naming it log
 is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
 about flags.
 
-## Evaluation
+### Evaluation
 
 `resolveAgentModelRouting(env, role, context)` evaluates the agent's flag with
 `getObjectDetails`, passing the Worker-variable default as the evaluation
 default. The context it sends is the run's identity, plus the attributes
 `flag-targeting-attributes.ts` loads for that subject.
 
-### Identity
+#### Identity
 
 A caller supplies only these, and only what it knows:
 
@@ -203,7 +217,7 @@ A caller supplies only these, and only what it knows:
 Identity wins over attributes: the loaded facts are spread underneath these, so
 nothing read from D1 can redefine the id a percentage rollout buckets on.
 
-### Attributes
+#### Attributes
 
 Ids alone cannot express a rule anybody would want to write. Nobody targets a
 uuid; they target the dogfooding workspace, the teams rather than the solo
@@ -237,7 +251,7 @@ than per workspace. `userId` names a regional `users` row, and one person with
 workspaces in both regions has one in each — bucketing on it would place them in
 a different bucket per region and hand them a half-rolled-out feature on one of
 them. The platform id is established once by the Global control plane and is
-immutable in both regions ([`REGIONALIZATION.md`](REGIONALIZATION.md)). It is
+immutable in both regions ([`regionalization.md`](regionalization.md)). It is
 absent only for an account predating that control plane, and an absent attribute
 does not match, so such an account sits out the rollout rather than landing in
 the wrong half of it.
@@ -248,7 +262,7 @@ classifiers carry no `userId` — nobody is asking, the workspace is — so with
 the owner's domain no rule could reach a customer's tenancy or the dogfooding
 workspaces on the paths that do the most inference.
 
-### What may become an attribute
+#### What may become an attribute
 
 An attribute leaves the Worker on every evaluation and lands in a flag-targeting
 system that is not a place for anyone's data. The line is therefore drawn at the
@@ -273,7 +287,7 @@ leaves the Worker; `flag-targeting-attributes.ts` keeps a test on exactly that,
 scoped to the fields the rule covers rather than passing by accident on the
 carve-out.
 
-### Freshness and cost
+#### Freshness and cost
 
 - Facts are cached in the isolate for five minutes, keyed by subject. A
   membership or a slug moves on a human timescale, so the staleness is free and
@@ -340,7 +354,7 @@ to use, resolved from the same flag at schedule time — a flag changed between
 scheduling and execution makes that column an expectation rather than a
 guarantee. The inference ledger records what each attempt actually used.
 
-## Client-visible flags
+### Client-visible flags
 
 A client flag decides what the desktop is allowed to *offer*, or how it should
 behave. There are two today:
@@ -380,7 +394,7 @@ it describes the person, evaluates the flag, and serves the answer. Changing who
 gets the section is a flag change with a changelog entry, not a deploy, and the
 console shows the whole truth about who is in.
 
-### What a client flag's rules match on
+#### What a client flag's rules match on
 
 The same [identity](#identity) and [attributes](#attributes) an agent
 evaluation sends, from the same loader, with identity spread over the top so
@@ -412,7 +426,7 @@ tell a rule that excluded someone from one that never fired; the names tell you
 whether the fact the rule is written against was even available. Neither carries
 a value.
 
-### The desktop half
+#### The desktop half
 
 `DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` in
 `apps/desktop/src/main/developer-settings-flag.ts` — one minute — is how long a
@@ -437,10 +451,172 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - A poll that cannot reach the service leaves the last answer standing.
   Revoking the section on a dropped connection would flicker it, and it crosses
   no trust boundary — it reveals debugging affordances the renderer already
-  holds, per [`SECURITY.md`](SECURITY.md). Only an answer, a sign-out, or a
+  holds, per [`security.md`](security.md). Only an answer, a sign-out, or a
   shutdown turns it off.
 
-## Provisioning
+## Invariants
+
+- **Nothing calls `env.FLAGS` outside the three resolvers.** They exist as
+  separate modules because they fail in opposite directions; a shared resolver
+  with a parameter is one place for that direction to be chosen wrongly.
+- **Model flags fail open, client feature flags fail closed, the cadence falls
+  back to the checked-in default.** A client feature that failed open would ship
+  an unreleased feature on the first Flagship outage; a cadence that failed closed
+  would leave a recording meeting with no briefing at all.
+- **A route plan is one flag value, never two flags.** A variation change is
+  atomic, so an agent can never serve a new default model against the previous
+  generation's fallbacks.
+- **A malformed variation is rejected whole, never merged field by field.**
+- **A work stream's pin wins and the flag is not consulted at all.** A rollout
+  reaching the workspace must not quietly take a pinned work stream with it.
+- **Every path that creates a run copies `model_override` onto that run's work
+  stream.** There are three, and two of them build the row inline rather than
+  going through the service: `createRun`, the scheduler's `startAutomation`, and
+  the activity consumer's `startActivityAutomation`. A pin that reaches only
+  `createRun` looks correct under **Run now** and is silently ignored by every
+  scheduled run — which is how it shipped in review.
+- **A pin carries no fallbacks.** It is a request to observe one specific model,
+  and routing onward would answer a question nobody asked.
+- **The set of pinnable ids is closed** (`AGENT_MODEL_OVERRIDES`), validated on
+  write *and* on read, which is what lets a model be retired without a migration.
+- **Identity is spread over the loaded attributes, never under them**, so nothing
+  read from D1 can redefine the id a percentage rollout buckets on.
+- **An attribute whose fact is unknown is omitted rather than sent empty**, so a
+  rule can never match a placeholder. The consequence is that a rule on an
+  attribute that was not sent silently never matches — which is why
+  `agent_model_flag_resolved` and `client_flag_resolved` log the attribute *names*
+  that were sent.
+- **Bucket a per-person rollout on `userPlatformId`, never `userId`.** `userId`
+  names a regional row, and one person with workspaces in both regions has one in
+  each; bucketing on it hands them a half-rolled-out feature on one region.
+- **What may leave the Worker is decided at the loader, not by the rule author.**
+  Ids, counts, ages, schema enums, and the *domain* half of an email address —
+  never a name, a full address or its local part, a title, an objective, a note, a
+  message, a prompt, or anything else a person wrote. `workspaceSlug` is the one
+  carve-out, and a second one is a decision, not a precedent.
+- **Attributes are an enrichment, never a precondition.** Loading them cannot fail
+  an agent run, and a run with no attributes still resolves its flag on identity.
+- **Nothing that protects data is scoped by a flag.** Flag targeting is a product
+  scope; a poll that cannot reach the service keeps its last answer, which is the
+  wrong failure mode for a confidentiality boundary — see
+  [`security.md`](security.md).
+- **A cohort is a Flagship targeting rule, not a condition in the Worker.**
+  `client-feature-flags.ts` describes the person, evaluates the flag, and serves
+  the answer; changing who is in is a flag change with a changelog entry, not a
+  deploy.
+- **The cadence has one definition** — `CONTROL_TOWER_REFRESH_SECONDS` in
+  `@avalon/contracts` — read by the resolver, the service default, and the desktop
+  fallback, and the resolver clamps what Flagship serves to that range before
+  serving it. Every refresh is an inference; a flag typed in milliseconds would
+  otherwise turn one meeting into thousands of runs.
+- **Evaluation is per run, not per model turn.** A flag change reaches an
+  in-flight run only at its next admission.
+
+## Boundary
+
+This document owns the `FLAGS` binding, the three resolvers, the attribute loader,
+and the one thing that overrides a flag. It does not own the agents themselves or
+what they do with the model they are handed:
+
+| For | Read |
+| --- | --- |
+| The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
+| The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
+| The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
+| Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
+| Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
+| The description loop that most wants its default raised | [`workstream-descriptions.md`](workstream-descriptions.md) |
+| Provisioning credentials and the release health gate | [`runbook.md`](runbook.md) |
+
+A subsystem that wants a rollout adds a flag here and reads it through the
+resolver for its kind. It does not read `env.FLAGS`, and it does not read
+`OPENROUTER_*` — ESLint forbids both outside the resolver.
+
+## Failure modes and limits
+
+Four failures resolve a model flag to the Worker variables, and every one of them
+is logged distinctly rather than collapsed:
+
+| Failure | Log event |
+| --- | --- |
+| No binding — `env.FLAGS` undefined because the Worker does not declare it | *(none; the normal local state)* |
+| A call that throws | `agent_model_flag_unavailable`, at `debug` in development and test |
+| A flag that does not resolve — missing, mistyped, disabled, type-mismatched | `agent_model_flag_unresolved` |
+| A served variation that fails the zod schema | `agent_model_flag_invalid` |
+
+Flagship reports the third by returning the default with an `errorCode` rather
+than throwing, so it is caught by reading `getObjectDetails().errorCode`. Without
+that check a typo in `AGENT_MODEL_FLAG_KEYS` would be indistinguishable from a
+correctly provisioned flag.
+
+- **`resolveAgentModelRouting` and `resolveClientFeatureFlags` never throw.** A
+  Flagship outage cannot fail an agent run or the client poll.
+- **Everything that is not an explicit `true` resolves a client flag to off** — no
+  binding, a binding that throws, an unresolved flag, a non-boolean value.
+- **Facts are cached in the isolate for five minutes, keyed by subject**, and
+  concurrent evaluations of the same subject share one read. A **miss is not
+  cached**: the automation paths resolve a model for a work-stream id one statement
+  before they insert the row, so remembering "no such work stream" would leave those
+  work streams unattributed through their first runs.
+- **A failed read is held down for ten seconds**, keyed by entity and subject.
+  While D1 is unhealthy every agent path would otherwise re-issue its reads and
+  warn again on every run, so an outage would arrive with a log flood on top of it.
+  "No row" and "no read" are therefore different outcomes internally, even though
+  both send no attributes.
+- **At most three reads, issued concurrently**, each degrading to "no attributes
+  from that entity" and logging `flag_targeting_attributes_unavailable`. A D1 error
+  warns in *every* environment — unlike the Flagship binding, D1 works locally, so a
+  failed read there is a real defect rather than the expected local state.
+- **A pin naming a retired model logs `workstream_model_override_unknown` and
+  returns to the flag**, rather than failing the run.
+- **A `fallbackModels` served to `agent-model-hypersight` is dropped** and logged as
+  `agent_model_flag_fallbacks_ignored`. The flag can retarget the model but cannot
+  turn routing on.
+- **A clamped cadence logs `control_tower_refresh_flag_clamped`** rather than
+  passing quietly.
+- **`harness_runs.model` is an expectation, not a guarantee.** It records the model
+  a scheduled run was expected to use, resolved at schedule time; a flag changed
+  between scheduling and execution makes it wrong. The inference ledger records what
+  each attempt actually used.
+- **A desktop poll that cannot reach the service leaves the last answer standing.**
+  Only an answer, a sign-out, or a shutdown turns the Developer section off; a flag
+  change takes up to `DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` (one minute) to
+  arrive, and a sign-in re-asks immediately.
+- **`GET /health` counts `featureFlags` as required in production**, so a Worker
+  deployed without a working binding fails the release health gate rather than
+  quietly running every agent on the Worker variables. Deployment itself does not
+  depend on Flagship: `wrangler deploy` writes the binding into script metadata
+  without calling the Flagship API, so the deployment token needs no Flagship
+  permission — only the provisioning commands do.
+- **Nothing catches a new service that never declared a flag.** The exhaustiveness
+  checks on `AGENT_MODEL_FLAG_KEYS` and `defaultAgentModelRouting` catch a *role*
+  declared and not wired; an agent that reads `OPENROUTER_*` directly is invisible
+  to every rollout, and only the ESLint rule stands between the two.
+
+## Testing
+
+| Suite | Covers |
+| --- | --- |
+| `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, the four unresolved cases, the zod rejection, and the HyperSight fallback drop. |
+| `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
+| `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
+| `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
+| `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
+
+Run one with
+`pnpm --filter @avalon/api exec vitest run test/agent-model-flags.test.ts` — the
+path is package-relative.
+
+Two traps. Flagship is unreachable in local development and test, which is the
+*expected* state, so a suite that asserts a flag resolved is really asserting the
+fallback; stub the binding rather than relying on the environment. And the
+attribute test is deliberately scoped to the fields its rule covers rather than
+asserting over the whole payload — a broad assertion passes by accident on the
+`workspaceSlug` carve-out.
+
+## Operations
+
+### Provisioning
 
 Both regional Workers bind the **one** `avalon-api` Flagship app
 (`bec01d3a-d6b6-4d8c-b89a-37440ed63b8c`), already provisioned:
@@ -490,7 +666,7 @@ Both paths need a Cloudflare API token carrying **Flagship write** access. A
 read-only Flagship grant is enough to list apps and flags but returns
 `Authentication error [code: 10000]` on any create, so a token that passes
 `wrangler whoami` and `wrangler flagship apps list` can still fail to provision.
-[The runbook](RUNBOOK.md#required-hosted-resources) lists the full token
+[The runbook](runbook.md#required-hosted-resources) lists the full token
 permission set.
 
 Then create one JSON flag per agent, seeded with the model ids currently in the
@@ -565,7 +741,7 @@ Withdrawing the section from everyone is `set … -V off`, which overrides every
 rule, and `wrangler flagship flags changelog <APP_ID> developer-settings` is the
 audit trail for who had it when.
 
-## Changing an agent's models
+### Changing an agent's models
 
 Add the new plan as a second variation, roll it out, then promote it:
 
@@ -615,7 +791,7 @@ Keep the Worker variables in step with the variation a flag serves by default.
 They are what a fresh region falls back to, and letting them drift means an
 outage silently moves every agent to an older model.
 
-## Local development
+### Local development
 
 Flagship bindings are always remote. `wrangler dev --local` — which is what
 `pnpm dev:api:local` runs, and what a sandbox must use — prints the binding as
@@ -638,7 +814,7 @@ instead of only after a deploy.
 To exercise a real flag locally you need Cloudflare credentials and
 `pnpm dev:api`, which opens a remote proxy session for the remote bindings.
 
-## Adding a flag
+### Adding a flag
 
 1. Add the key and its typed value to `agent-model-flags.ts` if it is about
    model routing, to `client-feature-flags.ts` if a client reads it, or to a new
@@ -663,7 +839,7 @@ To exercise a real flag locally you need Cloudflare credentials and
    it is created once — and a flag created without its rule is live and
    unscoped until the rule lands.
 
-## Adding an attribute
+### Adding an attribute
 
 A rule that needs a fact the table above does not carry gets it from
 `flag-targeting-attributes.ts`, never from a call site: callers pass ids, and
@@ -671,3 +847,15 @@ one module decides what those ids mean. Add the fact to the loader for its
 entity, emit it only when it is known, keep it inside the boundary above, and
 add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
+
+## Changelog
+
+No entries yet. This document predates the changelog rule in
+[`module-documents.md`](module-documents.md#starting-one). The reasoning behind
+each failure direction, the attribute boundary, and the pin's precedence is
+recorded inline above, but it was not kept as dated entries and was not
+reconstructed into them. The next substantial change to the flag surface starts the
+record, and that entry is that change, written in full.
+
+Note that a *flag value* change is not a change to this module and gets no entry
+here — the Flagship console is the audit record for who was rolled out to and when.

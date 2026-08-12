@@ -10,9 +10,9 @@ webhook ingestion, or anything that assumes a connector's callback is regional �
 Notion's is not.
 
 Everything else about the Notion connector — its tools, capabilities, and page
-authorization model — is in [`CONNECTORS.md`](CONNECTORS.md). The regional
+authorization model — is in [`connectors.md`](connectors.md). The regional
 boundary this module bends is defined in
-[`REGIONALIZATION.md`](REGIONALIZATION.md).
+[`regionalization.md`](regionalization.md).
 
 ## Where the code lives
 
@@ -163,7 +163,7 @@ Provider-side Notion webhook verification and normalization are covered by
 Global gains one table (`notion_workspace_routes`) and one secret (the Notion
 verification token, also replicated to EU). Authorization codes and webhook bytes
 for EU workspaces transit Global and are persisted only in EU. This is the same
-concession `REGIONALIZATION.md` already records for the shared GitHub, Linear,
+concession `regionalization.md` already records for the shared GitHub, Linear,
 and Slack ingresses, extended to the OAuth code because Notion allows only one
 redirect URI.
 
@@ -173,7 +173,7 @@ redirect URI.
 before the connection is registered with Notion.
 
 **The release that first ships this module needs the three-stage Worker rollout
-in [`RUNBOOK.md`](RUNBOOK.md), by hand.** The two bridges are a circular pair —
+in [`runbook.md`](runbook.md), by hand.** The two bridges are a circular pair —
 Global binds `EU_NOTION_BRIDGE` to an entrypoint EU does not export yet, and EU
 binds `GLOBAL_NOTION_ROUTER` to one Global does not export yet — so neither
 region can be deployed with its full configuration first, and the automatic
@@ -181,7 +181,7 @@ EU-then-Global deployment cannot land this change. Both Workers need
 `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, and
 `NOTION_INTEGRATION_ID` — the *same* values, since there is one connection — plus
 `NOTION_WEBHOOK_SETUP_TOKEN`. Registration steps are in
-[`PROVIDER_APPS.md`](PROVIDER_APPS.md).
+[`provider-apps.md`](provider-apps.md).
 
 ## Changelog
 
@@ -207,7 +207,7 @@ replication exists to prevent, reached through the other door.
 
 ### 2026-08-12 — The bridges ship as a staged rollout, not on the automatic deploy
 
-**What changed:** `RUNBOOK.md` gained a three-stage bootstrap for the release
+**What changed:** `runbook.md` gained a three-stage bootstrap for the release
 that first ships this module, and `Operations` above points at it. No code
 changed.
 

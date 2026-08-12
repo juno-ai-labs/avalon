@@ -102,7 +102,7 @@ test('the release trigger excludes what a user could never install', async () =>
   const patterns = await triggerPaths();
 
   for (const path of [
-    'docs/RUNBOOK.md',
+    'docs/runbook.md',
     'README.md',
     'apps/api/src/index.ts',
     'apps/site/src/pages/index.astro',
