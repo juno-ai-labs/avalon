@@ -1,7 +1,8 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { CONTROL_TOWER_REFRESH_SECONDS } from '@avalon/contracts';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MeetingCloseReason } from '../../common/desktop';
 import {
   appendMeetingSegment,
   DEFAULT_MEETING_NOTES_INTERVAL_MS,
@@ -31,7 +32,7 @@ const state = vi.hoisted(() => ({
     updateNote: vi.fn(),
   },
   closeMeetingNotes: vi.fn(async () => undefined),
-  closeRequested: undefined as undefined | (() => void),
+  closeRequested: undefined as undefined | ((reason: MeetingCloseReason) => void),
   copyText: vi.fn(),
   getMeetingAudioPermissions: vi.fn(),
   openMeetingAudioSettings: vi.fn(async () => undefined),
@@ -68,7 +69,7 @@ vi.mock('../lib/platform', () => ({
     getMeetingAudioPermissions: state.getMeetingAudioPermissions,
     openMeetingAudioSettings: state.openMeetingAudioSettings,
     prepareMeetingAudioPermissions: state.prepareMeetingAudioPermissions,
-    onMeetingCloseRequested: (listener: () => void) => {
+    onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => {
       state.closeRequested = listener;
       return () => {
         if (state.closeRequested === listener) state.closeRequested = undefined;
@@ -568,7 +569,7 @@ describe('MeetingNotesScreen', () => {
     expect(state.closeMeetingNotes).not.toHaveBeenCalled();
   });
 
-  it('finalizes a recording before allowing the native meeting window to close', async () => {
+  it('finalizes a recording before allowing a quit to close the meeting window', async () => {
     state.dictationState = 'listening';
     state.stop.mockImplementation(async () => {
       state.onTranscript?.('Close-safe final sentence.');
@@ -578,7 +579,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
 
-    act(() => state.closeRequested?.());
+    act(() => state.closeRequested?.('quit'));
 
     await waitFor(() => expect(state.closeMeetingNotes).toHaveBeenCalledOnce());
     expect(state.api.appendNoteTranscriptSegment).toHaveBeenCalledWith(
@@ -605,13 +606,92 @@ describe('MeetingNotesScreen', () => {
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
     await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
 
-    act(() => state.closeRequested?.());
+    act(() => state.closeRequested?.('quit'));
 
     await waitFor(() => expect(state.api.updateNote).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ recordingStatus: 'complete' }),
     ));
     await waitFor(() => expect(state.closeMeetingNotes).toHaveBeenCalledOnce());
+  });
+
+  it('asks before a person closes a window that is still recording', async () => {
+    state.dictationState = 'listening';
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
+
+    act(() => state.closeRequested?.('user'));
+
+    expect(await screen.findByRole('dialog', { name: 'This meeting is still recording' })).toBeVisible();
+    // Nothing has ended yet: the window stays up, and so does the recording.
+    expect(state.stop).not.toHaveBeenCalled();
+    expect(state.closeMeetingNotes).not.toHaveBeenCalled();
+  });
+
+  it('ends the recording and closes once the person confirms', async () => {
+    state.dictationState = 'listening';
+    state.stop.mockImplementation(async () => {
+      state.onTranscript?.('A sentence spoken just before the window closed.');
+    });
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
+
+    act(() => state.closeRequested?.('user'));
+    const dialog = await screen.findByRole('dialog', { name: 'This meeting is still recording' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'End and close' }));
+
+    await waitFor(() => expect(state.closeMeetingNotes).toHaveBeenCalledOnce());
+    expect(state.stop).toHaveBeenCalled();
+    expect(state.api.appendNoteTranscriptSegment).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ text: 'A sentence spoken just before the window closed.' }),
+    );
+    expect(state.api.generateNoteNotes).toHaveBeenCalledWith(expect.any(String), 'final', 'complete', 60);
+    const closeOrder = state.closeMeetingNotes.mock.invocationCallOrder[0]!;
+    const completeCallIndex = state.api.updateNote.mock.calls.findIndex(([, patch]) => patch.recordingStatus === 'complete');
+    expect(state.api.updateNote.mock.invocationCallOrder[completeCallIndex]).toBeLessThan(closeOrder);
+  });
+
+  it('leaves the meeting running when the person keeps recording', async () => {
+    state.dictationState = 'listening';
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
+
+    act(() => state.closeRequested?.('user'));
+    const dialog = await screen.findByRole('dialog', { name: 'This meeting is still recording' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep recording' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(state.stop).not.toHaveBeenCalled();
+    expect(state.closeMeetingNotes).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+  });
+
+  it('closes a window with nothing to lose without asking', async () => {
+    state.api.createNote.mockResolvedValue(noteDetail({
+      recordingStatus: 'complete',
+      liveNotes: '## Summary\n\nThe meeting already ended.',
+    }));
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
+
+    act(() => state.closeRequested?.('user'));
+
+    // A finished note is durable; a confirmation here would be a question about
+    // nothing, asked every time the window is closed.
+    await waitFor(() => expect(state.closeMeetingNotes).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('finishes with a partial final summary when the last transcript segment cannot be saved', async () => {
