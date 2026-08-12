@@ -20,9 +20,7 @@ import {
   Clipboard,
   Copy,
   LoaderCircle,
-  Pin,
   TerminalSquare,
-  X,
 } from 'lucide-react';
 import { Children, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
@@ -32,10 +30,10 @@ import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { useTextClamped } from '../lib/use-text-clamped';
-import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
+import type { ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
-import { Badge, Button, InlineError } from './primitives';
+import { Button, InlineError } from './primitives';
 
 function personAccent(id: string): string {
   const palette = ['#8db6de', '#c79bd5', '#81bfa5', '#d2a47f', '#a6a0d9', '#cf9ba2'];
@@ -760,56 +758,12 @@ export function ElicitationPanel({
   );
 }
 
-function SuggestionBlock({
-  suggestion,
-  onResolve,
-}: {
-  suggestion: ActivitySuggestionData;
-  onResolve: (action: 'accept' | 'dismiss') => Promise<void>;
-}): React.JSX.Element {
-  const [pending, setPending] = useState<'accept' | 'dismiss' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const resolve = async (action: 'accept' | 'dismiss'): Promise<void> => {
-    setPending(action);
-    setError(null);
-    try {
-      await onResolve(action);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The suggestion could not be updated.');
-    } finally {
-      setPending(null);
-    }
-  };
-  return (
-    <section className={clsx('suggestion-block', suggestion.status !== 'pending' && 'is-resolved')}>
-      <header>
-        <span><Pin aria-hidden="true" size={15} /></span>
-        <div><small>Suggested context</small><h3>{suggestion.title}</h3></div>
-        {suggestion.source && <Badge>{suggestion.source}</Badge>}
-      </header>
-      <div className="suggestion-reason"><small>Why</small><p>{suggestion.reason}</p></div>
-      {suggestion.status === 'pending' ? (
-        <footer>
-          <Button disabled={pending !== null} onClick={() => void resolve('dismiss')}><X size={14} /> Dismiss</Button>
-          <Button className="button-primary" disabled={pending !== null} onClick={() => void resolve('accept')}>
-            {pending === 'accept' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Add to work stream
-          </Button>
-        </footer>
-      ) : (
-        <p className="suggestion-resolution"><Check size={13} /> {suggestion.status === 'accepted' ? 'Added to this work stream' : 'Dismissed'}</p>
-      )}
-      {error && <InlineError>{error}</InlineError>}
-    </section>
-  );
-}
-
 interface MessageBlockProps {
   currentUserId?: string;
   message: Message;
   loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
-  onResolveSuggestion: (suggestionId: string, action: 'accept' | 'dismiss') => Promise<void>;
   systemRowDisclosure?: SystemRowDisclosure;
 }
 
@@ -819,7 +773,6 @@ export function MessageBlock({
   message,
   onAnswerElicitation,
   onOpenAttachment,
-  onResolveSuggestion,
   systemRowDisclosure,
 }: MessageBlockProps): React.JSX.Element {
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
@@ -847,9 +800,6 @@ export function MessageBlock({
       );
     }
     return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
-  }
-  if (message.messageType === 'activity_suggestion' && message.activitySuggestion) {
-    return <div className="transcript-event" id={`message-${message.id}`}><SuggestionBlock onResolve={(action) => onResolveSuggestion(message.activitySuggestion!.id, action)} suggestion={message.activitySuggestion} /></div>;
   }
   if (message.authorType === 'system' || message.messageType === 'system') {
     return <SystemMessageBlock disclosure={systemRowDisclosure} message={message} />;

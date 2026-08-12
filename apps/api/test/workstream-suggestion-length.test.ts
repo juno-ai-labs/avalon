@@ -19,69 +19,16 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-describe("work-stream suggestions with oversized source fields", () => {
-  it("truncates an activity title that exceeds the suggestion schema before returning it", async () => {
+describe("paused work-stream suggestions", () => {
+  it("does not return a pending suggestion", async () => {
     const database = migratedDatabase();
     seed(database);
-    // GitHub's push webhook can carry a full multi-line commit message as the
-    // activity title, truncated only to the connector's own 500-character
-    // cap — well past ActivitySuggestionSchema's 300-character max.
-    const oversizedTitle = "juno-ai-labs/avalon: push — ".padEnd(408, "x");
-    seedSuggestion(database, { activityTitle: oversizedTitle });
+    seedSuggestion(database, { activityTitle: "A context suggestion" });
     const service = new WorkstreamService(environment(database), auth());
 
     const detail = await service.get(workstreamId);
 
-    expect(detail.suggestions).toHaveLength(1);
-    const [suggestion] = detail.suggestions;
-    expect(suggestion?.title.length).toBeLessThanOrEqual(300);
-    expect(suggestion?.title).toBe(oversizedTitle.slice(0, 300));
-  });
-
-  it("truncates a title with an emoji straddling the boundary without leaving a lone surrogate", async () => {
-    const database = migratedDatabase();
-    seed(database);
-    // Commit messages routinely carry emoji. Place a surrogate pair (😀,
-    // two UTF-16 code units) exactly across the 300-character cut so a
-    // naive `.slice(0, 300)` would split it and leave a lone surrogate.
-    const oversizedTitle = `${"x".repeat(299)}\u{1F600}${"y".repeat(200)}`;
-    seedSuggestion(database, { activityTitle: oversizedTitle });
-    const service = new WorkstreamService(environment(database), auth());
-
-    const detail = await service.get(workstreamId);
-
-    const [suggestion] = detail.suggestions;
-    expect(suggestion?.title.length).toBeLessThanOrEqual(300);
-    const lastCode = suggestion?.title.charCodeAt((suggestion.title.length) - 1) ?? 0;
-    expect(lastCode >= 0xd800 && lastCode <= 0xdbff).toBe(false);
-  });
-
-  it("truncates a suggestion summary that exceeds the schema before returning it", async () => {
-    const database = migratedDatabase();
-    seed(database);
-    const oversizedSummary = "x".repeat(2_500);
-    seedSuggestion(database, { activityTitle: "Normal-length title", activitySummary: oversizedSummary });
-    const service = new WorkstreamService(environment(database), auth());
-
-    const detail = await service.get(workstreamId);
-
-    const [suggestion] = detail.suggestions;
-    expect(suggestion?.summary.length).toBeLessThanOrEqual(2_000);
-    expect(suggestion?.summary).toBe(oversizedSummary.slice(0, 2_000));
-  });
-
-  it("does not shorten a title, summary, or reason that already fit the schema", async () => {
-    const database = migratedDatabase();
-    seed(database);
-    seedSuggestion(database, { activityTitle: "Normal-length title", activitySummary: "Normal-length summary" });
-    const service = new WorkstreamService(environment(database), auth());
-
-    const detail = await service.get(workstreamId);
-
-    const [suggestion] = detail.suggestions;
-    expect(suggestion?.title).toBe("Normal-length title");
-    expect(suggestion?.summary).toBe("Normal-length summary");
-    expect(suggestion?.reason).toBe("Matches the workstream objective");
+    expect(detail.suggestions).toEqual([]);
   });
 
   it("truncates an oversized activity title before it is stored as an accepted resource", async () => {

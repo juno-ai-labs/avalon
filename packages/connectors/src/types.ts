@@ -50,9 +50,9 @@ function humanizeActivityEventType(eventType: string): string {
  * back to them?** A pull request opened, yes. The eleven check runs it started,
  * no.
  *
- * One surface besides the digest reads this: contextual routing starts an
- * operational type at a higher confidence bar before offering it as context
- * (`docs/contextual-routing.md`). It is a prior only — a workspace's own
+ * The paused contextual-routing surface retains this as a prior for a future
+ * re-enable: an operational type starts at a higher confidence bar before it
+ * can be offered as context (`docs/contextual-routing.md`). A workspace's own
  * acceptances overrule it, and a connector that classifies nothing as
  * digestible is read as having drawn no line rather than as having said no —
  * so answer the digest question here and nothing else.

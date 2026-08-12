@@ -18,6 +18,7 @@ import {
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import {
   BASE_CONFIDENCE_FLOOR,
   DISMISSAL_RUN_LIMIT,
@@ -25,7 +26,10 @@ import {
   dismissalRunCutoff,
   suggestionAdmission,
 } from "../services/activity-routing-feedback";
-import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
+import {
+  createActivitySuggestion,
+  publishWorkstreamRoomEvent,
+} from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
@@ -266,7 +270,9 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     const directWorkstreamIds = await routeDirectWatches(env, activity);
     const automationWorkstreamIds = await runMatchingAutomations(env, activity);
     for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
-    const routedContextually = await routeContextually(env, activity, directWorkstreamIds);
+    const routedContextually = SUGGESTED_CONTEXT_ENABLED
+      ? await routeContextually(env, activity, directWorkstreamIds)
+      : false;
     if (directWorkstreamIds.size === 0 && !routedContextually) {
       await enqueueActivityOpportunity(env, activity.id);
     }
