@@ -291,14 +291,24 @@ execution. The loop overlaps safe reads, serializes writes, records execution pl
 and results, replays completed receipts, and stops rather than repeating an
 ambiguous external write.
 
-Run limits are caller-specific. Ordinary work-stream runs enforce a 1,000-turn
-cap but no aggregate tool-call, model-cost, or task-scale wall-time ceiling;
-their Workflow step retains a one-year platform deadline. Unattended HyperSight
-refreshes and other bounded harness callers keep smaller explicit ceilings.
-Context, token, and per-operation streaming watchdogs still apply, and classified
-provider attempts append to an immutable inference ledger. Cancellation is a
-durable request observed by the lease owner, which alone commits the final
-`stopped` transition.
+Run limits are caller-specific. Root ordinary work-stream and HyperSight runs
+enforce a 1,000-turn cap but no aggregate tool-call, model-cost, or task-scale
+wall-time ceiling; their Workflow step retains a one-year platform deadline.
+Inline children and other deliberately bounded one-shot harness callers keep
+smaller explicit ceilings. Context, token, and per-operation streaming
+watchdogs still apply, and classified provider attempts append to an immutable
+inference ledger. Cancellation is a durable request observed by the lease
+owner, which alone commits the final `stopped` transition.
+
+Every terminal root harness execution also emits one exact structured Workers
+Log and one aggregate Workers Analytics Engine datapoint. The datapoint carries
+the already-computed run totals—duration, turns, routed model attempts, tool
+calls, model/tool time, tokens, cost, and outcome—and no member content or run
+identifier. Analytics Engine is sampled and optimized for distributions and
+time series, not exact event recovery, so Avalon never reconstructs a run from
+loop-churn datapoints. D1 remains canonical; Workers Logs and Traces provide
+correlated diagnosis. [`runbook.md`](runbook.md#root-run-analytics) owns the
+positional dataset schema and sampling-aware queries.
 
 Durable memory is scoped to an ad-hoc work stream, an installed automation
 subscription, a user inside a workspace, or the workspace itself. The host — not
@@ -496,9 +506,10 @@ it.
   ticket, a bounded regional session count, and rate- and size-limited audio
   events. Raw microphone audio and transcripts are not persisted by that bridge.
 - **A run stops rather than repeating an ambiguous external write.** Context,
-  token, iteration, and streaming-watchdog limits terminate ordinary runs;
-  HyperSight and the other bounded callers also enforce their explicit cost,
-  tool-call, and wall-clock ceilings. The caller-specific numbers are in
+  token, iteration, and streaming-watchdog limits terminate root runs;
+  HyperSight shares the root policy, while inline children and the other
+  bounded callers also enforce their explicit cost, tool-call, and wall-clock
+  ceilings. The caller-specific numbers are in
   [`agent-harness.md`](agent-harness.md).
 - **A missing or malformed Worker variable fails the isolate at its entrypoint**
   rather than inside the first request that happened to read it.
@@ -552,6 +563,37 @@ activation can narrow, but never widen, a run's original authority.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-12 — HyperSight adopts the root policy with aggregate run telemetry
+
+**What changed:** HyperSight no longer has separate 8-turn, 24-tool,
+four-minute, and 500-cent ceilings. It now shares the root run's 1,000-turn
+policy and one-year Workflow deadline. Every completed root harness execution
+emits one structured Workers Log and one versioned Workers Analytics Engine
+summary datapoint.
+
+**Why:** HyperSight's prior safety thresholds were selected without a measured
+distribution of successful and failed run duration, tool use, or cost. They
+could terminate useful unattended work for the same reason the ordinary
+eight-turn limit did. The policy now gathers the measurements needed to set a
+future threshold from observed behavior rather than a guess.
+
+**Considered and rejected:** Emitting every loop iteration and reconstructing a
+run in Analytics Engine was rejected because the product uses adaptive
+sampling, does not guarantee retrieval of an individual point, and cannot
+reliably reconstruct event sequences. Keeping only Workers Logs was rejected
+because logs are the exact diagnostic stream, not the sampling-aware aggregate
+time-series store. Removing the final iteration guard was rejected because
+1,000 turns still terminates a pathological model loop.
+
+**Consequences:** An unattended HyperSight refresh can consume materially more
+provider and tool capacity before it is cancelled or reaches 1,000 routed model
+attempts. Per-operation watchdogs, read-only enforcement, durable
+cancellation, lease fencing, and ambiguous-write handling remain mandatory.
+Analytics Engine is advisory telemetry with three-month retention; D1 remains
+the source of truth, and telemetry failure cannot change a run result.
+
+Shipped in #130.
 
 ### 2026-08-12 — Root work-stream runs use a caller-specific resource policy
 

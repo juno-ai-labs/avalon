@@ -455,8 +455,105 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Degraded connector workflows | `event = connector_poll_timeout` or `event = connector_poll_failed` |
 | Rejected model calls | `event = agent_inference_attempt_failed` or `event = structured_inference`, and `provider_error_code` exists |
 | Broken response contracts | `event = request_failed` and `error_name = ZodError` |
+| Harness run outcomes | `event = harness_run_finished` |
+| Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
 
 Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
+
+### Root-run analytics
+
+Both API Workers bind `RUN_ANALYTICS` to the account-level Workers Analytics
+Engine dataset `avalon_agent_runs`. A root ordinary work-stream or HyperSight
+execution writes exactly one datapoint after the harness has produced its final
+result and persisted its usage metadata. It also emits the correlated
+`harness_run_finished` Workers Log carrying workspace, work-stream, and run IDs.
+
+The Analytics Engine point is deliberately a **terminal summary**, not one row
+per model turn or loop event. Bind has already computed duration, turns, routed
+attempts, tool calls, model/tool time, tokens, and cost. Reconstructing those
+totals from churn would be both more expensive and incorrect for this store:
+Analytics Engine samples at write and query time, does not guarantee retrieval
+of an individual point, cannot reconstruct exact event sequences, and supports
+neither joins nor unions. D1 is the run ledger. Workers Logs and Workers Traces
+are the exact correlated diagnostic path. If a future investigation needs
+latency by tool name, give completed tool executions a separate fixed-schema
+dataset; do not mix a second event grain into `avalon_agent_runs`.
+
+`writeDataPoint` accepts ordered arrays, so position is the schema. Never reorder
+or repurpose a populated slot. Add a new version and unused trailing slots when
+the schema grows:
+
+| Column | Meaning |
+| --- | --- |
+| `index1` | `<source>:<region>` sampling cohort, for example `hypersight:eu`; never a unique run ID |
+| `blob1` | schema version (`harness_run_v1`) |
+| `blob2` | source (`workstream` or `hypersight`) |
+| `blob3` | terminal status |
+| `blob4` | final model ID |
+| `blob5` | terminal failure code or `none` |
+| `blob6` | region |
+| `blob7` | app version |
+| `blob8` | build SHA |
+| `double1` | end-to-end harness duration in milliseconds |
+| `double2` | successfully completed model turns |
+| `double3` | tool calls requested by completed turns, including cached calls |
+| `double4` | cumulative model routing/retry/generation time in milliseconds |
+| `double5` | sum of individual tool durations in milliseconds; this may exceed wall time when tools overlap |
+| `double6` | input tokens |
+| `double7` | output tokens |
+| `double8` | cost in cents |
+| `double9` | routed model attempts (the count governed by the 1,000-iteration policy) |
+| `double10` | output tokens per second, or zero when unavailable |
+
+No Analytics Engine point contains workspace, work-stream, run, user, prompt,
+transcript, tool-argument, tool-result, connector-content, or credential data.
+The sampling index follows the primary operator query—caller source by
+region—and stays far below the 96-byte index limit. One point uses eight of the
+20 blob slots and ten of the 20 double slots, stays below the 16 KiB aggregate
+blob limit, and is one of at most 250 writes allowed per Worker invocation.
+Writes are non-blocking and must never be awaited or allowed to change a run's
+durable outcome.
+
+Queries must weight every aggregate by `_sample_interval`. This seven-day view
+is the starting point for deciding whether a run ceiling is warranted:
+
+```sql
+SELECT
+  blob2 AS source,
+  blob3 AS status,
+  count() AS sampled_rows,
+  SUM(_sample_interval) AS estimated_runs,
+  SUM(_sample_interval * double1) / SUM(_sample_interval) AS avg_duration_ms,
+  quantileExactWeighted(0.50)(double1, _sample_interval) AS p50_duration_ms,
+  quantileExactWeighted(0.95)(double1, _sample_interval) AS p95_duration_ms,
+  quantileExactWeighted(0.95)(double3, _sample_interval) AS p95_tool_calls,
+  quantileExactWeighted(0.95)(double8, _sample_interval) AS p95_cost_cents,
+  max(double9) AS max_routed_attempts
+FROM avalon_agent_runs
+WHERE blob1 = 'harness_run_v1'
+  AND timestamp > NOW() - INTERVAL '7' DAY
+GROUP BY source, status
+ORDER BY source, status
+```
+
+For a dashboard, group the same weighted measures with
+`toStartOfInterval(timestamp, INTERVAL '1' HOUR)`. Use `count()` as a sample-size
+quality signal, not as the run count; `SUM(_sample_interval)` estimates events,
+and `quantileExactWeighted(..., _sample_interval)` is the supported percentile
+form. Filter on `index1 = 'hypersight:eu'` or
+`index1 = 'hypersight:global'` for the highest-resolution regional HyperSight
+view. Do not use this dataset for exact billing, deduplication, run lookup, or
+crash recovery.
+
+Query the SQL API with a token restricted to **Account Analytics: Read**, or
+connect Grafana through the documented ClickHouse datasource. Analytics Engine
+retains data for three months. Its published limits currently include 10
+million writes and one million SQL reads per month on Workers Paid before
+usage-based charges; Cloudflare's April 2026 pricing page says billing has not
+started yet, so re-check the product page before treating that as a budget.
+Every `writeDataPoint` is one billable write regardless of how many fields it
+contains, which is another reason to record one terminal summary rather than
+every churn.
 
 Automatic tracing is enabled on both API Workers and on the retention Worker at
 a `traces` head sampling rate of 1. It is a separate switch from logs: the
@@ -563,9 +660,10 @@ only how to read it back.
 ### OpenRouter unavailable
 
 The harness tries configured fallback models within its per-request and stream
-watchdogs plus the caller's run policy. An ordinary work-stream run allows 1,000
-turns and has a one-year Workflow deadline; bounded callers retain their smaller
-wall-time and iteration ceilings. If all models fail, the run becomes `failed`
+watchdogs plus the caller's run policy. Root ordinary work-stream and HyperSight
+runs allow 1,000 routed model attempts and have a one-year Workflow deadline;
+inline children and bounded one-shot callers retain their smaller wall-time and
+iteration ceilings. If all models fail, the run becomes `failed`
 and the work stream retains its persisted context. Check redacted structured
 logs by request, workspace, work-stream, and harness-run IDs; never add prompt
 bodies or credentials to logs.

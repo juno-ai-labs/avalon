@@ -63,16 +63,9 @@ const submission = (state: { markdown: string | null }) =>
   hyperSightSubmissionPlugin(state, async () => {});
 
 describe("root-run limits", () => {
-  it("keeps unattended HyperSight refreshes bounded independently of ordinary work streams", () => {
-    expect(workstreamRunLimits(false)).toEqual({ maxIterations: 1_000 });
-    expect(workstreamRunLimits(true)).toEqual({
-      maxIterations: 8,
-      maxToolCalls: 24,
-      maxWallClockMs: 240_000,
-      maxCostCents: 500,
-    });
-    expect(workstreamWorkflowStepTimeout(false)).toBe("1 year");
-    expect(workstreamWorkflowStepTimeout(true)).toBe("5 minutes");
+  it("uses the expanded root policy for ordinary and HyperSight runs", () => {
+    expect(workstreamRunLimits()).toEqual({ maxIterations: 1_000 });
+    expect(workstreamWorkflowStepTimeout()).toBe("1 year");
   });
 });
 
