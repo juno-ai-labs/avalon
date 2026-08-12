@@ -1190,7 +1190,7 @@ describe("Slack agent-session origins", () => {
       },
     })).toEqual({
       resourceType: "slack_thread",
-      providerResourceId: "C0A4UF9RWAU:1786491700.928349",
+      providerResourceId: "C0A4UF9RWAU:thread:1786491700.928349",
       title: "Thread in #operations",
       canonicalUrl: null,
       metadata: {
@@ -1218,6 +1218,31 @@ describe("Slack agent-session origins", () => {
     })?.title).toBe("Slack thread");
   });
 
+  it("keeps a thread's identity distinct from its root message's", () => {
+    // `normalizeSlackActivity` identifies a message as `<channel>:<ts>`, and for
+    // a thread root that `ts` is the `thread_ts` — so without the segment both
+    // would resolve the same resource row, and the resource identity tuple does
+    // not include the type. Whichever arrived first would win, and a thread
+    // origin would inherit a `slack_message` row with no permalink.
+    const rootTs = "1786491700.928349";
+    const thread = slackOriginSource().describe({
+      kind: "agent_session",
+      session: { teamId: "T1", channelId: "C1", threadTs: rootTs, channelType: "public" },
+    });
+    const message = normalizeSlackActivity(
+      slackActivityConnection(),
+      {
+        team_id: "T1",
+        event_id: "Ev1",
+        event: { type: "message", channel: "C1", ts: rootTs, user: "U1", text: "hello" },
+      } as never,
+      null,
+    );
+
+    expect(message?.resourceType).toBe("slack_message");
+    expect(thread?.providerResourceId).not.toBe(message?.providerResourceId);
+  });
+
   it("hands an activity back to the shared derivation", () => {
     expect(slackOriginSource().describe({
       kind: "activity",
@@ -1241,7 +1266,7 @@ describe("Slack agent-session origins", () => {
       slackWorkspaceConnection(),
       {
         resourceType: "slack_thread",
-        providerResourceId: "C0A4UF9RWAU:1786491700.928349",
+        providerResourceId: "C0A4UF9RWAU:thread:1786491700.928349",
         title: "Thread in #operations",
         canonicalUrl: null,
         metadata: {},
@@ -1284,6 +1309,20 @@ async function slackSignature(secret: string, timestamp: string, body: string): 
 
 function json(value: unknown, headers: HeadersInit = {}, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...Object.fromEntries(new Headers(headers)) } });
+}
+
+/** The connection shape `normalizeSlackActivity` reads, not an authorized one. */
+function slackActivityConnection() {
+  return {
+    id: "connection-slack",
+    workspaceId: "workspace-avalon",
+    scope: "workspace" as const,
+    ownerUserId: null,
+    grantedScopes: [],
+    credentials: {},
+    cursor: {},
+    config: { region: "global" },
+  };
 }
 
 function slackWorkspaceConnection(): AuthorizedConnectorConnection {

@@ -132,6 +132,20 @@ describe("connector origins", () => {
     expect(resolveCanonicalUrl).not.toHaveBeenCalled();
   });
 
+  it("refuses a URL the provider returned that is not one", async () => {
+    // The least trusted value in the whole path, and it ends up behind a link a
+    // person clicks. A description that fails the contract leaves the origin
+    // without a link, exactly as an unreachable provider would.
+    expect(await describeConnectorOrigin(
+      adapter({
+        describe: () => ({ resourceType: "test_thread", providerResourceId: "C1:1.1", title: "Thread" }),
+        resolveCanonicalUrl: async () => "javascript:alert(1)",
+      }),
+      { kind: "agent_session", session: {} },
+      { connection: connection(), signal: AbortSignal.timeout(1_000) },
+    )).toMatchObject({ providerResourceId: "C1:1.1", canonicalUrl: null });
+  });
+
   it("keeps the origin when the provider will not give up the URL", async () => {
     // An origin that records *which* thread but cannot link to it is still the
     // only record of where the work stream came from; losing it to a timeout

@@ -108,6 +108,14 @@ to reply under. The identity is `<channelId>:<threadTs>`, and the ingress passes
 the channel and thread the agent actually replies into rather than the ones the
 event carried, which a DM invocation arrives without.
 
+Its identity carries a `thread` segment — `<channelId>:thread:<threadTs>` — and
+that is not cosmetic. `normalizeSlackActivity` identifies a message as
+`<channelId>:<ts>`, and for a thread root that `ts` *is* the `thread_ts`, so the
+obvious form would be the same string while the identity tuple does not include
+the resource type. A thread origin and a `slack_message` activity resource would
+collide on one row, and whichever arrived first would win: the origin would
+inherit the message's type, title, and missing permalink.
+
 The title names the channel (`Thread in #operations`), or says
 `Slack direct message` for a DM, or falls back to `Slack thread` when Slack did
 not give a channel name. The canonical URL is asked of `chat.getPermalink`
@@ -162,13 +170,30 @@ it.
 - **`relationship_type = 'origin'` means the work stream *began* there.** The
   agent is handed the relationship by `workstream_read`, which is how it tells
   the channel it was summoned from apart from a document somebody attached
-  afterwards. A future detach path must not treat the two alike: removing an
-  origin loses the only record of where the work stream came from.
+  afterwards. Nothing *automatic* may treat the two alike — a cleanup sweep or a
+  re-attach path that cannot tell them apart would drop the only record of where
+  the work stream came from.
+
+  A person still can: `DELETE /workstreams/:id/resources/:resourceId` removes an
+  origin like any other attachment, and the rail's **Remove** button offers it,
+  because `WorkstreamDetail` does not carry `relationship_type`. That is
+  deliberate for now — somebody who does not want a private channel's name
+  visible in a shared work stream should be able to take it out, and protecting
+  the row would mean a contract field, a disabled control, and a refusal that
+  nobody has asked for. Revisit it together with those three, not on its own.
 - **An origin carries no provider content.** It records where something is, not
   what it said. Slack Agent policy makes this explicit — durably storing provider
   content gathered for surrounding context is forbidden — and the rule is the
   same for every connector: identifiers, a name, and the kind of place, with the
   content left where an authorized tool can fetch it for a run.
+
+  Concretely, an origin's `content_ref` is always null. An activity's
+  `payload_ref` addresses the raw verified webhook body in R2, and
+  `workstream_read_resource` serves whatever `content_ref` points at to the model
+  with no connector authorization of its own — so copying it would turn "record
+  where this came from" into "publish the provider payload to the run".
+  `attachActivityResource` is the one path that still sets it, because there a
+  person accepted a card about that activity and reading it is the point.
 
 ## Boundary
 
@@ -205,12 +230,20 @@ It deliberately does **not** cover:
 - **The connector registry cannot be built.** One misconfigured credential takes
   every adapter down with it, so an activity locator falls back to
   `connectorOriginFromActivity` — which needs no adapter — and the origin
-  survives. Logged as `workstream_origin_description_failed`. A session locator
-  has no such fallback and yields no origin.
-- **An adapter describes an undeclared resource type.** `describeConnectorOrigin`
-  throws `invalid_configuration`; the caller logs and creates the work stream
-  without an origin. It is a connector bug, and it fails visibly rather than
-  writing a forked resource identity.
+  survives. Logged as `connector_registry_unavailable_for_origin`. A session
+  locator has no such fallback and yields no origin.
+- **An adapter describes an undeclared resource type**, or its description fails
+  the contract. `describeConnectorOrigin` throws `invalid_configuration`, logged
+  as `workstream_origin_description_failed`, and the work stream is created with
+  **no** origin — not with a derived one. The two failures above are caught
+  separately for exactly this reason: a single `catch` around both let an
+  adapter's undeclared type fall through to the activity derivation, which
+  answered with a substitute origin and defeated the check that exists to stop a
+  typo forking a resource identity.
+- **A queue invocation dies between committing an automation run and attaching
+  its origin.** The redelivery attaches it: the write sits on both the new-run
+  and existing-run paths, before the Workflow is created, and both statements
+  behind it are `ON CONFLICT DO NOTHING`. Repeating it costs one lookup.
 - **The resource insert or the attachment write fails.** Logged as
   `workstream_origin_resource_attach_failed` with the workspace, work stream,
   provider, and resource type. The create continues. The resource row is resolved
@@ -221,12 +254,14 @@ It deliberately does **not** cover:
   can be built from a run of related events, and the rail is a reading surface
   before it is an index; the cap is generous against what admission actually
   produces.
-- **The same object is resolved concurrently.** There is no unique index on
-  `(workspace_id, connection_id, provider, provider_resource_id)`, so two
-  simultaneous first-time resolutions of one object can leave two rows. The
-  insert is read back rather than trusted, which closes the common ordering; the
-  residual race is the same one every other resource path carries and has not
-  been observed.
+- **The same object is resolved concurrently.** Safe, and by construction rather
+  than by luck: `resources_connection_provider_identity_idx`
+  (`0002_scope_resource_identity.sql`) is a unique index on exactly
+  `(workspace_id, connection_id, provider, provider_resource_id)` where both are
+  non-null, so the `ON CONFLICT DO NOTHING` insert is a real no-op for the loser
+  and the read-back returns the one row. That index is also why two *different*
+  kinds of object must never share a `providerResourceId` — see the invariant
+  above.
 - **The work stream is gone by the time the attachment is written.** The foreign
   key rejects it, the failure is logged, and `attachWorkstreamOriginResource`
   returns null.
@@ -333,6 +368,14 @@ worse than no link. Deriving the origin lazily when the rail is read — the
 information is not durably available later, which is the whole problem. Making
 the attachment a required step of create — it would let a resource write fail a
 person's request.
+
+**Also settled here, from review:** a Slack thread's identity carries a `thread`
+segment so it cannot collide with its root message's activity resource; the
+automation attachment sits on both run paths so a redelivery repairs it; the two
+description failures are caught separately so a connector's undeclared type is
+never worked around; a provider-returned URL is re-parsed through the contract
+before it is stored; an origin's `content_ref` is always null; and an existing
+row has a missing link filled in rather than being left stale.
 
 **Consequences:** A new connector gets activity origins with no code and opts
 into more by implementing `origin`; a new *ingress* is expected to build a
