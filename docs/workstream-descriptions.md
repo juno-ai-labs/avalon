@@ -19,7 +19,7 @@ stream forever.
 | `packages/agent-harness/src/prompts/workstream-description.ts` | The prompt and its judgment. Byte-stable and golden-hashed. |
 | `apps/api/src/workflows/` — `WorkstreamLoopWorkflow`'s last step | Where an evaluation is triggered from. |
 | `WorkstreamService.update` | The authored-edit path that resets the clock in the same batch as the text. |
-| `packages/db/migrations/0058_*.sql` | The one-time `description_source` backfill. |
+| `packages/db/migrations/0058_workstream_description_refresh.sql` | The refresh table and the one-time `description_source` backfill. |
 | `apps/api/test/workstream-description-refresh.test.ts` | Asserts against the exported constants. |
 
 ## How it works
