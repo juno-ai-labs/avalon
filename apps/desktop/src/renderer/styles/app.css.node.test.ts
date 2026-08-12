@@ -96,3 +96,30 @@ describe('system message clamp', () => {
     expect(open).toContain('overflow-y: auto;');
   });
 });
+
+/**
+ * Markdown list markers are drawn by the browser, which makes them exactly the
+ * kind of thing a global reset can remove without any test noticing: the DOM is
+ * unchanged, the list is still a list, and every assertion about its items
+ * still passes. Tailwind's preflight — pulled in by `@tailwind base` at the top
+ * of this stylesheet — sets `list-style: none` on every `ol` and `ul`, and for
+ * as long as nothing here took it back, bulleted lists rendered as indented
+ * paragraphs and numbered ones lost their numbers on every markdown surface in
+ * the app.
+ */
+describe('markdown list markers', () => {
+  it.each([
+    ['.markdown-body ul', 'disc'],
+    ['.markdown-body ul ul', 'circle'],
+    ['.markdown-body ul ul ul', 'square'],
+    ['.markdown-body ol', 'decimal'],
+  ])('draws %s with %s', (selector, style) => {
+    expect(rule(selector)).toContain(`list-style: ${style};`);
+  });
+
+  // The one list that should keep the reset: its items carry checkboxes, and a
+  // bullet beside each one is the reason this exception was written.
+  it('leaves a task list without markers', () => {
+    expect(rule('.markdown-body .contains-task-list')).toContain('list-style: none;');
+  });
+});

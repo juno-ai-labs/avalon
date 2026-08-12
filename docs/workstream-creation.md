@@ -329,9 +329,10 @@ right-aligned bubble, capped at `min(72%, 620px)`. That was checked in a real
 window against a brief with headings, bullet and numbered lists, and multiple
 sections rather than reasoned about: headings, spacing, and wrapping all hold at
 that width, and code blocks scroll inside themselves rather than widening the
-bubble. List markers do not render — `list-style: none` from the `tw-fade`
-preflight defeats `.markdown-body li::marker`, identically for agent messages,
-which predates this change and is not fixed here.
+bubble. List markers did not render at the time — reported here as the `tw-fade`
+preflight, which was wrong: the `list-style: none` came from Tailwind's own
+preflight, pulled in by `@tailwind base`. It applied to every markdown surface,
+not only this one, and is fixed separately.
 
 ### 2026-08-11 — The create path waits for its own work again; only the launch surface stays
 
