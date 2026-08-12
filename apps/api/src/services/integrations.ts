@@ -149,6 +149,12 @@ import {
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
 const WORKSTREAM_MAX_MODEL_ITERATIONS = 1_000;
+const HYPERSIGHT_RUN_LIMITS = {
+  maxIterations: 8,
+  maxToolCalls: 24,
+  maxWallClockMs: 240_000,
+  maxCostCents: 500,
+} as const;
 const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
 const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
@@ -1608,8 +1614,9 @@ export async function runWorkstreamHarness(
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
   let suppressInferencePayloadLogging = false;
+  const runLimits = workstreamRunLimits(Boolean(hyperSightRun));
   const runScopeLimits = {
-    maxIterations: WORKSTREAM_MAX_MODEL_ITERATIONS,
+    ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
   };
   await persistImmutableRunScope(env.DB, input, liveness.lease, {
@@ -1755,7 +1762,7 @@ export async function runWorkstreamHarness(
         fallbackModels: modelRouting.fallbackModels,
         appUrl: env.PUBLIC_API_BASE_URL,
         appName: "Avalon",
-        maxIterations: runScopeLimits.maxIterations,
+        ...runLimits,
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
         maxCatalogTokens: runScopeLimits.maxCatalogTokens,
@@ -2461,6 +2468,12 @@ function childRunLimits(env: Env) {
     maxCostCents: Math.min(250, numericEnv(env, "HARNESS_CHILD_MAX_COST_CENTS", 100)),
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
   };
+}
+
+function workstreamRunLimits(hyperSightRun: boolean) {
+  return hyperSightRun
+    ? HYPERSIGHT_RUN_LIMITS
+    : { maxIterations: WORKSTREAM_MAX_MODEL_ITERATIONS } as const;
 }
 
 async function installInlineChildAgentTool(options: InlineChildToolOptions): Promise<HarnessTool> {
@@ -6067,6 +6080,7 @@ export const __integrationTesting = {
   createAvalonTools,
   createInlineChildHarnessSurface,
   childRunLimits,
+  workstreamRunLimits,
   connectorSearchAliases,
   connectorPluginPresentation,
   hyperSightSubmissionPlugin,
