@@ -17,7 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -641,9 +641,19 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   // the value: a screen that read "no draft" as "start over" on every render
   // would wipe a conversation as soon as it began, before it had named itself.
   const namedDraftId = useRef(resumeDraftId);
+  // The history entry that draft id was read from. The id alone cannot see a
+  // navigation that lands in the same commit as this screen's own URL write:
+  // the bar goes null → this draft → null, the effect observes only the value
+  // it ends on, and a transition that never appears is one nothing reacts to.
+  // A new entry is what actually says somebody navigated, and — unlike the id —
+  // it does not appear during the renders where the bar is merely behind.
+  const locationKey = useLocation().key;
+  const namedLocationKey = useRef(locationKey);
   useEffect(() => {
     const previous = namedDraftId.current;
+    const navigated = namedLocationKey.current !== locationKey;
     namedDraftId.current = resumeDraftId;
+    namedLocationKey.current = locationKey;
     // Everything below keys off the address bar *changing*, never off what it
     // currently says. This screen's own write reaches the router several
     // renders after the state beside it, so for a render or two the bar still
@@ -660,7 +670,15 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     if (resumeDraftId === null) {
       // New automation was chosen while a draft was on screen. The route did
       // not change, so nothing else clears it.
-      if (previous !== null) {
+      //
+      // Either the id was seen to change, or a new history entry arrived while
+      // a draft is on screen. The second is not redundant: this screen names
+      // its own draft in the bar, and when that write and the reader's next
+      // navigation land in one commit the id reads null both before and after,
+      // so the first test sees nothing happen. The composer was then left keyed
+      // to a draft the reader had already navigated away from — holding, on the
+      // blank builder, the sentence they typed for the other one.
+      if (previous !== null || (navigated && composerDraftId !== null)) {
         selfNamedDraftId.current = null;
         setResumedDraftId(null);
         setComposerDraftId(null);
@@ -687,7 +705,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     setComposerDraftId(resumeDraftId);
     setDraft(resumed.draft);
     setTurns(resumedTurns(resumed.messages, resumed.draft));
-  }, [draft, resumeDraftId, resumedDraft.data, resumedDraftId]);
+  }, [composerDraftId, draft, locationKey, resumeDraftId, resumedDraft.data, resumedDraftId]);
   const visibleMentionConnections = mentionQuery === null
     ? []
     : (connections.data ?? [])

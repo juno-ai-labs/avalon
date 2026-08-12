@@ -240,6 +240,45 @@ creation, not at draft time.
 
 ## Changelog
 
+### 2026-08-12 — A navigation the address bar cannot show, and the sentence it stranded
+
+**What changed:** The builder's route effect resets on a new history entry with
+no draft named, not only on the draft id *changing* to null. It reads
+`useLocation().key` alongside `resumeDraftId` for exactly that.
+
+**Why:** The entry below says three things key off the address bar changing
+rather than what it says, and that anything added here must do the same. That
+holds — but it has a blind spot this change found: the id can be observed
+*unchanged* across a navigation that really happened. This screen names its own
+draft in the bar with a `replace`, and when that write and the reader's next
+navigation land in one commit, the effect sees null before and null after. The
+transition it keys off never appears, so nothing resets, and the composer stays
+keyed to a draft the reader has already left — showing, on the blank builder,
+the sentence they typed for the other one. A new history entry is the signal
+that survives the batching, and unlike the id it does not appear during the
+renders where the bar is merely behind.
+
+Both defects surfaced as the same intermittent failure of
+`new-automation.test.tsx > carries an answer typed during a turn onto the draft
+that turn named`. The other one — the copy left behind under the old key — was
+found independently and fixed first, in #109; this is what remained after it,
+and the two are unrelated beyond the test that caught them. The assertion could
+be satisfied by the moment between the composer emptying on a key change and
+refilling when the read lands, which is why either defect alone let it mostly
+pass.
+
+**Considered and rejected:** *Reading the current bar instead of its
+transitions*, again — that is the change the entry below rejected twice, and it
+wipes a conversation during the same lag window this one is careful to ignore.
+*Making the screen's URL write synchronous with its state*, which is not
+something a caller of `setSearchParams` gets to decide.
+
+**Consequences:** There are now two signals here, and they answer different
+questions: the draft id says *which* conversation the bar names, and the location
+key says *whether the reader moved*. A reset needs the second; a load needs the
+first. Anything added to this effect has to pick deliberately, and using the id
+alone will silently miss the batched case rather than fail loudly.
+
 ### 2026-08-11 — Bound every writer that a live draft row newly exposed
 
 **What changed:** `shareSubscription` refuses a draft. `saveDraft`'s statements
