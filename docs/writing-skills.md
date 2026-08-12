@@ -4,7 +4,7 @@ This is the **authoring guide** — how to write a skill a model will load at th
 right moment and follow correctly. For how the skill *system* works (frozen
 scope, the three disclosure tiers, `load_skill` / `read_skill_resource`, the
 load caps, activation hints), read the Skills section of
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md#skills) first. This document is the craft
+[`agent-harness.md`](agent-harness.md#skills) first. This document is the craft
 on top of it, and the skill analogue of [`agent-tools.md`](agent-tools.md).
 
 A skill is **prompt content**. Once loaded, its body is rendered verbatim into
@@ -23,7 +23,7 @@ Read it before writing your own — most of what follows is distilled from it.
 A skill is read by a model **twice**, and it has to work both times for a
 **medium-sized model**, not just the strongest one in the routing stage. Avalon
 routes each agent through a Cloudflare Flagship flag and falls back through
-configured model stages ([`FEATURE_FLAGS.md`](FEATURE_FLAGS.md)), so the model
+configured model stages ([`feature-flags.md`](feature-flags.md)), so the model
 that reads your skill is not always the one you tested on. Holding both moments
 to the medium-model bar is what keeps a skill honest: if a smaller model can
 route to it and execute it, a larger one certainly will.
@@ -317,7 +317,7 @@ provider's cached prefix survives. Two authoring rules follow:
 
 ## See also
 
-- [`AGENT_HARNESS.md`](AGENT_HARNESS.md#skills) — the skill **system**: frozen
+- [`agent-harness.md`](agent-harness.md#skills) — the skill **system**: frozen
   scope, disclosure tiers, the two controls, caps, activation hints, warnings.
 - [`agent-tools.md`](agent-tools.md) — when the right answer is a *tool*, not a
   skill, and how to design one for a medium model.
@@ -325,4 +325,4 @@ provider's cached prefix survives. Two authoring rules follow:
   *policy* rather than a loaded skill, and how that text is written.
 - [`built-in-skills.ts`](../packages/agent-harness/src/built-in-skills.ts) — the
   live exemplar.
-- [`SECURITY.md`](SECURITY.md) — the trust boundaries a skill body must respect.
+- [`security.md`](security.md) — the trust boundaries a skill body must respect.

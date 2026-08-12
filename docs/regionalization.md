@@ -101,7 +101,7 @@ routes:
 
 Work-stream email *names* have one Global reservation registry for all regions:
 Global reserves locally, and every non-Global Worker calls the named Global
-router. See [`WORKSTREAM_EMAIL_ADDRESSES.md`](WORKSTREAM_EMAIL_ADDRESSES.md).
+router. See [`workstream-email-addresses.md`](workstream-email-addresses.md).
 
 ## Invariants
 
@@ -153,13 +153,13 @@ to cross it.
 
 | For | Read |
 | --- | --- |
-| The whole system's shape, of which this is one axis | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| Which tables hold what, per region | [`DATA_MODEL.md`](DATA_MODEL.md) |
-| Trust boundaries and credential handling | [`SECURITY.md`](SECURITY.md) |
+| The whole system's shape, of which this is one axis | [`architecture.md`](architecture.md) |
+| Which tables hold what, per region | [`data-model.md`](data-model.md) |
+| Trust boundaries and credential handling | [`security.md`](security.md) |
 | The Notion single-ingress design in full | [`notion-ingress.md`](notion-ingress.md) |
-| The Global address registry and its tombstones | [`WORKSTREAM_EMAIL_ADDRESSES.md`](WORKSTREAM_EMAIL_ADDRESSES.md) |
-| Provider app registrations and their callbacks | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) |
-| Deploying and verifying both regions | [`RUNBOOK.md`](RUNBOOK.md) |
+| The Global address registry and its tombstones | [`workstream-email-addresses.md`](workstream-email-addresses.md) |
+| Provider app registrations and their callbacks | [`provider-apps.md`](provider-apps.md) |
+| Deploying and verifying both regions | [`runbook.md`](runbook.md) |
 
 A module document that touches identity, the Global registry, a cross-region
 bridge, provider ingress routing, or residency carries its own **Regional impact**
@@ -214,7 +214,7 @@ Both Wrangler dry-run builds run in CI and are what catch a binding that exists 
 one deployment's configuration and not the other — no Vitest suite reads
 `wrangler.global.jsonc` or `wrangler.eu.jsonc`. Locally, `pnpm dev:api:local` starts both regions and
 `pnpm health:regions` checks the hosted ones; see
-[`dev-environment.md`](dev-environment.md) and [`RUNBOOK.md`](RUNBOOK.md).
+[`dev-environment.md`](dev-environment.md) and [`runbook.md`](runbook.md).
 
 ## Security and trust model
 

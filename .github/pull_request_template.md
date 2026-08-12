@@ -90,7 +90,7 @@ Reviewer notes.
 ## Regional impact
 
 Required in spirit for identity, the Global registry, cross-region bridges,
-provider ingress routing, or data residency. See docs/REGIONALIZATION.md.
+provider ingress routing, or data residency. See docs/regionalization.md.
 
 - <what changes in Global, in the EU, or in the routing between them>
 
@@ -98,7 +98,7 @@ provider ingress routing, or data residency. See docs/REGIONALIZATION.md.
 
 Required in spirit whenever the change touches renderer isolation, connector
 credential scope, session or ticket handling, webhook signature verification,
-untrusted model or provider payloads, or secrets placement. See docs/SECURITY.md.
+untrusted model or provider payloads, or secrets placement. See docs/security.md.
 
 - <the trust surface this opens or closes>
 

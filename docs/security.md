@@ -97,7 +97,7 @@ are canonical storage services, not authorization layers.
   it sits in is offered only where the service's `developer-settings` flag says
   so, and the main process reports the stored preference as `false` while that
   flag is off, so a hand-edited `debugEnabled: true` reveals nothing — see
-  [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md). Who the flag reaches is a Flagship
+  [`feature-flags.md`](feature-flags.md). Who the flag reaches is a Flagship
   targeting rule rather than a condition in the Worker, which is sound precisely
   because this is a product scope on a staff tool and not a confidentiality
   boundary — the same reason a poll that cannot reach the service keeps its last
@@ -333,16 +333,16 @@ does not own the subsystems on either side of them:
 
 | For | Read |
 | --- | --- |
-| The surfaces and how a request travels between them | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| Which region holds what, and what crosses | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
-| Tenancy columns and the visibility rule | [`DATA_MODEL.md`](DATA_MODEL.md) |
+| The surfaces and how a request travels between them | [`architecture.md`](architecture.md) |
+| Which region holds what, and what crosses | [`regionalization.md`](regionalization.md) |
+| Tenancy columns and the visibility rule | [`data-model.md`](data-model.md) |
 | Socket admission and the ticket format | [`realtime-sockets.md`](realtime-sockets.md) |
-| Connector scopes, grants, and adapter invariants | [`CONNECTORS.md`](CONNECTORS.md) |
-| The Slack scope inventory | [`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) |
-| Run admission, limits, and the inference ledger | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) |
+| Connector scopes, grants, and adapter invariants | [`connectors.md`](connectors.md) |
+| The Slack scope inventory | [`slack-permissions.md`](slack-permissions.md) |
+| Run admission, limits, and the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The draft cache under `userData` | [`composer-drafts.md`](composer-drafts.md) |
 | The windowless menu bar surface | [`menu-bar.md`](menu-bar.md) |
-| Rotating a key or responding to an incident | [`RUNBOOK.md`](RUNBOOK.md) |
+| Rotating a key or responding to an incident | [`runbook.md`](runbook.md) |
 
 ## Failure modes and limits
 
@@ -408,7 +408,7 @@ still-referenced old numeric version to its old key. Reads decrypt with the row
 version and opportunistically rewrite the row with the active key. Operators
 remove an old mapping only after confirming no regional
 `connector_connections.credential_key_version` rows still reference it. Global and
-EU rotate independently. [`RUNBOOK.md`](RUNBOOK.md) owns the procedure and the
+EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog

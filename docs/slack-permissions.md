@@ -242,17 +242,17 @@ the Slack product surface, the ingress, or the registration:
 
 | For | Read |
 | --- | --- |
-| Lifecycle, data handling, App Home, user linking, acceptance | [`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md) |
-| The registration itself and its regional routing | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) |
-| The unfurl card and its audience rules | [`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md) |
-| Connector scope kinds, capabilities, and health semantics | [`CONNECTORS.md`](CONNECTORS.md) |
-| Why a stored status is not a gate | [`CONNECTORS.md`](CONNECTORS.md#stored-status-is-a-belief-not-a-gate) |
+| Lifecycle, data handling, App Home, user linking, acceptance | [`slack-integration.md`](slack-integration.md) |
+| The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
+| The unfurl card and its audience rules | [`workstream-links.md`](workstream-links.md) |
+| Connector scope kinds, capabilities, and health semantics | [`connectors.md`](connectors.md) |
+| Why a stored status is not a gate | [`connectors.md`](connectors.md#stored-status-is-a-belief-not-a-gate) |
 
 ### Changing a scope
 
 1. Update the manifest and the runtime scope and capability declarations together.
 2. Update this document and the integration data-flow description in
-   [`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md).
+   [`slack-integration.md`](slack-integration.md).
 3. Add or update tests that keep the manifest and runtime declarations aligned.
 4. Determine whether existing workspace installations or personal connections must
    complete OAuth again for the changed grant.
@@ -293,7 +293,7 @@ path is package-relative.
 `slack manifest validate` reads the same manifest through the checked-in `.slack`
 hook, and is what catches a scope Slack itself rejects. Nothing in Vitest can tell
 you that a scope was actually granted; only the acceptance flows in
-[`E2E.md`](E2E.md) can.
+[`e2e.md`](e2e.md) can.
 
 ## Security and trust model
 
@@ -303,7 +303,7 @@ tool output, or inference-payload logs. Search results are transient model conte
 and are excluded from durable tool-result replay.
 
 Everything Slack supplies — active-view metadata, attachment metadata, message
-content — is untrusted evidence. [`SECURITY.md`](SECURITY.md) owns the boundary this
+content — is untrusted evidence. [`security.md`](security.md) owns the boundary this
 sits inside.
 
 ## Changelog

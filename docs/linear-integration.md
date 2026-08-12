@@ -61,7 +61,7 @@ Worker. The shared webhook ingress verifies Linear's exact signed bytes, reads o
 the organization routing key, and forwards the untouched bytes to the owning
 regional data plane. Each region verifies the signature again before regional
 persistence. Global keeps only the opaque route; provider content remains in its
-selected region. [`REGIONALIZATION.md`](REGIONALIZATION.md) owns the boundary this
+selected region. [`regionalization.md`](regionalization.md) owns the boundary this
 sits on.
 
 ### OAuth
@@ -226,12 +226,12 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 
 | For | Read |
 | --- | --- |
-| The registry, manifests, and adapter rules every connector obeys | [`CONNECTORS.md`](CONNECTORS.md) |
-| The registration itself and its regional routing | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) |
+| The registry, manifests, and adapter rules every connector obeys | [`connectors.md`](connectors.md) |
+| The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
 | Which Linear activity types a person hears about in a digest | [`connector-digestibility.md`](connector-digestibility.md) |
-| The Global/EU boundary the shared ingress sits on | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
-| The flag that gates the native-agent surface | [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) |
-| Credential encryption and webhook verification rules | [`SECURITY.md`](SECURITY.md) |
+| The Global/EU boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
+| The flag that gates the native-agent surface | [`feature-flags.md`](feature-flags.md) |
+| Credential encryption and webhook verification rules | [`security.md`](security.md) |
 
 ## Failure modes and limits
 

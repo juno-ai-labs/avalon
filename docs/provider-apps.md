@@ -185,7 +185,7 @@ personal token before creating an owner-only activity.
 Store the same client ID, client secret, and webhook signing secret in both
 regional Workers. `linear-native-agent.preview.json` is a later configuration
 snapshot for that **same app**, applied only after the native-session acceptance
-gate passes. [`LINEAR_INTEGRATION.md`](LINEAR_INTEGRATION.md) owns the protocol,
+gate passes. [`linear-integration.md`](linear-integration.md) owns the protocol,
 surface model, event matrix, and that gate.
 
 ### Notion public connection
@@ -224,8 +224,8 @@ events, interactivity, commands, and unfurls use `https://slack.with-avalon.com`
 and the opaque team router. Enable Slack's **Delayed Events** retry option: Avalon
 verifies requests immediately, admits work through an idempotent regional ingress
 job, and enforces a 2.6-second end-to-end response budget.
-[`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) owns the scope-to-tool mapping and
-[`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md) owns scope rationale, user linking,
+[`slack-permissions.md`](slack-permissions.md) owns the scope-to-tool mapping and
+[`slack-integration.md`](slack-integration.md) owns scope rationale, user linking,
 App Home, zero-copy behavior, automation delivery, review evidence, and acceptance
 tests.
 
@@ -307,13 +307,13 @@ routing machinery the shared ingresses use:
 
 | For | Read |
 | --- | --- |
-| The registry, manifest model, and adapter invariants | [`CONNECTORS.md`](CONNECTORS.md) |
-| The region boundary the shared ingresses sit on | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
-| Linear's protocol, event matrix, and native-agent gate | [`LINEAR_INTEGRATION.md`](LINEAR_INTEGRATION.md) |
-| Slack's product boundary and scope rationale | [`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md), [`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) |
+| The registry, manifest model, and adapter invariants | [`connectors.md`](connectors.md) |
+| The region boundary the shared ingresses sit on | [`regionalization.md`](regionalization.md) |
+| Linear's protocol, event matrix, and native-agent gate | [`linear-integration.md`](linear-integration.md) |
+| Slack's product boundary and scope rationale | [`slack-integration.md`](slack-integration.md), [`slack-permissions.md`](slack-permissions.md) |
 | The single Notion ingress design | [`notion-ingress.md`](notion-ingress.md) |
-| Setting the secrets on a hosted Worker | [`RUNBOOK.md`](RUNBOOK.md) |
-| Credential encryption and webhook verification rules | [`SECURITY.md`](SECURITY.md) |
+| Setting the secrets on a hosted Worker | [`runbook.md`](runbook.md) |
+| Credential encryption and webhook verification rules | [`security.md`](security.md) |
 
 ## Failure modes and limits
 
@@ -334,7 +334,7 @@ routing machinery the shared ingresses use:
   users; move the consent screen out of Testing; and complete Google's verification
   and any security assessment required for the exact requested scopes. Do not mark
   the Google connectors release-ready until both preset flows in
-  [`E2E.md`](E2E.md) pass.
+  [`e2e.md`](e2e.md) pass.
 - **Linear's native Agent APIs are still Developer Preview.** Enabling the surface
   requires an `operational` native-agent runtime,
   `VITE_LINEAR_NATIVE_AGENT_ENABLED=true` in the desktop build, and
@@ -355,7 +355,7 @@ repository. What can be:
   with `pnpm --filter @avalon/connectors exec vitest run src/<name>.test.ts`.
 - `apps/api/test/*-routing.test.ts` cover the account-to-region directories the
   shared ingresses consult.
-- The manual provider acceptance flows in [`E2E.md`](E2E.md) are the only check
+- The manual provider acceptance flows in [`e2e.md`](e2e.md) are the only check
   that a registration's redirect URIs, permissions, and event subscriptions match
   what this document says. A change here that is not exercised there is unverified.
 

@@ -74,12 +74,12 @@ they do not.
 - **Regional impact** — What changes in Global, in the European Union, or in the
   routing between them. **Required in spirit** for anything touching identity,
   the Global registry, cross-region bridges, provider ingress routing, or data
-  residency. Read [Regionalization](REGIONALIZATION.md) first.
+  residency. Read [Regionalization](regionalization.md) first.
 - **Security and trust model** — The trust surface the change opens or closes:
   renderer isolation, connector credential scope, session and ticket handling,
   webhook signature verification, untrusted model or provider payloads, secrets
   placement. **Required in spirit** whenever the change touches any of those;
-  [Security model](SECURITY.md) defines the boundaries.
+  [Security model](security.md) defines the boundaries.
 - **Provider configuration** — Any change requiring a Slack, GitHub, Linear,
   Notion, Google, Resend, or Cloudflare setting to be updated outside the repo,
   and in which region. A reviewer must be able to see what will break if the
@@ -267,7 +267,7 @@ user having to remember to turn anything back on.
 
 ## Related or new documentation
 
-- Updated `docs/DATA_MODEL.md`.
+- Updated `docs/data-model.md`.
 
 ## Validation
 

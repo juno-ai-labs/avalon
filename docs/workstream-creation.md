@@ -209,10 +209,10 @@ contract, not this one's. Draft text and attachments belong to
 [`composer-drafts.md`](composer-drafts.md); this module clears the draft on
 submit and restores it on failure, and changes nothing else about it. Address
 allocation and delivery belong to
-[`WORKSTREAM_EMAIL_ADDRESSES.md`](WORKSTREAM_EMAIL_ADDRESSES.md); this module
+[`workstream-email-addresses.md`](workstream-email-addresses.md); this module
 only decides that activation stays on the create path, ahead of the response.
 Run admission, leases,
-and scope belong to [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
+and scope belong to [`agent-harness.md`](agent-harness.md).
 
 ## Failure modes and limits
 
@@ -271,7 +271,7 @@ a Global one does not. Both are on the create path. Moving activation off it was
 tried and reverted — see the changelog — because the create's own cache
 invalidation makes `list` backfill the route immediately, paying the same hop a
 moment later against extra reads. Anything that wants that hop back has to deal
-with the backfill first. See [`REGIONALIZATION.md`](REGIONALIZATION.md).
+with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
 
@@ -300,7 +300,7 @@ later trigger-less run — a scheduled wakeup, an activity — would fence
 the transcript back at sequence 1 and re-execute the original request with days
 of finished work cut out of it. So the guess goes: runs now record
 `harness_runs.trigger_message_id` and `retry` inherits the failed run's own
-trigger. That reasoning is in [`AGENT_HARNESS.md`](AGENT_HARNESS.md), which owns
+trigger. That reasoning is in [`agent-harness.md`](agent-harness.md), which owns
 the run row.
 
 **Considered and rejected:** *Leaving the author as the agent and special-casing

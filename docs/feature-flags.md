@@ -251,7 +251,7 @@ than per workspace. `userId` names a regional `users` row, and one person with
 workspaces in both regions has one in each — bucketing on it would place them in
 a different bucket per region and hand them a half-rolled-out feature on one of
 them. The platform id is established once by the Global control plane and is
-immutable in both regions ([`REGIONALIZATION.md`](REGIONALIZATION.md)). It is
+immutable in both regions ([`regionalization.md`](regionalization.md)). It is
 absent only for an account predating that control plane, and an absent attribute
 does not match, so such an account sits out the rollout rather than landing in
 the wrong half of it.
@@ -451,7 +451,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - A poll that cannot reach the service leaves the last answer standing.
   Revoking the section on a dropped connection would flicker it, and it crosses
   no trust boundary — it reveals debugging affordances the renderer already
-  holds, per [`SECURITY.md`](SECURITY.md). Only an answer, a sign-out, or a
+  holds, per [`security.md`](security.md). Only an answer, a sign-out, or a
   shutdown turns it off.
 
 ## Invariants
@@ -499,7 +499,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **Nothing that protects data is scoped by a flag.** Flag targeting is a product
   scope; a poll that cannot reach the service keeps its last answer, which is the
   wrong failure mode for a confidentiality boundary — see
-  [`SECURITY.md`](SECURITY.md).
+  [`security.md`](security.md).
 - **A cohort is a Flagship targeting rule, not a condition in the Worker.**
   `client-feature-flags.ts` describes the person, evaluates the flag, and serves
   the answer; changing who is in is a flag change with a changelog entry, not a
@@ -520,13 +520,13 @@ what they do with the model they are handed:
 
 | For | Read |
 | --- | --- |
-| The run loop, the route plan's failure policy, the inference ledger | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) |
-| The `model_override` column and where it is copied | [`DATA_MODEL.md`](DATA_MODEL.md) |
+| The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
+| The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
-| Why **Debug enabled** crosses no trust boundary | [`SECURITY.md`](SECURITY.md) |
-| Why `userPlatformId` is the stable per-person id | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
+| Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
+| Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
 | The description loop that most wants its default raised | [`workstream-descriptions.md`](workstream-descriptions.md) |
-| Provisioning credentials and the release health gate | [`RUNBOOK.md`](RUNBOOK.md) |
+| Provisioning credentials and the release health gate | [`runbook.md`](runbook.md) |
 
 A subsystem that wants a rollout adds a flag here and reads it through the
 resolver for its kind. It does not read `env.FLAGS`, and it does not read
@@ -666,7 +666,7 @@ Both paths need a Cloudflare API token carrying **Flagship write** access. A
 read-only Flagship grant is enough to list apps and flags but returns
 `Authentication error [code: 10000]` on any create, so a token that passes
 `wrangler whoami` and `wrangler flagship apps list` can still fail to provision.
-[The runbook](RUNBOOK.md#required-hosted-resources) lists the full token
+[The runbook](runbook.md#required-hosted-resources) lists the full token
 permission set.
 
 Then create one JSON flag per agent, seeded with the model ids currently in the

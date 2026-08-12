@@ -6,7 +6,7 @@ session credential. This document owns how that ticket is issued, how it reaches
 the Worker, and how a handshake is accepted or refused. What happens *on* an
 open socket belongs elsewhere: the room's fan-out, replay, and presence are
 `WorkstreamRoom`'s, and the dictation bridge's audio rules are in
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+[`architecture.md`](architecture.md).
 
 The promise it makes is narrow and worth stating plainly: a socket is opened
 only by someone who just proved, over an authenticated HTTP request, that they
@@ -90,9 +90,9 @@ answering the handshake. It exposes the four transport helpers in
 
 It does not own what happens next. Room subscription, event replay, presence,
 and the `resync_required` contract are `WorkstreamRoom`'s, described in
-[`ARCHITECTURE.md`](ARCHITECTURE.md); the reconnect and heartbeat behavior of
-the client is in [`RUNBOOK.md`](RUNBOOK.md); dictation's audio limits and Azure
-contract are in [`ARCHITECTURE.md`](ARCHITECTURE.md). It depends on
+[`architecture.md`](architecture.md); the reconnect and heartbeat behavior of
+the client is in [`runbook.md`](runbook.md); dictation's audio limits and Azure
+contract are in [`architecture.md`](architecture.md). It depends on
 `SESSION_SIGNING_KEY`, `ALLOWED_ORIGINS`, and the regional Durable Object
 namespace helper.
 
@@ -151,7 +151,7 @@ but the platform records the whole request independently — the invocation log'
 
 The sentinel is public and carries no authority. The other query-string
 credential on this surface — a connector OAuth callback's `?code=` — is fixed by
-the provider's redirect and cannot move; [`SECURITY.md`](SECURITY.md) records
+the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog

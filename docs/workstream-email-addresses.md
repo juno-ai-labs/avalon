@@ -119,7 +119,7 @@ of it the creator may freeze email to their own account address and one
 connector-provided personal surface, chosen once on the create screen and stored in
 `automation_delivery_targets`. Which connectors offer such a surface is the
 connector's own declaration rather than a list held by the create screen; see
-[connector architecture](CONNECTORS.md#delivering-automation-results-to-a-person).
+[connector architecture](connectors.md#delivering-automation-results-to-a-person).
 Slack's Agent DM is the one shipped today.
 
 Email delivery resolves the owner's account address when the automation is saved
@@ -136,7 +136,7 @@ The array order below is part of the v1 protocol. **Do not reorder, replace, or
 remove entries.** Future vocabulary changes require a new generation version and do
 not alter existing addresses.
 
-**Adjectives (128)**
+#### Frozen v1 adjectives (128)
 
 ```text
 acoustic, adaptive, aerial, alpine, amber, aquatic, arboreal, arctic,
@@ -158,7 +158,7 @@ tidy, unified, useful, verdant, versatile, vertical, vibrant, vivid,
 windward, wintry, woodland
 ```
 
-**Scientist surnames (256)**
+#### Frozen v1 scientist surnames (256)
 
 ```text
 ampere, lovelace, avogadro, babbage, becquerel, bernoulli, bohr, boltzmann,
@@ -193,7 +193,7 @@ langmuir, laplace, larmor, lawrence, leakey, lebedev, lebesgue, lee, lehmann,
 lemaitre, leloir, lister, lobachevsky, lyell
 ```
 
-**Animals (256)**
+#### Frozen v1 animals (256)
 
 ```text
 aardvark, agouti, albatross, alpaca, anole, antelope, badger, bandicoot,
@@ -264,11 +264,11 @@ registry, and what happens to mail addressed to one. It does not own:
 | For | Read |
 | --- | --- |
 | The create path that awaits activation | [`workstream-creation.md`](workstream-creation.md) |
-| Which connectors offer a personal delivery surface | [`CONNECTORS.md`](CONNECTORS.md#delivering-automation-results-to-a-person) |
-| The Global/EU bridge this registry is reached through | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
-| Untrusted-input handling and the spoofing threat model | [`SECURITY.md`](SECURITY.md) |
-| The `automation_delivery_targets` columns | [`DATA_MODEL.md`](DATA_MODEL.md) |
-| The Resend receiving domain and its secrets | [`RUNBOOK.md`](RUNBOOK.md) |
+| Which connectors offer a personal delivery surface | [`connectors.md`](connectors.md#delivering-automation-results-to-a-person) |
+| The Global/EU bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
+| Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
+| The `automation_delivery_targets` columns | [`data-model.md`](data-model.md) |
+| The Resend receiving domain and its secrets | [`runbook.md`](runbook.md) |
 
 ## Failure modes and limits
 
@@ -303,11 +303,19 @@ Run one with
 `pnpm --filter @avalon/api exec vitest run test/workstream-email-address.test.ts`
 — the path is package-relative.
 
-The trap is that the allocator is deterministic over a fixed vocabulary, so a test
+Two traps. The allocator is deterministic over a fixed vocabulary, so a test
 asserting on a literal generated address is really asserting the array order. That
 is intentional and those assertions should not be loosened when they fail: a
 changed literal means the vocabulary moved, which is the thing that must not happen
 inside a version.
+
+And **the three vocabulary headings in this document are load-bearing**.
+`workstream-email-address.test.ts` reads this file and parses each list out of the
+`text` block that follows a heading matching `## Frozen v1 <section> (`, then
+asserts it byte-for-byte against the arrays in code. Renaming one of those headings,
+or moving a list out of its fenced block, fails the suite with a missing-vocabulary
+error rather than a mismatch — the coupling is deliberate, because it is what stops
+the document and the allocator drifting apart.
 
 ## Changelog
 
