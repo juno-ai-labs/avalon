@@ -51,11 +51,27 @@ UPDATE digest_deliveries
 -- delivery id and reads this column; nothing searches deliveries *by* work
 -- stream.
 
--- The schedule no longer owns a work stream, so the column that pointed at one
--- goes. Leaving it would leave a pointer that the run path no longer maintains,
--- which reads as "the current work stream" to anybody who finds it.
+-- `digest_schedules.system_workstream_id` is deliberately NOT dropped here.
 --
--- The work streams it named are deliberately left in place. They hold real
--- transcripts their owners can still open with Debug enabled, and deleting a
--- person's history to tidy up a pointer is not this migration's business.
-ALTER TABLE digest_schedules DROP COLUMN system_workstream_id;
+-- The deploy job applies both regions' migrations before it deploys either
+-- Worker, so between this migration and the Worker that stops naming the column
+-- the *previous* Worker is still running — and it reads that column in
+-- `fireDigestSchedule`, writes it in `reconcileDigestDefaults`, and selects it
+-- when the settings screen loads a digest. Dropping it in the same change turns
+-- all three into `no such column` for the length of a deployment, which the
+-- runbook measures in seconds when it goes well and in hours when it does not,
+-- because a failed deploy leaves the migrations applied. Digest firing would
+-- throw, the reconciler's whole batch would abort, and digest settings would
+-- 500. See RUNBOOK.md, "The window between a migration and the Worker that
+-- needs it".
+--
+-- So this is the backward-compatible half: the new column arrives and is
+-- populated, and the old column keeps working for whatever is still reading it.
+-- Once this Worker is deployed everywhere, a later migration drops the column
+-- on its own — by then nothing reads it, and the drop is the whole change
+-- rather than a hazard buried in one.
+--
+-- The work streams it names are a separate question and are left alone
+-- permanently. They hold real transcripts their owners can still open with
+-- Debug enabled, and deleting somebody's history to tidy up a pointer is not
+-- this migration's business.

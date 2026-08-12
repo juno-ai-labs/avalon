@@ -189,9 +189,22 @@ export async function fireDigestSchedule(
       // The work stream belongs to this occurrence and nothing else will ever
       // run in it, so a released claim takes it too rather than leaving an empty
       // transcript behind for every failed attempt. Its messages cascade.
+      //
+      // Only while no harness run has been recorded against it, though, and
+      // that is a stricter test than `harnessRunId === null`. `launchWorkstreamHarness`
+      // inserts the run row, then creates the Cloudflare Workflow instance, and
+      // only then writes the instance id back — so a failure in that last write
+      // throws with a live workflow already running against this work stream.
+      // Deleting it there would cascade away the transcript, the run row and the
+      // frozen memory context out from under it. An empty work stream nobody
+      // reaps is a far cheaper mistake, so the presence of a run row is treated
+      // as "something may be executing here" and stops the cleanup.
       if (workstreamId) {
-        await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
-          .bind(workstreamId).run().catch(() => undefined);
+        await env.DB.prepare(
+          `DELETE FROM workstreams
+            WHERE id = ? AND system_kind = 'digest'
+              AND NOT EXISTS (SELECT 1 FROM harness_runs WHERE workstream_id = ?)`,
+        ).bind(workstreamId, workstreamId).run().catch(() => undefined);
       }
     }
     throw error;
