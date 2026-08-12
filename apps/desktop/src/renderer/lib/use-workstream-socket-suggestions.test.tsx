@@ -3,11 +3,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { WorkstreamDetail } from './types';
+import type { Message, WorkstreamDetail } from './types';
 import { type WorkstreamSocketApi, useWorkstreamSocket } from './use-workstream-socket';
 
 const workstreamId = '00000000-0000-7000-8000-000000000210';
 const suggestionId = '00000000-0000-7000-8000-000000000211';
+const dismissedSuggestionId = '00000000-0000-7000-8000-000000000213';
 
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
@@ -86,7 +87,7 @@ function detail(): WorkstreamDetail {
 }
 
 describe('activity suggestions over the work-stream socket', () => {
-  it('takes a resolved suggestion out of the detail its cards are rebuilt from', async () => {
+  it('keeps an accepted card in the feed and removes a dismissed one', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail());
@@ -134,5 +135,33 @@ describe('activity suggestions over the work-stream socket', () => {
     // its pending state on the next message fetch, offering buttons whose
     // request the API has already resolved.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions).toEqual([]);
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((message) => ({
+      id: message.activitySuggestion?.id,
+      status: message.activitySuggestion?.status,
+    }))).toEqual([{ id: suggestionId, status: 'accepted' }]);
+
+    act(() => socket.message({
+      type: 'activity_suggestion_created',
+      sequence: 3,
+      occurredAt: '2026-08-10T22:22:01.158Z',
+      suggestion: { ...wireSuggestion, id: dismissedSuggestionId },
+    }));
+    act(() => socket.message({
+      type: 'activity_suggestion_resolved',
+      sequence: 4,
+      occurredAt: '2026-08-10T22:22:03.158Z',
+      suggestion: {
+        ...wireSuggestion,
+        id: dismissedSuggestionId,
+        status: 'dismissed',
+        resolvedAt: '2026-08-10T22:22:03.158Z',
+      },
+    }));
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions).toEqual([]);
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((message) => ({
+      id: message.activitySuggestion?.id,
+      status: message.activitySuggestion?.status,
+    }))).toEqual([{ id: suggestionId, status: 'accepted' }]);
   });
 });
