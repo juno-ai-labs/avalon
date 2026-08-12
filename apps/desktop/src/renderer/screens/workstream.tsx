@@ -36,7 +36,13 @@ import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
-import { createTextMessage, removeTranscriptMessage } from '../lib/transcript';
+import {
+  appendDismissedSuggestionId,
+  createTextMessage,
+  dismissedSuggestionIdsQueryKey,
+  removeTranscriptMessage,
+  visibleTranscriptMessages,
+} from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -794,7 +800,11 @@ export function WorkstreamScreen(): React.JSX.Element {
         queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
       }
       queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
-      const canonicalMessages = messagesWithTransientBlocks(page.items, detail);
+      const canonicalMessages = messagesWithTransientBlocks(
+        page.items,
+        detail,
+        queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id)),
+      );
       return reconcileCanonicalTranscript(previous, canonicalMessages, detail.harnessStatus);
     },
     enabled: Boolean(api && id),
@@ -882,8 +892,12 @@ export function WorkstreamScreen(): React.JSX.Element {
       const page = await api.getMessagePage(id, { before });
       if (activeWorkstreamIdRef.current !== id) return;
       if (page.nextCursor === before) throw new Error('Avalon received a repeated transcript cursor.');
+      const visibleItems = visibleTranscriptMessages(
+        page.items,
+        queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id)),
+      );
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+        visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
       queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
       window.requestAnimationFrame(() => {
         const element = transcriptRef.current;
@@ -907,8 +921,12 @@ export function WorkstreamScreen(): React.JSX.Element {
       const page = await api.getMessagePage(id, { after });
       if (activeWorkstreamIdRef.current !== id) return;
       if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
+      const visibleItems = visibleTranscriptMessages(
+        page.items,
+        queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id)),
+      );
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+        visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
       queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
     } catch (error) {
       setOlderMessagesError(error instanceof Error ? error.message : 'Newer messages could not be loaded.');
@@ -927,8 +945,12 @@ export function WorkstreamScreen(): React.JSX.Element {
         const page = await api.getMessagePage(id, { after });
         if (activeWorkstreamIdRef.current !== id) return;
         if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
+        const visibleItems = visibleTranscriptMessages(
+          page.items,
+          queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id)),
+        );
         queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-          page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+          visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
         after = page.newerCursor;
         queryClient.setQueryData(['messages-newer-cursor', id], after);
       }
@@ -1226,6 +1248,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       // too so the card does not survive while an active run makes transcript
       // reconciliation retain newer realtime rows.
       if (action === 'dismiss') {
+        queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id), (current) =>
+          appendDismissedSuggestionId(current, suggestionId));
         queryClient.setQueryData<Message[]>(['messages', id], (current) =>
           removeTranscriptMessage(current, `suggestion-${suggestionId}`));
       }
