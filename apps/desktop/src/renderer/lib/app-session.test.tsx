@@ -571,23 +571,72 @@ describe('single-platform desktop identity routing', () => {
       linked: true,
       teamId: 'T01234567',
       slackUserId: 'U01234567',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      // The link continues straight into the personal Slack authorization, so
+      // one click in Slack does both halves rather than leaving the second as
+      // an errand the member has to know about.
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        url: 'https://slack.com/oauth/v2_user/authorize?state=abc',
+        attemptId: 'b'.repeat(43),
       }), { status: 200, headers: { 'content-type': 'application/json' } }));
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
     await dispatchDeepLink(`avalon://slack/link?token=${'a'.repeat(43)}`);
 
-    await waitFor(() => expect(fetchRequest).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchRequest).toHaveBeenCalledTimes(3));
     const [previewUrl, previewInit] = fetchRequest.mock.calls[0]!;
     const [linkUrl, linkInit] = fetchRequest.mock.calls[1]!;
+    const [startUrl, startInit] = fetchRequest.mock.calls[2]!;
     expect(previewUrl).toBe('https://eu.api.with-avalon.com/connections/slack/link/preview');
     expect(linkUrl).toBe('https://eu.api.with-avalon.com/connections/slack/link');
+    expect(startUrl).toBe('https://eu.api.with-avalon.com/connections/slack/start');
     expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${euSession.accessToken}`);
     expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
     expect(linkInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
-    expect(confirm).toHaveBeenCalledWith('Connect Slack user U01234567 from Acme to your current Avalon account?');
+    expect(JSON.parse(String(startInit?.body))).toMatchObject({ scope: 'personal' });
+    expect(confirm).toHaveBeenCalledWith(
+      'Connect Slack user U01234567 from Acme to your Avalon account, '
+      + 'and let Avalon search and act in Slack as you?',
+    );
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledWith(
+      'https://slack.com/oauth/v2_user/authorize?state=abc',
+    ));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+    fetchRequest.mockRestore();
+    confirm.mockRestore();
+  });
+
+  it('keeps the link when the personal Slack authorization cannot be started', async () => {
+    // The link committed and is useful on its own, so the failure is reported
+    // without retracting what already succeeded.
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.openSettings.mockResolvedValueOnce(undefined);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const fetchRequest = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        teamId: 'T01234567',
+        slackUserId: 'U01234567',
+        workspaceName: 'Acme',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        linked: true,
+        teamId: 'T01234567',
+        slackUserId: 'U01234567',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 'provider_unavailable', message: 'nope' } }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      }));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(`avalon://slack/link?token=${'a'.repeat(43)}`);
+
+    await waitFor(() => expect(screen.getByTestId('deep-link-error')).toHaveTextContent(
+      /Slack was linked, but personal Slack tools could not be connected/u,
+    ));
     fetchRequest.mockRestore();
     confirm.mockRestore();
   });

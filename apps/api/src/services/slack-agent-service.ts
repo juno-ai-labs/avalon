@@ -768,6 +768,78 @@ export class SlackAgentService {
     }
   }
 
+  /**
+   * Record that a Slack identity belongs to an Avalon member, from a proof that
+   * is not a link challenge.
+   *
+   * A personal Slack connection is a stronger proof than the challenge ever
+   * was: Slack itself completed the OAuth and named the user, where the
+   * challenge only shows the same person held a token minted seconds earlier.
+   * So a member who connects their personal Slack is linked by that act, rather
+   * than being asked to perform a second, near-identical ceremony whose button
+   * says the same word.
+   *
+   * Idempotent, and safe to call when the link already exists — the two routes
+   * to it are expected to overlap, and neither is required to run first.
+   * Returns `false` when the identity belongs to a different Avalon member,
+   * which is not this operation's business to resolve: the personal connection
+   * itself is still valid and the caller must not fail over it.
+   */
+  async establishIdentityLinkFromPersonalConnection(input: {
+    workspaceId: string;
+    userId: string;
+    teamId: string;
+    slackUserId: string;
+  }): Promise<boolean> {
+    const workspaceConnection = await this.env.DB.prepare(
+      `SELECT id FROM connector_connections
+       WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'workspace'
+         AND provider_account_id = ? AND status <> 'disabled'
+       ORDER BY created_at LIMIT 1`,
+    ).bind(input.workspaceId, input.teamId).first<{ id: string }>();
+    // No installation for this team means there is nothing to link against:
+    // the link is scoped to the workspace connection, and a personal Slack
+    // connection is legitimate without one.
+    if (!workspaceConnection) return false;
+    const at = nowIso();
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO slack_user_links
+         (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+         ON CONFLICT(workspace_id, connection_id, user_id) DO UPDATE SET
+           slack_team_id = excluded.slack_team_id,
+           slack_user_id = excluded.slack_user_id,
+           status = 'active',
+           updated_at = excluded.updated_at`,
+      ).bind(
+        newId(),
+        input.workspaceId,
+        workspaceConnection.id,
+        input.userId,
+        input.teamId,
+        input.slackUserId,
+        at,
+        at,
+      ).run();
+    } catch (error) {
+      // The other unique key is `(connection_id, slack_user_id)`: this Slack
+      // person is already some other Avalon member. Their personal connection
+      // stands; only the link does not.
+      if (error instanceof Error && /(?:UNIQUE|constraint)/iu.test(error.message)) return false;
+      throw error;
+    }
+    await this.assignWorkspaceSessions(
+      workspaceConnection.id,
+      input.teamId,
+      input.slackUserId,
+      input.userId,
+      "explicit_link",
+    );
+    await this.publishHome(input.teamId, input.slackUserId);
+    return true;
+  }
+
   async linkUser(auth: AuthContext, token: string): Promise<{ linked: true; teamId: string; slackUserId: string }> {
     const tokenHash = await sha256(token);
     const challenge = await this.loadLinkChallenge(auth, tokenHash);
@@ -3180,7 +3252,7 @@ function unlinkedHome(): Record<string, unknown>[] {
   return [
     { type: "header", text: { type: "plain_text", text: "Meet Avalon" } },
     { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Avalon workspace tools and remain attributed to your Slack identity. Avalon uses bounded Slack activity and task-specific context for requested work and configured automations; it does not recreate Slack as a parallel inbox or searchable workspace." } },
-    { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account to claim tasks that need personal authority, use your personal connectors, and see assigned work in Avalon." } },
+    { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account to claim tasks that need personal authority, use your personal connectors, and see assigned work in Avalon. The same step connects personal Slack tools, so Avalon can search and act in Slack with your own permissions." } },
     // Deliberately not a `url` button: the handoff URL carries a single-use
     // challenge, and this view outlives any expiry short enough to be safe.
     { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "avalon_connect" }] },
@@ -3226,7 +3298,7 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
   for (const automation of automations) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${escapeMrkdwn(String(automation.name))}* · ${escapeMrkdwn(String(automation.status))}\n${automation.next_run_at ? `Next run: ${escapeMrkdwn(String(automation.next_run_at))}` : "No scheduled run"}` } });
   blocks.push(
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected · connect to search Slack and act with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Connect" }, url: desktopHandoffUrl(webBase, "avalon://settings/connections"), action_id: "avalon_open_personal_tools" } },
+    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Avalon account normally does this too. Finish it to let Avalon search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "avalon://settings/connections"), action_id: "avalon_open_personal_tools" } },
   );
   if (administration) blocks.push(
     { type: "divider" },
