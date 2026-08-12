@@ -487,8 +487,9 @@ describe('New work-stream home', () => {
     }));
 
     expect(await screen.findByRole('status', { name: 'Avalon is working' })).toBeVisible();
-    // The opening turn of suggested work is the agent's, written from the
-    // expanded prompt, so there is nothing here that could stand in for it.
+    // The opening turn of suggested work is the selecting member's, but its text
+    // is the brief the server expanded, which this screen has never seen — so
+    // there is nothing here that could stand in for it.
     expect(screen.queryByRole('article', { name: 'Message from Adam Juhasz' })).not.toBeInTheDocument();
     // And the draft belongs to a work stream nobody has started.
     expect(composer).toHaveValue('');

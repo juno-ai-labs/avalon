@@ -289,12 +289,19 @@ name.
 **Why:** Selecting a suggestion *is* the request; the brief is that request
 written out. Attributing it to the agent made every one of these work streams
 open with Avalon instructing itself, and left the transcript with no human turn
-in it at all — which is not only a presentational claim. `retry` picks its
-trigger as the latest human message, so for a work stream started from a
-suggestion it found none and started the replay with a null trigger; the model
-projection admits the brief *only* as the trigger, so a retried run replayed
-against an empty transcript. Human authorship makes the brief the trigger a
-retry finds.
+in it at all — which is not only a presentational claim. `retry` resolved its
+trigger as the latest human message, found none, and started the replay with a
+null trigger; the model projection admits the brief *only* as the trigger, so a
+retried run replayed against an empty transcript.
+
+Making the brief a human turn fixes that and immediately breaks the guess the
+other way: the brief becomes the newest human message *forever*, so retrying a
+later trigger-less run — a scheduled wakeup, an activity, a digest — would fence
+the transcript back at sequence 1 and re-execute the original request with days
+of finished work cut out of it. So the guess goes: runs now record
+`harness_runs.trigger_message_id` and `retry` inherits the failed run's own
+trigger. That reasoning is in [`AGENT_HARNESS.md`](AGENT_HARNESS.md), which owns
+the run row.
 
 **Considered and rejected:** *Leaving the author as the agent and special-casing
 `retry`* to fall back to the opening message — it fixes the retry and leaves the
@@ -316,6 +323,15 @@ member-written text — `recentAddressingMessages` and the naming context both d
 which is the intent. Unchanged, and worth knowing: the brief is still admitted to
 the model only when it is the run's trigger, so a follow-up message starts a run
 that cannot see it.
+
+The brief also moves from the full-width agent column into the human turn's
+right-aligned bubble, capped at `min(72%, 620px)`. That was checked in a real
+window against a brief with headings, bullet and numbered lists, and multiple
+sections rather than reasoned about: headings, spacing, and wrapping all hold at
+that width, and code blocks scroll inside themselves rather than widening the
+bubble. List markers do not render — `list-style: none` from the `tw-fade`
+preflight defeats `.markdown-body li::marker`, identically for agent messages,
+which predates this change and is not fixed here.
 
 ### 2026-08-11 — The create path waits for its own work again; only the launch surface stays
 

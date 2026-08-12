@@ -99,11 +99,11 @@ describe("starting a suggestion", () => {
     });
   });
 
-  it("gives a retry the brief to replay against", async () => {
-    // `retry` triggers on the latest human message. With the brief authored by
-    // the agent there was none, so a retry started a run with a null trigger —
-    // and the projection admits the brief only as the trigger, leaving the
-    // replayed run with an empty transcript.
+  it("gives a retry of the opening run the brief to replay against", async () => {
+    // The projection admits the brief only as the run's trigger, so a retry that
+    // resolves no trigger replays this work stream as an empty transcript. The
+    // opening run records the brief as what it ran against, and the retry
+    // inherits it.
     const database = seededDatabase();
     const service = new WorkstreamService(environment(database), auth(), () => undefined);
     const created = await service.createFromOpportunity(opportunityRequest());
@@ -111,11 +111,31 @@ describe("starting a suggestion", () => {
 
     await service.retry(created.workstream.id);
 
-    const workflowInputs = vi.mocked(startWorkstreamWorkflow).mock.calls
-      .map((call) => call[1] as { triggerMessageId: string | null });
-    expect(workflowInputs.at(-1)?.triggerMessageId).toBe(created.messageId);
+    expect(lastWorkflowInput()?.triggerMessageId).toBe(created.messageId);
+  });
+
+  it("does not fence a later trigger-less run's retry back onto the brief", async () => {
+    // A scheduled wakeup, an activity, or a digest run carries no trigger, and
+    // the transcript is fenced at the trigger — so resolving one for it would
+    // discard everything that happened after the brief and re-execute the
+    // original request against days of work it can no longer see.
+    const database = seededDatabase();
+    const service = new WorkstreamService(environment(database), auth(), () => undefined);
+    const created = await service.createFromOpportunity(opportunityRequest());
+    completeLatestRun(database, created.workstream.id);
+    insertFailedTriggerlessRun(database, created.workstream.id);
+
+    await service.retry(created.workstream.id);
+
+    expect(lastWorkflowInput()?.triggerMessageId).toBeNull();
   });
 });
+
+function lastWorkflowInput(): { triggerMessageId: string | null } | undefined {
+  return vi.mocked(startWorkstreamWorkflow).mock.calls
+    .map((call) => call[1] as { triggerMessageId: string | null })
+    .at(-1);
+}
 
 function opportunityRequest() {
   return {
@@ -160,6 +180,35 @@ function failLatestRun(database: DatabaseSync, workstreamId: string): void {
   database.prepare(
     `UPDATE harness_runs SET status = 'failed', terminalized_at = ? WHERE workstream_id = ?`,
   ).run(at, workstreamId);
+  database.prepare("UPDATE workstreams SET harness_status = 'failed' WHERE id = ?").run(workstreamId);
+}
+
+function completeLatestRun(database: DatabaseSync, workstreamId: string): void {
+  database.prepare(
+    `UPDATE harness_runs SET status = 'completed', terminalized_at = ? WHERE workstream_id = ?`,
+  ).run(at, workstreamId);
+}
+
+/**
+ * A later run of the kind that has no message behind it, already failed.
+ *
+ * `created_at` is after the opening run's, which is the order `retry` reads.
+ */
+function insertFailedTriggerlessRun(database: DatabaseSync, workstreamId: string): void {
+  database.prepare(
+    `INSERT INTO harness_runs
+     (id, workspace_id, workstream_id, origin, execution_principal_json, status,
+      started_at, terminalized_at, created_at, trigger_message_id)
+     VALUES (?, ?, ?, 'scheduled_wakeup', ?, 'failed', ?, ?, ?, NULL)`,
+  ).run(
+    "00000000-0000-7000-8000-0000000000b1",
+    workspaceId,
+    workstreamId,
+    JSON.stringify({ type: "user", userId: selectorId }),
+    "2026-08-14T09:00:00.000Z",
+    "2026-08-14T09:05:00.000Z",
+    "2026-08-14T09:00:00.000Z",
+  );
   database.prepare("UPDATE workstreams SET harness_status = 'failed' WHERE id = ?").run(workstreamId);
 }
 
