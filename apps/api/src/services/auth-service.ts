@@ -212,6 +212,12 @@ export class AuthService {
     if (this.env.AVALON_REGION !== "global") {
       throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform identity endpoint");
     }
+    // The same guard `beginIdentity` applies, on the other half of the flow.
+    // Without it an unconfigured deployment sends `undefined` to Google and
+    // reports the provider's rejection as a token-exchange failure.
+    if (!this.env.GOOGLE_OAUTH_CLIENT_ID || !this.env.GOOGLE_OAUTH_CLIENT_SECRET) {
+      throw new ApiError(503, "google_oauth_not_configured", "Google authentication is not configured");
+    }
     const row = await this.claimOAuthState(state, "identity");
     if (!row.desktop_attempt_id || !row.desktop_code_challenge) {
       throw new ApiError(401, "invalid_desktop_binding", "The desktop authentication binding is missing");
