@@ -25,6 +25,8 @@ boundary this module bends is defined in
 | `apps/api/src/notion-routing-bridge.ts` | Global-side `WorkerEntrypoint` the EU Worker calls to register and retire routes. |
 | `apps/api/src/lib/connector-registry.ts` | Builds the connector's `redirectUri` from the shared host in **both** regions. |
 | `packages/db/migrations/0066_shared_notion_connection_routing.sql` | The `notion_workspace_routes` directory, Global only. |
+| `packages/db/migrations/0071_notion_webhook_setup_nonces.sql` | Short-lived setup nonces and their link to the active encrypted verification token. |
+| `scripts/notion-webhook-setup.mjs` | Prepares a one-time subscription URL and copies the captured token without server-side plaintext output. |
 
 ## How it works
 
@@ -51,11 +53,36 @@ whose events can never be delivered.
 
 ### Webhooks
 
-Notion sends the one-time `verification_token` to the subscription URL, which is
-the shared host. Global validates the operator `NOTION_WEBHOOK_SETUP_TOKEN`,
-encrypts the token under its own key, and then replicates the plaintext to EU
-over the bridge, where EU encrypts it under *its* key with its own region-bound
-AAD. Both regions end up able to verify a signature independently.
+The operator runs `pnpm notion:webhook:prepare`. It generates a 32-byte nonce,
+stores only its SHA-256 hash and a 30-minute expiry in Global D1, and copies the
+subscription URL to the local clipboard. The permanent URL still carries
+`setup=`, because Notion cannot attach an operator header, but Cloudflare's URL
+capture sees only a short-lived value that becomes useless on first use. The
+command retires the previous current generation and inserts its replacement in
+one D1 transaction; a partial unique index makes two current generations
+impossible even when operators prepare concurrently.
+
+Notion sends the one-time `verification_token` to that URL. Global binds the
+current nonce to the first token hash it sees, encrypts the plaintext token under
+its own key, and conditionally stores it only while that setup generation remains
+current. It then replicates the plaintext and the nonce row's monotonic setup
+generation to EU over the bridge, where EU rejects an older generation, then
+encrypts the accepted token under *its* key with region-bound AAD.
+The operator then runs `pnpm notion:webhook:copy-token`: it reads the ciphertext
+and the current nonce binding through the Cloudflare D1 API, decrypts on the
+operator's machine, verifies the plaintext hash against that binding, and pipes it
+straight to the clipboard for Notion's verification dialog. It refuses both the
+previous subscription's token and the brief claim-before-storage window. No server
+log or API response exposes it. Both regions end up able to verify signatures
+independently.
+
+A retry carrying the same current nonce and token is idempotent. A different token
+cannot reuse a consumed nonce, and preparing a new generation immediately
+supersedes the old one. The encrypted-token upsert checks current ownership again
+in its own SQL statement, so an older request paused after its claim cannot resume
+after a newer request and restore the superseded signing secret.
+The same generation travels with regional replication: if two Global requests
+reach EU out of order, EU's conditional upsert retains the larger generation.
 
 Every later delivery is verified at Global against the stored token and the
 expected integration ID, then routed on the `workspace_id` the verified envelope
@@ -103,6 +130,11 @@ persists the payload in its own R2.
   `/health` stays reachable either way, so a health-only smoke check will not
   notice. Configuring the two to the same host in production would instead
   silently disable cross-region callbacks.
+- **No reusable setup credential or verification token enters observability.**
+  Cloudflare captures the full URL before application redaction, so the URL may
+  carry only a short-lived nonce that is harmless after first use. The HMAC
+  verification token is encrypted at rest and reaches plaintext only in Worker
+  memory, the regional service binding, and the operator's clipboard.
 
 ## Boundary
 
@@ -127,6 +159,8 @@ otherwise.
 | Delivery for a Notion workspace that has never been routed | `503 notion_route_pending`. Notion retries, by which time the OAuth callback has normally registered the route. |
 | Delivery for a Notion workspace whose every route is disabled | `{accepted, activityCount: 0}`. Disabling an Avalon connection does not uninstall the integration at Notion, so a retired workspace keeps delivering forever; retrying it would spend the full retry budget on every delivery, against the subscription every customer shares. |
 | Setup challenge posted to a regional host instead of the ingress | `400 notion_setup_wrong_host`, naming the right URL. Only the ingress replicates the token, so accepting it elsewhere would answer 200 and leave the other region unable to verify anything. |
+| Setup nonce missing, expired, already bound to another token, or superseded | `unauthorized`; no challenge row is inserted or replaced. Preparing another URL invalidates any earlier unconsumed one. |
+| Token copy attempted before the current challenge finishes storage | The command refuses to copy. It joins the challenge to the one current consumed nonce and verifies the decrypted token against that nonce's token hash, so neither the previous subscription secret nor a partially stored replacement reaches the clipboard. |
 | Signature invalid, or signed for another integration | `invalid_signature` / `unauthorized`, before the route directory is consulted and before any payload is stored. Not before *all* D1 access: the stored verification token is read first, because verifying is what makes the delivery's workspace readable. |
 | Challenge replication to EU fails | The whole setup request fails. Re-sending the verification from Notion's dashboard is idempotent: Global recognizes the same token and replicates again. |
 | Webhook body over `PROVIDER_WEBHOOK_MAX_BYTES` (2 MB default) | `payload_too_large`, before parsing. |
@@ -156,16 +190,21 @@ obviously different hosts:
 
 Provider-side Notion webhook verification and normalization are covered by
 `apps/api/test/provider-webhooks.test.ts` and
-`packages/connectors/src/notion.test.ts`; this suite does not re-test them.
+`packages/connectors/src/notion.test.ts`; this suite does not re-test them. The
+former models nonce expiry, token binding, idempotent replay, rotation, and
+supersession. `scripts/notion-webhook-setup.test.mjs` proves the D1 write contains
+only a nonce hash and that encrypted rows decrypt to the clipboard value.
 
 ## Regional impact
 
-Global gains one table (`notion_workspace_routes`) and one secret (the Notion
-verification token, also replicated to EU). Authorization codes and webhook bytes
-for EU workspaces transit Global and are persisted only in EU. This is the same
-concession `regionalization.md` already records for the shared GitHub, Linear,
-and Slack ingresses, extended to the OAuth code because Notion allows only one
-redirect URI.
+Global owns `notion_workspace_routes`, the used rows in
+`notion_webhook_setup_nonces`, and the encrypted Notion verification token, which
+is also replicated and independently encrypted in EU. The nonce table exists in
+both schemas because regional migrations remain identical, but EU never writes it
+in production. Authorization codes and webhook bytes for EU workspaces transit
+Global and are persisted only in EU. This is the same concession
+`regionalization.md` already records for the shared GitHub, Linear, and Slack
+ingresses, extended to the OAuth code because Notion allows only one redirect URI.
 
 ## Operations
 
@@ -179,11 +218,36 @@ binds `GLOBAL_NOTION_ROUTER` to one Global does not export yet — so neither
 region can be deployed with its full configuration first, and the automatic
 EU-then-Global deployment cannot land this change. Both Workers need
 `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, and
-`NOTION_INTEGRATION_ID` — the *same* values, since there is one connection — plus
-`NOTION_WEBHOOK_SETUP_TOKEN`. Registration steps are in
+`NOTION_INTEGRATION_ID` — the *same* values, since there is one connection. Apply
+migration `0071_notion_webhook_setup_nonces.sql`, then use
+`pnpm notion:webhook:prepare` and `pnpm notion:webhook:copy-token` for the
+subscription handshake. Registration steps are in
 [`provider-apps.md`](provider-apps.md).
 
 ## Changelog
+
+### 2026-08-12 — Subscription setup becomes one-time and locally retrievable
+
+**What changed:** The reusable Worker setup secret was replaced by a 30-minute
+nonce stored only as a hash. Its first challenge atomically binds the nonce to
+the verification token; retries must carry that pair, and consuming a newer
+nonce supersedes older pairs. Operator commands now copy the prepared URL and
+decrypt the captured token directly to the local clipboard. Preparation is one
+transaction with a unique current-generation constraint, challenge storage is
+conditional on that generation still being current, and token copying proves its
+ciphertext belongs to the current consumed nonce. The generation is replicated to
+EU so an older cross-region call cannot arrive last and restore the old token there.
+
+**Why:** Notion requires a manual paste of the token it posts to the endpoint,
+while Avalon's handler correctly refused to log or return that signing secret.
+That left no way to finish verification. Logging it was rejected because the
+token authenticates every future event and the repository retains Cloudflare
+logs for 90 days. The old query guard was also reusable and therefore leaked as
+a credential through Cloudflare's platform-level full-URL capture. A public
+reveal endpoint would trade the missing workflow for a permanent remote secret
+reader. Encrypted D1 storage plus local decryption solves the operator handoff;
+token-bound, superseding nonces make the unavoidable query parameter safe after
+its first request and preserve retry after a mid-capture failure.
 
 ### 2026-08-12 — A retired workspace is answered, and the challenge has one door
 

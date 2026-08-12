@@ -274,15 +274,16 @@ describe("shared Notion connection routing", () => {
   });
 
   it("replicates the one-time verification token to the region that never receives it", async () => {
-    const replicated: Array<{ region: Region; token: string }> = [];
+    const replicated: Array<{ region: Region; token: string; setupGeneration: number }> = [];
     const captured: Array<string | null> = [];
     const service = new NotionRoutingService(environment(new FakeDatabase()), {
       now: () => NOW,
-      storeChallengeInRegion: async (region, token) => {
-        replicated.push({ region, token });
+      storeChallengeInRegion: async (region, token, setupGeneration) => {
+        replicated.push({ region, token, setupGeneration });
       },
-      captureChallenge: async (token, setupToken) => {
-        captured.push(setupToken);
+      setupGenerationForToken: async () => 17,
+      captureChallenge: async (token, setupNonce) => {
+        captured.push(setupNonce);
         expect(token).toBe(SECRET);
         return { accepted: true, duplicate: false, activityCount: 0 };
       },
@@ -295,7 +296,7 @@ describe("shared Notion connection routing", () => {
       activityCount: 0,
     });
     expect(captured).toEqual(["setup-token"]);
-    expect(replicated).toEqual([{ region: "eu", token: SECRET }]);
+    expect(replicated).toEqual([{ region: "eu", token: SECRET, setupGeneration: 17 }]);
   });
 
   it("keeps the ingress in the Global control plane", async () => {
@@ -403,7 +404,6 @@ function environment(database: FakeDatabase): Env {
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
     NOTION_INTEGRATION_ID: INTEGRATION_ID,
-    NOTION_WEBHOOK_SETUP_TOKEN: "setup-token",
     PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
   } as Env;
 }
