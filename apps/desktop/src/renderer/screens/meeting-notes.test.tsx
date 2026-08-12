@@ -676,6 +676,27 @@ describe('MeetingNotesScreen', () => {
     expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
   });
 
+  it('takes the question away when the recording ends underneath it', async () => {
+    state.dictationState = 'listening';
+
+    const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
+
+    act(() => state.closeRequested?.('user'));
+    await screen.findByRole('dialog', { name: 'This meeting is still recording' });
+
+    // Dictation failing finalizes the meeting on its own. Asking whether to end
+    // a recording that has already stopped is a question about nothing, over a
+    // window whose remaining news is the error that stopped it.
+    state.dictationState = 'error';
+    view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(state.closeMeetingNotes).not.toHaveBeenCalled();
+  });
+
   it('closes a window with nothing to lose without asking', async () => {
     state.api.createNote.mockResolvedValue(noteDetail({
       recordingStatus: 'complete',
