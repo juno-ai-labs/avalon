@@ -9,6 +9,7 @@ import {
   workspaceSchedulerName
 } from "../src/durable-objects/workspace-scheduler";
 import {
+  applyActiveStreamCheckpointEvent,
   consumeSocketTicket,
   distinctNonParticipantViewers,
   isPersonalEventAudience,
@@ -80,6 +81,104 @@ describe("runtime component invariants", () => {
       type: "replay",
       events: [firstEvent],
     });
+  });
+
+  it("checkpoints the exact active stream for subscribers joining mid-response", () => {
+    const messageId = "00000000-0000-7000-8000-000000000010";
+    const harnessRunId = "00000000-0000-7000-8000-000000000011";
+    const at = "2026-01-01T00:00:00.000Z";
+    expect(applyActiveStreamCheckpointEvent([], ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 9,
+      occurredAt: at,
+      messageId,
+      harnessRunId,
+      turnId: "turn-one",
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: "Missing prefix",
+    }))).toEqual([]);
+    let checkpoints = applyActiveStreamCheckpointEvent([], ServerSocketEventSchema.parse({
+      type: "stream_started",
+      sequence: 10,
+      occurredAt: at,
+      messageId,
+      harnessRunId,
+      turnId: "turn-one",
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 11,
+      occurredAt: at,
+      messageId,
+      turnId: "turn-one",
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: "First answer.",
+    }));
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "stream_started",
+      sequence: 12,
+      occurredAt: at,
+      messageId,
+      harnessRunId,
+      turnId: "turn-two",
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 13,
+      occurredAt: at,
+      messageId,
+      turnId: "turn-two",
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: " Discard this attempt.",
+    }));
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 14,
+      occurredAt: at,
+      messageId,
+      turnId: "turn-two",
+      epoch: 1,
+      streamSeq: 2,
+      reset: true,
+      delta: " Final continuation.",
+    }));
+
+    expect(checkpoints).toEqual([expect.objectContaining({
+      messageId,
+      harnessRunId,
+      text: "First answer. Final continuation.",
+      turnStartOffset: "First answer.".length,
+      roomSequence: 14,
+      seenTurnIds: ["turn-one", "turn-two"],
+    })]);
+
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "harness_status_changed",
+      sequence: 15,
+      occurredAt: at,
+      status: "running",
+    }));
+    expect(checkpoints).toHaveLength(1);
+
+    const completed = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "harness_status_changed",
+      sequence: 16,
+      occurredAt: at,
+      status: "completed",
+    }));
+    expect(completed).toEqual([]);
   });
 
   it("skips missed interval ticks without creating a catch-up storm", () => {
