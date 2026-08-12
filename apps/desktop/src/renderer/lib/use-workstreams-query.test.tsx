@@ -34,7 +34,7 @@ function summary(id: string, title: string): WorkstreamSummary {
     title,
     titleStatus: 'settled',
     origin: 'ad_hoc',
-    scope: 'workspace',
+    visibility: 'public',
     harnessStatus: 'completed',
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,

@@ -1875,7 +1875,7 @@ export class SlackAgentService {
       // stay for one deployment: the previous Worker names both columns in this
       // insert and `execution_scope` is `NOT NULL` with no default, so dropping
       // them in the same change as the code would break every new Slack thread
-      // for the length of a deploy. `0072` removes them. The pair written is
+      // for the length of a deploy. `0078` removes them. The pair written is
       // the permissive one — an old Worker reading these rows treats the thread
       // as workspace-owned, which is what this change makes every thread.
       `INSERT INTO slack_agent_sessions

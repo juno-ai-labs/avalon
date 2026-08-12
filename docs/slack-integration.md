@@ -130,7 +130,8 @@ gate: later prompts still reach Slack and fail on Slack's answer if the scope is
 see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
 
 1. An unlinked member clicks **Connect Avalon** — on App Home, or on the private
-   prompt Avalon sends when a workspace-owned task needs personal authority.
+   prompt Avalon sends when a task it is running for them needs an Avalon account
+   of its own.
 2. The regional service creates a random, hashed, 15-minute link challenge bound
    to the workspace installation and Slack user ID, and returns it in a modal
    opened against that same click.
@@ -149,9 +150,9 @@ when the Slack identity already belongs to a different Avalon member — the per
 still stands in that case, because resolving it is not that operation's business.
 
 **A challenge is minted by the click that redeems it, and never earlier.** No
-Slack surface holds a handoff URL: App Home and the claim DM carry a button
+Slack surface holds a handoff URL: App Home and the connect DM carry a button
 whose only job is to ask for one. This is a hard rule rather than a preference —
-App Home is a published document with no expiry of its own and the claim DM is
+App Home is a published document with no expiry of its own and the connect DM is
 read whenever the member gets to it, so a token rendered into either dies where
 it is still visible, and a member clicking it has no way to tell. A new surface
 that invites a member to connect uses the same button; it does not embed a link.
@@ -175,6 +176,28 @@ the challenge is single-use, fifteen minutes old, and minted by a click Slack si
 
 Suspended members and revoked links cannot start or continue tasks. A user may link separately in every connected Slack team.
 
+#### Who a Slack work stream belongs to
+
+A work stream started from Slack takes the audience of the conversation it was summoned from,
+by the connector-wide rule in
+[the connector document](connectors.md#a-work-streams-audience-is-the-conversation-it-started-in).
+A mention in a public channel opens a **public** work stream. A private channel, a DM, a group
+message, or a conversation the installation could not classify opens a **private** one, seated
+with the members `conversations.members` returns — up to 200, each resolved through the shared
+actor mapping, and best effort: a roster Slack refuses costs a smaller starting room rather
+than the prompt.
+
+**Every member of that Slack conversation can continue the work stream.** A reply from somebody
+the work stream has not seen seats them first and is then recorded, so a private work stream
+answers the channel it belongs to rather than 404ing at it. A Slack member Avalon cannot map to
+an account at all still has their message recorded, under their Slack actor.
+
+**Each message runs under the authority of whoever sent it**: a member with a confirmed account
+link runs as themselves, and everybody else runs under the workspace principal. Nothing weaker
+than a link authorizes a run — a `users.lookupByEmail`-grade match seats and credits somebody
+and cannot spend their credentials — so two replies in one thread can run under different
+principals, exactly as they do when two members type into the same work stream in Avalon.
+
 #### Work stream attribution
 
 A work stream started from Slack records the Avalon member the Slack author resolves to as its
@@ -184,9 +207,7 @@ uses the shared connector actor identity described in
 every agent connector uses. Slack contributes the `users.info` profile — including the email
 that feeds the `verified_email` step — and records the resolved mapping for later work.
 
-Slack adds one provider-specific mapping of its own: an explicit claim credits the claiming
-member when they are the same Slack author who started the task. A claim by a different Slack
-member makes that member a participant rather than the creator. When a mapping only arrives
+When a mapping only arrives
 later — the member links their account, or joins Avalon after the task ran — the earlier
 ownerless work streams of their Slack sessions are credited to them then. Account linking may
 additionally correct a creator that the same session's earlier `users.lookupByEmail` match
@@ -197,7 +218,9 @@ with the workspace principal, and the opening message keeps its external Slack a
 
 ### Agent sessions and delivery
 
-A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Avalon workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Avalon` mention. Avalon ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
+A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Avalon workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Avalon` mention, whoever sends them. Avalon ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
+
+The session row records who started the thread and where; it does not decide who may use it. The only reply Avalon refuses is one answering a question addressed to a specific member — the same rule the Avalon app applies to a targeted elicitation, per question rather than per thread.
 
 The workstream also carries the thread it was summoned from as an attached `slack_thread` resource, so a member reading it in Avalon can get back to the conversation. That attachment holds identifiers, the channel name, and Slack's own permalink — origin metadata, not message content, consistent with the retention boundary above. See [work-stream origin attachments](workstream-origin-attachments.md).
 
@@ -256,7 +279,7 @@ Home is updated on `app_home_opened`, after account linking, and after settings 
 - **Connect Avalon**: mint a link challenge and open it in a modal whose single
   button is the desktop handoff. Not refused on a stored status; a grant that is
   really gone fails on Slack's answer.
-- Result buttons: open the canonical task or provide feedback.
+- Result buttons: open the canonical task or provide feedback. Feedback is open to any linked member of the installation, not only whoever started the thread.
 - Avalon person mention: notify the matched member in the Avalon Agent DM, falling back to email.
 - Avalon links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Avalon authorization for its contents.
 
@@ -338,7 +361,7 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
   tools.
 - **A link challenge is minted by the click that redeems it, and never earlier.**
   No Slack surface holds a handoff URL — App Home is a published document with no
-  expiry of its own and a claim DM is read whenever the member gets to it, so a
+  expiry of its own and a connect DM is read whenever the member gets to it, so a
   token rendered into either dies where it is still visible and the member has no
   way to tell. A new surface that invites a member to connect uses the same button;
   it does not embed a link.
@@ -356,6 +379,11 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
   successful retry.
 - **Attribution is not authorization.** An unlinked author's task still runs with
   the workspace principal, and the opening message keeps its external Slack actor.
+- **A thread belongs to its Slack conversation, not to one member.** Its work
+  stream is public for a public channel and private for anything else, a private
+  one's room is the conversation's members, and anybody in the conversation may
+  continue it. Each message runs as whoever sent it, and only a confirmed account
+  link authorizes running as a member.
 - **The persisted Avalon run is canonical.** A Slack delivery failure never
   rewrites a completed run as failed.
 - **The `action_token` is hidden run authorization** and never enters a prompt,
@@ -425,7 +453,14 @@ not own:
 - **An identity-link insert is refused only when the Slack identity already belongs
   to a different Avalon member.** The personal connection still stands in that case,
   because resolving the conflict is not that operation's business.
-- **Suspended members and revoked links cannot start or continue tasks.**
+- **Suspended members and revoked links cannot start or continue tasks.** A
+  revoked link does not lock somebody out of a thread, though — it drops them to
+  the workspace principal, the same as any unlinked member.
+- **A private conversation's roster is read once and best effort.**
+  `conversations.members` needs `groups:read`, which an installation that has not
+  reconnected does not have, and it is bounded at 200 members. A failure or a
+  larger channel costs a smaller starting room, not the prompt: everybody else is
+  seated when they first reply.
 - **Existing workspace installations must reconnect after a scope expansion**
   before health checks and tool calls succeed. Until the identity scopes arrive,
   lookup-based mentions fall back to email.
@@ -451,7 +486,8 @@ not own:
 | --- | --- |
 | `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, and the manifest read from `config/provider-apps/slack.json`. |
 | `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
-| `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution, the claim rule, and the one case where an existing creator is rewritten. |
+| `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution and the one case where an existing creator is rewritten. |
+| `apps/api/test/slack-thread-audience.test.ts` | The conversation's visibility and room, a second linked member continuing a thread, and a reply from a Slack member Avalon cannot map. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
 | `apps/api/test/slack-mention-service.test.ts` | The lookup-based mention path and its email fallback. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
@@ -580,6 +616,45 @@ compatibility-only static grants and should be removed with an explicit
 reconnection migration rather than extended or mapped onto provider-owned tools.
 
 Shipped in the pull request for this change.
+
+### 2026-08-12 — A Slack thread stopped belonging to whoever was linked first
+
+**What changed:** A work stream started from Slack takes its conversation's audience — public
+channel to a public work stream, private channel or DM to a private one seated with that
+conversation's members — and everybody in the conversation can continue it. The two refusals
+that enforced the old pin are gone, as are the claim button, the claim DM, and
+`claimWorkspaceSession`. Each message runs as whoever sent it: a linked member's own authority,
+the workspace principal otherwise, and a Slack member Avalon cannot map still has their message
+recorded under their Slack actor. Feedback buttons are open to any linked member of the
+installation.
+
+**Why:** In a public channel, one member asked Avalon for domain names and the thread became
+theirs. The workspace owner replying "do deep research on all technology companies named Delta"
+was answered with *"This thread is already running with another Avalon member's personal
+authority. Start a new Avalon task to keep identities and connected accounts separate."* A third
+member, an active Avalon member Slack could resolve by email but who had not linked, got the
+other half: *"an unlinked Slack member cannot continue it."* Both messages were posted in
+channel, both were the correct behaviour as written, and both told a colleague that the
+conversation they were standing in belonged to somebody else. The claim button existed for
+exactly this and was never the answer: it moved the whole thread's authority rather than
+answering the one message.
+
+**Considered and rejected:** Keeping the pin and adding a "continue as me" button beside the
+refusal — the claim flow again, still asking a conversation to have one owner. Also rejected:
+letting Slack's verified email authorize a run as the matched member, which would have made
+every refusal disappear and would have let a Slack profile address spend an Avalon member's
+personal connectors. That match seats and credits somebody; nothing weaker than a link
+authorizes a run.
+
+**Consequences:** A Slack thread in a *private* channel now produces a work stream nobody
+outside that channel can read, where before it was workspace-visible; that is the point, but it
+means the roster read is what makes the channel able to find its own work stream, and it is
+bounded and best effort. Membership is admitted and never revoked, so leaving the Slack channel
+does not remove somebody from the work stream. `slack_agent_sessions.linked_user_id` and
+`execution_scope` survive as fixed compatibility values for one deployment — the previous Worker
+names both in its insert and `execution_scope` is `NOT NULL` — and `0078` drops them. The
+targeted-elicitation refusal is deliberately still there: it is per question and matches what
+the Avalon app does, rather than saying who owns the conversation.
 
 ### 2026-08-12 — Linking became one step, and a stored status stopped gating events
 

@@ -9,7 +9,7 @@ another machine finds their list exactly as they left it.
 A pin is **one person's opinion about a shared row**. Pinning a work stream tells
 nobody else anything, changes nothing about who may read it, and does not appear
 on anyone else's screen. Read that alongside
-[`data-model.md`](data-model.md#work-streams), where `workstreams.scope` answers
+[`data-model.md`](data-model.md#work-streams), where `workstreams.visibility` answers
 the different question of who a work stream is *for*.
 
 ## Where the code lives
@@ -364,7 +364,7 @@ a theoretical boundary.
 **Considered and rejected:** `useInfiniteQuery`, which is the obvious tool and
 the wrong one here. It stores `{ pages, pageParams }` under its key, and eight
 call sites in the realtime socket handlers and the app shell patch this cache
-entry as a flat `WorkstreamSummary[]` — a rename, an unread count, a scope
+entry as a flat `WorkstreamSummary[]` — a rename, an unread count, a visibility
 change, a pin reorder. Adopting the paged shape would strand every one of them
 silently: the write lands on a value nobody reads and the sidebar sits stale
 until the next poll. The flat array is the contract those writers were built
@@ -499,7 +499,7 @@ a limit, it is a trap.
   this one: the count that mattered was of *visible* pins, so the trigger would
   have to restate `workstream-visibility.ts` in SQL inside a migration that is
   immutable once deployed — and the one time that rule was duplicated by hand,
-  the copy lost `scope`.
+  the copy lost the visibility clause.
 
 **Consequences:** Two things now scale with the length of somebody's pinned list
 and are the argument any future bound has to beat: a reorder writes one `UPDATE`

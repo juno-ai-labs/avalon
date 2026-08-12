@@ -10,7 +10,7 @@ function summary(): WorkstreamSummary {
     titleStatus: 'settled',
     origin: 'ad_hoc',
     harnessStatus: 'completed',
-    scope: 'workspace',
+    visibility: 'public',
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,
     manualUnreadFromSequenceNumber: null,

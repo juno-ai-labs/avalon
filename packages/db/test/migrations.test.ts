@@ -2379,4 +2379,61 @@ describe("database migrations", () => {
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });
+
+  it("keeps work-stream visibility and the column it replaces agreeing in both directions", () => {
+    const database = migrateDatabaseThrough("0076_terminal_recoverable_github_connections.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-visibility', 'google-visibility', 'v@example.com', 'V', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-visibility', 'V', 'v', 'global', 'user-visibility', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+         next_sequence_number, last_activity_at, created_at, updated_at, scope)
+      VALUES
+        ('ws-open', 'workspace-visibility', 'Launch', '', 'ad_hoc', 'user-visibility', 'idle', 1,
+         '2026-01-01', '2026-01-01', '2026-01-01', 'workspace'),
+        ('ws-closed', 'workspace-visibility', 'Comp review', '', 'ad_hoc', 'user-visibility', 'idle', 1,
+         '2026-01-01', '2026-01-01', '2026-01-01', 'personal');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0077_workstream_visibility.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      "SELECT id, visibility FROM workstreams ORDER BY id",
+    ).all()).toEqual([
+      { id: "ws-closed", visibility: "private" },
+      { id: "ws-open", visibility: "public" },
+    ]);
+
+    // The previous Worker still decides visibility through `scope` for the
+    // length of a deployment, and the two regions go live nine seconds apart.
+    // A digest it writes in that window is the case that matters: `scope` is
+    // the only column it sets, and the row is assembled from one person's
+    // private activity.
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+         next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
+      VALUES ('ws-digest', 'workspace-visibility', 'Digest', '', 'ad_hoc', 'user-visibility', 'idle', 1,
+              '2026-01-01', '2026-01-01', '2026-01-01', 'digest', 'personal');
+    `);
+    expect(database.prepare("SELECT visibility FROM workstreams WHERE id = 'ws-digest'").get())
+      .toEqual({ visibility: "private" });
+
+    // Old Worker closes a work stream; the new one must not still read it open.
+    database.exec("UPDATE workstreams SET scope = 'personal' WHERE id = 'ws-open'");
+    expect(database.prepare("SELECT visibility FROM workstreams WHERE id = 'ws-open'").get())
+      .toEqual({ visibility: "private" });
+
+    // And the reverse: the new Worker opens one, and the old Worker's own read
+    // of `scope` has to agree.
+    database.exec("UPDATE workstreams SET visibility = 'public' WHERE id = 'ws-closed'");
+    expect(database.prepare("SELECT scope FROM workstreams WHERE id = 'ws-closed'").get())
+      .toEqual({ scope: "workspace" });
+    database.close();
+  });
 });

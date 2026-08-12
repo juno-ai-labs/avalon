@@ -104,7 +104,7 @@ describe("work-stream row contracts", () => {
     // Hand-coercion turned an absent status into a plausible one and an absent
     // sequence number into 0, so a query that stopped returning a column
     // produced plausible output instead of an error. `visibility` used to be
-    // this example and cannot be until `0072` makes it `NOT NULL`; the rule it
+    // this example and cannot be until `0078` makes it `NOT NULL`; the rule it
     // demonstrates is the schema's, not that column's.
     const withoutTitleStatus: Record<string, unknown> = workstreamRow();
     delete withoutTitleStatus.title_status;

@@ -3,9 +3,9 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { SlackAgentService } from "../src/services/slack-agent-service";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 
 /**
@@ -144,9 +144,11 @@ describe("who may continue a Slack work stream", () => {
 });
 
 function service(database: DatabaseSync): SlackAgentService {
-  return new SlackAgentService({
+  return new SlackAgentService(createTestEnv({
     DB: sqliteD1(database),
-    ACTIVITY_QUEUE: { send: vi.fn(async () => undefined) } as unknown as Queue,
+    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({
+      send: vi.fn(async () => undefined),
+    }),
     AVALON_REGION: "global",
     CONNECTOR_CREDENTIALS_KEY: CREDENTIALS_KEY,
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -154,12 +156,14 @@ function service(database: DatabaseSync): SlackAgentService {
     PUBLIC_API_BASE_URL: "https://api.with-avalon.test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.test",
     WORKSTREAM_EMAIL_ADDRESS_KEY: "test-workstream-email-address-key",
-    WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow-instance" })) },
+    WORKSTREAM_LOOP_WORKFLOW: {
+      create: vi.fn(async () => ({ id: "workflow-instance" })),
+    },
     SLACK_APP_ID: "A1",
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
-  } as unknown as Env);
+  }));
 }
 
 /** The Slack directory these tests speak to, and how Avalon can map each member. */

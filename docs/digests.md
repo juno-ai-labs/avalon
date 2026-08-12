@@ -282,11 +282,10 @@ receipts, the realtime room and the transcript for free.
 Two columns, answering two different questions. A digest's work stream carries
 both.
 
-- **`scope` — who may read it.** `personal` means an active participant and
-  nobody else; `workspace` means anyone in the workspace. This is the same
-  column and the same vocabulary `notes.scope` uses, so "private" means one
-  thing in Avalon and is declared on the row rather than inferred by each
-  caller. A digest's work stream has exactly one participant, its recipient,
+- **`visibility` — who may read it.** `private` means an active participant and
+  nobody else; `public` means anyone in the workspace. It is declared on the row
+  rather than inferred by each caller, so "private" means one thing across
+  Avalon. A digest's work stream has exactly one participant, its recipient,
   which is also what makes every tool the run reaches for resolve against their
   own access. Another member cannot open it knowing its id, because the brief
   inside is assembled from their private activity.
@@ -296,7 +295,7 @@ both.
   is on. It widens what is shown, never who may read it. A private work stream
   that is not machinery is protected exactly the same way.
 
-In the interface, `scope = 'personal'` renders the private marker — the lock a
+In the interface, `visibility = 'private'` renders the private marker — the lock a
 personal note already wears in the sidebar, plus a **Private** badge in the
 work-stream header.
 

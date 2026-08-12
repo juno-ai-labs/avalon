@@ -62,34 +62,47 @@ includes it. Knowing an object ID is never sufficient authorization.
   knowing the loop looked is what separates a description that still fits from one
   nothing has examined. See
   [`workstream-descriptions.md`](workstream-descriptions.md).
-- `workstreams.scope` answers who may read a work stream, in the same
-  `personal`/`workspace` vocabulary `notes.scope` uses. `personal` is enforced as
-  "an active participant, and nobody else" by both the list query and the
-  single-row read, so privacy is a declared property of the row rather than a rule
-  each caller has to remember. Existing rows are `workspace`; the one narrower
-  rule already in the code — a personal automation's work stream being visible to
-  its owner — stays separate, because those rows carry no participants and reading
-  them as `personal` would hide them from the person they belong to. The rule
-  itself is written once, in `apps/api/src/lib/workstream-visibility.ts`, and
-  parameterized by the SQL expression naming the reader so the work-stream room
-  can bind by position and its eviction sweep can ask it of a whole column; a call
-  site that pastes the rule instead of importing it is how it lost `scope` before.
+- `workstreams.visibility` answers who may read a work stream: `private` is
+  enforced as "an active participant, and nobody else" by both the list query and
+  the single-row read, and `public` is the workspace. Privacy is a declared
+  property of the row rather than a rule each caller has to remember. It
+  deliberately does *not* borrow `notes.scope`'s `personal`/`workspace`
+  vocabulary, which it replaced: a work stream started from a private Slack
+  channel is private and belongs to everyone in that channel, and "personal" says
+  the opposite. The one narrower rule already in the code — a personal
+  automation's work stream being visible to its owner — stays separate, because
+  those rows carry no participants and reading them as `private` would hide them
+  from the person they belong to. The rule itself is written once, in
+  `apps/api/src/lib/workstream-visibility.ts`, and parameterized by the SQL
+  expression naming the reader so the work-stream room can bind by position and
+  its eviction sweep can ask it of a whole column; a call site that pastes the
+  rule instead of importing it is how it lost the clause before.
+- **A work stream born from a connector conversation inherits that
+  conversation's audience**, rather than defaulting to `public` and being narrowed
+  afterwards: a private channel opens a `private` row whose participants are that
+  channel's members. The rule and its reasoning are the connector's, in
+  [`connectors.md`](connectors.md#a-work-streams-audience-is-the-conversation-it-started-in).
+- `visibility` is nullable until `0078`. `0077` added it that way on purpose —
+  the previous Worker writes rows for the length of a deployment and does not know
+  the column, so a `DEFAULT` would have been the value for every digest work
+  stream written in that window. Three triggers mirror it against the retired
+  `scope` column in both directions until the drop lands.
 - **A work stream moves between the two, and privacy is not ownership.**
-  `PATCH /workstreams/:id` takes `scope`, and the sidebar's right-click menu offers
+  `PATCH /workstreams/:id` takes `visibility`, and the sidebar's right-click menu offers
   it as **Make private** / **Make public to workspace**, named for the state it
   moves to the way the note item is. Anyone who may read a work stream may move it
   either way, and everyone left inside a private one can read it, write to it, and
   add anyone else in the workspace — `addParticipant` requires only that the caller
   can read the work stream and that the person named is an active member. Two
-  consequences fall out of `personal` being enforced against participants: whoever
-  makes a work stream private is upserted as one in the same batch as the scope
-  itself — either both land or neither does, and a person the upsert genuinely adds
+  consequences fall out of `private` being enforced against participants: whoever
+  makes a work stream private is upserted as one in the same batch as the
+  visibility itself — either both land or neither does, and a person the upsert genuinely adds
   is announced as a participant — or the one action that closes a work stream would
   be the one that locks its author out of it; and the change has to reach the
   sockets already inside the room, which authorized once at connect time. The room
   evicts the connections that may no longer read it and sends
-  `workstream_scope_changed` to the rest. Two kinds of row refuse the change with
-  `scope_change_unsupported`, because `scope` is not what decides who reads them: a
+  `workstream_visibility_changed` to the rest. Two kinds of row refuse the change with
+  `visibility_change_unsupported`, because `visibility` is not what decides who reads them: a
   `system_kind` row is machinery assembled from one person's activity, and an
   automation-generated row takes its audience from that automation's scope —
   opening it would broaden nothing and closing it would hide it from the owner, who
@@ -100,7 +113,7 @@ includes it. Knowing an object ID is never sufficient authorization.
   rather than inventing a second one. It decides whether the row is *listed* — off
   unless the caller passes `includeSystem`, which the desktop does when Debug
   enabled is on — never who may read it. A digest's work stream carries both:
-  `scope = 'personal'` and `system_kind = 'digest'`. See
+  `visibility = 'private'` and `system_kind = 'digest'`. See
   [`digests.md`](digests.md).
 - `workstreams.model_override` pins this one work stream's runs to an OpenRouter
   model, ahead of the `agent-model-workstream` flag. `NULL` — the overwhelming
@@ -418,7 +431,7 @@ collection, opt-out, and destination behavior.
    outside the region's storage guarantees.
 9. **Who may read a work stream is expressed once**, in
    `apps/api/src/lib/workstream-visibility.ts`. A call site that pastes the rule
-   instead of importing it is how it lost `scope` before, and the next such call
+   instead of importing it is how it lost the visibility clause before, and the next such call
    site will lose whatever is added next.
 10. **Migration files are immutable after deployment.** New schema changes receive
     a monotonically numbered SQL file; local and hosted databases are migrated with
@@ -482,8 +495,8 @@ has a document, and the column notes above point at it rather than restating it:
 - **A deleted `automation_subscriptions` row is kept forever.** Automation runs,
   generated work streams, the memory scope, and the permanent email tombstone all
   reference it, so a hard delete would orphan four things at once.
-- **A `system_kind` or automation-generated work stream refuses a scope change**
-  with `scope_change_unsupported`. That is deliberate, not a missing case.
+- **A `system_kind` or automation-generated work stream refuses a visibility change**
+  with `visibility_change_unsupported`. That is deliberate, not a missing case.
 - **A migration deployed ahead of the code that needs it is the safe order; the
   reverse is not.** A `CHECK` relaxed before the enum widens means rows the new
   schema accepts fail the readers still running.
@@ -606,6 +619,37 @@ deployment.
 
 Shipped in the pull request for this change. Design:
 [`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
+
+### 2026-08-12 — Who may read a work stream is `visibility`, in the words the product uses
+
+**What changed:** `workstreams.scope` became `workstreams.visibility`, `personal`/`workspace`
+became `private`/`public`, and the socket event and the refusal code were renamed with it
+(`workstream_visibility_changed`, `visibility_change_unsupported`). Migration `0077` adds the
+column and mirrors it against `scope`; `0078` drops `scope` and tightens `visibility` to `NOT
+NULL`.
+
+**Why:** The column borrowed `notes.scope`'s vocabulary because a note and a work stream were
+answering the same question. They stopped being the same question when a work stream could be
+started from a private Slack channel: that work stream is private *and* belongs to everyone in
+the channel, and `personal` names one person's property. The sidebar had rendered the lock as
+"Private work stream" since the column existed, so the storage was the only place still using
+the other word.
+
+**Considered and rejected:** Keeping `scope` and widening the enum, which would have left two
+vocabularies for one question and a `personal` value nothing set. Also rejected: dropping
+`scope` in the same migration that adds `visibility`. The deploy job applies migrations before
+either Worker is deployed, so for the length of a deployment — longer if it fails — the previous
+Worker reads `w.scope` in the one SQL fragment that decides who may read a work stream, and
+dropping it would take every work-stream read down. See RUNBOOK.md, "The window between a
+migration and the Worker that needs it".
+
+**Consequences:** `visibility` is nullable until `0078` and read with `IS NOT 'private'` rather
+than `<>`, because `<>` is `NULL` for a row an old Worker inserted and a `NULL` condition
+excludes the row from every branch. `0077` mirrors the two columns in *both* directions with
+triggers, not one: the regions deploy nine seconds apart, so a member closing a work stream on
+one Worker while a reader is served by the other is a private work stream read by the workspace
+— the one failure here that cannot be taken back. `0078` must drop the three triggers with the
+column.
 
 ### 2026-08-12 — One pointer and one outbox replace the model-object catalog
 

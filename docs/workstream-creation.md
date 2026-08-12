@@ -219,7 +219,11 @@ allocation and delivery belong to
 [`workstream-email-addresses.md`](workstream-email-addresses.md); this module
 only decides that activation stays on the create path, ahead of the response.
 Run admission, leases,
-and scope belong to [`agent-harness.md`](agent-harness.md).
+and scope belong to [`agent-harness.md`](agent-harness.md). A work stream a
+connector creates does not come through this screen at all, and its `visibility`
+and starting participants are decided by the conversation it was summoned from —
+see
+[`connectors.md`](connectors.md#a-work-streams-audience-is-the-conversation-it-started-in).
 
 ## Failure modes and limits
 

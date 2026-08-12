@@ -15,7 +15,7 @@
 -- assembled from one person's private activity. See RUNBOOK.md, "The window
 -- between a migration and the Worker that needs it". The insert trigger below
 -- derives the column from `scope` instead, so an old Worker's row is correct
--- rather than merely defaulted, and `0072` tightens it to `NOT NULL`.
+-- rather than merely defaulted, and `0078` tightens it to `NOT NULL`.
 ALTER TABLE workstreams ADD COLUMN visibility TEXT
   CHECK (visibility IS NULL OR visibility IN ('public', 'private'));
 

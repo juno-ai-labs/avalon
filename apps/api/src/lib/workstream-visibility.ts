@@ -31,10 +31,10 @@
  * pasting it into a new query cannot quietly weaken it.
  *
  * `visibility` is compared with `IS NOT` rather than `<>` because the column is
- * nullable until `0072` tightens it: `<>` is `NULL` for a row an old Worker
+ * nullable until `0078` tightens it: `<>` is `NULL` for a row an old Worker
  * inserted between the migration and the deploy, and a `NULL` condition excludes
  * the row from *every* branch, which reads as "nobody may see their own work
- * stream" rather than as the intended default. `0071`'s insert trigger fills the
+ * stream" rather than as the intended default. `0077`'s insert trigger fills the
  * column in the same statement, so this is a guard against the window rather
  * than a state anything durably observes.
  *
