@@ -323,4 +323,4 @@ Shipped without it because the feedback gates are measurable on their own and
 overlap-based selection changes recall in a way that wants a look at real
 resolutions first.
 
-Pull request number to be added when this is opened.
+Shipped in #109.
