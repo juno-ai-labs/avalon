@@ -96,6 +96,17 @@ order. A member with nothing stored also gets recency order written first,
 against an *empty* fingerprint, so they see four suggestions immediately while
 the real ranking stays outstanding.
 
+### Starting one
+
+`POST /work-opportunities/:id/start` creates a work stream whose title and
+objective are the `displayPrompt` and whose opening message is the
+`executionPrompt` — **written as the selecting member's own turn**, not the
+agent's. Selecting is the request, and the brief is that request expanded; the
+`suggested_work_expansion` structured content on the message is what records that
+the words are Avalon's, and both the transcript label and the model projection
+read it from there rather than from the author. The creation path itself belongs
+to [`workstream-creation.md`](workstream-creation.md).
+
 ## Freshness
 
 `suggested_work_sets.candidate_fingerprint` hashes the id and version of every
