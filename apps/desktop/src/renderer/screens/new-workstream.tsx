@@ -202,22 +202,27 @@ function ParticipantPicker({
   onOpenChange: (open: boolean) => void;
   onToggle: (member: WorkspaceMember) => void;
 }): React.JSX.Element {
+  const availableMembers = members.filter((member) => member.id !== currentUser.id);
+  const firstCheckboxRef = useRef<HTMLInputElement>(null);
+  const doneButtonRef = useRef<HTMLButtonElement>(null);
+
   return (
     <Modal
       description="Only individual workspace members can be added in this version."
-      footer={<Button className="button-primary" onClick={() => onOpenChange(false)}>Done</Button>}
+      footer={<Button ref={doneButtonRef} className="button-primary" onClick={() => onOpenChange(false)}>Done</Button>}
+      initialFocusRef={availableMembers.length > 0 ? firstCheckboxRef : doneButtonRef}
       onOpenChange={onOpenChange}
       open={open}
       title="Add people"
     >
       <div className="member-picker-list" role="group" aria-label="Workspace members">
-        {members
-          .filter((member) => member.id !== currentUser.id)
-          .map((member) => (
+        {availableMembers
+          .map((member, index) => (
             <label className="member-picker-row" key={member.id}>
               <input
                 checked={selected.has(member.id)}
                 onChange={() => onToggle(member)}
+                ref={index === 0 ? firstCheckboxRef : undefined}
                 type="checkbox"
               />
               <Avatar member={member} size="medium" />

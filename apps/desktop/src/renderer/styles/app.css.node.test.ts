@@ -87,6 +87,22 @@ describe('work-stream launch surface geometry', () => {
   });
 });
 
+describe('member picker controls', () => {
+  it('keeps the custom checkbox out of the flexible member-copy rule', () => {
+    const copy = rule(
+      '.member-picker-row > span:not(.avatar):not(.member-checkbox),\n.member-action-list button > span:not(.avatar)',
+    );
+
+    expect(copy).toContain('flex: 1;');
+    expect(rule('.member-checkbox')).toContain('flex: 0 0 16px;');
+  });
+
+  it('mirrors focus from the transparent native input onto the visible checkbox', () => {
+    expect(rule('.member-picker-row:has(input:focus-visible) .member-checkbox'))
+      .toContain('outline: 2px solid #6a7f95;');
+  });
+});
+
 /**
  * The five-line cap on a system row exists only here. `SystemMessageBlock`
  * renders the whole string and sets one attribute; the clamp, and therefore the

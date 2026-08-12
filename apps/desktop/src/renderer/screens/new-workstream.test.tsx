@@ -215,6 +215,28 @@ describe('New work-stream home', () => {
     }));
   });
 
+  it('focuses the first member when the participant picker opens', async () => {
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants: Morgan Ellis' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
+    await waitFor(() => expect(within(dialog).getByRole('checkbox', { name: /Samantha Lee/u })).toHaveFocus());
+    expect(within(dialog).getByRole('button', { name: 'Close dialog' })).not.toHaveFocus();
+  });
+
+  it('focuses Done when the participant picker has no available members', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([currentUser]);
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants: Morgan Ellis' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
+    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Done' })).toHaveFocus());
+    expect(within(dialog).getByRole('button', { name: 'Close dialog' })).not.toHaveFocus();
+  });
+
   it('hides the model selector unless developer mode is on', async () => {
     renderScreen();
 
