@@ -294,7 +294,47 @@ function initialSettingsSection(): SettingsSection {
   return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section')) ?? 'account';
 }
 
-export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
+/** Input types Escape may close the window over: the rest hold no typing. */
+const TEXT_ENTRY_INPUT_TYPES = new Set(['email', 'number', 'password', 'search', 'tel', 'text', 'url']);
+
+function holdsUnsavedText(target: Element | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return target.value.trim() !== '';
+  if (target instanceof HTMLInputElement) {
+    return TEXT_ENTRY_INPUT_TYPES.has(target.type) && target.value.trim() !== '';
+  }
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
+/**
+ * Whether an Escape keystroke is a request to close the Settings window.
+ *
+ * macOS spends Escape on *cancelling* — a sheet, a popover, an operation in
+ * flight — and closes an ordinary window like this one with Command-W, so
+ * Escape here is a convenience rather than the platform gesture. It is offered
+ * because every other desktop application has trained people to expect it, and
+ * it is answered only when nothing nearer has a claim on the keystroke:
+ *
+ * - Radix renders dialogs and select menus into portals and dismisses them on
+ *   Escape itself. That keystroke belongs to the layer on top; taking the
+ *   window with it would close Settings out from under a confirmation.
+ * - Settings applies every change immediately and has no undo. An Escape aimed
+ *   at a half-written invitation, endpoint, or API key would discard text with
+ *   nowhere else to come from — the loss Apple's rule exists to prevent.
+ */
+export function escapeClosesSettings(event: KeyboardEvent): boolean {
+  if (event.key !== 'Escape' || event.defaultPrevented) return false;
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  const target = event.target instanceof Element ? event.target : null;
+  const dismissableLayer = target?.closest(
+    '[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"], [data-radix-popper-content-wrapper]',
+  );
+  return !dismissableLayer && !holdsUnsavedText(target);
+}
+
+export function WorkspaceSettingsScreen({
+  standaloneWindow = false,
+  workspace,
+}: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
   const { api, runtime, session, signOut } = useAppSession();
   const queryClient = useQueryClient();
   const bridge = useMemo(() => desktopBridge(), []);
@@ -518,6 +558,18 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     const first = filteredNavigation[0]?.items[0]?.id;
     if (first) setActiveSection(first);
   }, [activeSection, availableSections, filteredNavigation]);
+
+  // Only the Settings window closes on Escape. The same screen is also a route
+  // inside the main window on surfaces with no separate window to open, and
+  // there the keystroke would shut the workspace itself.
+  useEffect(() => {
+    if (!standaloneWindow) return undefined;
+    const close = (event: KeyboardEvent): void => {
+      if (escapeClosesSettings(event)) window.close();
+    };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [standaloneWindow]);
 
   useEffect(() => bridge.onSettingsSectionRequested((section) => {
     const nextSection = parseDesktopSettingsSection(section);
