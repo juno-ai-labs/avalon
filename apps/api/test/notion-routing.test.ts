@@ -274,13 +274,14 @@ describe("shared Notion connection routing", () => {
   });
 
   it("replicates the one-time verification token to the region that never receives it", async () => {
-    const replicated: Array<{ region: Region; token: string }> = [];
+    const replicated: Array<{ region: Region; token: string; setupGeneration: number }> = [];
     const captured: Array<string | null> = [];
     const service = new NotionRoutingService(environment(new FakeDatabase()), {
       now: () => NOW,
-      storeChallengeInRegion: async (region, token) => {
-        replicated.push({ region, token });
+      storeChallengeInRegion: async (region, token, setupGeneration) => {
+        replicated.push({ region, token, setupGeneration });
       },
+      setupGenerationForToken: async () => 17,
       captureChallenge: async (token, setupNonce) => {
         captured.push(setupNonce);
         expect(token).toBe(SECRET);
@@ -295,7 +296,7 @@ describe("shared Notion connection routing", () => {
       activityCount: 0,
     });
     expect(captured).toEqual(["setup-token"]);
-    expect(replicated).toEqual([{ region: "eu", token: SECRET }]);
+    expect(replicated).toEqual([{ region: "eu", token: SECRET, setupGeneration: 17 }]);
   });
 
   it("keeps the ingress in the Global control plane", async () => {

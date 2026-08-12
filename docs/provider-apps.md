@@ -214,8 +214,9 @@ publication is a separate, optional review.
 
 Apply migration `0071_notion_webhook_setup_nonces.sql` and deploy the API before
 preparing the URL. `pnpm notion:webhook:prepare` writes only a SHA-256 nonce hash
-to Global D1 and copies a URL whose plaintext nonce expires after 30 minutes. The
-newest prepared URL invalidates any earlier unconsumed one.
+to Global D1 and copies a URL whose plaintext nonce expires after 30 minutes. It
+replaces the current generation in one D1 transaction, and the database permits
+only one current generation, so concurrent preparation cannot leave two live URLs.
 
 Create the subscription with that URL. Notion sends a one-time
 `verification_token`; the ingress atomically binds the nonce to that token,
@@ -223,7 +224,9 @@ encrypts the token in D1, and replicates it to EU so that region can verify
 signatures for itself. Run `pnpm notion:webhook:copy-token` to decrypt the Global
 row locally and copy the plaintext directly to the clipboard, then paste it into
 Notion's **Verify subscription** dialog. Neither command prints the nonce, URL,
-or verification token. The token then signs every later `X-Notion-Signature`.
+or verification token. The copy command refuses until the encrypted row is linked
+to the current consumed nonce and its plaintext hash matches that nonce's token
+binding. The token then signs every later `X-Notion-Signature`.
 
 ### Slack app
 
@@ -377,7 +380,9 @@ repository. What can be:
 a 30-minute, single-use nonce prepared in Global D1. Two operator commands copy
 the subscription URL and the captured verification token directly to the local
 clipboard without printing either. Recreating a subscription prepares a new
-nonce; its first challenge supersedes every older nonce.
+current generation in one D1 transaction; its first challenge supersedes every
+older nonce, and an older in-flight request cannot win the ciphertext write in
+Global or arrive late and overwrite a newer EU replica.
 
 **Why:** Cloudflare records full request URLs independently of Avalon's logger,
 so a reusable query-string guard became a 90-day credential in Workers Logs and

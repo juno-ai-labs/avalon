@@ -57,21 +57,32 @@ The operator runs `pnpm notion:webhook:prepare`. It generates a 32-byte nonce,
 stores only its SHA-256 hash and a 30-minute expiry in Global D1, and copies the
 subscription URL to the local clipboard. The permanent URL still carries
 `setup=`, because Notion cannot attach an operator header, but Cloudflare's URL
-capture sees only a short-lived value that becomes useless on first use.
+capture sees only a short-lived value that becomes useless on first use. The
+command retires the previous current generation and inserts its replacement in
+one D1 transaction; a partial unique index makes two current generations
+impossible even when operators prepare concurrently.
 
-Notion sends the one-time `verification_token` to that URL. Global atomically
-binds the nonce to the first token hash it sees, links it to the active challenge,
-encrypts the plaintext token under its own key, and replicates the plaintext to
-EU over the bridge, where EU encrypts it under *its* key with region-bound AAD.
+Notion sends the one-time `verification_token` to that URL. Global binds the
+current nonce to the first token hash it sees, encrypts the plaintext token under
+its own key, and conditionally stores it only while that setup generation remains
+current. It then replicates the plaintext and the nonce row's monotonic setup
+generation to EU over the bridge, where EU rejects an older generation, then
+encrypts the accepted token under *its* key with region-bound AAD.
 The operator then runs `pnpm notion:webhook:copy-token`: it reads the ciphertext
-through the Cloudflare D1 API, decrypts it on the operator's machine, and pipes it
-straight to the clipboard for Notion's verification dialog. No server log or API
-response exposes it. Both regions end up able to verify signatures independently.
+and the current nonce binding through the Cloudflare D1 API, decrypts on the
+operator's machine, verifies the plaintext hash against that binding, and pipes it
+straight to the clipboard for Notion's verification dialog. It refuses both the
+previous subscription's token and the brief claim-before-storage window. No server
+log or API response exposes it. Both regions end up able to verify signatures
+independently.
 
-A retry carrying the same nonce and token is idempotent. A different token cannot
-reuse a consumed nonce, and once a new nonce is consumed the challenge row links
-to it atomically, preventing an older nonce/token pair from restoring a
-superseded signing secret after a subscription rotation.
+A retry carrying the same current nonce and token is idempotent. A different token
+cannot reuse a consumed nonce, and preparing a new generation immediately
+supersedes the old one. The encrypted-token upsert checks current ownership again
+in its own SQL statement, so an older request paused after its claim cannot resume
+after a newer request and restore the superseded signing secret.
+The same generation travels with regional replication: if two Global requests
+reach EU out of order, EU's conditional upsert retains the larger generation.
 
 Every later delivery is verified at Global against the stored token and the
 expected integration ID, then routed on the `workspace_id` the verified envelope
@@ -149,6 +160,7 @@ otherwise.
 | Delivery for a Notion workspace whose every route is disabled | `{accepted, activityCount: 0}`. Disabling an Avalon connection does not uninstall the integration at Notion, so a retired workspace keeps delivering forever; retrying it would spend the full retry budget on every delivery, against the subscription every customer shares. |
 | Setup challenge posted to a regional host instead of the ingress | `400 notion_setup_wrong_host`, naming the right URL. Only the ingress replicates the token, so accepting it elsewhere would answer 200 and leave the other region unable to verify anything. |
 | Setup nonce missing, expired, already bound to another token, or superseded | `unauthorized`; no challenge row is inserted or replaced. Preparing another URL invalidates any earlier unconsumed one. |
+| Token copy attempted before the current challenge finishes storage | The command refuses to copy. It joins the challenge to the one current consumed nonce and verifies the decrypted token against that nonce's token hash, so neither the previous subscription secret nor a partially stored replacement reaches the clipboard. |
 | Signature invalid, or signed for another integration | `invalid_signature` / `unauthorized`, before the route directory is consulted and before any payload is stored. Not before *all* D1 access: the stored verification token is read first, because verifying is what makes the delivery's workspace readable. |
 | Challenge replication to EU fails | The whole setup request fails. Re-sending the verification from Notion's dashboard is idempotent: Global recognizes the same token and replicates again. |
 | Webhook body over `PROVIDER_WEBHOOK_MAX_BYTES` (2 MB default) | `payload_too_large`, before parsing. |
@@ -220,7 +232,11 @@ subscription handshake. Registration steps are in
 nonce stored only as a hash. Its first challenge atomically binds the nonce to
 the verification token; retries must carry that pair, and consuming a newer
 nonce supersedes older pairs. Operator commands now copy the prepared URL and
-decrypt the captured token directly to the local clipboard.
+decrypt the captured token directly to the local clipboard. Preparation is one
+transaction with a unique current-generation constraint, challenge storage is
+conditional on that generation still being current, and token copying proves its
+ciphertext belongs to the current consumed nonce. The generation is replicated to
+EU so an older cross-region call cannot arrive last and restore the old token there.
 
 **Why:** Notion requires a manual paste of the token it posts to the endpoint,
 while Avalon's handler correctly refused to log or return that signing secret.

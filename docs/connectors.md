@@ -268,9 +268,11 @@ For a provider that does match the pattern:
    credential in the query string: edge and platform observability may capture the
    complete URL before application logging or redaction runs.
 2. Consume the nonce atomically with the first challenge, binding it to a hash of
-   the delivered verification secret and to the encrypted active-secret row. A
-   retry of the same pair is idempotent; a different secret, an expired or already
-   consumed nonce, and an older pair superseded by a newer setup are rejected.
+   the delivered verification secret. Make the encrypted active-secret write
+   conditional on that setup generation still being current, closing the race
+   between claiming and storage. A retry of the same pair is idempotent; a
+   different secret, an expired or already consumed nonce, and an older pair
+   superseded by a newer setup are rejected.
 3. Encrypt the delivered secret immediately and never log it or return it from a
    public API. If an operator must paste it into the provider UI, supply a local
    command that reads the ciphertext through authenticated infrastructure

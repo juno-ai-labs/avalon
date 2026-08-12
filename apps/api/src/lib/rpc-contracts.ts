@@ -87,6 +87,7 @@ export const NotionCallbackFailureInputSchema = z.object({
 });
 export const NotionChallengeInputSchema = z.object({
   verificationToken: z.string().min(1).max(1_000),
+  setupGeneration: z.number().int().positive().safe(),
 });
 
 export const SlackRouteInputSchema = z.object({
