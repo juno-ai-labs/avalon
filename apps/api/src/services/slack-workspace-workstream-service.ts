@@ -3,6 +3,7 @@ import {
   type ExternalActor,
   type SlackOriginContext,
   type SlackSearchAuthorization,
+  type WorkstreamVisibility,
 } from "@avalon/contracts";
 import { createDatabase, newId, nowIso } from "@avalon/db";
 import { z } from "zod";
@@ -63,6 +64,13 @@ export class SlackWorkspaceWorkstreamService {
     objective: string;
     creatorUserId?: string | null;
     originResource?: OriginResourceDescriptor;
+    /**
+     * The conversation's own audience, carried onto the work stream. A private
+     * Slack channel opens a private work stream whose room is
+     * `participantUserIds` — see `connector-workstream-audience.ts`.
+     */
+    visibility?: WorkstreamVisibility;
+    participantUserIds?: string[];
   }) {
     const actor = ExternalActorSchema.parse(input.actor);
     const title = input.title ?? provisionalWorkstreamTitle(input.objective, "Slack task");
@@ -85,7 +93,8 @@ export class SlackWorkspaceWorkstreamService {
       openingAuthor: { type: "external", actor },
       openingMessage: input.text,
       clientMessageId: input.clientMessageId,
-      participantUserIds: [],
+      participantUserIds: input.participantUserIds ?? [],
+      ...(input.visibility ? { visibility: input.visibility } : {}),
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
     const message = await this.database.workstreams.getMessageByClientId(

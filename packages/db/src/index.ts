@@ -9,7 +9,8 @@ import type {
   HarnessStatus,
   Message,
   Scope,
-  Workstream
+  Workstream,
+  WorkstreamVisibility
 } from "@avalon/contracts";
 
 export interface D1ResultLike<T = unknown> {
@@ -315,6 +316,12 @@ export interface CreateWorkstreamInput {
   openingStructuredContent?: Record<string, unknown> | null;
   clientMessageId: string;
   participantUserIds: string[];
+  /**
+   * Who may read it. Defaults to `public`; a caller passes `private` when the
+   * work stream is born closed — a connector conversation that was itself
+   * private, whose members are `participantUserIds`.
+   */
+  visibility?: WorkstreamVisibility;
   attachmentIds?: string[];
   /**
    * An OpenRouter model id every run of this work stream is pinned to, ahead of
@@ -440,8 +447,8 @@ export function createDatabase(db: D1DatabaseLike) {
             `INSERT INTO workstreams
              (id, workspace_id, title, title_status, objective, description_source, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
               next_sequence_number, latest_attention_sequence_number, last_activity_at, created_at, updated_at, model_override,
-              created_from_opportunity_id, opportunity_version, opportunity_display_prompt_hash, opportunity_execution_prompt_hash)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+              created_from_opportunity_id, opportunity_version, opportunity_display_prompt_hash, opportunity_execution_prompt_hash, visibility)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             workstreamId,
@@ -460,6 +467,7 @@ export function createDatabase(db: D1DatabaseLike) {
             input.opportunitySnapshot?.version ?? null,
             input.opportunitySnapshot?.displayPromptHash ?? null,
             input.opportunitySnapshot?.executionPromptHash ?? null,
+            input.visibility ?? "public",
           ),
         db
           .prepare(
