@@ -30,7 +30,7 @@ export interface OriginResourceDescriptor extends ConnectorOriginResource {
 
 /**
  * `origin` rather than `attachment`, and the distinction is load-bearing in two
- * places: the `workstream_read` tool hands the relationship to the model, which
+ * places: the `workstream_list_resources` tool hands the relationship to the model, which
  * is how it can tell the channel it was summoned from apart from a document
  * somebody attached afterwards, and a future detach path must not treat the two
  * alike — removing the origin loses the only record of where the work stream

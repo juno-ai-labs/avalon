@@ -282,10 +282,20 @@ sanitizer accepts only those strict shapes, the eight registered kinds, bounded
 MIME/reason values, and the existing fixed recovery fields. It does not forward
 converter, provider, or attachment-authored objects.
 
-The runtime attachment tools are introduced additively. Until the durable
-derivative and authorization phases land, existing work-stream projection and
-resource reads remain the active behavior; the shared contracts do not by
-themselves grant a new capability.
+The work-stream runtime now exposes three bounded operations. The old
+`workstream_read` hard-capped index is replaced by
+`workstream_list_resources`, whose first call accepts an optional natural-
+language kind and whose cursor-only continuations can exhaust more than fifty
+resources. `workstream_read_resource` returns at most 12,000 characters by
+default with exact characters before and after plus previous/next cursors.
+`workstream_search_resource` searches one derivative index and returns at most
+five passages and 20,000 characters. Every cursor is reauthorized and bound to
+the current inventory or derivative version.
+
+All three operations use the same visibility loader as the right sidebar.
+Nonexistent, foreign, detached, archived, revoked, and principal-invisible note
+IDs therefore collapse to `resource_not_found`; a list continuation fails and
+restarts when current visibility changes instead of combining inventories.
 
 ## Mechanics — where the rules are enforced
 

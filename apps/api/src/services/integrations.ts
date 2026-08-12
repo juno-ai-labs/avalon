@@ -104,6 +104,7 @@ import {
   buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
+import { createWorkstreamAttachmentTools } from "./workstream-attachment-tools";
 import {
   ACCEPTED_DELAY_UNITS_HINT,
   ACCEPTED_TIMESTAMP_HINT,
@@ -5243,10 +5244,8 @@ const ScheduleWakeupInputSchema = z.object({
 }).strict();
 
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
-  const principalUserId = input.executionPrincipal.type === "user"
-    ? input.executionPrincipal.userId
-    : null;
   const tools: HarnessTool[] = [
+    ...createWorkstreamAttachmentTools(env, input),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
       execute: async (raw) => {
@@ -5254,84 +5253,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         const zones = await runLocalTimezones(env, input, args.timezone);
         const text = easyEnglishCurrentTime(new Date(), zones.local, zones.workspace);
         return { output: text, summary: text };
-      },
-    },
-    {
-      definition: {
-        name: "read",
-        description: "Read the current workstream's objective, status, and index of explicitly attached resources. Use the returned resource IDs with workstream_read_resource.",
-        capability: "workstream.read",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: { type: "object", additionalProperties: false, properties: {} },
-      },
-      execute: async () => {
-        const [row, attached] = await Promise.all([
-          env.DB.prepare(
-            `SELECT title, objective, harness_status, planned_for, last_activity_at
-             FROM workstreams WHERE id = ? AND workspace_id = ?`,
-          ).bind(input.workstreamId, input.workspaceId).first<Record<string, unknown>>(),
-          env.DB.prepare(
-            `SELECT r.id, r.title, r.resource_type, r.provider, r.mime_type,
-                    wr.relationship_type, wr.attached_at
-             FROM workstream_resources wr
-             JOIN resources r ON r.id = wr.resource_id AND r.workspace_id = ?
-             WHERE wr.workstream_id = ?
-               AND (r.provider != 'avalon_note' OR EXISTS (
-                 SELECT 1 FROM notes visible_note
-                 WHERE visible_note.resource_id = r.id
-                   AND visible_note.workspace_id = r.workspace_id
-                   AND visible_note.archived_at IS NULL
-                   AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?)
-               ))
-             ORDER BY wr.attached_at DESC
-             LIMIT 50`,
-          ).bind(input.workspaceId, input.workstreamId, principalUserId).all<Record<string, unknown>>(),
-        ]);
-        if (!row) throw new Error("Work stream not found");
-        return {
-          output: { ...row, attachedResources: attached.results ?? [] },
-          summary: "Read work-stream details and attached-resource index",
-        };
-      },
-    },
-    {
-      definition: {
-        name: "read_resource",
-        description: "Read a text resource explicitly attached to this work stream.",
-        capability: "resource.read",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: {
-          type: "object", additionalProperties: false,
-          properties: { resourceId: { type: "string", format: "uuid" } }, required: ["resourceId"],
-        },
-      },
-      execute: async (raw) => {
-        const args = z.object({ resourceId: z.string().uuid() }).parse(raw);
-        const row = await env.DB.prepare(
-          `SELECT r.title,
-                  COALESCE(r.model_mime_type, r.mime_type) AS mime_type,
-                  COALESCE(r.model_content_ref, r.content_ref) AS content_ref
-           FROM resources r
-           JOIN workstream_resources wr ON wr.resource_id = r.id
-           WHERE r.id = ? AND wr.workstream_id = ? AND r.workspace_id = ?
-             AND (r.provider != 'avalon_note' OR EXISTS (
-               SELECT 1 FROM notes visible_note
-               WHERE visible_note.resource_id = r.id
-                 AND visible_note.workspace_id = r.workspace_id
-                 AND visible_note.archived_at IS NULL
-                 AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?)
-             ))`,
-        ).bind(args.resourceId, input.workstreamId, input.workspaceId, principalUserId).first<{ title: string; mime_type: string | null; content_ref: string | null }>();
-        if (!row?.content_ref) throw new Error("Attached resource content is not hydrated");
-        if (row.mime_type && !row.mime_type.startsWith("text/") && row.mime_type !== "application/json") {
-          throw new Error("This resource must be exported to readable text before use");
-        }
-        const object = await env.PAYLOADS.get(row.content_ref);
-        if (!object) throw new Error("Attached resource content is unavailable");
-        const text = await object.text();
-        return { output: { title: row.title, text }, summary: `Read ${text.length} characters from ${row.title}` };
       },
     },
     {
