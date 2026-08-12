@@ -112,8 +112,8 @@ describe("tool activity names", () => {
   it("never words a failed row as success", () => {
     expect(toolActivityName({ toolName: "web_search", status: "failed" }))
       .toBe("Could not search the public web");
-    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "failed" }))
-      .toBe("Could not create an artifact");
+    expect(toolActivityName({ toolName: "workstream_read_resource", status: "failed" }))
+      .toBe("Could not read an attached resource");
     // One wording for reads and writes alike: the call never reached the provider.
     expect(toolActivityName({ toolName: "github_1_issues_create", status: "failed", plugin: github }))
       .toBe("Could not reach GitHub");

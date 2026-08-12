@@ -262,40 +262,6 @@ describe("Avalon core write-tool idempotency", () => {
     })).rejects.toThrow("Invalid IANA timezone");
   });
 
-  it("converges artifact retries on one deterministic D1 row and R2 object", async () => {
-    const { database, env, bucket } = fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
-      .find((candidate) => candidate.definition.name === "create_artifact");
-    expect(tool?.definition.idempotency).toBe("provider_key");
-
-    const args = { title: "Release notes", artifactType: "markdown", content: "Shipped once." };
-    const first = await tool!.execute(args, context("run:turn:1:tool:0"));
-    const second = await tool!.execute(args, context("run:turn:1:tool:0"));
-
-    expect(second).toEqual(first);
-    expect(first.providerOperationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM artifacts").get()).toEqual({ count: 1 });
-    expect(bucket.puts).toHaveLength(1);
-    expect(bucket.objects.get(bucket.puts[0]!)).toBe("Shipped once.");
-  });
-
-  it("safely retries an artifact write whose R2 timeout may have followed persistence", async () => {
-    const { database, env, bucket } = fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
-      .find((candidate) => candidate.definition.name === "create_artifact");
-    const args = { title: "Timeout-safe", artifactType: "text", content: "One logical object." };
-    const toolContext = context("run:turn:1:tool:timeout");
-    bucket.failAfterNextPut = true;
-
-    await expect(tool!.execute(args, toolContext)).rejects.toMatchObject({ name: "TimeoutError" });
-    const retried = await tool!.execute(args, toolContext);
-
-    expect(retried.providerOperationId).toMatch(/^[0-9a-f-]{36}$/u);
-    expect(new Set(bucket.puts)).toHaveLength(1);
-    expect(bucket.objects.size).toBe(1);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM artifacts").get()).toEqual({ count: 1 });
-  });
-
   it("converges elicitation retries on one durable question", async () => {
     const { database, env } = fixture();
     const databaseBinding = env.DB;
@@ -356,10 +322,10 @@ describe("Avalon core write-tool idempotency", () => {
   it("refuses to execute provider-key writes without the receipt-derived key", async () => {
     const { env } = fixture();
     const tool = __integrationTesting.createAvalonTools(env, workflowInput())
-      .find((candidate) => candidate.definition.name === "create_artifact");
+      .find((candidate) => candidate.definition.name === "request_elicitation");
 
     await expect(tool!.execute(
-      { title: "Unsafe", artifactType: "text", content: "No receipt" },
+      { prompt: "No receipt", responseType: "text" },
       context(),
     )).rejects.toThrow("requires a durable provider idempotency key");
   });

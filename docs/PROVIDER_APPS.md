@@ -15,7 +15,7 @@ Zero-copy does not mean that no provider data may cross the boundary, that
 Avalon cannot subscribe to activity, or that every byte must remain transient.
 Avalon may receive webhooks, poll incremental changes, retain bounded normalized
 trigger evidence and provenance, fetch authorized task-specific context on
-demand, and persist the prompts, work history, outputs, receipts, and artifacts
+demand, and persist the prompts, work history, outputs, and receipts
 needed to perform user-requested work. Those copies must serve an Avalon task,
 automation, audit, or reliability function; they must not accumulate into a
 replacement for the connected product.

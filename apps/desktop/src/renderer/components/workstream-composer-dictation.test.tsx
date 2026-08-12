@@ -68,7 +68,6 @@ const workstream: WorkstreamDetail = {
   viewers: [],
   resources: [],
   connections: [],
-  artifacts: [],
   backgroundTasks: [],
   automationRuns: [],
 };

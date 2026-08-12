@@ -256,7 +256,7 @@ the app.
 ### The system work stream
 
 The agent loop is work-stream shaped end to end — the transcript is `messages`,
-and compaction, tool invocations, artifacts and the realtime room all key off
+and compaction, tool invocations and the realtime room all key off
 `workstream_id`. Running the *normal* loop therefore means having a work stream,
 and reusing that abstraction is the point: a digest run gets compaction, tool
 receipts, the realtime room and the transcript for free.
@@ -453,6 +453,32 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
 
 ## Changelog
+
+### 2026-08-12 — A digest run has nowhere to put its summary except the message it ends with
+
+**What changed:** Nothing in the digest path itself. The `create_artifact` tool
+that a digest run could reach — every digest executes the ordinary work-stream
+loop, so it loaded `avalon_workstream` like any other run — no longer exists. See
+[`AGENT_HARNESS.md`](AGENT_HARNESS.md#changelog).
+
+**Why:** A run wrote its digest into an artifact and ended with "Outcome: Digest
+artifact created (id …)". `deliverResultsDurably` passes `message.textContent` to
+`settleDigestRun`, so that sentence became `summary_markdown` and was mailed as
+the digest. Nothing failed: the text was non-empty and the run completed, so the
+delivery settled as `delivered` and `cursor_through` advanced past events the
+recipient was never actually told about. That is the specific failure the "a run
+that could not write a digest sends nothing" branch exists to prevent, and it
+could not catch this one — from the settlement layer's position a one-line
+receipt and a real digest are both just text.
+
+**Considered and rejected:** Reading the artifact when the final message looks
+like a receipt. It puts a heuristic between a run and what gets mailed, and every
+delivery surface would need its own copy of it.
+
+**Consequences:** The brief in `buildDigestBrief` is now the only instruction
+about where the digest goes, and it should stay explicit that the final message
+is the deliverable — a future tool offering a run somewhere else to write
+re-opens this exactly as the artifact tool did.
 
 ### 2026-08-12 — Each occurrence gets its own work stream, because a shared one was an unbounded context channel between digests
 

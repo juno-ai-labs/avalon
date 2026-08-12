@@ -824,8 +824,8 @@ async function projectModelProtocolTranscript(
       continue;
     }
 
-    // Artifact, suggestion, and system rows are UI state. Their relevant
-    // durable content is represented separately.
+    // Suggestion and system rows are UI state. Their relevant durable content
+    // is represented separately.
     if (message.messageType !== "text") continue;
     const content = modelMessageContent(message);
     if (content.trim().length === 0 && message.attachments.length === 0) {
@@ -4818,7 +4818,7 @@ function connectorSelectionPriority(
 }
 
 async function coreWriteEntityId(
-  kind: "artifact" | "elicitation",
+  kind: "elicitation",
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   providerIdempotencyKey: string,
 ): Promise<string> {
@@ -4944,7 +4944,6 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
   const workstreamCapabilities = [
     "workstream.",
     "resource.",
-    "artifact.",
     "subagent.",
   ];
   const workstreamTools = tools.filter((tool) =>
@@ -4955,8 +4954,8 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
     modelId: "avalon_workstream",
     shortWireName: "workstream",
     displayName: "Workstream",
-    searchAliases: ["task", "resources", "artifacts", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
-    description: "Read and update the current workstream, its resources, artifacts, and execution lifecycle, including waking it up later to act on a prompt.",
+    searchAliases: ["task", "resources", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
+    description: "Read and update the current workstream, its resources, and execution lifecycle, including waking it up later to act on a prompt.",
     systemMessage: [
       "Use these tools only for the current authorized workstream and its attached resources.",
       "Use workstream_schedule_wakeup when work genuinely has to happen later — waiting on an external result, or a time a person named — instead of promising it in text. Do the work now when it can be done now.",
@@ -5117,54 +5116,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         if (!object) throw new Error("Attached resource content is unavailable");
         const text = await object.text();
         return { output: { title: row.title, text }, summary: `Read ${text.length} characters from ${row.title}` };
-      },
-    },
-    {
-      definition: {
-        name: "create_artifact",
-        description: "Create a durable text artifact in this work stream.",
-        capability: "artifact.write",
-        mode: "write",
-        idempotency: "provider_key",
-        inputSchema: {
-          type: "object", additionalProperties: false,
-          properties: {
-            title: { type: "string", minLength: 1, maxLength: 300 },
-            artifactType: { type: "string", minLength: 1, maxLength: 80 },
-            content: { type: "string", maxLength: 500000 },
-          },
-          required: ["title", "artifactType", "content"],
-        },
-      },
-      execute: async (raw, context) => {
-        const args = z.object({ title: z.string().min(1).max(300), artifactType: z.string().min(1).max(80), content: z.string().max(500_000) }).parse(raw);
-        const providerIdempotencyKey = requireProviderIdempotencyKey(
-          "workstream_create_artifact",
-          context.providerIdempotencyKey,
-        );
-        const id = await coreWriteEntityId("artifact", input, providerIdempotencyKey);
-        const existing = await env.DB.prepare(
-          `SELECT id FROM artifacts
-           WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND harness_run_id = ?`,
-        ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId).first<{ id: string }>();
-        if (existing) {
-          return {
-            output: { artifactId: id, title: args.title },
-            summary: `Created artifact “${args.title}”`,
-            providerOperationId: id,
-          };
-        }
-        const key = `${env.AVALON_REGION}/${input.workspaceId}/artifacts/${id}.txt`;
-        await env.PAYLOADS.put(key, args.content, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
-        const at = nowIso();
-        await env.DB.prepare(
-          `INSERT INTO artifacts
-           (id, workspace_id, workstream_id, harness_run_id, artifact_type, title,
-            content_ref, preview_text, status, metadata_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'complete', '{}', ?, ?)
-           ON CONFLICT(id) DO NOTHING`,
-        ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.artifactType, args.title, key, args.content.slice(0, 1_000), at, at).run();
-        return { output: { artifactId: id, title: args.title }, summary: `Created artifact “${args.title}”`, providerOperationId: id };
       },
     },
     {

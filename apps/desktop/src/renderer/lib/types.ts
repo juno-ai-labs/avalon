@@ -199,17 +199,6 @@ export interface ThoughtEventData {
   startedAt?: number;
 }
 
-export interface ArtifactData {
-  id: string;
-  title: string;
-  artifactType: string;
-  previewText?: string;
-  status?: string;
-  mimeType?: string;
-  harnessRunId?: string;
-  createdAt?: string;
-}
-
 export interface ElicitationData {
   id: string;
   prompt: string;
@@ -300,7 +289,6 @@ export interface Message {
     | 'text'
     | 'thought'
     | 'tool_event'
-    | 'artifact'
     | 'elicitation'
     | 'activity_suggestion'
     | 'system';
@@ -324,7 +312,6 @@ export interface Message {
   };
   toolEvent?: ToolEventData;
   thoughtEvent?: ThoughtEventData;
-  artifact?: ArtifactData;
   elicitation?: ElicitationData;
   activitySuggestion?: ActivitySuggestionData;
 }
@@ -407,7 +394,6 @@ export interface WorkstreamDetail extends WorkstreamSummary {
   viewers: Participant[];
   resources: WorkstreamResource[];
   connections: WorkstreamConnection[];
-  artifacts: ArtifactData[];
   backgroundTasks: BackgroundTask[];
   automationRuns: AutomationRunSummary[];
   automationSubscriptionId?: string;
@@ -420,7 +406,6 @@ export interface WorkstreamDetail extends WorkstreamSummary {
 }
 
 export interface WorkstreamDeferredContext {
-  artifacts: ArtifactData[];
   backgroundTasks: BackgroundTask[];
   automationRuns: AutomationRunSummary[];
   automationSubscription?: WorkstreamAutomationSubscription;

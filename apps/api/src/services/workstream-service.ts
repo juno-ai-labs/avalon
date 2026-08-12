@@ -113,11 +113,6 @@ const WORKSTREAM_RESOURCES_SQL = `SELECT r.*,
     ))
   ORDER BY wr.attached_at DESC`;
 
-const WORKSTREAM_ARTIFACTS_SQL = `SELECT * FROM artifacts
-  WHERE workspace_id = ? AND workstream_id = ?
-  ORDER BY created_at DESC
-  LIMIT 250`;
-
 const WORKSTREAM_HARNESS_TASKS_SQL = `SELECT hr.*,
     m.id AS transcript_message_id,
     (SELECT COUNT(*) FROM tool_invocations ti WHERE ti.harness_run_id = hr.id) AS tool_uses
@@ -438,23 +433,6 @@ const ResourceRowSchema = z.object({
   watch_enabled: rowFlag,
   watch_status: z.enum(["unsupported", "watching", "paused"]),
   last_hydrated_at: rowText.nullish(),
-  created_at: rowTimestamp,
-  updated_at: rowTimestamp,
-});
-
-const ArtifactRowSchema = z.object({
-  id: rowId,
-  workspace_id: rowId,
-  workstream_id: rowId,
-  harness_run_id: rowId.nullish(),
-  artifact_type: rowText,
-  // Safe today only because `workstream_create_artifact` is the sole writer and
-  // bounds it to 300. Bounding it here too makes the context panel structurally
-  // safe against a second writer rather than conventionally safe.
-  title: displayText(300),
-  preview_text: rowText.nullish(),
-  status: rowText,
-  metadata_json: rowText.nullish(),
   created_at: rowTimestamp,
   updated_at: rowTimestamp,
 });
@@ -882,7 +860,6 @@ export class WorkstreamService {
       viewers: [],
       resources,
       connections,
-      artifacts: [],
       backgroundTasks: [],
       openElicitations,
       suggestions,
@@ -903,11 +880,7 @@ export class WorkstreamService {
 
   async context(id: string) {
     await this.requireWorkstream(id);
-    const [artifacts, backgroundTasks] = await Promise.all([
-      this.loadArtifacts(id),
-      this.loadBackgroundTasks(id),
-    ]);
-    return { artifacts, backgroundTasks };
+    return { backgroundTasks: await this.loadBackgroundTasks(id) };
   }
 
   async update(id: string, input: UpdateWorkstreamInput) {
@@ -1829,29 +1802,6 @@ export class WorkstreamService {
     return { url: url.toString(), ticket };
   }
 
-  async artifactContent(id: string, artifactId: string): Promise<{
-    body: ReadableStream;
-    contentType: string;
-    fileName: string;
-  }> {
-    await this.requireWorkstream(id);
-    const artifact = await this.env.DB.prepare(
-      `SELECT id, title, artifact_type, content_ref, metadata_json
-       FROM artifacts WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(artifactId, this.auth.workspaceId, id).first<Record<string, unknown>>();
-    if (!artifact) throw new ApiError(404, "artifact_not_found", "Artifact not found");
-    if (artifact.content_ref == null) throw new ApiError(409, "artifact_not_ready", "This artifact is not ready to download");
-    const object = await this.env.PAYLOADS.get(String(artifact.content_ref));
-    if (!object) throw new ApiError(404, "artifact_content_not_found", "Artifact content is no longer available");
-    const metadata = json<{ mimeType?: string; fileName?: string }>(artifact.metadata_json, {});
-    const contentType = object.httpMetadata?.contentType ?? metadata.mimeType ?? mimeTypeForArtifact(String(artifact.artifact_type));
-    return {
-      body: object.body,
-      contentType,
-      fileName: safeArtifactFileName(metadata.fileName ?? String(artifact.title), String(artifact.artifact_type)),
-    };
-  }
-
   private async requireWorkstream(id: string) {
     let row = await this.loadVisibleWorkstreamRow(id, false);
     const desiredEmailStatus = row.archived_at == null ? "active" : "disabled";
@@ -2250,28 +2200,6 @@ export class WorkstreamService {
     return (result.results ?? []).map((row) => connectionFromRow(row));
   }
 
-  private async loadArtifacts(id: string) {
-    const result = await this.env.DB.prepare(WORKSTREAM_ARTIFACTS_SQL)
-      .bind(this.auth.workspaceId, id).all<Record<string, unknown>>();
-    return (result.results ?? []).map((input) => {
-      const row = ArtifactRowSchema.parse(input);
-      const metadata = json<{ mimeType?: string }>(row.metadata_json, {});
-      return {
-        id: row.id,
-        workspaceId: row.workspace_id,
-        workstreamId: row.workstream_id,
-        harnessRunId: row.harness_run_id ?? null,
-        artifactType: row.artifact_type,
-        title: row.title,
-        previewText: row.preview_text == null ? null : row.preview_text.slice(0, 4_000),
-        status: row.status,
-        mimeType: metadata.mimeType ?? mimeTypeForArtifact(row.artifact_type),
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      };
-    });
-  }
-
   private async loadBackgroundTasks(id: string) {
     const [harnessResult, toolResult] = await Promise.all([
       this.env.DB.prepare(WORKSTREAM_HARNESS_TASKS_SQL)
@@ -2435,7 +2363,6 @@ export class WorkstreamService {
 export const workstreamRowSchemas = {
   participants: ParticipantRowSchema,
   resources: ResourceRowSchema,
-  artifacts: ArtifactRowSchema,
   elicitations: ElicitationRowSchema,
   suggestions: SuggestionRowSchema,
 } as const;
@@ -2444,14 +2371,11 @@ export const __workstreamServiceTesting = {
   activityResourceLookupSql: ACTIVITY_RESOURCE_LOOKUP_SQL,
   attachResourceSql: ATTACH_RESOURCE_SQL,
   workstreamResourcesSql: WORKSTREAM_RESOURCES_SQL,
-  workstreamArtifactsSql: WORKSTREAM_ARTIFACTS_SQL,
   workstreamHarnessTasksSql: WORKSTREAM_HARNESS_TASKS_SQL,
   workstreamToolTasksSql: WORKSTREAM_TOOL_TASKS_SQL,
   backgroundTaskStatus,
   harnessTaskTitle,
   memberSafeHarnessError,
-  mimeTypeForArtifact,
-  safeArtifactFileName,
 };
 
 /**
@@ -2514,26 +2438,4 @@ function toolTaskTitle(toolName: string): string {
   return leaf.replaceAll("_", " ").replace(/\b\w/gu, (character) => character.toUpperCase());
 }
 
-function mimeTypeForArtifact(artifactType: string): string {
-  switch (artifactType.trim().toLowerCase()) {
-    case "markdown":
-    case "md": return "text/markdown; charset=utf-8";
-    case "csv": return "text/csv; charset=utf-8";
-    case "json": return "application/json; charset=utf-8";
-    case "html": return "text/html; charset=utf-8";
-    default: return "text/plain; charset=utf-8";
-  }
-}
-
-function safeArtifactFileName(title: string, artifactType: string): string {
-  const clean = Array.from(title, (character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return codePoint <= 0x1f || codePoint === 0x7f || '\\/:*?"<>|'.includes(character)
-      ? "-"
-      : character;
-  }).join("").trim().replace(/^[.\s-]+/u, "").slice(0, 180) || "avalon-output";
-  if (/\.[a-z0-9]{1,12}$/iu.test(clean)) return clean;
-  const extension = ({ markdown: "md", md: "md", csv: "csv", json: "json", html: "html" } as Record<string, string>)[artifactType.trim().toLowerCase()] ?? "txt";
-  return `${clean}.${extension}`;
-}
 

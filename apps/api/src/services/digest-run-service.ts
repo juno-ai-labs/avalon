@@ -270,7 +270,7 @@ function digestWorkstreamTitle(plannedFor: string, timezone: string): string {
  * The hidden work stream one digest occurrence executes in.
  *
  * The agent loop is work-stream shaped end to end — transcript, compaction, tool
- * invocations, artifacts and the realtime room all key off `workstream_id` — so
+ * invocations and the realtime room all key off `workstream_id` — so
  * running the *normal* loop rather than a bespoke one means having a work
  * stream. `system_kind` keeps it out of every listing surface.
  *

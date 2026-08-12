@@ -66,7 +66,7 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `avalon_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, artifacts, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Avalon revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
 
@@ -243,6 +243,41 @@ This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
 
+### 2026-08-12 — Artifacts are gone; a run's output is its final message
+
+**What changed:** `workstream_create_artifact` was removed from
+`avalon_workstream`, along with the `artifact.write` capability prefix, the
+`artifacts` table, the R2 write behind it, the download route, and the transcript
+block that rendered one. A run that is asked to produce something now produces it
+as text, as a resource, or through a connector write. The workstream prompt's
+"create the requested durable artifact" clause went with it.
+
+**Why:** Nothing read artifacts back. The scheduled digest is the case that
+proved it: `settleDigestRun` mails the run's *final message*, so a digest run
+that wrote its summary into an artifact and closed with "Outcome: Digest artifact
+created (id …)" mailed that sentence — and because the sentence is non-empty and
+the run completed, the delivery settled as delivered and advanced the cursor, so
+the window it covered could never be re-digested. The model was not
+misbehaving: the workstream prompt told it to prefer a durable artifact, the tool
+was preloaded on every workstream run, and the digest brief never said the final
+message *is* the deliverable. A write destination that no consumer reads is a
+trap for exactly this, and it had one consumer-shaped surface — the context panel
+— that made it look otherwise.
+
+**Considered and rejected:** Teaching the digest to fall back to the newest
+artifact when the final message is short. That keeps two places where a digest's
+text can live and makes "which one is the digest" a heuristic evaluated at send
+time; every other delivery surface would need the same fallback, and each would
+guess differently. Also rejected: keeping the tool but hiding it from digest
+runs, which leaves ordinary work streams writing into a store nothing reads.
+
+**Consequences:** A run cannot park a long output anywhere but its transcript,
+which is the intended constraint — anything durable that a person should be able
+to open belongs in `resources`. `message_type` no longer admits `'artifact'`;
+the enum is enforced by trigger rather than by rebuilding `messages`, so a writer
+that tries one aborts loudly. The R2 objects under
+`<region>/<workspace>/artifacts/` outlive their pointers and must be swept by
+prefix out of band — a migration cannot reach the bucket.
 ### 2026-08-12 — Compaction moved to its own document
 
 **What changed:** Compaction policy — the threshold, the summary prompt, the

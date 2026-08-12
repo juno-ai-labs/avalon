@@ -303,7 +303,7 @@ export const MessageSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   author: MessageAuthorSchema,
-  messageType: z.enum(["text", "system", "tool", "artifact", "elicitation", "suggestion"]),
+  messageType: z.enum(["text", "system", "tool", "elicitation", "suggestion"]),
   textContent: z.string(),
   structuredContent: z.record(z.string(), z.unknown()).nullable(),
   mentions: z.array(MentionSchema),
@@ -594,20 +594,6 @@ export const HarnessRunMetadataSchema = z.object({
   createdAt: TimestampSchema
 });
 
-export const WorkstreamArtifactSchema = z.object({
-  id: IdSchema,
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  harnessRunId: IdSchema.nullable(),
-  artifactType: z.string().min(1).max(80),
-  title: z.string().min(1).max(300),
-  previewText: z.string().max(4000).nullable(),
-  status: z.string().min(1).max(80),
-  mimeType: z.string().min(1).max(160),
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema
-});
-
 export const BackgroundTaskSchema = z.object({
   id: IdSchema,
   harnessRunId: IdSchema,
@@ -718,7 +704,6 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   viewers: z.array(ViewerSchema),
   resources: z.array(ResourceSchema),
   connections: z.array(ConnectionSchema),
-  artifacts: z.array(WorkstreamArtifactSchema).default([]),
   backgroundTasks: z.array(BackgroundTaskSchema).default([]),
   openElicitations: z.array(ElicitationSchema),
   suggestions: z.array(ActivitySuggestionSchema),
@@ -727,7 +712,6 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
 });
 
 export const WorkstreamContextSchema = z.object({
-  artifacts: z.array(WorkstreamArtifactSchema),
   backgroundTasks: z.array(BackgroundTaskSchema)
 });
 
@@ -1928,7 +1912,6 @@ export type Connection = z.infer<typeof ConnectionSchema>;
 export type AutomationDeliveryTargetType = z.infer<typeof AutomationDeliveryTargetTypeSchema>;
 export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
-export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
