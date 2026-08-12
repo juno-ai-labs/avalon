@@ -5,7 +5,11 @@ resource watch and triggers no automation, contextual routing asks whether one
 of the work streams somebody is already using is *about* it, and writes a
 **Suggested context** card offering the attachment if the answer is a confident
 yes. Accepting attaches the activity's resource to the work stream; dismissing
-records that it should not have been offered.
+records that it should not have been offered. An accepted card is a person's
+decision about an *existing* work stream, and lands as an ordinary `attachment`;
+the place a work stream was *created* from is recorded at creation instead, as an
+`origin` — [work-stream origin attachments](workstream-origin-attachments.md)
+owns that, and both resolve the same underlying resource row.
 
 Nothing here was asked for. That is the fact the whole design answers to: a card
 is an interruption nobody requested, in a transcript somebody is reading for
