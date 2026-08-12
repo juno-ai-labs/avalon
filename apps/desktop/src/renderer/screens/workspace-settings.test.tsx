@@ -23,6 +23,8 @@ const api = vi.hoisted(() => ({
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
   updateWorkspaceLogAgentInference: vi.fn(),
+  getDigestSchedule: vi.fn(),
+  updateDigestSchedule: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
@@ -122,7 +124,7 @@ function renderSettings(
   );
 }
 
-function openSettingsSection(name: 'Account' | 'Workspace' | 'Connections' | 'Application'): void {
+function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'Application'): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
 }
@@ -1308,6 +1310,18 @@ describe('Closing the settings window with Escape', () => {
     api.getWorkspaceInvitations.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
     api.getAvailableConnectorTypes.mockResolvedValue([]);
+    api.getDigestSchedule.mockResolvedValue({
+      id: '00000000-0000-4000-8000-000000000001',
+      enabled: true,
+      days: [1, 2, 3, 4, 5],
+      times: [9 * 60],
+      timezone: 'Europe/London',
+      deliveryTargets: [
+        { type: 'email', connectionId: null, displayName: 'adam@avalon.local', status: 'active', lastDeliveredAt: null },
+      ],
+      nextRunAt: null,
+      lastDeliveredAt: null,
+    });
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
   });
 
@@ -1343,6 +1357,39 @@ describe('Closing the settings window with Escape', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it('keeps an invitation draft the caret has already left', async () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+    openSettingsSection('Workspace');
+
+    const email = await screen.findByPlaceholderText('teammate@company.com');
+    fireEvent.change(email, { target: { value: 'teammate@company.com' } });
+
+    // Typing the address and reaching for the Role select or Send is the normal
+    // way to fill this in; the draft is no less unsaved for the caret moving.
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Role' }), { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
+
+    fireEvent.change(email, { target: { value: '' } });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('closes over a digest time, which is a picker rather than a draft', async () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+    openSettingsSection('Digest');
+
+    // `New digest time` is initialised to 09:00 and is never empty, so counting
+    // it as unsaved text would leave Escape permanently dead in this section.
+    const time = await screen.findByLabelText('New digest time');
+    fireEvent.change(time, { target: { value: '10:30' } });
+    fireEvent.keyDown(time, { key: 'Escape' });
+
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it('dismisses an open dialog without taking the window with it', async () => {
     api.getAvailableConnectorTypes.mockResolvedValue(['granola']);
     renderSettings(workspace, createTestQueryClient(), true);
@@ -1363,10 +1410,10 @@ describe('Closing the settings window with Escape', () => {
 });
 
 describe('escapeClosesSettings', () => {
-  function escapeOn(target: EventTarget, init: KeyboardEventInit = {}): boolean {
+  function escapeOn(target: EventTarget, init: KeyboardEventInit = {}, pane: Element | null = null): boolean {
     const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', ...init });
     target.dispatchEvent(event);
-    return escapeClosesSettings(event);
+    return escapeClosesSettings(event, pane);
   }
 
   it('answers only a bare, unclaimed Escape', () => {
@@ -1405,5 +1452,35 @@ describe('escapeClosesSettings', () => {
     // A checked box carries a value of its own; it is not unsaved text.
     expect(escapeOn(toggle)).toBe(true);
     toggle.remove();
+  });
+
+  it('sweeps the pane for text no element currently holds focus over', () => {
+    const pane = document.createElement('div');
+    const draft = document.createElement('input');
+    const elsewhere = document.createElement('button');
+    pane.append(draft);
+    document.body.append(pane, elsewhere);
+
+    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
+    draft.value = 'teammate@company.com';
+    expect(escapeOn(elsewhere, {}, pane)).toBe(false);
+
+    // Values that are already saved, or that cannot be edited at all, are not
+    // drafts — a generated endpoint and a disabled field both read as text.
+    draft.readOnly = true;
+    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
+    draft.readOnly = false;
+    draft.disabled = true;
+    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
+
+    // A picker that ships with a value is never empty, so counting it would
+    // leave Escape permanently dead in whichever section shows one.
+    draft.disabled = false;
+    draft.type = 'time';
+    draft.value = '10:30';
+    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
+
+    pane.remove();
+    elsewhere.remove();
   });
 });
