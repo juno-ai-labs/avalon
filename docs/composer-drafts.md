@@ -98,6 +98,17 @@ read landed, which the debounce never held because saving stands down until
 hydration. That one is written by its own unmount-only commit; without it, a
 composer opened, typed into, and left inside the read window lost the sentence.
 
+A key change is a *copy* unless something removes the original, and one screen
+needs a **move**. The New automation screen re-keys its own composer when a turn
+names the draft it just wrote, carrying whatever was typed while the model worked
+onto the new key by hand. `releaseDraft()` is what makes that a move: it drops the
+pending write so the key-change flush leaves nothing behind, and clears the key
+the text was typed under, which a typing burst longer than the debounce has
+already written. Both halves are needed — either alone leaves the sentence in two
+places — and it must be called before the key changes, since it reads the key
+being released from `latest`, which describes the key being switched *to* by the
+time any effect runs.
+
 `useFileAttachments(api, draftKey)` owns the files. On mount it restores the
 cached rows in insertion order, rebuilds each `File`, and regenerates image
 previews. An attachment that already carries a resource is immediately ready; one
@@ -167,6 +178,50 @@ connection perturbs React's `act` scheduling enough to break unrelated screens'
 assertions.
 
 ## Changelog
+
+### 2026-08-12 — A draft that moves to another key stops being left behind in the old one
+
+**What changed:** `useDraftText` gained `releaseDraft()`, which drops the pending
+write and clears the key the composer is holding. The New automation screen calls
+it in the same handler that carries the composer onto the draft a settled turn
+just named.
+
+**Why:** That screen's hand-carry was a copy, not a move, and the copy stayed
+where it was typed. A sentence typed while a turn was compiling belongs to the
+draft that turn created — but the blank launcher shares the key it was typed
+under, so **New automation** would open holding a sentence the user had already
+sent. Two separate writers put it there: the debounce, for a burst longer than
+250 ms, and the key-change flush, which commits `pending` under the key it was
+captured in. Removing one still leaves the other, and each covers a different
+timing, which is why `releaseDraft` does both rather than being a delete at the
+call site.
+
+It surfaced as an intermittent failure of `new-automation.test.tsx`'s
+"carries an answer typed during a turn onto the draft that turn named" — about
+one run in twelve. The bug underneath is not intermittent at all: the stale copy
+is written every time. What varied was only whether the fire-and-forget write had
+landed before the assertion's read, so the test noticed the defect roughly 8% of
+the time. A rerun would have looked like a fix.
+
+**Considered and rejected:** Deleting the old key from the screen after the
+re-key, once the flush had run. It reads as the smaller change and it is not
+sound: `withStores` awaits `openDatabase()` before opening each transaction, so
+two fire-and-forget writes have no guaranteed order, and the flush could land
+after the delete. Suppressing the write is the only ordering-free half.
+
+Also rejected: clearing the composer before re-keying, so the flush would write
+an empty string. React batches both state updates into one render, so the save
+effect never runs under the old key and `pending` still holds the sentence.
+
+**Consequences:** `releaseDraft` reads its key from `latest` rather than the
+render's `draftKey`, for the same reason the unmount-only commit is not keyed on
+`draftKey`: by the time an effect runs, `draftKey` is already the new key, and
+clearing that one would delete the draft being moved *to*. Any future screen that
+re-keys its own composer has to call it — a hand-carry without it silently
+duplicates the draft. The two regression tests are deliberately split, one per
+writer, because a single test covering both passes when either half is removed.
+
+Shipped in #109.
 
 ### 2026-08-11 — An edit made before the cache read lands is no longer lost
 

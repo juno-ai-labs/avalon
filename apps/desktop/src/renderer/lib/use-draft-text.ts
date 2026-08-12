@@ -21,6 +21,19 @@ export interface DraftText {
   setText: Dispatch<SetStateAction<string>>;
   mentions: MentionIdentity[];
   setMentions: Dispatch<SetStateAction<MentionIdentity[]>>;
+  /**
+   * Take this composer's draft out of its key, because the caller is about to
+   * store it under a different one.
+   *
+   * For the screen that re-keys its own composer mid-conversation: the text
+   * typed while a turn was compiling belongs to the draft that turn created,
+   * and carrying it over by hand is a *copy* unless something removes the
+   * original. Both halves of that removal are here because both are easy to get
+   * wrong alone — the pending write is dropped so the key-change flush leaves
+   * nothing behind, and the key is cleared because a typing burst longer than
+   * the debounce has already written it. Call this before changing `draftKey`.
+   */
+  releaseDraft: () => void;
 }
 
 /**
@@ -116,5 +129,16 @@ export function useDraftText(draftKey: string): DraftText {
   }, [flush]);
   useEffect(() => () => commitUnhydratedEdit(), [commitUnhydratedEdit]);
 
-  return { text, setText, mentions, setMentions };
+  // Reads the key off `latest` rather than the render's `draftKey` so a caller
+  // that releases and re-keys in one handler cannot clear the key it is moving
+  // *to*: React batches both state updates into one render, and by the time any
+  // effect runs, `draftKey` is already the new one.
+  const releaseDraft = useCallback((): void => {
+    const { draftKey: releasedKey, epoch } = latest.current;
+    pending.current = null;
+    edited.current = false;
+    void writeDraftText(releasedKey, '', NO_MENTIONS, epoch);
+  }, []);
+
+  return { text, setText, mentions, setMentions, releaseDraft };
 }
