@@ -101,6 +101,7 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): Workstream
       transaction: async (body: (t: unknown) => Promise<unknown>) => body({
         get: async (key: string) => storage.get(key),
         put: async (key: string, value: unknown) => { storage.set(key, value); },
+        delete: async (key: string) => storage.delete(key),
       }),
     },
   } as unknown as DurableObjectState;

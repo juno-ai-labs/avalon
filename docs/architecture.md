@@ -502,8 +502,9 @@ it.
   the client refreshes its canonical REST queries. A history-gap frame also
   carries the accumulated active stream; a sequence-ahead frame does not trust it.
 - **The replay cache is bounded to 256 events or 512 KB**, and is memory-only by
-  design. The active-stream checkpoint is a separate, single accumulated value
-  updated once per batched delta; it is not an event log and cannot replay
+  design. The active-stream checkpoint is a separate logical value whose text is
+  segmented across bounded Durable Object values and updated once per batched
+  delta; it is not an event log and cannot replay
   non-stream mutations.
 - **Publishing to a room is best-effort** and swallows its own failures. The one
   exception is a retraction: `publishWorkstreamEvent` reports whether the room
@@ -637,22 +638,21 @@ Workflow deadlines. The reasoning behind architecture decisions before this
 entry was not recorded here and was not reconstructed.
 
 Shipped in #130.
-This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one). The reasoning behind
-the older decisions above was not recorded here and was not reconstructed —
-`git log` and the PRDs under `docs/PRDs/` are what exist.
 
 ### 2026-08-12 — Active streams cross initial joins, route changes, and replay gaps
 
 **What changed:** `WorkstreamRoom` gained one accumulated active-stream
-checkpoint in Durable Object storage. A streamed event advances that checkpoint
-and the room sequence in one transaction; initial snapshots and
+checkpoint in Durable Object storage. Its metadata and storage-safe text chunks
+advance with the room sequence in one transaction; initial snapshots and
 `history_unavailable` resync frames carry it to the desktop. The checkpoint holds
 the active harness run, message, accumulated text, turn/epoch/stream cursor, seen
 turns, and retry-prefix offset. Terminal events remove it. The desktop shares its
 room and Bind cursors above routed screens, keeps bounded background subscribers
 for listed running work streams, and retains the transient assistant row across
-active-run REST merges.
+active-run REST merges. Canonical reconciliation re-anchors cold-join rows after
+persisted history, drops synthetic streams once a run is terminal, and validates
+a history-gap checkpoint against freshly fetched run identity rather than stale
+cache state.
 
 **Why:** Partial assistant text exists only in realtime until completion. A
 screen-owned socket closed on route change and returned with sequence zero, where
@@ -669,9 +669,9 @@ hibernation. Keeping a socket for every sidebar work stream scales connections
 with history rather than active work; only running work streams receive a
 background subscriber.
 
-**Consequences:** Each coalesced delta adds one Durable Object checkpoint write
-to the sequence transaction, while D1 remains final-only and the replay buffer
-remains bounded and in memory. Snapshot consumers must install checkpoint text
+**Consequences:** Each coalesced delta adds bounded Durable Object checkpoint
+writes to the sequence transaction, while D1 remains final-only and the replay
+buffer remains bounded and in memory. Snapshot consumers must install checkpoint text
 and its Bind cursor together: either half alone creates a duplicate or a
 truncation at the catch-up boundary. The optional/defaulted contract fields keep
 regional and desktop rollout skew compatible. The checkpoint is not a general
