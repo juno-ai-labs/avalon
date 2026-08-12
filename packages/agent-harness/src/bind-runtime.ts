@@ -229,11 +229,16 @@ class OpenRouterCompletionDefectError extends Error {
 
 export async function runHarnessWithBind(input: RunHarnessInput): Promise<HarnessOutcome> {
   const onTurnWouldEnd = input.onTurnWouldEnd;
-  const deadline = createRunDeadline({
-    timeoutMs: input.config.maxWallClockMs,
-    label: "Avalon Bind run",
-  });
-  const signal = deadline.withExternal(input.signal);
+  const maxIterations = input.config.maxIterations ?? Number.POSITIVE_INFINITY;
+  const deadline = input.config.maxWallClockMs === undefined
+    ? null
+    : createRunDeadline({
+        timeoutMs: input.config.maxWallClockMs,
+        label: "Avalon Bind run",
+      });
+  const signal = deadline?.withExternal(input.signal)
+    ?? input.signal
+    ?? new AbortController().signal;
   const state: ToolLoopState = {
     messages: [],
     inputTokens: 0,
@@ -376,7 +381,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       }
       const summary = routed.result.content.trim();
       if (!summary) throw new OpenRouterCompletionDefectError("empty_completion");
-      if (state.costCents + compactionCostCents > (input.config.maxCostCents ?? 500)) {
+      if (
+        input.config.maxCostCents !== undefined
+        && state.costCents + compactionCostCents > input.config.maxCostCents
+      ) {
         throw new HarnessLimitError("run_cost_limit_exceeded", "Run cost ceiling exceeded during compaction");
       }
       const compactedMessages: OpenAI.ChatCompletionMessageParam[] = [
@@ -439,12 +447,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     const result = await runToolLoop({
       state,
       activePlugins: runtime.active,
-      maxIterations: input.config.maxIterations,
+      maxIterations,
       signal,
-      throwIfTimedOut: deadline.throwIfTimedOut,
+      throwIfTimedOut: () => deadline?.throwIfTimedOut(),
       ensureNotCancelled: () => {
         if (signal.aborted) throw abortReason(signal);
-        if (state.costCents > (input.config.maxCostCents ?? 500)) {
+        if (input.config.maxCostCents !== undefined && state.costCents > input.config.maxCostCents) {
           throw new HarnessLimitError("run_cost_limit_exceeded", "Run cost ceiling exceeded");
         }
       },
@@ -488,7 +496,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         });
       },
       callModel: async (messages, _tools, onOutputProgress) => {
-        deadline.throwIfTimedOut();
+        deadline?.throwIfTimedOut();
         await runtime.reauthorizeActive();
         const systemPrompt = runtime.renderSystemPrompt();
         replaceSystemMessage(messages, systemPrompt.content);
@@ -526,8 +534,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           priorToolCalls: state.toolCalls,
           turnCostCents,
           requestedToolCalls: routed.result.toolCalls.length,
-          maxCostCents: input.config.maxCostCents ?? 500,
-          maxToolCalls: input.config.maxToolCalls,
+          ...(input.config.maxCostCents === undefined
+            ? {}
+            : { maxCostCents: input.config.maxCostCents }),
+          ...(input.config.maxToolCalls === undefined
+            ? {}
+            : { maxToolCalls: input.config.maxToolCalls }),
         });
         routed.result.toolCalls.forEach((call, index) => {
           toolCallPositions.set(call.id, { turn: stableTurnIndex, index });
@@ -847,7 +859,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       return outcome("stopped", content || streamedContent, model, state, routedAttempts, resultStats);
     }
     if (result.stopReason === "iteration_limit") {
-      throw new HarnessLimitError("run_iteration_limit_exceeded", `Harness exceeded ${input.config.maxIterations} model iterations`);
+      throw new HarnessLimitError("run_iteration_limit_exceeded", `Harness exceeded ${maxIterations} model iterations`);
     }
     await emit({
       type: "stream_completed",
@@ -856,18 +868,19 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     });
     return outcome("completed", content || streamedContent, model, state, routedAttempts, resultStats);
   } catch (error) {
-    if (input.signal?.aborted && !deadline.timedOut && !(error instanceof AmbiguousExternalWriteError)) {
+    const timedOut = deadline?.timedOut ?? false;
+    if (input.signal?.aborted && !timedOut && !(error instanceof AmbiguousExternalWriteError)) {
       return outcome("stopped", content || streamedContent, model, state, routedAttempts);
     }
     const code = error instanceof HarnessLimitError
       ? error.code
       : error instanceof AmbiguousExternalWriteError
         ? "ambiguous_external_write"
-      : deadline.timedOut
+      : timedOut
         ? "run_wall_time_limit_exceeded"
         : "harness_execution_failed";
     const failure: HarnessFailure = {
-      kind: deadline.timedOut
+      kind: timedOut
         ? "deadline"
         : error instanceof HarnessLimitError
           ? error.code === "context_limit_exceeded"
@@ -885,7 +898,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       failure,
     };
   } finally {
-    deadline.dispose();
+    deadline?.dispose();
   }
 
   async function routeOpenRouterTurn(args: {
@@ -1815,11 +1828,11 @@ function assertCompletedTurnWithinRunLimits(input: {
   priorToolCalls: number;
   turnCostCents: number;
   requestedToolCalls: number;
-  maxCostCents: number;
-  maxToolCalls: number;
+  maxCostCents?: number;
+  maxToolCalls?: number;
 }): void {
   const totalCostCents = input.priorCostCents + input.turnCostCents;
-  if (totalCostCents > input.maxCostCents) {
+  if (input.maxCostCents !== undefined && totalCostCents > input.maxCostCents) {
     throw new HarnessLimitError(
       "run_cost_limit_exceeded",
       `Run cost ceiling of ${input.maxCostCents} cents was exceeded`,
@@ -1827,7 +1840,7 @@ function assertCompletedTurnWithinRunLimits(input: {
   }
 
   const totalToolCalls = input.priorToolCalls + input.requestedToolCalls;
-  if (totalToolCalls > input.maxToolCalls) {
+  if (input.maxToolCalls !== undefined && totalToolCalls > input.maxToolCalls) {
     // Reject the complete batch before Bind dispatches any member. Partially
     // running an oversized parallel batch could perform a write and then fail
     // the run solely because a sibling call crossed the ceiling.

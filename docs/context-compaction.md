@@ -52,8 +52,8 @@ everything above it leaves the context once it answers.
 
 An empty completion is a defect and is retried by the route plan. The
 compaction's own tokens are accounted as auxiliary spend rather than an agent
-turn, and the run's cost ceiling is checked against them before the result is
-used.
+turn. When the caller supplied a run cost ceiling, it is checked against that
+spend before the result is used; ordinary work-stream runs no longer supply one.
 
 ### The compacted transcript
 
@@ -108,8 +108,8 @@ it must be derived state and nothing else (see the first invariant).
   part may reach the row — attachment bytes are neither replayable nor safe to
   keep, and the summary is expected to have described whatever mattered.
 - **Compaction spend is not a turn.** It is accumulated as auxiliary spend;
-  counting it in `stats.turns` would make that number incomparable with
-  `maxIterations`.
+  counting it in `stats.turns` would overstate how many model decisions the
+  work-stream loop made.
 - **`compacted_through_sequence` only moves forward** (except for a rewrite by
   the same run). A regression would replay messages the checkpoint already
   summarizes, double-counting them.
@@ -137,9 +137,9 @@ a compaction. Scheduling, receipts, and everything else about the run stay in
 | Model catalog unavailable | 200,000-token window assumed; compaction still runs on real usage. |
 | Threshold crossed with nothing beneath the system prompt | `context_limit_exceeded` — there is nothing to summarize. |
 | Empty summary completion | Treated as a completion defect and retried by the route plan; a persistent one fails the run rather than storing an empty checkpoint. |
-| Cost ceiling exceeded by the compaction | `run_cost_limit_exceeded`, before the compacted transcript is adopted. The ceiling is checked *after* the summary call returns, so a run can overshoot it by one summarization pass — two if the first was truncated. That is the largest single overshoot a run can make, because the summary runs at full reasoning effort over a near-full context; it is accepted because the alternative is estimating a call's cost before making it. |
 | Checkpoint persistence fails | Fatal for the run — a compacted context that was not stored would be lost work the next run cannot recover. |
 | Summary truncated by the provider's output cap | Retried once with a terser instruction appended. If that is truncated too, the run fails with `context_limit_exceeded` rather than checkpointing a partial record. Both attempts' tokens and cost are accounted. |
+| Summary would exceed an explicitly bounded caller's run cost ceiling | `run_cost_limit_exceeded` before the checkpoint is adopted. Ordinary work-stream runs do not configure this ceiling. |
 | Repeated compactions in one long work stream | Each checkpoint summarizes the previous one. The prompt asks for earlier checkpoint content to be carried forward as written, which slows but does not eliminate decay. |
 
 Numbers: threshold 0.8 of the window; catalog TTL one hour, fetch timeout five
@@ -189,6 +189,27 @@ by reading it.
   every routed model.
 
 ## Changelog
+
+### 2026-08-12 — Ordinary work-stream compaction has no run cost ceiling
+
+**What changed:** A work-stream compaction still records the tokens and cost of
+every summary attempt. Ordinary work-stream runs no longer provide a run-wide
+cost ceiling to compare that spend with before adopting the checkpoint; the
+conditional check remains for harness callers that explicitly configure one.
+
+**Why:** Ordinary work-stream runs now carry a 1,000-turn ceiling and no
+tool-call, wall-time, or cost ceiling after a successful source-gathering run
+was stopped one turn before it could answer. Keeping the compaction-only cost
+check would have left a hidden copy of one removed ceiling on the path long runs
+are most likely to exercise.
+
+**Considered and rejected:** Keeping a separate compaction budget. It would make
+the run unlimited only until it needed the mechanism that permits long context
+to continue, coupling survivability to an unrelated spend threshold.
+
+**Consequences:** Repeated and retried summaries can add unbounded recorded
+model spend to an ordinary work-stream run. Truncation detection, the single
+terser retry, context failure, and checkpoint durability remain unchanged.
 
 ### 2026-08-12 — The summary carries provenance, not just content
 
