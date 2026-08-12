@@ -7,6 +7,7 @@ import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
 
@@ -105,7 +106,7 @@ export function applyPinnedWorkstreams(
   pinned: WorkstreamSummary[],
 ): void {
   const positions = new Map(pinned.map((workstream) => [workstream.id, workstream.pinPosition]));
-  queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+  setCachedWorkstreams(queryClient, (current) =>
     current?.map((item) => {
       const pinPosition = positions.get(item.id) ?? null;
       return item.pinPosition === pinPosition ? item : { ...item, pinPosition };
@@ -282,7 +283,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onChangeWorkstreamScope={async (workstream, scope) => {
           if (!api) return;
           const updated = await api.setWorkstreamScope(workstream.id, scope);
-          queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+          setCachedWorkstreams(queryClient, (current) =>
             current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
           );
           queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
@@ -307,7 +308,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
           const updated = await api.markWorkstreamUnread(workstream.id);
-          queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+          setCachedWorkstreams(queryClient, (current) =>
             current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
           );
           queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
@@ -328,7 +329,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;
           const updated = await api.renameWorkstream(workstream.id, title);
-          queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+          setCachedWorkstreams(queryClient, (current) =>
             current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
           );
           queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>

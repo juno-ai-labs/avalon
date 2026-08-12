@@ -1,9 +1,10 @@
 import { AutomationDraftStreamEventSchema } from "@avalon/contracts";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Env, HonoAppEnv } from "../src/env";
+import type { HonoAppEnv } from "../src/env";
 import { automationRoutes } from "../src/routes/automations";
 import { AutomationService } from "../src/services/automation-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const draft = {
   name: "Blog monitor",
@@ -84,7 +85,7 @@ describe("automation draft stream", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ draftId, messages: [{ role: "user", content: "Check this blog every day." }] }),
-    }, {} as Env);
+    }, createTestEnv({}));
 
     expect(response.status).toBe(200);
     expect(compile).toHaveBeenCalledWith(

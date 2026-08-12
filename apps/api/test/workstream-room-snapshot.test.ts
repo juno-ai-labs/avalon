@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Env } from "../src/env";
 import { loadWorkstreamRoomSnapshot } from "../src/durable-objects/workstream-room";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-0000000000b0";
 const readerId = "00000000-0000-7000-8000-0000000000b2";
@@ -24,7 +24,7 @@ describe("work-stream room snapshot", () => {
   // including the rename the naming agent publishes seconds after creation.
   it("satisfies the work-stream contract, read state included", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     const snapshot = await loadWorkstreamRoomSnapshot(env, {
       workspaceId,
@@ -63,7 +63,7 @@ describe("work-stream room snapshot", () => {
       at,
       at,
     );
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     const snapshot = await loadWorkstreamRoomSnapshot(env, {
       workspaceId,
@@ -105,7 +105,7 @@ describe("work-stream room snapshot", () => {
       JSON.stringify({ type: "user", userId: readerId }), "scheduled",
       null, null, "2026-08-11T10:00:00.000Z",
     );
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     const snapshot = await loadWorkstreamRoomSnapshot(env, {
       workspaceId,
@@ -122,7 +122,7 @@ describe("work-stream room snapshot", () => {
     const database = seededDatabase();
     database.prepare("UPDATE workstreams SET title_status = 'naming', created_at = ? WHERE id = ?")
       .run("2020-01-01T00:00:00.000Z", workstreamId);
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     // The row was created hours ago and its naming pass never settled it, so
     // the placeholder title is the title — a skeleton in front of it would
@@ -148,7 +148,7 @@ describe("work-stream room snapshot", () => {
 
   it("reads the read state of the subscriber it is built for", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     const other = await loadWorkstreamRoomSnapshot(env, {
       workspaceId,

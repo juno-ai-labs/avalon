@@ -5,14 +5,15 @@ import {
   initializeAutoUpdate,
   MANUAL_UPDATE_URL,
   type AutoUpdateDependencies,
+  type AutoUpdaterPort,
   type UpdateStatus,
 } from './updater';
 
-class FakeUpdater extends EventEmitter {
+class FakeUpdater extends EventEmitter implements AutoUpdaterPort {
   autoDownload = false;
   autoInstallOnAppQuit = false;
   disableDifferentialDownload = false;
-  logger: unknown;
+  logger: AutoUpdaterPort['logger'] = null;
   checkForUpdates = vi.fn(async () => null);
   downloadUpdate = vi.fn(async () => []);
   quitAndInstall = vi.fn();
@@ -39,7 +40,7 @@ function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
     showMessageBox,
     openExternal,
     onStatusChange: (status) => statuses.push(status),
-    updater: updater as unknown as AutoUpdateDependencies['updater'],
+    updater,
     scheduleInterval,
     scheduleTimeout,
     ...overrides,

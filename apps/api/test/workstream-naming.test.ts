@@ -9,6 +9,7 @@ import {
   refreshWorkstreamName,
 } from "../src/services/workstream-naming-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "workspace-naming";
 const userId = "user-owner";
@@ -142,7 +143,7 @@ describe("work-stream naming", () => {
     const database = seededDatabase();
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
-    const env = { ...environment(database, []), OPENROUTER_API_KEY: "" } as Env;
+    const env = createTestEnv({ ...environment(database, []), OPENROUTER_API_KEY: "" });
 
     await nameWorkstream(env, {
       workspaceId,
@@ -340,12 +341,12 @@ describe("work-stream naming", () => {
     // callers cannot absorb — one awaits naming having already created the work
     // stream and launched its run, and the other is a durable workflow step
     // that would retry the model call and then fail a committed run.
-    const failing = {
+    const failing = createTestEnv({
       ...environment(database, []),
       DB: {
         prepare: () => { throw new Error("D1_ERROR: network"); },
       },
-    } as unknown as Env;
+    });
 
     await expect(nameWorkstream(failing, {
       workspaceId,
@@ -364,7 +365,7 @@ describe("work-stream naming", () => {
     seedMessages(database, 40);
     const counted: string[] = [];
     const env = environment(database, []);
-    const settled = {
+    const settled = createTestEnv({
       ...env,
       DB: {
         ...env.DB,
@@ -373,7 +374,7 @@ describe("work-stream naming", () => {
           return env.DB.prepare(sql);
         },
       },
-    } as unknown as Env;
+    });
 
     await refreshWorkstreamName(settled, { workspaceId, workstreamId });
 
@@ -478,7 +479,7 @@ function environment(database: DatabaseSync, published: Array<Record<string, unk
       },
     }),
   };
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
@@ -488,7 +489,7 @@ function environment(database: DatabaseSync, published: Array<Record<string, unk
     OPENROUTER_FALLBACK_MODELS: "",
     PUBLIC_API_BASE_URL: "https://api.test.with-avalon.com",
     WORKSTREAM_ROOMS: rooms,
-  } as unknown as Env;
+  });
 }
 
 function seededDatabase(): DatabaseSync {

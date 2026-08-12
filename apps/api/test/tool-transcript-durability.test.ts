@@ -1,8 +1,8 @@
 import type { ToolInvocation } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 
-import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 interface StoredToolMessage {
   id: string;
@@ -19,14 +19,14 @@ class ToolTranscriptDatabase {
   nextSequenceNumber = 12;
   readonly messages = new Map<string, StoredToolMessage>();
 
-  readonly binding = {
-    prepare: (sql: string) => new ToolTranscriptStatement(this, sql) as unknown as D1PreparedStatement,
+  readonly binding = createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new ToolTranscriptStatement(this, sql)),
     batch: async <T = unknown>(statements: D1PreparedStatement[]) => {
       const results: D1Result<T>[] = [];
       for (const statement of statements) results.push(await statement.run<T>());
       return results;
     },
-  } as unknown as D1Database;
+  });
 }
 
 class ToolTranscriptStatement {
@@ -70,7 +70,7 @@ class ToolTranscriptStatement {
     } else {
       throw new Error(`Unexpected durable transcript query: ${normalized}`);
     }
-    return { success: true, results: [], meta: { changes: 1 } } as unknown as D1Result<T>;
+    return createTestD1Result<T>({ success: true, results: [], meta: { changes: 1 } });
   }
 }
 
@@ -100,7 +100,7 @@ function invocation(status: "started" | "completed"): ToolInvocation {
 describe("durable inline tool transcript", () => {
   it("keeps one canonical sequence while lifecycle and replay updates refresh the same row", async () => {
     const database = new ToolTranscriptDatabase();
-    const env = { DB: database.binding } as unknown as Env;
+    const env = createTestEnv({ DB: database.binding });
     const scope = { workspaceId, workstreamId };
 
     await __integrationTesting.persistToolTranscriptMessage(env, scope, invocation("started"));
@@ -145,14 +145,14 @@ class SingleRowDatabase {
 
   constructor(private readonly row: Record<string, unknown> | null) {}
 
-  readonly binding = {
+  readonly binding = createTestD1Database({
     prepare: (sql: string) => {
       this.sql = sql.replace(/\s+/gu, " ").trim();
-      return {
+      return createTestD1PreparedStatement({
         bind: () => ({ first: async () => this.row }),
-      } as unknown as D1PreparedStatement;
+      });
     },
-  } as unknown as D1Database;
+  });
 }
 
 const invocationRow = {
@@ -177,7 +177,7 @@ describe("tool invocation attribution", () => {
       owner_display_name: "Google Drive · Work",
       owner_model_plugin_id: "plugin_google_2",
     });
-    const env = { DB: database.binding } as unknown as Env;
+    const env = createTestEnv({ DB: database.binding });
 
     const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
 
@@ -199,7 +199,7 @@ describe("tool invocation attribution", () => {
       owner_display_name: null,
       owner_model_plugin_id: null,
     });
-    const env = { DB: database.binding } as unknown as Env;
+    const env = createTestEnv({ DB: database.binding });
 
     const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
 
@@ -216,7 +216,7 @@ describe("tool invocation attribution", () => {
       owner_display_name: "Google Drive · Work",
       owner_model_plugin_id: "Not-A-Plugin-Id",
     });
-    const env = { DB: database.binding } as unknown as Env;
+    const env = createTestEnv({ DB: database.binding });
 
     expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.plugin).toBeNull();
   });
@@ -234,7 +234,7 @@ describe("tool invocation failure wording", () => {
       owner_display_name: "Google Drive · Work",
       owner_model_plugin_id: "plugin_google_2",
     });
-    const env = { DB: database.binding } as unknown as Env;
+    const env = createTestEnv({ DB: database.binding });
 
     expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
       .toBe("Could not reach Google Drive · Work");
@@ -249,7 +249,7 @@ describe("tool invocation failure wording", () => {
       owner_display_name: "Google Drive · Work",
       owner_model_plugin_id: "plugin_google_2",
     });
-    const env = { DB: database.binding } as unknown as Env;
+    const env = createTestEnv({ DB: database.binding });
 
     expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
       .toBe("Searched Google Drive · Work");
@@ -263,7 +263,7 @@ describe("tool invocation failure wording", () => {
       owner_display_name: "   ",
       owner_model_plugin_id: "plugin_google_2",
     });
-    const env = { DB: database.binding } as unknown as Env;
+    const env = createTestEnv({ DB: database.binding });
 
     const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
     expect(loaded?.plugin).toBeNull();

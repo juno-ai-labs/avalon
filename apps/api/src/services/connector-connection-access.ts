@@ -3,7 +3,6 @@ import {
   authorizedConnection,
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
-  type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { nowIso } from "@avalon/db";
 import type { Env } from "../env";
@@ -11,6 +10,7 @@ import { encryptString } from "../lib/crypto";
 import {
   ensureFreshConnectorCredentials,
   rotateConnectorCredentials,
+  type CredentialRefreshAdapter,
 } from "./connector-credential-refresh";
 
 type ConnectionAccessEnv = Pick<Env,
@@ -39,7 +39,7 @@ export async function withAuthorizedConnection<T>(
   env: ConnectionAccessEnv,
   input: {
     connection: ConnectorConnectionContext;
-    adapter: ResolvedConnectorAdapter;
+    adapter: CredentialRefreshAdapter;
     signal: AbortSignal;
     /** Refresh a credential expiring within this window. */
     minimumValidityMs?: number;

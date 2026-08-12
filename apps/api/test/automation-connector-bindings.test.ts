@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const auth: AuthContext = {
   sessionId: "session-1",
@@ -74,7 +75,7 @@ describe("automation activity connector bindings", () => {
       })),
     }));
     const batch = vi.fn(async () => []);
-    const service = new AutomationService({ DB: { prepare, batch } } as unknown as Env, auth);
+    const service = new AutomationService(createTestEnv({ DB: { prepare, batch } }), auth);
     vi.spyOn(service, "get").mockResolvedValue({ id: "automation-1" } as never);
 
     await expect(service.update("automation-1", {
@@ -87,7 +88,7 @@ describe("automation activity connector bindings", () => {
 
   it("rejects an activity trigger with no selected connector", async () => {
     const prepare = vi.fn();
-    const service = new AutomationService({ DB: { prepare } } as unknown as Env, auth);
+    const service = new AutomationService(createTestEnv({ DB: { prepare } }), auth);
 
     await expect(service.create(createInput({
       type: "connector_activity",
@@ -111,7 +112,7 @@ describe("automation activity connector bindings", () => {
     });
     const bind = vi.fn(() => ({ first }));
     const prepare = vi.fn(() => ({ bind }));
-    const service = new AutomationService({ DB: { prepare } } as unknown as Env, auth);
+    const service = new AutomationService(createTestEnv({ DB: { prepare } }), auth);
 
     await expect(service.create(createInput({
       type: "semantic_activity",
@@ -135,12 +136,12 @@ describe("automation activity connector bindings", () => {
     });
     const bind = vi.fn(() => ({ first }));
     const prepare = vi.fn(() => ({ bind }));
-    const env = {
+    const env = createTestEnv({
       DB: { prepare },
       PUBLIC_API_BASE_URL: "https://api.example.com",
       GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "client",
       GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "secret",
-    } as unknown as Env;
+    });
     const service = new AutomationService(env, auth);
     const baseTrigger = {
       type: "connector_activity" as const,
@@ -178,12 +179,12 @@ describe("automation activity connector bindings", () => {
       status: "healthy",
     });
     const bind = vi.fn(() => ({ first }));
-    const service = new AutomationService({
+    const service = new AutomationService(createTestEnv({
       DB: { prepare: vi.fn(() => ({ bind })) },
       PUBLIC_API_BASE_URL: "https://api.example.com",
       GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "client",
       GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "secret",
-    } as unknown as Env, auth);
+    }), auth);
 
     await expect(service.create(createInput({
       type: "semantic_activity",

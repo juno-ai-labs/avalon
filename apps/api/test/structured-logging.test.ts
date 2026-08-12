@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Env } from "../src/env";
-import { logError, logEvent, logInfo, logStructuredEvent, logWarn, summarizeEvent } from "../src/observability/logger";
+import { logError, logInfo, logRequestEvent, logStructuredEvent, logWarn, summarizeEvent } from "../src/observability/logger";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
-const env = {
+const env = createTestEnv({
   AVALON_REGION: "global",
   APP_VERSION: "0.24.0",
   BUILD_SHA: "abc1234",
   LOG_LEVEL: "info",
-} as unknown as Env;
+});
 
 function capture(level: "info" | "warn" | "error", emit: () => void): Record<string, unknown> {
   const spy = vi.spyOn(console, level).mockImplementation(() => undefined);
@@ -20,24 +20,19 @@ function capture(level: "info" | "warn" | "error", emit: () => void): Record<str
   }
 }
 
-// `logEvent` reads only these three off the context.
-function requestContext(values: { requestId?: string; workspaceId?: string }): Parameters<typeof logEvent>[0] {
-  return {
-    env,
-    get: (key: string) => key === "auth"
-      ? (values.workspaceId === undefined ? undefined : { workspaceId: values.workspaceId })
-      : values.requestId,
-  } as unknown as Parameters<typeof logEvent>[0];
-}
-
 describe("structured logging", () => {
   it("keeps the request context authoritative over caller-supplied correlation", () => {
-    const c = requestContext({ requestId: "req-1", workspaceId: "workspace-1" });
-    const entry = capture("warn", () => logEvent(c, "warn", "connector_oauth_callback_failed", {
+    const entry = capture("warn", () => logRequestEvent(
+      env,
+      { requestId: "req-1", workspaceId: "workspace-1" },
+      "warn",
+      "connector_oauth_callback_failed",
+      {
       request_id: "spoofed",
       workspace_id: "someone-elses-workspace",
       code: "connector_unauthorized",
-    }));
+      },
+    ));
 
     expect(entry).toMatchObject({
       code: "connector_unauthorized",
@@ -49,8 +44,7 @@ describe("structured logging", () => {
   it("lets an unauthenticated route name the workspace the context does not know", () => {
     // A connector OAuth callback carries no session, so overwriting the field
     // with the context's `undefined` would erase what the caller knows.
-    const c = requestContext({ requestId: "req-2" });
-    const entry = capture("warn", () => logEvent(c, "warn", "connector_oauth_callback_failed", {
+    const entry = capture("warn", () => logRequestEvent(env, { requestId: "req-2" }, "warn", "connector_oauth_callback_failed", {
       workspace_id: "workspace-2",
     }));
 
@@ -154,7 +148,7 @@ describe("structured logging", () => {
   });
 
   it("drops an entry below the configured level", () => {
-    const quiet = { ...env, LOG_LEVEL: "error" } as unknown as Env;
+    const quiet = createTestEnv({ ...env, LOG_LEVEL: "error" });
     const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       logWarn(quiet, "slack_thread_title_failed");

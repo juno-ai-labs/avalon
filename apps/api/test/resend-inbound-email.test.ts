@@ -9,6 +9,7 @@ import {
   type ResendRegionalEmailInput,
 } from "../src/services/resend-inbound-email-service";
 import { __resendRouteTesting, resendInboundRoutes } from "../src/routes/resend";
+import { createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
 const SECRET_BYTES = new TextEncoder().encode("avalon-resend-webhook-test-secret-v1");
@@ -40,11 +41,11 @@ class FakeStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return this.database.all(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.all(this.sql, this.values));
   }
 
   async run<T>(): Promise<D1Result<T>> {
-    return this.database.run(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.run(this.sql, this.values));
   }
 }
 
@@ -854,7 +855,7 @@ function environment(
   region: Region,
   bucket: FakeBucket = new FakeBucket(),
 ): Env {
-  return {
+  return createTestEnv({
     DB: database,
     PAYLOADS: bucket,
     AVALON_REGION: region,
@@ -866,7 +867,7 @@ function environment(
     RESEND_API_KEY: "re_full_access_test",
     WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
     PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
-  } as unknown as Env;
+  });
 }
 
 function regionalInput(): ResendRegionalEmailInput {
@@ -953,7 +954,7 @@ function automationReceiptKey(emailId: string, automationId: string): string {
 }
 
 function result(changes: number): D1Result {
-  return {
+  return createTestD1Result<unknown>({
     success: true,
     meta: {
       changes,
@@ -964,5 +965,5 @@ function result(changes: number): D1Result {
       size_after: 0,
       changed_db: changes > 0,
     },
-  } as D1Result;
+  });
 }

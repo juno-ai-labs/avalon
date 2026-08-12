@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { HYPERSIGHT_MODEL, type Env } from "../src/env";
 import { HyperSightService, launchHyperSightRefresh } from "../src/services/hypersight-service";
+import { createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000401";
@@ -25,7 +26,7 @@ class SqliteD1Statement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -33,11 +34,11 @@ class SqliteD1Statement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: { changes: 0 },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
@@ -68,7 +69,7 @@ function fixture(): {
     VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Shared panel', 'Test shared state',
             'ad_hoc', '${OWNER_ID}', 'idle', '2026-01-01', '2026-01-01', '2026-01-01');
   `);
-  const prepare = (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement;
+  const prepare = (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql)));
   const batch = async (statements: D1PreparedStatement[]): Promise<D1Result<unknown>[]> => {
     const results: D1Result<unknown>[] = [];
     database.exec("BEGIN");
@@ -89,13 +90,13 @@ function fixture(): {
     idFromName: vi.fn(() => ({ toString: () => "room-id" })),
     get: vi.fn(() => ({ fetch: publish })),
   };
-  const env = {
+  const env = createTestEnv({
     APP_ENV: "test",
     AVALON_REGION: "global",
     DB: { prepare, batch },
     WORKSTREAM_ROOMS: namespace,
     WORKSTREAM_LOOP_WORKFLOW: { create: startWorkflow },
-  } as unknown as Env;
+  });
   return { database, env, publish, startWorkflow };
 }
 

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import type * as IntegrationsModule from "../src/services/integrations";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -35,6 +35,7 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 }));
 
 import { AutomationService } from "../src/services/automation-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const userId = "00000000-0000-7000-8000-000000000002";
@@ -74,7 +75,7 @@ function seededDatabase(): DatabaseSync {
 }
 
 function serviceFor(database: DatabaseSync, as: AuthContext = auth): AutomationService {
-  const env = {
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -82,7 +83,7 @@ function serviceFor(database: DatabaseSync, as: AuthContext = auth): AutomationS
       idFromName: () => "scheduler",
       get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
     },
-  } as unknown as Env;
+  });
   return new AutomationService(env, as);
 }
 
