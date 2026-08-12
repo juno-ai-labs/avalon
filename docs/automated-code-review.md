@@ -32,7 +32,7 @@ One matrix job runs three independent executions and posts separate comments:
 Each reviewer validates and normalizes the configured Azure endpoint. A trusted
 shell step uses `gh` to write explicit PR metadata fields and the diff into a
 bounded context file before Cline starts. Cline receives that file through
-redirected stdin, runs in an empty temporary directory with
+an actual stdin pipe, runs in an empty temporary directory with
 `--auto-approve false`, and receives no GitHub token. Because stdin and stdout
 are non-TTY streams, Cline denies every tool request. Its completed
 `run_result.text` is extracted from NDJSON into a fixed temporary path. A later
@@ -56,10 +56,12 @@ updated head is ready.
 - The workflow never checks out the PR. A trusted step reads metadata and the
   diff with `gh`, asks only for explicit JSON fields, and fails if that input is
   larger than 600,000 bytes.
-- Cline runs with redirected stdin and stdout, `CLINE_TOOL_APPROVAL_MODE` set to
-  `terminal`, and `--auto-approve false`. Those settings move every tool call
-  through the non-TTY approval path, which denies it. Do not replace them with
-  an allowlist or automatic approval.
+- Cline runs with a real stdin pipe and redirected stdout,
+  `CLINE_TOOL_APPROVAL_MODE` set to `terminal`, and `--auto-approve false`.
+  Cline's JSON mode distinguishes a pipe from regular-file stdin redirection;
+  the pipe must be preserved. These settings move every tool call through the
+  non-TTY approval path, which denies it. Do not replace them with an allowlist
+  or automatic approval.
 - The Cline step receives neither `GH_TOKEN` nor an untrusted checkout. It runs
   in an empty `$RUNNER_TEMP` directory and can review only the context supplied
   on stdin. The provider key remains available to Cline's own authenticated
@@ -159,6 +161,28 @@ Use the Actions run for context-size, installation, endpoint-validation, and
 provider errors.
 
 ## Changelog
+
+### 2026-08-12 — Reviewer prompts moved to a true stdin pipe
+
+**What changed:** The prompt file is now sent through `cat | cline` with
+`pipefail` enabled, and the workflow contract test requires that pipe while
+rejecting regular-file stdin redirection.
+
+**Why:** Cline 3.0.47's JSON mode distinguishes a pipe from a regular file on
+stdin. Redirecting the prompt file with `<` made all three reviewers exit before
+calling their models with "JSON output mode requires a prompt argument or piped
+stdin."
+
+**Considered and rejected:** Passing the prompt as a command-line argument.
+Reviewer input is allowed to reach 600,000 bytes, which exceeds Linux's
+per-argument limit on GitHub-hosted runners. A pipe handles the bounded input
+without shell interpolation or a second size ceiling.
+
+**Consequences:** The model and tool-security boundaries are unchanged: Cline
+still receives only the bounded prompt, no GitHub token, no checkout, and no
+automatic tool approval. Future changes must keep the prompt on a genuine pipe
+unless the pinned CLI's input contract changes and the full input-size budget is
+preserved another way.
 
 ### 2026-08-12 — Tool execution removed from the reviewer boundary
 
