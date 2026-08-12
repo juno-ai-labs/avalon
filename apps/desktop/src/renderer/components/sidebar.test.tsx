@@ -276,11 +276,12 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
+    const accessibleTimerLabel = `Active timer. Next: ${formatDateTime(dueAt)}. Check whether production deploy completed…`;
     const marker = within(screen.getByRole('link', { name: /Wait for the deploy/u }))
-      .getByRole('img', { name: 'Active timer' });
+      .getByRole('img', { name: accessibleTimerLabel });
     expect(marker).toHaveClass('sidebar-workstream-timer');
     expect(within(screen.getByRole('link', { name: /Deploy finished/u }))
-      .queryByRole('img', { name: 'Active timer' })).not.toBeInTheDocument();
+      .queryByRole('img', { name: /Active timer/u })).not.toBeInTheDocument();
 
     fireEvent.pointerMove(marker, { pointerType: 'mouse' });
     expect(await screen.findByText(`Next: ${formatDateTime(dueAt)}`)).toBeVisible();
