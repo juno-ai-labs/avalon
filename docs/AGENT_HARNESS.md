@@ -109,7 +109,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 ## Limits
 
-Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary. No earlier message survives a compaction verbatim — not even the conversation's first — so the summary is asked for as a sectioned handoff covering the instructions given in order, the settled decisions and constraints, finished work, exactly copied identifiers and tool results, and what was open at the checkpoint, carrying an earlier checkpoint's content forward as written rather than re-compressing it. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages.
+Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`RUNBOOK.md`](RUNBOOK.md).
 
@@ -243,47 +243,19 @@ This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
 
-### 2026-08-12 — A compaction keeps nothing but its own summary
+### 2026-08-12 — Compaction moved to its own document
 
-**What changed:** Compaction no longer pins the transcript's first user message.
-The compacted context is now the stable system prompt plus a single synthetic
-user message built from the continuation summary. The assistant-summary plus
-stub-user pair collapsed into that one message, and the attachment scrubbing that
-ran over a preserved message before it was persisted went with it — a `data:`
-URL or file part can no longer reach a stored checkpoint at all.
+**What changed:** Compaction policy — the threshold, the summary prompt, the
+shape of the compacted transcript, and the stored work-stream checkpoint — now
+lives in [`context-compaction.md`](context-compaction.md), which carries its own
+changelog. This document keeps a one-paragraph summary and a pointer.
 
-The summary prompt was rewritten to match: it now asks for a sectioned handoff
-(request, decisions, done, facts, open) rather than a sentence listing what to
-keep. The structure follows what the published compaction prompts converge on —
-Codex's checkpoint handoff, OpenCode's summarizer, Claude Code's `/compact` — and
-two sections are pitched harder than those because this harness keeps less than
-they do. Codex keeps the last ~20k tokens of user messages beside its summary and
-OpenCode keeps the messages while pruning tool output, so both can afford a lossy
-account of what was asked; here the summary is the only copy, so `# Request` asks
-for every instruction in order, and `# Facts` asks for identifiers to be copied
-exactly rather than recalled. The rule to carry an earlier checkpoint's content
-forward verbatim rather than re-summarizing it addresses the failure all three
-report: quality decays across successive compactions, and re-compressing the same
-fact at every checkpoint is how it decays.
-
-**Why:** The pin was not preserving "the initial user message" in any durable
-sense. A work-stream run replays its stored checkpoint as the transcript prefix,
-so whatever sat at index 1 of the previous run became index 1 of the next one and
-was pinned again. On a long-lived work stream that fixed point was a trigger
-window from months earlier — an untrusted evidence blob the summary had already
-superseded — and every compaction re-spent context on it while dropping the
-recent work that mattered. Rebuilding index 1 from the summary each time is what
-makes compaction converge instead of accumulating: the checkpoint is derived
-state, and the only thing a compaction is entitled to carry forward is what it
-just summarized.
-
-The alternative considered was keeping the pin but re-resolving it to the *current*
-trigger message on each run. It was rejected because it keeps the shape that
-caused the bug — a verbatim message with an authority the compaction cannot check
-— and the current trigger already enters the next run through the transcript
-projection, so pinning it duplicates it. A future change may add messages back
-beneath the system prompt, but it must not reintroduce a slot whose content
-outlives the compaction that produced it.
+**Why:** It had stopped being a paragraph about the loop. It has a persisted
+table, a replay path through the API service, a prompt with its own design
+constraints, and invariants an outside change can break silently; the entry that
+prompted the split (a first-user-message pin that outlived the conversation it
+came from) needed more explanation than a harness-wide log should carry. The
+reasoning for that change is the first entry there, not here.
 
 ### 2026-08-12 — A run records what triggered it, so a retry stops guessing
 
