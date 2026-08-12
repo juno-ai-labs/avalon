@@ -163,6 +163,7 @@ let settingsWindow: BrowserWindow | null = null;
 const meetingWindows = new Set<BrowserWindow>();
 const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
 let rendererReady = false;
+let quitting = false;
 let inMemoryAuth: StoredAuth | null = null;
 let inMemorySession: WireSession | null = null;
 let refreshInFlight: Promise<DesktopSession> | null = null;
@@ -2045,13 +2046,22 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
   meetingWindow.on('close', (event) => {
     if (meetingWindowsAllowedToClose.has(meetingWindow)) return;
     event.preventDefault();
-    meetingContents.send('meeting:close-requested');
+    // The screen finalizes the recording and closes the window itself. It may
+    // also stop and ask first, but only for a close the person performed on
+    // this window: during a quit, a window that waits for an answer is a
+    // window that never shuts, and the quit dies with it.
+    meetingContents.send('meeting:close-requested', quitting ? 'quit' : 'user');
   });
   meetingWindow.on('closed', () => {
     void nativeSystemAudioController.stop(meetingContents).catch((error) => {
       logWarn('meeting', 'Failed to stop native computer audio after window close', error);
     });
     meetingWindows.delete(meetingWindow);
+    // A meeting window is the only thing that vetoes a quit, so while one is
+    // still open the quit it abandoned is still the close every other meeting
+    // window is answering. Once the last has gone, Avalon is staying up, and
+    // the next close is the person's again.
+    if (meetingWindows.size === 0) quitting = false;
   });
   try {
     await loadRenderer(
@@ -2305,6 +2315,21 @@ app.on('window-all-closed', () => {
   // left — a login launch opens no window at all. Quitting here would take it
   // away the first time someone closed the last window.
   if (process.platform !== 'darwin') app.quit();
+});
+
+// A quit asks every window to close, and this is what tells a meeting window
+// that the close it is answering is a quit rather than the person closing that
+// window — the difference between finalizing and asking first.
+//
+// The flag says "a quit was requested and has not finished", not "a quit was
+// requested this tick", because the cascade is not reliably synchronous: on
+// macOS a window mid-fullscreen-transition defers its close until the
+// transition ends, and a close arriving after a timed reset would be read as
+// the person's and answered with a dialog — vetoing the quit silently, which is
+// the one outcome this flag exists to rule out. It is cleared where the quit is
+// known to be over instead, as the last meeting window goes.
+app.on('before-quit', () => {
+  quitting = true;
 });
 
 // `will-quit`, not `before-quit`: the latter fires before any window is asked to

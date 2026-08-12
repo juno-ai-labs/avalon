@@ -105,6 +105,20 @@ export type DesktopMediaPermissionStatus =
 
 export type MeetingAudioPermissionKind = 'microphone' | 'system-audio';
 
+/**
+ * Who asked a meeting window to close, which decides whether the recording
+ * screen may stop and ask first.
+ *
+ * `user` is a close the person performed on that window — its traffic light or
+ * Command-W — and a recording in progress is worth a confirmation, because the
+ * window is the only place the meeting exists until finalization lands.
+ * `quit` is the application shutting down, where a window that stops to ask is
+ * a window that refuses to close, and a quit vetoed that way leaves Avalon
+ * running with no way to finish. That path finalizes and closes as it always
+ * has.
+ */
+export type MeetingCloseReason = 'user' | 'quit';
+
 export interface DesktopMeetingAudioPermissions {
   microphone: DesktopMediaPermissionStatus;
   systemAudio: DesktopMediaPermissionStatus;
@@ -164,7 +178,7 @@ export interface AvalonDesktopBridge {
   stopMeetingSystemAudioCapture: () => Promise<void>;
   onMeetingSystemAudioData: (listener: (data: ArrayBuffer, sampleRate: number) => void) => () => void;
   openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
-  onMeetingCloseRequested: (listener: () => void) => () => void;
+  onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   consumePendingDeepLinks: () => Promise<string[]>;
   onDeepLink: (listener: (url: string) => void) => () => void;
