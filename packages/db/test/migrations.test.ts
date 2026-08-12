@@ -1756,7 +1756,7 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("records where each past digest ran without breaking the Worker still reading the old column", () => {
+  it("records where each past digest ran, then drops the old column once no Worker reads it", () => {
     const database = migrateDatabaseThrough("0067_harness_run_trigger_message.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -1824,6 +1824,45 @@ describe("database migrations", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM workstreams WHERE id = 'workstream-digest-shared'",
     ).get()).toEqual({ count: 1 });
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+
+    // And the phase that was waiting on the deployment window: once every live
+    // Worker ignores the column, it goes, taking nothing with it. The delivery
+    // link, the transcripts, and the delivery rows that carry the cursor all
+    // survive — a schedule losing a pointer must not lose a person's history or
+    // let a window be digested twice.
+    database.exec(readFileSync(
+      new URL("../migrations/0070_drop_digest_schedule_workstream.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect((database.prepare("PRAGMA table_info(digest_schedules)").all() as Array<{ name: string }>)
+      .map((column) => column.name)).not.toContain("system_workstream_id");
+    expect(database.prepare(
+      "SELECT id, workstream_id FROM digest_deliveries ORDER BY planned_for",
+    ).all()).toEqual([
+      { id: "delivery-ran", workstream_id: "workstream-digest-shared" },
+      { id: "delivery-empty", workstream_id: null },
+    ]);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM workstreams WHERE id = 'workstream-digest-shared'",
+    ).get()).toEqual({ count: 1 });
+    // The schedule itself is intact and still usable — the drop is a column, not
+    // a rebuild, so nothing around it was restated and nothing could be lost.
+    expect(database.prepare(
+      "SELECT id, day_mask, enabled FROM digest_schedules WHERE id = 'schedule-digest'",
+    ).get()).toEqual({ id: "schedule-digest", day_mask: 62, enabled: 1 });
+    // The dropped column took its foreign key with it and left the other two
+    // alone. This is what makes the drop legal without a table rebuild — SQLite
+    // refuses `DROP COLUMN` for a column named in a constraint it cannot remove
+    // — so it is asserted rather than assumed: a future column added here with a
+    // reference that outlives it would fail this rather than fail a deployment.
+    expect((database.prepare("PRAGMA foreign_key_list(digest_schedules)")
+      .all() as Array<{ table: string; from: string }>)
+      .map((key) => `${key.from} -> ${key.table}`).sort()).toEqual([
+        "user_id -> users",
+        "workspace_id -> workspaces",
+      ]);
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });
