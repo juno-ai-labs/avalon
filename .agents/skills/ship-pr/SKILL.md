@@ -27,7 +27,11 @@ review queue this skill exists to move the change through.
 
 Monitor the PR for human and bot review comments (timers every 5 minutes or so but stop after 30 minutes). First verify if the finding is valid. If it is, fix it. If it's not, write a substantive correction citing the exact code, not just an assertion that they're wrong.
 
-## 4. Validate publishing — don't stop at "the merge succeeded"
+## 4. Merging
+
+If you have a new migration, before merging check if a new migration has been merged into main since the PR was opened. If so, rebase the PR and re-number your migrations to be the next number after the latest migration in main.
+
+## 5. Validate publishing — don't stop at "the merge succeeded"
 
 A merge landing and a deploy succeeding are different facts, and this repo
 auto-deploys to production on every merge to `main` that touches `apps/api` or
