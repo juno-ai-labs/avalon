@@ -211,4 +211,26 @@ describe('markdown list markers', () => {
       expect(offenders).toEqual([]);
     },
   );
+
+  // The heading scales are the deliberate exception, and how they win matters as
+  // much as that they win. Written as `.note-detail-article :is(h1, …)` they tie
+  // `.markdown-body h1` at (0,1,1) and are decided by which sits lower in the
+  // file — so splitting this stylesheet, or moving either block, would return
+  // both surfaces to the shared scale with nothing going red. That is the same
+  // silent visual regression as the missing markers, arriving the same way.
+  // Naming `.markdown-body` in the selector settles it on specificity instead,
+  // and this is what stops the class being tidied back out.
+  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
+    'wins its heading scale on specificity rather than source order in %s',
+    (host) => {
+      const headingRules = preludes()
+        .filter((prelude) => prelude.includes(host))
+        .filter((prelude) => elementsIn(prelude).some((element) => /^h[1-6]$/u.test(element)));
+
+      expect(headingRules.length).toBeGreaterThan(0);
+      for (const prelude of headingRules) {
+        expect(prelude).toContain('.markdown-body');
+      }
+    },
+  );
 });

@@ -2533,8 +2533,11 @@ pre {
 }
 .note-detail-main { display: grid; grid-template-rows: 55px minmax(0, 1fr); min-width: 0; }
 .note-detail-scroll { min-height: 0; overflow-y: auto; }
+/* `font-size` and `line-height` are the empty state's; the markdown carries its
+   own. No `color` here: `.markdown-body` sets one on itself and a declaration
+   beats inheritance, so a colour stated on this element would reach the markdown
+   not at all and the empty state — which sets `--muted-2` below — not either. */
 .note-detail-article {
-  color: var(--ink-soft);
   font-size: 14px;
   line-height: 1.68;
   margin: 0 auto;
@@ -2547,14 +2550,20 @@ pre {
    comes from that container. A note reads as a document page rather than a chat
    turn, and its heading scale is the one thing worth saying twice: 22/17/14
    against the shared 18/16/14.5, which stays close together because a transcript
-   turn is too short for a hierarchy to be worth much.
-   Nothing else belongs here. This surface used to restate the list geometry too,
-   and restating it is precisely how it came to be missing a marker rule the
-   shared container had. The declarations above still cover the empty state. */
-.note-detail-article :is(h1, h2, h3, h4, h5, h6) { color: var(--ink); margin: 28px 0 10px; }
-.note-detail-article h1 { font-size: 22px; }
-.note-detail-article h2 { font-size: 17px; }
-.note-detail-article :is(h3, h4, h5, h6) { font-size: 14px; }
+   turn is too short for a hierarchy to be worth much. Nothing else belongs here.
+   This surface used to restate the list geometry too, and restating it is
+   precisely how it came to be missing a marker rule the shared container had.
+
+   `.markdown-body` is named in the selector so these win on **specificity**
+   rather than on sitting lower in the file than the shared scale. Written as
+   `.note-detail-article :is(h1, …)` they tied `.markdown-body h1` at (0,1,1) and
+   won only by source order — which is the precise hazard this arrangement exists
+   to avoid, so splitting the stylesheet or moving either block would have put a
+   note quietly back on the transcript's headings with nothing going red. */
+.note-detail-article .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--ink); margin: 28px 0 10px; }
+.note-detail-article .markdown-body h1 { font-size: 22px; }
+.note-detail-article .markdown-body h2 { font-size: 17px; }
+.note-detail-article .markdown-body :is(h3, h4, h5, h6) { font-size: 14px; }
 .note-detail-empty,
 .note-transcript-empty {
   align-items: center;
@@ -2750,8 +2759,10 @@ pre {
 /* The one deliberate departure from the shared renderer, for the same reason the
    note above has one: this briefing lives in a narrow rail beside a transcript,
    where a descending heading scale mostly wastes the width, so every level sits
-   at one size. Everything else the briefing draws is `.markdown-body`'s. */
-.meeting-notes-body :is(h1, h2, h3, h4, h5, h6) {
+   at one size. Everything else the briefing draws is `.markdown-body`'s — which
+   is also named here, so this wins on specificity rather than on source order.
+   See the note's block for why that distinction is worth a class. */
+.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6) {
   font-size: 15px;
   margin: 22px 0 8px;
 }
