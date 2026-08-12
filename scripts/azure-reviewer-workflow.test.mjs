@@ -144,7 +144,9 @@ test('reviewers prefetch bounded context and deny Cline all tools', async () => 
 	assert.match(modelReview, /--cwd "\$CLINE_WORKSPACE"/u);
 	assert.match(modelReview, /--auto-approve false/u);
 	assert.match(modelReview, /--json/u);
-	assert.match(modelReview, /< "\$PROMPT_FILE"/u);
+	assert.match(modelReview, /set -o pipefail/u);
+	assert.match(modelReview, /cat "\$PROMPT_FILE" \| cline/u);
+	assert.doesNotMatch(modelReview, /< "\$PROMPT_FILE"/u);
 	assert.match(modelReview, /> "\$OUTPUT_FILE"/u);
 	assert.match(modelReview, /select\(\.type == "run_result" and \.finishReason == "completed"\)/u);
 

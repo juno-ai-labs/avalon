@@ -262,13 +262,15 @@ jobs:
           } > "$PROMPT_FILE"
 
           # `--auto-approve false` plus non-TTY stdin/stdout is the enforcement
-          # boundary: Cline denies every tool request. The process receives no
-          # workflow token and runs in an empty directory with no PR checkout.
-          if ! cline \
+          # boundary: Cline denies every tool request. Use an actual pipe because
+          # Cline's JSON mode does not treat regular-file redirection as piped
+          # input. The process receives no workflow token and runs in an empty
+          # directory with no PR checkout.
+          set -o pipefail
+          if ! cat "$PROMPT_FILE" | cline \
             --cwd "$CLINE_WORKSPACE" \
             --auto-approve false \
             --json \
-            < "$PROMPT_FILE" \
             > "$OUTPUT_FILE" \
             2> >(grep -vF "The 'openai-compatible' key in providerOptions is deprecated. Use 'openaiCompatible' instead." >&2); then
             echo "::error::Cline did not complete the review."
