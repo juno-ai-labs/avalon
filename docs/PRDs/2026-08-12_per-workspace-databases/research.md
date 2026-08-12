@@ -116,6 +116,11 @@ limits](https://developers.cloudflare.com/durable-objects/platform/limits/):
 
 Relevant properties:
 
+- **FTS5 is supported.** The [SQLite storage API
+  docs](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+  list the supported extensions: the "FTS5 module for full-text search
+  (including `fts5vocab`)", the JSON extension, and math functions — so
+  D1-style FTS5 full-text search carries over to Durable Object SQLite.
 - **This is the primitive D1 is built on.** A D1 database *is* a SQLite-backed
   Durable Object plus an HTTP/binding front end and dashboard tooling
   ([Cloudflare blog](https://blog.cloudflare.com/sqlite-in-durable-objects/)).
