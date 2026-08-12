@@ -36,7 +36,7 @@ import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
-import { createTextMessage } from '../lib/transcript';
+import { createTextMessage, removeTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -1221,6 +1221,14 @@ export function WorkstreamScreen(): React.JSX.Element {
       : current);
     try {
       await api!.resolveActivitySuggestion(id, suggestionId, action);
+      // A disconnected socket cannot deliver the resolved event that normally
+      // removes a dismissal from the feed. Apply the successful decision here
+      // too so the card does not survive while an active run makes transcript
+      // reconciliation retain newer realtime rows.
+      if (action === 'dismiss') {
+        queryClient.setQueryData<Message[]>(['messages', id], (current) =>
+          removeTranscriptMessage(current, `suggestion-${suggestionId}`));
+      }
     } catch (error) {
       // 404 and 409 both mean the server no longer holds this suggestion open,
       // so its card must not return offering buttons over a decision already
