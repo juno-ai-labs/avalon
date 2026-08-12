@@ -562,7 +562,13 @@ only how to read it back.
 
 ### OpenRouter unavailable
 
-The harness tries configured fallback models within its wall-clock and iteration limits. If all fail, the run becomes `failed` and the work stream retains its persisted context. Check redacted structured logs by request, workspace, work-stream, and harness-run IDs; never add prompt bodies or credentials to logs.
+The harness tries configured fallback models within its per-request and stream
+watchdogs plus the caller's run policy. An ordinary work-stream run allows 1,000
+turns and has a one-year Workflow deadline; bounded callers retain their smaller
+wall-time and iteration ceilings. If all models fail, the run becomes `failed`
+and the work stream retains its persisted context. Check redacted structured
+logs by request, workspace, work-stream, and harness-run IDs; never add prompt
+bodies or credentials to logs.
 
 ### Ambiguous external write
 

@@ -291,10 +291,14 @@ execution. The loop overlaps safe reads, serializes writes, records execution pl
 and results, replays completed receipts, and stops rather than repeating an
 ambiguous external write.
 
-The run also enforces context, token, cost, iteration, tool-call, wall-clock, and
-streaming-watchdog limits. Classified provider attempts append to an immutable
-inference ledger. Cancellation is a durable request observed by the lease owner,
-which alone commits the final `stopped` transition.
+Run limits are caller-specific. Ordinary work-stream runs enforce a 1,000-turn
+cap but no aggregate tool-call, model-cost, or task-scale wall-time ceiling;
+their Workflow step retains a one-year platform deadline. Unattended HyperSight
+refreshes and other bounded harness callers keep smaller explicit ceilings.
+Context, token, and per-operation streaming watchdogs still apply, and classified
+provider attempts append to an immutable inference ledger. Cancellation is a
+durable request observed by the lease owner, which alone commits the final
+`stopped` transition.
 
 Durable memory is scoped to an ad-hoc work stream, an installed automation
 subscription, a user inside a workspace, or the workspace itself. The host — not
@@ -492,8 +496,10 @@ it.
   ticket, a bounded regional session count, and rate- and size-limited audio
   events. Raw microphone audio and transcripts are not persisted by that bridge.
 - **A run stops rather than repeating an ambiguous external write.** Context,
-  token, cost, iteration, tool-call, wall-clock, and streaming-watchdog limits all
-  terminate the run; the numbers are in [`agent-harness.md`](agent-harness.md).
+  token, iteration, and streaming-watchdog limits terminate ordinary runs;
+  HyperSight and the other bounded callers also enforce their explicit cost,
+  tool-call, and wall-clock ceilings. The caller-specific numbers are in
+  [`agent-harness.md`](agent-harness.md).
 - **A missing or malformed Worker variable fails the isolate at its entrypoint**
   rather than inside the first request that happened to read it.
 - **Cross-region workspace-content access is not implemented.** A caller that
@@ -547,9 +553,29 @@ activation can narrow, but never widen, a run's original authority.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning
-behind the decisions described above was not recorded here and was not
-reconstructed — `git log` and the PRDs under `docs/PRDs/` are what exist. The next
-substantial change to the system's shape starts the record, and that entry is that
-change, written in full.
+### 2026-08-12 — Root work-stream runs use a caller-specific resource policy
+
+**What changed:** Ordinary root runs now allow 1,000 model turns without
+aggregate tool-call, model-cost, or task-scale wall-time ceilings. HyperSight and
+other bounded harness products retain their own smaller ceilings, per-operation
+watchdogs remain, and Cloudflare's required Workflow deadline is one year for an
+ordinary run.
+
+**Why:** A production research run completed eight successful turns and fetched
+its final source on the eighth, then the old eight-turn ceiling prevented the
+ninth turn from reading that result and answering. The shared defaults treated
+legitimate long research and unattended bounded work as the same product.
+
+**Considered and rejected:** Keeping the eight-turn ordinary default would leave
+the observed failure intact. Removing the iteration guard entirely was rejected
+because 1,000 turns leaves practical research room while still terminating a
+pathological model loop. Applying the expanded policy to HyperSight was rejected
+because its scheduled refreshes run without a person present to cancel them.
+
+**Consequences:** Cost and tool usage remain recorded but are not aggregate stop
+conditions for ordinary root runs. Future resource-policy changes must name the
+execution product they govern and preserve the relationship between harness and
+Workflow deadlines. The reasoning behind architecture decisions before this
+entry was not recorded here and was not reconstructed.
+
+Shipped in #130.
