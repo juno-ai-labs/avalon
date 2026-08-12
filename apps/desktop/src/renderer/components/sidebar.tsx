@@ -341,6 +341,9 @@ function WorkstreamRow({
 }): React.JSX.Element {
   const isPrivate = workstream.scope === 'personal';
   const isPinned = workstream.pinPosition !== null;
+  const nextWakeupTime = workstream.nextPendingWakeup
+    ? formatDateTime(workstream.nextPendingWakeup.dueAt)
+    : null;
   // Two kinds of row take their audience from something other than this
   // column, so offering the toggle on them would describe a change that does
   // not happen: a subsystem's own work stream is machinery, and one an
@@ -443,7 +446,11 @@ function WorkstreamRow({
             {workstream.nextPendingWakeup && (
               <Tooltip.Root delayDuration={300}>
                 <Tooltip.Trigger asChild>
-                  <span aria-label="Active timer" className="sidebar-workstream-timer" role="img">
+                  <span
+                    aria-label={`Active timer. Next: ${nextWakeupTime}. ${workstream.nextPendingWakeup.promptPreview}`}
+                    className="sidebar-workstream-timer"
+                    role="img"
+                  >
                     <Clock aria-hidden="true" size={15} strokeWidth={1.7} />
                   </span>
                 </Tooltip.Trigger>
@@ -454,7 +461,7 @@ function WorkstreamRow({
                     side="right"
                     sideOffset={8}
                   >
-                    <strong>Next: {formatDateTime(workstream.nextPendingWakeup.dueAt)}</strong>
+                    <strong>Next: {nextWakeupTime}</strong>
                     <span>{workstream.nextPendingWakeup.promptPreview}</span>
                     <Tooltip.Arrow className="tooltip-arrow" />
                   </Tooltip.Content>
