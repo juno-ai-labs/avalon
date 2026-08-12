@@ -145,6 +145,12 @@ the words are Avalon's, and both the transcript label and the model projection r
 it from there rather than from the author. The creation path itself belongs to
 [`workstream-creation.md`](workstream-creation.md).
 
+The activity provenance roots behind the suggestion are attached to the new work
+stream as origin resources — up to eight, and only those held through a
+workspace connection or the selecting member's own — so the work stream links
+back to the issue, thread, or page it was proposed from. See
+[work-stream origin attachments](workstream-origin-attachments.md).
+
 ## Invariants
 
 - **A request never ranks.** `list()` reads `suggested_work_sets` and filters it to

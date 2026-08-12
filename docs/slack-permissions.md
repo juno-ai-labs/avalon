@@ -108,7 +108,7 @@ The production manifest requests these scopes as one administrator-approved bund
 | `im:history` | Receive Agent DM prompts and read accessible DM history. |
 | `im:read` | Discover bot-visible direct-message conversations and membership, and read a DM's conversation metadata to tell an ordinary DM from a Slack Connect DM before an unfurl names a work stream. |
 | `im:write` | Open an Agent DM for account linking, notifications, automation delivery, or workspace `slack_create_conversation`. |
-| `links:read` | Receive `link_shared` events for supported Avalon URLs. |
+| `links:read` | Receive `link_shared` events for supported Avalon URLs. Slack's own permalink for a thread Avalon was summoned in is read with `chat.getPermalink`, which needs no scope of its own beyond the bot's access to that conversation. |
 | `links:write` | Attach a work-stream preview — title, status, last activity, origin — to an eligible Avalon URL with `chat.unfurl`, or an anonymous card where the audience is not known to be internal. |
 | `mpim:history` | Read accessible multi-person-DM history and threads. |
 | `mpim:read` | Discover accessible multi-person DMs and membership, and read their conversation metadata for the same unfurl audience check. Avalon does not subscribe to ordinary `message.mpim` traffic. |

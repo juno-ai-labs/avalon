@@ -32,6 +32,11 @@ import { automationModelOverride, scheduledWorkstreamModel } from "../services/a
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
+import {
+  activityOriginResourceDescriptor,
+  attachWorkstreamOriginResource,
+  connectorActivityUrl,
+} from "../services/workstream-origin-resource";
 import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 
@@ -349,7 +354,7 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
     actorLabel: connectorActorLabel(activity),
     title: activity.title,
     body: activity.summary || activity.text_snippet,
-    canonicalUrl: connectorActivityUrl(activity),
+    canonicalUrl: connectorActivityUrl(activity.metadata_json),
     occurredAt: activity.occurred_at,
     sourceKind: "activity",
     sourceId: activity.id,
@@ -438,15 +443,6 @@ function connectorActorLabel(activity: ActivityRow): string {
   const displayName = parseRecord(activity.actor_json).displayName;
   if (typeof displayName === "string" && displayName.length > 0) return displayName;
   return activity.provider;
-}
-
-function connectorActivityUrl(activity: ActivityRow): string | null {
-  const metadata = parseRecord(activity.metadata_json);
-  // Providers disagree on the key; take the first that is actually a link.
-  for (const candidate of [metadata.canonicalUrl, metadata.url, metadata.htmlUrl, metadata.permalink]) {
-    if (typeof candidate === "string" && /^https?:\/\//u.test(candidate)) return candidate;
-  }
-  return null;
 }
 
 async function loadActivity(env: Env, input: ActivityQueueMessage): Promise<ActivityRow | null> {
@@ -809,6 +805,19 @@ async function startActivityAutomation(
       ).bind(runId, workstreamId, activity.workspace_id)
     ]);
     run = { id: runId, workstream_id: workstreamId, workflow_instance_id: null, status: "running" };
+    // The activity is the whole reason this work stream exists, so the object
+    // behind it is attached before the Workflow starts — the run's first
+    // context read then already names the issue, page, or thread it is about.
+    // Ownerless on purpose: an automation fired, nobody attached anything.
+    const originResource = activityOriginResourceDescriptor(activity);
+    if (originResource) {
+      await attachWorkstreamOriginResource(env, {
+        workspaceId: activity.workspace_id,
+        workstreamId,
+        attachedByUserId: null,
+        descriptor: originResource,
+      });
+    }
   } else {
     const harness = await env.DB.prepare(
       `SELECT id FROM harness_runs
