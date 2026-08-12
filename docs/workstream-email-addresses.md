@@ -310,12 +310,19 @@ changed literal means the vocabulary moved, which is the thing that must not hap
 inside a version.
 
 And **the three vocabulary headings in this document are load-bearing**.
-`workstream-email-address.test.ts` reads this file and parses each list out of the
-`text` block that follows a heading matching `## Frozen v1 <section> (`, then
-asserts it byte-for-byte against the arrays in code. Renaming one of those headings,
-or moving a list out of its fenced block, fails the suite with a missing-vocabulary
-error rather than a mismatch — the coupling is deliberate, because it is what stops
-the document and the allocator drifting apart.
+`workstream-email-address.test.ts` reads this file, locates each list by
+`indexOf("## Frozen v1 <section> (")`, takes the fenced `text` block that follows,
+and asserts it byte-for-byte against the arrays in code. Renaming one of those
+headings, or moving a list out of its fenced block, fails the suite with a
+missing-vocabulary error rather than a mismatch — the coupling is deliberate,
+because it is what stops the document and the allocator drifting apart.
+
+The subtlety, since it reads like a bug both ways: that is a **substring** search,
+not a line-prefix match, so it is satisfied by any heading level of two hashes or
+more. The headings here are `####`, nested under **The frozen v1 vocabulary**, and
+`"#### Frozen v1 adjectives ("` contains `"## Frozen v1 adjectives ("` at index 2.
+Deepening or flattening the nesting is therefore safe as long as at least two
+hashes remain; changing the words after them is not.
 
 ## Changelog
 
