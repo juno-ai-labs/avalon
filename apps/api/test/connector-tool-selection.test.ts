@@ -464,7 +464,6 @@ describe("connector tools selected for harness runs", () => {
     )?.tools.map(({ definition }) => definition.name)).toEqual(expect.arrayContaining([
       "read",
       "read_resource",
-      "create_artifact",
       "run_subagent",
     ]));
     expect(selected.tools.filter(({ definition }) =>

@@ -19,15 +19,14 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
  * route's own `parse` be the assertion, so a column this code stops selecting or
  * an enum a migration widens fails here rather than in production.
  *
- * `GET /:id/context` matters most: `loadArtifacts` and `loadBackgroundTasks` are
- * reached from nowhere else, and their rows only exist once a work stream has
- * run the agent — so an empty-result test exercises none of the mapping.
+ * `GET /:id/context` matters most: `loadBackgroundTasks` is reached from nowhere
+ * else, and its rows only exist once a work stream has run the agent — so an
+ * empty-result test exercises none of the mapping.
  */
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
 const USER = "00000000-0000-7000-8000-000000000002";
 const WORKSTREAM = "00000000-0000-7000-8000-000000000003";
 const RUN = "00000000-0000-7000-8000-000000000004";
-const ARTIFACT = "00000000-0000-7000-8000-000000000005";
 const TOOL_CALL = "00000000-0000-7000-8000-000000000006";
 const ACTIVITY = "00000000-0000-7000-8000-000000000007";
 const SUGGESTION = "00000000-0000-7000-8000-000000000008";
@@ -79,11 +78,6 @@ function seedAgentRun(database: DatabaseSync): void {
        started_at, completed_at, model, usage_json, created_at)
     VALUES ('${RUN}', '${WORKSPACE}', '${WORKSTREAM}', 'human_message', '{}', 'completed',
             '${AT}', '${AT}', 'x-ai/grok-4.3', '{"prompt_tokens":42,"completion_tokens":8}', '${AT}');
-    INSERT INTO artifacts
-      (id, workspace_id, workstream_id, harness_run_id, artifact_type, title, preview_text,
-       status, metadata_json, created_at, updated_at)
-    VALUES ('${ARTIFACT}', '${WORKSPACE}', '${WORKSTREAM}', '${RUN}', 'markdown', 'Changelog',
-            'A summary.', 'complete', '{}', '${AT}', '${AT}');
     INSERT INTO tool_invocations
       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
        input_hash, input_json, status, started_at, completed_at)
@@ -119,21 +113,24 @@ function appFor(database: DatabaseSync) {
 }
 
 describe("work-stream response contracts, driven through the real queries", () => {
-  it("serves a context of artifacts and background tasks from a run that happened", async () => {
+  it("serves a context of background tasks from a run that happened", async () => {
     const database = seededDatabase();
     seedAgentRun(database);
     const { app, env } = appFor(database);
 
     const response = await app.request(`/workstreams/${WORKSTREAM}/context`, undefined, env);
 
-    // `ArtifactRowSchema`, `HarnessTaskRowSchema` and `ToolTaskRowSchema` are
-    // only reachable from here, and only once these rows exist. A 200 means all
-    // three matched the columns their queries actually select.
+    // `HarnessTaskRowSchema` and `ToolTaskRowSchema` are only reachable from
+    // here, and only once these rows exist. A 200 means both matched the
+    // columns their queries actually select.
     expect(response.status).toBe(200);
-    const body = WorkstreamContextSchema.parse(await response.json());
-    expect(body.artifacts).toEqual([
-      expect.objectContaining({ id: ARTIFACT, artifactType: "markdown", title: "Changelog" }),
-    ]);
+    const payload = await response.json();
+    // Asserted on the raw body rather than through the schema, which would
+    // supply the default itself. A desktop build in the wild requires this
+    // field and fails the whole response without it, so what matters is that
+    // it is actually serialized — see `WorkstreamContextSchema`.
+    expect(payload).toMatchObject({ artifacts: [] });
+    const body = WorkstreamContextSchema.parse(payload);
     expect(body.backgroundTasks).toEqual([
       expect.objectContaining({ id: RUN, taskType: "agent", status: "completed", tokenCount: 50 }),
       expect.objectContaining({ id: TOOL_CALL, taskType: "tool", status: "completed" }),

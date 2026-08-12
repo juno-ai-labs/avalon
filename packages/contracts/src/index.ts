@@ -303,7 +303,7 @@ export const MessageSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   author: MessageAuthorSchema,
-  messageType: z.enum(["text", "system", "tool", "artifact", "elicitation", "suggestion"]),
+  messageType: z.enum(["text", "system", "tool", "elicitation", "suggestion"]),
   textContent: z.string(),
   structuredContent: z.record(z.string(), z.unknown()).nullable(),
   mentions: z.array(MentionSchema),
@@ -594,20 +594,6 @@ export const HarnessRunMetadataSchema = z.object({
   createdAt: TimestampSchema
 });
 
-export const WorkstreamArtifactSchema = z.object({
-  id: IdSchema,
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  harnessRunId: IdSchema.nullable(),
-  artifactType: z.string().min(1).max(80),
-  title: z.string().min(1).max(300),
-  previewText: z.string().max(4000).nullable(),
-  status: z.string().min(1).max(80),
-  mimeType: z.string().min(1).max(160),
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema
-});
-
 export const BackgroundTaskSchema = z.object({
   id: IdSchema,
   harnessRunId: IdSchema,
@@ -718,7 +704,6 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   viewers: z.array(ViewerSchema),
   resources: z.array(ResourceSchema),
   connections: z.array(ConnectionSchema),
-  artifacts: z.array(WorkstreamArtifactSchema).default([]),
   backgroundTasks: z.array(BackgroundTaskSchema).default([]),
   openElicitations: z.array(ElicitationSchema),
   suggestions: z.array(ActivitySuggestionSchema),
@@ -727,7 +712,32 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
 });
 
 export const WorkstreamContextSchema = z.object({
-  artifacts: z.array(WorkstreamArtifactSchema),
+  /**
+   * Vestigial, and read by nothing. Artifacts were removed in this release, but
+   * this one schema is parsed on **both** sides of the wire — the route parses
+   * its own response with it, and the desktop parses that response with the same
+   * copy — so it has to tolerate both directions of version skew across a
+   * rollout, and `GET /:id/context` is what fills the work-stream context rail.
+   *
+   * Old client, new server: a build in the wild bundles a copy that *requires*
+   * the field — unlike `WorkstreamDetailSchema`, which defaulted it — so leaving
+   * it out fails the whole response. `.default([])` is what puts it on the wire.
+   *
+   * New client, old server: a Worker that predates this release still returns
+   * real rows here, and EU deploys before Global, so one region runs the old
+   * Worker for part of every rollout and indefinitely if the other half fails.
+   * The element type is therefore permissive rather than `never`: rejecting a
+   * populated array would fail the whole response for the same reason, one
+   * direction over. Emptiness is the *server's* invariant and is enforced where
+   * the server is — `WorkstreamService.context` returns only `backgroundTasks`,
+   * and `workstream-response-contracts.test.ts` asserts `[]` on the raw body.
+   *
+   * Drop the field one release after the build carrying this change ships. Do
+   * not write a fixed version number here: this comment already named one that
+   * went stale while the branch waited, when `main` shipped two releases without
+   * it.
+   */
+  artifacts: z.array(z.unknown()).default([]),
   backgroundTasks: z.array(BackgroundTaskSchema)
 });
 
@@ -1928,7 +1938,6 @@ export type Connection = z.infer<typeof ConnectionSchema>;
 export type AutomationDeliveryTargetType = z.infer<typeof AutomationDeliveryTargetTypeSchema>;
 export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
-export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;

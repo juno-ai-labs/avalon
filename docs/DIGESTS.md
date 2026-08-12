@@ -256,7 +256,7 @@ the app.
 ### The system work stream
 
 The agent loop is work-stream shaped end to end — the transcript is `messages`,
-and compaction, tool invocations, artifacts and the realtime room all key off
+and compaction, tool invocations and the realtime room all key off
 `workstream_id`. Running the *normal* loop therefore means having a work stream,
 and reusing that abstraction is the point: a digest run gets compaction, tool
 receipts, the realtime room and the transcript for free.
@@ -453,6 +453,56 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
 
 ## Changelog
+
+### 2026-08-12 — A digest run has nowhere to put its summary except the message it ends with
+
+**What changed:** `renderDigestBrief` now opens by telling the run that its final
+message *is* the digest and is mailed verbatim — that no summary of it, report
+about it, or closing sentence may take its place — and `settleDigestRun` refuses
+to settle on a final message too short to be one. The `create_artifact` tool a
+digest run could reach — every digest executes the ordinary work-stream loop, so
+it loaded `avalon_workstream` like any other run — no longer exists. See
+[`AGENT_HARNESS.md`](AGENT_HARNESS.md#changelog).
+
+**Why:** A run wrote its digest into an artifact and ended with "Outcome: Digest
+artifact created (id …)". `deliverResultsDurably` passes `message.textContent` to
+`settleDigestRun`, so that sentence became `summary_markdown` and was mailed as
+the digest. Nothing failed: the text was non-empty and the run completed, so the
+delivery settled as `delivered` and `cursor_through` advanced past events the
+recipient was never actually told about. That is the specific failure the "a run
+that could not write a digest sends nothing" branch exists to prevent, and it
+could not catch this one — from the settlement layer's position a one-line
+receipt and a real digest are both just text.
+
+**Considered and rejected:** Reading the artifact when the final message looks
+like a receipt. It puts a heuristic between a run and what gets mailed, and every
+delivery surface would need its own copy of it.
+
+**Bounded rather than trusted.** The prompt alone would have left the expensive
+half of this open — a run can still end on a sign-off, and settlement cannot tell
+one from a digest — so `settleDigestRun` now refuses to settle on a final message
+shorter than `MINIMUM_DIGEST_CHARACTERS`. That is deliberately a floor on
+*implausibility*, not the "does this look like a digest" test rejected above: a
+run only reaches settlement when its window held an event, and the brief mandates
+an opening sentence, `## ` sections and `- ` bullets, so a real digest clears it
+by an order of magnitude. The asymmetry is the argument — rejecting a real digest
+costs one delayed occurrence and the events return in the next one, because a
+failed delivery does not move the cursor, while accepting a receipt costs the
+window permanently.
+
+**Consequences:** Three things now stand between a run and a consumed window,
+and they are not interchangeable. Removing the tool closed the destination this
+run happened to find. `renderDigestBrief` is the only place that establishes
+where a digest goes, so the sentence saying so has to stay whenever the brief is
+reworded. The floor in settlement is the only one that holds when the other two
+fail, which is why it is a hard refusal rather than a warning — and it is also
+the only one that can be wrong in the cheap direction. Treat any future tool that
+offers a run somewhere else to write as re-opening the first of the three.
+
+A digest genuinely shorter than the floor is now undeliverable rather than
+merely unlikely. If that ever becomes a real case — a workspace whose windows are
+routinely one line — the fix is to lower the floor deliberately, not to remove
+it: the branch it routes into is what keeps the events.
 
 ### 2026-08-12 — Each occurrence gets its own work stream, because a shared one was an unbounded context channel between digests
 

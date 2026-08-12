@@ -275,7 +275,6 @@ describe('useWorkstreamSocket', () => {
       viewers: [],
       resources: [],
       connections: [],
-      artifacts: [],
       backgroundTasks: [],
       automationRuns: [],
     };

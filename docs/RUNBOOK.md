@@ -591,7 +591,13 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 ## Recovery and data handling
 
 - D1 is canonical for work streams, messages, runs, schedules, connector metadata, and audit events.
-- R2 stores large payloads, uploads, snapshots, and artifacts referenced by D1.
+- R2 stores large payloads, uploads, and snapshots referenced by D1.
 - Durable Object storage coordinates presence, ordering, sockets, and alarms; it is not the backup source.
 - Production never loads `packages/db/seed.sql`.
 - Restore D1 and its corresponding R2 objects as a region-consistent set before resuming Queue consumers or scheduler alarms.
+
+### Finishing the artifact retirement
+
+Retiring artifacts is staged across two releases, for the reason [the migration window](#the-window-between-a-migration-and-the-worker-that-needs-it) gives: the Worker that is live while a migration applies still reads `artifacts` on every `GET /workstreams/:id/context`, so the table cannot go in the same release as the code that stopped reading it. `0069_retire_artifact_messages.sql` therefore only retires the `'artifact'` message type. **A later release still owes a `DROP TABLE artifacts` migration**, and it is safe to write once no deployed Worker reads the table — after the release carrying that code removal is live in both regions.
+
+The R2 objects are the third step and are not reachable from a migration at all. The retired `create_artifact` tool wrote them under `<region>/<workspace>/artifacts/<artifact-id>.txt` in both regions, and `artifacts.content_ref` holds their only pointers — so sweep them **before** the drop lands, or enumerate them from the table first, or they become unreferenced with nothing left to enumerate. Delete by prefix once per region — `wrangler r2 object delete` per key, or a bucket lifecycle rule on the prefix — and confirm the prefix lists empty afterwards. Do it deliberately rather than as part of a deploy: the objects are the last copy of anything an agent wrote there, so anything worth keeping has to be pulled out first.
