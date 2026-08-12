@@ -241,9 +241,10 @@ policies that will drift.
 
 `apps/api/test/activity-contextual-routing.test.ts` keeps the dormant prior,
 feedback reads, corroboration rule, and candidate exclusions covered against a
-migrated in-memory SQLite database. Work-opportunity, work-stream response, and
-desktop transcript/socket tests separately assert that the pause creates and
-shows no cards.
+migrated in-memory SQLite database. Its queue-level regression also proves the
+pause skips inference while preserving Suggested work batching. Work-opportunity,
+work-stream REST and room-snapshot, and desktop transcript/socket tests
+separately assert that the pause creates and shows no cards.
 
 ```bash
 pnpm --filter @avalon/api exec vitest run test/activity-contextual-routing.test.ts
