@@ -144,10 +144,14 @@ until finalization lands this window *is* the meeting: the transcript tail is
 still buffered in it, the final summary has not been written, and the note is not
 marked complete. **End and close** takes the native path from there; **Keep
 recording** leaves the window and the capture exactly as they were. A `quit`
-close is never asked, and this is the load-bearing half: `before-quit` sets the
-flag for the cascade that follows, so a meeting window that stopped to confirm
-would veto the quit and leave Avalon running with a dialog nobody went looking
-for. Anything the preload cannot read as `user` is treated as a quit.
+close is never asked, and this is the load-bearing half: a meeting window that
+stopped to confirm would veto the quit and leave Avalon running with a dialog
+nobody went looking for. `before-quit` raises the flag and the last meeting
+window to close lowers it, so it says *a quit was requested and has not
+finished* rather than *a quit was requested just now* — the close it describes
+can arrive later than the cascade, and a window mid-fullscreen-transition on
+macOS is where it does. Anything the preload cannot read as `user` is treated as
+a quit.
 
 ### Landing a briefing
 
@@ -390,11 +394,18 @@ this is a request to close, already confirmed once, and asking twice about the
 same intent is how a window becomes impossible to shut.
 
 **What a future change has to respect:** the quit path stays unprompted, and the
-`quitting` flag is cleared on the next turn of the loop rather than at
-`will-quit` — a meeting window finalizes asynchronously and therefore vetoes the
-very quit that set it, so a flag left standing would silence the confirmation for
-the rest of the session. An unreadable reason must keep resolving to `quit`:
-failing to ask closes a window, failing to close hangs a quit.
+`quitting` flag is a state rather than a moment. It cannot be cleared at
+`will-quit`, because a meeting window finalizes asynchronously and therefore
+vetoes the very quit that set it — `will-quit` never fires, and a flag left
+standing would silence the confirmation for the rest of the session. It also
+cannot be cleared on a timer keyed to the cascade, which review caught before
+this landed: `NativeWindowMac::Close` defers a close while the window is
+mid-fullscreen-transition, so the `close` event can arrive after any such reset
+and be answered with a dialog — vetoing the quit silently, the exact outcome the
+reason exists to prevent. The last meeting window to close is what lowers it,
+because a meeting window is the only thing that vetoes a quit in the first
+place. An unreadable reason must keep resolving to `quit`: failing to ask closes
+a window, failing to close hangs a quit.
 
 ### 2026-08-11 — One meeting keeps one cadence, and the client is what keeps it
 
