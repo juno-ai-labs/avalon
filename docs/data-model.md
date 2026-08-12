@@ -268,6 +268,12 @@ includes it. Knowing an object ID is never sufficient authorization.
 
 - `connector_connections` owns scope, encrypted provider credentials,
   capabilities, cursors, and health.
+- `notion_webhook_setup_nonces` exists in both regional schemas but is used only
+  by Global. It stores a SHA-256 nonce hash, a 30-minute expiry, and — only after
+  consumption — the hash of the Notion verification token that claimed it.
+  `provider_webhook_challenges.setup_nonce_hash` links the active encrypted token
+  to the nonce allowed to retry it, so a newer subscription setup makes older
+  nonce/token pairs unable to restore a superseded signing secret.
 - `slack_installation_routes` is the opaque Global team-to-region directory;
   `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`
   remain regional.
@@ -395,9 +401,24 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the schema decisions above — beyond the reasons already written inline — was not
-recorded here and was not reconstructed. The migrations, `git log`, and the PRDs
-under `docs/PRDs/` are what exist. The next substantial change to the schema starts
-the record, and that entry is that change, written in full.
+### 2026-08-12 — Notion setup nonces are token-bound and superseding
+
+**What changed:** `notion_webhook_setup_nonces` stores short-lived nonce hashes
+and the verification-token hash fixed by first use.
+`provider_webhook_challenges.setup_nonce_hash` identifies the setup that owns the
+active ciphertext, and a database trigger updates that link in the same statement
+that consumes a nonce.
+
+**Why:** Notion cannot sign the challenge that establishes its later signing
+secret, while Cloudflare records every webhook query string. A reusable URL guard
+therefore leaked into observability, and a plain consumed flag was insufficient:
+after a subscription rotation, replaying the old valid nonce/token pair could
+otherwise restore the old secret. Linking consumption to the challenge inside
+the same SQLite statement preserves a retry if the Worker fails before encrypted
+storage and prevents a superseded setup from winning later. A separate public
+token-retrieval table or endpoint was rejected; the existing encrypted challenge
+row is read and decrypted only by local operator tooling.
+
+This document predates the changelog rule; reasoning for earlier schema decisions
+beyond the inline prose was not reconstructed. The migrations, `git log`, and the
+PRDs under `docs/PRDs/` are the remaining record.

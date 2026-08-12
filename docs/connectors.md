@@ -250,6 +250,45 @@ The request body must be a JSON object no larger than the regional provider-webh
 
 Avalon verifies the HMAC over the exact received bytes before UTF-8 decoding or JSON parsing. Invalid signatures return `401`, malformed or schema-invalid bodies return `400`, disallowed events or non-member targets return `422`, identity/dedupe collisions return `409`, oversized bodies return `413`, and new deliveries return `202` (`200` when the same delivery is already known). Senders should retry network failures and `5xx` responses with exponential backoff using the same identity and exact body; they must not reuse an identity or dedupe key with changed content.
 
+### Unsigned webhook subscription handshakes
+
+Use Notion's setup flow as the reference pattern when a provider sends an
+**unsigned setup challenge whose plaintext becomes the secret for later webhook
+verification**, especially when the provider's dashboard requires an operator to
+paste that plaintext back. This is narrower than ordinary webhook verification:
+GitHub and Linear start with developer-configured signing secrets, Slack starts
+with its app signing secret, Granola returns a Standard Webhooks signing secret
+while Avalon creates the endpoint, and generic webhooks are created by Avalon.
+Those connectors do not need this handshake.
+
+For a provider that does match the pattern:
+
+1. Generate a cryptographically random, short-lived setup nonce and put it in the
+   one setup URL. Store only its hash and expiry. Never put a reusable setup
+   credential in the query string: edge and platform observability may capture the
+   complete URL before application logging or redaction runs.
+2. Consume the nonce atomically with the first challenge, binding it to a hash of
+   the delivered verification secret and to the encrypted active-secret row. A
+   retry of the same pair is idempotent; a different secret, an expired or already
+   consumed nonce, and an older pair superseded by a newer setup are rejected.
+3. Encrypt the delivered secret immediately and never log it or return it from a
+   public API. If an operator must paste it into the provider UI, supply a local
+   command that reads the ciphertext through authenticated infrastructure
+   administration access,
+   decrypts with the region's existing connector key and version, and writes the
+   plaintext directly to the clipboard without printing or persisting it.
+4. In a multi-region single-ingress design, authorize and capture the challenge at
+   the public ingress, then forward the plaintext only over the authenticated
+   internal regional binding so every region can encrypt its own copy. Do not ask
+   the provider to repeat a one-time challenge to each region.
+
+The setup runbook must preserve that order: prepare the one-time URL, create or
+rotate the provider subscription, retrieve the captured secret locally if the UI
+requires it, then verify delivery. Keep provider-specific storage and commands in
+the provider's module document; extract shared code only when a second connector
+actually needs the pattern. Notion's implementation, retry rules, regional fan-out,
+and operator commands are documented in [`notion-ingress.md`](notion-ingress.md).
+
 ### Activity ingestion
 
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
@@ -321,6 +360,14 @@ Every rule below was learned from a defect in production or in review, and each 
 **Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
 
 **A health check must not write.** Provider state that needs restoring goes in `repair`, which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
+
+**An unsigned setup challenge is not a logging channel.** When the delivered
+plaintext will verify future webhooks, authorize the challenge with an expiring,
+single-use, token-bound nonce, encrypt the plaintext immediately, and retrieve it
+only through a local operator handoff. *Notion required its delivered
+`verification_token` to be pasted back into its dashboard, but Cloudflare records
+full request URLs before Worker redaction, making either a reusable query secret
+or a log-based handoff a persistent credential in observability.*
 
 **A health check answers reachability and authorization, never capacity.** Do not read balances, quotas, or credit counts to predict whether a later call will succeed; the provider decides that per call and will say so. *X read `recharge_credits` alone and reported an account holding ~10,000 spendable bonus credits as having none, failing every `plugin_x` load in the workspace.*
 
@@ -462,6 +509,42 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-12 — Unsigned webhook setup is a connector pattern, not a Notion exception
+
+**What changed:** The connector contract now names the narrow class of provider
+handshakes in which an unsigned challenge delivers the secret that will sign
+future webhooks. Such a connector uses a short-lived nonce stored only as a hash,
+atomically binds its first challenge to that nonce, encrypts the delivered secret,
+and gives an operator the plaintext only through a local no-output handoff when a
+provider UI requires it. Notion is the reference implementation. Existing GitHub,
+Linear, Slack, Granola, and generic-webhook connectors are explicitly outside the
+pattern because their signing secrets are configured, returned during authenticated
+endpoint creation, or generated by Avalon rather than arriving in an unsigned
+operator-mediated challenge.
+
+**Why:** Treating the Notion fix as an isolated runbook detail would leave the next
+provider with the same handshake free to repeat both failed designs: a reusable
+query credential that the edge records before application code runs, or logging the
+future signing secret so an operator can recover it. The security property belongs
+to the connector architecture because it is determined by the provider protocol,
+not by Notion's product name.
+
+**Considered and rejected:** Requiring the nonce-and-local-copy workflow for every
+webhook connector. That would add state and ceremony where a provider already has
+a safe configured or authenticated secret exchange, without reducing risk. Also
+rejected: introducing a generic setup-challenge table and adapter facet now. One
+provider uses the flow today; keeping its schema and commands provider-specific
+avoids freezing an abstraction before a second protocol reveals what is actually
+shared.
+
+**Consequences:** A future connector author must classify the provider's webhook
+setup before implementation. If an unsigned delivered value becomes the signing
+secret, the one-time token-bound flow is mandatory and logging is forbidden. If
+the provider supplies or accepts a secret through an authenticated configuration
+path, its existing setup remains sufficient. A second matching provider is the
+point to evaluate a shared adapter facet and storage model, while retaining the
+same observability and plaintext-handoff boundaries.
 
 ### 2026-08-12 — A connector says where the things it produces live
 
