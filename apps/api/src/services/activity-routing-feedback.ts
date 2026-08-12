@@ -148,6 +148,11 @@ export async function suggestionAdmission(
        FROM activity_suggestions s
        JOIN activities a ON a.id = s.activity_id
       WHERE s.workspace_id = ?1
+        -- Contextual routing's own cards only. The suggested-work path publishes
+        -- the same card through the same helper, and counting its resolutions
+        -- here would let one agent's record decide whether the other gets to
+        -- speak. Rows predating the column are 'unknown' and count for nobody.
+        AND s.source = 'contextual_routing'
         AND s.status IN ('accepted', 'dismissed')
         AND s.resolved_at >= ?2
         AND a.provider = ?3
