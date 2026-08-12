@@ -71,6 +71,33 @@ const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
   "hypersight_configuration_updated",
 ]);
 const ACTIVE_STREAM_CHECKPOINTS_KEY = "activeStreamCheckpoints";
+const ACTIVE_STREAM_CHECKPOINT_CHUNK_PREFIX = "activeStreamCheckpointText:";
+// Keep each stored string below even the legacy 128 KiB value ceiling. The
+// room classes use SQLite-backed Durable Objects (whose current value ceiling
+// is larger), but a storage representation should not depend on one enormous
+// value when the response itself has no equivalent product limit.
+const ACTIVE_STREAM_CHECKPOINT_CHUNK_CODE_UNITS = 30_000;
+
+const StoredActiveStreamCheckpointSchema = z.object({
+  messageId: IdSchema,
+  harnessRunId: IdSchema,
+  turnId: z.string().min(1).max(180),
+  epoch: z.number().int().nonnegative(),
+  streamSeq: z.number().int().nonnegative(),
+  seenTurnIds: z.array(z.string().min(1).max(180)),
+  textChunkCount: z.number().int().nonnegative(),
+  turnStartOffset: z.number().int().nonnegative(),
+  roomSequence: z.number().int().nonnegative(),
+  createdAt: z.string().datetime({ offset: true }),
+});
+
+type StoredActiveStreamCheckpoint = z.infer<typeof StoredActiveStreamCheckpointSchema>;
+
+interface ActiveStreamCheckpointStorage {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  put(key: string, value: unknown): Promise<void>;
+  delete(key: string): Promise<boolean>;
+}
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
@@ -104,6 +131,87 @@ interface UserRow {
 }
 
 const textEncoder = new TextEncoder();
+
+function activeStreamCheckpointChunkKey(index: number): string {
+  return `${ACTIVE_STREAM_CHECKPOINT_CHUNK_PREFIX}${String(index).padStart(8, "0")}`;
+}
+
+/** Split without leaving one half of a UTF-16 surrogate pair in either value. */
+export function splitActiveStreamCheckpointText(text: string): string[] {
+  const chunks: string[] = [];
+  for (let start = 0; start < text.length;) {
+    let end = Math.min(text.length, start + ACTIVE_STREAM_CHECKPOINT_CHUNK_CODE_UNITS);
+    const prior = text.charCodeAt(end - 1);
+    const next = text.charCodeAt(end);
+    if (end < text.length && prior >= 0xD800 && prior <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
+      end -= 1;
+    }
+    chunks.push(text.slice(start, end));
+    start = end;
+  }
+  return chunks;
+}
+
+async function loadActiveStreamCheckpoints(
+  storage: ActiveStreamCheckpointStorage,
+  storedValue?: unknown,
+): Promise<ActiveStreamCheckpoint[]> {
+  const value = storedValue ?? await storage.get(ACTIVE_STREAM_CHECKPOINTS_KEY);
+  const legacy = ActiveStreamCheckpointsSchema.safeParse(value);
+  if (legacy.success) return legacy.data;
+
+  const stored = StoredActiveStreamCheckpointSchema.safeParse(value);
+  if (!stored.success) return [];
+  const chunks: string[] = [];
+  for (let index = 0; index < stored.data.textChunkCount; index += 1) {
+    const chunk = await storage.get(activeStreamCheckpointChunkKey(index));
+    if (typeof chunk !== "string") return [];
+    chunks.push(chunk);
+  }
+  const hydrated = ActiveStreamCheckpointsSchema.safeParse([{ ...stored.data, text: chunks.join("") }]);
+  return hydrated.success ? hydrated.data : [];
+}
+
+async function storeActiveStreamCheckpoints(
+  storage: ActiveStreamCheckpointStorage,
+  previousValue: unknown,
+  checkpoints: ActiveStreamCheckpoint[],
+): Promise<void> {
+  const previousStored = StoredActiveStreamCheckpointSchema.safeParse(previousValue);
+  const previousChunkCount = previousStored.success ? previousStored.data.textChunkCount : 0;
+  const checkpoint = checkpoints[0];
+  if (!checkpoint) {
+    for (let index = 0; index < previousChunkCount; index += 1) {
+      await storage.delete(activeStreamCheckpointChunkKey(index));
+    }
+    await storage.delete(ACTIVE_STREAM_CHECKPOINTS_KEY);
+    return;
+  }
+
+  const chunks = splitActiveStreamCheckpointText(checkpoint.text);
+  for (let index = 0; index < chunks.length; index += 1) {
+    await storage.put(activeStreamCheckpointChunkKey(index), chunks[index]);
+  }
+  for (let index = chunks.length; index < previousChunkCount; index += 1) {
+    await storage.delete(activeStreamCheckpointChunkKey(index));
+  }
+  const metadata = StoredActiveStreamCheckpointSchema.parse({
+    ...checkpoint,
+    textChunkCount: chunks.length,
+  }) satisfies StoredActiveStreamCheckpoint;
+  await storage.put(ACTIVE_STREAM_CHECKPOINTS_KEY, metadata);
+}
+
+function eventCanChangeActiveStreamCheckpoint(event: ServerSocketEvent): boolean {
+  return event.type === "stream_started"
+    || event.type === "stream_delta"
+    || event.type === "stream_completed"
+    || (event.type === "harness_status_changed"
+      && (event.status === "needs_input"
+        || event.status === "completed"
+        || event.status === "failed"
+        || event.status === "idle"));
+}
 
 /**
  * Whether this event can have taken somebody's read access away.
@@ -879,9 +987,7 @@ export class WorkstreamRoom {
       reason: plan.reason,
       latestSequence: currentSequence,
       activeStreams: plan.reason === "history_unavailable"
-        ? ActiveStreamCheckpointsSchema.catch([]).parse(
-            await this.state.storage.get(ACTIVE_STREAM_CHECKPOINTS_KEY),
-          )
+        ? await loadActiveStreamCheckpoints(this.state.storage)
         : [],
     });
     socket.send(JSON.stringify(event));
@@ -898,16 +1004,14 @@ export class WorkstreamRoom {
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
       const workstream = await this.loadSnapshot(workspaceId, workstreamId, attachment.userId);
       const sequence = knownSequence ?? await this.currentSequence(workstreamId);
-      const storedCheckpoints = ActiveStreamCheckpointsSchema.safeParse(
-        await this.state.storage.get(ACTIVE_STREAM_CHECKPOINTS_KEY),
-      );
+      const storedCheckpoints = await loadActiveStreamCheckpoints(this.state.storage);
       const event = ServerSocketEventSchema.parse({
         type: "snapshot",
         sequence,
         occurredAt: new Date().toISOString(),
         workstream,
-        activeStreams: workstream.harnessStatus === "running" && storedCheckpoints.success
-          ? storedCheckpoints.data.filter((checkpoint) =>
+        activeStreams: workstream.harnessStatus === "running"
+          ? storedCheckpoints.filter((checkpoint) =>
               checkpoint.harnessRunId === workstream.latestHarnessRunId)
           : [],
       });
@@ -1084,20 +1188,14 @@ export class WorkstreamRoom {
       const current = (await transaction.get<number>("eventSequence")) ?? 0;
       const sequence = Math.max(current + 1, requestedSequence ?? 0);
       const event = ServerSocketEventSchema.parse({ ...unsequencedEvent, sequence });
-      const storedValue = await transaction.get(ACTIVE_STREAM_CHECKPOINTS_KEY);
-      const stored = ActiveStreamCheckpointsSchema.safeParse(storedValue);
-      const checkpoints = stored.success ? stored.data : [];
-      const nextCheckpoints = applyActiveStreamCheckpointEvent(checkpoints, event);
-
       await transaction.put("eventSequence", sequence);
-      if (nextCheckpoints.length > 0 && nextCheckpoints !== checkpoints) {
-        await transaction.put(ACTIVE_STREAM_CHECKPOINTS_KEY, nextCheckpoints);
-      } else if (
-        nextCheckpoints.length === 0
-        && storedValue !== undefined
-        && (nextCheckpoints !== checkpoints || !stored.success)
-      ) {
-        await transaction.delete(ACTIVE_STREAM_CHECKPOINTS_KEY);
+      if (eventCanChangeActiveStreamCheckpoint(event)) {
+        const storedValue = await transaction.get(ACTIVE_STREAM_CHECKPOINTS_KEY);
+        const checkpoints = await loadActiveStreamCheckpoints(transaction, storedValue);
+        const nextCheckpoints = applyActiveStreamCheckpointEvent(checkpoints, event);
+        if (nextCheckpoints !== checkpoints) {
+          await storeActiveStreamCheckpoints(transaction, storedValue, nextCheckpoints);
+        }
       }
       return event;
     });

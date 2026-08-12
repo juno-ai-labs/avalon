@@ -146,7 +146,7 @@ Every classified provider attempt appends an immutable inference-ledger row with
 
 OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`. A route restart increments `epoch`; `streamSeq` orders frames within the turn epoch; `reset: true` replaces text from the abandoned attempt. These fields are independent of the WorkstreamRoom event `sequence` used for socket replay.
 
-Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. An initial snapshot or history-gap resync includes that checkpoint, including its independent Bind cursor and retry boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
+Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and retry boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
 The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset while preserving completed text from earlier tool turns. The shell keeps a background subscriber only for running work streams that are not open, and a canonical refresh retains the active transient assistant row until its final row arrives. D1 stores only the complete final assistant message; terminal REST resynchronization remains canonical.
 
@@ -488,12 +488,13 @@ fail on any of their four ceilings. Cancellation, lease heartbeats, authority
 checks, context compaction, provider watchdogs, and ambiguous-write handling
 remain mandatory. Any future resource policy must be explicit about why useful
 progress should terminate and which execution product it applies to.
+
 ### 2026-08-12 — Mid-stream joins resume from an accumulated room checkpoint
 
 **What changed:** `WorkstreamRoom` now folds every `stream_started` and
-`stream_delta` event into an active-stream checkpoint and commits that checkpoint
-in the same Durable Object storage transaction as the room sequence. A room
-snapshot carries the accumulated text, the active turn and epoch, the per-turn
+`stream_delta` event into an active-stream checkpoint and commits its metadata
+and bounded text chunks in the same Durable Object storage transaction as the
+room sequence. A room snapshot carries the accumulated text, the active turn and epoch, the per-turn
 stream sequence, harness run, every seen turn, and the retry prefix boundary.
 The desktop installs that text and cursor together before it accepts catch-up or
 live frames.
@@ -504,6 +505,12 @@ that is not currently open, so changing routes hands the stream from the screen
 to the shell and back without discarding its cursor or transient transcript row.
 REST transcript merges retain that row while the harness is active and replace
 it with the canonical final message once the run is terminal.
+
+Canonical reconciliation also re-anchors a checkpoint first received into an
+empty cache after the persisted transcript boundary. A history-gap checkpoint
+is displayed immediately, then validated against the freshly fetched harness
+run before the replay cursor advances; stale cached run detail is never allowed
+to discard the only copy of a new run's prefix.
 
 **Why:** The screen used to own both the WebSocket and a cursor initialized to
 zero. Leaving a streaming work stream closed that socket; returning subscribed
@@ -530,9 +537,9 @@ count with the sidebar; background subscribers are limited to work streams that
 are actually running, and a cold join reconstructs any stream the list poll has
 not observed yet from its snapshot.
 
-**Consequences:** A coalesced stream delta now adds one checkpoint value write to
-the room's existing sequence transaction. The checkpoint stores the retry prefix
-as an offset into the accumulated text rather than duplicating the prefix, and
+**Consequences:** A coalesced stream delta now updates bounded checkpoint values
+in the room's existing sequence transaction. The checkpoint stores the retry
+prefix as an offset into the accumulated text rather than duplicating the prefix, and
 terminal lifecycle events remove it. A snapshot from an older server remains
 valid because `activeStreams` defaults to an empty list. New socket consumers
 must install a checkpoint's Bind cursor with its text; applying the text alone

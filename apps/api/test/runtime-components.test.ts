@@ -14,6 +14,7 @@ import {
   distinctNonParticipantViewers,
   isPersonalEventAudience,
   planSocketReplay,
+  splitActiveStreamCheckpointText,
   workstreamRoomName,
 } from "../src/durable-objects/workstream-room";
 import { durableObjectNamespaceForRegion } from "../src/lib/durable-object-namespace";
@@ -179,6 +180,19 @@ describe("runtime component invariants", () => {
       status: "completed",
     }));
     expect(completed).toEqual([]);
+  });
+
+  it("segments checkpoints before one Durable Object value can exceed its limit", () => {
+    const text = `${"a".repeat(2_100_000)}😀${"z".repeat(35_000)}`;
+    const chunks = splitActiveStreamCheckpointText(text);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.length <= 30_000)).toBe(true);
+    expect(chunks.join("")).toBe(text);
+    expect(chunks.every((chunk) => {
+      const last = chunk.charCodeAt(chunk.length - 1);
+      return !(last >= 0xD800 && last <= 0xDBFF);
+    })).toBe(true);
   });
 
   it("skips missed interval ticks without creating a catch-up storm", () => {

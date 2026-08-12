@@ -12,6 +12,7 @@ import {
   mergeCanonicalTranscript,
   mergeCanonicalTranscriptAfterConcurrentEvent,
   nextTranscriptSequence,
+  reconcileCanonicalTranscript,
   replaceWithCanonicalTranscript,
   SOCKET_STABLE_CONNECTION_MS,
   socketHeartbeatDelay,
@@ -443,6 +444,8 @@ describe('useWorkstreamSocket', () => {
 
     expect(mergeCanonicalTranscript([streaming], [])).toEqual([streaming]);
     expect(replaceWithCanonicalTranscript([streaming], [])).toEqual([]);
+    expect(reconcileCanonicalTranscript([streaming], [], 'running')).toEqual([streaming]);
+    expect(reconcileCanonicalTranscript([streaming], [], 'failed')).toEqual([]);
   });
 
   it('joins an unseen active stream at its checkpoint and appends only new chunks', () => {
@@ -493,6 +496,38 @@ describe('useWorkstreamSocket', () => {
       text: 'Already streamed and live',
       streaming: true,
     });
+  });
+
+  it('reanchors a cold-join checkpoint after canonical history arrives', () => {
+    const workstreamId = '00000000-0000-7000-8000-000000000074';
+    const messageId = '00000000-0000-7000-8000-000000000075';
+    const cursors = new Map();
+    const checkpoint = applyActiveStreamCheckpoints([], [{
+      messageId,
+      harnessRunId: '00000000-0000-7000-8000-000000000076',
+      turnId: 'turn-cold-order',
+      epoch: 0,
+      streamSeq: 1,
+      seenTurnIds: ['turn-cold-order'],
+      text: 'Current response',
+      turnStartOffset: 0,
+      roomSequence: 40,
+      createdAt: '2026-07-31T19:20:02.000Z',
+    }], workstreamId, cursors);
+    const canonical: Message[] = [{
+      id: '00000000-0000-7000-8000-000000000077',
+      workstreamId,
+      sequenceNumber: 39,
+      authorType: 'human',
+      messageType: 'text',
+      text: 'Triggering message',
+      createdAt: '2026-07-31T19:20:01.000Z',
+    }];
+
+    const merged = mergeCanonicalTranscript(checkpoint, canonical);
+
+    expect(merged.map((message) => message.id)).toEqual([canonical[0]?.id, messageId]);
+    expect(merged[1]?.realtimeOrder?.anchorSequenceNumber).toBe(40);
   });
 
   it('drops synthetic realtime tool rows after a terminal canonical refresh', () => {
@@ -1619,8 +1654,8 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstream', 'workstream-one'], {
       id: 'workstream-one',
       title: 'Stale',
-      harnessStatus: 'running',
-      latestHarnessRunId: harnessRunId,
+      harnessStatus: 'completed',
+      latestHarnessRunId: '00000000-0000-7000-8000-000000000503',
     });
     queryClient.setQueryData(['messages', 'workstream-one'], []);
     queryClient.setQueryData(['workstreams'], [{ id: 'workstream-one', title: 'Stale' }]);
@@ -1628,7 +1663,12 @@ describe('useWorkstreamSocket', () => {
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const canonicalWorkstream = { id: 'workstream-one', title: 'Canonical', harnessStatus: 'running' };
+    const canonicalWorkstream = {
+      id: 'workstream-one',
+      title: 'Canonical',
+      harnessStatus: 'running',
+      latestHarnessRunId: harnessRunId,
+    };
     const getWorkstream = vi.fn(async () => canonicalWorkstream);
     const getMessages = vi.fn()
       .mockRejectedValueOnce(new Error('transient D1 failure'))

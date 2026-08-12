@@ -42,7 +42,12 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
-import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
+import {
+  insertMessage,
+  nextTranscriptSequence,
+  reconcileCanonicalTranscript,
+  useWorkstreamSocket,
+} from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
@@ -788,7 +793,8 @@ export function WorkstreamScreen(): React.JSX.Element {
         queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
       }
       queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
-      return mergeCanonicalTranscript(previous, messagesWithTransientBlocks(page.items, detail));
+      const canonicalMessages = messagesWithTransientBlocks(page.items, detail);
+      return reconcileCanonicalTranscript(previous, canonicalMessages, detail.harnessStatus);
     },
     enabled: Boolean(api && id),
     staleTime: 2_000,

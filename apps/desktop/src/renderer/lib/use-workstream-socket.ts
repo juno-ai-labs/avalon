@@ -316,12 +316,52 @@ export function mergeCanonicalTranscript(previous: Message[] | undefined, canoni
     && !canonicalIds.has(message.id)
     && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
   );
-  return orderTranscript([
-    ...olderPersistedMessages,
-    ...canonical,
+  const realtimeMessages = [
     ...realtimeTools,
     ...streamingAgentMessages,
     ...pendingHumanMessages,
+  ];
+  const canonicalById = new Map(canonical.map((message) => [message.id, message]));
+  const settledRealtimeAnchors = new Map<number, number>();
+  for (const message of previous ?? []) {
+    const canonicalMessage = canonicalById.get(message.id);
+    if (message.realtimeOrder && canonicalMessage) {
+      settledRealtimeAnchors.set(
+        message.realtimeOrder.anchorSequenceNumber,
+        canonicalMessage.sequenceNumber,
+      );
+    }
+  }
+  const anchorsThatMustFollowCanonical = new Set(
+    [...streamingAgentMessages, ...pendingHumanMessages]
+      .flatMap((message) => message.realtimeOrder ? [message.realtimeOrder.anchorSequenceNumber] : []),
+  );
+  const firstRealtimeAnchor = [...anchorsThatMustFollowCanonical].reduce(
+    (lowest, anchor) => Math.min(lowest, anchor),
+    Number.POSITIVE_INFINITY,
+  );
+  const canonicalBoundary = nextTranscriptSequence([...olderPersistedMessages, ...canonical]);
+  const anchorShift = Number.isFinite(firstRealtimeAnchor)
+    ? Math.max(0, canonicalBoundary - firstRealtimeAnchor)
+    : 0;
+  const reanchoredRealtimeMessages = anchorShift === 0 && settledRealtimeAnchors.size === 0
+    ? realtimeMessages
+    : realtimeMessages.map((message) => message.realtimeOrder
+      ? {
+          ...message,
+          realtimeOrder: {
+            ...message.realtimeOrder,
+            anchorSequenceNumber: settledRealtimeAnchors.get(message.realtimeOrder.anchorSequenceNumber)
+              ?? (anchorsThatMustFollowCanonical.has(message.realtimeOrder.anchorSequenceNumber)
+                ? message.realtimeOrder.anchorSequenceNumber + anchorShift
+                : message.realtimeOrder.anchorSequenceNumber),
+          },
+        }
+      : message);
+  return orderTranscript([
+    ...olderPersistedMessages,
+    ...canonical,
+    ...reanchoredRealtimeMessages,
   ]);
 }
 
@@ -381,8 +421,18 @@ export function mergeCanonicalTranscriptAfterConcurrentEvent(
   );
 }
 
-function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
+export function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
   return status === 'running' || status === 'scheduled';
+}
+
+export function reconcileCanonicalTranscript(
+  previous: Message[] | undefined,
+  canonical: Message[],
+  harnessStatus: WorkstreamDetail['harnessStatus'],
+): Message[] {
+  return runMayStillEmitRealtime(harnessStatus)
+    ? mergeCanonicalTranscript(previous, canonical)
+    : replaceWithCanonicalTranscript(previous, canonical);
 }
 
 /**
@@ -462,6 +512,7 @@ export function useWorkstreamSocket(
     let ticketRequestInFlight = false;
     let canonicalResyncInFlight = false;
     let canonicalResyncTarget: number | null = null;
+    let canonicalResyncActiveStreams: readonly ActiveStreamCheckpoint[] = [];
     let canonicalReconcileGeneration = 0;
     const streamCursors = resumeState.streamCursors;
     const isOffline = (): boolean => navigator.onLine === false;
@@ -528,15 +579,12 @@ export function useWorkstreamSocket(
 
     const applyEvent = (event: ServerSocketEvent): void => {
       if (event.type === 'resync_required') {
-        const currentWorkstream = queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]);
-        const activeStreams = event.reason === 'history_unavailable'
-          && currentWorkstream?.harnessStatus === 'running'
-          ? event.activeStreams.filter((checkpoint) =>
-              checkpoint.harnessRunId === currentWorkstream.latestHarnessRunId)
+        canonicalResyncActiveStreams = event.reason === 'history_unavailable'
+          ? event.activeStreams
           : [];
-        if (activeStreams.length > 0) {
+        if (canonicalResyncActiveStreams.length > 0) {
           queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-            applyActiveStreamCheckpoints(current, activeStreams, workstreamId, streamCursors));
+            applyActiveStreamCheckpoints(current, canonicalResyncActiveStreams, workstreamId, streamCursors));
         }
         canonicalResyncTarget = Math.max(canonicalResyncTarget ?? 0, event.latestSequence);
         clearHeartbeat();
@@ -853,18 +901,30 @@ export function useWorkstreamSocket(
           if (closedByEffect) return;
           queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
           const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
-          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-            mayStillEmitRealtime
-              ? mergeCanonicalTranscript(current, canonicalMessages)
-              : replaceWithCanonicalTranscript(current, canonicalMessages));
+          const validatedActiveStreams = mayStillEmitRealtime
+            ? canonicalResyncActiveStreams.filter((checkpoint) =>
+                checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
+            : [];
+          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
+            const canonicalTranscript = replaceWithCanonicalTranscript(current, canonicalMessages);
+            streamCursors.clear();
+            return applyActiveStreamCheckpoints(
+              canonicalTranscript,
+              validatedActiveStreams,
+              workstreamId,
+              streamCursors,
+            );
+          });
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
             syncHyperSightQueries(),
           ]);
-          if (!mayStillEmitRealtime) streamCursors.clear();
           resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
-          if (canonicalResyncTarget === targetSequence) canonicalResyncTarget = null;
+          if (canonicalResyncTarget === targetSequence) {
+            canonicalResyncTarget = null;
+            canonicalResyncActiveStreams = [];
+          }
         } catch {
           scheduleReconnect();
           return;

@@ -397,7 +397,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 ## Realtime operations and cost controls
 
 - Use one deterministic WorkstreamRoom per work stream, scoped by region and workspace. Do not allocate a room per socket or user.
-- Keep REST/D1 canonical. The room's bounded replay buffer is an in-memory optimization and must not be persisted. The separate active-stream checkpoint is one accumulated value updated per batched delta, removed at terminal state, and carried by `history_unavailable` while the client refreshes every canonical REST surface.
+- Keep REST/D1 canonical. The room's bounded replay buffer is an in-memory optimization and must not be persisted. The separate active-stream checkpoint is one logical value with bounded text chunks, updated per batched delta, removed at terminal state, and carried by `history_unavailable` while the client refreshes every canonical REST surface. Do not collapse it back into one unbounded Durable Object value: an oversized write would also roll back the room sequence and stop later live chunks.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The client heartbeat is jittered across 45–55 seconds, waits 15 seconds for `pong`, and reconnects with equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not perform application work.
 - Batch model `stream_delta` broadcasts. Avoid Durable Object timers, per-connection alarms, and periodic room health polling; each can wake an otherwise idle room and add duration or request cost.

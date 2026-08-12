@@ -74,9 +74,10 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
 2. Disconnect after receiving an event and reconnect. Confirm the new socket subscribes with the last applied sequence and receives only newer buffered events.
 3. Evict/restart the room or exceed its replay window during an active response. Confirm it returns `resync_required` with the accumulated active stream, the desktop preserves that partial while refreshing canonical work stream/transcript/list queries, and the first newer chunk continues it without a gap or duplicate.
 4. Start a response before a second client has ever opened its work stream. Subscribe that client with `afterSequence: 0` and confirm the room snapshot carries the accumulated active text and Bind cursor; publish a frame while the snapshot is loading and confirm catch-up plus live delivery produce the exact response once, with no missing or duplicated boundary chunk.
-5. Leave the socket idle through at least two jittered heartbeat intervals. Confirm exact text `ping` receives `pong` through Cloudflare auto-response and does not require application-level room work.
-6. Simulate a missing `pong`, offline/online transitions, and a burst of reconnecting clients. Confirm the desktop closes the stale socket, applies capped jittered backoff, resumes immediately when online, and keeps the last cursor.
-7. Attempt an upgrade without `Origin`, from an unconfigured origin, and with an allowed-origin suffix lookalike. Confirm all are rejected; then connect from the exact desktop or development origin with a fresh ticket.
+5. Repeat the first-time join in a work stream with older transcript history. Confirm the recovered bubble stays after the triggering message when REST history lands rather than jumping near the start. Fail the run before it persists a final assistant message and confirm the next canonical refresh removes the transient bubble.
+6. Leave the socket idle through at least two jittered heartbeat intervals. Confirm exact text `ping` receives `pong` through Cloudflare auto-response and does not require application-level room work.
+7. Simulate a missing `pong`, offline/online transitions, and a burst of reconnecting clients. Confirm the desktop closes the stale socket, applies capped jittered backoff, resumes immediately when online, and keeps the last cursor.
+8. Attempt an upgrade without `Origin`, from an unconfigured origin, and with an allowed-origin suffix lookalike. Confirm all are rejected; then connect from the exact desktop or development origin with a fresh ticket.
 
 ## Desktop dictation acceptance
 
