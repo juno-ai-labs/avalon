@@ -145,7 +145,13 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 - **A work stream is returned exactly once across `GET /workstreams`.** Pins are
   excluded from the paged query and appended to the first page instead. Leaving
   them in both would return a quiet pin twice — once appended, once on whichever
-  cursor page its `last_activity_at` falls in.
+  cursor page its `last_activity_at` falls in. System work streams are appended
+  the same way when `includeSystem` asks for them, and are excluded from the pin
+  append in turn, so a pinned digest arrives once and as a pin.
+- **The sidebar pages.** It requests one page and follows `nextCursor` when the
+  scroll approaches the bottom, so a rule that only holds on the first page no
+  longer holds where anybody looks. Any future merge into the first page has to
+  keep the row out of the cursor pages, not merely out of the first one.
 - **Nothing counts pins against a limit.** Two limits were tried and both broke
   on the same rock — a pin whose work stream has gone out of sight renders
   nothing and offers no menu, so it cannot be counted, and once it is not
@@ -227,6 +233,43 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-12 — The sidebar follows the cursor it was throwing away
+
+**What changed:** `getWorkstreams` returns `nextCursor` instead of discarding it,
+and `useWorkstreamsQuery` walks pages: the sidebar asks for the next one as the
+scroll comes within 400px of the bottom, and appends it. System work streams
+joined pins in being appended to the first page rather than paged, and each
+partition gained its own recency index.
+
+**Why:** The list was one request for 250 rows, and everything past that was
+simply not in the product — `nextCursor` was parsed and dropped. That was
+survivable while the only thing producing work streams was people making them.
+Digests now create one per occurrence and nothing reaps them, so a Debug-enabled
+account accumulates rows at a rate nobody chose, and the 250th row stopped being
+a theoretical boundary.
+
+**Considered and rejected:** `useInfiniteQuery`, which is the obvious tool and
+the wrong one here. It stores `{ pages, pageParams }` under its key, and eight
+call sites in the realtime socket handlers and the app shell patch this cache
+entry as a flat `WorkstreamSummary[]` — a rename, an unread count, a scope
+change, a pin reorder. Adopting the paged shape would strand every one of them
+silently: the write lands on a value nobody reads and the sidebar sits stale
+until the next poll. The flat array is the contract those writers were built
+against, so paging lives in the fetcher and the stored value keeps its shape.
+
+Also rejected: shrinking the page. A smaller first page would exercise the new
+path constantly and cost every ordinary workspace a second request for a list
+that already fitted in one.
+
+**Consequences:** Two rules now hold that a hand-rolled pager does not get for
+free, and both are covered by tests. A refetch — the poll runs every fifteen
+seconds — walks *every page already on screen*, or the list would truncate under
+somebody who had scrolled; `pagesLoaded` is that count. And a failed page leaves
+its cursor in place, so the next scroll retries it rather than ending the list
+quietly. Toggling Debug enabled resets to one page, because the rows are a
+different population. `nextCursor` continues to come from the paged rows alone,
+which is what keeps both appends out of the cursor pages.
 
 ### 2026-08-11 — Following the row means focus too, and the intent to follow expires
 

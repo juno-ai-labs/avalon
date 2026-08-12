@@ -10,14 +10,12 @@
 -- projector drops. A wrong line in one digest became a settled fact for every
 -- one after it.
 --
--- Compaction made it worse rather than better. `compact()` preserves
--- `messages[1]` verbatim as the initial user message and pins it through every
--- later compaction, on the assumption that it is the human request defining the
--- task. A digest work stream has no such message: each occurrence brings its
--- own window. So the first occurrence's brief — one morning's connector events —
--- was pinned to the front of that person's context permanently, under a
--- synthetic instruction to "continue the original task from the preserved user
--- message".
+-- An earlier compaction design made that worse: it preserved the first user
+-- message verbatim through every later compaction, which in a digest work stream
+-- meant the first occurrence's brief pinned to the front of that person's
+-- context forever. That was removed in 084c54a, before this landed, so it is
+-- history rather than a reason — compaction now carries nothing forward
+-- verbatim. The replayed transcript above is the whole of the case.
 --
 -- Per-occurrence work streams make the run what it always was: a pure function
 -- from a frozen window to a summary. Nothing carries between occurrences except
@@ -47,9 +45,35 @@ UPDATE digest_deliveries
    )
  WHERE harness_run_id IS NOT NULL;
 
--- No index. The only reverse lookup is settlement's note, which starts from a
--- delivery id and reads this column; nothing searches deliveries *by* work
--- stream.
+-- No index on it. The only reverse lookup is settlement's note, which starts
+-- from a delivery id and reads this column; nothing searches deliveries *by*
+-- work stream.
+
+-- The sidebar's two lists become two index partitions, because they are now two
+-- populations growing at different rates.
+--
+-- `workstreams_sidebar_recency_idx` is keyed `(workspace_id, last_activity_at
+-- DESC)`, so both listing queries seek to the workspace and then walk in recency
+-- order, testing `system_kind` row by row. That was free when a workspace held
+-- one digest work stream per person. With one per occurrence and nothing reaping
+-- them, the ordinary list has to walk past every digest row newer than its last
+-- result — a scan that grows with digest history for a query whose result set
+-- never does. Hiding the accumulation from the sidebar while leaving it in that
+-- query's path would only move the cost somewhere nobody looks.
+--
+-- A partial index is usable only when the query's WHERE implies its predicate,
+-- which is why these mirror the listing clauses exactly rather than being one
+-- index on `system_kind`: `IS NULL` and `IS NOT NULL` are what the two queries
+-- state. The general index above stays for readers that do not partition by
+-- `system_kind` at all, so a row sits in it and in exactly one of these — two
+-- index writes per `last_activity_at` update rather than one.
+CREATE INDEX workstreams_sidebar_recency_ordinary_idx
+  ON workstreams(workspace_id, last_activity_at DESC)
+  WHERE archived_at IS NULL AND system_kind IS NULL;
+
+CREATE INDEX workstreams_sidebar_recency_system_idx
+  ON workstreams(workspace_id, last_activity_at DESC)
+  WHERE archived_at IS NULL AND system_kind IS NOT NULL;
 
 -- `digest_schedules.system_workstream_id` is deliberately NOT dropped here.
 --

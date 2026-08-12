@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppSession } from './app-session';
 import { useDebugEnabled } from './use-debug-enabled';
 import type { WorkstreamSummary } from './types';
@@ -17,24 +17,105 @@ import type { WorkstreamSummary } from './types';
 export const WORKSTREAMS_QUERY_KEY = ['workstreams'] as const;
 
 /**
+ * The query result every existing caller already reads, widened with paging.
+ *
+ * An intersection rather than an `interface … extends`: `UseQueryResult` is a
+ * discriminated union over the pending, error and success shapes, and an
+ * interface cannot extend one.
+ */
+export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
+  /** Whether the service reported a page after the ones already loaded. */
+  hasMore: boolean;
+  /** A page beyond the first is in flight. The first page is `isFetching`. */
+  isFetchingMore: boolean;
+  /** Load the next page and append it. A no-op when there is no next page. */
+  fetchMore: () => void;
+};
+
+/**
  * The work-stream list, as every surface sees it.
  *
  * Debugging widens it to include system work streams — a digest run's
  * transcript and anything like it. That is a property of the request, not of
  * the identity of the list, which is why it stays out of the key.
+ *
+ * ## Why this pages by hand rather than with `useInfiniteQuery`
+ *
+ * `useInfiniteQuery` stores `{ pages, pageParams }` under its key. Eight call
+ * sites across the realtime socket handlers and the app shell patch this entry
+ * as a flat `WorkstreamSummary[]` with `setQueryData` — a rename, an unread
+ * count, a pin reorder, a scope change. Adopting the paged shape would strand
+ * every one of them silently: the write would land on a value nobody reads, and
+ * the sidebar would sit stale until the next poll. The flat array is the
+ * contract those writers were built against, so paging is kept inside the
+ * fetcher and the stored value never changes shape.
+ *
+ * Two rules follow from that, and they are what make a hand-rolled version
+ * correct rather than merely simpler:
+ *
+ * - **A refetch reloads every page already on screen.** The poll runs every
+ *   fifteen seconds, and a fetcher that returned only the first page would
+ *   silently truncate the list under somebody who had scrolled. `pagesLoaded`
+ *   is how many to walk.
+ * - **`fetchMore` appends rather than refetching.** It asks for one page and
+ *   merges it in, so reaching the bottom costs one request rather than
+ *   re-reading everything above it.
  */
-export function useWorkstreamsQuery(): UseQueryResult<WorkstreamSummary[]> {
+export function useWorkstreamsQuery(): WorkstreamsQuery {
   const { api } = useAppSession();
   const queryClient = useQueryClient();
   const debugEnabled = useDebugEnabled();
+  const pagesLoaded = useRef(1);
+  const nextCursor = useRef<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
 
   const query = useQuery({
     queryKey: WORKSTREAMS_QUERY_KEY,
-    queryFn: ({ signal }) => api!.getWorkstreams(signal, debugEnabled),
+    queryFn: async ({ signal }) => {
+      const items: WorkstreamSummary[] = [];
+      let cursor: string | undefined;
+      let walked = 0;
+      for (let page = 0; page < pagesLoaded.current; page += 1) {
+        const result = await api!.getWorkstreams(signal, debugEnabled, cursor);
+        items.push(...result.items);
+        walked += 1;
+        cursor = result.nextCursor ?? undefined;
+        // The list shortened while it was open — archived elsewhere, or simply
+        // fewer rows than when it was scrolled. Stop, and stop asking for pages
+        // that are no longer there on every poll from here on.
+        if (!cursor) break;
+      }
+      pagesLoaded.current = walked;
+      nextCursor.current = cursor ?? null;
+      setHasMore(cursor != null);
+      return mergeWorkstreams([], items);
+    },
     enabled: Boolean(api),
     staleTime: 10_000,
     refetchInterval: 15_000,
   });
+
+  const fetchMore = useCallback(() => {
+    const cursor = nextCursor.current;
+    if (!api || cursor === null || isFetchingMore) return;
+    setIsFetchingMore(true);
+    void api.getWorkstreams(undefined, debugEnabled, cursor)
+      .then((page) => {
+        // Counted before the merge so a poll that lands between the two still
+        // reloads this page rather than dropping it.
+        pagesLoaded.current += 1;
+        nextCursor.current = page.nextCursor;
+        setHasMore(page.nextCursor !== null);
+        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+          mergeWorkstreams(current ?? [], page.items));
+      })
+      // The cursor is deliberately left where it was, so scrolling to the
+      // bottom again retries the same page. A failed page is not an empty one:
+      // clearing it would end the list early and quietly.
+      .catch(() => undefined)
+      .finally(() => setIsFetchingMore(false));
+  }, [api, debugEnabled, isFetchingMore, queryClient]);
 
   // Since the key does not vary, toggling the preference has to ask for the
   // refetch itself. This has to be declared below `useQuery`: the query hands
@@ -46,8 +127,35 @@ export function useWorkstreamsQuery(): UseQueryResult<WorkstreamSummary[]> {
   useEffect(() => {
     if (observedDebugEnabled.current === debugEnabled) return;
     observedDebugEnabled.current = debugEnabled;
+    // Debugging changes which rows the list is made of, so the pages already
+    // walked describe a different list. Start again from the first.
+    pagesLoaded.current = 1;
+    nextCursor.current = null;
     void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
   }, [debugEnabled, queryClient]);
 
-  return query;
+  return { ...query, hasMore, isFetchingMore, fetchMore };
+}
+
+/**
+ * `existing` followed by whatever in `incoming` is not already in it.
+ *
+ * A row can arrive twice legitimately: it moved between two page requests, so
+ * it sat on both sides of the cursor. Keeping the copy already in the cache
+ * rather than the newer one is deliberate — the cached row may carry a patch a
+ * realtime handler applied while the page was in flight, and the poll is what
+ * reconciles the two a few seconds later anyway.
+ */
+function mergeWorkstreams(
+  existing: WorkstreamSummary[],
+  incoming: WorkstreamSummary[],
+): WorkstreamSummary[] {
+  const seen = new Set(existing.map((workstream) => workstream.id));
+  const merged = [...existing];
+  for (const workstream of incoming) {
+    if (seen.has(workstream.id)) continue;
+    seen.add(workstream.id);
+    merged.push(workstream);
+  }
+  return merged;
 }
