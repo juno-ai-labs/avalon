@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ApiError } from "../src/lib/api-error";
 import type { AuthContext, Env } from "../src/env";
 import { WorkstreamService } from "../src/services/workstream-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const authorId = "00000000-0000-7000-8000-000000000002";
@@ -179,7 +179,7 @@ function environment(database: DatabaseSync, published?: unknown[]): Env {
 function recordingRooms(published: unknown[]): DurableObjectNamespace {
   return createCloudflareTestBinding<DurableObjectNamespace>({
     jurisdiction: () => recordingRooms(published),
-    idFromName: (name: string) => name,
+    idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
       fetch: (_url: string, init: { body: string }) => {
         const payload: unknown = JSON.parse(init.body);

@@ -34,3 +34,18 @@ export function setCachedWorkstreams(
     return next;
   });
 }
+
+/** Refresh page-one rows without truncating pages or debug rows already loaded. */
+export function mergeCachedWorkstreamPage(
+  queryClient: QueryClient,
+  pageItems: WorkstreamSummary[],
+): void {
+  setCachedWorkstreams(queryClient, (current) => {
+    if (current === undefined) return pageItems;
+    const refreshedIds = new Set(pageItems.map((workstream) => workstream.id));
+    return [
+      ...pageItems,
+      ...current.filter((workstream) => !refreshedIds.has(workstream.id)),
+    ];
+  });
+}

@@ -31,6 +31,11 @@ test("work-stream cache writes go through the typed helper", () => {
       import { WORKSTREAMS_QUERY_KEY as key } from "./workstreams-cache";
       queryClient.setQueriesData({ queryKey: key }, page);
     `,
+    `
+      import { WORKSTREAMS_QUERY_KEY } from "./workstreams-cache";
+      const filters = { queryKey: WORKSTREAMS_QUERY_KEY };
+      queryClient.setQueriesData(filters, page);
+    `,
   ]) {
     assert.equal(lint(source, "no-direct-workstreams-cache-write").length, 1, source);
   }

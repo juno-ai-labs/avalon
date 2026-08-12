@@ -9,7 +9,7 @@ import {
   refreshWorkstreamName,
 } from "../src/services/workstream-naming-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "workspace-naming";
 const userId = "user-owner";
@@ -470,7 +470,7 @@ function stubOpenRouter(
 function environment(database: DatabaseSync, published: Array<Record<string, unknown>>): Env {
   const rooms = {
     jurisdiction: () => rooms,
-    idFromName: (name: string) => name,
+    idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
       fetch: async (_url: string, init: RequestInit) => {
         const event = JSON.parse(String(init.body)) as Record<string, unknown>;

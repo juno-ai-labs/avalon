@@ -309,8 +309,11 @@ the crash.
 failing lint, and a renamed API return shape now fails every contract-checked
 socket mock. The runtime assertion is a backstop for type escapes, not a second
 wire parser: external HTTP, socket, IPC, and storage boundaries continue to use
-Zod. Any future change from a flat list to a page must change the helper and all
-of its readers deliberately rather than arriving through one caller.
+Zod. Canonical socket refreshes merge their first page over the flat cache
+rather than replacing it, so already-loaded later pages and debug-only system
+rows remain visible until the paginated invalidation completes. Any future
+change from a flat list to a page must change the helper and all of its readers
+deliberately rather than arriving through one caller.
 
 ### 2026-08-12 — The sidebar follows the cursor it was throwing away
 

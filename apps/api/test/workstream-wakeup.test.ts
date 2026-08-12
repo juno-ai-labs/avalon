@@ -16,7 +16,7 @@ import {
   resolveWakeupInstant,
   type WorkstreamWakeupRow,
 } from "../src/services/workstream-wakeup-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = "00000000-0000-4000-8000-000000000000";
@@ -123,16 +123,16 @@ function fixture(): Fixture {
     AVALON_REGION: "global",
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
-      idFromName: (name: string) => name,
-      get: (name: string) => ({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: (id: DurableObjectId) => ({
         fetch: async (_url: string, init: { body: string }) => {
-          schedulerRefreshes.push(`${name}:${init.body}`);
+          schedulerRefreshes.push(`${id.toString()}:${init.body}`);
           return new Response("{}", { status: 200 });
         },
       }),
     },
     WORKSTREAM_ROOMS: {
-      idFromName: (name: string) => name,
+      idFromName: (name: string) => createTestDurableObjectId(name),
       get: () => ({ fetch: async () => new Response("{}", { status: 200 }) }),
     },
     WORKSTREAM_LOOP_WORKFLOW: {
@@ -464,7 +464,7 @@ describe("wake-up tools", () => {
   it("leaves no pending wake-up behind when the alarm cannot be armed", async () => {
     const { database, env } = fixture();
     (env as unknown as { WORKSPACE_SCHEDULERS: unknown }).WORKSPACE_SCHEDULERS = {
-      idFromName: (name: string) => name,
+      idFromName: (name: string) => createTestDurableObjectId(name),
       get: () => ({ fetch: async () => new Response("nope", { status: 500 }) }),
     };
     const { schedule } = wakeupTools(env);
