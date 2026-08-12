@@ -263,7 +263,7 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
-`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. One surface reads the declaration without being the digest: [contextual routing](contextual-routing.md) starts an operational type at a higher confidence bar before offering it as Suggested context, as a prior a workspace's own acceptances overrule. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
@@ -278,7 +278,15 @@ Manifests and facets are cross-validated at registry construction: a connector t
 5. Evaluate explicit resource watches and deterministic automation triggers.
 6. Run semantic trigger matching only after deterministic prefilters.
 7. Create automation work idempotently or produce an in-stream contextual suggestion.
-8. Persist accepted/dismissed routing feedback.
+8. Persist accepted/dismissed routing feedback, which decides what step 7 offers next.
+
+Steps 1 through 6 are deterministic and are what this document owns. **Step 7's
+speculative half — which unclaimed activity becomes a Suggested context card, the
+four gates it passes first, and what an accept or a dismiss is then worth — has
+grown into its own subsystem and moved to
+[`contextual-routing.md`](contextual-routing.md).** It consumes the digestibility
+declaration described above and nothing else from here; change what becomes a
+card there, not in this document.
 
 Routing feedback is idempotent in the direction it was given. A suggestion card is rendered from the work stream detail's pending suggestions and is rebuilt whenever the transcript is refetched, so a card can outlive the resolution it belongs to — a detail snapshot read before the accept restores it, buttons and all. Repeating the same accept or dismissal therefore reports the state the suggestion already reached (the accepted resource attachment is an upsert, so the same resource ID comes back); only a resolution that contradicts the recorded one is refused, with `409 suggestion_already_resolved`. A suggestion that does not exist in the work stream is still `404 suggestion_not_found`. Clients drop a resolved suggestion from the cached detail — both when they resolve it and when `activity_suggestion_resolved` arrives — so the card cannot regress to pending.
 
@@ -297,6 +305,38 @@ A connector's normalized `title`/`summary` is not independently bounded to the A
 Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/SLACK_INTEGRATION.md` for the product and data flow and `docs/SLACK_PERMISSIONS.md` for the complete OAuth scope inventory.
 
 ## Changelog
+
+### 2026-08-12 — Contextual routing moved out, and takes the digestibility declaration with it
+
+**What changed:** Step 7's speculative half — what becomes a Suggested context
+card — is now [`contextual-routing.md`](contextual-routing.md). This document
+keeps the deterministic pipeline, the manifest contract, and the digestibility
+declaration. Step 8 says what the feedback is now *for*.
+
+**Why:** What becomes a card is now decided by a confidence floor that this
+document's digestibility declaration only sets the starting point for, with the
+workspace's own accept and dismiss history overruling it, its own thresholds and
+windows, a corroboration rule, and a decay rule that exists to stop suppression
+being permanent. That is a subsystem with invariants an outsider can break — most
+of them about `digestible`, which this document owns and that one now reads for a
+different question — and it was about to be four paragraphs inside a document
+already covering seven connectors. The reasoning is in that document's changelog,
+including why reading `digestible` as a veto was tried and reverted.
+
+**Considered and rejected:** Keeping it here under a new heading, per the
+one-module-one-owner rule. Rejected because the two are genuinely separable: this
+document is about what a connector declares and delivers, and that one is about
+what Avalon speculates on top of it. The split is recorded in both files, as
+[`module-documents.md`](module-documents.md) requires.
+
+**Consequences:** A change to what a connector declares is still recorded here; a
+change to what is done with the declaration is recorded there. The digestibility
+contract now has a second consumer, so weakening it is no longer only a digest
+question — see the invariant in
+[`contextual-routing.md`](contextual-routing.md#invariants) before treating a
+`digestible` flag as one surface's business.
+
+Shipped in #109.
 
 ### 2026-08-11 — What was fixed for Google was fixed for every connector, including Google
 
