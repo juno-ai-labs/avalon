@@ -1925,7 +1925,13 @@ export class SlackAgentService {
     try {
       const adapter = connectorRegistryForEnv(this.env).get("slack");
       const context = await this.connectionContext(connection);
-      const signal = AbortSignal.timeout(5_000);
+      // A second, not the five this used to take. Everything here runs inside
+      // the thread claim and ahead of the `slack_agent_sessions` write, and a
+      // concurrent event in the same thread waits only ~2s in `waitForSession`
+      // before it is refused with `slack_thread_busy`. The permalink is an
+      // optional field on an optional attachment; it does not get to spend the
+      // window that decides whether somebody else's message is accepted.
+      const signal = AbortSignal.timeout(1_000);
       return await withAuthorizedConnection(
         this.env,
         { connection: context, adapter, signal },

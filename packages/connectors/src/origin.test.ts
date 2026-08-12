@@ -51,6 +51,31 @@ describe("connector origins", () => {
     expect(connectorOriginUrl(undefined)).toBeNull();
   });
 
+  it("emits only links its own contract accepts", () => {
+    // A prefix test used to accept this and the schema rejected it, so a
+    // provider that put it in metadata cost the whole origin rather than the
+    // link. The producer is now bounded by the same validator the parse uses.
+    expect(connectorOriginUrl({ url: "https://" })).toBeNull();
+  });
+
+  it("survives an activity whose fields exceed the contract's bounds", async () => {
+    // A stored `activities.resource_type` is not capped at the schema's 80.
+    const origin = await describeConnectorOrigin(adapter(), {
+      kind: "activity",
+      activity: {
+        resourceType: "x".repeat(200),
+        providerResourceId: "y".repeat(900),
+        title: "z".repeat(600),
+        metadata: { url: "https://" },
+      },
+    });
+
+    expect(origin).toMatchObject({ canonicalUrl: null });
+    expect(origin?.resourceType).toHaveLength(80);
+    expect(origin?.providerResourceId).toHaveLength(500);
+    expect(origin?.title).toHaveLength(300);
+  });
+
   it("has nothing to say about a session kind the connector does not implement", async () => {
     expect(await describeConnectorOrigin(adapter(), {
       kind: "agent_session",

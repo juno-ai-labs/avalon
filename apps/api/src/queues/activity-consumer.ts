@@ -39,6 +39,7 @@ import {
 } from "../services/workstream-origin-resource";
 import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { restrictedActivityUserIds } from "../lib/activity-visibility";
 
 interface ActivityRow {
   id: string;
@@ -149,20 +150,6 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
     ...metadata
   };
   return Object.entries(filters).every(([key, expected]) => deepEqual(available[key], expected));
-}
-
-function restrictedActivityUserIds(activity: ActivityRow): string[] | null {
-  if (activity.connection_scope === "personal") {
-    return activity.connection_owner_user_id ? [activity.connection_owner_user_id] : [];
-  }
-  const explicitTargets = parseStrings(activity.target_user_ids_json);
-  const visibility = parseRecord(activity.visibility_json);
-  if (explicitTargets.length > 0) return explicitTargets;
-  for (const candidate of [visibility.targetUserIds, visibility.allowedUserIds]) {
-    const restricted = z.array(z.string()).safeParse(candidate);
-    if (restricted.success && restricted.data.length > 0) return [...new Set(restricted.data)];
-  }
-  return visibility.workspaceAutomationAllowed === false ? [] : null;
 }
 
 function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boolean {
