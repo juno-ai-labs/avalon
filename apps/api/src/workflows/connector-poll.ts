@@ -52,7 +52,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
            FROM connector_connections c
           WHERE c.id = ?2
             AND c.workspace_id = ?3
-            AND c.status = 'healthy'
+            AND c.status <> 'disabled'
             AND (
               EXISTS (
                 SELECT 1 FROM schedules s

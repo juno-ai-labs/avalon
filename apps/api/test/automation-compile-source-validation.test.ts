@@ -64,7 +64,7 @@ describe("automation compile activity-source validation", () => {
     expect(result.draft).toMatchObject({
       ready: false,
       elicitation: null,
-      followUpQuestion: expect.stringContaining("unavailable or unhealthy"),
+      followUpQuestion: expect.stringContaining("unavailable"),
     });
     // The turn is still a draft worth keeping: the source could not be bound,
     // which is the very thing the person comes back to the conversation to fix.

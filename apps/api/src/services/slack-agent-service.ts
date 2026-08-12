@@ -130,6 +130,30 @@ const SlackModalContextSchema = z.object({
 }).strict();
 
 const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
+
+/**
+ * The `error_code` values a job carries when it failed on authorization, and so
+ * the only ones a later reauthorization can plausibly repair.
+ *
+ * Written as an allowlist rather than "anything that failed", so a job that died
+ * on malformed data is not re-driven every time its connection's token rotates.
+ * The values are what `slackIngressErrorCode` produces: Slack's own
+ * authorization vocabulary as `details.error`, the bare `unauthorized` of a
+ * `ConnectorError` that carries no provider word, and the one `ApiError` code
+ * raised when a stored token is absent. A code outside the set simply is not
+ * re-driven, which is the conservative direction.
+ */
+const SLACK_AUTHORIZATION_ERROR_CODES = [
+  "account_inactive",
+  "invalid_auth",
+  "invalid_refresh_token",
+  "missing_scope",
+  "not_authed",
+  "slack_token_missing",
+  "token_expired",
+  "token_revoked",
+  "unauthorized",
+] as const;
 /**
  * The automations App Home shows a linked person, newest activity first.
  *
@@ -145,7 +169,6 @@ const PERSONAL_AUTOMATIONS_FOR_HOME_SQL =
    WHERE s.workspace_id = ? AND s.owner_user_id = ? AND s.lifecycle_state = 'visible'
      AND s.status <> 'draft'
    ORDER BY s.updated_at DESC LIMIT 5`;
-const SLACK_CONNECTION_DENIAL_TEXT = "Avalon’s Slack workspace connection needs attention, so it did not start this task. Ask an Avalon workspace admin to reconnect or test Slack in Avalon Settings, then reply `try again` in this thread.";
 const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Avalon` again and restate what you want me to do.";
 const SLACK_RETRYABLE_DENIAL_PREFIXES = [
   "Avalon’s Slack workspace connection needs attention",
@@ -217,6 +240,7 @@ export class SlackAgentService {
   async maintainIngress(limit = 100): Promise<void> {
     await this.prewarmWorkspaceCredentials();
     const at = nowIso();
+    await this.redriveReauthorizedIngress(limit);
     const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
     const recoverable = await this.env.DB.prepare(
       `SELECT id, workspace_id FROM slack_ingress_jobs
@@ -274,6 +298,81 @@ export class SlackAgentService {
     }
   }
 
+  /**
+   * Give a job that failed on authorization another run once the installation
+   * has been reauthorized.
+   *
+   * An authorization failure is classified non-retryable and pins
+   * `attempt_count` at the ceiling, which is right while the grant is dead —
+   * but nothing ever lifted it. The events that arrived during an outage stayed
+   * failed forever with their payload still on the row, and the recovery sweep
+   * skipped them by the same ceiling that stopped the pointless retries. A
+   * member who reconnected got no repair, only silence: a `link_shared` Slack
+   * reports exactly once is not redelivered, so the message keeps its bare URL
+   * permanently.
+   *
+   * Two conditions, and both are load-bearing. `c.status = 'healthy'` is the
+   * reauthorization signal: only the OAuth commit and an explicit connection
+   * test return a marked row to healthy, and every marking write requires
+   * `status = 'healthy'`, so a row that is still broken cannot be written back
+   * into the selection set by its own failures. `c.updated_at > j.updated_at`
+   * then narrows it to jobs that failed *before* that recovery.
+   *
+   * Together they terminate by construction. A re-driven job that fails again
+   * either marks the row — which removes it from `healthy` and empties the set
+   * — or leaves the row alone, in which case the job's own newer `updated_at`
+   * excludes it. An earlier draft selected on `updated_at` alone against any
+   * non-disabled row, which does not terminate: every failure bumped the
+   * connection's `updated_at` through the marking write, so N stranded jobs
+   * re-drove each other forever, on a signal that meant "something failed
+   * again" rather than "someone reconnected".
+   *
+   * Bounded by age as well. Replaying a `link_shared` from three weeks ago
+   * unfurls a message nobody is looking at, and Slack may refuse it outright;
+   * a day is past the length of the outage this was written for.
+   */
+  private static readonly REDRIVE_MAX_AGE_MS = 24 * 60 * 60_000;
+
+  private async redriveReauthorizedIngress(limit: number): Promise<void> {
+    const redriven = await this.env.DB.prepare(
+      `UPDATE slack_ingress_jobs SET status = 'queued', attempt_count = 0,
+         lease_id = NULL, lease_expires_at = NULL, updated_at = ?
+       WHERE id IN (
+         SELECT j.id FROM slack_ingress_jobs j
+         JOIN connector_connections c ON c.id = j.connection_id
+         WHERE j.payload_json IS NOT NULL AND j.status = 'failed'
+           AND j.attempt_count >= 20 AND j.error_code IN (${SLACK_AUTHORIZATION_ERROR_CODES.map(() => "?").join(", ")})
+           AND j.received_at > ?
+           AND c.status = 'healthy' AND c.updated_at > j.updated_at
+         ORDER BY j.received_at ASC LIMIT ?
+       )
+       RETURNING id, workspace_id`,
+    ).bind(
+      nowIso(),
+      ...SLACK_AUTHORIZATION_ERROR_CODES,
+      new Date(Date.now() - SlackAgentService.REDRIVE_MAX_AGE_MS).toISOString(),
+      limit,
+    ).all<{ id: string; workspace_id: string }>();
+    for (const job of redriven.results ?? []) {
+      try {
+        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+          kind: "slack_ingress",
+          region: this.env.AVALON_REGION,
+          workspaceId: job.workspace_id,
+          jobId: job.id,
+        }));
+      } catch (error) {
+        logWarn(this.env, "slack_ingress_redrive_enqueue_failed", {
+          job_id: job.id,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
+    if (redriven.results?.length) {
+      logInfo(this.env, "slack_ingress_redriven_after_reauthorization", { count: redriven.results.length });
+    }
+  }
+
   private async prewarmWorkspaceCredentials(): Promise<void> {
     let afterId = "";
     while (true) {
@@ -281,7 +380,7 @@ export class SlackAgentService {
         `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
                 granted_scopes_json, status
          FROM connector_connections
-         WHERE connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy' AND id > ?
+         WHERE connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled' AND id > ?
          ORDER BY id ASC LIMIT 100`,
       ).bind(afterId).all<SlackConnectionRow>();
       for (let index = 0; index < page.results.length; index += 10) {
@@ -410,10 +509,11 @@ export class SlackAgentService {
     if ((type === "shortcut" || type === "message_action" || type === "block_actions") && triggerId) {
       if (actionId === "avalon_create_automation") return {};
       if (actionId === "avalon_connect") {
-        if (connection.status !== "healthy") {
-          await slackApi(token, "views.open", { trigger_id: triggerId, view: reconnectRequiredModal() }, AbortSignal.timeout(1_500));
-          return {};
-        }
+        // No status gate. Reaching here means the bot token just opened a
+        // Slack view, so the installation demonstrably works; refusing to mint
+        // a link on a stored belief sent a member to ask an admin to fix
+        // something that was not broken. If the grant really is dead,
+        // `createLink` and the `views.open` below fail on Slack's word.
         // The click is the mint. Slack signed this payload and named the member
         // in it, which is the same authority App Home had when it published the
         // button — but a challenge issued now is redeemed seconds later instead
@@ -690,6 +790,32 @@ export class SlackAgentService {
     }
   }
 
+  /**
+   * Deliberately absent: a personal Slack connection does **not** establish the
+   * identity link.
+   *
+   * It was written that way — Slack ran the OAuth and named the user, which
+   * reads like a stronger proof than a challenge Avalon minted — and it is
+   * unsafe, because the connector OAuth callback is mounted before the auth
+   * middleware (`app.ts`) and completes from its `state` alone. Nothing proves
+   * the browser redeeming it belongs to the Avalon user in the `oauth_states`
+   * row. A member can therefore start a personal flow, send the resulting
+   * `slack.com` consent URL to a colleague, and have that colleague's genuine
+   * click write `slack_user_links(workspace, connection, *sender*, *colleague's
+   * Slack id*) `— after which the colleague's Slack messages resolve to the
+   * sender's Avalon identity, and `assignWorkspaceSessions`'s `explicit_link`
+   * mode rewrites work-stream ownership to match.
+   *
+   * The link challenge is the only artifact that carries a Slack-signed
+   * statement of *who clicked*, so it stays the only thing that can mint a
+   * link. One click still accomplishes both halves — the desktop continues from
+   * the redeemed challenge into the personal authorization — but only in that
+   * direction, because only that direction is authenticated at both ends.
+   * Reinstating the reverse needs the connector OAuth start bound to its
+   * initiating client the way `AuthService.beginIdentity` binds a desktop
+   * attempt, which is a change to a pre-existing gap rather than to this one.
+   */
+
   async linkUser(auth: AuthContext, token: string): Promise<{ linked: true; teamId: string; slackUserId: string }> {
     const tokenHash = await sha256(token);
     const challenge = await this.loadLinkChallenge(auth, tokenHash);
@@ -709,7 +835,7 @@ export class SlackAgentService {
          JOIN connector_connections cc ON cc.id = c.connection_id
          WHERE c.token_hash = ? AND c.consumed_at = ? AND c.consumed_by_user_id = ?
            AND cc.workspace_id = ? AND cc.connector_type = 'slack'
-           AND cc.scope = 'workspace' AND cc.status = 'healthy'
+           AND cc.scope = 'workspace' AND cc.status <> 'disabled'
          ON CONFLICT(workspace_id, connection_id, user_id) DO UPDATE SET
            slack_team_id = excluded.slack_team_id,
            slack_user_id = excluded.slack_user_id,
@@ -718,7 +844,11 @@ export class SlackAgentService {
       ).bind(newId(), auth.userId, at, at, tokenHash, at, auth.userId, auth.workspaceId),
       ]);
     } catch (error) {
-      if (error instanceof Error && /(?:UNIQUE|constraint)/iu.test(error.message)) {
+      // Narrowly the unique violation. The looser `/constraint/` test this
+      // replaced also matched FOREIGN KEY and NOT NULL failures, reporting a
+      // genuine bug to the member as "already connected to another Avalon
+      // user" — advice that can never resolve.
+      if (isSlackUniqueConstraintError(error)) {
         throw new ApiError(409, "slack_identity_already_linked", "This Slack identity is already connected to another Avalon user");
       }
       throw error;
@@ -759,7 +889,7 @@ export class SlackAgentService {
               granted_scopes_json, status
        FROM connector_connections
        WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'workspace'
-         AND status = 'healthy' ORDER BY id`,
+         AND status <> 'disabled' ORDER BY id`,
     ).bind(workspaceId).all<SlackConnectionRow>();
     let assigned = 0;
     for (const connection of rawConnections.results ?? []) {
@@ -942,7 +1072,20 @@ export class SlackAgentService {
     // statuses this API emits, and the honest 410 is not worth widening it for
     // when the distinction clients act on is the code.
     if (String(challenge.expires_at) <= nowIso()) throw new ApiError(404, "slack_link_expired", "This Slack connection link has expired; click Connect Avalon in Slack to get a new one");
-    if (challenge.connection_status !== "healthy") throw new ApiError(409, "slack_installation_unhealthy", "This Slack workspace's Avalon installation needs to be reconnected before accounts can be linked; an Avalon workspace owner or admin can reconnect it under Settings → Connections");
+    // A stale belief does not refuse this — linking an identity is a row in
+    // `slack_user_links`, it neither spends the installation's credential nor
+    // needs it to be sound, and refusing on `needs_reconnect` stranded a member
+    // who had a valid challenge in hand behind an admin they had to go find.
+    //
+    // `disabled` is different, and an earlier draft of this wrongly waived it
+    // too. It is a person's decision rather than an observation, and honouring
+    // it here is not merely consistency: disabling clears the credentials and
+    // drops the row from `connectionForTeam`, so redeeming would commit the
+    // identity link and then fail publishing App Home — leaving the member
+    // looking at an error for a mutation that had already landed.
+    if (challenge.connection_status === "disabled") {
+      throw new ApiError(409, "slack_installation_disabled", "This Slack workspace's Avalon installation has been disabled; an Avalon workspace owner or admin can reconnect it under Settings → Connections");
+    }
     return challenge;
   }
 
@@ -1093,10 +1236,10 @@ export class SlackAgentService {
     if (!rawTarget) return;
     const target = SlackAutomationTargetSchema.parse(rawTarget);
     if (target.last_delivered_workstream_id === input.workstreamId) return;
-    if (target.connection_status !== "healthy") {
-      await this.markAutomationDelivery(target, "needs_input", new Error("Slack installation needs reconnect"));
-      return;
-    }
+    // Not gated on the stored status. Marking the target `needs_input` without
+    // attempting the send turned one stale belief into a delivery a member
+    // never received and a target they then had to repair by hand. The attempt
+    // below marks it on a real failure, from Slack's answer.
     try {
       const token = await this.tokenFromEncrypted(target);
       const opened = await slackApi(token, "conversations.open", { users: target.slack_user_id }, AbortSignal.timeout(10_000));
@@ -1161,8 +1304,8 @@ export class SlackAgentService {
         retryable: false,
       });
     }
-    if (rawConnection.connection_status !== "healthy") {
-      throw new ApiError(503, "slack_connection_unhealthy", "The Slack installation needs to be reconnected", {
+    if (rawConnection.connection_status === "disabled") {
+      throw new ApiError(503, "slack_connection_disabled", "The Slack installation has been disabled", {
         retryable: false,
       });
     }
@@ -1265,8 +1408,12 @@ export class SlackAgentService {
     if (type === "app_uninstalled") {
       const connection = await this.connectionForTeam(teamId);
       await this.env.DB.prepare(
+        // No `error_json`, so nothing is overwritten and any non-disabled row
+        // may be marked — Slack saying the app is gone is a fact, not a
+        // diagnosis. The `disabled` guard stops an uninstall resurrecting a
+        // connection somebody had turned off.
         `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = ?
-         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
+         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
       ).bind(nowIso(), connection.id).run();
       await this.deactivateTeamRoute(connection);
       return;
@@ -1279,14 +1426,15 @@ export class SlackAgentService {
         const connection = await this.connectionForTeam(teamId);
         await this.env.DB.prepare(
           `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = ?
-           WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
+           WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
         ).bind(nowIso(), connection.id).run();
         await this.deactivateTeamRoute(connection);
       }
       for (const userId of oauthUsers) {
         await this.env.DB.prepare(
           `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = ?
-           WHERE connector_type = 'slack' AND scope = 'personal' AND provider_account_id = ?`,
+           WHERE connector_type = 'slack' AND scope = 'personal' AND provider_account_id = ?
+             AND status <> 'disabled'`,
         ).bind(nowIso(), `${teamId}:${userId}`).run();
       }
       return;
@@ -1393,25 +1541,11 @@ export class SlackAgentService {
       ? await this.loadPendingPrompt(connection.id, channelId, threadTs, slackUserId)
       : null;
     const requestedPrompt = pendingPrompt?.prompt ?? prompt;
-    if (connection.status !== "healthy") {
-      const targetChannel = channelId ?? await this.openDm(token, slackUserId);
-      if (threadTs) {
-        await this.rememberPendingPrompt(
-          connection.id,
-          targetChannel,
-          threadTs,
-          slackUserId,
-          requestedPrompt,
-          "connection",
-        );
-      }
-      await slackApi(token, "chat.postMessage", {
-        channel: targetChannel,
-        ...(threadTs ? { thread_ts: threadTs } : {}),
-        text: SLACK_CONNECTION_DENIAL_TEXT,
-      }, AbortSignal.timeout(5_000));
-      return;
-    }
+    // A member's request is answered on the strength of the token, not the
+    // row. `botToken` above already succeeded, and the denial this replaced was
+    // itself posted with that token — the installation was working well enough
+    // to tell someone it was broken, which is the whole argument against the
+    // gate. Anything genuinely dead now fails on Slack's answer instead.
     const identity = await this.linkedIdentity(teamId, slackUserId);
     let actor: ExternalActor | null = null;
     let matchedWorkspaceUserId: string | null = identity?.auth.userId ?? null;
@@ -2136,7 +2270,7 @@ export class SlackAgentService {
     await this.env.DB.prepare(
       `UPDATE connector_connections
        SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-       WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
+       WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy'`,
     ).bind(JSON.stringify({
       code: "slack_bot_scope_missing",
       message: `Slack workspace authorization needs reconnect (${reason})`,
@@ -2502,7 +2636,7 @@ export class SlackAgentService {
        JOIN connector_connections cc ON cc.id = l.connection_id
        JOIN workspace_members wm ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
        WHERE l.slack_team_id = ? AND l.slack_user_id = ? AND l.status = 'active'
-         AND cc.connector_type = 'slack' AND cc.scope = 'workspace' AND cc.status = 'healthy'`,
+         AND cc.connector_type = 'slack' AND cc.scope = 'workspace' AND cc.status <> 'disabled'`,
     ).bind(teamId, slackUserId).first<Record<string, unknown>>();
     if (!row || row.member_status !== "active") return null;
     const connection: SlackConnectionRow = {
@@ -3045,6 +3179,11 @@ function publicChannelSyncFields(summary: SlackPublicChannelSyncResult): Record<
   };
 }
 
+/** The unique violation alone — never a FOREIGN KEY, NOT NULL, or CHECK failure. */
+function isSlackUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Error && /unique constraint failed|constraint_unique/iu.test(error.message);
+}
+
 function slackErrorReason(error: unknown): string {
   if (error instanceof ConnectorError) {
     const details = error.details;
@@ -3106,17 +3245,11 @@ function connectModal(link: string): Record<string, unknown> {
   ] };
 }
 
-function reconnectRequiredModal(): Record<string, unknown> {
-  return { type: "modal", callback_id: "avalon_connect_unavailable", title: { type: "plain_text", text: "Connect Avalon" }, close: { type: "plain_text", text: "Close" }, blocks: [
-    { type: "section", text: { type: "mrkdwn", text: "This Slack workspace's Avalon installation needs to be reconnected before accounts can be linked. An Avalon workspace owner or admin can reconnect it from *Settings → Connections* in Avalon." } },
-  ] };
-}
-
 function unlinkedHome(): Record<string, unknown>[] {
   return [
     { type: "header", text: { type: "plain_text", text: "Meet Avalon" } },
     { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Avalon workspace tools and remain attributed to your Slack identity. Avalon uses bounded Slack activity and task-specific context for requested work and configured automations; it does not recreate Slack as a parallel inbox or searchable workspace." } },
-    { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account to claim tasks that need personal authority, use your personal connectors, and see assigned work in Avalon." } },
+    { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account to claim tasks that need personal authority, use your personal connectors, and see assigned work in Avalon. The same step connects personal Slack tools, so Avalon can search and act in Slack with your own permissions." } },
     // Deliberately not a `url` button: the handoff URL carries a single-use
     // challenge, and this view outlives any expiry short enough to be safe.
     { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "avalon_connect" }] },
@@ -3162,7 +3295,7 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
   for (const automation of automations) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${escapeMrkdwn(String(automation.name))}* · ${escapeMrkdwn(String(automation.status))}\n${automation.next_run_at ? `Next run: ${escapeMrkdwn(String(automation.next_run_at))}` : "No scheduled run"}` } });
   blocks.push(
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected · connect to search Slack and act with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Connect" }, url: desktopHandoffUrl(webBase, "avalon://settings/connections"), action_id: "avalon_open_personal_tools" } },
+    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Avalon account normally does this too. Finish it to let Avalon search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "avalon://settings/connections"), action_id: "avalon_open_personal_tools" } },
   );
   if (administration) blocks.push(
     { type: "divider" },
@@ -3451,6 +3584,7 @@ function recordableUnfurlLinks(
 
 export const __slackAgentTesting = {
   PERSONAL_AUTOMATIONS_FOR_HOME_SQL,
+  SLACK_AUTHORIZATION_ERROR_CODES,
   claimWorkspaceSession,
   isDirectSlackMessageEvent,
   isSlackRetryPrompt,
