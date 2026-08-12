@@ -10,6 +10,10 @@ import type {
   LinearRegionalBridgeRpcBinding,
 } from "./services/linear-routing-service";
 import type {
+  GlobalNotionRouterRpcBinding,
+  NotionRegionalBridgeRpcBinding,
+} from "./services/notion-routing-service";
+import type {
   GlobalSlackRouterRpcBinding,
   SlackRegionalBridgeRpcBinding,
 } from "./services/slack-routing-service";
@@ -36,10 +40,12 @@ export interface Env {
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
   EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
+  EU_NOTION_BRIDGE?: NotionRegionalBridgeRpcBinding;
   EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
+  GLOBAL_NOTION_ROUTER?: GlobalNotionRouterRpcBinding;
   GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
 
   APP_ENV: "development" | "test" | "staging" | "production";
@@ -54,6 +60,7 @@ export interface Env {
   DESKTOP_DEEP_LINK_URI: string;
   GITHUB_INGRESS_BASE_URL?: string;
   LINEAR_INGRESS_BASE_URL?: string;
+  NOTION_INGRESS_BASE_URL?: string;
   SLACK_INGRESS_BASE_URL?: string;
 
   OPENROUTER_API_KEY: string;
@@ -248,6 +255,7 @@ const EnvContractSchema = z.object({
   EU_PUBLIC_API_BASE_URL: HttpUrlSchema.optional(),
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   LINEAR_INGRESS_BASE_URL: HttpUrlSchema.optional(),
+  NOTION_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   SLACK_INGRESS_BASE_URL: HttpUrlSchema.optional(),
 });
 
