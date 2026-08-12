@@ -26,6 +26,8 @@ import {
   createElicitationMessage,
   createTextMessage,
   createToolEventMessage,
+  appendDismissedSuggestionId,
+  dismissedSuggestionIdsQueryKey,
   isSameLogicalMessage,
   removeTranscriptMessage,
   upsertTranscriptMessage,
@@ -546,7 +548,11 @@ export function useWorkstreamSocket(
           api.getMessages(workstreamId),
           api.getWorkstreams(),
         ]);
-        const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
+        const canonicalMessages = messagesWithTransientBlocks(
+          canonicalMessagePage,
+          canonicalWorkstream,
+          queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
+        );
         if (closedByEffect || generation !== canonicalReconcileGeneration) return;
         if (resumeState.lastSequence > sequenceAtStart) {
           queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
@@ -775,15 +781,23 @@ export function useWorkstreamSocket(
               : remaining,
           };
         });
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, {
-          id: `suggestion-${event.suggestion.id}`,
-          workstreamId,
-          sequenceNumber: event.sequence,
-          authorType: 'system',
-          messageType: 'activity_suggestion',
-          createdAt: event.suggestion.createdAt,
-          activitySuggestion: mapSuggestion(event.suggestion),
-        }));
+        if (event.suggestion.status === 'dismissed') {
+          queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId), (dismissed) =>
+            appendDismissedSuggestionId(dismissed, event.suggestion.id));
+        }
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
+          const messageId = `suggestion-${event.suggestion.id}`;
+          if (event.suggestion.status === 'dismissed') return removeTranscriptMessage(current, messageId);
+          return insertMessage(current, {
+            id: messageId,
+            workstreamId,
+            sequenceNumber: event.sequence,
+            authorType: 'system',
+            messageType: 'activity_suggestion',
+            createdAt: event.suggestion.createdAt,
+            activitySuggestion: mapSuggestion(event.suggestion),
+          });
+        });
       } else if (event.type === 'hypersight_configuration_updated') {
         queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], event.hypersight);
       } else if (event.type === 'hypersight_block_run_updated') {
