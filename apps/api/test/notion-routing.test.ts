@@ -5,6 +5,7 @@ import {
   isAllowedNotionIngressRoute,
   isSharedNotionIngress,
   notionCallbackUrl,
+  notionIngressIsElsewhere,
 } from "../src/lib/notion-ingress";
 import {
   NotionRoutingService,
@@ -64,13 +65,16 @@ class FakeDatabase {
   }
 
   all(sql: string, values: unknown[]): D1Result<Record<string, unknown>> {
-    if (!sql.includes("SELECT DISTINCT region FROM notion_workspace_routes")) {
+    if (!sql.includes("SELECT DISTINCT region, status FROM notion_workspace_routes")) {
       throw new Error(`Unexpected all query: ${sql}`);
     }
-    const regions = [...new Set(this.routes
-      .filter((row) => row.notionWorkspaceId === values[0] && row.status === "active")
-      .map((row) => row.region))].sort();
-    return result(0, regions.map((region) => ({ region })));
+    // Statuses come back unfiltered on purpose: the service has to tell a
+    // retired route from one that was never registered.
+    const rows = [...new Map(this.routes
+      .filter((row) => row.notionWorkspaceId === values[0])
+      .map((row) => [`${row.region}:${row.status}`, { region: row.region, status: row.status }]))
+      .values()].sort((left, right) => left.region.localeCompare(right.region));
+    return result(0, rows);
   }
 
   run(sql: string, values: unknown[]): D1Result {
@@ -214,21 +218,30 @@ describe("shared Notion connection routing", () => {
     expect(dispatches.every((entry) => bytesEqual(entry.bytes, delivery.bytes))).toBe(true);
   });
 
-  it("stops carrying deliveries for a disabled route", async () => {
+  it("stops asking Notion to retry once every route for a workspace is retired", async () => {
     const database = new FakeDatabase();
+    const dispatched: Region[] = [];
     const service = new NotionRoutingService(environment(database), {
       now: () => NOW,
       verificationToken: async () => SECRET,
-      ingestInRegion: async () => ({ accepted: true, duplicate: false, activityCount: 1 }),
+      ingestInRegion: async (region) => {
+        dispatched.push(region);
+        return { accepted: true, duplicate: false, activityCount: 1 };
+      },
     });
     await service.registerConnection(route("eu", "workspace-eu", "connection-eu"));
     await service.setConnectionStatus({ ...route("eu", "workspace-eu", "connection-eu"), status: "disabled" });
 
+    // Disabling an Avalon connection does not uninstall the integration at
+    // Notion, so this workspace keeps delivering. A retired route is answered,
+    // not retried — the retry budget is shared by every customer.
     const delivery = await signedDelivery();
-    await expect(service.ingestNotion(delivery.bytes, delivery.headers)).rejects.toMatchObject({
-      status: 503,
-      code: "notion_route_pending",
+    await expect(service.ingestNotion(delivery.bytes, delivery.headers)).resolves.toEqual({
+      accepted: true,
+      duplicate: false,
+      activityCount: 0,
     });
+    expect(dispatched).toEqual([]);
   });
 
   it("verifies before routing and asks Notion to retry an installation race", async () => {
@@ -327,6 +340,28 @@ describe("shared Notion connection routing", () => {
     expect(target.searchParams.get("provider")).toBe("notion");
     expect(target.searchParams.get("status")).toBe("failed");
     expect(target.searchParams.get("error")).toBe("invalid_oauth_state");
+  });
+
+  it("refuses a setup challenge posted to a regional host", async () => {
+    // The regional handler would store the token and answer 200 without ever
+    // replicating it, and the omission would only surface as a total delivery
+    // failure for the other region much later.
+    const app = createApp();
+    const response = await app.request(
+      "https://api.with-avalon.com/ingest/notion?setup=setup-token",
+      { method: "POST", body: JSON.stringify({ verification_token: SECRET }) },
+      ingressEnv(),
+    );
+    expect(response.status).toBe(400);
+    const body = await response.json() as { error?: { code?: string; message?: string } };
+    expect(body.error?.code).toBe("notion_setup_wrong_host");
+    expect(body.error?.message).toContain("https://notion.with-avalon.com/ingest/notion");
+  });
+
+  it("still accepts a setup challenge where the ingress and the API are one host", async () => {
+    // Development is that configuration, and the refusal above must not reach it.
+    expect(notionIngressIsElsewhere(developmentEnv(), "http://127.0.0.1:8787/ingest/notion")).toBe(false);
+    expect(notionIngressIsElsewhere(ingressEnv(), "https://api.with-avalon.com/ingest/notion")).toBe(true);
   });
 
   it("round-trips a region-routed state and rejects a forged prefix", () => {

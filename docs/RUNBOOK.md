@@ -251,6 +251,8 @@ Current production status: the site, both regional APIs, and the private nightly
 
 Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
 
+The release that first ships the shared Notion ingress is the second such rollout, and it is staged for the same reason: Global adds `EU_NOTION_BRIDGE` bound to `NotionRegionalBridge`, which the deployed EU Worker does not export yet, while EU adds `GLOBAL_NOTION_ROUTER` bound to `NotionRoutingBridge`, which the deployed Global Worker does not export yet. Neither region can be deployed with its full configuration first. Deploy a bootstrap Global Worker carrying the new `NotionRoutingBridge` export and the `notion.with-avalon.com` custom domain but **without** the `EU_NOTION_BRIDGE` binding, then the full EU Worker, then the full Global Worker. Apply `0066_shared_notion_connection_routing.sql` to both databases first. Until the third stage lands, an EU authorization returns `notion_region_unavailable` rather than completing — the shared callback is live but has nowhere to hand an EU attempt — so set the Notion Worker secrets only after the rollout finishes, which keeps the connector out of the catalog and the connect button disabled in the meantime.
+
 For ordinary releases after both entrypoints exist:
 
 1. Validate both Wrangler configurations with dry-run builds.
@@ -258,7 +260,7 @@ For ordinary releases after both entrypoints exist:
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
 5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
-6. Deploy the EU Worker, then the Global Worker. For the first inbound-email release only, use the three-stage bootstrap order above.
+6. Deploy the EU Worker, then the Global Worker. For the first inbound-email release and the first shared-Notion-ingress release, use the three-stage bootstrap order above instead.
 7. Call `GET /health` on both regional APIs with `pnpm health:regions`, which fails unless both regions report `ok`.
 8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
 9. Complete one Google identity login in a provider test account.
