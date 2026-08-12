@@ -14,6 +14,7 @@
     "PUBLIC_WEB_BASE_URL": "https://with-avalon.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.with-avalon.com",
     "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
+    "NOTION_INGRESS_BASE_URL": "https://notion.with-avalon.com",
     "SLACK_INGRESS_BASE_URL": "https://slack.with-avalon.com",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://avalon",
@@ -89,6 +90,11 @@
       "binding": "GLOBAL_LINEAR_ROUTER",
       "service": "avalon-api-global",
       "entrypoint": "LinearRoutingBridge"
+    },
+    {
+      "binding": "GLOBAL_NOTION_ROUTER",
+      "service": "avalon-api-global",
+      "entrypoint": "NotionRoutingBridge"
     },
     {
       "binding": "GLOBAL_SLACK_ROUTER",
