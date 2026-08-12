@@ -324,12 +324,21 @@ artifacts.
 paged against real work.** `WorkstreamService.list` excludes `system_kind` rows
 from the paged query unconditionally and appends the newest
 `SYSTEM_WORKSTREAM_LIST_LIMIT` of them when the caller asked to see them — the
-same shape pins already use, and for a sharper reason: the sidebar requests one
-page of 250 and discards the cursor, so on recency alone a daily digest would
-push every ordinary work stream off the only list a Debug-enabled account ever
-requests, within months. Older occurrences stay reachable by URL. Anything else
-that marks itself `system_kind` inherits this, which is the intent — machinery
-should never win a place from the work somebody is doing.
+same shape pins already use. On recency alone a daily digest would fill the first
+page and push the work somebody is doing onto later ones; the sidebar pages as it
+scrolls, so nothing becomes unreachable, but a reader would be scrolling through
+months of machinery to reach last week's work stream. Older occurrences stay
+reachable by URL. Anything else that marks itself `system_kind` inherits this,
+which is the intent — machinery should never win a place from real work.
+
+The two lists are also two index partitions,
+`workstreams_sidebar_recency_ordinary_idx` and
+`workstreams_sidebar_recency_system_idx`. Both queries seek `(workspace_id,
+last_activity_at DESC)` and then walk, so on the shared index the ordinary list
+would have to step past every digest row newer than its last result — a scan
+that grows with digest history for a result set that does not. Hiding the
+accumulation from the sidebar while leaving it in that query's path would only
+move the cost somewhere nobody looks.
 
 ### Delivery
 
@@ -469,16 +478,16 @@ came from, because those are `system` rows the projector drops. A wrong line in
 one digest became a settled fact for every digest after it, with no path back to
 the events that would have contradicted it.
 
-Compaction sharpened it rather than containing it. `compact()` preserves
-`messages[1]` verbatim as the initial user message and re-pins it through every
-later compaction, on the assumption — correct for an ordinary work stream — that
-it is the human request defining the task. A digest work stream has no such
-message; each occurrence brings its own window. So the first occurrence's brief,
-one morning of connector events, would sit at the front of that person's context
-permanently, under `COMPACTION_STUB_USER`'s instruction to "continue the original
-task from the preserved user message". Per-occurrence work streams make
-`messages[1]` this occurrence's brief, which is what that invariant was written
-for.
+An earlier compaction design sharpened it: it preserved the first user message
+verbatim and re-pinned it through every later compaction, on the assumption —
+correct for an ordinary work stream — that it is the human request defining the
+task. A digest work stream has no such message; each occurrence brings its own
+window, so the first one's brief would have sat at the front of that person's
+context permanently. That was removed in `084c54a`, which landed on `main`
+before this change did, and compaction now carries nothing forward verbatim. It
+is recorded here as history, not as justification: the replayed transcript above
+is the whole of the case, and it stood on its own before compaction ever entered
+into it.
 
 The continuity being paid for was already unnecessary. `cursor_from` and
 `cursor_through` guarantee no event appears in two windows, so non-repetition is

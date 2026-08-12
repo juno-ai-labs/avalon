@@ -1827,4 +1827,28 @@ describe("database migrations", () => {
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });
+
+  it("gives each sidebar partition a recency index it can seek rather than filter", () => {
+    const database = migrateFreshDatabase();
+    // Both listing queries seek `(workspace_id, last_activity_at DESC)` and then
+    // walk. Sharing one index means the ordinary list walks past every digest
+    // row newer than its last result, and digest rows accumulate per occurrence
+    // — a scan that grows without bound for a result set that does not. A
+    // partial index is only usable when the query's WHERE implies its
+    // predicate, so these assert the exact clauses the two queries state.
+    const planFor = (predicate: string): string =>
+      (database.prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT w.id FROM workstreams w
+          WHERE w.workspace_id = 'ws' AND w.archived_at IS NULL AND ${predicate}
+          ORDER BY w.last_activity_at DESC LIMIT 25`,
+      ).all() as Array<{ detail: string }>).map((row) => row.detail).join("\n");
+
+    expect(planFor("w.system_kind IS NULL")).toContain("workstreams_sidebar_recency_ordinary_idx");
+    expect(planFor("w.system_kind IS NOT NULL")).toContain("workstreams_sidebar_recency_system_idx");
+    // Neither may fall back to a scan of the whole workspace.
+    expect(planFor("w.system_kind IS NULL")).not.toContain("SCAN");
+    expect(planFor("w.system_kind IS NOT NULL")).not.toContain("SCAN");
+    database.close();
+  });
 });

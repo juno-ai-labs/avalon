@@ -40,6 +40,7 @@ import {
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
 } from "./integrations";
+import { markWorkflowInstanceCreated, workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
@@ -285,7 +286,14 @@ export async function launchWorkstreamHarness(
       type: "harness_status_changed",
       status: "failed",
     });
-    throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+    // Carried onto the member-safe error so a caller that cleans up after a
+    // failed launch can tell "nothing started" from "started, and only the
+    // record of it failed". The run row above is `failed` either way, so it
+    // cannot answer that question and must not be read as if it could.
+    // The member-safe error carries forward whether an instance is live, so a
+    // caller undoing its own preparation is answering the right question.
+    const memberSafe = new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+    throw workflowInstanceWasCreated(error) ? markWorkflowInstanceCreated(memberSafe) : memberSafe;
   }
   await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
     type: "harness_status_changed",
@@ -607,10 +615,11 @@ export class WorkstreamService {
     // Machinery is excluded from the paged query unconditionally and appended
     // separately below, the same way a pin is. Digest work streams are created
     // one per occurrence and nothing reaps them, so on recency alone they would
-    // take the whole page: the sidebar asks for one page of 250 and discards
-    // the cursor, so within months of a daily digest every ordinary work stream
-    // would fall off the only list a Debug-enabled account ever requests.
-    // Paging machinery against real work is the wrong contest to hold.
+    // fill the first page and push the work somebody is actually doing onto
+    // later ones — the sidebar pages as it scrolls, so nothing is unreachable,
+    // but a reader would be scrolling through months of machinery to find last
+    // week's work stream. Paging machinery against real work is the wrong
+    // contest to hold whether or not the loser is reachable.
     const systemClause = "AND w.system_kind IS NULL";
     // A pinned work stream leaves the recency order altogether rather than
     // being paged with everything else, which is the same thing the sidebar
@@ -647,8 +656,15 @@ export class WorkstreamService {
     // rather than from the last item returned.
     if (!before) rows.push(...await this.loadPinnedWorkstreamRows(includeSystem));
     if (!before && includeSystem) rows.push(...await this.loadSystemWorkstreamRows());
+    // Machinery is never given an inbound address. Reserving one activates a
+    // route in the global registry — a cross-region RPC from the EU — and
+    // nothing reclaims it, so with one work stream per digest occurrence this
+    // would mint a permanent mailbox per occurrence, hundreds a year per person.
+    // It would also make a work stream emailable whose entire point is that its
+    // context is exactly one frozen window. A digest work stream carries no
+    // address and needs none: nobody writes to a run.
     const unreconciledAddressRows = rows.filter((row) =>
-      row.email_address == null || row.email_route_status !== "active");
+      row.system_kind == null && (row.email_address == null || row.email_route_status !== "active"));
     if (unreconciledAddressRows.length > 0) {
       const routes = await new WorkstreamEmailRoutingService(this.env).backfillWorkstreamAddresses(
         unreconciledAddressRows.map((row) => ({
@@ -1323,12 +1339,15 @@ export class WorkstreamService {
   /**
    * The machinery a caller asked to see, as its own bounded set.
    *
-   * System work streams are excluded from the paged query and appended here for
-   * the same reason pins are: they belong to a different section of the list
-   * than the recency order serves. The difference is that pins are a person's
-   * own choice and are therefore unbounded, while these arrive on their own —
-   * one per digest occurrence, forever — so this takes only the newest
-   * {@link SYSTEM_WORKSTREAM_LIST_LIMIT}. Debugging wants the run that just
+   * System work streams are excluded from the paged query and appended here the
+   * way pins are, but not for the same reason — a pin leaves the recency order
+   * because it is rendered in a section of its own, and these are not: the
+   * desktop re-sorts everything it receives by `lastActivityAt` into recency
+   * buckets, so a digest occurrence still renders among the work of its own
+   * morning. What the append buys here is only the bound: they arrive on their
+   * own, one per occurrence and forever, so taking the newest
+   * {@link SYSTEM_WORKSTREAM_LIST_LIMIT} keeps them from filling the first page
+   * and pushing real work behind a scroll. Debugging wants the run that just
    * happened, and everything older is still reachable by its URL.
    *
    * A pinned one is excluded, because `loadPinnedWorkstreamRows` has already

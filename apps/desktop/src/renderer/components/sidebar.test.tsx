@@ -1690,3 +1690,94 @@ describe('pinned work streams', () => {
     expect(within(dialog).getByText('The work stream could not be reached.')).toBeVisible();
   });
 });
+
+describe('Sidebar work-stream paging', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.listeners.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function renderWithPaging(overrides: {
+    hasMoreWorkstreams?: boolean;
+    loadingMoreWorkstreams?: boolean;
+    onLoadMoreWorkstreams?: () => void;
+  }): HTMLElement {
+    const { container } = render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('one', 'Launch brief', 'completed')]}
+            {...overrides}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    // The scroll container is an unnamed `nav` landmark inside the labelled
+    // `aside`, so there is no accessible name to query it by.
+    return container.querySelector('.sidebar-scroll') as HTMLElement;
+  }
+
+  /** jsdom lays nothing out, so the scroll geometry is declared outright. */
+  function scrollTo(nav: HTMLElement, scrollTop: number): void {
+    Object.defineProperty(nav, 'scrollHeight', { configurable: true, value: 2_000 });
+    Object.defineProperty(nav, 'clientHeight', { configurable: true, value: 800 });
+    Object.defineProperty(nav, 'scrollTop', { configurable: true, value: scrollTop });
+    fireEvent.scroll(nav);
+  }
+
+  it('asks for the next page as the scroll approaches the end', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    const nav = renderWithPaging({ hasMoreWorkstreams: true, onLoadMoreWorkstreams });
+
+    // 1000px of list still below the fold: too early to spend a request.
+    scrollTo(nav, 200);
+    expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
+
+    // Within the threshold, and ahead of the end rather than at it, so the rows
+    // are usually there by the time the reader arrives.
+    scrollTo(nav, 900);
+    expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks once while a page is in flight', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    // A flick fires a scroll event per frame, and the list is one cache entry
+    // that a second response would append to twice.
+    const nav = renderWithPaging({
+      hasMoreWorkstreams: true,
+      loadingMoreWorkstreams: true,
+      onLoadMoreWorkstreams,
+    });
+
+    scrollTo(nav, 1_100);
+    scrollTo(nav, 1_150);
+
+    expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
+    expect(screen.getByText('Loading more…')).toBeInTheDocument();
+  });
+
+  it('does not ask at the end of the list', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    const nav = renderWithPaging({ hasMoreWorkstreams: false, onLoadMoreWorkstreams });
+
+    scrollTo(nav, 1_200);
+
+    expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
+    // No standing invitation to scroll: a list that ends on a page boundary
+    // would otherwise claim forever that there is more.
+    expect(screen.queryByText('Loading more…')).not.toBeInTheDocument();
+  });
+});

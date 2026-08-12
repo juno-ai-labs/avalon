@@ -114,12 +114,15 @@ describe('New work-stream home', () => {
       disconnect(): void {}
     });
     api.getWorkspaceMembers.mockResolvedValue([currentUser, teammate]);
-    api.getWorkstreams.mockResolvedValue([
-      workstream('waiting', 'Board decision', 'needs_input'),
-      workstream('running', 'Pricing restructure', 'running'),
-      workstream('completed', 'Release notes', 'completed'),
-      workstream('failed', 'Broken connector', 'failed'),
-    ]);
+    api.getWorkstreams.mockResolvedValue({
+      items: [
+        workstream('waiting', 'Board decision', 'needs_input'),
+        workstream('running', 'Pricing restructure', 'running'),
+        workstream('completed', 'Release notes', 'completed'),
+        workstream('failed', 'Broken connector', 'failed'),
+      ],
+      nextCursor: null,
+    });
     api.getWorkOpportunities.mockResolvedValue([]);
     api.recordWorkOpportunityImpressions.mockResolvedValue(undefined);
     api.dismissWorkOpportunity.mockResolvedValue(undefined);

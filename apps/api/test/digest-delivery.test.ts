@@ -12,6 +12,7 @@ const SCHEDULE = "00000000-0000-7000-8000-000000000005";
 const DELIVERY = "00000000-0000-7000-8000-000000000006";
 const TARGET = "00000000-0000-7000-8000-000000000007";
 const WORKSTREAM = "00000000-0000-7000-8000-000000000008";
+const RUN = "00000000-0000-7000-8000-000000000009";
 
 const databases: DatabaseSync[] = [];
 afterEach(() => {
@@ -192,6 +193,30 @@ describe("settling a digest run", () => {
     });
     expect(database.prepare("SELECT next_sequence_number FROM workstreams WHERE id = ?").get(WORKSTREAM))
       .toEqual({ next_sequence_number: 3 });
+  });
+
+  it("notes a delivery the previous Worker claimed without the new column", async () => {
+    const database = seededDatabase();
+    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+    // Migrations land before either Worker deploys, so the Worker running
+    // during that window claims deliveries into the new schema without writing
+    // `workstream_id`. Resolving through the column alone would drop the note
+    // and invert its meaning: the digest went out, and the transcript would say
+    // it did not.
+    database.exec(`
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('${RUN}', '${WORKSPACE}', '${WORKSTREAM}', 'scheduled_digest',
+              '{"type":"user","userId":"${OWNER}"}', 'completed', '2026-08-11');
+      UPDATE digest_deliveries
+         SET workstream_id = NULL, harness_run_id = '${RUN}' WHERE id = '${DELIVERY}';
+    `);
+
+    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+
+    expect(database.prepare(
+      "SELECT workstream_id FROM messages WHERE client_message_id = ?",
+    ).get(`digest-delivered:${DELIVERY}`)).toEqual({ workstream_id: WORKSTREAM });
   });
 
   it("sends nothing when the run finished without writing a digest", async () => {

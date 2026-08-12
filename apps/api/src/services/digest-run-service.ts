@@ -10,6 +10,7 @@ import {
   type ActivityEventRow,
 } from "./activity-event-service";
 import { publishWorkstreamEvent } from "./integrations";
+import { workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { launchWorkstreamHarness } from "./workstream-service";
 
 /**
@@ -175,36 +176,31 @@ export async function fireDigestSchedule(
     ).bind(harnessRunId, nowIso(), deliveryId).run();
     return { started: true, deliveryId, harnessRunId };
   } catch (error) {
-    // Only a claim that never reached a harness is released, so the scheduler's
-    // retry gets another attempt at this occurrence. Whether the launch happened
-    // is read from `harnessRunId` rather than from the row's status: the status
-    // write is itself inside the `try`, so a launch that succeeded and failed
-    // only to record itself still leaves the row `planned`, and releasing that
-    // would strand a live run — settlement would find no delivery, drop the
-    // digest, and the retry would start a second run with no uniqueness left to
-    // catch it.
-    if (harnessRunId === null) {
+    // An attempt that started nothing undoes itself completely — the claim, so
+    // the scheduler's retry gets another go at this occurrence, and the work
+    // stream with it, since it belongs to this occurrence alone and a retry
+    // makes its own. Otherwise every launch outage would leave an empty
+    // transcript behind, and those are never reaped.
+    //
+    // An attempt that *did* start something undoes nothing. `launchWorkstreamHarness`
+    // inserts the run row, creates the Cloudflare Workflow instance, and only
+    // then records the instance id, so a failure in that last write throws with
+    // a live run already executing. Releasing the claim there would let a retry
+    // digest the same window twice with no uniqueness left to catch it, and
+    // deleting the work stream would cascade the transcript, run row and frozen
+    // memory context away beneath the run still reading them.
+    //
+    // Which of the two happened is asked of the error rather than inferred from
+    // a row: the launcher marks its own run `failed` in both cases, so neither
+    // `harness_runs.status` nor the row's existence can answer it. `harnessRunId`
+    // covers the failures that happen before the launcher is reached at all.
+    if (harnessRunId === null && !workflowInstanceWasCreated(error)) {
       await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned'")
         .bind(deliveryId).run().catch(() => undefined);
-      // The work stream belongs to this occurrence and nothing else will ever
-      // run in it, so a released claim takes it too rather than leaving an empty
-      // transcript behind for every failed attempt. Its messages cascade.
-      //
-      // Only while no harness run has been recorded against it, though, and
-      // that is a stricter test than `harnessRunId === null`. `launchWorkstreamHarness`
-      // inserts the run row, then creates the Cloudflare Workflow instance, and
-      // only then writes the instance id back — so a failure in that last write
-      // throws with a live workflow already running against this work stream.
-      // Deleting it there would cascade away the transcript, the run row and the
-      // frozen memory context out from under it. An empty work stream nobody
-      // reaps is a far cheaper mistake, so the presence of a run row is treated
-      // as "something may be executing here" and stops the cleanup.
+      // Messages, the run row and the memory context cascade with it.
       if (workstreamId) {
-        await env.DB.prepare(
-          `DELETE FROM workstreams
-            WHERE id = ? AND system_kind = 'digest'
-              AND NOT EXISTS (SELECT 1 FROM harness_runs WHERE workstream_id = ?)`,
-        ).bind(workstreamId, workstreamId).run().catch(() => undefined);
+        await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
+          .bind(workstreamId).run().catch(() => undefined);
       }
     }
     throw error;
@@ -282,10 +278,9 @@ function digestWorkstreamTitle(plannedFor: string, timezone: string): string {
  * frozen window to a summary, and the only thing that has to survive between
  * occurrences is the cursor, which lives on `digest_deliveries`. Sharing one
  * work stream instead gave every run the previous months of digests as replayed
- * assistant history — unlabelled, uncheckable against windows the projector
- * drops, and pinned at the front of the context permanently once compaction
- * preserved the first occurrence's brief as the "initial user message". A fresh
- * work stream is what makes each occurrence's context exactly its own window.
+ * assistant history — unlabelled, and uncheckable against the windows it came
+ * from, which the protocol projector drops as UI state. A fresh work stream is
+ * what makes each occurrence's context exactly its own window.
  *
  * No claim race to resolve: the caller reaches this only after winning the
  * `digest_deliveries` insert, so exactly one attempt per occurrence gets here.

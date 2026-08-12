@@ -133,6 +133,14 @@ export async function settleDigestRun(
  * Resolved through `digest_deliveries.workstream_id` rather than by joining back
  * through `harness_runs`, so it still lands when the launch never recorded its
  * run id on the delivery.
+ *
+ * The `COALESCE` covers the deploy window running the other way. Migrations land
+ * before either Worker deploys, so the *previous* Worker claims deliveries into
+ * the new schema without writing the new column; resolving through
+ * `workstream_id` alone would drop the note for every one of them and invert the
+ * signal above — the digest went out, and its transcript would say it did not.
+ * `harness_runs` is what the migration's own backfill reads for exactly the same
+ * reason, and it is only ever consulted here when the column is NULL.
  */
 async function noteDeliveryInTranscript(
   env: Env,
@@ -148,7 +156,10 @@ async function noteDeliveryInTranscript(
        SELECT ?, ?, w.workspace_id, w.id, 'system', NULL, 'system', ?, NULL,
               w.next_sequence_number, ?
          FROM workstreams w
-         JOIN digest_deliveries d ON d.workstream_id = w.id
+         JOIN digest_deliveries d
+           ON w.id = COALESCE(
+                d.workstream_id,
+                (SELECT run.workstream_id FROM harness_runs run WHERE run.id = d.harness_run_id))
         WHERE d.id = ?
        ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
     ).bind(
@@ -161,7 +172,12 @@ async function noteDeliveryInTranscript(
     env.DB.prepare(
       `UPDATE workstreams
           SET next_sequence_number = next_sequence_number + 1, updated_at = ?
-        WHERE id = (SELECT d.workstream_id FROM digest_deliveries d WHERE d.id = ?)
+        WHERE id = (
+          SELECT COALESCE(
+                   d.workstream_id,
+                   (SELECT run.workstream_id FROM harness_runs run WHERE run.id = d.harness_run_id))
+            FROM digest_deliveries d WHERE d.id = ?
+        )
           AND EXISTS (
             SELECT 1 FROM messages WHERE client_message_id = ? AND workstream_id = workstreams.id
           )`,
