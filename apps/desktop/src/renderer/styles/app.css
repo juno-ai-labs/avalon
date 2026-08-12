@@ -1714,6 +1714,7 @@ pre {
 .member-picker-row small,
 .member-action-list small { color: var(--muted); font-size: 10.5px; }
 .member-checkbox { border: 1px solid #55564f; border-radius: 4px; flex: 0 0 16px; height: 16px; width: 16px; }
+.member-picker-row:has(input:focus-visible) .member-checkbox { outline: 2px solid #6a7f95; outline-offset: 2px; }
 .member-picker-row:has(input:checked) .member-checkbox { background: var(--blue); border-color: var(--blue); box-shadow: inset 0 0 0 3px #242521; }
 
 .resource-picker { display: grid; gap: 11px; }
