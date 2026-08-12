@@ -555,8 +555,8 @@ A retrieved payload contains the prompt, the connector data pulled into it, and
 whatever the person wrote. Treat it as production user content: read it from a
 scratch directory, keep it out of logs, tickets, and commits, and delete it when
 the investigation is done. What the feature stores and why is
-[`agent-harness.md`](agent-harness.md#limits); this section is only how to read it
-back.
+[`agent-harness.md`](agent-harness.md#failure-modes-and-limits); this section is
+only how to read it back.
 
 ## Incident response
 
