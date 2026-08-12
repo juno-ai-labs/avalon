@@ -8,9 +8,9 @@ user-invocable: true
 
 ## 1. Before you start
 
-Read [`docs/pull-requests.md`](../../docs/pull-requests.md) if you haven't already
+Read [`docs/pull-requests.md`](../../../docs/pull-requests.md) if you haven't already
 this session — it's the actual spec this skill implements, and it can change
-independently of this file. Also skim [`docs/README.md`](../../docs/README.md) to
+independently of this file. Also skim [`docs/README.md`](../../../docs/README.md) to
 find which other docs the change you're shipping should update in the same PR.
 
 Trust CI to run the tests, linting, and type checks. It will run faster than you can.
@@ -20,7 +20,7 @@ reason to do so.
 ## 2. Write the PR
 
 Never rely on the GitHub "create PR" button's autofill — write the description
-yourself against [`docs/pull-requests.md`](../../docs/pull-requests.md)'s spec.
+yourself against [`docs/pull-requests.md`](../../../docs/pull-requests.md)'s spec.
 
 **Never open it as a draft** (`docs/pull-requests.md`, "Never open a draft pull
 request") — no `--draft` flag, no `draft: true` through the API. An open PR in
