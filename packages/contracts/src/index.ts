@@ -1280,6 +1280,27 @@ const StreamEventBaseSchema = ServerEventBaseSchema.extend({
   streamSeq: z.number().int().nonnegative()
 });
 /**
+ * The accumulated assistant text a room can hand to somebody who subscribes
+ * after the stream began. `turnStartOffset` identifies the prefix that survives
+ * a retry without storing that prefix twice in Durable Object storage.
+ */
+export const ActiveStreamCheckpointSchema = z.object({
+  messageId: IdSchema,
+  harnessRunId: IdSchema,
+  turnId: z.string().min(1).max(180),
+  epoch: z.number().int().nonnegative(),
+  streamSeq: z.number().int().nonnegative(),
+  seenTurnIds: z.array(z.string().min(1).max(180)),
+  text: z.string(),
+  turnStartOffset: z.number().int().nonnegative(),
+  roomSequence: z.number().int().nonnegative(),
+  createdAt: TimestampSchema,
+}).refine((checkpoint) => checkpoint.turnStartOffset <= checkpoint.text.length, {
+  message: "Turn start must fall within the accumulated stream text",
+  path: ["turnStartOffset"],
+});
+export const ActiveStreamCheckpointsSchema = z.array(ActiveStreamCheckpointSchema).max(1);
+/**
  * The close code the work-stream room uses when it disconnects a socket whose
  * reader may no longer see the work stream.
  *
@@ -1295,7 +1316,11 @@ const StreamEventBaseSchema = ServerEventBaseSchema.extend({
 export const WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE = 1008;
 
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
-  ServerEventBaseSchema.extend({ type: z.literal("snapshot"), workstream: WorkstreamDetailSchema }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("snapshot"),
+    workstream: WorkstreamDetailSchema,
+    activeStreams: ActiveStreamCheckpointsSchema.default([]),
+  }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
   ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
   /** The title changed — a person renamed the work stream, or Avalon named it. */
@@ -1323,6 +1348,8 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   StreamEventBaseSchema.extend({
     type: z.literal("stream_delta"),
     messageId: IdSchema,
+    /** Present on new publishers; optional while older regional Workers drain. */
+    harnessRunId: IdSchema.optional(),
     delta: z.string(),
     /** Replaces text from the prior attempt instead of concatenating it. */
     reset: z.boolean()
@@ -1345,7 +1372,9 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
     reason: z.enum(["history_unavailable", "sequence_ahead"]),
-    latestSequence: z.number().int().nonnegative()
+    latestSequence: z.number().int().nonnegative(),
+    /** Preserves an in-flight response while canonical REST state is refreshed. */
+    activeStreams: ActiveStreamCheckpointsSchema.default([]),
   }),
   ServerEventBaseSchema.extend({ type: z.literal("error"), code: z.string(), message: z.string() })
 ]);
@@ -1991,6 +2020,7 @@ export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptSt
 export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
+export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
 export type GenerateMeetingNotesRequest = z.infer<typeof GenerateMeetingNotesRequestSchema>;

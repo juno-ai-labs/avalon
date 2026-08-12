@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   readStructuredFailure,
   ActivityQueueMessageSchema,
+  ActiveStreamCheckpointSchema,
   AnswerElicitationRequestSchema,
   AppendNoteTranscriptSegmentRequestSchema,
   AutomationDraftSchema,
@@ -546,6 +547,26 @@ describe("boundary contracts", () => {
       epoch: 2,
       streamSeq: 0,
       reset: true
+    }).success).toBe(false);
+  });
+
+  it("bounds a stream checkpoint's retry prefix to its accumulated text", () => {
+    const checkpoint = {
+      messageId: id,
+      harnessRunId: id,
+      turnId: "turn-2",
+      epoch: 1,
+      streamSeq: 7,
+      seenTurnIds: ["turn-1", "turn-2"],
+      text: "The answer so far",
+      turnStartOffset: 10,
+      roomSequence: 42,
+      createdAt: "2026-07-31T20:00:00.000Z",
+    };
+    expect(ActiveStreamCheckpointSchema.parse(checkpoint)).toEqual(checkpoint);
+    expect(ActiveStreamCheckpointSchema.safeParse({
+      ...checkpoint,
+      turnStartOffset: checkpoint.text.length + 1,
     }).success).toBe(false);
   });
 

@@ -1,10 +1,12 @@
 import {
+  ActiveStreamCheckpointsSchema,
   ClientSocketEventSchema,
   IdSchema,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamDetailSchema,
+  type ActiveStreamCheckpoint,
   type PersonalSocketEvent,
   type ServerSocketEvent,
   type User,
@@ -68,6 +70,7 @@ const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
   "activity_suggestion_resolved",
   "hypersight_configuration_updated",
 ]);
+const ACTIVE_STREAM_CHECKPOINTS_KEY = "activeStreamCheckpoints";
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
@@ -112,6 +115,83 @@ const textEncoder = new TextEncoder();
 function retractsReadAccess(event: ServerSocketEvent): boolean {
   if (event.type === "workstream_scope_changed") return event.scope === "personal";
   return event.type === "participant_removed";
+}
+
+/**
+ * Fold one sequenced room event into the durable partial-response checkpoint.
+ * This mirrors the renderer's Bind cursor rules so a fresh subscriber receives
+ * exactly the text an uninterrupted subscriber is already displaying.
+ */
+export function applyActiveStreamCheckpointEvent(
+  checkpoints: ActiveStreamCheckpoint[],
+  event: ServerSocketEvent,
+): ActiveStreamCheckpoint[] {
+  if (event.type === "stream_completed") {
+    return checkpoints.filter((checkpoint) => checkpoint.messageId !== event.message.id);
+  }
+  if (
+    event.type === "harness_status_changed"
+    && (event.status === "needs_input"
+      || event.status === "completed"
+      || event.status === "failed"
+      || event.status === "idle")
+  ) {
+    return [];
+  }
+  if (event.type !== "stream_started" && event.type !== "stream_delta") return checkpoints;
+
+  // Admission permits one active harness run per work stream. A start from a
+  // different run supersedes a checkpoint whose terminal event never reached
+  // the room, keeping this one accumulated value bounded across outages.
+  const activeCheckpoints = event.type === "stream_started"
+    ? checkpoints.filter((checkpoint) => checkpoint.harnessRunId === event.harnessRunId)
+    : checkpoints;
+  const existing = activeCheckpoints.find((checkpoint) => checkpoint.messageId === event.messageId);
+  // The publisher always attempts `stream_started` first. If that room request
+  // failed, a later delta cannot reconstruct the missing prefix and must not
+  // manufacture a checkpoint that claims it can.
+  if (event.type === "stream_delta" && !existing) return checkpoints;
+  if (existing) {
+    if (event.sequence <= existing.roomSequence) return checkpoints;
+    if (event.turnId === existing.turnId) {
+      if (event.epoch < existing.epoch) return checkpoints;
+      if (event.epoch === existing.epoch && event.streamSeq <= existing.streamSeq) {
+        return checkpoints;
+      }
+    } else if (existing.seenTurnIds.includes(event.turnId)) {
+      return checkpoints;
+    }
+  }
+
+  const startsNewTurn = !existing || event.turnId !== existing.turnId;
+  const turnStartOffset = startsNewTurn ? existing?.text.length ?? 0 : existing.turnStartOffset;
+  const replacesAttempt = event.reset
+    || (existing !== undefined && !startsNewTurn && event.epoch > existing.epoch);
+  const text = event.type === "stream_started"
+    ? (replacesAttempt ? (existing?.text ?? "").slice(0, turnStartOffset) : existing?.text ?? "")
+    : replacesAttempt
+      ? `${(existing?.text ?? "").slice(0, turnStartOffset)}${event.delta}`
+      : `${existing?.text ?? ""}${event.delta}`;
+  const seenTurnIds = existing?.seenTurnIds.includes(event.turnId)
+    ? existing.seenTurnIds
+    : [...(existing?.seenTurnIds ?? []), event.turnId];
+  const harnessRunId = event.type === "stream_started"
+    ? event.harnessRunId
+    : existing?.harnessRunId;
+  if (!harnessRunId) return checkpoints;
+  const next: ActiveStreamCheckpoint = {
+    messageId: event.messageId,
+    harnessRunId,
+    turnId: event.turnId,
+    epoch: event.epoch,
+    streamSeq: event.streamSeq,
+    seenTurnIds,
+    text,
+    turnStartOffset,
+    roomSequence: event.sequence,
+    createdAt: existing?.createdAt ?? event.occurredAt,
+  };
+  return [next];
 }
 
 /**
@@ -565,30 +645,32 @@ export class WorkstreamRoom {
       typeof rawEvent.sequence === "number" && Number.isSafeInteger(rawEvent.sequence)
         ? rawEvent.sequence
         : undefined;
-    const sequence = await this.allocateSequence(requestedSequence);
     const candidate = {
       ...rawEvent,
-      sequence,
+      // Validate before consuming a room sequence. The committed event is
+      // assigned its real sequence atomically with any stream checkpoint.
+      sequence: 0,
       occurredAt:
         typeof rawEvent.occurredAt === "string" ? rawEvent.occurredAt : new Date().toISOString()
     };
-    const event = ServerSocketEventSchema.safeParse(candidate);
+    const unsequencedEvent = ServerSocketEventSchema.safeParse(candidate);
 
-    if (!event.success) {
+    if (!unsequencedEvent.success) {
       return jsonResponse(
-        { error: "invalid_event", details: event.error.flatten().fieldErrors },
+        { error: "invalid_event", details: unsequencedEvent.error.flatten().fieldErrors },
         400
       );
     }
+    const event = await this.commitRealtimeEvent(unsequencedEvent.data, requestedSequence);
 
-    this.recordRecentEvent(event.data);
+    this.recordRecentEvent(event);
     // Authorization is decided once, when each socket connects, so anything that
     // can retract it has to reach the connections already inside the room.
     // Sweeping before the broadcast means the people this event excluded do not
     // receive it — they are disconnected instead, and their client stops rather
     // than resynchronizing into a work stream it may no longer read.
     let evicted = false;
-    if (retractsReadAccess(event.data)) {
+    if (retractsReadAccess(event)) {
       evicted = await this.evictReadersWhoMayNoLongerRead(true);
     } else if (
       // The publisher that delivers the event above swallows its own failures,
@@ -598,12 +680,12 @@ export class WorkstreamRoom {
       // a retraction that never arrived is applied before the next thing this
       // room would have sent. That also covers the retractions nothing
       // publishes at all, such as a workspace membership going inactive.
-      event.data.type !== "stream_delta"
+      event.type !== "stream_delta"
       && Date.now() - this.lastRevalidatedAt >= AUTHORIZATION_REVALIDATE_MS
     ) {
       evicted = await this.evictReadersWhoMayNoLongerRead(false);
     }
-    this.broadcast(event.data);
+    this.broadcast(event);
     // After the event, not inside the sweep. Presence allocates a sequence of
     // its own, and this event's was allocated before the sweep ran — sending
     // the roster first would put a higher sequence on the wire ahead of a lower
@@ -621,10 +703,10 @@ export class WorkstreamRoom {
         await this.broadcastPresence(identity.data.workspaceId, identity.data.workstreamId);
       }
     }
-    if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(event.data.type)) {
-      await this.scheduleHyperSightRefresh(event.data.sequence);
+    if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(event.type)) {
+      await this.scheduleHyperSightRefresh(event.sequence);
     }
-    return jsonResponse({ accepted: true, sequence: event.data.sequence }, 202);
+    return jsonResponse({ accepted: true, sequence: event.sequence }, 202);
   }
 
   /**
@@ -796,6 +878,11 @@ export class WorkstreamRoom {
       occurredAt: new Date().toISOString(),
       reason: plan.reason,
       latestSequence: currentSequence,
+      activeStreams: plan.reason === "history_unavailable"
+        ? ActiveStreamCheckpointsSchema.catch([]).parse(
+            await this.state.storage.get(ACTIVE_STREAM_CHECKPOINTS_KEY),
+          )
+        : [],
     });
     socket.send(JSON.stringify(event));
   }
@@ -811,11 +898,18 @@ export class WorkstreamRoom {
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
       const workstream = await this.loadSnapshot(workspaceId, workstreamId, attachment.userId);
       const sequence = knownSequence ?? await this.currentSequence(workstreamId);
+      const storedCheckpoints = ActiveStreamCheckpointsSchema.safeParse(
+        await this.state.storage.get(ACTIVE_STREAM_CHECKPOINTS_KEY),
+      );
       const event = ServerSocketEventSchema.parse({
         type: "snapshot",
         sequence,
         occurredAt: new Date().toISOString(),
-        workstream
+        workstream,
+        activeStreams: workstream.harnessStatus === "running" && storedCheckpoints.success
+          ? storedCheckpoints.data.filter((checkpoint) =>
+              checkpoint.harnessRunId === workstream.latestHarnessRunId)
+          : [],
       });
       socket.send(JSON.stringify(event));
     } catch {
@@ -973,6 +1067,39 @@ export class WorkstreamRoom {
       const next = Math.max(current + 1, requested ?? 0);
       await transaction.put("eventSequence", next);
       return next;
+    });
+  }
+
+  /**
+   * The event sequence and accumulated active text are one durable commit. A
+   * snapshot can therefore be older than a concurrently arriving event (the
+   * subscription catch-up handles that), but can never skip a stream frame
+   * whose sequence it already claims to include.
+   */
+  private async commitRealtimeEvent(
+    unsequencedEvent: ServerSocketEvent,
+    requestedSequence?: number,
+  ): Promise<ServerSocketEvent> {
+    return this.state.storage.transaction(async (transaction) => {
+      const current = (await transaction.get<number>("eventSequence")) ?? 0;
+      const sequence = Math.max(current + 1, requestedSequence ?? 0);
+      const event = ServerSocketEventSchema.parse({ ...unsequencedEvent, sequence });
+      const storedValue = await transaction.get(ACTIVE_STREAM_CHECKPOINTS_KEY);
+      const stored = ActiveStreamCheckpointsSchema.safeParse(storedValue);
+      const checkpoints = stored.success ? stored.data : [];
+      const nextCheckpoints = applyActiveStreamCheckpointEvent(checkpoints, event);
+
+      await transaction.put("eventSequence", sequence);
+      if (nextCheckpoints.length > 0 && nextCheckpoints !== checkpoints) {
+        await transaction.put(ACTIVE_STREAM_CHECKPOINTS_KEY, nextCheckpoints);
+      } else if (
+        nextCheckpoints.length === 0
+        && storedValue !== undefined
+        && (nextCheckpoints !== checkpoints || !stored.success)
+      ) {
+        await transaction.delete(ACTIVE_STREAM_CHECKPOINTS_KEY);
+      }
+      return event;
     });
   }
 }
