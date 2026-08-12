@@ -115,8 +115,13 @@ configurations:
   database handle that happens to be an RPC stub instead of a D1 binding.
   The hop a query pays — the edge Worker calling into a storage object that
   lives where it was first created — is the same kind of hop a D1 query pays
-  today, because D1 is the same object model; open question 2 in the PRD
-  tracks measuring the deliberately-remote case.
+  today, because D1 is the same object model; that placement behavior is
+  accepted as inherent to the platform (key design decision 8), the same
+  regional property D1 already has.
+- **Keeps FTS5.** Cloudflare documents the FTS5 module (including
+  `fts5vocab`), the JSON extension, and math functions as supported in
+  Durable Object SQLite ([`research.md`](./research.md)), so scoped-memory
+  lexical search — D1 FTS5 today — carries over unchanged.
 - **Serializes writes per workspace.** A Durable Object processes one event at
   a time, which strengthens — for free — the invariants the schema currently
   defends with unique indexes and compare-and-swap: sequence-number
@@ -362,7 +367,10 @@ objects; this is the real cost of option D, and it is bounded:
 - **Ad-hoc queries** — a read-only diagnostic RPC on `WorkspaceDatabase`,
   reachable only through an operator-authenticated admin route that logs to
   `audit_events`, mirroring the runbook's existing raw-inference inspection
-  posture. Never exposed to product code.
+  posture. Never exposed to product code. A small pnpm CLI wrapper drives the
+  same RPC against the local Worker from day one, replacing
+  `wrangler d1 execute --local` for workspace data with the identical tool
+  operators use against hosted objects.
 - **Export** — a `dump` RPC streaming a SQL-text dump to the region's R2
   bucket, giving per-workspace backup artifacts `wrangler d1 export` used to
   give per region.
@@ -382,9 +390,10 @@ objects; this is the real cost of option D, and it is bounded:
 
 ## Cutover
 
-Prototype posture, applied deliberately: **hard cutover, no data migration, no
-dual-write, no feature flag.** The only users are the team; the cheapest
-correct migration of a disposable dataset is to not perform one.
+Prototype posture, applied deliberately: **hard cutover, no dual-write, no
+feature flag.** The only users are the team; the only data carried is the
+team's own test workspaces, by a throwaway script rather than migration
+machinery.
 
 1. **Land the data layer.** `WorkspaceDatabase` class, the migration-step
    array (a fresh schema baseline — current schema minus `workspace_id`
@@ -398,11 +407,11 @@ correct migration of a disposable dataset is to not perform one.
    per the brief — and the 57 cross-store joins are reworked per
    [the rules above](#cross-store-reads-the-57-joins-that-split), which is
    the step's real bulk.
-3. **Reset hosted state.** Recreate the team's test workspaces through
-   ordinary signup after the cutover deploys. If any test workspace is worth
-   keeping, a one-shot throwaway script replays its rows from a
-   `wrangler d1 export` dump through the new handle — written only if wanted
-   at cutover time, deleted after use, never productized.
+3. **Carry the team's workspaces across.** A one-shot throwaway script
+   replays each existing workspace's rows from a `wrangler d1 export` dump
+   through the new handle into that workspace's database — written for the
+   cutover, deleted after use, never productized. A workspace not worth
+   carrying is recreated through ordinary signup instead.
 4. **Retire the moved tables.** The regional D1 databases are also the
    control plane, so the databases themselves live on; it is the moved tables
    that are frozen — unwritten by the new path, still readable through
