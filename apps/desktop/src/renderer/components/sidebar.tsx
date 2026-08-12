@@ -739,8 +739,20 @@ export function Sidebar({
         setCommandShortcutsVisible(true);
         return;
       }
-      if (!event.metaKey || !/^[1-9]$/u.test(event.key)) return;
-      const target = pinnedWorkstreams[Number(event.key) - 1];
+      const digit = /^Digit([1-9])$/u.exec(event.code)?.[1];
+      // `code` follows the physical number row even on layouts where `key`
+      // is a symbol, which is the row the visible 1–9 mapping describes.
+      // A held digit repeats keydown, and reopening the same route on every
+      // repeat would strand Back behind duplicate history entries. A modal is
+      // likewise a boundary: its focused controls must not navigate the page
+      // underneath it.
+      if (
+        !event.metaKey
+        || event.repeat
+        || digit === undefined
+        || document.querySelector('[role="dialog"]')
+      ) return;
+      const target = pinnedWorkstreams[Number(digit) - 1];
       if (!target) return;
       event.preventDefault();
       navigate(`/workstreams/${target.id}`);
