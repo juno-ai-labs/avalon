@@ -1191,65 +1191,117 @@ async function seedSlackInstallation(database: DatabaseSync, credentialsKey: str
 }
 
 describe("Slack ingress re-drive after reauthorization", () => {
-  it("re-drives an authorization failure once the installation is reauthorized", async () => {
-    // Slack reports `link_shared` exactly once and never redelivers it, so an
-    // event that failed while the grant was dead is lost permanently unless
-    // something lifts the retry ceiling after the reconnect. The ceiling is
-    // right while the grant is dead and wrong the moment it is not.
+  async function strandedJob(id: string): Promise<{ database: DatabaseSync; credentialsKey: string }> {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:stranded", appMention("EvStranded"));
+    insertSlackEventJob(database, id, appMention("EvStranded"));
     database.prepare(
       `UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 20,
-         error_code = 'unauthorized', updated_at = '2026-01-02'
-       WHERE id = 'event:stranded'`,
-    ).run();
-    // The reconnect: the connection is written after the job last failed.
+         error_code = 'unauthorized', received_at = ?, updated_at = '2026-01-02'
+       WHERE id = ?`,
+    ).run(new Date().toISOString(), id);
+    return { database, credentialsKey };
+  }
+
+  function sweep(database: DatabaseSync, credentialsKey: string): Promise<unknown[]> {
+    const sent: unknown[] = [];
+    return new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async (body: unknown) => { sent.push(body); }),
+    )).maintainIngress().then(() => sent);
+  }
+
+  it("re-drives an authorization failure once the installation is reauthorized", async () => {
+    // Slack reports `link_shared` exactly once and never redelivers it, so an
+    // event that failed while the grant was dead is lost permanently unless
+    // something lifts the retry ceiling after the reconnect.
+    const { database, credentialsKey } = await strandedJob("event:stranded");
     database.prepare(
       `UPDATE connector_connections SET status = 'healthy', updated_at = '2026-01-03'
        WHERE id = '11111111-1111-4111-8111-111111111111'`,
     ).run();
-    const sent: unknown[] = [];
 
-    await new SlackAgentService(slackMembershipEnvironment(
-      database,
-      credentialsKey,
-      vi.fn(async (body: unknown) => { sent.push(body); }),
-    )).maintainIngress();
+    const sent = await sweep(database, credentialsKey);
 
-    expect(sent).toContainEqual(expect.objectContaining({ jobId: "event:stranded" }));
+    expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:stranded")).toHaveLength(1);
     expect(database.prepare(
       "SELECT status, attempt_count FROM slack_ingress_jobs WHERE id = 'event:stranded'",
     ).get()).toMatchObject({ status: "queued", attempt_count: 0 });
   });
 
-  it("leaves a job alone when nothing about its connection has changed", async () => {
-    // The self-limiting half: a re-driven job that fails again stamps itself
-    // newer than the connection, so it is not selected again until the next
-    // reauthorization. Without that the sweep would re-queue it every cycle.
-    const database = migratedDatabase();
-    const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:still-broken", appMention("EvStillBroken"));
+  it("does not re-drive while the connection is still marked", async () => {
+    // The termination proof. An earlier draft selected on `updated_at` alone
+    // against any non-disabled row, and every failure bumped that timestamp
+    // through the marking write — so N stranded jobs re-drove each other
+    // forever, on a signal that meant "something failed again" rather than
+    // "someone reconnected". Only a return to `healthy` is a reconnect.
+    const { database, credentialsKey } = await strandedJob("event:still-broken");
     database.prepare(
-      `UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 20,
-         error_code = 'unauthorized', updated_at = '2026-01-04'
-       WHERE id = 'event:still-broken'`,
-    ).run();
-    database.prepare(
-      `UPDATE connector_connections SET updated_at = '2026-01-03'
+      `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = '2026-01-03'
        WHERE id = '11111111-1111-4111-8111-111111111111'`,
     ).run();
-    const sent: unknown[] = [];
 
-    await new SlackAgentService(slackMembershipEnvironment(
-      database,
-      credentialsKey,
-      vi.fn(async (body: unknown) => { sent.push(body); }),
-    )).maintainIngress();
+    const sent = await sweep(database, credentialsKey);
 
-    expect(sent).not.toContainEqual(expect.objectContaining({ jobId: "event:still-broken" }));
+    expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:still-broken")).toHaveLength(0);
+  });
+
+  it("leaves a job alone when nothing about its connection has changed", async () => {
+    const { database, credentialsKey } = await strandedJob("event:untouched");
+    database.prepare(
+      `UPDATE connector_connections SET status = 'healthy', updated_at = '2026-01-01'
+       WHERE id = '11111111-1111-4111-8111-111111111111'`,
+    ).run();
+
+    const sent = await sweep(database, credentialsKey);
+
+    expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:untouched")).toHaveLength(0);
+  });
+
+  it("re-drives only failures a reauthorization can repair", async () => {
+    // A job that died on malformed data is not fixed by a reconnect, and
+    // re-driving it every time a connection is written is pure waste.
+    const { database, credentialsKey } = await strandedJob("event:bad-data");
+    database.prepare(
+      "UPDATE slack_ingress_jobs SET error_code = 'invalid_slack_data' WHERE id = 'event:bad-data'",
+    ).run();
+    database.prepare(
+      `UPDATE connector_connections SET status = 'healthy', updated_at = '2026-01-03'
+       WHERE id = '11111111-1111-4111-8111-111111111111'`,
+    ).run();
+
+    const sent = await sweep(database, credentialsKey);
+
+    expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:bad-data")).toHaveLength(0);
+  });
+
+  it("does not replay an event older than the age bound", async () => {
+    // Unfurling a message from three weeks ago answers nobody, and Slack may
+    // refuse it outright.
+    const { database, credentialsKey } = await strandedJob("event:ancient");
+    database.prepare(
+      "UPDATE slack_ingress_jobs SET received_at = '2026-01-01' WHERE id = 'event:ancient'",
+    ).run();
+    database.prepare(
+      `UPDATE connector_connections SET status = 'healthy', updated_at = ?
+       WHERE id = '11111111-1111-4111-8111-111111111111'`,
+    ).run(new Date().toISOString());
+
+    const sent = await sweep(database, credentialsKey);
+
+    expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:ancient")).toHaveLength(0);
+  });
+
+  it("re-drives the vocabulary a real authorization failure actually emits", async () => {
+    // Closes the loop between `slackIngressErrorCode` and the allowlist: a
+    // drift in either would silently disable the whole sweep.
+    const { database } = await strandedJob("event:vocabulary");
+    const emitted = database.prepare(
+      "SELECT error_code FROM slack_ingress_jobs WHERE id = 'event:vocabulary'",
+    ).get() as { error_code: string };
+    expect(__slackAgentTesting.SLACK_AUTHORIZATION_ERROR_CODES).toContain(emitted.error_code);
   });
 });
 

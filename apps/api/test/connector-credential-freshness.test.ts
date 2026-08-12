@@ -32,11 +32,15 @@ const FRESH_TOKEN = "rotated-access-token";
 const EXPIRED_AT = "2020-01-01T00:00:00.000Z";
 
 describe("the credential door", () => {
-  it("heals a stale belief when the provider honours the refresh", async () => {
-    // The row is the record of one past moment; the provider's answer is the
-    // only current thing. A refresh it accepts therefore clears
-    // `needs_reconnect` and its `error_json`, so a member is not asked to
-    // reconnect something that has demonstrably started working again.
+  it("writes the rotated credential for a row the database believes is broken, and heals nothing", async () => {
+    // The credential lands: that is what the rotation produced. The *status*
+    // does not, and an earlier draft of this healed it to `healthy` — on the
+    // reasoning that a provider honouring the refresh token has said the grant
+    // is alive. It has, and grant liveness is not grant sufficiency: a token
+    // exchange succeeds whatever scopes the installation holds, so healing here
+    // would have cleared the incident's own `missing_scopes: reactions:read`
+    // verdict within one token lifetime and reported a connection as working
+    // while every scoped call kept failing.
     const statements: string[] = [];
     const database = recordingLeasedDatabase(
       await encryptString(
@@ -46,6 +50,11 @@ describe("the credential door", () => {
       ),
       statements,
     );
+    const connection = connectionContext({
+      accessToken: STALE_TOKEN,
+      refreshToken: "refresh-token",
+      expiresAt: EXPIRED_AT,
+    });
 
     await withAuthorizedConnection(
       {
@@ -54,25 +63,25 @@ describe("the credential door", () => {
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
       },
       {
-        connection: connectionContext({
-          accessToken: STALE_TOKEN,
-          refreshToken: "refresh-token",
-          expiresAt: EXPIRED_AT,
-        }),
+        connection,
         adapter: {
           refreshCredentials: async () => ({ accessToken: FRESH_TOKEN }),
         } as unknown as ResolvedConnectorAdapter,
         signal: AbortSignal.timeout(2_000),
-        connectionStatus: "needs_reconnect",
       },
       async () => undefined,
     );
 
+    // The refresh reached the provider and its result is in hand — the
+    // behaviour the healthy-only lease used to make impossible.
+    expect(connection.credentials.accessToken).toBe(FRESH_TOKEN);
     const persisted = statements.find((sql) => sql.includes("RETURNING id"));
-    expect(persisted).toContain("status = 'healthy'");
-    expect(persisted).toContain("error_json = NULL");
-    // Never resurrects a connection somebody turned off: that status is a
-    // decision, not a belief.
+    // Asserted on the statement's own text because this fake dispatches on SQL
+    // rather than executing it. Both halves matter and only one is about the
+    // gate: no status is written at all, and the row must not be resurrected
+    // from `disabled`.
+    expect(persisted).not.toContain("SET status");
+    expect(persisted).not.toContain("error_json");
     expect(persisted).toContain("status <> 'disabled'");
   });
 
@@ -161,7 +170,6 @@ describe("the credential door", () => {
         }),
         adapter: { refreshCredentials } as unknown as ResolvedConnectorAdapter,
         signal: AbortSignal.timeout(2_000),
-        connectionStatus: "needs_reconnect",
       },
       async (authorized) => { reached.push(authorized.credentials.accessToken); },
     );

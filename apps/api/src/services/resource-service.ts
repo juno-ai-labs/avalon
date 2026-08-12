@@ -287,8 +287,10 @@ export class ResourceService {
     } catch (error) {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
       await this.env.DB.prepare(
+        // Only from `healthy`: this write carries a diagnosis and must not
+        // replace an earlier, more specific one on a row already marked.
         `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?`,
+         WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
       ).bind(
         JSON.stringify({ message: error.message, reconnectRequired: true }),
         nowIso(),

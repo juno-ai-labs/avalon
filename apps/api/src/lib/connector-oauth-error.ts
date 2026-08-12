@@ -103,15 +103,40 @@ function safeProviderStatus(value: unknown): number | null {
  * `bad_redirect_uri`, `invalid_grant`, `unsupported_grant_type` — the whole
  * space is underscores.
  *
- * Hyphens and dots are deliberately *not* allowed, and the exclusion is
- * load-bearing rather than tidy: a Slack user token is
- * `xoxp-10164519659008-11799907517957-…`, which is lowercase, alphanumeric,
- * and short enough to pass a laxer pattern. The first draft of this admitted
- * one, and its test caught it. Widening this character class means re-deriving
- * that no credential fits — no provider needs it for an error code.
+ * **Two guards, and the first is the real one.** What makes this safe is the
+ * *source*: the callers read `details.providerError` and `details.error`, which
+ * are the provider's error-code field by construction — Slack's is
+ * `apiError.data.error` off an `{ok: false}` envelope, and `providerJsonResponse`
+ * extracts the OAuth `error`/`code` key. A credential or an address is never
+ * what lives there.
+ *
+ * The shape test is the second guard, and it bounds the blast radius if a
+ * provider ever puts something else in that field. It is deliberately not a
+ * semantic proof and should not be read as one — `secret` is a valid-looking
+ * identifier — but it is much tighter than "an identifier": **every
+ * underscore-separated segment must be alphabetic**, which is true of every
+ * OAuth vocabulary (`invalid_grant`, `bad_redirect_uri`,
+ * `unsupported_grant_type`, `account_inactive`) and false of every credential
+ * shape, because secrets carry entropy and entropy carries digits.
+ *
+ * Two earlier drafts were looser and each admitted a real credential. `[a-z0-9_-]`
+ * took a Slack user token (`xoxp-10164519659008-11799907517957-…`); dropping the
+ * hyphen still took a 32-character lowercase-hex client secret. Both were caught
+ * by this module's own test rather than in production, which is the argument for
+ * keeping that test adversarial: add the credential formats, not more
+ * obviously-wrong strings. An error code carrying a digit is dropped rather than
+ * relayed — the failure still reports `connector_code`, so the cost is one
+ * diagnostic, and that is the right direction to fail.
+ *
+ * Widening either guard — this character class, or the set of fields the
+ * callers read from — means re-deriving that property. A provider-specific
+ * allowlist was considered and rejected: an unrecognised code is precisely what
+ * an operator needs during the kind of incident this exists for, and an
+ * allowlist would suppress exactly that case while adding a list to forget to
+ * update.
  */
 function safeProviderError(value: unknown): string | null {
-  return typeof value === "string" && /^[a-z][a-z0-9_]{0,39}$/u.test(value)
+  return typeof value === "string" && /^[a-z]{1,20}(?:_[a-z]{1,20}){0,4}$/u.test(value)
     ? value
     : null;
 }

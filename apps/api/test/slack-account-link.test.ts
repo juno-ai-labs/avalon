@@ -206,47 +206,20 @@ describe("Slack account linking", () => {
     ).get()).toMatchObject({ kind: "interaction", status: "queued" });
   });
 
-  it("links the identity from a personal Slack connection, without a challenge", async () => {
-    // The other half of "one button that does both". Slack completed the OAuth
-    // and named the user, which is a stronger proof of who this is than the
-    // challenge ever was, so connecting personal Slack links the identity by
-    // itself — whichever half a member reaches first, both end up done.
+  it("refuses to mint a link for an installation a person disabled", async () => {
+    // `disabled` is a decision, not an observation. It is also not merely a
+    // consistency point: disabling clears the credentials and drops the row
+    // from `connectionForTeam`, so redeeming would commit the identity link and
+    // then fail publishing App Home — an error shown for a mutation that landed.
     const database = await seededDatabase();
-    stubSlack();
+    await seedChallenge(database, "disabled-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
+    database.exec("UPDATE connector_connections SET status = 'disabled'");
     const service = new SlackAgentService(environment(database));
 
-    await expect(service.establishIdentityLinkFromPersonalConnection({
-      workspaceId,
-      userId,
-      teamId: "T123",
-      slackUserId: "U456",
-    })).resolves.toBe(true);
-
-    expect(database.prepare(
-      "SELECT user_id, slack_user_id, status FROM slack_user_links WHERE slack_user_id = 'U456'",
-    ).get()).toMatchObject({ user_id: userId, slack_user_id: "U456", status: "active" });
-  });
-
-  it("leaves a personal connection standing when the Slack identity is someone else's", async () => {
-    // Not this operation's business to resolve. The personal connection is
-    // valid and committed; only the link cannot be made, and failing the OAuth
-    // over it would discard a credential the member just authorized.
-    const database = await seededDatabase();
-    stubSlack();
-    const service = new SlackAgentService(environment(database));
-    await service.establishIdentityLinkFromPersonalConnection({
-      workspaceId,
-      userId,
-      teamId: "T123",
-      slackUserId: "U456",
+    await expect(service.previewLink(auth(), "disabled-token")).rejects.toMatchObject({
+      code: "slack_installation_disabled",
+      status: 409,
     });
-
-    await expect(service.establishIdentityLinkFromPersonalConnection({
-      workspaceId,
-      userId: "00000000-0000-7000-8000-00000000000f",
-      teamId: "T123",
-      slackUserId: "U456",
-    })).resolves.toBe(false);
   });
 
   it("mints a link even when the row believes the installation is broken", async () => {
@@ -281,7 +254,8 @@ describe("Slack account linking", () => {
     // past moment that nothing re-checks.
     database.exec("UPDATE connector_connections SET status = 'needs_reconnect'");
     await expect(service.previewLink(auth(), "fresh-token")).resolves.toMatchObject({
-      teamId: expect.any(String),
+      teamId: "T123",
+      slackUserId: "U456",
     });
   });
 
