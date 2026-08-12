@@ -33,6 +33,7 @@ import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
+import { useTextClamped } from '../lib/use-text-clamped';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
@@ -396,6 +397,47 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
         {tool.status === 'ambiguous' && <p className="tool-warning">Avalon could not confirm whether this external action completed. It will not retry automatically.</p>}
       </div>
     </details>
+  );
+}
+
+/**
+ * A system row: the note Avalon leaves in the transcript when something happened
+ * to the work stream rather than in it.
+ *
+ * Most are a sentence — a scheduled wake-up, a delivery confirmation. A few are
+ * the entire input a run was launched with: a digest brief, an automation's
+ * opening prompt, an inbound email. Those arrive thousands of words long and
+ * used to be laid out in full, burying the conversation they preface under a
+ * screen or more of scrolling. Every system row is clamped to the five lines
+ * that `--system-message-lines` sets, and the reader opens the rest; the short
+ * ones look exactly as they did, because the control appears only once the
+ * clamp is actually hiding something. Nothing distinguishes a prompt from a
+ * one-liner on the wire, and the height is the only honest discriminator.
+ */
+function SystemMessageBlock({ message }: { message: Message }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const [textNode, setTextNode] = useState<HTMLElement | null>(null);
+  const text = message.text ?? '';
+  const clamped = useTextClamped(textNode, text, !expanded);
+
+  return (
+    <div className="system-message" id={`message-${message.id}`}>
+      <span aria-hidden="true" className="system-message-dot" />
+      <div className="system-message-body">
+        <p className="system-message-text" data-expanded={expanded ? 'true' : undefined} ref={setTextNode}>{text}</p>
+        {clamped && (
+          <button
+            aria-expanded={expanded}
+            className="system-message-toggle"
+            onClick={() => setExpanded((current) => !current)}
+            type="button"
+          >
+            {expanded ? 'less' : 'more'}
+            <ChevronDown aria-hidden="true" size={12} />
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -787,7 +829,7 @@ export function MessageBlock({
     return <div className="transcript-event" id={`message-${message.id}`}><SuggestionBlock onResolve={(action) => onResolveSuggestion(message.activitySuggestion!.id, action)} suggestion={message.activitySuggestion} /></div>;
   }
   if (message.authorType === 'system' || message.messageType === 'system') {
-    return <div className="system-message" id={`message-${message.id}`}><span />{message.text}</div>;
+    return <SystemMessageBlock message={message} />;
   }
 
   const human = message.authorType === 'human' || message.authorType === 'external';
