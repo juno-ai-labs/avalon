@@ -2,7 +2,7 @@ import {
   renderActivityRoutingMessages,
   renderSemanticTriggerMessages,
 } from "@avalon/agent-harness";
-import { ConnectorError, connectorRetryAfterMs } from "@avalon/connectors";
+import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@avalon/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
@@ -18,6 +18,13 @@ import {
 import { z } from "zod";
 
 import type { Env } from "../env";
+import {
+  BASE_CONFIDENCE_FLOOR,
+  DISMISSAL_RUN_LIMIT,
+  OPERATIONAL_CONFIDENCE_FLOOR,
+  dismissalRunCutoff,
+  suggestionAdmission,
+} from "../services/activity-routing-feedback";
 import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
@@ -25,8 +32,14 @@ import { automationModelOverride, scheduledWorkstreamModel } from "../services/a
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
-import { logWarn } from "../observability/logger";
+import {
+  activityOriginLocator,
+  attachWorkstreamOriginResource,
+  describeWorkstreamOrigin,
+} from "../services/workstream-origin-resource";
+import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { restrictedActivityUserIds } from "../lib/activity-visibility";
 
 interface ActivityRow {
   id: string;
@@ -41,6 +54,7 @@ interface ActivityRow {
   event_type: string;
   resource_type: string | null;
   provider_resource_id: string | null;
+  payload_ref: string | null;
   actor_json: string;
   occurred_at: string;
   received_at: string;
@@ -136,20 +150,6 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
     ...metadata
   };
   return Object.entries(filters).every(([key, expected]) => deepEqual(available[key], expected));
-}
-
-function restrictedActivityUserIds(activity: ActivityRow): string[] | null {
-  if (activity.connection_scope === "personal") {
-    return activity.connection_owner_user_id ? [activity.connection_owner_user_id] : [];
-  }
-  const explicitTargets = parseStrings(activity.target_user_ids_json);
-  const visibility = parseRecord(activity.visibility_json);
-  if (explicitTargets.length > 0) return explicitTargets;
-  for (const candidate of [visibility.targetUserIds, visibility.allowedUserIds]) {
-    const restricted = z.array(z.string()).safeParse(candidate);
-    if (restricted.success && restricted.data.length > 0) return [...new Set(restricted.data)];
-  }
-  return visibility.workspaceAutomationAllowed === false ? [] : null;
 }
 
 function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boolean {
@@ -342,7 +342,7 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
     actorLabel: connectorActorLabel(activity),
     title: activity.title,
     body: activity.summary || activity.text_snippet,
-    canonicalUrl: connectorActivityUrl(activity),
+    canonicalUrl: connectorOriginUrl(parseRecord(activity.metadata_json)),
     occurredAt: activity.occurred_at,
     sourceKind: "activity",
     sourceId: activity.id,
@@ -378,6 +378,11 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
 
 /**
  * Whether this connector activity may be read back to a person in a digest.
+ *
+ * This answers the digest question only. Contextual routing reads the same
+ * declaration through `declaredConfidenceFloor`, which treats it as a prior
+ * rather than a verdict and reaches a different answer on purpose; do not merge
+ * the two.
  *
  * The connector's manifest is the authority, keyed on the event type — the one
  * thing an activity durably carries all the way from the provider to the log.
@@ -426,15 +431,6 @@ function connectorActorLabel(activity: ActivityRow): string {
   const displayName = parseRecord(activity.actor_json).displayName;
   if (typeof displayName === "string" && displayName.length > 0) return displayName;
   return activity.provider;
-}
-
-function connectorActivityUrl(activity: ActivityRow): string | null {
-  const metadata = parseRecord(activity.metadata_json);
-  // Providers disagree on the key; take the first that is actually a link.
-  for (const candidate of [metadata.canonicalUrl, metadata.url, metadata.htmlUrl, metadata.permalink]) {
-    if (typeof candidate === "string" && /^https?:\/\//u.test(candidate)) return candidate;
-  }
-  return null;
 }
 
 async function loadActivity(env: Env, input: ActivityQueueMessage): Promise<ActivityRow | null> {
@@ -816,6 +812,32 @@ async function startActivityAutomation(
     workstreamId: run.workstream_id,
   });
 
+  // The activity is the whole reason this work stream exists, so the object
+  // behind it is attached before the Workflow starts — the run's first context
+  // read then already names the issue, page, or thread it is about. Ownerless on
+  // purpose: an automation fired, nobody attached anything.
+  //
+  // On both run paths, not only the one that just created the work stream. A
+  // queue invocation killed after the batch commits but before this write leaves
+  // the run durable and the origin missing; the redelivery then takes the
+  // existing-run branch and would launch the Workflow permanently without it.
+  // Both writes behind this are `ON CONFLICT DO NOTHING`, so repeating it costs
+  // one lookup and fixes that.
+  const originResource = await describeWorkstreamOrigin(env, {
+    connectorType: activity.connector_type,
+    connectionId: activity.connection_id,
+    provider: activity.provider,
+    locator: activityOriginLocator(activity),
+  });
+  if (originResource) {
+    await attachWorkstreamOriginResource(env, {
+      workspaceId: activity.workspace_id,
+      workstreamId: run.workstream_id,
+      attachedByUserId: null,
+      descriptor: originResource,
+    });
+  }
+
   if (["completed", "failed", "needs_input"].includes(run.status)) return run.workstream_id;
   const workflowId = `activity-${subscription.id}-${activity.id}`;
   const workflowInput: WorkstreamWorkflowInput = WorkstreamWorkflowInputSchema.parse({
@@ -847,12 +869,82 @@ async function startActivityAutomation(
   return run.workstream_id;
 }
 
+/**
+ * Where an event type's confidence bar starts, before this workspace has said
+ * anything about it.
+ *
+ * The manifest's digestibility partition is the only standing judgement about
+ * an event type that exists, so it is worth reading — but it answers a
+ * different question ("should somebody be told this on a schedule"), and it is
+ * read here as a prior rather than a veto. An empty `digestible` list is the
+ * absence of a judgement rather than a negative one: the generic webhook
+ * classifies nothing as news because Avalon cannot parse what a caller posts,
+ * which says nothing at all about whether that payload belongs in a work
+ * stream. A connector that drew no line gets no prior.
+ *
+ * A registry that cannot answer leaves the bar at the base. Withholding is
+ * right when the question is "may this reach somebody's inbox" and wrong here,
+ * where the cost of a missing answer would be one misconfigured credential
+ * silently disabling contextual routing for a whole region.
+ */
+function declaredConfidenceFloor(env: Env, activity: ActivityRow): number {
+  try {
+    const digestible = connectorRegistryForEnv(env)
+      .get(activity.connector_type)
+      .manifest
+      .digestibleActivityTypes;
+    if (digestible.length === 0) return BASE_CONFIDENCE_FLOOR;
+    return digestible.includes(activity.event_type)
+      ? BASE_CONFIDENCE_FLOOR
+      : OPERATIONAL_CONFIDENCE_FLOOR;
+  } catch {
+    // `activityIsDigestible` logs the same failure for the same activity a few
+    // steps later, on the projection path; a second line would only double it.
+    return BASE_CONFIDENCE_FLOOR;
+  }
+}
+
+/**
+ * The speculative half of routing: no watch and no automation asked for this
+ * activity, so a model is asked whether one of the work streams a person is
+ * already using is about it, and a card offering the attachment is written if
+ * it says yes.
+ *
+ * Nothing here is asked for, which is why every gate below withholds rather
+ * than admits. `docs/contextual-routing.md` owns the whole of it.
+ */
 async function routeContextually(
   env: Env,
   activity: ActivityRow,
   excludedWorkstreamIds: Set<string>
 ): Promise<boolean> {
   if (!env.OPENROUTER_API_KEY) return false;
+
+  const admission = await suggestionAdmission(env, {
+    workspaceId: activity.workspace_id,
+    provider: activity.provider,
+    eventType: activity.event_type,
+    declaredFloor: declaredConfidenceFloor(env, activity),
+  });
+  // Asked before the candidates are selected and before the model is called: an
+  // event type this workspace has only ever dismissed cannot produce a card at
+  // any confidence, so buying an inference to discover that is pure waste.
+  if (admission.suppressed) {
+    // Suppression is invisible from the outside — the absence of a card looks
+    // exactly like a model that declined. Logged at debug rather than info
+    // because it fires once per ingested activity: a suppressed high-volume
+    // type would otherwise write thousands of identical lines a day at the
+    // production log level. `docs/contextual-routing.md` has the query that
+    // answers the same question from the rows.
+    logDebug(env, "contextual_routing_event_type_suppressed", {
+      workspace_id: activity.workspace_id,
+      provider: activity.provider,
+      event_type: activity.event_type,
+      dismissed: admission.dismissed,
+      dismissers: admission.dismissers,
+    });
+    return false;
+  }
   const restrictedUserIds = restrictedActivityUserIds(activity);
   const restrictedUserIdsJson = restrictedUserIds == null ? null : JSON.stringify(restrictedUserIds);
   const candidates = await env.DB.prepare(
@@ -870,12 +962,52 @@ async function routeContextually(
                 AND wp.removed_at IS NULL
            )
         ))
+        -- A work stream whose last few suggestions were all dismissed stops
+        -- being offered one. Counted here rather than after the LIMIT so a
+        -- suppressed work stream is replaced by the next eligible one instead
+        -- of costing the model a candidate; counted only since the most recent
+        -- acceptance so a single acceptance clears the run, and only within the
+        -- window so a work stream that never gets another suggestion is not
+        -- excluded forever by dismissals nobody remembers.
+        -- Both halves are scoped to this module's own cards: the suggested-work
+        -- path writes the same table, and a work stream must not lose its place
+        -- in contextual routing's candidate pool over dismissals of a different
+        -- agent's suggestions.
+        AND (
+          SELECT COUNT(*)
+            FROM activity_suggestions dismissed
+           WHERE dismissed.workstream_id = w.id
+             AND dismissed.source = 'contextual_routing'
+             AND dismissed.status = 'dismissed'
+             AND dismissed.resolved_at >= ?3
+             AND dismissed.resolved_at > COALESCE((
+               SELECT MAX(accepted.resolved_at)
+                 FROM activity_suggestions accepted
+                WHERE accepted.workstream_id = w.id
+                  AND accepted.source = 'contextual_routing'
+                  AND accepted.status = 'accepted'
+             ), '')
+        ) < ?4
+        -- Anything a watch or an automation already routed. Excluded here for
+        -- the same reason the dismissal run is: filtering after the LIMIT let a
+        -- work stream that is already receiving this activity consume one of
+        -- the twelve slots, so a directly-routed activity handed the model
+        -- eleven candidates and silently cost the twelfth its chance.
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(?5) routed WHERE routed.value = w.id
+        )
       ORDER BY w.last_activity_at DESC
       LIMIT 12`
   )
-    .bind(activity.workspace_id, restrictedUserIdsJson)
+    .bind(
+      activity.workspace_id,
+      restrictedUserIdsJson,
+      dismissalRunCutoff(),
+      DISMISSAL_RUN_LIMIT,
+      JSON.stringify([...excludedWorkstreamIds]),
+    )
     .all<WorkstreamCandidate>();
-  const eligible = candidates.results.filter((candidate) => !excludedWorkstreamIds.has(candidate.id));
+  const eligible = candidates.results;
   if (eligible.length === 0) return false;
 
   const { result } = await runStructuredInference(env, {
@@ -902,7 +1034,11 @@ async function routeContextually(
     parse: (value) => ActivityRoutingResultSchema.parse(value)
   });
 
-  if (!result.suggest || result.confidence < 0.8 || !result.candidateWorkstreamId) return false;
+  // The floor is the event type's own record in this workspace rather than a
+  // constant. `confidence` is the model grading its own answer, so it is not
+  // evidence about a type whose past high-confidence matches were all dismissed
+  // — raising the bar under it is the only thing that reaches that case.
+  if (!result.suggest || result.confidence < admission.confidenceFloor || !result.candidateWorkstreamId) return false;
   if (!eligible.some((candidate) => candidate.id === result.candidateWorkstreamId)) return false;
   await createActivitySuggestion(env, {
     region: activity.workspace_region,
@@ -914,6 +1050,7 @@ async function routeContextually(
     confidence: result.confidence,
     reason: result.reason,
     matchedEntities: result.matchedEntities,
+    source: "contextual_routing",
   });
   return true;
 }
@@ -942,6 +1079,7 @@ export const __testing = {
   matchesFilters,
   projectActivityEvent,
   restrictedActivityUserIds,
+  routeContextually,
   runMatchingAutomations,
   triggerMatches,
 };

@@ -12,6 +12,29 @@ import { deliverDigest } from "./digest-delivery-service";
  * import the other's machinery, and the retry semantics of each stay their own.
  */
 
+/**
+ * The shortest final message this will accept as a digest.
+ *
+ * A bound on the one failure here cannot detect on its own. Settlement mails
+ * the run's last message and has no way to tell a digest from a sign-off, so a
+ * run that ended "Outcome: digest written (id …)" — 120 characters — settled as
+ * `delivered` and advanced `cursor_through` past events nobody was ever told
+ * about. That loss is silent and permanent: only settled deliveries move the
+ * cursor, so the window never comes back.
+ *
+ * This is a floor on *implausibility*, not a judgement about quality. A run only
+ * reaches settlement when the window held at least one event, and the brief
+ * mandates an opening sentence, `## ` sections, and `- ` bullets, so a real
+ * digest clears this by an order of magnitude. It is deliberately not a check
+ * that the text *looks* like a digest — that is the send-time heuristic this
+ * subsystem already rejected once; it only refuses text that cannot be one.
+ *
+ * The asymmetry is the whole argument. Rejecting a real digest costs one delayed
+ * occurrence, and the events return in the next one because a failed delivery
+ * does not move the cursor. Accepting a receipt costs the window forever.
+ */
+const MINIMUM_DIGEST_CHARACTERS = 200;
+
 interface DigestDeliveryRow {
   id: string;
   workspace_id: string;
@@ -52,7 +75,7 @@ export async function settleDigestRun(
   if (delivery.status === "delivered" || delivery.status === "failed") return;
 
   const summary = text?.trim() ?? "";
-  if (outcomeStatus !== "completed" || summary.length === 0) {
+  if (outcomeStatus !== "completed" || summary.length < MINIMUM_DIGEST_CHARACTERS) {
     // A run that could not write a digest sends nothing. The delivery is marked
     // failed rather than delivered, and because only settled deliveries advance
     // the cursor, this window is folded into the next digest rather than lost.
@@ -119,14 +142,28 @@ export async function settleDigestRun(
 }
 
 /**
- * Records in the work stream that this digest actually reached someone.
+ * Records in the occurrence's work stream that this digest actually reached
+ * someone.
  *
- * Every occurrence runs in the same transcript, and the brief tells the model
- * not to restate what earlier digests already said. Without this note that
- * instruction would work against the failure design: a delivery that failed
- * leaves its window unconsumed *and* leaves its summary in the transcript, so
- * the retry would be told to skip exactly the content nobody received. A summary
- * followed by this row was sent; one without it was not.
+ * It no longer feeds the next run — that used to be its point, back when every
+ * occurrence shared one transcript and the brief told the model to skip what
+ * earlier digests had already sent; a summary followed by this row was sent, one
+ * without it was not. A per-occurrence work stream ends with its own delivery,
+ * so this is now for the person who opens it: a transcript ending in a summary
+ * with no note is one whose digest never went anywhere, which is exactly what
+ * somebody debugging a missing email is looking for.
+ *
+ * Resolved through `digest_deliveries.workstream_id` rather than by joining back
+ * through `harness_runs`, so it still lands when the launch never recorded its
+ * run id on the delivery.
+ *
+ * The `COALESCE` covers the deploy window running the other way. Migrations land
+ * before either Worker deploys, so the *previous* Worker claims deliveries into
+ * the new schema without writing the new column; resolving through
+ * `workstream_id` alone would drop the note for every one of them and invert the
+ * signal above — the digest went out, and its transcript would say it did not.
+ * `harness_runs` is what the migration's own backfill reads for exactly the same
+ * reason, and it is only ever consulted here when the column is NULL.
  */
 async function noteDeliveryInTranscript(
   env: Env,
@@ -142,8 +179,10 @@ async function noteDeliveryInTranscript(
        SELECT ?, ?, w.workspace_id, w.id, 'system', NULL, 'system', ?, NULL,
               w.next_sequence_number, ?
          FROM workstreams w
-         JOIN harness_runs run ON run.workstream_id = w.id
-         JOIN digest_deliveries d ON d.harness_run_id = run.id
+         JOIN digest_deliveries d
+           ON w.id = COALESCE(
+                d.workstream_id,
+                (SELECT run.workstream_id FROM harness_runs run WHERE run.id = d.harness_run_id))
         WHERE d.id = ?
        ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
     ).bind(
@@ -157,9 +196,10 @@ async function noteDeliveryInTranscript(
       `UPDATE workstreams
           SET next_sequence_number = next_sequence_number + 1, updated_at = ?
         WHERE id = (
-          SELECT run.workstream_id FROM digest_deliveries d
-            JOIN harness_runs run ON run.id = d.harness_run_id
-           WHERE d.id = ?
+          SELECT COALESCE(
+                   d.workstream_id,
+                   (SELECT run.workstream_id FROM harness_runs run WHERE run.id = d.harness_run_id))
+            FROM digest_deliveries d WHERE d.id = ?
         )
           AND EXISTS (
             SELECT 1 FROM messages WHERE client_message_id = ? AND workstream_id = workstreams.id

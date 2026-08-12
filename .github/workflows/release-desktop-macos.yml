@@ -13,10 +13,10 @@ on:
     #
     # This list is the release trigger, so it is the thing to check first when a
     # merge does not release: a push that matches nothing here produces no run
-    # at all, not a run that explains itself. `docs/RUNBOOK.md` documents that
+    # at all, not a run that explains itself. `docs/runbook.md` documents that
     # diagnosis, and release-workflow.test.mjs pins the list.
     #
-    # Keep in sync with the Documentation note in docs/RUNBOOK.md. A path filter
+    # Keep in sync with the Documentation note in docs/runbook.md. A path filter
     # is evaluated against the push's own diff, which GitHub does not guarantee
     # to compute for very large pushes; when it cannot, the workflow runs, and
     # the planner's check for work since the last release decides instead.

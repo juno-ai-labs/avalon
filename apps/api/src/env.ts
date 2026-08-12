@@ -10,6 +10,10 @@ import type {
   LinearRegionalBridgeRpcBinding,
 } from "./services/linear-routing-service";
 import type {
+  GlobalNotionRouterRpcBinding,
+  NotionRegionalBridgeRpcBinding,
+} from "./services/notion-routing-service";
+import type {
   GlobalSlackRouterRpcBinding,
   SlackRegionalBridgeRpcBinding,
 } from "./services/slack-routing-service";
@@ -36,10 +40,12 @@ export interface Env {
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
   EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
+  EU_NOTION_BRIDGE?: NotionRegionalBridgeRpcBinding;
   EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
+  GLOBAL_NOTION_ROUTER?: GlobalNotionRouterRpcBinding;
   GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
 
   APP_ENV: "development" | "test" | "staging" | "production";
@@ -54,6 +60,7 @@ export interface Env {
   DESKTOP_DEEP_LINK_URI: string;
   GITHUB_INGRESS_BASE_URL?: string;
   LINEAR_INGRESS_BASE_URL?: string;
+  NOTION_INGRESS_BASE_URL?: string;
   SLACK_INGRESS_BASE_URL?: string;
 
   OPENROUTER_API_KEY: string;
@@ -75,8 +82,9 @@ export interface Env {
   WORKSTREAM_EMAIL_ADDRESS_KEY?: string;
   WORKSTREAM_EMAIL_DOMAIN?: string;
 
-  GOOGLE_OAUTH_CLIENT_ID: string;
-  GOOGLE_OAUTH_CLIENT_SECRET: string;
+  /** Global only. `productionOnlySecrets` enforces them there; EU never carries them. */
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
   GOOGLE_CONNECTOR_OAUTH_CLIENT_ID?: string;
   GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET?: string;
   GITHUB_APP_ID?: string;
@@ -248,28 +256,46 @@ const EnvContractSchema = z.object({
   EU_PUBLIC_API_BASE_URL: HttpUrlSchema.optional(),
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   LINEAR_INGRESS_BASE_URL: HttpUrlSchema.optional(),
+  NOTION_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   SLACK_INGRESS_BASE_URL: HttpUrlSchema.optional(),
 });
 
 /**
- * Typed required on `Env`, but routinely absent from `.dev.vars`, so local
- * development has always run without them. Requiring them outright would break
- * `pnpm dev:api:local` rather than catch a real misconfiguration, so they are
- * enforced only where their absence is genuinely a deployment fault.
+ * Secrets routinely absent from `.dev.vars`, so local development has always run
+ * without them. Requiring them outright would break `pnpm dev:api:local` rather
+ * than catch a real misconfiguration, so they are enforced only where their
+ * absence is genuinely a deployment fault — which is a question of region as
+ * well as of environment.
  *
- * `OPENROUTER_API_KEY` belongs here for a second reason: the app already models
- * its absence as a supported state rather than a fault — `/health` reports
- * `openRouter: not configured` — and `scripts/seed-sandbox-env.mjs` leaves it
- * empty whenever no real key is available, which is every sandbox session.
- * Enforcing it at the entrypoint turned that into a 503 on every route of both
- * regions, `/health` included, so the one endpoint whose job is to report which
- * key is missing was the one endpoint that could not answer.
+ * **Google identity OAuth is a Global-only surface.** Every user signs in through
+ * the Global endpoint (`regionalization.md`), `AuthService.beginIdentity` refuses
+ * a non-Global region before it reads either key, and `sync-dev-env.mjs` lists
+ * both under `globalOnlyKeys`. Requiring them in every region made the deployed
+ * EU Worker fail its own contract on every request, every queue batch, and every
+ * cron tick — while `/health`, exempt so that it can report the fault, went on
+ * answering `ok`. A contract that demands what the architecture forbids does not
+ * catch a misconfiguration; it manufactures one, silently.
+ *
+ * `OPENROUTER_API_KEY` is required in both regions, and belongs here for a second
+ * reason: `scripts/seed-sandbox-env.mjs` leaves it empty whenever no real key is
+ * available, which is every sandbox session, and outside production the app
+ * models its absence as a supported state rather than a fault — `/health`
+ * reports `openRouter: not configured` and still answers. Requiring it
+ * unconditionally at the entrypoint turned that into a 503 on every route of
+ * both regions, `/health` included, so the one endpoint whose job is to report
+ * which key is missing was the one endpoint that could not answer.
+ *
+ * In production and staging it is a fault, and since `/health` began asserting
+ * this contract the probe answers 503 there rather than `openRouter: not
+ * configured`. That is the intended difference between a sandbox missing a key
+ * and a deployment missing one; the probe still *answers*, which is the
+ * distinction that matters.
  */
 const productionOnlySecrets = [
-  "GOOGLE_OAUTH_CLIENT_ID",
-  "GOOGLE_OAUTH_CLIENT_SECRET",
-  "OPENROUTER_API_KEY",
-] as const;
+  { key: "GOOGLE_OAUTH_CLIENT_ID", regions: ["global"] },
+  { key: "GOOGLE_OAUTH_CLIENT_SECRET", regions: ["global"] },
+  { key: "OPENROUTER_API_KEY", regions: ["global", "eu"] },
+] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**
  * Drift guard. If a key is required by the schema but optional on `Env` — or
@@ -297,8 +323,26 @@ const validated = new WeakSet<object>();
 export function assertEnvContract(env: Env): void {
   if (validated.has(env)) return;
   const result = EnvContractSchema.safeParse(env);
+  // An unrecognized region cannot select a region-scoped rule, so it is held to
+  // all of them.
+  //
+  // This does not prevent a fail-open: `EnvContractSchema` types `AVALON_REGION`
+  // as an enum, so an unrecognized region already fails the parse and the throw
+  // happens either way. What it buys is a *complete* throw — every missing
+  // secret reported alongside the bad region, rather than a key list that
+  // quietly shrank because the region could not be read.
+  //
+  // Derived from that same enum rather than restating its members, because a
+  // third region added to the enum and missed here would land in "unknown, so
+  // it must carry every secret" — including the Global-only login pair it must
+  // not have. That is this outage, reissued for the next region, and the drift
+  // guard cannot catch it: none of these keys are in the schema.
+  const knownRegion = EnvContractSchema.shape.AVALON_REGION.safeParse(env.AVALON_REGION).success;
   const missingSecrets = env.APP_ENV === "production" || env.APP_ENV === "staging"
-    ? productionOnlySecrets.filter((key) => !env[key])
+    ? productionOnlySecrets
+        .filter((secret) => (!knownRegion || (secret.regions as readonly Region[]).includes(env.AVALON_REGION))
+          && !env[secret.key])
+        .map((secret) => secret.key)
     : [];
   if (result.success && missingSecrets.length === 0) {
     validated.add(env);

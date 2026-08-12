@@ -29,6 +29,7 @@ import {
 } from "../src/services/realtime-transcription-service";
 import { __resourceServiceTesting } from "../src/services/resource-service";
 import { __workstreamServiceTesting } from "../src/services/workstream-service";
+import { __originResourceTesting } from "../src/services/workstream-origin-resource";
 
 describe("API security utilities", () => {
   it("round-trips authenticated encrypted values without exposing plaintext", async () => {
@@ -104,10 +105,9 @@ describe("API security utilities", () => {
     expect(__workstreamServiceTesting.memberSafeHarnessError(null)).toBeNull();
   });
 
-  it("binds suggested provider resources to their originating connection", () => {
-    const sql = __workstreamServiceTesting.activityResourceLookupSql.replace(/\s+/gu, " ");
-    expect(sql).toContain("connection_id = ?");
-    expect(sql).toContain("connection_id IS NULL AND ? IS NULL");
+  it("binds suggested and origin provider resources to their originating connection", () => {
+    const sql = __originResourceTesting.originResourceLookupSql.replace(/\s+/gu, " ");
+    expect(sql).toContain("workspace_id = ? AND connection_id = ?");
     expect(sql).toContain("provider = ? AND provider_resource_id = ?");
   });
 
@@ -144,23 +144,14 @@ describe("API security utilities", () => {
   });
 
   it("loads durable rail data only from the current work stream and workspace", () => {
-    const artifactSql = __workstreamServiceTesting.workstreamArtifactsSql.replace(/\s+/gu, " ");
     const harnessSql = __workstreamServiceTesting.workstreamHarnessTasksSql.replace(/\s+/gu, " ");
     const toolSql = __workstreamServiceTesting.workstreamToolTasksSql.replace(/\s+/gu, " ");
 
-    expect(artifactSql).toContain("WHERE workspace_id = ? AND workstream_id = ?");
     expect(harnessSql).toContain("WHERE hr.workspace_id = ? AND hr.workstream_id = ?");
     expect(harnessSql).toContain("m.client_message_id = ('harness:' || hr.id)");
     expect(toolSql).toContain("WHERE ti.workspace_id = ? AND ti.workstream_id = ?");
     expect(__workstreamServiceTesting.backgroundTaskStatus("needs_input")).toBe("needs_input");
     expect(__workstreamServiceTesting.backgroundTaskStatus("ambiguous")).toBe("failed");
-  });
-
-  it("serves artifacts with conservative MIME and safe filenames", () => {
-    expect(__workstreamServiceTesting.mimeTypeForArtifact("markdown")).toBe("text/markdown; charset=utf-8");
-    expect(__workstreamServiceTesting.mimeTypeForArtifact("unknown-binary")).toBe("text/plain; charset=utf-8");
-    expect(__workstreamServiceTesting.safeArtifactFileName('../Q3: plan?', 'markdown')).toBe('Q3- plan-.md');
-    expect(__workstreamServiceTesting.safeArtifactFileName('results.csv', 'csv')).toBe('results.csv');
   });
 
   it("preserves offline credentials only for the same stable Google account", () => {
@@ -747,7 +738,7 @@ describe("environment guardrails", () => {
   it("batches rapid model deltas before publishing realtime frames", async () => {
     let now = 0;
     const published: string[] = [];
-    const batcher = __integrationTesting.createStreamDeltaBatcher(
+    const batcher = __integrationTesting.createTextDeltaBatcher(
       async (delta) => { published.push(delta); },
       { maxCharacters: 5, maxDelayMs: 100, now: () => now },
     );
@@ -761,6 +752,14 @@ describe("environment guardrails", () => {
     await batcher.push("f");
     expect(published).toEqual(["abcde", "f"]);
     await batcher.push("gh");
+    await batcher.flush();
+    expect(published).toEqual(["abcde", "f", "gh"]);
+
+    // A caller retracting text drops what is pending rather than flushing it,
+    // so the abandoned fragment never reaches the client ahead of the frame
+    // that replaces it.
+    await batcher.push("ij");
+    batcher.discard();
     await batcher.flush();
     expect(published).toEqual(["abcde", "f", "gh"]);
   });

@@ -115,7 +115,6 @@ export const messageSchema = z
     messageType: z.enum([
       'text',
       'tool_event',
-      'artifact',
       'elicitation',
       'activity_suggestion',
       'system',
@@ -124,16 +123,6 @@ export const messageSchema = z
     createdAt: z.string(),
     streaming: z.boolean().optional(),
     toolEvent: toolEventSchema.optional(),
-    artifact: z
-      .object({
-        id: z.string(),
-        title: z.string(),
-        artifactType: z.string(),
-        previewText: z.string().optional(),
-        status: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
     elicitation: z
       .object({
         id: z.string(),

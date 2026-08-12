@@ -1,3 +1,4 @@
+import { CONTROL_TOWER_REFRESH_SECONDS } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { Env, IdentityAuthContext } from "../src/env";
@@ -98,6 +99,22 @@ function serving(value: unknown): Partial<Flagship> {
       flagKey,
       value: value as boolean,
       variant: "on",
+      reason: "STATIC",
+    })),
+  };
+}
+
+/**
+ * The same, for the one number flag in the response. Composed with `serving`
+ * wherever a test needs both, because the two are resolved by different modules
+ * and a stub that answers only one of them is how a test stops noticing.
+ */
+function servingNumber(value: unknown): Partial<Flagship> {
+  return {
+    getNumberDetails: vi.fn(async (flagKey: string) => ({
+      flagKey,
+      value: value as number,
+      variant: "served",
       reason: "STATIC",
     })),
   };
@@ -213,7 +230,49 @@ describe("client feature flags", () => {
 
   it("stays off when no binding is attached", async () => {
     await expect(resolveClientFeatureFlags(envWithAccounts(), auth(staffUserId)))
-      .resolves.toEqual({ developerSettings: false });
+      .resolves.toEqual({
+        developerSettings: false,
+        // A feature fails closed; a cadence has no off, so it fails to the
+        // checked-in default the desktop would have used anyway.
+        controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
+      });
+  });
+
+  it("serves the Control Tower cadence Flagship decides", async () => {
+    const env = envWithAccounts({ ...serving(false), ...servingNumber(90) });
+
+    await expect(resolveClientFeatureFlags(env, auth(staffUserId)))
+      .resolves.toEqual({ developerSettings: false, controlTowerRefreshSeconds: 90 });
+  });
+
+  it("clamps a cadence that would make every meeting a billing incident", async () => {
+    // A flag typed in milliseconds is the mistake this bound exists for: every
+    // refresh is an inference, so 60000 served as seconds must not become a
+    // sixteen-hour gap, and 0.5 must not become two refreshes a second.
+    const tooFast = envWithAccounts({ ...serving(false), ...servingNumber(0.5) });
+    await expect(resolveClientFeatureFlags(tooFast, auth(staffUserId)))
+      .resolves.toMatchObject({ controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.minimum });
+
+    clearFlagTargetingAttributeCache();
+    const tooSlow = envWithAccounts({ ...serving(false), ...servingNumber(60_000) });
+    await expect(resolveClientFeatureFlags(tooSlow, auth(staffUserId)))
+      .resolves.toMatchObject({ controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.maximum });
+  });
+
+  it("keeps the default cadence when the cadence flag does not resolve", async () => {
+    const env = envWithAccounts({
+      ...serving(false),
+      getNumberDetails: vi.fn(async (flagKey: string) => ({
+        flagKey,
+        value: CONTROL_TOWER_REFRESH_SECONDS.default,
+        errorCode: "FLAG_NOT_FOUND",
+        errorMessage: "flag not found",
+        reason: "ERROR",
+      })),
+    });
+
+    await expect(resolveClientFeatureFlags(env, auth(staffUserId)))
+      .resolves.toMatchObject({ controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default });
   });
 
   it("stays off when the binding throws, as it does under wrangler dev --local", async () => {
@@ -248,13 +307,19 @@ describe("client feature flags", () => {
   });
 
   it("evaluates every client flag against one description of the person", async () => {
-    const flags = serving(true);
+    const flags = { ...serving(true), ...servingNumber(60) };
     const env = envWithAccounts(flags);
 
     await resolveClientFeatureFlags(env, auth(staffUserId));
 
-    const contexts = (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[2]);
-    expect(contexts.length).toBeGreaterThan(0);
+    // Including the cadence, which a separate module resolves: two modules
+    // describing one person differently would mean a rule that reaches somebody
+    // for one flag and silently misses them for the other.
+    const contexts = [
+      ...(flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls,
+      ...(flags.getNumberDetails as ReturnType<typeof vi.fn>).mock.calls,
+    ].map((call) => call[2]);
+    expect(contexts.length).toBeGreaterThan(1);
     for (const context of contexts) expect(context).toEqual(contexts[0]);
   });
 });
@@ -290,7 +355,10 @@ describe("GET /feature-flags", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ developerSettings: true });
+    await expect(response.json()).resolves.toEqual({
+      developerSettings: true,
+      controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
+    });
   });
 
   it("forbids caching, because the answer is one person's and the client polls it", async () => {
@@ -307,6 +375,9 @@ describe("GET /feature-flags", () => {
     const response = await createApp().request("/feature-flags", { headers: asStaff() }, routeEnv());
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ developerSettings: false });
+    await expect(response.json()).resolves.toEqual({
+      developerSettings: false,
+      controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
+    });
   });
 });

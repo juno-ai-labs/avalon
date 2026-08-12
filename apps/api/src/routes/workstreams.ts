@@ -13,6 +13,7 @@ import {
   HyperSightSchema,
   MessageSchema,
   ParticipantSchema,
+  ReorderWorkstreamPinsRequestSchema,
   ResourceSchema,
   UpdateHyperSightPreferenceRequestSchema,
   UpdateHyperSightRequestSchema,
@@ -33,7 +34,6 @@ const participantParam = z.object({ id: IdSchema, userId: IdSchema });
 const resourceParam = z.object({ id: IdSchema, resourceId: IdSchema });
 const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const suggestionParam = z.object({ id: IdSchema, suggestionId: IdSchema });
-const artifactParam = z.object({ id: IdSchema, artifactId: IdSchema });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   before: z.string().datetime({ offset: true }).optional(),
@@ -85,6 +85,13 @@ const ResolvedSuggestionSchema = z.object({
   resourceId: IdSchema.nullable(),
 });
 const RetriedRunSchema = z.object({ harnessRunId: IdSchema });
+/**
+ * What every pin mutation answers with: the caller's pinned work streams, in
+ * their order. Pinning, unpinning, and reordering all return the same list
+ * rather than the row that moved, so a client applies one response the same way
+ * whichever of the three it made.
+ */
+const PinnedWorkstreamsSchema = z.object({ items: z.array(WorkstreamSchema) });
 const SocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string().min(1) });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
@@ -106,6 +113,18 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
     descriptionSource: body.objective ? "authored" : "derived",
   })), 201);
 });
+// Registered ahead of every `/:id` route so the literal segment is never read
+// as an id, whatever order Hono would otherwise resolve them in.
+workstreamRoutes.put("/pins", zValidator("json", ReorderWorkstreamPinsRequestSchema), async (c) =>
+  c.json(PinnedWorkstreamsSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).reorderPins(c.req.valid("json").workstreamIds))),
+);
+workstreamRoutes.put("/:id/pin", zValidator("param", idParam), async (c) =>
+  c.json(PinnedWorkstreamsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).pin(c.req.valid("param").id))),
+);
+workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) =>
+  c.json(PinnedWorkstreamsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).unpin(c.req.valid("param").id))),
+);
 workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) =>
   c.json(WorkstreamContextSchema.parse(
     await new WorkstreamService(c.env, getAuth(c)).context(c.req.valid("param").id))),
@@ -208,15 +227,3 @@ workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) =>
 workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) =>
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id))),
 );
-workstreamRoutes.get("/:id/artifacts/:artifactId/content", zValidator("param", artifactParam), async (c) => {
-  const param = c.req.valid("param");
-  const artifact = await new WorkstreamService(c.env, getAuth(c)).artifactContent(param.id, param.artifactId);
-  return new Response(artifact.body, {
-    headers: {
-      "Cache-Control": "private, no-store",
-      "Content-Disposition": `attachment; filename="${artifact.fileName}"; filename*=UTF-8''${encodeURIComponent(artifact.fileName)}`,
-      "Content-Type": artifact.contentType,
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
-});

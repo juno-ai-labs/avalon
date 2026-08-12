@@ -53,12 +53,36 @@ describe("tool activity names", () => {
       .toBe("Drafted in Google Drive · Work");
     // Slack's `read_user_profile` ends in `profile` too. A leaf-keyed entry for
     // the Gmail tool would label somebody else's Slack profile as the
-    // connected account, so these are keyed on the whole action path.
+    // connected account, so these are keyed on the whole action path — and this
+    // one takes its verb from the name instead of the object map.
     expect(toolActivityName({
       toolName: "slack_1_read_user_profile",
       status: "completed",
       plugin: { pluginId: "plugin_slack_1", displayName: "Slack" },
-    })).toBe("Reviewed Slack");
+    })).toBe("Read Slack");
+  });
+
+  it("finds the verb wherever a connector puts it in the name", () => {
+    const slack = { pluginId: "plugin_slack_1", displayName: "Slack" };
+    const google = { pluginId: "plugin_google_2", displayName: "Google" };
+
+    // Verb first, which is how five of the seven connectors name a tool.
+    expect(toolActivityName({ toolName: "slack_1_send_message", status: "completed", plugin: slack }))
+      .toBe("Sent through Slack");
+    expect(toolActivityName({ toolName: "slack_1_search_messages", status: "completed", plugin: slack }))
+      .toBe("Searched Slack");
+    // Verb in the middle, behind an area prefix. This is the shape that hid
+    // longest: the name neither starts nor ends with its verb.
+    expect(toolActivityName({ toolName: "google_2_calendar_create_event", status: "completed", plugin: google }))
+      .toBe("Created in Google");
+    expect(toolActivityName({ toolName: "google_2_sheets_update_values", status: "completed", plugin: google }))
+      .toBe("Updated in Google");
+    // Both segments are verbs; the trailing one is the better label.
+    expect(toolActivityName({ toolName: "slack_1_create_comment", status: "completed", plugin: slack }))
+      .toBe("Commented in Slack");
+    // Nothing in the name is a verb, so the generic row is still reachable.
+    expect(toolActivityName({ toolName: "slack_1_channel_topic", status: "completed", plugin: slack }))
+      .toBe("Reviewed Slack");
   });
 
   it("does not describe a connector write as a read", () => {
@@ -88,13 +112,22 @@ describe("tool activity names", () => {
   it("never words a failed row as success", () => {
     expect(toolActivityName({ toolName: "web_search", status: "failed" }))
       .toBe("Could not search the public web");
-    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "failed" }))
-      .toBe("Could not create an artifact");
+    expect(toolActivityName({ toolName: "workstream_read_resource", status: "failed" }))
+      .toBe("Could not read an attached resource");
     // One wording for reads and writes alike: the call never reached the provider.
     expect(toolActivityName({ toolName: "github_1_issues_create", status: "failed", plugin: github }))
       .toBe("Could not reach GitHub");
     expect(toolActivityName({ toolName: "memory_prune", status: "failed" }))
       .toBe("Memory prune failed");
+  });
+
+  it("keeps wording rows a retired tool already wrote", () => {
+    // `workstream_create_artifact` no longer exists, but the rows it wrote do,
+    // and they are worded from the stored name every time they are read.
+    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "completed" }))
+      .toBe("Created an artifact");
+    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "failed" }))
+      .toBe("Could not create an artifact");
   });
 
   it("reads an unrecognized unattributed tool as a phrase rather than a symbol", () => {

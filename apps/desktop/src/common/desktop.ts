@@ -51,6 +51,24 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   /** Whether the service allows this account the Developer section at all.
    * Off until a poll says otherwise, and off again on sign-out. */
   developerSettingsAvailable: boolean;
+  /** Whether the Avalon status item is in the macOS menu bar. On by default. */
+  menuBarEnabled: boolean;
+  /** Whether this platform has a menu bar Avalon can live in at all. The
+   * preference is still stored where it is not, so moving the same profile to a
+   * Mac restores the choice rather than the default. */
+  menuBarAvailable: boolean;
+  /** Whether a status item is actually in the menu bar. Creating one can fail,
+   * and the preference says nothing about that — so this is what lets Settings
+   * tell someone their choice did not take rather than showing a switch that is
+   * on beside a menu bar that is empty. */
+  menuBarPresent: boolean;
+  /** Whether Avalon is registered to open at login. Read back from the
+   * operating system, which owns it — not from Avalon's preference file — so
+   * this reports what macOS actually holds, including a registration it is
+   * still waiting for the person to approve. */
+  launchAtLogin: boolean;
+  /** Whether this platform has login items at all. */
+  launchAtLoginAvailable: boolean;
 }
 
 export interface DesktopWorkspaceSummary {
@@ -87,6 +105,20 @@ export type DesktopMediaPermissionStatus =
 
 export type MeetingAudioPermissionKind = 'microphone' | 'system-audio';
 
+/**
+ * Who asked a meeting window to close, which decides whether the recording
+ * screen may stop and ask first.
+ *
+ * `user` is a close the person performed on that window — its traffic light or
+ * Command-W — and a recording in progress is worth a confirmation, because the
+ * window is the only place the meeting exists until finalization lands.
+ * `quit` is the application shutting down, where a window that stops to ask is
+ * a window that refuses to close, and a quit vetoed that way leaves Avalon
+ * running with no way to finish. That path finalizes and closes as it always
+ * has.
+ */
+export type MeetingCloseReason = 'user' | 'quit';
+
 export interface DesktopMeetingAudioPermissions {
   microphone: DesktopMediaPermissionStatus;
   systemAudio: DesktopMediaPermissionStatus;
@@ -102,6 +134,8 @@ export interface AvalonDesktopBridge {
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   onApplicationSettingsChanged: (listener: (settings: DesktopApplicationSettings) => void) => () => void;
   getApplicationIcon: () => Promise<DesktopApplicationIconState>;
   setApplicationIcon: (iconId: ApplicationIconId) => Promise<DesktopApplicationIconState>;
@@ -132,14 +166,19 @@ export interface AvalonDesktopBridge {
   openExternal: (url: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   openMeetingNotes: (noteId?: string) => Promise<void>;
-  closeMeetingNotes: () => Promise<void>;
+  /**
+   * Closes the meeting window. Given a note id, the main window is raised and
+   * taken to that note on the way out — the meeting is over, and the note is
+   * the thing the person is left with.
+   */
+  closeMeetingNotes: (noteId?: string) => Promise<void>;
   getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
   stopMeetingSystemAudioCapture: () => Promise<void>;
   onMeetingSystemAudioData: (listener: (data: ArrayBuffer, sampleRate: number) => void) => () => void;
   openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
-  onMeetingCloseRequested: (listener: () => void) => () => void;
+  onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   consumePendingDeepLinks: () => Promise<string[]>;
   onDeepLink: (listener: (url: string) => void) => () => void;

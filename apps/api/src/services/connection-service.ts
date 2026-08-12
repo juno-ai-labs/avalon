@@ -1,5 +1,10 @@
 import {
   ConnectorError,
+  GoogleCapabilityScopes,
+  GranolaCapabilities,
+  LinearCapabilityScopes,
+  SlackCapabilityScopes,
+  SlackWorkspaceCapabilities,
   assertGitHubCapabilitiesGranted,
   connectorCapabilitySupportsScope,
   createGranolaWebhookEndpoint,
@@ -7,14 +12,11 @@ import {
   deleteGranolaWebhookEndpoint,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
-  GoogleCapabilityScopes,
-  GranolaCapabilities,
-  LinearCapabilityScopes,
-  SlackCapabilityScopes,
-  SlackWorkspaceCapabilities,
+  type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
   type GitHubWebhookResourceHint,
+  type ResolvedConnectorAdapter,
   type VerifiedGranolaWebhook,
 } from "@avalon/connectors";
 import type {
@@ -36,11 +38,13 @@ import { encryptString, openString, randomToken, sealString, sha256 } from "../l
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
+import { createRegionRoutedState } from "../lib/region-routed-state";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
 import { LinearRoutingService } from "./linear-routing-service";
+import { NotionRoutingService } from "./notion-routing-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { SlackRoutingService } from "./slack-routing-service";
 import { resolveUserDelivery } from "./user-delivery";
@@ -111,6 +115,36 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   },
   slack: SlackCapabilityScopes,
 };
+
+/**
+ * Runs an adapter's repair before its health check, and reports what happened.
+ *
+ * A repair never fails the test: the health check is the answer being asked
+ * for, and a connection that could not be repaired still has a state worth
+ * reporting. But the outcome is returned rather than only logged — a connection
+ * whose delivery is still broken must not read the same as one just fixed.
+ */
+async function attemptConnectorRepair(
+  env: Env,
+  adapter: { repair?: ResolvedConnectorAdapter["repair"] },
+  connection: AuthorizedConnectorConnection,
+  identity: { connectionId: string; connectorType: string },
+): Promise<string | null> {
+  if (!adapter.repair) return null;
+  try {
+    const repair = await adapter.repair(connection, AbortSignal.timeout(10_000));
+    return repair.repaired ? repair.message ?? "Repaired the connection" : null;
+  } catch (error) {
+    logWarn(env, "connector_repair_failed", {
+      connection_id: identity.connectionId,
+      connector_type: identity.connectorType,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return error instanceof Error
+      ? `A repair was attempted and failed: ${error.message}`
+      : "A repair was attempted and failed";
+  }
+}
 
 export class ConnectionService {
   constructor(private readonly env: Env, private readonly auth?: AuthContext) {}
@@ -330,7 +364,13 @@ export class ConnectionService {
     }
     const verifier = randomToken(64);
     const challenge = await sha256(verifier);
-    const state = randomToken(32);
+    // Notion accepts one redirect URI for the whole public connection, so its
+    // callback lands on the shared Global ingress whichever region started it,
+    // and the region prefix is the only thing that ingress can route on. Every
+    // other connector answers on its own regional host and needs no prefix.
+    const state = provider === "notion"
+      ? createRegionRoutedState(this.env.AVALON_REGION, randomToken(32))
+      : randomToken(32);
     const attemptId = randomToken(32);
     const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     const authorization = await adapter.beginAuthorization?.({
@@ -813,6 +853,37 @@ export class ConnectionService {
         throw error;
       }
     }
+    if (provider === "notion") {
+      // Routed on the Notion workspace rather than on `providerAccountId`: that
+      // is the installed bot, and a delivery names the workspace it happened in.
+      try {
+        const notionWorkspaceId = stringField(credentials, "notionWorkspaceId");
+        if (!notionWorkspaceId) {
+          throw new ApiError(502, "connector_identity_missing", "Notion did not return a workspace identity");
+        }
+        await new NotionRoutingService(this.env).registerConnection({
+          notionWorkspaceId,
+          region: this.env.AVALON_REGION,
+          workspaceId: String(row.workspace_id),
+          connectionId,
+        });
+      } catch (error) {
+        await this.env.DB.prepare(
+          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND connector_type = 'notion'`,
+        ).bind(
+          JSON.stringify({
+            code: "notion_route_registration_failed",
+            message: "The shared Notion webhook route could not be registered",
+            retryable: true,
+          }),
+          nowIso(),
+          connectionId,
+          row.workspace_id,
+        ).run();
+        throw error;
+      }
+    }
     if (provider === "slack" && stateData.scope === "workspace") {
       try {
         await new SlackRoutingService(this.env).registerConnection({
@@ -1008,8 +1079,8 @@ export class ConnectionService {
     const connection = await this.loadAuthorized(id);
     const context = await this.context(connection);
     const adapter = this.registry().get(connection.connector_type);
-    const before = JSON.stringify(context.credentials);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
+    let repairOutcome: string | null = null;
     try {
       result = await withAuthorizedConnection(
         this.env,
@@ -1017,13 +1088,36 @@ export class ConnectionService {
           connection: context,
           adapter,
           signal: AbortSignal.timeout(10_000),
-          connectionStatus: String(connection.status),
         },
-        (authorized) => adapter.healthCheck(authorized, AbortSignal.timeout(10_000)),
+        async (authorized) => {
+          // Testing a connection is the one moment somebody has asked Avalon to
+          // put it right, so this is where a provider-side repair belongs — not
+          // in the health check, which reauthorization runs on every plugin
+          // activation. A repair that fails must not fail the test: the check
+          // below is still the answer being asked for.
+          repairOutcome = await attemptConnectorRepair(this.env, adapter, authorized, {
+            connectionId: String(connection.id),
+            connectorType: String(connection.connector_type),
+          });
+          return adapter.healthCheck(authorized, AbortSignal.timeout(10_000));
+        },
       );
     } catch (error) {
-      if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
-      result = { ok: false, message: error.message, reconnectRequired: true };
+      // Every failure is an answer here, not a 500. Testing a connection is the
+      // affordance a member reaches for *because* it is broken, so the one
+      // thing it must not do is fail to report. This used to be narrower and
+      // could afford to be: a non-healthy row skipped the refresh entirely.
+      // Now the door refreshes for any row, which puts two more failures on
+      // this path — the ten-second abort (a `DOMException`, not a
+      // `ConnectorError`) and the lease compare-and-swap losing under a
+      // concurrent refresh — and either one would have escaped as a 5xx, with
+      // the terminal status write below skipped as well.
+      const reconnectRequired = error instanceof ConnectorError && error.code === "unauthorized";
+      result = {
+        ok: false,
+        message: error instanceof Error ? error.message : "The connection test failed",
+        ...(reconnectRequired ? { reconnectRequired: true } : {}),
+      };
     }
     if (result.ok && connection.connector_type === "linear") {
       const organizationId = connection.provider_account_id == null
@@ -1044,6 +1138,23 @@ export class ConnectionService {
         }
       }
     }
+    if (result.ok && connection.connector_type === "notion") {
+      const notionWorkspaceId = notionWorkspaceIdFromConfig(connection.config_json);
+      if (!notionWorkspaceId) {
+        result = { ok: false, message: "The Notion workspace identity is missing", reconnectRequired: true };
+      } else {
+        try {
+          await new NotionRoutingService(this.env).registerConnection({
+            notionWorkspaceId,
+            region: this.env.AVALON_REGION,
+            workspaceId: connection.workspace_id,
+            connectionId: connection.id,
+          });
+        } catch {
+          result = { ok: false, message: "The shared Notion webhook route could not be registered" };
+        }
+      }
+    }
     if (result.ok && connection.connector_type === "slack" && connection.scope === "workspace") {
       const teamId = connection.provider_account_id == null ? null : String(connection.provider_account_id);
       if (!teamId) {
@@ -1061,15 +1172,11 @@ export class ConnectionService {
         }
       }
     }
-    // The door persists what it and the health check changed, but only for a
-    // connection D1 still holds as healthy. A probe that revives a
-    // `needs_reconnect` connection is the case that write skips, so the
-    // identity a successful check recovered is stored here instead — and only
-    // for that case, or a healthy connection would be encrypted and written
+    // The compensating write this used to need is gone: the door now persists
+    // for any row a person has not disabled, so a probe that revives a
+    // `needs_reconnect` connection has its recovered credential stored by the
+    // door itself. Writing again here would encrypt and store the same value
     // twice for one test.
-    if (connection.status !== "healthy" && JSON.stringify(context.credentials) !== before) {
-      await this.persistCredentials(connection, context.credentials);
-    }
     if (result.ok && connection.connector_type === "granola" && connection.scope === "personal") {
       const providerAccountId = stringField(context.credentials, "providerAccountId");
       if (!providerAccountId) {
@@ -1095,6 +1202,7 @@ export class ConnectionService {
         ).run();
       }
     }
+    if (repairOutcome) result = { ...result, message: `${result.message}. ${repairOutcome}` };
     await this.env.DB.prepare(
       `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ?`,
     ).bind(
@@ -1123,7 +1231,6 @@ export class ConnectionService {
             connection: await this.context(connection),
             adapter,
             signal,
-            connectionStatus: String(connection.status),
           },
           (authorized) => adapter.revoke!(authorized, signal),
         );
@@ -1186,6 +1293,28 @@ export class ConnectionService {
             connection_id: connection.id,
             reason: error instanceof Error ? error.message : "unknown route error",
           });
+        }
+      }
+      if (connection.connector_type === "notion") {
+        const notionWorkspaceId = notionWorkspaceIdFromConfig(connection.config_json);
+        if (notionWorkspaceId) {
+          try {
+            await new NotionRoutingService(this.env).setConnectionStatus({
+              notionWorkspaceId,
+              region: this.env.AVALON_REGION,
+              workspaceId: connection.workspace_id,
+              connectionId: connection.id,
+              status: "disabled",
+            });
+          } catch (error) {
+            // The regional connection is already disabled and cannot consume the
+            // event. Keep teardown recoverable; reconciliation can retire the
+            // opaque Global route later without restoring credentials.
+            logWarn(this.env, "notion_route_deactivation_failed", {
+              connection_id: connection.id,
+              reason: error instanceof Error ? error.message : "unknown route error",
+            });
+          }
         }
       }
       if (
@@ -1292,7 +1421,7 @@ export class ConnectionService {
     const connection = await this.env.DB.prepare(
       `SELECT * FROM connector_connections
        WHERE id = ? AND workspace_id = ? AND connector_type = 'generic_webhook'
-         AND status = 'healthy'`,
+         AND status <> 'disabled'`,
     ).bind(id, auth.workspaceId).first<StoredConnection>();
     if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
     if (connection.scope === "personal" && connection.owner_user_id !== auth.userId) {
@@ -1308,7 +1437,7 @@ export class ConnectionService {
     await this.env.DB.prepare(
       `UPDATE connector_connections
        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+       WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
     ).bind(
       encrypted.ciphertext,
       encrypted.iv,
@@ -1495,7 +1624,7 @@ export class ConnectionService {
     }
     const connection = await this.env.DB.prepare(
       `SELECT * FROM connector_connections
-       WHERE id = ? AND connector_type = 'granola' AND scope = 'workspace' AND status = 'healthy'`,
+       WHERE id = ? AND connector_type = 'granola' AND scope = 'workspace' AND status <> 'disabled'`,
     ).bind(connectionId).first<StoredConnection>();
     if (!connection) throw new ApiError(404, "connection_not_found", "Granola webhook connection not found");
     const context = await this.context(connection);
@@ -1609,7 +1738,7 @@ export class ConnectionService {
       throw new ApiError(400, "invalid_webhook_body", "Webhook body is not valid UTF-8");
     }
     const connection = await this.env.DB.prepare(
-      `SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'generic_webhook' AND status = 'healthy'`,
+      `SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'generic_webhook' AND status <> 'disabled'`,
     ).bind(connectionId).first<StoredConnection>();
     if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
     const context = await this.context(connection);
@@ -2213,6 +2342,22 @@ function arrayField(record: Record<string, unknown>, key: string): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+/**
+ * The Notion workspace a connection was installed into, as recorded by
+ * `verifiedIdentityConfig`. Reading it from the connection's own config keeps
+ * route teardown and re-registration off the credential-decryption path.
+ */
+function notionWorkspaceIdFromConfig(configJson: unknown): string | null {
+  try {
+    const parsed = JSON.parse(String(configJson ?? "{}")) as unknown;
+    return parsed && typeof parsed === "object"
+      ? stringField(parsed as Record<string, unknown>, "providerTenantId")
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function verifiedIdentityConfig(
   provider: ConnectorOAuthProvider,
   credentials: Record<string, unknown>,
@@ -2473,6 +2618,7 @@ function assertLinearNativeAgentCapabilityEnabled(
 }
 
 export const __connectionServiceTesting = {
+  attemptConnectorRepair,
   reconcileGoogleAccount,
   googleConnectionDisplayName,
   googleProviderScopesForCapabilities,

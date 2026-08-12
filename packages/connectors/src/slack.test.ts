@@ -9,6 +9,7 @@ import {
   slackApi,
   slackActivityEventType,
   slackAgentActivationAcknowledgement,
+  slackOriginSource,
   SlackActivityEventTypes,
   SlackCapabilities,
   SlackWorkspaceCapabilities,
@@ -22,9 +23,45 @@ import {
   acknowledgeConnectorAgentActivation,
   authorizedConnection,
   connectorCapabilitySupportsScope,
+  type ConnectorError,
 } from "./types";
 
 describe("Slack connector", () => {
+  it("offers only tool-backed capabilities when it refuses one it lacks", async () => {
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: async () => {
+        throw new Error("A refused tool must never reach Slack");
+      },
+    });
+
+    const refusal = await adapter.executeTool("create_canvas", { title: "Notes" }, {
+      connection: slackWorkspaceToolConnection(),
+      principal: { type: "workspace", workspaceId: "workspace-avalon" },
+      signal: AbortSignal.timeout(1_000),
+    }).then(
+      () => { throw new Error("A tool the connection cannot call must be refused"); },
+      (error: unknown) => error as ConnectorError,
+    );
+
+    const available = (refusal.details as { available?: string[] } | undefined)?.available ?? [];
+    // Slack is the connector where the grant and the model-callable surface
+    // genuinely differ. `slack.agent` and `slack.notifications.write` are
+    // control-plane grants with no tool behind them, so answering "what can I
+    // do instead?" with either of them sends the model after something it
+    // cannot call — worse than the bare refusal this replaced.
+    expect(available).not.toContain(SlackCapabilities.agent);
+    expect(available).not.toContain(SlackCapabilities.notificationsWrite);
+    expect(available).toContain(SlackCapabilities.messagesWrite);
+    expect(available).toContain(SlackCapabilities.search);
+    // Everything offered is a capability some tool in this plugin declares.
+    const toolCapabilities = new Set(adapter.agentPlugin.tools.map((tool) => tool.capability));
+    expect(available.filter((capability: string) => !toolCapabilities.has(capability))).toEqual([]);
+  });
+
   it("declares expressive activity triggers with typed Slack filters", () => {
     const adapter = createSlackConnector({
       clientId: "client",
@@ -509,6 +546,10 @@ describe("Slack connector", () => {
     }, AbortSignal.timeout(1_000))).rejects.toMatchObject({
       code: "unauthorized",
       message: "invalid_refresh_token",
+      // The name of this test was the only place the verdict appeared. Slack
+      // answers a refused refresh with HTTP 200, so nothing downstream can
+      // infer it, and without the flag the host left the connection healthy.
+      details: { reconnectRequired: true },
     });
   });
 
@@ -1131,6 +1172,135 @@ describe("Slack connector", () => {
   });
 });
 
+/**
+ * Slack's answer to "where did this work stream come from". The thread, never
+ * the channel, and never any of what was said in it.
+ */
+describe("Slack agent-session origins", () => {
+  it("keys the origin on the thread and names the channel it is in", () => {
+    expect(slackOriginSource().describe({
+      kind: "agent_session",
+      session: {
+        teamId: "T0A4UF9KD08",
+        channelId: "C0A4UF9RWAU",
+        threadTs: "1786491700.928349",
+        channelName: "operations",
+        channelType: "public",
+        invocationType: "app_mention",
+      },
+    })).toEqual({
+      resourceType: "slack_thread",
+      providerResourceId: "C0A4UF9RWAU:thread:1786491700.928349",
+      title: "Thread in #operations",
+      canonicalUrl: null,
+      metadata: {
+        teamId: "T0A4UF9KD08",
+        channelId: "C0A4UF9RWAU",
+        channelName: "operations",
+        threadTs: "1786491700.928349",
+        channelType: "public",
+        invocationType: "app_mention",
+      },
+    });
+  });
+
+  it("names a direct message as one rather than as a channel nobody can open", () => {
+    expect(slackOriginSource().describe({
+      kind: "agent_session",
+      session: { teamId: "T1", channelId: "D1", threadTs: "1.1", channelType: "im" },
+    })?.title).toBe("Slack direct message");
+  });
+
+  it("falls back to an unqualified thread when Slack did not name the channel", () => {
+    expect(slackOriginSource().describe({
+      kind: "agent_session",
+      session: { teamId: "T1", channelId: "C1", threadTs: "1.1", channelType: "public" },
+    })?.title).toBe("Slack thread");
+  });
+
+  it("keeps a thread's identity distinct from its root message's", () => {
+    // `normalizeSlackActivity` identifies a message as `<channel>:<ts>`, and for
+    // a thread root that `ts` is the `thread_ts` — so without the segment both
+    // would resolve the same resource row, and the resource identity tuple does
+    // not include the type. Whichever arrived first would win, and a thread
+    // origin would inherit a `slack_message` row with no permalink.
+    const rootTs = "1786491700.928349";
+    const thread = slackOriginSource().describe({
+      kind: "agent_session",
+      session: { teamId: "T1", channelId: "C1", threadTs: rootTs, channelType: "public" },
+    });
+    const message = normalizeSlackActivity(
+      slackActivityConnection(),
+      {
+        team_id: "T1",
+        event_id: "Ev1",
+        event: { type: "message", channel: "C1", ts: rootTs, user: "U1", text: "hello" },
+      } as never,
+      null,
+    );
+
+    expect(message?.resourceType).toBe("slack_message");
+    expect(thread?.providerResourceId).not.toBe(message?.providerResourceId);
+  });
+
+  it("hands an activity back to the shared derivation", () => {
+    expect(slackOriginSource().describe({
+      kind: "activity",
+      activity: { resourceType: "slack_message", providerResourceId: "C1:1.1", title: "Message" },
+    })).toBeNull();
+  });
+
+  it("asks Slack for the permalink rather than assembling one from the ids", async () => {
+    // A permalink is qualified by the team's own domain, which the installation
+    // never tells us, so a URL built here would silently open the wrong
+    // workspace for anyone in more than one.
+    const fetcher: FetchLike = vi.fn(async (input) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/api/chat.getPermalink");
+      expect(url.searchParams.get("channel")).toBe("C0A4UF9RWAU");
+      expect(url.searchParams.get("message_ts")).toBe("1786491700.928349");
+      return json({ ok: true, permalink: "https://avalon.slack.com/archives/C0A4UF9RWAU/p1786491700928349" });
+    });
+
+    expect(await slackOriginSource(fetcher).resolveCanonicalUrl?.(
+      slackWorkspaceConnection(),
+      {
+        resourceType: "slack_thread",
+        providerResourceId: "C0A4UF9RWAU:thread:1786491700.928349",
+        title: "Thread in #operations",
+        canonicalUrl: null,
+        metadata: {},
+      },
+      AbortSignal.timeout(1_000),
+    )).toBe("https://avalon.slack.com/archives/C0A4UF9RWAU/p1786491700928349");
+  });
+
+  it("stores no Slack message content, only where the message was", () => {
+    const described = slackOriginSource().describe({
+      kind: "agent_session",
+      session: {
+        teamId: "T1",
+        channelId: "C1",
+        threadTs: "1.1",
+        channelName: "finance",
+        channelType: "private",
+        invocationType: "app_mention",
+      },
+    });
+
+    // Slack Agent policy forbids durably storing provider content gathered for
+    // surrounding context, and an origin is durable.
+    expect(Object.keys(described?.metadata ?? {})).toEqual([
+      "teamId",
+      "channelId",
+      "channelName",
+      "threadTs",
+      "channelType",
+      "invocationType",
+    ]);
+  });
+});
+
 async function slackSignature(secret: string, timestamp: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v0:${timestamp}:${body}`)));
@@ -1139,6 +1309,20 @@ async function slackSignature(secret: string, timestamp: string, body: string): 
 
 function json(value: unknown, headers: HeadersInit = {}, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...Object.fromEntries(new Headers(headers)) } });
+}
+
+/** The connection shape `normalizeSlackActivity` reads, not an authorized one. */
+function slackActivityConnection() {
+  return {
+    id: "connection-slack",
+    workspaceId: "workspace-avalon",
+    scope: "workspace" as const,
+    ownerUserId: null,
+    grantedScopes: [],
+    credentials: {},
+    cursor: {},
+    config: { region: "global" },
+  };
 }
 
 function slackWorkspaceConnection(): AuthorizedConnectorConnection {

@@ -1,3 +1,4 @@
+import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
@@ -264,6 +265,7 @@ describe('useWorkstreamSocket', () => {
       manualUnreadGeneration: 0,
       hasUnread: false,
       firstUnreadSequenceNumber: null,
+      pinPosition: null,
       lastActivityAt: '2026-07-31T19:20:00.000Z',
     };
     const detail: WorkstreamDetail = {
@@ -273,7 +275,6 @@ describe('useWorkstreamSocket', () => {
       viewers: [],
       resources: [],
       connections: [],
-      artifacts: [],
       backgroundTasks: [],
       automationRuns: [],
     };
@@ -1335,7 +1336,7 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async () => ({
       url: 'wss://api.avalon.test/workstreams/workstream-one',
-      ticket: 'socket-ticket',
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = { getSocketTicket } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
@@ -1374,7 +1375,7 @@ describe('useWorkstreamSocket', () => {
     vi.spyOn(window.navigator, 'onLine', 'get').mockImplementation(() => online);
     const getSocketTicket = vi.fn(async () => ({
       url: 'wss://api.avalon.test/workstreams/workstream-one',
-      ticket: 'socket-ticket',
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = { getSocketTicket } as unknown as AvalonApi;
     const { result } = renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
@@ -1399,7 +1400,7 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const getSocketTicket = vi.fn(async () => ({
       url: 'wss://api.avalon.test/workstreams/workstream-one',
-      ticket: 'socket-ticket',
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = { getSocketTicket } as unknown as AvalonApi;
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
@@ -1424,7 +1425,7 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstreams'], [{ id: 'workstream-one', title: 'Stale' }]);
     const getSocketTicket = vi.fn(async () => ({
       url: 'wss://api.avalon.test/workstreams/workstream-one',
-      ticket: 'socket-ticket',
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const canonicalWorkstream = { id: 'workstream-one', title: 'Canonical' };
     const canonicalWorkstreams = [{ id: 'workstream-one', title: 'Canonical' }];

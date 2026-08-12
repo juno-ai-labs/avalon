@@ -8,7 +8,7 @@ or browser-automation command. If a step here has drifted from reality, fix the
 step in the same change rather than working around it.
 
 The container definition that this guide assumes is documented separately in
-[the sandbox environment](SANDBOX.md).
+[the sandbox environment](sandbox.md).
 
 ## Prerequisites
 
@@ -95,7 +95,7 @@ unlike the others the binding object is still present, and it is each *call*
 that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
 uses the model ids in its `OPENROUTER_*` Worker variables, which is the designed
 fallback rather than a degradation — see
-[the feature-flag document](FEATURE_FLAGS.md#local-development).
+[the feature-flag document](feature-flags.md#local-development).
 
 Verify both regions:
 
@@ -166,6 +166,15 @@ workspace with its work streams, automations, and onboarding checklist.
   Worker-variable fallback they resolve to can.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
   Worker has none unless a tunnel is configured.
+- **The macOS menu bar status item, and the windowless half of a login launch.**
+  The item is created only on darwin, and there is no menu bar to draw it into
+  here. The launch skips its window only when a status item is actually present,
+  so off darwin that check is always false and `--hidden` opens a window like any
+  other launch — proving the window *does not* open needs a Mac. What the sandbox
+  can check is everything around it: the two Settings toggles in a real window,
+  that a `--hidden` launch still loads the menu's content in the main process,
+  and that a deep link delivered to that instance opens the work stream. See
+  [`menu-bar.md`](menu-bar.md).
 - **macOS packaging, signing, notarization, and Gatekeeper checks.**
   `package:desktop`, `start:desktop:packaged`, and the release publisher are
   macOS-only and must run on a Mac.

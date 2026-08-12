@@ -1055,8 +1055,76 @@ export class AutomationCompilerError extends Error {
   }
 }
 
+export interface TextDeltaBatcher {
+  push(delta: string): Promise<void>;
+  flush(): Promise<void>;
+  /** Drop pending text without publishing it. See the retraction rule below. */
+  discard(): void;
+}
+
+/**
+ * Coalesce provider text fragments before they become frames on a wire.
+ *
+ * A model emits a token at a time, and every fragment that reaches a client
+ * unbatched costs a frame, a schema parse, a state update, and — where the
+ * receiver follows the transcript — a layout pass. The defaults match the
+ * sequenced batcher on the work-stream socket path
+ * (`createSequencedStreamDeltaBatcher` in `apps/api/src/services/integrations.ts`),
+ * so both surfaces coalesce identically; that one stays separate because it
+ * also has to keep turn and epoch sequencing, which this one has no concept of.
+ *
+ * **A retraction is never batched.** A caller with reset semantics settles
+ * whatever is pending — `flush` when the retraction only clears part of the
+ * receiver's buffer, `discard` when the retracting frame carries the whole
+ * replacement — and publishes that frame on its own, so text can never arrive
+ * coalesced behind the frame that was meant to replace it. Which of the two
+ * applies depends on what the retraction means, so it lives with each caller
+ * rather than in here.
+ */
+export function createTextDeltaBatcher(
+  publish: (delta: string) => Promise<void>,
+  options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
+): TextDeltaBatcher {
+  const maxCharacters = options.maxCharacters ?? 2_048;
+  const maxDelayMs = options.maxDelayMs ?? 75;
+  const now = options.now ?? Date.now;
+  let pending = "";
+  let lastFlushAt = now();
+
+  const flush = async (): Promise<void> => {
+    if (!pending) return;
+    const delta = pending;
+    pending = "";
+    lastFlushAt = now();
+    await publish(delta);
+  };
+
+  return {
+    async push(delta: string): Promise<void> {
+      pending += delta;
+      if (pending.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
+        await flush();
+      }
+    },
+    flush,
+    discard(): void {
+      pending = "";
+      lastFlushAt = now();
+    },
+  };
+}
+
 export type AutomationCompilerStreamEvent =
   | { type: "started" }
+  | {
+      /**
+       * A fragment of the architect's narration. `reset: true` replaces the
+       * composer's whole narration buffer with `delta` rather than appending.
+       */
+      type: "delta";
+      delta: string;
+      reset: boolean;
+    }
   | {
       type: "thinking";
       inferenceRequestId: string;
@@ -1302,6 +1370,27 @@ export async function compileAutomation(input: {
   let submissionReminderSent = false;
   let elicitationReminderSent = false;
   let modelTimeMs = 0;
+  /**
+   * The composer shows one narration bubble for the whole compile, but Bind's
+   * stream resets are scoped to a turn: a route restart replays only the turn
+   * it abandoned. Remembering what earlier turns settled lets a reset restore
+   * them instead of erasing the plan the person has already read, and lets the
+   * `started` frame — which clears the bubble — be sent once rather than once
+   * per turn.
+   */
+  const narration = { started: false, turnId: "", settled: "", current: "" };
+  const narrationBatch = createTextDeltaBatcher(async (delta) => {
+    await input.onStreamEvent?.({ type: "delta", delta, reset: false });
+  });
+  /**
+   * Every frame that is not batched narration settles the batch first, so a
+   * tool row, a thinking row, or the completion can never overtake the text
+   * that was written before it.
+   */
+  const emitStreamEvent = async (event: AutomationCompilerStreamEvent): Promise<void> => {
+    await narrationBatch.flush();
+    await input.onStreamEvent?.(event);
+  };
   const toolStartedAt = new Map<string, number>();
   const toolLabelPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
@@ -1529,7 +1618,30 @@ export async function compileAutomation(input: {
     corePlugins,
     onEvent: async (event) => {
       if (event.type === "stream_started") {
-        await input.onStreamEvent?.({ type: "started" });
+        if (narration.started) return;
+        narration.started = true;
+        await emitStreamEvent({ type: "started" });
+      } else if (event.type === "stream_delta") {
+        if (event.turnId !== narration.turnId) {
+          narration.settled = [narration.settled, narration.current].filter(Boolean).join("\n\n");
+          narration.turnId = event.turnId;
+          narration.current = "";
+        }
+        if (event.reset) {
+          narration.current = "";
+          // The retraction goes out alone: anything still pending belongs to
+          // the attempt being abandoned, and coalescing it behind this frame
+          // would restore the text the reset exists to remove.
+          narrationBatch.discard();
+          await emitStreamEvent({ type: "delta", delta: narration.settled, reset: true });
+          return;
+        }
+        if (!event.delta) return;
+        // A new turn continues the same bubble, so its first fragment carries
+        // the paragraph break that separates it from the previous update.
+        const separator = narration.settled && !narration.current ? "\n\n" : "";
+        narration.current += event.delta;
+        await narrationBatch.push(`${separator}${event.delta}`);
       } else if (event.type === "tool_started") {
         const plugin = automationOwningPlugin(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
@@ -1543,7 +1655,7 @@ export async function compileAutomation(input: {
           : automationSubjectPlugins(event.toolName, event.input, catalog);
         toolStartedAt.set(event.toolCallId, Date.now());
         toolLabelPlugins.set(event.toolCallId, labelPlugins);
-        await input.onStreamEvent?.({
+        await emitStreamEvent({
           type: "tool",
           toolCallId: event.toolCallId,
           name: automationDiscoveryActivityName(event.toolName, "started", labelPlugins),
@@ -1574,7 +1686,7 @@ export async function compileAutomation(input: {
             );
         toolStartedAt.delete(event.toolCallId);
         toolLabelPlugins.delete(event.toolCallId);
-        await input.onStreamEvent?.({
+        await emitStreamEvent({
           type: "tool",
           toolCallId: event.toolCallId,
           name: automationDiscoveryActivityName(event.toolName, "completed", labelPlugins),
@@ -1595,7 +1707,7 @@ export async function compileAutomation(input: {
         const labelPlugins = plugin ? [plugin] : toolLabelPlugins.get(event.toolCallId) ?? [];
         toolStartedAt.delete(event.toolCallId);
         toolLabelPlugins.delete(event.toolCallId);
-        await input.onStreamEvent?.({
+        await emitStreamEvent({
           type: "tool",
           toolCallId: event.toolCallId,
           name: automationDiscoveryActivityName(event.toolName, "failed", labelPlugins),
@@ -1608,7 +1720,7 @@ export async function compileAutomation(input: {
     },
     onInferenceRequest: async (request) => {
       await input.onInferenceRequest?.(request);
-      await input.onStreamEvent?.({
+      await emitStreamEvent({
         type: "thinking",
         inferenceRequestId: request.inferenceRequestId,
         status: "started",
@@ -1618,7 +1730,7 @@ export async function compileAutomation(input: {
     onInferenceAttempt: async (attempt) => {
       await input.onInferenceAttempt?.(attempt);
       modelTimeMs += attempt.latencyMs;
-      await input.onStreamEvent?.({
+      await emitStreamEvent({
         type: "thinking",
         inferenceRequestId: attempt.inferenceRequestId,
         status: "completed",
@@ -1664,7 +1776,7 @@ export async function compileAutomation(input: {
     ...(input.signal ? { signal: input.signal } : {}),
   });
   if (draftState.submitted && (draftState.submitted.ready || draftState.submitted.elicitation)) {
-    await input.onStreamEvent?.({ type: "completed" });
+    await emitStreamEvent({ type: "completed" });
     return draftState.submitted;
   }
   if (outcome.failure) {
@@ -2227,6 +2339,24 @@ export interface HarnessCompactionConfig {
  */
 export type PluginAuthorization = "authorized" | "denied" | "indeterminate";
 
+/**
+ * Why a plugin's authorization is being revalidated, which decides how far the
+ * host has to go to answer.
+ *
+ * `activation` is a plugin becoming usable — a `load_plugin`, a restored hint,
+ * the initial preload. It happens a handful of times per run, and the answer
+ * has to be current all the way to the provider.
+ *
+ * `continuation` is the check between model turns, which runs before *every*
+ * inference. What it exists to catch is authority the host itself withdrew
+ * mid-run: a revoked grant, a removed member, an archived work stream, a
+ * connection marked unhealthy — all of which the host knows from its own
+ * records. Answering it with a provider round trip per active plugin per turn
+ * spends real quota to re-learn something the host already knows, and on a
+ * connector whose health check writes it is worse than wasteful.
+ */
+export type PluginAuthorizationOccasion = "activation" | "continuation";
+
 export interface RunHarnessInput {
   config: OpenRouterConfig & {
     maxIterations: number;
@@ -2305,7 +2435,10 @@ export interface RunHarnessInput {
     inputHash: string,
     policy: { pluginId: string } & HarnessToolPolicyIdentity,
   ) => Promise<HarnessToolResult | null>;
-  reauthorizePlugin?: (canonicalId: string) => PluginAuthorization | Promise<PluginAuthorization>;
+  reauthorizePlugin?: (
+    canonicalId: string,
+    occasion: PluginAuthorizationOccasion,
+  ) => PluginAuthorization | Promise<PluginAuthorization>;
   persistActivation?: (canonicalId: string) => void | Promise<void>;
   onActivationDropped?: (drop: unknown) => void | Promise<void>;
   beforeToolCall?: BeforeToolCallHook;

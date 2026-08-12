@@ -55,6 +55,7 @@ const workerKeys = [
   "SLACK_SIGNING_SECRET",
   "TWITTER_API_IO_API_KEY",
   "SLACK_INGRESS_BASE_URL",
+  "NOTION_INGRESS_BASE_URL",
   "NOTION_OAUTH_CLIENT_ID",
   "NOTION_OAUTH_CLIENT_SECRET",
   "NOTION_INTEGRATION_ID",
@@ -196,6 +197,9 @@ const sharedPublicAppKeys = [
   "LINEAR_OAUTH_CLIENT_ID",
   "LINEAR_OAUTH_CLIENT_SECRET",
   "LINEAR_WEBHOOK_SECRET",
+  "NOTION_OAUTH_CLIENT_ID",
+  "NOTION_OAUTH_CLIENT_SECRET",
+  "NOTION_INTEGRATION_ID",
   "SLACK_APP_ID",
   "SLACK_CLIENT_ID",
   "SLACK_CLIENT_SECRET",
@@ -235,6 +239,15 @@ for (const region of ["global", "eu"]) {
     || local[`GITHUB_APP_PRIVATE_KEY_${region.toUpperCase()}`]
     || existing.GITHUB_APP_PRIVATE_KEY
     || "";
+  // Notion derives its one redirect URI from this, so leaving it unset would
+  // point a local authorization at production. Development names the region's
+  // own Worker rather than the shared host: a callback then completes in the
+  // region that started it, with no cross-region service binding to run, and
+  // `isSharedNotionIngress` declines the regional API so the ingress route gate
+  // never applies to the whole local surface. An explicit value in .env.local
+  // still wins, for exercising the shared path against a tunnel.
+  regional.NOTION_INGRESS_BASE_URL = local.NOTION_INGRESS_BASE_URL
+    || regional.PUBLIC_API_BASE_URL;
   // Keep generated development encryption/signing material stable per region.
   regional.SESSION_SIGNING_KEY ||= randomBytes(48).toString("base64url");
   regional.OAUTH_STATE_ENCRYPTION_KEY ||= randomBytes(32).toString("base64");

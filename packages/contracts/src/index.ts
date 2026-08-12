@@ -49,7 +49,7 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * from it stops new overrides naming it; work streams already pinned to it fall
  * back to the flag, because the API re-validates the stored value on read.
  *
- * See `docs/FEATURE_FLAGS.md` for how an override composes with the flags.
+ * See `docs/feature-flags.md` for how an override composes with the flags.
  */
 export const AGENT_MODEL_OVERRIDES = [
   "x-ai/grok-4.3",
@@ -152,14 +152,43 @@ export const AcceptWorkspaceInvitationRequestSchema = z.object({
 });
 
 /**
+ * How often Control Tower rewrites its briefing while a meeting records, in
+ * seconds. One definition for the three places that need it: the flag resolver
+ * that clamps what Flagship serves, the response schema below, and the desktop
+ * timer that falls back to it.
+ *
+ * The bounds are what makes a served cadence safe to act on. Every refresh is
+ * an inference, so a mistyped flag at the low end is a bill and a rate limit;
+ * at the high end it is a briefing so stale the feature stops being live. The
+ * default reproduces the behavior of a client that never asked.
+ */
+export const CONTROL_TOWER_REFRESH_SECONDS = {
+  default: 60,
+  minimum: 15,
+  maximum: 600
+} as const;
+
+/**
  * Every server-decided feature flag a client is allowed to see, resolved for
- * the signed-in person. Each field defaults to the closed state so a response
- * from an older service — or one whose flag provider was unreachable — leaves
- * the feature off rather than absent.
+ * the signed-in person. Each field defaults to the answer an unreachable flag
+ * provider — or a response from an older service that does not know the field —
+ * has to reproduce: off for a feature, and today's behavior for a setting that
+ * has no off.
  */
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
-  developerSettings: z.boolean().default(false)
+  developerSettings: z.boolean().default(false),
+  /**
+   * Control Tower's refresh cadence in seconds. `catch` rather than a bare
+   * bound: a value outside the range is a provisioning mistake, and degrading
+   * it to the default keeps one bad flag from failing the whole response and
+   * taking every other flag down with it.
+   */
+  controlTowerRefreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .catch(CONTROL_TOWER_REFRESH_SECONDS.default)
+    .default(CONTROL_TOWER_REFRESH_SECONDS.default)
 });
 
 export const ParticipantSchema = z.object({
@@ -174,6 +203,7 @@ export const ViewerSchema = z.object({
 });
 
 export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
+
 export const WorkstreamSchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -219,7 +249,18 @@ export const WorkstreamSchema = z.object({
    * surfaces leave these out unless the reader has asked to see them, and render
    * them as secondary when they do.
    */
-  systemKind: z.enum(["digest"]).nullable().default(null)
+  systemKind: z.enum(["digest"]).nullable().default(null),
+  /**
+   * Where this work stream sits in *the reader's* pinned list, or `null` when
+   * they have not pinned it. Per-viewer the way the read-state fields above are:
+   * the same row is pinned for one member and not for another, so a client must
+   * never treat it as a property of the work stream itself.
+   *
+   * A position is an index into a dense ascending run, so it is only meaningful
+   * relative to the reader's other pins and changes whenever they rearrange
+   * them. Sort by it; do not store it as an identity.
+   */
+  pinPosition: z.number().int().nonnegative().nullable().default(null)
 });
 
 export const ExternalActorSchema = z.object({
@@ -262,7 +303,7 @@ export const MessageSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   author: MessageAuthorSchema,
-  messageType: z.enum(["text", "system", "tool", "artifact", "elicitation", "suggestion"]),
+  messageType: z.enum(["text", "system", "tool", "elicitation", "suggestion"]),
   textContent: z.string(),
   structuredContent: z.record(z.string(), z.unknown()).nullable(),
   mentions: z.array(MentionSchema),
@@ -364,6 +405,18 @@ export const AppendNoteTranscriptSegmentRequestSchema = z.object({
 export const GenerateNoteNotesRequestSchema = z.object({
   mode: z.enum(["live", "final"]).default("live"),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+  /**
+   * The refresh cadence the client is actually keeping, in seconds, so the live
+   * briefing can be written for it. The client asks for the served cadence once
+   * per meeting and holds it; the server would otherwise re-resolve the flag on
+   * every pass and describe a schedule nobody is on for the rest of any meeting
+   * the flag moved under. Omitted by a client that does not know it, which
+   * leaves the server resolving the flag as before.
+   */
+  refreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .optional(),
 }).strict();
 
 // Every run is always delivered to its Avalon work stream. These are the
@@ -541,20 +594,6 @@ export const HarnessRunMetadataSchema = z.object({
   createdAt: TimestampSchema
 });
 
-export const WorkstreamArtifactSchema = z.object({
-  id: IdSchema,
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  harnessRunId: IdSchema.nullable(),
-  artifactType: z.string().min(1).max(80),
-  title: z.string().min(1).max(300),
-  previewText: z.string().max(4000).nullable(),
-  status: z.string().min(1).max(80),
-  mimeType: z.string().min(1).max(160),
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema
-});
-
 export const BackgroundTaskSchema = z.object({
   id: IdSchema,
   harnessRunId: IdSchema,
@@ -665,7 +704,6 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   viewers: z.array(ViewerSchema),
   resources: z.array(ResourceSchema),
   connections: z.array(ConnectionSchema),
-  artifacts: z.array(WorkstreamArtifactSchema).default([]),
   backgroundTasks: z.array(BackgroundTaskSchema).default([]),
   openElicitations: z.array(ElicitationSchema),
   suggestions: z.array(ActivitySuggestionSchema),
@@ -674,7 +712,32 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
 });
 
 export const WorkstreamContextSchema = z.object({
-  artifacts: z.array(WorkstreamArtifactSchema),
+  /**
+   * Vestigial, and read by nothing. Artifacts were removed in this release, but
+   * this one schema is parsed on **both** sides of the wire — the route parses
+   * its own response with it, and the desktop parses that response with the same
+   * copy — so it has to tolerate both directions of version skew across a
+   * rollout, and `GET /:id/context` is what fills the work-stream context rail.
+   *
+   * Old client, new server: a build in the wild bundles a copy that *requires*
+   * the field — unlike `WorkstreamDetailSchema`, which defaulted it — so leaving
+   * it out fails the whole response. `.default([])` is what puts it on the wire.
+   *
+   * New client, old server: a Worker that predates this release still returns
+   * real rows here, and EU deploys before Global, so one region runs the old
+   * Worker for part of every rollout and indefinitely if the other half fails.
+   * The element type is therefore permissive rather than `never`: rejecting a
+   * populated array would fail the whole response for the same reason, one
+   * direction over. Emptiness is the *server's* invariant and is enforced where
+   * the server is — `WorkstreamService.context` returns only `backgroundTasks`,
+   * and `workstream-response-contracts.test.ts` asserts `[]` on the raw body.
+   *
+   * Drop the field one release after the build carrying this change ships. Do
+   * not write a fixed version number here: this comment already named one that
+   * went stale while the branch waited, when `main` shipped two releases without
+   * it.
+   */
+  artifacts: z.array(z.unknown()).default([]),
   backgroundTasks: z.array(BackgroundTaskSchema)
 });
 
@@ -819,6 +882,13 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("completed"),
+    /**
+     * The draft subscription this turn wrote. It is the automation's real id
+     * from the first turn onward — the row the sidebar lists, the next turn
+     * updates, and creation promotes — so the client adopts it rather than
+     * keeping the key it opened the conversation with.
+     */
+    draftId: IdSchema,
     draft: AutomationDraftSchema,
     assistantMessage: z.string().min(1)
   }),
@@ -833,6 +903,24 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
     })
   })
 ]);
+
+export const AutomationCompilerMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string()
+});
+
+/**
+ * A draft automation as the compiler left it: the transcript so far, the
+ * resources it was given, and the draft it last produced. It is what the
+ * builder screen needs to pick a draft back up out of the sidebar, and exactly
+ * what the next compile turn sends back.
+ */
+export const AutomationDraftStateSchema = z.object({
+  draftId: IdSchema,
+  messages: z.array(AutomationCompilerMessageSchema),
+  attachmentIds: z.array(IdSchema).default([]),
+  draft: AutomationDraftSchema
+});
 
 export const AutomationSummarySchema = z.object({
   id: IdSchema,
@@ -1068,6 +1156,27 @@ export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   observedManualUnreadGeneration: z.number().int().nonnegative(),
 });
 
+/**
+ * The whole pinned list in its new order, not a move of one row.
+ *
+ * A drag produces a complete arrangement, and sending that arrangement is what
+ * lets the server write a dense run without inferring one from an index whose
+ * meaning depends on a list state the client may no longer share. Ids the
+ * caller has since unpinned elsewhere are ignored rather than rejected, and
+ * pins the caller does not name keep their relative order behind the ones it
+ * did — a second window that pinned something a moment ago loses its position,
+ * never its pin.
+ *
+ * Deliberately unbounded. Nothing limits how many work streams a person may
+ * pin, so any count this array could be capped at would be a number the server
+ * can legitimately exceed — and the arrangement is all-or-nothing, so a cap
+ * would not truncate a drag, it would refuse one and leave the list
+ * unreorderable for as long as the person stayed above it.
+ */
+export const ReorderWorkstreamPinsRequestSchema = z.object({
+  workstreamIds: z.array(IdSchema),
+});
+
 export const CreateMessageRequestSchema = z.object({
   text: z.string().max(50000),
   clientMessageId: z.string().min(1).max(120),
@@ -1094,6 +1203,13 @@ export const AnswerElicitationRequestSchema = z.union([
   }).strict()
 ]);
 export const CreateAutomationRequestSchema = z.object({
+  /**
+   * The draft this automation was built from. Creating promotes that row in
+   * place — same id, same sidebar position — instead of leaving the draft
+   * behind beside the automation it became. Absent only when an automation is
+   * created without ever having been a draft.
+   */
+  draftId: IdSchema.optional(),
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
@@ -1120,8 +1236,14 @@ export const CreateAutomationRequestSchema = z.object({
   }
 });
 export const CompileAutomationRequestSchema = z.object({
+  /**
+   * The draft subscription this conversation is already writing to. Absent on
+   * the first turn, and ignored when it names anything but a visible draft the
+   * caller owns — a compile turn may update a draft, never an automation that
+   * runs.
+   */
   draftId: IdSchema.optional(),
-  messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
+  messages: z.array(AutomationCompilerMessageSchema).min(1),
   currentDraft: AutomationDraftSchema.nullable().default(null),
   attachmentIds: z.array(IdSchema).max(10).default([]),
 });
@@ -1247,6 +1369,12 @@ export const GenerateMeetingNotesRequestSchema = z.object({
   startedAt: TimestampSchema.nullable().default(null),
   endedAt: TimestampSchema.nullable().default(null),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+  /** The cadence the client is keeping; null means resolve the flag instead. */
+  refreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .nullable()
+    .default(null),
 }).strict();
 
 export const MeetingNotesResponseSchema = z.object({
@@ -1266,6 +1394,26 @@ export const MeetingNotesResponseSchema = z.object({
  * consumer's processing-claim keys already use for host-owned metadata.
  */
 export const ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY = "_streamNotDigestible";
+
+/**
+ * A place inside a provider that a work stream can be started from — a Slack
+ * thread, a Linear issue, a GitHub pull request.
+ *
+ * This is the connector half of a work stream's origin attachment, and it
+ * deliberately names no connection and no provider: a connector knows *which
+ * object*, and only the host knows which installed credential it was reached
+ * through. Keeping those apart is what stops an adapter from being able to
+ * describe an origin against somebody else's connection.
+ * See `docs/workstream-origin-attachments.md`.
+ */
+export const ConnectorOriginResourceSchema = z.object({
+  /** Must be one the connector's manifest declares in `resourceTypes`. */
+  resourceType: z.string().min(1).max(80),
+  providerResourceId: z.string().min(1).max(500),
+  title: z.string().min(1).max(300),
+  canonicalUrl: HttpUrlSchema.nullable().default(null),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+}).strict();
 
 export const NormalizedActivitySchema = z.object({
   id: IdSchema,
@@ -1375,6 +1523,19 @@ export const WorkstreamWorkflowInputSchema = z.object({
   workstreamId: IdSchema,
   harnessRunId: IdSchema,
   triggerMessageId: IdSchema.nullable(),
+  /**
+   * The newest message this run may see, when that is not the trigger.
+   *
+   * The trigger doubles as the transcript's upper bound, which is right for a
+   * run a message started and wrong for a `retry`: the failed run's trigger has
+   * to stay the trigger — it is what admits a suggested-work brief or an
+   * inbound email to the model — while the replay still needs to see anything
+   * said since, including a correction that started no run of its own. Resolved
+   * at launch rather than at projection time so a replayed attempt reads the
+   * same window. Optional rather than nullable so every existing producer keeps
+   * parsing unchanged.
+   */
+  transcriptFenceMessageId: IdSchema.nullable().optional(),
   automationSubscriptionId: IdSchema.nullable(),
   activityId: IdSchema.nullable(),
   /**
@@ -1797,7 +1958,6 @@ export type Connection = z.infer<typeof ConnectionSchema>;
 export type AutomationDeliveryTargetType = z.infer<typeof AutomationDeliveryTargetTypeSchema>;
 export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
-export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
@@ -1814,6 +1974,8 @@ export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
 export type MemoryTableColumnType = z.infer<typeof MemoryTableColumnTypeSchema>;
 export type AutomationDraftStreamEvent = z.infer<typeof AutomationDraftStreamEventSchema>;
+export type AutomationCompilerMessage = z.infer<typeof AutomationCompilerMessageSchema>;
+export type AutomationDraftState = z.infer<typeof AutomationDraftStateSchema>;
 export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
@@ -1834,6 +1996,8 @@ export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
 export type GenerateMeetingNotesRequest = z.infer<typeof GenerateMeetingNotesRequestSchema>;
 export type MeetingNotesResponse = z.infer<typeof MeetingNotesResponseSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
+export type ConnectorOriginResource = z.infer<typeof ConnectorOriginResourceSchema>;
+export type ConnectorOriginResourceInput = z.input<typeof ConnectorOriginResourceSchema>;
 export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
 export type SlackIngressQueueMessage = z.infer<typeof SlackIngressQueueMessageSchema>;
 export type ExecutionPrincipal = z.infer<typeof ExecutionPrincipalSchema>;

@@ -18,7 +18,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -68,6 +68,13 @@ interface AutomationCompilePayload {
   attachmentLocalIds: string[];
   attachments: MessageAttachment[];
   message: string;
+  /**
+   * The draft this turn was sent from, or null when it opens a new one. A turn
+   * outlives the screen state it was sent from — the builder stays mounted
+   * across a switch to another draft — so every write it makes is checked
+   * against this rather than against whatever is on screen when it lands.
+   */
+  startedOnDraftId: string | null;
   templateId?: string;
   turnId: string;
   elicitation?: { id: string; answer: ElicitationAnswer };
@@ -91,6 +98,27 @@ function automationTextMessage(
     ...(attachments.length > 0 ? { attachments } : {}),
     ...(streaming ? { streaming: true } : {}),
   });
+}
+
+/**
+ * How much narration a failed compile leaves behind, and from which end.
+ *
+ * The opening plan and the first progress updates are the part that explains a
+ * failure; a run that degenerates does so at the end. A compiler stuck
+ * repairing a rejected submission has been observed narrating the rejected
+ * schema itself, and persisting that into the transcript is worse than
+ * persisting nothing — so the tail is what gets dropped, not the head.
+ */
+const RETAINED_NARRATION_CHARACTERS = 1_500;
+
+export function retainableNarration(narration: string): string {
+  const trimmed = narration.trim();
+  if (trimmed.length <= RETAINED_NARRATION_CHARACTERS) return trimmed;
+  // Cut at the last paragraph break inside the budget so the message ends on a
+  // finished thought; fall back to the hard cut when there is no break to use.
+  const head = trimmed.slice(0, RETAINED_NARRATION_CHARACTERS);
+  const lastBreak = head.lastIndexOf('\n\n');
+  return `${(lastBreak > 0 ? head.slice(0, lastBreak) : head).trimEnd()}\n\n…`;
 }
 
 function settleThought(turns: Message[], thoughtId: string): Message[] {
@@ -328,6 +356,23 @@ function automationQuestionMessage(
   });
 }
 
+/** A saved conversation as the builder renders it. Every turn comes back as
+ * plain text except the compiler's last one, which is re-rendered from the
+ * draft so a choice the person walked away from is still a choice they can
+ * make, rather than a sentence describing one. */
+function resumedTurns(
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  draft: AutomationDraftResponse,
+): Message[] {
+  const lastIndex = messages.length - 1;
+  return messages.map((message, index) => {
+    if (index === lastIndex && message.role === 'assistant' && draft.question) {
+      return automationQuestionMessage(draft.assistantMessage ?? message.content, draft.question);
+    }
+    return automationTextMessage(`resumed-${index}`, message.role === 'user' ? 'human' : 'agent', message.content);
+  });
+}
+
 function DeliveryChoice({
   checked,
   description,
@@ -392,7 +437,12 @@ function DraftSystemPrompt({ draftId, scope }: { draftId: string; scope: Automat
     staleTime: Infinity,
   });
   return (
-    <section className="automation-plugin-defaults automation-system-prompt" aria-label="System prompt">
+    // `aria-live="off"` because the whole create card sits inside the
+    // conversation's polite live region: without it, a screen reader announces
+    // several thousand characters of prompt every time this resolves, which is
+    // never what the reader asked to hear. The region still reads normally when
+    // it is navigated to.
+    <section aria-label="System prompt" aria-live="off" className="automation-plugin-defaults automation-system-prompt">
       <header>
         <div><strong>System prompt</strong></div>
         {systemPrompt.data !== undefined && (
@@ -535,19 +585,80 @@ function DraftSummary({
 export function NewAutomationScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api, session } = useAppSession();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const resumeDraftId = searchParams.get('draft');
+  // This screen also writes the draft into the URL once a turn compiles, and
+  // that write must not read back as "go and load this draft" — the
+  // conversation on screen is already the one it names, and loading it would
+  // replace it with the turn before. What separates the two is which *screen*
+  // wrote the URL, so the mark is held here and not in history state: a history
+  // entry outlives this component, and one that stayed marked would leave a
+  // remount — a back gesture, a restored window — with the resume permanently
+  // switched off, showing an empty builder for a draft that has a conversation.
+  const selfNamedDraftId = useRef<string | null>(null);
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const draftKey = newAutomationDraftKey(workspace.id);
-  const { text: input, setText: setInput } = useDraftText(draftKey);
+  // The conversation this screen's composer belongs to. Keeping the cache per
+  // draft is what stops an unsent message, and the attachments staged with it,
+  // following the screen into somebody else's conversation — including the
+  // blank one **New automation** opens, which shares the launcher's key.
+  //
+  // It moves on a settled turn rather than on the draft in the URL, because
+  // this screen's own URL write reaches the router several renders late and a
+  // key that followed it would re-key the composer mid-turn. `useDraftText`
+  // empties the composer whenever its key changes, so whatever was typed while
+  // the turn was compiling is carried over by hand rather than dropped.
+  const [composerDraftId, setComposerDraftId] = useState<string | null>(resumeDraftId);
+  const carriedInput = useRef<string | null>(null);
+  const draftKey = newAutomationDraftKey(workspace.id, composerDraftId);
+  const { text: input, setText: setInput, releaseDraft } = useDraftText(draftKey);
+  useEffect(() => {
+    const carried = carriedInput.current;
+    carriedInput.current = null;
+    // Runs after the hook's own key effect, which is declared above this one,
+    // so this is what the composer is left holding. Writing it back also marks
+    // the draft edited, so the cache read still in flight stands down rather
+    // than overwriting it.
+    if (carried) setInput(carried);
+  }, [composerDraftId, setInput]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<Message[]>([]);
-  const [streamingAssistant, setStreamingAssistant] = useState<{ hasText: boolean; text: string }>({
-    hasText: false,
-    text: '',
-  });
+  const [streamingText, setStreamingText] = useState('');
+  /**
+   * The same narration, readable from a settled-mutation callback. `onError`
+   * runs after the stream is over and has to keep what the architect said;
+   * the state above is the render source and this is the imperative read, both
+   * written only by `applyNarration` below.
+   */
+  const streamingNarrationRef = useRef('');
+  const applyNarration = useCallback((next: (current: string) => string) => {
+    const settled = next(streamingNarrationRef.current);
+    streamingNarrationRef.current = settled;
+    setStreamingText(settled);
+  }, []);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Narration and tool rows grow the transcript past the viewport, and this
+   * screen has no virtualizer following it the way a work stream does. The
+   * view is pinned to the bottom while a compile streams, and unpinned the
+   * moment the reader scrolls up: yanking someone back who has deliberately
+   * looked at an earlier step is worse than not following at all.
+   */
+  const followStreamRef = useRef(true);
+  /**
+   * The offset Avalon's own follow last scrolled to, which is what makes the
+   * threshold below safe to keep tight. A scroll event is dispatched at frame
+   * time, not when the offset is assigned, so by the time the follow's own
+   * event arrives more narration has usually landed and the surface is
+   * hundreds of pixels short of a bottom that moved after the assignment.
+   * Measuring that as the reader scrolling up unpins the follow on its own
+   * scroll — the feature switching itself off a second into a compile. An
+   * event that reports this offset is Avalon's; anything else is the reader's.
+   */
+  const autoScrollTopRef = useRef(-1);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
   const [activitySourcePluginIds, setActivitySourcePluginIds] = useState<Record<string, string>>({});
@@ -571,6 +682,89 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     enabled: Boolean(api),
     staleTime: 10_000,
   });
+
+  // Opened from a draft in the sidebar. The conversation is fetched once and
+  // applied once: after that the screen owns it again, so continuing the draft
+  // is not undone by a refetch of the turn it was resumed at.
+  const [resumedDraftId, setResumedDraftId] = useState<string | null>(null);
+  const resumedDraft = useQuery({
+    queryKey: ['automation-draft', resumeDraftId],
+    queryFn: ({ signal }) => api!.resumeAutomationDraft(resumeDraftId!, signal),
+    enabled: Boolean(api && resumeDraftId)
+      && resumeDraftId !== selfNamedDraftId.current
+      && resumedDraftId !== resumeDraftId,
+    staleTime: Infinity,
+    retry: false,
+  });
+  // Which draft the address bar named last. The transition is what matters, not
+  // the value: a screen that read "no draft" as "start over" on every render
+  // would wipe a conversation as soon as it began, before it had named itself.
+  const namedDraftId = useRef(resumeDraftId);
+  // The history entry that draft id was read from. The id alone cannot see a
+  // navigation that lands in the same commit as this screen's own URL write:
+  // the bar goes null → this draft → null, the effect observes only the value
+  // it ends on, and a transition that never appears is one nothing reacts to.
+  // A new entry is what actually says somebody navigated, and — unlike the id —
+  // it does not appear during the renders where the bar is merely behind.
+  const locationKey = useLocation().key;
+  const namedLocationKey = useRef(locationKey);
+  useEffect(() => {
+    const previous = namedDraftId.current;
+    const navigated = namedLocationKey.current !== locationKey;
+    namedDraftId.current = resumeDraftId;
+    namedLocationKey.current = locationKey;
+    // Everything below keys off the address bar *changing*, never off what it
+    // currently says. This screen's own write reaches the router several
+    // renders after the state beside it, so for a render or two the bar still
+    // names the draft before last — and reading that as a navigation is what
+    // wiped a conversation, and then re-keyed the composer under the typing
+    // hand, in two earlier attempts at this.
+    const movedToAnotherDraft = resumeDraftId !== previous;
+    // The mark only ever covers the URL this screen wrote, and it is stale once
+    // the reader has moved somewhere else. Left set, it would refuse to reopen
+    // that very draft later in the same screen.
+    if (movedToAnotherDraft && resumeDraftId !== null && resumeDraftId !== selfNamedDraftId.current) {
+      selfNamedDraftId.current = null;
+    }
+    if (resumeDraftId === null) {
+      // New automation was chosen while a draft was on screen. The route did
+      // not change, so nothing else clears it.
+      //
+      // Either the id was seen to change, or a new history entry arrived while
+      // a draft is on screen. The second is not redundant: this screen names
+      // its own draft in the bar, and when that write and the reader's next
+      // navigation land in one commit the id reads null both before and after,
+      // so the first test sees nothing happen. The composer was then left keyed
+      // to a draft the reader had already navigated away from — holding, on the
+      // blank builder, the sentence they typed for the other one.
+      if (previous !== null || (navigated && composerDraftId !== null)) {
+        selfNamedDraftId.current = null;
+        setResumedDraftId(null);
+        setComposerDraftId(null);
+        setDraft(null);
+        setTurns([]);
+      }
+      return;
+    }
+    // The moment the reader picks a different draft, the conversation on screen
+    // stops being the one this screen is showing — before its replacement has
+    // loaded, and whether or not that load ever succeeds. Leaving the old one
+    // up would let a turn be sent against the draft the sidebar says was
+    // closed, and a failed load would leave it there for good.
+    if (movedToAnotherDraft
+      && resumeDraftId !== selfNamedDraftId.current
+      && resumeDraftId !== resumedDraftId
+      && draft !== null) {
+      setDraft(null);
+      setTurns([]);
+    }
+    const resumed = resumedDraft.data;
+    if (!resumed || resumedDraftId === resumeDraftId) return;
+    setResumedDraftId(resumeDraftId);
+    setComposerDraftId(resumeDraftId);
+    setDraft(resumed.draft);
+    setTurns(resumedTurns(resumed.messages, resumed.draft));
+  }, [composerDraftId, draft, locationKey, resumeDraftId, resumedDraft.data, resumedDraftId]);
   const visibleMentionConnections = mentionQuery === null
     ? []
     : (connections.data ?? [])
@@ -671,16 +865,31 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     if (!stillAvailable || scope !== 'you') setDeliveryConnectionId('');
   }, [connections.data, scope, deliveryConnectionId]);
 
+  // The conversation on screen right now, read from a box rather than from a
+  // closure: a turn's callbacks are created when it is sent and fire minutes
+  // later, by which time the render they closed over may describe a draft the
+  // reader has already left.
+  const openDraftId = useRef<string | null>(null);
+  openDraftId.current = draft?.draftId ?? null;
+  const showsTurn = (payload: AutomationCompilePayload): boolean =>
+    payload.startedOnDraftId === openDraftId.current;
+
   const compile = useMutation({
     mutationFn: (payload: AutomationCompilePayload) =>
       api!.compileAutomation({
         message: payload.message,
-        ...(draft?.draftId ? { draftId: draft.draftId } : {}),
+        ...(payload.startedOnDraftId ? { draftId: payload.startedOnDraftId } : {}),
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
         ...(payload.attachmentIds.length > 0 ? { attachmentIds: payload.attachmentIds } : {}),
       }, (event) => {
+        // A turn belongs to the conversation it was sent from. Picking another
+        // draft out of the sidebar leaves this one in flight against a screen
+        // that has moved on, and every write below — the streamed thinking and
+        // tool rows as much as the final answer — would otherwise land in
+        // somebody else's transcript.
+        if (!showsTurn(payload)) return;
         if (event.type === 'started') {
-          setStreamingAssistant({ hasText: false, text: '' });
+          applyNarration(() => '');
           return;
         }
         if (event.type === 'thinking') {
@@ -734,13 +943,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
           });
           return;
         }
-        setStreamingAssistant((current) => ({
-          hasText: true,
-          text: event.reset ? event.delta : current.text + event.delta,
-        }));
+        applyNarration((current) => event.reset ? event.delta : current + event.delta);
       }),
     onMutate: (payload) => {
-      setStreamingAssistant({ hasText: false, text: '' });
+      followStreamRef.current = true;
+      applyNarration(() => '');
       setTurns((current) => {
         const updated = payload.elicitation
           ? resolveElicitationMessages(current, payload.elicitation.id, payload.elicitation.answer)
@@ -754,12 +961,44 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     },
     onSuccess: (response, payload) => {
       attachmentDraft.consume(payload.attachmentLocalIds);
-      setStreamingAssistant({ hasText: false, text: '' });
-      setDraft(response);
+      // The saved conversation moved on whatever is on screen now, so the
+      // cached copy is stale either way. Dropping it is what makes reopening
+      // this draft later show the turn it is actually at.
+      queryClient.removeQueries({ queryKey: ['automation-draft', response.draftId] });
       // A compiled turn rewrites the draft the developer-mode viewer renders,
-      // and the draft id it is keyed on survives the edit. Without this the
-      // viewer would answer with the prompt of a draft that no longer exists.
-      void queryClient.invalidateQueries({ queryKey: ['automation-draft-system-prompt'] });
+      // and the draft id it is keyed on survives the edit. Dropped here rather
+      // than below the screen check, because the draft was rewritten whether or
+      // not the reader is still looking at it — and removed rather than
+      // invalidated, because an invalidated query keeps serving its old value
+      // while it refetches, leaving the superseded prompt on screen and on the
+      // clipboard until the new one lands.
+      queryClient.removeQueries({ queryKey: ['automation-draft-system-prompt', response.draftId] });
+      void queryClient.invalidateQueries({ queryKey: ['automations'] });
+      // The screen moved to another draft while this turn was compiling. The
+      // turn still landed on the server — it is in that draft's saved
+      // conversation — but nothing about it belongs on screen, least of all
+      // the URL write below, which would drag the reader back to it.
+      if (!showsTurn(payload)) return;
+      applyNarration(() => '');
+      setDraft(response);
+      // The turn wrote a draft automation, which the sidebar lists. Naming it
+      // in the URL is what makes that row the active one and what lets this
+      // screen be reopened on the conversation it is showing. The composer's
+      // cache moves with it, carrying anything typed while the turn compiled.
+      if (resumeDraftId !== response.draftId) {
+        selfNamedDraftId.current = response.draftId;
+        setResumedDraftId(response.draftId);
+        setSearchParams({ draft: response.draftId }, { replace: true });
+      }
+      if (composerDraftId !== response.draftId) {
+        carriedInput.current = input;
+        // The sentence is *moving* to the new draft's key, so it has to leave
+        // the old one. Without this it is carried forward and left behind at
+        // once: the blank launcher this screen shares a key with would rehydrate
+        // a sentence the user had already sent into a draft.
+        releaseDraft();
+        setComposerDraftId(response.draftId);
+      }
       const responseMessage = response.question
         ? automationQuestionMessage(response.assistantMessage, response.question)
         : response.assistantMessage
@@ -772,10 +1011,36 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       });
     },
     onError: (_error, payload) => {
-      setStreamingAssistant({ hasText: false, text: '' });
-      setTurns((current) => settleThought(current, `${payload.turnId}-thought`));
+      if (!showsTurn(payload)) return;
+      // Keep what the architect said. A compile that exhausts the harness's
+      // wall clock is exactly when the narration is worth the most — "GitHub
+      // holds the data but no connector is authorized" explains a timeout
+      // that a column of tool rows does not — and clearing it here would
+      // delete the explanation at the one moment it is needed.
+      const narration = retainableNarration(streamingNarrationRef.current);
+      applyNarration(() => '');
+      setTurns((current) => {
+        const settled = settleThought(current, `${payload.turnId}-thought`);
+        return narration
+          ? [...settled, automationTextMessage(crypto.randomUUID(), 'agent', narration)]
+          : settled;
+      });
     },
   });
+
+  const compilePending = compile.isPending;
+  useEffect(() => {
+    // Only while a compile streams. Once the draft settles the summary below
+    // the transcript is what the reader wants, and jumping past it to the
+    // create button would hide the thing they are being asked to accept.
+    if (!compilePending || !followStreamRef.current) return;
+    const element = transcriptScrollRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+    // Read back rather than reusing the assigned value: the browser clamps to
+    // its own fractional maximum, and the scroll event reports that.
+    autoScrollTopRef.current = element.scrollTop;
+  }, [compilePending, streamingText, turns]);
 
   const deliveryConnection = (connections.data ?? []).find((connection) =>
     connection.id === deliveryConnectionId && connection.userDelivery);
@@ -813,6 +1078,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     const readyAttachments = attachmentDraft.ready;
     const trimmed = message.trim();
     if ((!trimmed && readyAttachments.length === 0) || attachmentDraft.uploading || compile.isPending) return;
+    // The address bar names a draft this screen has not got hold of — it is
+    // still loading, or the load failed. A turn sent now carries no draft id
+    // and would open a *second* draft while the sidebar still highlights the
+    // first.
+    if (resumeDraftId !== null && draft === null) return;
     const createdAt = new Date().toISOString();
     await compile.mutateAsync({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
@@ -826,6 +1096,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         createdAt,
       })),
       message: trimmed,
+      startedOnDraftId: draft?.draftId ?? null,
       turnId,
       ...(elicitation ? { elicitation } : {}),
     });
@@ -838,7 +1109,21 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const draftId = draft?.draftId;
 
   return (
-    <div className="new-automation-screen screen-with-titlebar">
+    <div
+      className="new-automation-screen screen-with-titlebar"
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        if (element.scrollTop === autoScrollTopRef.current) return;
+        // Sub-pixel, not the 80px a work stream uses. That threshold covers a
+        // virtualizer whose estimated row heights settle after paint; nothing
+        // here is virtualized, and at 80px a reader who nudged up a few pixels
+        // would still be pinned and get yanked forward by the next fragment.
+        // Only the browser's fractional clamp needs absorbing, and the guard
+        // above is what keeps that true while the transcript is growing.
+        followStreamRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
+      }}
+      ref={transcriptScrollRef}
+    >
       <div className="screen-drag-strip window-drag" />
       <div className="new-automation-actions window-no-drag">
         <DropdownMenu.Root>
@@ -902,6 +1187,24 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   {subscribe.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Use template
                 </Button>
               </section>
+            ) : resumeDraftId !== null && !draft && resumedDraft.isError ? (
+              // The draft named in the address bar is the one the sidebar is
+              // highlighting, so the intro's blank slate would be a lie here —
+              // and a message sent against it starts a second draft while the
+              // first is still on screen in the sidebar.
+              <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
+                <AvalonMark />
+                <p className="eyebrow">Draft automation</p>
+                <h1 id="automation-builder-heading">This draft could not be opened</h1>
+                <p>{resumedDraft.error instanceof ApiError ? resumedDraft.error.message : 'Avalon could not load this conversation.'}</p>
+                <Button className="button-secondary" onClick={() => void resumedDraft.refetch()}>Try again</Button>
+              </section>
+            ) : resumeDraftId !== null && !draft ? (
+              <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
+                <AvalonMark />
+                <p className="eyebrow">Draft automation</p>
+                <h1 id="automation-builder-heading">Opening this draft…</h1>
+              </section>
             ) : turns.length === 0 && !draft ? (
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
                 <AvalonMark />
@@ -935,8 +1238,12 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   />
                 ))}
                 {compile.isPending && (
-                  streamingAssistant.hasText
-                    ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingAssistant.text, true)} />
+                  // Trimmed, not just non-empty: an abandoned first turn
+                  // resets to '' and a model that opens a narration turn with
+                  // a bare newline sends whitespace before it sends a word.
+                  // Either would render as Avalon having said something blank.
+                  streamingText.trim().length > 0
+                    ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingText, true)} />
                     : turns.some((turn) => turn.messageType === 'thought' && turn.thoughtEvent?.status === 'started')
                       ? null
                       : <AgentWorkTiming

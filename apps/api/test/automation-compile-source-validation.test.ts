@@ -54,16 +54,21 @@ describe("automation compile activity-source validation", () => {
           : null),
       })),
     }));
-    const service = new AutomationService({ DB: { prepare } } as unknown as Env, auth);
+    const batch = vi.fn(async () => []);
+    const service = new AutomationService({ DB: { prepare, batch } } as unknown as Env, auth);
 
     const result = await service.compile({
       messages: [{ role: "user", content: "When a GitHub issue opens, prepare a response." }],
     }, "request-1");
 
-    expect(result).toMatchObject({
+    expect(result.draft).toMatchObject({
       ready: false,
       elicitation: null,
-      followUpQuestion: expect.stringContaining("unavailable or unhealthy"),
+      followUpQuestion: expect.stringContaining("unavailable"),
     });
+    // The turn is still a draft worth keeping: the source could not be bound,
+    // which is the very thing the person comes back to the conversation to fix.
+    expect(prepare.mock.calls.map(([sql]) => sql).join("\n")).toContain("INSERT INTO automation_subscriptions");
+    expect(batch).toHaveBeenCalledOnce();
   });
 });

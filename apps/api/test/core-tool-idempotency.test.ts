@@ -62,18 +62,18 @@ function sqliteD1(database: DatabaseSync): D1Database {
   } as unknown as D1Database;
 }
 
+/**
+ * The `PAYLOADS` binding the tools under test need in order to construct, kept
+ * behaviourally honest so a read finds whatever a fixture put there. It also
+ * carried put-recording and a timeout injector for `create_artifact`, the one
+ * provider-key tool that wrote an object before its row; nothing here writes R2
+ * any more, so asserting on puts would only be asserting on this class.
+ */
 class MemoryBucket {
-  readonly objects = new Map<string, string>();
-  readonly puts: string[] = [];
-  failAfterNextPut = false;
+  private readonly objects = new Map<string, string>();
 
   async put(key: string, value: string): Promise<void> {
-    this.puts.push(key);
     this.objects.set(key, value);
-    if (this.failAfterNextPut) {
-      this.failAfterNextPut = false;
-      throw new DOMException("The storage request timed out", "TimeoutError");
-    }
   }
 
   async get(key: string): Promise<{ text: () => Promise<string> } | null> {
@@ -92,7 +92,7 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function fixture(): { database: DatabaseSync; env: Env; bucket: MemoryBucket } {
+function fixture(): { database: DatabaseSync; env: Env } {
   const database = new DatabaseSync(":memory:");
   openDatabases.push(database);
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
@@ -115,13 +115,11 @@ function fixture(): { database: DatabaseSync; env: Env; bucket: MemoryBucket } {
     VALUES ('${HARNESS_RUN_ID}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'test',
             '{"type":"user","userId":"${USER_ID}"}', 'running', '2026-08-03');
   `);
-  const bucket = new MemoryBucket();
   return {
     database,
-    bucket,
     env: {
       DB: sqliteD1(database),
-      PAYLOADS: bucket as unknown as R2Bucket,
+      PAYLOADS: new MemoryBucket() as unknown as R2Bucket,
       AVALON_REGION: "global",
       APP_ENV: "test",
     } as Env,
@@ -262,40 +260,6 @@ describe("Avalon core write-tool idempotency", () => {
     })).rejects.toThrow("Invalid IANA timezone");
   });
 
-  it("converges artifact retries on one deterministic D1 row and R2 object", async () => {
-    const { database, env, bucket } = fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
-      .find((candidate) => candidate.definition.name === "create_artifact");
-    expect(tool?.definition.idempotency).toBe("provider_key");
-
-    const args = { title: "Release notes", artifactType: "markdown", content: "Shipped once." };
-    const first = await tool!.execute(args, context("run:turn:1:tool:0"));
-    const second = await tool!.execute(args, context("run:turn:1:tool:0"));
-
-    expect(second).toEqual(first);
-    expect(first.providerOperationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM artifacts").get()).toEqual({ count: 1 });
-    expect(bucket.puts).toHaveLength(1);
-    expect(bucket.objects.get(bucket.puts[0]!)).toBe("Shipped once.");
-  });
-
-  it("safely retries an artifact write whose R2 timeout may have followed persistence", async () => {
-    const { database, env, bucket } = fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
-      .find((candidate) => candidate.definition.name === "create_artifact");
-    const args = { title: "Timeout-safe", artifactType: "text", content: "One logical object." };
-    const toolContext = context("run:turn:1:tool:timeout");
-    bucket.failAfterNextPut = true;
-
-    await expect(tool!.execute(args, toolContext)).rejects.toMatchObject({ name: "TimeoutError" });
-    const retried = await tool!.execute(args, toolContext);
-
-    expect(retried.providerOperationId).toMatch(/^[0-9a-f-]{36}$/u);
-    expect(new Set(bucket.puts)).toHaveLength(1);
-    expect(bucket.objects.size).toBe(1);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM artifacts").get()).toEqual({ count: 1 });
-  });
-
   it("converges elicitation retries on one durable question", async () => {
     const { database, env } = fixture();
     const databaseBinding = env.DB;
@@ -356,10 +320,10 @@ describe("Avalon core write-tool idempotency", () => {
   it("refuses to execute provider-key writes without the receipt-derived key", async () => {
     const { env } = fixture();
     const tool = __integrationTesting.createAvalonTools(env, workflowInput())
-      .find((candidate) => candidate.definition.name === "create_artifact");
+      .find((candidate) => candidate.definition.name === "request_elicitation");
 
     await expect(tool!.execute(
-      { title: "Unsafe", artifactType: "text", content: "No receipt" },
+      { prompt: "No receipt", responseType: "text" },
       context(),
     )).rejects.toThrow("requires a durable provider idempotency key");
   });

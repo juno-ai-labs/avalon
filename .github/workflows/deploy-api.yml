@@ -1,6 +1,6 @@
 name: Deploy Avalon API
 
-# Ordinary regional release, in the order docs/RUNBOOK.md requires:
+# Ordinary regional release, in the order docs/runbook.md requires:
 # validate both Wrangler configurations, apply the remote D1 migrations, deploy
 # EU, deploy Global, then call GET /health on both regions.
 #
@@ -206,7 +206,7 @@ jobs:
             echo "- Regions: EU \`${DEPLOY_EU}\`, Global \`${DEPLOY_GLOBAL}\`"
             echo "- Remote migrations applied: \`${APPLY_MIGRATIONS}\`"
             echo ""
-            echo "Remaining human acceptance gates from docs/RUNBOOK.md (steps 8-13):"
+            echo "Remaining human acceptance gates from docs/runbook.md (steps 8-13):"
             echo ""
             echo "1. Workspace invitation to a real inbox and email-bound acceptance."
             echo "2. Google identity login in a provider test account."

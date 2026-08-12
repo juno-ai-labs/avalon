@@ -55,7 +55,7 @@ interface ConnectionRow extends Record<string, unknown> {
   scope: "personal" | "workspace";
   owner_user_id: string | null;
   granted_scopes_json: string;
-  status: "healthy" | "error";
+  status: "healthy" | "error" | "needs_reconnect" | "disabled";
   created_at: string;
   model_plugin_id?: string;
   encrypted_credentials?: string;
@@ -464,7 +464,6 @@ describe("connector tools selected for harness runs", () => {
     )?.tools.map(({ definition }) => definition.name)).toEqual(expect.arrayContaining([
       "read",
       "read_resource",
-      "create_artifact",
       "run_subagent",
     ]));
     expect(selected.tools.filter(({ definition }) =>
@@ -861,7 +860,7 @@ describe("connector tools selected for harness runs", () => {
       revoke: (_database: ToolSelectionDatabase, row: ConnectionRow) => {
         row.owner_user_id = OTHER_USER_ID;
       },
-      message: "Connector is no longer healthy or authorized for this run",
+      message: "Connector is no longer authorized for this run",
     },
     {
       authority: "capability grant",
@@ -871,11 +870,15 @@ describe("connector tools selected for harness runs", () => {
       message: "Connector capability was revoked",
     },
     {
-      authority: "connection health",
+      // A person disabling a connection mid-run is a decision, and it is the
+      // one status value that still closes the door. `error` and
+      // `needs_reconnect` no longer do: they are beliefs about a past moment,
+      // and the provider is what says whether the credential still works.
+      authority: "connection disablement",
       revoke: (_database: ToolSelectionDatabase, row: ConnectionRow) => {
-        row.status = "error";
+        row.status = "disabled";
       },
-      message: "Connector is no longer healthy or authorized for this run",
+      message: "Connector is no longer authorized for this run",
     },
   ])("blocks credential access when $authority changes between model selection and tool execution", async ({
     revoke,

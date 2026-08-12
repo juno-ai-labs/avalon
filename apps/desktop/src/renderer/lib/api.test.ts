@@ -1,3 +1,4 @@
+import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
 import type { ApiError } from './api';
@@ -14,7 +15,6 @@ const automationId = '00000000-0000-7000-8000-000000000008';
 const templateId = '00000000-0000-7000-8000-000000000009';
 const currentVersionId = '00000000-0000-7000-8000-000000000010';
 const nextVersionId = '00000000-0000-7000-8000-000000000011';
-const artifactId = '00000000-0000-7000-8000-000000000012';
 const taskId = '00000000-0000-7000-8000-000000000013';
 const noteId = '00000000-0000-7000-8000-000000000014';
 
@@ -53,6 +53,7 @@ const detail = {
   archivedAt: null,
   scope: 'workspace' as const,
   systemKind: null,
+  pinPosition: null,
   participants: [{ user, participationReason: 'creator' as const, joinedAt: timestamp }],
   viewers: [{ user, connectedAt: timestamp }],
   resources: [],
@@ -71,7 +72,6 @@ const detail = {
     lastSyncAt: null,
     createdAt: timestamp,
   }],
-  artifacts: [],
   backgroundTasks: [],
   openElicitations: [],
   suggestions: [],
@@ -213,7 +213,7 @@ describe('Avalon API wire adapter', () => {
       },
       { type: 'delta', delta: 'Which blog ', reset: false },
       { type: 'delta', delta: 'should I monitor?', reset: false },
-      { type: 'completed', draft, assistantMessage: 'Which blog should I monitor?' },
+      { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft, assistantMessage: 'Which blog should I monitor?' },
     ];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
@@ -228,7 +228,10 @@ describe('Avalon API wire adapter', () => {
       { message: 'Check this blog every 24 hours.', attachmentIds: [resourceId] },
       (event) => streamed.push(event),
     );
+    // The draft's identity comes back from the API, which is what makes it the
+    // id of the draft automation now sitting in the sidebar.
     expect(result).toMatchObject({
+      draftId: '00000000-0000-7000-8000-000000000042',
       assistantMessage: 'Which blog should I monitor?',
       question: {
         prompt: 'Paste the full blog URL.',
@@ -240,15 +243,17 @@ describe('Avalon API wire adapter', () => {
     const request = fetchMock.mock.calls[0]!;
     expect(String(request[0])).toBe('https://api.avalon.test/automations/draft/stream');
     expect(new Headers(request[1]?.headers).get('Accept')).toBe('text/event-stream');
-    expect(JSON.parse(String(request[1]?.body))).toMatchObject({
-      draftId: result.draftId,
+    const opening = JSON.parse(String(request[1]?.body));
+    expect(opening).toMatchObject({
       messages: [{ role: 'user', content: 'Check this blog every 24 hours.' }],
       currentDraft: null,
       attachmentIds: [resourceId],
     });
+    expect(opening).not.toHaveProperty('draftId');
 
     await api.compileAutomation({ message: 'Only report meaningful changes.', draftId: result.draftId });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      draftId: '00000000-0000-7000-8000-000000000042',
       attachmentIds: [resourceId],
       messages: [
         { role: 'user', content: 'Check this blog every 24 hours.' },
@@ -557,22 +562,9 @@ describe('Avalon API wire adapter', () => {
     )).toEqual([answeredResponse]);
   });
 
-  it('maps persisted artifacts and background activity into the durable rail model', () => {
+  it('maps background activity into the durable rail model', () => {
     expect(mapWorkstreamDetail({
       ...detail,
-      artifacts: [{
-        id: artifactId,
-        workspaceId,
-        workstreamId,
-        harnessRunId: messageId,
-        artifactType: 'markdown',
-        title: 'Launch brief.md',
-        previewText: '# Launch brief',
-        status: 'complete',
-        mimeType: 'text/markdown; charset=utf-8',
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }],
       backgroundTasks: [{
         id: taskId,
         harnessRunId: messageId,
@@ -586,7 +578,6 @@ describe('Avalon API wire adapter', () => {
         transcriptMessageId: messageId,
       }],
     })).toMatchObject({
-      artifacts: [{ id: artifactId, title: 'Launch brief.md', status: 'complete' }],
       backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000, tokenCount: 1_250, toolUses: 3 }],
     });
   });
@@ -595,19 +586,6 @@ describe('Avalon API wire adapter', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       void input;
       return json({
-        artifacts: [{
-          id: artifactId,
-          workspaceId,
-          workstreamId,
-          harnessRunId: messageId,
-          artifactType: 'markdown',
-          title: 'Launch brief.md',
-          previewText: '# Launch brief',
-          status: 'complete',
-          mimeType: 'text/markdown; charset=utf-8',
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        }],
         backgroundTasks: [{
           id: taskId,
           harnessRunId: messageId,
@@ -626,7 +604,6 @@ describe('Avalon API wire adapter', () => {
     const api = new AvalonApi('https://api.avalon.test', session);
 
     await expect(api.getWorkstreamContext(workstreamId)).resolves.toMatchObject({
-      artifacts: [{ id: artifactId, title: 'Launch brief.md' }],
       backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000 }],
       automationRuns: [],
     });
@@ -668,30 +645,6 @@ describe('Avalon API wire adapter', () => {
       `https://api.avalon.test/notes/${noteId}/archive`,
       expect.objectContaining({ method: 'POST' }),
     );
-  });
-
-  it('downloads an authenticated persisted artifact with its safe server filename', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void input;
-      void init;
-      return new Response('# Launch brief', {
-        headers: {
-          'Content-Type': 'text/markdown; charset=utf-8',
-          'Content-Disposition': `attachment; filename="Launch brief.md"; filename*=UTF-8''Launch%20brief.md`,
-        },
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
-
-    const result = await api.downloadArtifact(workstreamId, artifactId);
-
-    expect(result.fileName).toBe('Launch brief.md');
-    await expect(result.blob.text()).resolves.toBe('# Launch brief');
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `https://api.avalon.test/workstreams/${workstreamId}/artifacts/${artifactId}/content`,
-    );
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${session.accessToken}`);
   });
 
   it('uses the regional organization invitation contracts end to end', async () => {
@@ -1127,14 +1080,37 @@ describe('Avalon API wire adapter', () => {
   });
 });
 
+describe('socket ticket transport', () => {
+  it('drops the query ticket the endpoint still returns and offers it as a subprotocol', async () => {
+    // The server keeps `?ticket=` in the URL for desktop builds released before
+    // the subprotocol scheme. Nothing here may open a socket with it, because
+    // Cloudflare records request URLs into stores this app cannot redact.
+    vi.stubGlobal('fetch', vi.fn(async () => json({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}?ticket=socket-ticket`,
+      ticket: 'socket-ticket',
+    })));
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    });
+  });
+});
+
 describe('expired access-token recovery', () => {
   const renewed: DesktopSession = { ...session, accessToken: 'renewed-access-token-longer-than-twenty' };
-  const socketTicket = { url: 'wss://api.avalon.test/socket', ticket: 'socket-ticket' };
+  // What the endpoint sends, and what the client hands back after stripping the
+  // query ticket and attaching the handshake subprotocols. Keeping them
+  // separate stops the fixture from implying the server sends `protocols`.
+  const wireTicket = { url: 'wss://api.avalon.test/socket', ticket: 'socket-ticket' };
+  const parsedTicket = { ...wireTicket, protocols: socketTicketProtocols('socket-ticket') };
 
   function unauthorizedUntilRenewed() {
     return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(
       new Headers(init?.headers).get('Authorization') === `Bearer ${renewed.accessToken}`
-        ? json(socketTicket)
+        ? json(wireTicket)
         : json({ error: { code: 'invalid_session', message: 'The session is invalid or expired' } }, { status: 401 }),
     ));
   }
@@ -1146,7 +1122,7 @@ describe('expired access-token recovery', () => {
     const renew = vi.fn().mockResolvedValue(renewed);
     api.setCredentialRenewal(renew);
 
-    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(socketTicket);
+    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(parsedTicket);
     expect(renew).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('Authorization'))
@@ -1170,7 +1146,7 @@ describe('expired access-token recovery', () => {
     await vi.waitFor(() => expect(renew).toHaveBeenCalledOnce());
     release(renewed);
 
-    await expect(pending).resolves.toEqual([socketTicket, socketTicket, socketTicket]);
+    await expect(pending).resolves.toEqual([parsedTicket, parsedTicket, parsedTicket]);
     expect(renew).toHaveBeenCalledOnce();
   });
 
@@ -1211,14 +1187,14 @@ describe('expired access-token recovery', () => {
     for (const code of ['invalid_session', 'authentication_required', 'session_revoked']) {
       const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(
         new Headers(init?.headers).get('Authorization') === `Bearer ${renewed.accessToken}`
-          ? json(socketTicket)
+          ? json(wireTicket)
           : json({ error: { code } }, { status: 401 }),
       ));
       vi.stubGlobal('fetch', fetchMock);
       const api = new AvalonApi('https://api.avalon.test', session);
       api.setCredentialRenewal(vi.fn().mockResolvedValue(renewed));
 
-      await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(socketTicket);
+      await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(parsedTicket);
       expect(fetchMock, code).toHaveBeenCalledTimes(2);
     }
   });

@@ -669,7 +669,7 @@ export function useRealtimeDictation(
         ].filter(Boolean).join(' '));
       }
       transition('connecting');
-      const socket = new WebSocket(ticket.url);
+      const socket = new WebSocket(ticket.url, ticket.protocols);
       attempt.socket = socket;
       await waitForTranscriptionSession(
         socket,

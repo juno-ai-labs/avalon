@@ -225,8 +225,16 @@ describe("X connector", () => {
     const rejected = xAdapter(async () => jsonResponse({ message: "Invalid API key" }, 401));
     await expect(rejected.healthCheck()).resolves.toEqual({ ok: false, message: "Invalid API key" });
 
-    const empty = xAdapter(async () => jsonResponse({ recharge_credits: 0 }));
-    await expect(empty.healthCheck()).resolves.toEqual({ ok: false, message: "TwitterAPI.io has no remaining credits" });
+    // A balance is not a health signal. TwitterAPI.io bills against more than
+    // one, documents only one, and is the authority on whether any given call
+    // can be paid for — so an account reporting zero recharge credits while
+    // holding spendable bonus credits stays usable, and a call that genuinely
+    // cannot be funded fails as a call.
+    const zeroRecharge = xAdapter(async () => jsonResponse({ recharge_credits: 0 }));
+    await expect(zeroRecharge.healthCheck()).resolves.toEqual({ ok: true, message: "TwitterAPI.io access is healthy" });
+
+    const noBalanceReported = xAdapter(async () => jsonResponse({}));
+    await expect(noBalanceReported.healthCheck()).resolves.toEqual({ ok: true, message: "TwitterAPI.io access is healthy" });
 
     const throttled = xAdapter(async () => jsonResponse({ message: "Slow down" }, 429, { "retry-after": "5" }));
     await expect(throttled.healthCheck()).rejects.toMatchObject({

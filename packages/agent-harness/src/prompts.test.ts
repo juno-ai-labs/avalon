@@ -74,7 +74,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "fa9bd8510d2f996831129ebbcf094a02acc245741b5e72f665a660b570b691d6",
+        hash: "4110366440a2b966f58661015ccf7139d83445a9342d3a75d617ef714dfaefe1",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -85,14 +85,14 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "2f01a9bc2b5188af005fd927479752eb45fbab30fcedde7ce349fc7f678a207d",
+        hash: "b758cf46c954874ed61853ee2a8afb71ec571abeae8d2936d8b1316a949c2cd4",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "ecf880389285d5522d731144523715870ab2cd032907737559ed8d3f1bdf34d9",
+        hash: "8c4c55048236e1c761aef5bf68f8d97afa45d1dcd9e4c03dd8a3562a58baafc0",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -100,7 +100,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "be263bdad77755fea2ba7650e898c166331b011fdd3b6741ee0b206f3bc26ff8",
+        hash: "045016a615d291c97e9a619575b90a14bad6d45c0bcbb08caa7f10643243b843",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -506,7 +506,13 @@ describe("prompt renderers", () => {
     const compilerPrompt = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
 
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_000);
-    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(8_000);
+    // The compiler's ceiling is 1 KB above the work stream's because it gained
+    // a permanent `# Narration` section that the 8 KB figure predates. The
+    // bound is here to catch prose creeping in unnoticed, not to force the
+    // next author to delete a rule to fit a new one: raising it deliberately,
+    // with the reason in the agent-harness.md changelog, is a valid move and
+    // usually the better one. See that entry before cutting policy to fit.
+    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(9_000);
   });
 
   it("renders a stable active and loadable plugin catalog using model-facing IDs", () => {
@@ -549,12 +555,26 @@ describe("prompt renderers", () => {
     }
     expect(policy).toContain("# Goal");
     expect(policy).toContain("# Plan");
+    expect(policy).toContain("# Narration");
     expect(policy).toContain("# Submission");
     expect(policy).toContain("Use these phases flexibly rather than as a fixed sequence");
     expect(policy).toContain("Once the automation is well defined, call automation_submit_draft");
     expect(policy).toContain("Default suggestedScope to personal");
-    expect(policy).toContain("Then call core_request_elicitation");
-    expect(policy).toContain("Tool-call turns must contain no assistant text");
+    expect(policy).toContain("call automation_submit_draft with ready=false and then core_request_elicitation");
+    // The draft-before-question ordering is stated where an elicitation is
+    // described as well as in Submission: calling the elicitation tool first
+    // throws, and a thrown call spends an iteration the run may not have.
+    expect(policy).toContain("first call automation_submit_draft with the best partial draft and ready=false");
+    // The narration rules and the no-text submission rule can both reach the
+    // same turn when a request needs no research at all, so narration is
+    // scoped to research turns in the section that asks for it rather than
+    // leaving the tie-break to the one that forbids it.
+    expect(policy).toContain("Narrate on research turns; a turn that only submits or elicits gets none");
+    expect(policy).toContain("Open the first research turn");
+    expect(policy).toContain("one or two sentences roughly every three or four tool calls");
+    expect(policy).toContain(
+      "The turn that calls automation_submit_draft or core_request_elicitation must contain no assistant text",
+    );
     expect(policy).toContain("Do not emit a separate confirmation or question");
     expect(policy).toContain("medium-sized model");
     expect(policy).toContain("automation_plugins_list");
