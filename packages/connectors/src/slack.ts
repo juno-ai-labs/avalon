@@ -663,6 +663,10 @@ const SlackWebApiSchemas = {
     request: z.object({ channel: SlackIdSchema, ts: SlackTimestampSchema, markdown_text: z.string().min(1).max(12_000) }).strict(),
     response: SlackStreamResponseSchema,
   },
+  "chat.getPermalink": {
+    request: z.object({ channel: SlackIdSchema, message_ts: SlackTimestampSchema }).strict(),
+    response: SlackOkSchema.extend({ permalink: HttpsUrlSchema }),
+  },
   "chat.postMessage": {
     request: z.object({
       channel: SlackIdSchema,
@@ -1069,6 +1073,7 @@ interface SlackApiCallResult<M extends SlackWebApiMethod> {
 
 const SlackGetMethods = new Set<SlackWebApiMethod>([
   "auth.revoke",
+  "chat.getPermalink",
   "conversations.history",
   "conversations.info",
   "conversations.list",

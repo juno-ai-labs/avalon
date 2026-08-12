@@ -136,7 +136,9 @@ includes it. Knowing an object ID is never sufficient authorization.
   a signature-validated derivative used only for model input. Animated GIF
   metadata records dimensions, frame count, duration, approximate frame rate, loop
   behavior, and storyboard timestamps. `workstream_resources` owns
-  attachment/watch behavior.
+  attachment/watch behavior; its `relationship_type` distinguishes an ordinary
+  `attachment` from the `origin` a work stream was created from — see
+  [work-stream origin attachments](workstream-origin-attachments.md).
 - `elicitations` and `activity_suggestions` are first-class transcript blocks.
 
 ### Automations and execution

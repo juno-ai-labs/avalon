@@ -58,6 +58,7 @@ import { decryptVersionedConnectorCredentials } from "./connector-credential-env
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import { SlackWorkspaceWorkstreamService } from "./slack-workspace-workstream-service";
 import { WorkstreamService } from "./workstream-service";
+import { slackOriginResourceDescriptor } from "./workstream-origin-resource";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -1660,6 +1661,7 @@ export class SlackAgentService {
               clientMessageId,
               source,
               slackOrigin,
+              token,
               ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
             });
             sessionCreatedThisCall = true;
@@ -1805,7 +1807,18 @@ export class SlackAgentService {
     source: SlackPromptSource;
     slackOrigin: SlackOriginContext;
     slackSearchAuthorization?: SlackSearchAuthorization;
+    token: string;
   }): Promise<SlackSessionRow> {
+    // `channel` and `thread` rather than the origin context's own pair: a DM
+    // invocation arrives with neither, and these two are the conversation the
+    // agent actually replies into after opening it.
+    const originResource = slackOriginResourceDescriptor({
+      connectionId: input.connection.id,
+      channelId: input.channel,
+      threadTs: input.thread,
+      origin: input.slackOrigin,
+      permalink: await this.slackThreadPermalink(input.token, input.channel, input.thread),
+    });
     // Neither branch passes a title. Both derive the same provisional one from
     // the objective, and leaving it to them is what lets the naming agent
     // replace it — a title supplied here would read as a deliberate choice.
@@ -1816,6 +1829,7 @@ export class SlackAgentService {
           openingMessage: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
           attachmentIds: [],
+          originResource,
         }, input.slackOrigin, input.slackSearchAuthorization)
       : await new SlackWorkspaceWorkstreamService(this.env, input.connection.workspace_id).create({
           actor: ExternalActorSchema.parse(input.actor),
@@ -1827,6 +1841,7 @@ export class SlackAgentService {
           // is theirs rather than ownerless.
           creatorUserId: input.matchedWorkspaceUserId,
           slackOrigin: input.slackOrigin,
+          originResource,
           ...(input.slackSearchAuthorization
             ? { slackSearchAuthorization: input.slackSearchAuthorization }
             : {}),
@@ -1884,6 +1899,37 @@ export class SlackAgentService {
     ).bind(id).first<SlackSessionRow>();
     if (!session) throw new ApiError(500, "slack_session_write_failed", "The Slack task session could not be stored");
     return session;
+  }
+
+  /**
+   * Slack's own link to the thread root, so the attached origin opens the
+   * conversation in the reader's workspace.
+   *
+   * Asked of Slack rather than assembled here: a permalink is qualified by the
+   * team's own domain, which the installation never told us, and a URL we
+   * guessed at would be a link that silently goes to the wrong place. When the
+   * call fails the attachment keeps a null URL — it still records *which*
+   * thread, which is the part nothing else holds.
+   */
+  private async slackThreadPermalink(
+    token: string,
+    channel: string,
+    threadTs: string,
+  ): Promise<string | null> {
+    try {
+      const result = await slackApi(token, "chat.getPermalink", {
+        channel,
+        message_ts: threadTs,
+      }, AbortSignal.timeout(5_000));
+      return result.permalink;
+    } catch (error) {
+      logWarn(this.env, "slack_thread_permalink_lookup_failed", {
+        channel_id: channel,
+        thread_ts: threadTs,
+        reason: slackErrorReason(error),
+      });
+      return null;
+    }
   }
 
   private async loadSession(
