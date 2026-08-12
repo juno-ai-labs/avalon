@@ -138,6 +138,24 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(eu)).not.toThrow();
   });
 
+  it("holds an unrecognized region to every rule, including Global's", () => {
+    // The fail-closed branch. The invalid-region case above keeps both Google
+    // keys, so on its own it never proves they stay required when the region
+    // cannot be read — and a change that treated an unknown region like EU
+    // would pass the suite without this.
+    const unknown = productionEnv({ AVALON_REGION: "us" as never });
+    delete (unknown as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (unknown as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+
+    let thrown: EnvContractError | undefined;
+    try { assertEnvContract(unknown); } catch (error) { thrown = error as EnvContractError; }
+    expect(thrown?.keys).toEqual([
+      "AVALON_REGION is invalid",
+      "GOOGLE_OAUTH_CLIENT_ID is missing",
+      "GOOGLE_OAUTH_CLIENT_SECRET is missing",
+    ]);
+  });
+
   it("still requires the OpenRouter key in EU, which does use it", () => {
     const eu = productionEnv({ AVALON_REGION: "eu", PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com" });
     delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
