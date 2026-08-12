@@ -1755,4 +1755,63 @@ describe("database migrations", () => {
     `)).toThrow();
     database.close();
   });
+
+  it("records where each past digest ran and stops the schedule owning a work stream", () => {
+    const database = migrateDatabaseThrough("0065_automation_draft_conversation.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-digest', 'google-digest', 'digest@example.com', 'Digest User', '2026-08-10', '2026-08-10');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-digest', 'Digest Workspace', 'digest-workspace', 'global',
+              'user-digest', '2026-08-10', '2026-08-10');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+         last_activity_at, created_at, updated_at, system_kind, scope)
+      VALUES ('workstream-digest-shared', 'workspace-digest', 'Digest · Digest User', '',
+              'ad_hoc', 'user-digest', 'idle', '2026-08-10', '2026-08-10', '2026-08-10',
+              'digest', 'personal');
+      INSERT INTO digest_schedules
+        (id, workspace_id, user_id, day_mask, enabled, system_workstream_id,
+         execution_principal_json, version, created_at, updated_at)
+      VALUES ('schedule-digest', 'workspace-digest', 'user-digest', 62, 1, 'workstream-digest-shared',
+              '{"type":"user","userId":"user-digest"}', 1, '2026-08-10', '2026-08-10');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('run-digest', 'workspace-digest', 'workstream-digest-shared', 'scheduled_digest',
+              '{"type":"user","userId":"user-digest"}', 'completed', '2026-08-10');
+      INSERT INTO digest_deliveries
+        (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_from, cursor_through,
+         event_count, highlight_count, harness_run_id, status, created_at, updated_at)
+      VALUES
+        ('delivery-ran', 'workspace-digest', 'schedule-digest', 'user-digest', '2026-08-10T08:00:00.000Z',
+         NULL, 12, 4, 1, 'run-digest', 'delivered', '2026-08-10', '2026-08-10'),
+        ('delivery-empty', 'workspace-digest', 'schedule-digest', 'user-digest', '2026-08-11T08:00:00.000Z',
+         12, 12, 0, 0, NULL, 'empty', '2026-08-11', '2026-08-11');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0066_digest_workstream_per_occurrence.sql", import.meta.url),
+      "utf8",
+    ));
+
+    // Where each one actually ran, which for everything before this migration
+    // is the shared work stream. An occurrence that never reached a harness has
+    // no work stream, and NULL is the accurate answer rather than a gap.
+    expect(database.prepare(
+      "SELECT id, workstream_id FROM digest_deliveries ORDER BY planned_for",
+    ).all()).toEqual([
+      { id: "delivery-ran", workstream_id: "workstream-digest-shared" },
+      { id: "delivery-empty", workstream_id: null },
+    ]);
+    const scheduleColumns = database.prepare("PRAGMA table_info(digest_schedules)")
+      .all() as Array<{ name: string }>;
+    expect(scheduleColumns.map((column) => column.name)).not.toContain("system_workstream_id");
+    // The transcripts themselves stay: their owners can still open them, and
+    // dropping a pointer is not a reason to delete somebody's history.
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM workstreams WHERE id = 'workstream-digest-shared'",
+    ).get()).toEqual({ count: 1 });
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
 });
