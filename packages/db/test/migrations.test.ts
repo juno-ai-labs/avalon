@@ -1757,7 +1757,7 @@ describe("database migrations", () => {
   });
 
   it("records where each past digest ran without breaking the Worker still reading the old column", () => {
-    const database = migrateDatabaseThrough("0065_automation_draft_conversation.sql");
+    const database = migrateDatabaseThrough("0067_harness_run_trigger_message.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES ('user-digest', 'google-digest', 'digest@example.com', 'Digest User', '2026-08-10', '2026-08-10');
@@ -1790,7 +1790,7 @@ describe("database migrations", () => {
     `);
 
     database.exec(readFileSync(
-      new URL("../migrations/0066_digest_workstream_per_occurrence.sql", import.meta.url),
+      new URL("../migrations/0068_digest_workstream_per_occurrence.sql", import.meta.url),
       "utf8",
     ));
 
