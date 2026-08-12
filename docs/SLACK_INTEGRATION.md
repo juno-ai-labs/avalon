@@ -1,10 +1,35 @@
 # Slack Agent connector
 
-## Product boundary
+Avalon lives inside Slack as one public Marketplace app carrying two independent
+credentials: an administrator's **workspace installation**, which is the bot
+identity and the whole Agent surface, and an optional **personal connection**,
+which gives Avalon's MCP client that member's own Slack visibility and
+attribution. Neither substitutes for the other.
 
-Every configured bot and personal OAuth scope, including its concrete Avalon
-use and model-tool mapping, is listed in
-[Slack permissions](SLACK_PERMISSIONS.md).
+Read this before changing the ingress, the identity-linking flow, what a
+Slack-originated run may read, or how a result is delivered. Every configured bot
+and personal OAuth scope, with its concrete use and model-tool mapping, is listed
+in [`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) rather than here.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/connectors/src/slack.ts` | The adapter: capabilities, scope health, tools, activity types. |
+| `packages/contracts/src/index.ts` | The shared contracts both ends parse. |
+| `packages/db/migrations/0039_slack_connector.sql` | The regional schema. |
+| `apps/api/src/services/connection-service.ts` | OAuth and connection lifecycle. |
+| `apps/api/src/services/slack-routing-service.ts` | The Global team-to-region route, and nothing else Global holds. |
+| `apps/api/src/services/slack-agent-service.ts` | Agent sessions, App Home, interactions, unfurls, delivery. |
+| `apps/api/src/services/slack-mention-service.ts` | Workspace-bot mention delivery. |
+| `apps/api/src/routes/slack.ts` | The three signed ingress routes. |
+| `apps/api/src/workflows/workstream-loop.ts` | The workflow output sink that reaches Slack. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `screens/new-automation.tsx` | Installation administration and the automation destination. |
+| `config/provider-apps/slack.json` | The manifest. |
+
+## How it works
+
+### Product boundary
 
 Avalon uses one public Slack Marketplace app for two related but separate connections:
 
@@ -15,7 +40,7 @@ The workspace installation is required for the in-Slack Agent experience. Person
 
 This split follows Slack's July 2026 Agent model. New apps use `features.agent_view`, the normal Messages tab, and threaded replies. The older `assistant_view` is not configured.
 
-## Connection cardinality
+### Connection cardinality
 
 The invariant is asymmetric:
 
@@ -26,7 +51,7 @@ The invariant is asymmetric:
 
 Global D1 stores only `team_id -> region/workspace/connection` routing metadata. Signed payload processing, encrypted tokens, user links, Agent sessions, workstreams, and results stay in the owning Avalon region. The database and desktop UI deliberately allow **Connect another workspace** for Slack.
 
-## API versus MCP
+### API versus MCP
 
 Raw Slack APIs are the workspace Agent and workspace-tool plane:
 
@@ -48,7 +73,7 @@ Slack's hosted MCP server is the user tool plane. Avalon initializes a JSON-RPC 
 
 Personal authorization is incremental. **Slack knowledge** requests the read/search capabilities; **Slack actions** requests user-attributed writes. Adding the second preset expands the existing personal Slack connection instead of replacing its earlier grants. Workspace Agent scopes remain a separate administrator-controlled installation with one reviewed capability bundle, including `reactions:read` for activity triggers and `reactions:write` for the deterministic activation acknowledgement and workspace reaction tool. Existing workspace installations must reconnect after the workspace-tool scope expansion before health checks and tool calls succeed.
 
-## Data behavior
+### Data behavior
 
 The canonical definition is in `docs/PROVIDER_APPS.md`: zero-copy means Avalon does not recreate Slack inside Avalon. It is a product and architecture boundary, not a claim that no Slack data crosses the connector or is ever persisted. Avalon must not become a parallel Slack inbox, channel browser, history store, or generally searchable Slack replica.
 
@@ -62,7 +87,7 @@ Real-time Search API responses are transient context for the active model turn. 
 
 Normal product use can persist information in the resources that use it. A user prompt, bounded trigger record, Slack context used for the task, model-authored summary, workstream message, tool receipt, or automation result may remain in Avalon. That is purpose-bound Avalon work, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Avalon holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Avalon resources.
 
-## Ingress and routing
+### Ingress and routing
 
 The shared ingress is `https://slack.with-avalon.com`:
 
@@ -76,7 +101,7 @@ Queue workers atomically lease jobs, retry failed or abandoned work, and clear t
 
 After a queued DM or mention passes connection, policy, and actor checks, the worker uses the shared connector activation flow to add the `eyes` reaction to the exact triggering message before it gathers context, creates/resumes a workstream, or starts model/tool processing. Slack's `already_reacted` response is a successful idempotent retry. A Slack-side reaction failure is logged and, when appropriate, marks the installation for reconnect, but does not discard the already-admitted user request. Commands and modal submissions have no unambiguous source message and retain their existing ephemeral/modal acknowledgement instead.
 
-## Identity linking
+### Identity linking
 
 Slack users are never matched to Avalon accounts by mutable profile fields or email alone.
 
@@ -141,7 +166,7 @@ the challenge is single-use, fifteen minutes old, and minted by a click Slack si
 
 Suspended members and revoked links cannot start or continue tasks. A user may link separately in every connected Slack team.
 
-### Work stream attribution
+#### Work stream attribution
 
 A work stream started from Slack records the Avalon member the Slack author resolves to as its
 creator, and adds them as a participant. Slack does not decide that mapping on its own: it
@@ -161,7 +186,7 @@ produced, which is the only case where an existing creator is rewritten.
 As everywhere else, attribution is not authorization: an unlinked author's task still runs
 with the workspace principal, and the opening message keeps its external Slack actor.
 
-## Agent sessions and delivery
+### Agent sessions and delivery
 
 A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Avalon workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Avalon` mention. Avalon ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
 
@@ -182,11 +207,11 @@ An automation's Agent-DM destination is one of the frozen delivery targets descr
 [work-stream and automation email addresses](WORKSTREAM_EMAIL_ADDRESSES.md#outbound-automation-results);
 Slack and email are delivered independently, so a failure in one is retried without holding back the other.
 
-## App Home
+### App Home
 
 App Home is a personalized control surface published per user. Avalon publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.
 
-### Unlinked
+#### Unlinked
 
 - concise description of Avalon and its data behavior
 - **Connect Avalon** call to action — an action button carrying no URL, so
@@ -196,7 +221,7 @@ App Home is a personalized control surface published per user. Avalon publishes 
 - paid Slack and Avalon plan disclosure
 - privacy and help links
 
-### Linked member
+#### Linked member
 
 - **Start a task**, **Create automation**, and **Notifications** actions
 - needs-attention and running tasks
@@ -204,13 +229,13 @@ App Home is a personalized control surface published per user. Avalon publishes 
 - explanation of optional personal Slack tools
 - privacy and support links
 
-### Workspace admin
+#### Workspace admin
 
 App Home adds a workspace-administration card for Avalon owners and admins with installation health and a secure desktop handoff to Connections. The desktop Connections page is the full administration surface: installation health, team labels, granted surfaces, token health, reconnect, and disconnect.
 
 Home is updated on `app_home_opened`, after account linking, and after settings changes. Blocks contain user-specific data only after the Slack user has been linked and active membership is revalidated.
 
-## Interactions
+### Interactions
 
 - Agent DM: start a durable task or continue its thread.
 - `@Avalon` in a channel: create/continue a task in the mention thread; later human replies in that Avalon-owned thread do not need another mention, and responses always stay threaded.
@@ -236,25 +261,25 @@ Every other web button uses a static, allowlisted HTTPS-to-desktop handoff. Work
 
 Modal submissions are validated server-side. Modals never request Avalon or provider passwords.
 
-## User stories
+### User stories
 
-### Delegate from Slack
+#### Delegate from Slack
 
 As a linked member, I can DM Avalon, mention it, invoke a shortcut on a message, or run `/avalon`, and receive progress and the durable result in the same Agent thread.
 
-### Bring Slack context into Avalon
+#### Bring Slack context into Avalon
 
 From a user-initiated Slack DM or app mention, I can ask Avalon to search public-channel messages using Slack's event-scoped authorization. With the workspace installation, I can also find visible users and conversations, read bounded channel/thread/message context, inspect bounded textual file content, and list conversation members. A personal Slack connection adds user-authorized private search, DMs, MPIMs, canvases, and the hosted MCP tool surface.
 
-### Act in Slack
+#### Act in Slack
 
 With the workspace installation, I can ask Avalon to send a bot-authored message, create or open a conversation, or add a bot reaction. A personal connection continues to support user-attributed actions and canvas writes. Existing confirmation and external-write receipt policies still apply.
 
-### Connect several Slack workspaces
+#### Connect several Slack workspaces
 
 As an Avalon admin, I can install the same Avalon app into several Slack workspaces. Each installation has its own health, links, sessions, and automation destinations. No installation becomes the implicit default when more than one is available.
 
-### Notify a mentioned teammate
+#### Notify a mentioned teammate
 
 As an Avalon member, when I mention an active teammate in a work stream, Avalon sends that
 teammate a bot-authored Slack DM when the workspace installation can resolve them. A confirmed
@@ -263,7 +288,7 @@ linking the accounts. The message identifies the author, workspace, work stream,
 mention text, and a secure **Open in Avalon** handoff. If Slack cannot resolve or deliver it,
 Avalon sends the existing mention email instead.
 
-### Morning Gmail briefing
+#### Morning Gmail briefing
 
 As a member, I can request: **“Check my Gmail every morning and send me the stack-ranked top 3 emails in Slack.”**
 
@@ -276,20 +301,161 @@ The saved personal automation freezes:
 
 At each run Avalon ranks actionable inbox items, sends up to three (fewer if fewer qualify), and includes rank, sender, subject, why it matters, recommended action, and Gmail link in the Agent DM. Long results are sent without connector truncation using Slack-required message chunks. It posts a root Agent DM and sets the Agent thread title as a best-effort decoration after delivery succeeds. Empty results are suppressed by default. Revoked Gmail or Slack authorization marks the run or destination `needs_input`; transient Slack delivery errors remain retryable and do not disable the destination. Avalon does not silently switch accounts or Slack workspaces. Saving the recurring automation is the user's approval for those scheduled reads and deliveries.
 
-## Implementation map
+## Invariants
 
-- Contract and connector: `packages/contracts/src/index.ts`, `packages/connectors/src/slack.ts`
-- Regional schema: `packages/db/migrations/0039_slack_connector.sql`
-- OAuth and connection lifecycle: `apps/api/src/services/connection-service.ts`
-- Shared routing: `apps/api/src/services/slack-routing-service.ts`
-- Agent/App Home/interactions/delivery: `apps/api/src/services/slack-agent-service.ts`
-- Workspace-bot mention delivery: `apps/api/src/services/slack-mention-service.ts`
-- Signed routes: `apps/api/src/routes/slack.ts`
-- Workflow output sink: `apps/api/src/workflows/workstream-loop.ts`
-- Desktop install and automation destination: `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `apps/desktop/src/renderer/screens/new-automation.tsx`
-- Slack manifest: `config/provider-apps/slack.json`
+- **One Slack team ID maps to at most one Avalon workspace and one data region**,
+  while one Avalon workspace may hold any number of installations. The asymmetry is
+  the point: a team that resolved to two workspaces has no answer to "where does
+  this event go".
+- **A workspace installation and a personal connection are independent
+  credentials**, even for the same Slack team. Workspace tools never borrow a
+  member's personal authority, and personal tools never process Agent events or
+  deliver workspace-bot messages.
+- **Global holds only `team_id → region/workspace/connection`.** Signed payload
+  processing, encrypted tokens, user links, Agent sessions, work streams, and
+  results stay in the owning region, and provider payloads are never written to
+  Global object storage during routing.
+- **Ingress verifies `v0:{timestamp}:{exact raw body}` before anything parses**,
+  requires a timestamp inside five minutes, compares in constant time, checks
+  `api_app_id`, and deduplicates `event_id`.
+- **The ingress job is written and its opaque id queued *before* Slack is
+  acknowledged.** An acknowledgement without a durable job is an event Slack will
+  never send again.
+- **Slack users are never matched to Avalon accounts by mutable profile fields or
+  email alone.** `users.lookupByEmail` is a delivery address only: it does not
+  create a `slack_user_links` row, authenticate the recipient, or authorize personal
+  tools.
+- **A link challenge is minted by the click that redeems it, and never earlier.**
+  No Slack surface holds a handoff URL — App Home is a published document with no
+  expiry of its own and a claim DM is read whenever the member gets to it, so a
+  token rendered into either dies where it is still visible and the member has no
+  way to tell. A new surface that invites a member to connect uses the same button;
+  it does not embed a link.
+- **Earlier challenges are retired only after the modal carrying the replacement
+  opens**, and retirement is bounded by mint time. A `views.open` that failed would
+  otherwise invalidate the link the member is still looking at in exchange for one
+  they never received, and unbounded retirement lets racing clicks strand the member
+  with no live link at all.
+- **A stored status is a belief, not a gate.** An installation marked
+  `needs_reconnect` still reaches Slack and fails on Slack's answer; only a
+  *disabled* installation is refused, because disabling clears the credentials and
+  drops the row from `connectionForTeam`.
+- **The `eyes` reaction is added by the host control plane after admission and
+  authorization but before context gathering**, and `already_reacted` is a
+  successful retry.
+- **Attribution is not authorization.** An unlinked author's task still runs with
+  the workspace principal, and the opening message keeps its external Slack actor.
+- **The persisted Avalon run is canonical.** A Slack delivery failure never
+  rewrites a completed run as failed.
+- **The `action_token` is hidden run authorization** and never enters a prompt,
+  the transcript, Slack session context, tool input, tool output, or the
+  inference-payload log — which is disabled outright once a Slack search result
+  enters model context.
+- **Nearby Slack content is model-visible as explicitly labelled untrusted
+  evidence**, never as system instructions.
+- **Unrelated channel messages are discarded before durable queueing.** Slack
+  offers no thread-only event filter, so the filtering is Avalon's job and it
+  happens before anything is stored.
+- **Avalon never becomes a parallel Slack.** No inbox, channel browser, history
+  store, or generally searchable replica — see
+  [`PROVIDER_APPS.md`](PROVIDER_APPS.md#the-zero-copy-connector-boundary).
+- **No installation becomes the implicit default when more than one is
+  available**, and Avalon never silently switches accounts or Slack workspaces.
+- **Every work-stream link Avalon posts is the canonical HTTPS form.** Slack
+  delivers `link_shared` only for the registered unfurl domain, so an `avalon://`
+  link pasted by a member produces no event and can never be previewed.
+- **Modal submissions are validated server-side**, and modals never request Avalon
+  or provider passwords.
 
-## Developer test setup
+## Boundary
+
+This document owns Avalon's Slack product surface: the two connections, the
+ingress, linking, Agent sessions, App Home, interactions, and delivery. It does
+not own:
+
+| For | Read |
+| --- | --- |
+| Every scope and its model-tool mapping | [`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) |
+| The registration and its secrets | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) |
+| The zero-copy definition this obeys | [`PROVIDER_APPS.md`](PROVIDER_APPS.md#the-zero-copy-connector-boundary) |
+| Connector-wide adapter rules and health semantics | [`CONNECTORS.md`](CONNECTORS.md) |
+| The shared actor-identity resolution behind attribution | [`CONNECTORS.md`](CONNECTORS.md#actor-identity-and-work-stream-attribution) |
+| The unfurl card, its audience rules, and the refresh sweep | [`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md) |
+| Frozen automation delivery targets | [`WORKSTREAM_EMAIL_ADDRESSES.md`](WORKSTREAM_EMAIL_ADDRESSES.md#outbound-automation-results) |
+| The Global/EU boundary the shared ingress sits on | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
+| The run a Slack prompt starts | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) |
+
+## Failure modes and limits
+
+- **A job that failed on authorization is classified non-retryable and pinned at
+  the attempt ceiling**, which is right while a grant is dead and wrong the moment
+  it is not. `redriveReauthorizedIngress` re-queues such a job once its connection
+  has been written again, which a reauthorization always does; it is self-limiting,
+  because a re-driven job that fails again stamps itself newer than the connection.
+  Without it, events that arrived during an outage stayed failed forever with their
+  payload still on the row — and a `link_shared` Slack reports exactly once is never
+  redelivered, so the message keeps its bare URL permanently.
+- **Retries with the same `event_id` and body are acknowledged once; reuse of an
+  event ID with different content is a conflict.**
+- **A denied prompt is retained regionally for at most 24 hours** so the same
+  member can reply `try again` after the problem is fixed. It is deleted when a
+  session starts, and expired rows are removed by scheduled maintenance. A narrowly
+  matched, explicitly mentioned retry of a denial created *before* this mechanism
+  may read at most the first 15 messages in that single thread to recover the
+  prompting mention; unmentioned messages in other threads are ignored.
+- **A missing `reactions:write` discovered mid-prompt does not stop the task.**
+  Avalon continues and marks the installation for reconnect.
+- **A challenge that cannot be redeemed is refused with the reason**, not a generic
+  expiry: `slack_link_unknown`, `slack_link_consumed` (used or superseded),
+  `slack_link_expired`, `slack_link_workspace_mismatch`, and
+  `slack_installation_disabled`. Only the first three are answered by clicking
+  **Connect Avalon** again; a disabled installation needs an Avalon workspace owner
+  or admin to re-enable it.
+- **An identity-link insert is refused only when the Slack identity already belongs
+  to a different Avalon member.** The personal connection still stands in that case,
+  because resolving the conflict is not that operation's business.
+- **Suspended members and revoked links cannot start or continue tasks.**
+- **Existing workspace installations must reconnect after a scope expansion**
+  before health checks and tool calls succeed. Until the identity scopes arrive,
+  lookup-based mentions fall back to email.
+- **Streaming degrades rather than fails**: replies stream in Slack's required
+  12,000-character chunks, falling back to complete 40,000-character message chunks
+  when streaming is unavailable.
+- **Message-context reads are bounded** — up to eight nearby messages on a prompt,
+  and the per-tool bounds in [`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md).
+- **SSE responses from Slack's MCP server are rejected**, because Slack does not
+  support them.
+- **Revoked Gmail or Slack authorization marks the run or destination
+  `needs_input`**; transient Slack delivery errors remain retryable and do not
+  disable the destination.
+- **Disconnecting does not delete existing Avalon resources.** Workspace disconnect
+  revokes the credentials Avalon holds and disables routing; a Slack administrator
+  separately removes the app from Slack App Management to uninstall it. Task and
+  automation resources do not expire automatically and remain until an authorized
+  user deletes the resource or the workspace is deleted.
+
+## Testing
+
+| Suite | Covers |
+| --- | --- |
+| `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, and the manifest read from `config/provider-apps/slack.json`. |
+| `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
+| `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution, the claim rule, and the one case where an existing creator is rewritten. |
+| `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
+| `apps/api/test/slack-mention-service.test.ts` | The lookup-based mention path and its email fallback. |
+| `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
+| `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md). |
+| `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant. |
+
+Run one with
+`pnpm --filter @avalon/api exec vitest run test/slack-agent-ingress.test.ts` — the
+path is package-relative.
+
+The trap is signature fixtures: verification runs over the **untouched raw body**,
+so a test that re-serializes a payload before signing it passes while the
+production path fails on the same delivery.
+
+### Developer test setup
 
 Use a separate development Slack app and a paid Slack test workspace. Do not
 point the Marketplace app at a temporary tunnel or install a CLI-issued bot
@@ -356,7 +522,9 @@ Agent DM and thread continuation, mention, both shortcuts, `/avalon`, signature
 replay, workspace search/read/write tools, personal MCP authorization, multi-workspace routing, and the Gmail
 briefing's three/one/zero-result cases.
 
-## Deployment and Marketplace gates
+## Operations
+
+### Deployment and Marketplace gates
 
 1. Set `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` in both regional Workers. Keep the public app identity identical.
 2. Deploy migrations through `0046` and both Workers, including the Global/EU Slack service bindings and `slack.with-avalon.com` custom domain.
