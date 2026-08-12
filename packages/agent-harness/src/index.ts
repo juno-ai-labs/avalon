@@ -2359,11 +2359,15 @@ export type PluginAuthorizationOccasion = "activation" | "continuation";
 
 export interface RunHarnessInput {
   config: OpenRouterConfig & {
-    maxIterations: number;
-    maxToolCalls: number;
-    maxWallClockMs: number;
+    /** Optional iteration ceiling; callers that intend an unlimited loop omit it. */
+    maxIterations?: number;
+    /** Optional ceiling for deliberately bounded callers. Ordinary work-stream runs omit it. */
+    maxToolCalls?: number;
+    /** Optional ceiling for deliberately bounded callers. Ordinary work-stream runs omit it. */
+    maxWallClockMs?: number;
     toolTimeoutMs: number;
     maxWebResults: number;
+    /** Optional ceiling for deliberately bounded callers. Ordinary work-stream runs omit it. */
     maxCostCents?: number;
     /**
      * Budget for one catalog, applied **per catalog** rather than across them:
