@@ -1,6 +1,7 @@
 ---
 name: review-swarm
 description: Run a multi-perspective code review swarm. Use when the user invokes /review-swarm.
+user-invocable: true
 ---
 
 All code reviews will classify issues into P0 (must fix), P1 (should fix), P2 (backlog), or nitpick.
@@ -10,167 +11,513 @@ Use sub-agents to do a code review using each of the personas under the "Sub-Age
 - Use effort `high` for each sub-agent.
 - Use the most current Opus model for each sub-agent.
 
+## What every sub-agent needs to know about this repository
+
+Give each persona this orientation, then its own section below.
+
+Avalon is a pnpm/TypeScript monorepo with three deployment surfaces: `apps/desktop`
+(Electron main + preload + sandboxed React renderers), `apps/api` (one Hono
+Cloudflare Worker deployed twice, as the Global and EU regions), and the shared
+packages `@avalon/contracts` (Zod wire contracts), `@avalon/db` (D1 migrations and
+repositories), `@avalon/agent-harness` (the Bind/OpenRouter adapter, prompts, and
+skills), and `@avalon/connectors`. Canonical state is regional D1; R2 holds large
+payloads; Durable Objects, Queues, and Workflows coordinate but are not canonical
+stores. `apps/site` and `apps/release-retention` are the smaller Workers.
+
+Every persona reads [`AGENTS.md`](../../../AGENTS.md) (symlinked as `CLAUDE.md`) and
+[`docs/README.md`](../../../docs/README.md) first — the index says which document owns
+which area, and the owning document usually states the invariant a finding would
+violate. Read the owning documents for the areas the diff touches before reviewing.
+
 ## Sub-Agents
 
 ### Backend Engineer
 
-A staff-level backend engineer. Below are some things to look for that reviews have missed previously but it is not an exhaustive list. You MUST still look for general backend edge-cases, bad code, sloppy implementation, in-elegant abstractions, over-engineering, missing error handling, bad assumptions, and anything else a staff-level engineer would flag in a code review.
+A staff-level backend engineer working on a Cloudflare Worker. Below are things reviews have missed previously; it is not an exhaustive list. You MUST still look for general backend edge-cases, bad code, sloppy implementation, in-elegant abstractions, over-engineering, missing error handling, bad assumptions, and anything else a staff-level engineer would flag in a code review.
 
-**Database migrations.** Migrations live in `db/migrations/` and are applied in lexical order by their zero-padded numeric prefix (`NNNN_name.sql`, e.g. `0113_semaphore_safety.sql`). Hold every migration change to these bars:
-    - **Least number of migration files per PR.** A single PR should add the **fewest** migration files possible — ideally exactly one. Flag a PR that splits one coherent schema change across multiple sequential files (e.g. create-table in `0114`, add-index in `0115`, backfill in `0116`) when they could and should be a single atomic migration — more files mean more apply steps, more partial-failure surface, and a noisier history. Multiple files in one PR are justified only when the steps are genuinely independent changes or must be separated for a documented operational reason (e.g. a concurrent index build that can't run in the same transaction). Concrete heuristic to avoid guessing intent: if the statements across the files touch the same table (or tightly-coupled set of tables) and could legally run in one transaction, treat them as one change and expect a single file. Whenever a PR introduces more than one new migration, don't flag outright — ask the author to justify the split, and only escalate to a finding if the justification is "they're related but I kept them separate."
-    - **No numbering collision.** Every new migration's numeric prefix must be **unique and strictly greater than every existing migration** on the base branch. The classic failure is two branches each grabbing the next free number (`0114_…`) in parallel. Because our runner (`db/migrate.ts`) applies pending migrations in alphabetical order and records each in the `_migrations` table by filename, a collision or out-of-order merge makes the execution order **diverge between a fresh database and an existing one**: a fresh DB applies every migration in strict alphabetical order, while on a database like production — where a higher prefix was already applied — a later-merged lower-prefix migration runs *last* (it's the only pending one), so it can land after migrations it was authored before and depends on being absent. Flag any new migration whose prefix duplicates an existing file, is out of order, or skips/reuses a number. When reviewing, check the highest committed prefix and confirm the new file(s) continue the sequence without gaps or repeats.
-    - **Idempotency.** Migrations should try as hard as possible to be idempotent — re-running one (after a partial failure, a retry, or an accidental double-apply) must not error or corrupt state. Prefer the guarded forms: `CREATE TABLE/INDEX IF NOT EXISTS`, `DROP … IF EXISTS`, `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE` for functions/views, `INSERT … ON CONFLICT DO NOTHING/UPDATE` for seed/backfill rows, and `DO $$ … IF NOT EXISTS … $$` guards for objects without a native `IF NOT EXISTS` (constraints, enum values, publications, cron jobs). Flag bare `CREATE`/`ALTER ADD`/`INSERT` statements that throw on a second run, and any backfill or data transform that isn't safe to apply twice (double-counting, re-incrementing, re-sending). Where a step genuinely can't be made idempotent, require an inline comment explaining why.
-- **Server boundary validation (zod).** Every value entering the server from outside the process must be parsed with a zod schema — `docs/validation-boundaries.md` is the full reference. Flag as P0/P1:
-    - A request body read via `await req.json()` without `parseJsonBody(req, schema)` (from `@/lib/api-schemas`), or query/search params consumed without `parseSearchParams(url.searchParams, schema)`.
-    - A queue job handler that trusts `job.payload` without a per-job-type zod `safeParse` at the top. The payload is a JSONB blob from Postgres and must be revalidated on **every** dequeue (`JobHandler<z.infer<typeof schema>>`) — an old code version or a corrupted row can hand the handler anything.
-    - Any `as`-cast standing in for a parse on boundary data (`as SomePayload`, and `as unknown as T` anywhere — the only sanctioned exceptions are catalogued in `docs/validation-boundaries.md` and carry inline comments). IDs cast with `as UserId` instead of parsed with the branded schemas in `lib/api-schemas/ids.ts`; Drizzle columns holding branded ids missing `.$type<BrandedId>()`.
-    - A new response shape defined ad hoc instead of in `lib/api-schemas/<domain>.ts` and re-exported from the package index — server and client must reference the same schema value, never two parallel definitions.
-- **Absolute/redirect URLs must derive from `APP_DOMAIN`, not the request.** Behind the production proxy, `req.url` / `req.nextUrl` is Next's **internal** URL (`localhost:3000`), not the public host the user is on — so any outbound URL built by cloning or reading `req.nextUrl` / `req.url` (a `NextResponse.redirect` target, an OAuth/OIDC `redirect_uri`, an email link, an unfurl/canonical URL) silently bounces users to `localhost`. Flag as P1:
-    - A redirect target built from `req.nextUrl.clone()` / `new URL(req.url)` / `req.nextUrl.origin` and then re-pathed (e.g. `const u = req.nextUrl.clone(); u.pathname = "/somewhere"; return NextResponse.redirect(u)`). Build it from `getPublicBaseUrl()` (apex) or `getTenantBaseUrl(slug)` (a tenant subdomain) in `server/lib/public-url.ts` — both derive the origin from `APP_DOMAIN`.
-    - The one sanctioned exception is a route that must redirect to a *specific tenant subdomain it can't know from `APP_DOMAIN` alone*, which reconstructs the origin from the inbound `Host` + `x-forwarded-proto` headers (reference: `app/api/oauth/authorize/route.ts`) — never from `req.nextUrl`. Note: reading `req.nextUrl.searchParams` for **inbound** params (an OIDC `code`/`state`, a verification `token`) is correct; the bug is only using `req.nextUrl`'s origin/host to build an **outbound** URL.
+**D1 migrations.** Migrations live in `packages/db/migrations/` as `NNNN_name.sql`
+and are applied by `wrangler d1 migrations apply DB` **once per region**, in
+filename order, with each applied file recorded by name. `docs/DATA_MODEL.md`
+("Migration policy") is the contract: files are immutable after deployment, the
+checked-in schema is authoritative, and no request handler ever migrates. Hold every
+migration change to these bars:
+
+- **Fewest migration files per PR — ideally exactly one.** Flag a PR that splits one
+  coherent schema change across sequential files (create-table in `0067`, index in
+  `0068`, backfill in `0069`) when the statements touch the same table or a tightly
+  coupled set and could land as one file. Multiple files are justified only when the
+  steps are genuinely independent changes. Don't flag outright — ask the author to
+  justify the split, and escalate only if the justification is "they're related but I
+  kept them separate."
+- **No numbering collision.** A new migration's prefix must be unique and strictly
+  greater than every prefix on `main` — and the repository already carries one
+  duplicate pair (`0066_activity_suggestion_feedback.sql` and
+  `0066_shared_notion_connection_routing.sql`), which is what the failure looks like:
+  two branches each grabbing the next free number in parallel. Because the runner
+  records applied files by name and applies pending ones in order, a collision or a
+  late-merged lower prefix makes execution order diverge between a fresh local
+  database and a hosted one that already applied a higher number. Check the highest
+  prefix on `main`, confirm the new files continue the sequence with no gap or
+  repeat, and flag a PR that needs renumbering after a rebase (`ship-pr` step 4).
+- **Both regions apply the same file.** A migration may not assume Global-only or
+  EU-only data, and anything region-specific belongs in code reading `AVALON_REGION`,
+  not in SQL.
+- **Idempotency where SQLite allows it.** Prefer `CREATE TABLE/INDEX IF NOT EXISTS`,
+  `DROP … IF EXISTS`, and `INSERT … ON CONFLICT DO NOTHING/UPDATE` so a re-run after a
+  partial apply does not error. SQLite has **no** `ALTER TABLE … ADD COLUMN IF NOT
+  EXISTS` and no transactional multi-statement DDL through D1 — so do not ask for a
+  guard that does not exist; instead flag a file whose statements would leave the
+  schema half-migrated with no way forward, and any backfill that double-counts,
+  re-increments, or re-sends when applied twice.
+- **New tables and columns.** Every product table carries `workspace_id` and the
+  indexes the reads actually use; a `CHECK` belongs on a closed set and deliberately
+  *not* on a set that is a moving product decision (see `workstreams.model_override`
+  in `docs/DATA_MODEL.md`). A new column's default must fail closed unless there is a
+  stated reason it cannot.
+
+**Boundary validation (Zod).** Everything entering the Worker from outside the
+process is parsed:
+
+- Request bodies, params, and query strings go through `zValidator` from
+  `apps/api/src/middleware/validation.ts` — never `@hono/zod-validator` directly,
+  which returns the raw Zod failure and leaks schema paths and regexes into the
+  public API.
+- Wire shapes live in `@avalon/contracts` and are referenced by both the route and
+  the desktop client. Flag a response shape defined ad hoc in a route when the client
+  parses a second, parallel definition of it.
+- A payload that crossed a durable boundary — a Queue message, a Workflow step's
+  input, a Durable Object RPC/attachment, a stored job or lease row, a provider
+  webhook body — is re-parsed on arrival. It may have been written by an older
+  deployment.
+- Any `as` cast standing in for a parse on boundary data is a finding. So is a bare
+  Zod URL: use the schemas in `@avalon/contracts/url-schemas`, which name the accepted
+  scheme contract (`docs/SECURITY.md` — bare URL validation accepts `javascript:` and
+  `data:`).
+
+**Layering.** Business rules live in services (`apps/api/src/services/`) or the shared
+packages, never in route handlers — a handler validates, resolves auth, delegates, and
+maps the result (`docs/ARCHITECTURE.md`). Errors are `ApiError` with a stable code and
+a message safe to show a user; flag internal detail, provider text, or SQL reaching a
+response.
+
+**Workers runtime.** Flag module-level mutable state treated as authority (an isolate
+is not a server), unawaited promises doing real work (use `requestDeferral` from
+`apps/api/src/lib/defer.ts` for work nothing depends on, and a Queue or Workflow for
+work that must survive), N+1 D1 round trips where `DB.batch` or one statement would
+do, unbounded result sets, and Node built-ins that the Worker runtime does not
+provide.
+
+**Absolute URLs come from configuration, not the request.** Public bases are
+`PUBLIC_API_BASE_URL`, `EU_PUBLIC_API_BASE_URL`, `PUBLIC_WEB_BASE_URL`, and the
+per-provider `*_INGRESS_BASE_URL` values. A URL derived from the inbound request is
+wrong for anything reached through the Global ingress bridges or a tunnel — flag
+callback URLs, invitation and work-stream links, and OAuth `redirect_uri` values built
+from `c.req.url`.
 
 ### React Specialist
 
-A React specialist (master of modern React solutions) frontend engineer.
+A React specialist (master of modern React solutions) working on Avalon's **Electron
+renderer** — sandboxed React surfaces in `apps/desktop/src/renderer`, with
+TanStack Query for server state, zustand for local state, Radix primitives, Tailwind,
+and `@tanstack/react-virtual` for long transcripts. Review general React quality
+(effect correctness, dependency arrays, render churn, key stability, memoization that
+actually pays for itself, accessibility of custom controls) plus the following.
 
-**Client boundary validation (zod).** Every payload the client receives must be parsed, never `as`-cast or trusted from a type annotation — `docs/validation-boundaries.md` is the full reference. Flag as P0/P1:
-- A fetch response consumed without `parseApiResponse(raw, schema, "/api/foo")` (or `useMentionData(url, schema)` where applicable), or a response type asserted with `as` instead of parsed against the shared schema from `lib/api-schemas/<domain>.ts`.
-- A WebSocket event payload used without `safeParse` against the relevant event schema (or a `discriminatedUnion` of them) from `lib/api-schemas/realtime.ts`. Each branch must check `result.success` so a malformed message logs a warning and is dropped — never a crash in the consumer or an unchecked cast off `msg.payload`.
-- Server-owned reads fetched through a new ad-hoc path instead of the sanctioned ones: `useResource`/`useResources` (`docs/client-data-hooks.md`) or the sync engine (`docs/sync-engine-guide.md`). A bare `fetch` + cast in a component is both a validation gap and a data-path violation.
+- **The renderer is untrusted and sandboxed.** `contextIsolation` is on, Node
+  integration is off, and the only bridge is the small named preload API — flag any
+  reach for `ipcRenderer`, `require`, environment variables, or filesystem paths, and
+  any IPC argument that is not parsed on both sides (`docs/SECURITY.md`).
+- **All server data flows through the API client** in
+  `apps/desktop/src/renderer/lib/api.ts`, whose `request` parses every response with a
+  `@avalon/contracts` schema and raises `ApiError` with `invalid_response` on
+  mismatch. Flag a bare `fetch` in a component, a response typed with `as`, and a
+  locally redeclared wire shape.
+- **Socket frames are parsed too**, and the caches they write must not disagree: a
+  frame that changes something shown in two places writes both caches in one update
+  rather than writing one and invalidating the other (the `harness_status_changed`
+  precedent in `docs/ARCHITECTURE.md`). A `resync_required` frame invalidates the
+  canonical REST queries; stale sequence/turn/epoch frames are dropped, not applied.
+- **A WebSocket may only be constructed from a URL returned by an authenticated
+  ticket endpoint**, and the ESLint rule `require-websocket-ticket` enforces that at
+  each production constructor. A new constructor that needs a disable comment is a
+  finding, not a formatting choice.
+- **Drafts, offline, and reconnect are product surface**, not edge cases: check the
+  composer draft cache rules in `docs/composer-drafts.md`, the optimistic new-work-
+  stream transition in `docs/workstream-creation.md`, and that reconnect/backoff state
+  cannot strand a spinner.
+- **Every visible change is verified in a real window.** Per `CLAUDE.md`, a passing
+  DOM test says nothing about whether an element is visible, positioned, legible, or
+  covered — flag a user-visible change whose PR shows no screenshot from the Xvfb +
+  Playwright procedure in `docs/dev-environment.md`.
 
 ### Security Specialist
 
-A security specialist looking at the cohesive security situation at all layers from the database to the API. The specialist should also consider the security posture of the entire stack.
+A security specialist looking at the cohesive security situation at all layers — the
+Electron client, the regional Workers, D1/R2, connectors, and the model surface.
+`docs/SECURITY.md` is the reference; read it before reviewing. Avalon has **no
+policy-engine authorization service**: authorization is the layered server-side
+resolution below, and a violation is a P0/P1 finding, not a style note.
 
-All authorization should happen using the authz system (that is based on Zanzibar-style fine-grained permissions) and not through one-off hardcoded checks.
-
-**Required authz patterns.** `docs/authorization.md` is the full reference — read it before reviewing. These are the project's authorization contract; a violation is a P0/P1 finding, not a style note:
-
-- **Authentication is not authorization.** Every new or edited API route and WebSocket topic subscription must pass an authorization check per HTTP method — `authorizeApiRequest(req, action, resource)` from `@/lib/api-utils`, or `authorize()` from `@/server/authz` with a shared `AuthzCache` when one request needs multiple checks. Flag any handler that stops at `authenticateRequest()`, and any hand-rolled permission logic (`if (user.id === resource.ownerId)`, role-string comparisons) where an action/resource rule belongs.
-- **Action coverage must track the route's semantics.** A GET that returns different data via a new query parameter, or a PATCH that grows new writable fields, needs the existing action re-verified or an additional check — flag expanded behavior riding under an old action. New actions must be registered in all three places: `server/authz/types.ts` (`Action` union), `server/authz/scopes.ts` (API-key scope mapping), `server/authz/authorize.ts` (evaluation rules). The closed `Record<Action, string[]>` in `scopes.ts` makes a *missing* entry a typecheck failure, so review the **chosen** scopes instead: an overly broad mapping over-grants API keys.
-- **Mass assignment.** PATCH/PUT handlers must whitelist allowed body fields (reference: `app/api/spaces/[spaceId]/route.ts`). Flag a parsed body spread or passed wholesale into an update.
-- **Tenant boundaries on user-membership writes.** Any write that links a `user_id` to a resource (group/space memberships, DM participants, agent assignees, canvas collaborators, mention targets, founder/bulk-import arrays) must verify the user belongs to the resource's tenant **before** the write — `WHERE users.id = $1 AND users.tenant_id = $2`, per the `assertEligibleMember` / `UserNotInTenantError` pattern in `data/queries/groups.ts`. Branded ID types and the global FK do **not** enforce this. The failure must be a single opaque 4xx (typically 422) that does not distinguish "no such user" from "user in another tenant" — distinguishable errors leak the existence of foreign-tenant ids. The check applies symmetrically when the resource side is the variable, and it composes with `authorize()` (which validates the actor, not the target) — the presence of one never excuses the absence of the other.
+- **Every operation resolves session → workspace → role → execution principal →
+  connection scope → capability, server-side.** Routes use `requireAuth` and
+  `getAuth`/`requireWorkspaceAdmin` from `apps/api/src/middleware/auth.ts`;
+  role-gated actions (`owner`/`admin`) are enforced in the service. Flag a handler
+  that authenticates but never authorizes, and a role comparison hand-rolled where the
+  helper exists.
+- **Every resource query includes `workspace_id`, and work-stream readability comes
+  from `workstreamVisibilitySql`** (`apps/api/src/lib/workstream-visibility.ts`).
+  That helper exists because the rule was written out three times and the third copy
+  dropped `scope`, letting any member read another person's personal work stream by
+  id. Flag a new query that re-derives readability instead of composing the helper,
+  and any read reachable by id that omits the workspace predicate.
+- **The region boundary is a security boundary.** Cross-region workspace content
+  access does not exist; Global reaches EU only through the named Worker RPC service
+  bindings, never a public internal HTTP route. Each region has its own D1, R2, DO
+  namespaces, session-signing key, and credential-encryption key. Flag anything that
+  crosses regions outside a bridge, or that assumes one region's key material.
+- **Socket admission.** Exact-match `ALLOWED_ORIGINS`, a one-time ticket bound to
+  user/workspace/work-stream/region carried in `Sec-WebSocket-Protocol` (not the query
+  string — whole URLs land in Cloudflare logs), atomic ticket consumption, and a room
+  that re-authorizes against D1 rather than trusting the ticket. A change that widens
+  who may read must also reach sockets already open (the retraction sweep in
+  `docs/realtime-sockets.md`).
+- **Connector credentials and provider ingress.** Refresh tokens use the versioned
+  AES-GCM envelope with connection-bound additional authenticated data; plaintext keys
+  and signing secrets never appear in configuration, responses, identifiers, audit
+  metadata, or logs. Webhooks verify the signature over the exact raw body — with size
+  and replay checks — **before** parsing, persisting, or queueing. Workspace-scoped
+  capabilities execute as the workspace principal; a participant's personal connector
+  is never implicitly shared.
+- **Untrusted content stays out of authority.** Model output, connector payloads,
+  fetched pages, and renderer input are untrusted: they belong in a user-role message
+  behind an evidence prefix, never in the system prefix (`docs/writing-prompts.md`
+  §12, enforced by the injection assertion in `packages/agent-harness/src/prompts.test.ts`).
+  Tool arguments are runtime-validated and canonically hashed, and an ambiguous
+  provider write is not silently repeated.
+- **Secrets hygiene.** Server values never sit behind a `VITE_` name, `.env.local` and
+  `apps/api/.dev.vars.*` stay ignored, Cloudflare administration credentials are
+  local-only and never Worker variables, and errors name keys rather than values (the
+  `assertEnvContract` precedent). CI runs Gitleaks over the full history.
 
 ### UX/UI Designer
 
-A designer who focuses mostly on UX (both locally and platform-wide) and makes sure the site is intuitive and cohesive.
+A designer who focuses mostly on UX (both locally and platform-wide) and makes sure
+Avalon is intuitive and cohesive — a macOS desktop application, not a web page.
+
+- Judge the change against the surfaces around it: the sidebar and its Pinned section,
+  the work-stream transcript and composer, the right rail, Settings (**Command-,**),
+  and the menu bar item, whose documents are indexed in `docs/README.md`.
+- Hold platform conventions: singleton Settings window, **Command-W**, Escape only
+  where nothing has a nearer claim on the keystroke, and a menu bar surface that must
+  work with no window open (`docs/menu-bar.md`).
+- Check the states a demo skips — empty, first-run, loading, partial, offline,
+  reconnecting, permission-denied, and the optimistic create transition in
+  `docs/workstream-creation.md` — and whether an agent's in-flight work reads
+  honestly.
+- Brand primary is `#CEDC00`, secondary `#47C7FC`; shared primitives live in
+  `apps/desktop/src/renderer/components/primitives.tsx`. Flag one-off styling that
+  forks a primitive, and copy that leaks internal vocabulary (ids, table names,
+  "harness", "durable object") into what a person reads.
+- Require the screenshots. Per `CLAUDE.md` a visible change is not done until it has
+  been looked at in a real window; review the images, not the DOM assertions.
 
 ### Prompt Engineer
 
-Read [`docs/writing-skills.md`](../../../docs/writing-skills.md) before reviewing — it is the authoring bar for skills and prompt content, and several checks below (altitude, behavior-nudges-not-tool-names, "don't" paired with "do", self-containment) derive from it. Hold the diff to that bar.
+Read [`docs/writing-prompts.md`](../../../docs/writing-prompts.md) before reviewing —
+it is the authoring bar for prompt text, with [`docs/writing-skills.md`](../../../docs/writing-skills.md)
+for skills and [`docs/agent-tools.md`](../../../docs/agent-tools.md) for tool design;
+[`docs/AGENT_HARNESS.md`](../../../docs/AGENT_HARNESS.md) owns the mechanics. Hold the
+diff to that bar. Note that the shipped prompts are explicitly **not** exemplars —
+several predate the guide — so review a change on whether it moves toward the document,
+not on whether it matches its neighbours.
 
-All prompts must be in a jinja template file and not inline in the source code.
+**Prompts are typed TypeScript functions** in `packages/agent-harness/src/prompts/`,
+returning a `string` or `PromptMessage[]`, with no template language, no file loaded at
+startup, and no I/O in the render path. Do **not** ask for a prompt to move into a
+template file — that is another project's convention. The static policy is a
+module-level constant; the render function composes it with run state.
 
-Prompts must have at least 1 test to validate that the rendering is correct (we don't trust the jinja rendering library); complex template control flow should be tested. All tests must do an exact string comparison against a complete golden version of the rendered prompt, do not do substring tests.
-
-- **Prompt complexity.** Verify that prompts are direct enough that a medium sized model can understand the task and the data given to the model. While we may use more sophisticated models for actual agent inference this gives us a good baseline to start from.
-- **Nudge behaviors, don't hardcode tool names.** Prompt/skill *prose* must not reference callable tool names by literal (`set_suggestions`, `add_space`, `search_web`, `ask`, …) — describe the behavior instead ("offer the owner a few next-step suggestions", "add a channel to the plan", "search the web"). The tool catalog the model sees already carries each tool's name + description, so a behavioral nudge binds to it; a hardcoded name silently rots the prompt when a tool is renamed or removed (no compiler catches it) and duplicates the catalog. Flag literal tool names in prompt/skill bodies. The carve-outs: **data-shape field names** the model must populate (`spacePlanItemIds`, `crons`, `columns`, `color`), **input-kind / enum values** (`radio`, `multi_select`, the status/priority enums), and names that are **interpolated from a registry** (e.g. `{{ loadSkillToolName }}`) are fine — those aren't brittle literals. Error-code literals the model branches on (`E_ONBOARDING_RESET`) are a softer smell: prefer describing the condition.
-- **Prompt-cache friendliness.** Treat the prompt as a layout problem where bytes-from-the-top are cheaper than bytes-from-the-bottom. For any new or modified template, flag the following:
-- **Dynamic values pinned to the tail.** Anything that mutates per call — `current_time`, counters like outbound-rate windows, "last activity at" timestamps that aren't keyed to a stable session, freshness indicators — must live as close to the end of the prompt as possible. A single high-frequency value (e.g. `current_time`) near the top invalidates the cache for everything below it on every call. The cost-of-position is asymmetric: putting `current_time` at byte 200 of a 30K-byte prompt costs ~30K cached bytes per call; putting it at byte 29,800 costs ~200.
-- **Stable-per-session values at the top.** Identity fields that are byte-stable for the lifetime of a `(agent, user, session)` tuple — `user_id`, `user_handle`, `space_id`, `lookback_hours` — are safe to interpolate in the cacheable prefix. Schema descriptions, static rules, and the decision rule belong above all dynamic content.
-- **Deterministic ordering for any JSON/array content.** Lists rendered with `tojson` or `{% for %}` must come from a producer that sorts deterministically — explicit SQL `ORDER BY` tiebreakers on a unique column (typically `id`), or an in-memory `.sort()` with a total-order comparator. A bare `ORDER BY created_at` is **not** sufficient: Postgres timestamp ties at microsecond granularity exist and will flap the rendered order between calls, invalidating the cache for no observable reason. Reference: `data/queries/heartbeat-activity.ts` uses `(created_at DESC, id DESC)` and `(last_activity DESC, thread_id DESC)`.
-- **Map/Set iteration order in producers.** If a producer builds a JS `Map` or `Set` and iterates it into the template, the iteration order is insertion order, which is only deterministic if the inputs were sorted. Flag any `Map.values()` / `Set.values()` fed into a template if the upstream input ordering isn't explicit.
-- **No `Date.now()` or `new Date()` in template inputs except for `current_time`.** Anything that calls `new Date()` per render and embeds the result in the prompt is a per-call cache buster. A "loaded at" or "as of" timestamp in the middle of a context block is the most common offender.
-- **Timestamp precision in embedded values.** **Reject any sub-second timestamp** (`toISOString()` with the `.NNN` millisecond fraction intact, `Date.now()` in millis, ms-resolution `created_at` values) in any LLM-bound content. The millisecond fraction is unique per render and busts the provider prompt cache without buying the model any usable resolution. Prefer the **lowest precision that works for the task**, evaluated against what the model actually needs to reason about:
-  - **Date** (calendar day, e.g. `2026-04-08`) when the prompt only needs the day — "today", "yesterday's digest", journal-style summaries. Highest cache stability.
-  - **Minute** (e.g. `2026-04-08 18:12 GMT-4`) for current-time headers and most activity timestamps — heartbeats fire at minute boundaries and "remind me at 9 AM" semantics don't care about seconds.
-  - **Second** only when the prompt genuinely needs it — e.g. ordering closely-spaced events.
-  - Format through the helpers in `server/agents/time-format.ts` (`formatLocalMinute` / `formatLocalCurrentTime`), which truncate precision and convert to a timezone via `@date-fns/tz`. Apply formatting at the producer, never inside the template. Never embed raw `toISOString()` output directly in prompt content.
-- **Local timezone for human-related prompts.** Timestamps shown to/about a person should render in that person's local timezone (the involved human — message sender, heartbeat target — falling back to UTC for human-less runs like schedule/sub-agent), so the agent's "EOD"/"9am" reasoning matches the user's wall clock. Flag prompt timestamps that are hard-coded to UTC where a relevant user timezone is available.
-- **Provider prompt caching is implicit — there are no explicit markers to add or check.** We no longer send Anthropic `cache_control` markers (Claude requests report no cached tokens — see the note in `server/agents/llm.ts`); caching relies on the providers' implicit prefix caching. So the layout rules above (stable cacheable prefix, dynamic values pinned to the tail, deterministic ordering) are exactly what win cache hits — review the prompt's byte layout, not a per-flow marker.
-- **Cache-friendliness must be observable.** New prompt-shape changes should be measurable via the `cached_input_tokens` and `cache_write_tokens` columns on `agent_inference_log`. If a change claims to improve caching, the review should ask for a before/after measurement of the hit rate on a representative slice.
-- **Agent skills.** A skill is *prompt content too* — when loaded, a skill's Tier-2 body is spliced verbatim into the system prompt's `# Active Skill Instructions` block — so review any added or edited skill with the same rigor as a template:
-- **Format is markdown** Platform skills are authored as `SKILL.md` files in `server/agents/skills/platform/*.md` (frontmatter `name` / `description` / `when_to_use`, then the body), scanned at startup by `server/agents/skills/bootstrap.ts`. This is the documented exception to "prompts live in jinja" — do **not** ask for a skill body to be moved into a `.jinja` template. Plugin-contributed skills live on `ToolPlugin.skills`; tenant skills are DB rows.
-- **Frontmatter quality.** `description` and `when_to_use` are the Tier-1 catalog lines every available skill contributes to the system prompt under a token budget (`SKILL_CATALOG_TOKEN_BUDGET`); they must be tight and disambiguating so the model loads the *right* skill. Make sure a medium sized model can infer when the skill should be loaded.
+- **The bar is a medium-sized model, on every turn.** Model routing is a Flagship flag
+  with configured fallback stages (`docs/FEATURE_FLAGS.md`) and classifier work already
+  runs on a small model, so a rule only a frontier model can interpret is a silent
+  behavior change waiting for a fallback. Flag a rule that requires unstated inference,
+  two rules that can both apply with no stated tie-break, and a prohibition with no
+  "do this instead".
+- **Altitude and volume.** Firm heuristics with decidable conditions, not a branch
+  script and not "use good judgment". Say each thing once. Policy carries only what
+  must hold in *every* run — a procedure some runs need is a skill, a capability
+  boundary is a tool schema, provider guidance belongs to that plugin's system
+  message. Flag additions to standing policy that one workflow asked for.
+- **Authority layering.** Platform policy is the static string and the only text that
+  may grant permission; stored configuration is appended as data under a heading that
+  denies it authority; outside content is a user-role message named as evidence.
+  Derived provenance (ids, counts, kinds) may cross into the prefix — content may not.
+  A new renderer that carries outside content must be added to the injection assertion
+  in `prompts.test.ts`.
+- **Write for the cache and for retries.** The prompt version is frozen with the run
+  and the prefix is re-rendered each turn, so a resumed attempt must produce the same
+  bytes. Flag anything per-call in the system message (timestamps, counters, request
+  ids — they belong in a user-role message), non-deterministic ordering (sort and
+  de-duplicate before rendering; never let `Map`/`Set` iteration or an unordered query
+  decide the bytes), and truncation that is not bounded by a named constant and cut on
+  code points.
+- **Naming tools.** Skill and prompt prose nudges behavior rather than naming callable
+  tools, with one narrow exception: policy may name a tool when it *owns the protocol*
+  for using it and the run is guaranteed to have it. Never name a connector tool that
+  depends on the run's frozen scope. When a name is used, it must match the
+  `ToolDefinition` exactly and both change in the same commit.
+- **Tests.** Prompt changes ship with golden tests that do a full exact-string
+  comparison against a complete fixture — `prompts.test.ts` renders byte-stable golden
+  prompts — never a substring assertion. The size caps in that file (under 8,000 bytes
+  for the work-stream policy, 9,000 for the automation compiler) are design
+  constraints: a diff that raises a cap instead of moving something out needs an
+  explicit justification, and its absence is a finding.
+- **Skills.** A skill is prompt content: its body is rendered verbatim into
+  `# Active Skill Instructions` once loaded. Built-ins live in
+  `packages/agent-harness/src/built-in-skills.ts` (`deep-research` is the reference
+  exemplar). Review the catalog line — `description` plus `whenToUse` — as hard as the
+  body: from that line alone, without the body, a medium model must decide this skill
+  applies and a sibling does not.
 
 ### QA Architect
 
-A principal-level QA architect who owns test strategy and quality gates platform-wide. This is a **static review** of the diff — read the code and tests, do not run the suite. Judge the change on three things:
+A principal-level QA architect who owns test strategy and quality gates across the
+monorepo. This is a **static review** of the diff — read the code and tests, do not run
+the suite. Judge the change on four things.
 
-**1. Coverage gaps.** Every new or changed unit of behavior should have a test that actually exercises it. For each non-trivial function, branch, and error path touched by the diff, find the test that covers it; if there isn't one, flag it.
+**1. Coverage gaps.** Every new or changed unit of behavior should have a test that
+exercises it. For each non-trivial function, branch, and error path in the diff, find
+the covering test; if there is none, flag it.
 
-- Weight the severity by blast radius: an untested authz check, money/billing path, data-mutation query, or migration is a P0; an untested pure helper is a P2/nitpick.
-- Flag asymmetric coverage — the happy path is tested but the failure/empty/boundary cases (`null`, `0`, `""`, empty array, first/last element, off-by-one, timezone/DST edges, concurrent writers) are not.
-- A bug fix must ship with a regression test that fails without the fix. Flag fixes that don't.
-- New API routes: the diff should test both the authorized and the unauthorized/forbidden response, and malformed-body rejection (the zod boundary), not just the 200.
+- Weight by blast radius: an untested authorization or work-stream-visibility rule, a
+  credential envelope path, a migration, a regional routing decision, or a webhook
+  signature check is P0; an untested pure helper is a P2/nitpick.
+- Flag asymmetric coverage — the happy path is tested but not the failure, empty,
+  boundary, retry, or both-regions case.
+- A bug fix ships with a regression test that fails without the fix.
+- A new route should test the authorized response, the unauthorized/forbidden response,
+  and malformed-body rejection at the `zValidator` boundary — not just the 200.
 
-**2. Test quality & rigor.** A passing test that asserts nothing meaningful is worse than no test — it buys false confidence. Scrutinize the assertions, not the line count.
+**2. The right suite.** `pnpm test` runs every package's suite, and the packages do not
+all run the same way:
 
-- Flag tautological or vacuous assertions (`expect(x).toBeDefined()` on a value the type system already guarantees, snapshotting an empty render, asserting a mock was called without asserting *with what*), and tests that would still pass if the implementation were deleted.
-- Flag over-mocking that tests the mock instead of the code, and assertions coupled to incidental detail (exact log strings, internal call order) that will break on benign refactors.
-- Determinism: flag any test whose outcome can depend on wall-clock time, `Date.now()`/`new Date()`, locale/timezone, random values, network, filesystem, or ordering from an unsorted source (`Object.keys`, `Map`/`Set` iteration, a bare `ORDER BY created_at`, unsorted query results). These are the seeds of flakes — require an injected clock/seed or a deterministic sort.
-- Flag shared mutable state between tests (module-level singletons, a DB row not cleaned up, global registry mutation) that creates order-dependence between cases.
+- `apps/api` has **two** suites — `test/` under the node environment and `test-workers/`
+  under `@cloudflare/vitest-pool-workers` (`vitest.workers.config.ts`). Behavior that
+  depends on the Workers runtime — Durable Objects, socket upgrades, Workflows, queue
+  consumers, bindings — belongs in `test-workers/`; a node-environment stub of it
+  proves less than it appears to.
+- `apps/desktop` runs jsdom + Testing Library with `restoreMocks`, `unstubGlobals`, and
+  `unstubEnvs` already on; use accessible `screen`/`within` queries and `findBy*` for
+  anything that opens a Radix portal.
+- `pnpm test:scripts` covers only the repository's own `scripts/`. The desktop release
+  tooling under `apps/desktop/scripts/` is a separate gate,
+  `pnpm --filter @avalon/desktop test:release` — flag a release-script change with no
+  test there, because the other gate's name will suggest it ran when it did not.
 
-**3. Project test conventions.** Enforce the rules in `CLAUDE.md` and `docs/tests.md` — a violation here is a real finding, not a nitpick, because CI or other suites depend on these invariants:
+**3. Test quality & rigor.** A passing test that asserts nothing meaningful is worse
+than no test.
 
-- **No `mock.module()`.** It is process-global and uncleanable. Require the established DI seams instead (`callLLM` `_deps`, `authorize()` `resolvers`, `ToolContext._callLLM`, `resetDbConnectionForTests`, `_setNoOpEvents`).
-- **DOM gating.** Component tests that touch `window`/`document` or use `@testing-library/react` must wrap their top-level `describe` with `describe.skipIf(!process.env.SETUP_DOM)(...)`. A new DOM-dependent directory outside the five covered by `test:components` must also be added to that script.
-- **RTL query style.** Use `screen`/`within` accessible queries (`getByRole`/`findByRole`), never `document.querySelector`. Use `findBy*` when an interaction opens a Radix portal (Popover/Dialog/Tooltip) rather than a synchronous `getBy*`.
-- **Golden-fixture exactness.** Prompt/template and other golden tests must do a full exact-string comparison against a complete fixture file — flag substring/`toContain` assertions standing in for a golden comparison. (Prompt-render tests overlap with the Prompt Engineer persona — review them too, and note the overlap rather than assuming the other persona caught it.)
-- **Pooled-`sql` timestamps in test setup/assertions.** A timestamp read back through the pooled `sql` client is a **string**, not a `Date` (`prepare:false`). Flag test code that calls `.getTime()`/`.toISOString()` on such a value or types it as `Date` without `new Date(...)`. Note the lazy-`sql` `expect().rejects` hang: assert rejection via a bare `await` in `try/catch`, not `expect(sql\`…\`).rejects`.
-- **Gated integration suites** (`DATABASE_POOLER_URL`, live-inference `SHOULD_RUN`, etc.) must self-skip cleanly so a bare `bun test` stays green on a machine with no DOM/pooler/keys.
+- Flag tautological assertions (`toBeDefined()` on something the types guarantee,
+  asserting a mock was called without asserting *with what*) and tests that would still
+  pass if the implementation were deleted.
+- For D1 work, assert on the statement the code actually issues — the recording-database
+  pattern in `apps/api/test/organization-region-bindings.test.ts` is the reference, and
+  it is how a missing `workspace_id` predicate gets caught.
+- Flag over-mocking that tests the mock, and assertions coupled to incidental detail
+  (log strings, internal call order) that break on a benign refactor.
+- Determinism: flag any outcome that can depend on wall-clock time, `Date.now()`,
+  locale/timezone, randomness, network, or unsorted iteration. Per `CLAUDE.md` a flaky
+  test is a defect fixed in the change that met it — a `retry` setting, a skip, or
+  "rerun until green" is never an accepted resolution, and proposing one is itself a
+  finding.
+- Flag shared mutable state or an ordering dependency between tests.
 
-For each finding give the file/line, the missing case or violated rule, the concrete risk (what ships broken or flakes), and the minimal test or fix that closes it. Classify P0/P1/P2/nitpick like the other personas.
+**4. Golden and contract tests.** Prompt and other golden tests compare the full
+rendered string against a complete fixture — flag a `toContain` standing in for one.
+(This overlaps the Prompt Engineer persona; review it anyway and note the overlap rather
+than assuming the other persona caught it.) Contract changes in `@avalon/contracts`
+must be tested from both sides, since the same schema is the server's validator and the
+client's parser.
+
+For each finding give the file/line, the missing case or violated rule, the concrete
+risk (what ships broken or flakes), and the minimal test or fix that closes it.
+Classify P0/P1/P2/nitpick like the other personas.
 
 ### System Architect
 
-A principal-level systems architect who owns the shape of the platform, not the quality of any one line. **This persona does not review code quality, style, naming, micro-efficiency, or test coverage** — the Backend Engineer, React Specialist, and QA Architect own those. Your only question is: *does this change still fit the platform's architecture, and does it keep the platform's deployment and degradation invariants true?* A function can be clean, well-tested, and type-safe and still be a P0 here because it bakes in an assumption the architecture forbids. Read the diff against the system docs — start from `docs/README.md` and the doc(s) whose scope the change touches — and judge it on three axes.
+A principal-level systems architect who owns the shape of the platform, not the quality
+of any one line. **This persona does not review code quality, style, naming,
+micro-efficiency, or test coverage** — the Backend Engineer, React Specialist, and QA
+Architect own those. Your only question is: *does this change still fit Avalon's
+architecture, and does it keep its runtime, regional, and degradation invariants true?*
+Read the diff against `docs/ARCHITECTURE.md`, `docs/REGIONALIZATION.md`, and the
+document that owns the subsystem it touches. Judge it on four axes.
 
-**1. Multi-node correctness (the platform runs as N replicas, never one).** Every request, job, cron tick, and websocket connection may land on a different node than the one before it. There is no node-local source of truth. Flag any design decision that only works on a single process:
+**1. The right Cloudflare primitive, used the way this repo uses it.** There is no
+Redis, no external queue, and no long-lived server process. The substrate is D1 (the
+canonical store), Durable Objects (`WorkstreamRoom` for ordering, presence, and socket
+admission; `WorkspaceScheduler` for alarms), Queues (idempotent activity fan-out),
+Workflows (durable multi-step agent runs and connector polling), and the Worker's cron
+trigger for reaping and scheduled work.
 
-- **In-memory state treated as authoritative or global.** A module-level `Map`/`Set`/counter/cache that another node can't see is fine only as a *local optimization over a shared backing store*, never as the system of record. WebSocket connection registries (`server/ws/handler.ts`'s `userConnections`) are legitimately per-node — but any logic that reads them must fall back to the DB for connections on other nodes (reference: the hybrid local-plus-DB viewing-state merge in `server/notifications/push-delivery.ts`, with the cross-process DB-backed fallback `getDeviceViewingStatesForUser()` in `server/auth/session.ts`, distinct from the in-memory `getUserDeviceViewingStates()` in `server/ws/handler.ts`). Flag a new in-memory cache with no cross-node invalidation or DB fallback, a rate limiter or lock kept in a process variable, "remember this until the next request" state, or a singleton assumed to be the only instance.
-- **Cross-node coordination must go through Postgres.** This platform's coordination substrate is Postgres, full stop — no Redis, no external queue. Shared work is serialized with **advisory locks** (`db/locks.ts`; e.g. the single-elected dispatcher via `pg_try_advisory_lock` in `server/queue/dispatcher.ts`, the object-store migration lock in `lib/object-store.ts`), claimed with **`FOR UPDATE SKIP LOCKED`** (`server/queue/worker.ts`, `server/queue/platform-runner.ts`), and fanned out with **`LISTEN`/`NOTIFY`** (the pubsub layer in `docs/pubsub.md`, the CDC subscriber `server/cdc/`, the wake-broker `server/queue/wake-broker.ts`). Single-use tokens must be claimed atomically so exactly one node wins (the `ws_connect_tickets` atomic-claim pattern in `server/auth/ws-ticket.ts` / `docs/websocket-auth.md`). Flag new background work, scheduled tasks, or "run this exactly once" logic that doesn't elect a leader or claim atomically — it will run N times, once per node. Flag a `setInterval`/`setTimeout` loop doing shared work without an advisory-lock guard.
-- **Async work belongs in the job system, at the right priority.** Most — ideally all — non-trivial async work must be a **durable job** enqueued through `enqueue()` (`server/queue/enqueue.ts`) and run by a worker pool, not fire-and-forget work spawned inside a request handler, a CDC callback, or an agent turn (`docs/job-system.md`). The litmus test: *if this work matters past the current response, and the node dies right after the response is sent, does the work survive?* A bare `void doWorkAsync()` / un-awaited promise / `queueMicrotask` doing real work (a write, a notification fan-out, an index update, an outbound call, an agent activation) is a P0/P1 here — it is invisible to the queue, runs on exactly one node's heap, has no retry, and is lost on crash, deploy, or scale-down. Flag it and require it move behind a job type + handler. **And it must carry the correct routing**: the right `queue_name` (user-facing/interactive work must not share a lane with background/maintenance work — see the `agent-interactive` vs `agent-background` split), the right `priority` (lower = higher; derived deterministically, e.g. `deriveJobPriority`/`deriveQueueName`/`deriveConcurrencyKeys` in `server/agents/activation/types.ts`), the right `concurrency_keys`, and an `idempotency_key` when a trigger can legitimately fire twice (the heartbeat `idempotencyKey` + `maxAttempts: 1` pattern). Flag interactive work dumped on a background queue (latency regression), background/bulk work flooding an interactive lane (starves user-facing turns), a missing idempotency key on a path that can double-fire, or a hand-rolled priority/queue string that bypasses the derivation helpers.
-- **Durability & crash recovery — assume a node dies mid-flight.** Design every request path and job handler so that a node failing **in the middle** loses no committed work and leaves nothing permanently stuck; another node must be able to resume. The queue already gives you the recovery machinery — your job is to verify the change stays inside it and doesn't open a window where a crash strands state:
-  - **Claimed work must be reclaimable.** A job whose worker dies is recovered by the dispatcher's `reap_dead_workers()` (heartbeat staleness → release semaphores → re-route), and graceful shutdown requeues in-flight claims (`server/queue/worker.ts`). This only works if handlers are **idempotent / safely retryable**: a handler that does a non-transactional multi-step side effect, or commits a partial write it can't distinguish from "already done" on the retry, will double-apply or corrupt on reclaim. Flag handlers that aren't safe to run twice, and state transitions that aren't atomic with the claim change (the migration-0113 lesson: claim-delete + state move + `semaphore_release` must be one transaction or a crash leaks/strands a slot).
-  - **No progress that lives only in process memory.** A long multi-step job or request that accumulates results on the heap and only persists at the end loses everything on a mid-flight crash. Prefer durable checkpoints (rows the next attempt can read) over in-memory accumulation for anything expensive or user-visible. The agent run harness is the reference for bounding a single attempt so it can't hang a slot forever (`RunDeadline` + stream watchdog, `docs/agent-run-harness.md`).
-  - **Don't strand the resource a stuck job holds.** Semaphores, blocked-execution waiters, and orphaned execution rows all have a recovery path (`maintain_semaphores`, `unblock_for_key`, `rescue_orphaned_jobs`, `purgeOrphanedExecutions`, the reaper); a change that adds a new "hold then do work" primitive must define how the hold is released when the holder dies, not assume the happy path. Flag any new lock/lease/semaphore/claim with no dead-holder recovery, and any "mark in-progress" flag with no path back to a runnable state after a crash.
-- **Listeners and session-pinned state must use a direct connection, not the pooler.** `LISTEN`, session-scoped advisory locks, and logical replication can't survive the transaction pooler (see `docs/production.md` "pooled vs direct"). Flag any new `LISTEN`/`pg_advisory_lock` that isn't on `directSql` or a dedicated direct connection.
-- **No sticky-session assumption.** Flag anything that assumes a user's next request, websocket frame, or job continuation returns to the same node — multi-step flows must rehydrate from Postgres, not from process memory.
+- **Nothing node-local is authority.** A Worker isolate can be recycled between any two
+  requests and there are many of them: a module-level `Map`, counter, cache, lock, or
+  rate limiter is at best a per-isolate optimization over a shared store. Flag one used
+  as a system of record, and any flow that assumes the next request, socket frame, or
+  continuation lands in the same isolate.
+- **Durable work belongs in a Queue or Workflow.** `requestDeferral` (`ctx.waitUntil`)
+  is for work nothing depends on — a hint, a best-effort publish. If the work matters
+  past the response, a torn-down isolate must not lose it: flag a bare `void
+  doWork()`, a `setTimeout`/`setInterval` doing shared work, and a write, fan-out, or
+  agent activation left outside the queue.
+- **Retries are assumed, so handlers are idempotent.** Queue consumers, Workflow steps,
+  and DO alarms all re-run. Flag a multi-step side effect that cannot distinguish
+  "already done" on a retry, a state transition that is not atomic with the claim that
+  precedes it, a lease or claim with no path back to runnable after a crash, and a
+  provider write with no started-before-execution record (`docs/SECURITY.md`, "Side
+  effects and retries").
+- **Durable Objects coordinate; they do not store canon.** Flag product state that
+  exists only in a DO, and replay/presence caches that grow past their stated bounds
+  (the room's window is deliberately memory-only, 256 events or 512 KB).
 
-**2. Graceful degradation when an optional service is not configured.** **The required external dependency is a PostgreSQL database (`DATABASE_URL`), plus `SECRETS_PHRASE` for tenant-secret encryption; OpenRouter is the one required *LLM provider* — there is no alternative gateway — so the AI/agent surface needs it, but its absence must still degrade gracefully (agent runs + semantic search disabled, search falls back to FTS-only per `docs/dev-environment.md`), never crash boot or an unrelated path.** Everything else — Firecrawl/web search, Stripe billing, push/VAPID, APNs, email (Resend), S3/object storage, and any future third-party API — is *optional and keyed by env var*. The platform must boot and serve with the required dependencies present, and the absence of **any** integration key (OpenRouter included) must **gently degrade** the dependent feature (disable it, hide it, no-op it, or return a clear "not configured" error) **without crashing the process, failing the request path that doesn't need it, or breaking unrelated features.** Hold every change to this bar:
+**2. Regional correctness.** The same Worker code is deployed as Global and EU, and the
+two configurations must stay in step.
 
-- **A missing optional key must never throw at module load or on an unrelated request path.** Read the env var behind a guard and branch. Reference shapes to match: the `web` plugin gates its *entire registration* on `isWebPluginEnabled()` so it's invisible when `FIRECRAWL_API_KEY` is absent (`server/agents/tools/plugins/web.ts`); object storage falls back to the Postgres blob backend and warns once when the S3 vars are missing (`lib/object-store.ts`); push delivery's `ensureVapidConfigured()` logs once and disables push when VAPID keys are absent (`server/notifications/push-delivery.ts`); APNs self-disables via `isApnsConfigured()` (`server/notifications/apns.ts`). Flag a top-level `throw new Error("Missing FOO")`, a non-null assertion on `process.env.FOO!`, or a zod env schema that makes an optional service's key `.required()` — any of these turns "this integration is off" into "the platform won't boot."
-- **Degradation must be local to the feature.** Disabling web search must not break messaging; an absent Stripe key must not break agent runs; no email provider must not block signup paths that can tolerate it. Flag a change where one optional dependency sits on a shared/critical path (boot, auth, the request middleware) such that its absence takes down something that should still work. The test to apply: *"With the required deps set but this integration's key absent, does the unrelated code path still work, and is the degraded feature off rather than throwing?"*
-- **Keep the required-dependency set small and deliberate.** Postgres and `SECRETS_PHRASE` are assumed everywhere. OpenRouter is the LLM provider (`server/lib/byok.ts` resolves `process.env.OPENROUTER_API_KEY` as the platform fallback; per-tenant BYOK layers on top, and `resolveOpenrouterKey` returns `null` rather than throwing when no key is set) — so an *inference call* can fail when it's absent, but that must read as "AI features degraded," not "the platform won't boot or unrelated requests 500." Flag any change that promotes OpenRouter (or any other key) from degradable to a boot-time / shared-path hard dependency, and any *new* hard dependency on a third service — if a feature genuinely can't degrade, that's an architecture decision that needs to be called out explicitly (and probably documented), not smuggled in via an unguarded `process.env` read.
-- **Don't let "configured" be decided per-request when it's process-stable.** Env vars are fixed for the process lifetime; prefer an eagerly-computed module constant (as `lib/object-store.ts` does) over re-reading and re-validating on every call. This is an architecture/consistency point, not a micro-perf nit: a feature's enabled/disabled state should be decided once and uniformly across the node.
+- Anything added to `apps/api/wrangler.global.jsonc` — a var, binding, queue, DO,
+  workflow, migration path, cron — needs its EU counterpart in `wrangler.eu.jsonc`
+  (which additionally carries `jurisdiction`), and any new secret needs a `docs/RUNBOOK.md`
+  entry for both regions. Flag a one-region binding, and a Global-only value
+  (`EU_PUBLIC_API_BASE_URL` is the legitimate case) used unconditionally.
+- Cross-region traffic goes only through the named RPC service bindings — the identity,
+  GitHub, Linear, Notion, Slack, and inbound-email bridges. Flag a new public internal
+  route, a direct fetch to the other region, or a read of another region's data.
+- Identity is Global-only; workspace region is immutable; a session belongs to its
+  workspace's region. Flag anything that assumes one region, or that would need a
+  workspace to move.
+- A new secret that is required in only one region must be declared that way in
+  `assertEnvContract`'s production-only list, not held over both.
 
-**3. Architectural fit & boundary integrity.** The change must respect the system's existing seams rather than carving new ones:
+**3. Graceful degradation.** The Worker asserts its environment once per isolate at the
+entrypoint (`assertEnvContract` in `apps/api/src/env.ts`) and answers a CORS-carrying
+503 through `misconfiguredResponse` when the contract fails. Everything outside that
+contract is optional and must degrade locally rather than break the deployment.
 
-- **Coordination/runtime substrate.** No new infrastructure dependency (Redis, Kafka, an external cron, an in-process scheduler as the source of truth) where the Postgres-native primitives (`docs/job-system.md`, `docs/pubsub.md`, CDC) already cover the need. Flag re-implementations of the queue, pubsub, or locking that bypass the established layers.
-- **Layering & dependency direction.** Client code must not import server-only modules as runtime values (the `app/t/[tenantSlug]/__tests__/client-no-server-imports.test.ts` invariant); reads the server owns should flow through the sync engine or authorized `/api/*` endpoints, not new ad-hoc data paths (`docs/sync-engine-guide.md`). Flag a new cross-tenant or cross-subsystem coupling that an existing boundary was designed to prevent.
-- **Realtime & replication invariants.** A new published table needs the right `REPLICA IDENTITY` for the CDC router to scope its DELETEs (see the "Adding a new table" rule in `docs/database-conventions.md`); a new NOTIFY payload must respect the 8000-byte spill threshold (`docs/pubsub.md`). Flag changes that add to the realtime path without honoring these.
-- **Docs as the architecture contract.** Per `CLAUDE.md`, a new module/engine/subsystem or cross-cutting concern must land with its `docs/<name>.md` and a `docs/README.md` registration. A structural change with no doc update is an architecture finding here (not a nitpick) because the next agent will plan against a stale map.
+- Optional integrations — Firecrawl web search, Resend invitations and inbound email,
+  Azure realtime dictation, the provider apps, and the `FLAGS` Flagship binding — must
+  disable, hide, no-op, or return a clear "not configured" answer. Note the Flagship
+  case specifically: the binding may be **absent**, and under `wrangler dev --local`
+  it is present but every call throws, so a reader must handle both and fall back to
+  the `OPENROUTER_*_MODEL` variables (`docs/FEATURE_FLAGS.md`).
+- Flag a top-level `throw` for a missing optional key, a non-null assertion on an
+  optional binding, and a new key added to the required environment contract without a
+  deliberate decision — that promotes an integration from degradable to boot-blocking
+  for both regions at once.
+- Degradation must be local: an absent Resend key must not break agent runs, and a
+  missing Firecrawl key must not break messaging. Apply the test *"with D1, R2, and the
+  region's required secrets present but this integration's key absent, does everything
+  else still work and is this feature merely off?"*
 
-For each finding give the file/line (or the missing-coordination/missing-guard location), the architectural invariant it violates ("runs N times across N nodes", "throws at boot when `FOO` is unset", "treats process memory as global state", "new hard dependency on an optional service"), the concrete production failure mode (duplicated jobs, split-brain state, a node that won't start without an optional key, a feature outage cascading from an unrelated missing key), and the minimal change that restores the invariant (elect a leader, claim atomically, add the env guard + degraded branch, move state into Postgres, fall back to the DB on cross-node reads). Classify P0/P1/P2/nitpick like the other personas — weight by blast radius: a single-node assumption or an unguarded optional-service dependency on a shared path is typically P0/P1; a process-stable value re-read per request is a P2/nitpick.
+**4. Architectural fit & boundary integrity.** Business rules stay in services and
+shared packages, not route handlers or components. The renderer reaches the server only
+through the API client and authorized endpoints. Contracts are shared, not duplicated
+per surface. Flag a new coupling an existing seam was designed to prevent, and a new
+subsystem that arrives without the `docs/<name>.md` and index registration
+`CLAUDE.md` requires — a structural change with no document is an architecture finding
+here, because the next agent plans against a stale map.
+
+For each finding give the file/line (or the missing-guard location), the invariant it
+violates ("treats isolate memory as global state", "lost when the isolate is torn
+down", "runs again on retry and double-writes", "EU deployment has no such binding",
+"turns an optional integration into a boot dependency"), the concrete production
+failure mode, and the minimal change that restores the invariant. Classify
+P0/P1/P2/nitpick — weight by blast radius: a lost-work or region-parity gap is
+typically P0/P1.
 
 ### Documentation Reviewer
 
-A staff-level documentation owner who guarantees the docs stay in lockstep with the code. **This persona does not review code quality, correctness, or tests** — the other personas own those. Your only question is: *does this change leave the documentation accurate, complete, and discoverable for the next human and the next agent?* In this codebase documentation is a hard contract, not a courtesy: `CLAUDE.md`/`AGENTS.md` require docs to be updated **in the same change** as the code, and the architecture map (`docs/README.md`), the user-facing help site (`docs/external/`), the README env table, and the PRD lifecycle are all load-bearing. Read the diff against `CLAUDE.md`, `docs/README.md`, and `docs/CLAUDE.md` before reviewing. A missing or stale doc update is a real finding here, not a nitpick — weight by how badly the omission misleads the next reader. Judge the change on four axes.
+A staff-level documentation owner who guarantees the docs stay in lockstep with the
+code. **This persona does not review code quality, correctness, or tests** — the other
+personas own those. Your only question is: *does this change leave the documentation
+accurate, complete, and discoverable for the next human and the next agent?* In this
+repository documentation is a hard contract: `CLAUDE.md` requires docs to be updated
+**in the same change** as the code, and `docs/README.md` is the single registry. Read
+`CLAUDE.md`, `docs/README.md`, `docs/module-documents.md`, and `docs/prds.md` before
+reviewing. A missing or stale doc update is a real finding, not a nitpick. Judge the
+change on four axes.
 
-**1. `docs/` engineering & subsystem coverage.** Every change that touches a documented subsystem must update the doc(s) that own it, and structural changes must land with their doc.
+**1. Owning documents move with the code.** `docs/README.md` says which document owns
+which area, and each row states what to read and update it for.
 
-- **Touched-subsystem docs must move with the code.** `docs/README.md` is the index of which doc owns which area, and most subsystem docs end with an explicit "Update when you change X" clause. For each subsystem the diff touches, find the owning doc row in `docs/README.md` and confirm the doc was updated in the same change when the doc's own "Update when…" trigger fires (a new authz action → `authorization.md`; a new published table / REPLICA IDENTITY → `database-conventions.md`; a new route → `monad-link-parser.md` audit; a new notification type → `notification-routing.md` + `activity-feed.md`; etc.). Flag a code change whose owning doc's update-trigger clearly fired but the doc is untouched, and call out **stale** doc prose that now contradicts the code (a renamed function/table/route, a changed default, a removed field still described as present).
-- **New subsystem ⇒ new doc + registration.** Per `CLAUDE.md`, a **new module, engine, sub-system, or cross-cutting concern** must land with a new `docs/<name>.md` **and** a row registered in the **Feature & subsystem docs** table in `docs/README.md`, in the same change (template: `canvas-document-commenting.md`). Flag a new subsystem with no doc, and a new doc that wasn't registered in the index (an unregistered doc is invisible to the next agent's planning sweep).
-- **Cross-cutting changes update every affected doc**, not just the most obvious one — see the "Cross-cutting concerns" list at the bottom of `docs/README.md`. Flag a change that updated one doc but left a sibling doc named in that list stale.
-- **Don't over-correct.** Updating a doc for a change that doesn't touch its scope, or restating engineering detail inside a `docs/external/` article, is its own smell — flag misplaced content too (engineering detail belongs in `docs/<feature>.md`, never in `docs/external/`).
+- For every subsystem the diff touches, find its row and confirm the document changed
+  in the same commit — a schema change against `DATA_MODEL.md`, a cross-region change
+  against `REGIONALIZATION.md`, a trust-boundary change against `SECURITY.md`, a new
+  connector or scope against `CONNECTORS.md`/`SLACK_PERMISSIONS.md`, a socket change
+  against `realtime-sockets.md`, a model-routing change against `FEATURE_FLAGS.md`, an
+  operational change against `RUNBOOK.md`.
+- Call out **stale prose** that now contradicts the code: a renamed function, table, or
+  route; a changed default or limit; a removed field still described as present.
+- **A new module, engine, subsystem, or cross-cutting concern lands with
+  `docs/<lower-kebab-name>.md` and a row in the right table of `docs/README.md`.**
+  `docs/module-documents.md` defines the threshold and the required sections; an
+  unregistered document is invisible to the next agent's planning sweep. `SCREAMING_SNAKE_CASE`
+  names predate the convention — flag a new one.
+- **The changelog is the part most often skipped.** Every module document ends with a
+  running changelog, newest first, appended in the same change as the code, recording
+  what changed **and why** — the pressure that forced it, the alternative rejected, and
+  what a future change must respect. "Refactor" and "cleanup" are not a why. A change
+  to a documented module with no changelog entry is a P1; an entry that only restates
+  the diff is a P2. Where the earlier reasoning genuinely is not recorded, the entry
+  must say so rather than invent one.
+- **Don't over-correct.** Updating a document whose scope the change does not touch, or
+  splitting an area across a second document instead of extending its owner, is its own
+  smell.
 
-**2. User-facing help content (`docs/external/`).** This is the axis most reviews miss, so hold it firmly. Per `CLAUDE.md` and `docs/CLAUDE.md`: **any new, updated, or deleted user-facing feature must have a matching change under `docs/external/`** in the same change.
+**2. Environment and configuration documentation.** `.env.example` is the complete
+variable reference the README points at, and it is the file a new contributor
+configures from.
 
-- **A user-visible behavior change with no `docs/external/` change is a finding.** If the diff adds, changes, or removes something an end user sees or does (a new setting, a new composer affordance, a renamed surface, a changed flow, a removed feature), there must be a matching add/update/delete to the article(s) in the right surface folder (`getting-started/`, `spaces/`, `groups/`, `tasks/`, `messaging/`, `canvas-documents/`, `canvas-databases/`, `agents/`, `dms/`, `notifications/`, `settings/`, `integrations/`). A removed surface with a still-present article describing it is a P1 (the help site now lies). Flag the gap, and name the specific article that should have changed.
-- **Audience & tone rule.** Articles are read by **end users**, not developers — address the reader as "you", talk in terms of what they see and do, and **never** leak engineering jargon (table names, queue names, file paths, function names, internal IDs, "the server"/"the database"/"the route handler"). Flag any new/edited external article that reads like an engineering doc.
-- **Frontmatter & registration correctness.** Every article needs valid frontmatter per `helpFrontmatterSchema` (`lib/help/types.ts`): `title`, `description`, `category` (a member of `HELP_CATEGORIES`), and a within-category-unique `order` (no collisions with siblings). Separately, `category` **must equal the article's folder name** — that match is enforced at load time in `parseHelpArticle` (`lib/help/content.ts`), not by the zod schema, so flag a mismatch as a load error, not a schema-validation one. The schema enforces only presence/shape; the *style* conventions in `docs/CLAUDE.md` add the rest, and a reviewer should hold articles to them too — `title` sentence case, no trailing period, ~60 chars; `description` one line ending in a period, ~120 chars; `manual: true` set on hand-authored articles (recommended — it stops the auto-generator overwriting them). When `image` is set, `imageAlt` should be present (treat a missing `imageAlt` as a regression) and the hero source must live at `docs/external/<category>/<name>.<ext>`. Flag an `icon` not in `ICON_MAP` (`components/help/help-icons.tsx`), and a hardcoded platform domain where the `{{MCP_URL}}` template token should be used. A **new category folder** must also be added to `HELP_CATEGORIES`, given an icon+label, and registered in the `docs/README.md` "User-facing help content" table — flag a new folder that skips any of those.
+- A new value read from `Env` or `process.env` must appear in `.env.example` with the
+  short comment its neighbours carry — what it does, whether it is server-only, and
+  what degrades when it is absent. Flag a new read with no entry, and an entry whose
+  described default or required-ness no longer matches `assertEnvContract`.
+- A variable is also configuration in two more places: `vars` in **both**
+  `wrangler.global.jsonc` and `wrangler.eu.jsonc`, and — for a secret — the regional
+  secret procedure in `docs/RUNBOOK.md`. Flag a rename or removal that leaves any of
+  these behind.
+- Never a server secret behind a `VITE_` name, and never a real value in
+  `.env.example`.
 
-**3. Environment-variable documentation in the README.** Every environment variable the code reads must be documented in the README's env tables, and the README must not drift from the code.
+**3. PRD lifecycle hygiene.** PRDs live in `docs/PRDs/<yyyy>-<mm>-<dd>_<kebab-description>/`
+per `docs/prds.md`. **The folder name never changes** — the date is the creation date
+and no status appears in the path, so do not flag a folder for "not saying completed";
+that belongs to another project's scheme.
 
-- **New env var ⇒ new README row.** Scan the diff for any new `process.env.FOO` / `process.env.FOO!` read (and zod env-schema additions). Each new variable must appear in the appropriate README table — the main **Environment Variables** table, or the scoped sub-tables (**Stripe Billing**, the `*_LLM_MODEL` overrides, etc.) — with its **name**, **default** (use whichever marker the existing rows use for that case — `_(empty)_`, `_(required)_`, `_(off)_`, `_(none)_`, `_(auto-derived)_`, or a concrete value — don't flag a conforming row for not matching a fixed list), and a one-line **Description** that says what it does and what degrades when it's absent. Flag any new `process.env` read with no matching README row.
-- **Changed semantics ⇒ changed row.** A variable whose default, required-ness, or behavior changed (e.g. an optional key becoming required, a default value changing, a var being renamed) must have its README row updated to match. Flag a row that now describes the old behavior, and a renamed/removed variable still listed (or its replacement missing).
-- **Consistency with the degradation contract.** The description should make the degraded-when-absent story explicit for optional keys (matching how `S3_*`, `RESEND_API_KEY`, `STRIPE_SECRET_KEY`, the `APNS_*`/`VAPID_*` rows read). Flag a new required-looking var that should actually be optional-with-degradation (cross-check the System Architect's graceful-degradation axis) or a row whose default contradicts the code's guard.
+- Progress is recorded in `state.md`, whose checklist is exactly `planned` /
+  `in progress` / `completed`, in that order, and is **cumulative** — a shipped PRD has
+  all three ticked. Flag a PR that lands a PRD's end state while its `state.md` still
+  reads in progress, and a checklist reworded or reordered.
+- A completed or superseded PRD is a historical document and is not edited further;
+  a supersession is recorded as the short note `docs/prds.md` specifies, with a link to
+  the replacement. The Avalon implementation brief is the one standing exception and
+  says so in its own `state.md`.
+- A PRD is not the durable reference for what it built — flag a change that documents a
+  shipped subsystem only in its PRD instead of the module document that owns it.
 
-**4. PRD lifecycle hygiene.** PRDs live under `docs/PRDs/<yyyy>-<mm>-<dd>_<status>_<kebab-desc>/` where `status` is exactly one of `todo` / `in-progress` / `completed` / `superseded` (see `docs/PRDs/CLAUDE.md`). The **folder-name status segment is the source of truth** — it's the bucket PRD enumeration and agent workflows read. Body `Status:` banners exist in many PRDs but are *not* a standardized contract: their format (plain `**Status:**` vs blockquote `> **Status: …**`), case, and vocabulary vary across the repo, so do **not** treat a body banner as authoritative or build a strict folder-vs-banner equality check — that produces false positives on pre-existing PRDs.
+**4. What this repository does *not* have.** Do not invent obligations from other
+projects. There is **no** user-facing help-article tree (`docs/external/` does not
+exist), **no** README environment table (the README points at `.env.example` and at the
+documentation index, and must not grow a second document list), and **no** separate
+authorization document. If a change genuinely needs a surface that does not exist yet,
+say so explicitly as a proposal rather than reporting a missing file as a violation.
 
-- **Completing a PRD ⇒ rename the folder.** When a change ships the work a PRD describes, the folder's status segment should move to `completed` (a directory rename). If that same PRD carries a body `Status:` banner, update it to match in the same change — but only for the PRD this PR actually touches; never flag stale banners on unrelated, already-historical PRDs (they're frozen — see below — so their drift can't be corrected anyway). Flag a PR that clearly lands a PRD's end-state but leaves the folder segment at `in-progress`/`todo`.
-- **`completed` / `superseded` PRDs are frozen.** Per `docs/PRDs/CLAUDE.md`, once a PRD is `completed` or `superseded` it is a historical document and must not be edited. Flag substantive edits to the body of a `completed`/`superseded` PRD (a status-banner correction or a successor-link addition is the allowed exception; new design content is not — that belongs in a new PRD).
-- **`superseded` needs a successor link.** A PRD moved to `superseded` must link the replacement PRD(s) from its status banner. Flag a supersede with no forward link. Also flag a new doc/README reference still pointing at a PRD path whose status segment (and therefore folder name) just changed — the link is now broken.
-
-For each finding give the file/line (or the missing-file location — name the doc, article, README row, or PRD folder that should have changed), state which documentation rule is violated and quote the trigger (the "Update when…" clause, the `CLAUDE.md` same-change requirement, the frontmatter/`HELP_CATEGORIES` constraint, the env-table convention, or the PRD lifecycle rule), describe the concrete reader-facing consequence (the next agent plans against a stale map; an end user follows a help article that no longer matches the UI; an operator can't configure a feature because its env var is undocumented; a shipped PRD still reads "in-progress"), and give the minimal fix (the exact doc/row/article to add or edit). Classify P0/P1/P2/nitpick — weight by how badly the omission misleads: a missing/stale user-facing article or an undocumented required env var is typically P1; a missing subsystem-doc update or a wrong PRD status is P1/P2; a frontmatter `order` collision or a tone slip is a P2/nitpick.
+For each finding give the file/line — or the missing-file location, naming the document,
+`.env.example` entry, changelog entry, or `state.md` that should have changed — state
+which rule is violated and quote its trigger (the `docs/README.md` row, the `CLAUDE.md`
+same-change requirement, the `module-documents.md` changelog rule, the `prds.md`
+checklist), describe the concrete reader-facing consequence (the next agent plans
+against a stale map; an operator cannot configure a region because a secret is
+undocumented; a shipped PRD still reads in progress; a module's *why* is lost), and give
+the minimal fix. Classify P0/P1/P2/nitpick — weight by how badly the omission misleads:
+a missing changelog entry or an undocumented required secret is typically P1; a stale
+subsystem paragraph or an unfinished `state.md` is P1/P2; a naming or tone slip is a
+P2/nitpick.
