@@ -80,12 +80,18 @@ migration change to these bars:
   it runs twice** (double-counting, re-incrementing, re-sending), since that is the
   case a retry or a hand-run actually reaches.
 - **New tables and columns.** A workspace-owned table carries `workspace_id` and the
-  indexes its reads actually use — but identity, control-plane, and cross-region
-  routing tables (`users`, `workspaces`, `sessions`, `oauth_states`,
-  `desktop_login_tickets`) legitimately do not, so check what the table *is* before
-  flagging. A `CHECK` belongs on a closed set and deliberately *not* on a set that is a
-  moving product decision (see `workstreams.model_override` in `docs/DATA_MODEL.md`).
-  A new column's default must fail closed unless there is a stated reason it cannot.
+  indexes its reads actually use. The genuine exceptions are only `users` and
+  `workspaces` — the latter trivially, since its own `id` is the workspace. In
+  particular do **not** treat auth and control-plane tables as exempt: `sessions`,
+  `desktop_login_tickets`, and `oauth_states` all carry `workspace_id`, **nullable**,
+  because a person can authenticate before choosing or joining an organization and the
+  row binds to a workspace only after setup or invitation acceptance (the rebuild in
+  `0011_identity_first_onboarding.sql`, which states that reason itself). So a new
+  auth- or ticket-shaped table that omits the column entirely is a finding — nullable
+  is the answer here, absent is not. A `CHECK` belongs on a closed set and deliberately
+  *not* on a set that is a moving product decision (see `workstreams.model_override` in
+  `docs/DATA_MODEL.md`). A new column's default must fail closed unless there is a
+  stated reason it cannot.
 
 **Boundary validation (Zod).** Everything entering the Worker from outside the
 process is parsed:
