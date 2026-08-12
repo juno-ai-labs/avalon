@@ -304,6 +304,8 @@ accessibility; the trailing span must stay decorative and excluded from flexible
 copy styling. Dialogs without an explicit initial-focus target keep Radix's
 default focus behavior.
 
+Shipped in #138.
+
 ### 2026-08-12 — A started suggestion opens with the member's own turn, not Avalon's
 
 **What changed:** `createFromOpportunity` writes its opening message as the
