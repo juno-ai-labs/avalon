@@ -605,6 +605,14 @@ export function MeetingNotesScreen(): React.JSX.Element {
     void pending.catch(() => undefined).finally(() => bridge.closeMeetingNotes());
   }, [dictation.state, finalizeRecording]);
 
+  // A recording can end on its own — a dictation error finalizes the meeting —
+  // and the question stops applying with it. Leaving the dialog up would ask
+  // about a recording that has already stopped, over a window whose only
+  // remaining news might be the error that stopped it.
+  useEffect(() => {
+    if (!recording) setCloseConfirmationOpen(false);
+  }, [recording]);
+
   useEffect(() => {
     const bridge = desktopBridge();
     return bridge.onMeetingCloseRequested((reason) => {

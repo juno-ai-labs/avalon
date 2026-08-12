@@ -2057,6 +2057,11 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
       logWarn('meeting', 'Failed to stop native computer audio after window close', error);
     });
     meetingWindows.delete(meetingWindow);
+    // A meeting window is the only thing that vetoes a quit, so while one is
+    // still open the quit it abandoned is still the close every other meeting
+    // window is answering. Once the last has gone, Avalon is staying up, and
+    // the next close is the person's again.
+    if (meetingWindows.size === 0) quitting = false;
   });
   try {
     await loadRenderer(
@@ -2312,18 +2317,19 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// A quit asks every window to close in one cascade, and this is what tells a
-// meeting window that the close it is answering is a quit rather than the
-// person closing that window — the difference between finalizing and asking
-// first. The flag is cleared on the next turn of the loop, once the cascade is
-// over: a meeting window finalizes asynchronously and so vetoes this quit
-// anyway, and a flag left standing would silence the confirmation for every
-// close that followed in the same session.
+// A quit asks every window to close, and this is what tells a meeting window
+// that the close it is answering is a quit rather than the person closing that
+// window — the difference between finalizing and asking first.
+//
+// The flag says "a quit was requested and has not finished", not "a quit was
+// requested this tick", because the cascade is not reliably synchronous: on
+// macOS a window mid-fullscreen-transition defers its close until the
+// transition ends, and a close arriving after a timed reset would be read as
+// the person's and answered with a dialog — vetoing the quit silently, which is
+// the one outcome this flag exists to rule out. It is cleared where the quit is
+// known to be over instead, as the last meeting window goes.
 app.on('before-quit', () => {
   quitting = true;
-  setImmediate(() => {
-    quitting = false;
-  });
 });
 
 // `will-quit`, not `before-quit`: the latter fires before any window is asked to

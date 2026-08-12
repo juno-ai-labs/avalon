@@ -1390,6 +1390,23 @@ describe('Closing the settings window with Escape', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it('still closes from every section when nothing has been typed', async () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+
+    // The pane sweep asks the panes a question about themselves: the first one
+    // to render a saved value into a writable text field would make Escape
+    // permanently dead in that section, and the symptom is a key that quietly
+    // stopped working rather than a failing assertion anywhere near the cause.
+    for (const section of ['Account', 'Digest', 'Workspace', 'Connections', 'Application'] as const) {
+      openSettingsSection(section);
+      await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(section));
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(close, `Escape is dead in ${section}`).toHaveBeenCalled();
+      close.mockClear();
+    }
+  });
+
   it('dismisses an open dialog without taking the window with it', async () => {
     api.getAvailableConnectorTypes.mockResolvedValue(['granola']);
     renderSettings(workspace, createTestQueryClient(), true);
