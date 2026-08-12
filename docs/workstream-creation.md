@@ -296,7 +296,7 @@ retried run replayed against an empty transcript.
 
 Making the brief a human turn fixes that and immediately breaks the guess the
 other way: the brief becomes the newest human message *forever*, so retrying a
-later trigger-less run — a scheduled wakeup, an activity, a digest — would fence
+later trigger-less run — a scheduled wakeup, an activity — would fence
 the transcript back at sequence 1 and re-execute the original request with days
 of finished work cut out of it. So the guess goes: runs now record
 `harness_runs.trigger_message_id` and `retry` inherits the failed run's own
