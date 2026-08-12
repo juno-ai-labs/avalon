@@ -87,7 +87,6 @@ interface VerifiedIngestion {
   routingUserId?: string;
   bodyHash: string;
   raw: ExactRawBody;
-  includeRecoverableConnections?: boolean;
   normalize: (
     connection: ConnectorConnectionContext,
     payloadRef: string,
@@ -172,7 +171,6 @@ export class ProviderWebhookService {
         ...(routingUserId ? { routingUserId } : {}),
         bodyHash: delivery.rawContentHash,
         raw,
-        includeRecoverableConnections: lifecycle !== null,
         normalize: (connection, payloadRef) => source
           ? source.normalize(connection, verifiedEnvelope, payloadRef)
           : normalizeGitHubWebhook(connection, delivery, payloadRef),
@@ -256,7 +254,6 @@ export class ProviderWebhookService {
         eventType: verified.eventName,
         accountId: verified.organizationId,
         ...(linearAuthorizationUserId ? { routingUserId: linearAuthorizationUserId } : {}),
-        includeRecoverableConnections: lifecycle !== null,
         bodyHash: verified.bodyHash,
         raw,
         normalize: (connection, payloadRef) => source
@@ -474,7 +471,6 @@ export class ProviderWebhookService {
     let connections = await this.loadMatchingConnections(
       input.provider,
       input.accountId,
-      input.includeRecoverableConnections ?? false,
       input.routingAccountIds,
       input.routingUserId,
     );
@@ -867,7 +863,6 @@ export class ProviderWebhookService {
   private async loadMatchingConnections(
     provider: Provider,
     accountId: string | null,
-    includeRecoverable: boolean,
     routingAccountIds: string[] | undefined,
     routingUserId: string | undefined,
   ): Promise<ConnectorConnectionContext[]> {
@@ -876,9 +871,13 @@ export class ProviderWebhookService {
     if (provider === "notion" && (!routingAccountIds || routingAccountIds.length === 0)) {
       return [];
     }
-    const statusClause = includeRecoverable
-      ? "status IN ('healthy', 'error', 'needs_reconnect')"
-      : "status = 'healthy'";
+    // One clause, and no parameter selecting between two. The old
+    // `includeRecoverable` split let some inbound deliveries reach a connection
+    // this row believed was broken while others could not, which made whether a
+    // provider's event was processed depend on a belief rather than on the
+    // event. A webhook is a request Avalon can usually answer, so it is
+    // answered; `disabled` is the person's decision and stays excluded.
+    const statusClause = "status <> 'disabled'";
     const query = provider === "notion"
       ? `SELECT * FROM connector_connections
          WHERE connector_type = 'notion' AND scope = 'personal'
@@ -1058,7 +1057,7 @@ export class ProviderWebhookService {
       `UPDATE connector_connections
        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
            updated_at = ?
-       WHERE id = ? AND status = 'healthy'`,
+       WHERE id = ? AND status <> 'disabled'`,
     ).bind(
       encrypted.ciphertext,
       encrypted.iv,
