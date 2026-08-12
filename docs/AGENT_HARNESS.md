@@ -109,7 +109,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 ## Limits
 
-Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the live tail with an LLM continuation summary. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages.
+Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`RUNBOOK.md`](RUNBOOK.md).
 
@@ -242,6 +242,20 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
+
+### 2026-08-12 — Compaction moved to its own document
+
+**What changed:** Compaction policy — the threshold, the summary prompt, the
+shape of the compacted transcript, and the stored work-stream checkpoint — now
+lives in [`context-compaction.md`](context-compaction.md), which carries its own
+changelog. This document keeps a one-paragraph summary and a pointer.
+
+**Why:** It had stopped being a paragraph about the loop. It has a persisted
+table, a replay path through the API service, a prompt with its own design
+constraints, and invariants an outside change can break silently; the entry that
+prompted the split (a first-user-message pin that outlived the conversation it
+came from) needed more explanation than a harness-wide log should carry. The
+reasoning for that change is the first entry there, not here.
 
 ### 2026-08-12 — A run records what triggered it, so a retry stops guessing
 
