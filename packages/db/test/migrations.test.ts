@@ -1974,4 +1974,27 @@ describe("database migrations", () => {
     ).get()).toEqual({ message_type: "text" });
     database.close();
   });
+
+  it("serializes Notion webhook setup to one current generation", () => {
+    const database = migrateFreshDatabase();
+    const insert = database.prepare(
+      `INSERT INTO notion_webhook_setup_nonces
+       (nonce_hash, verification_token_hash, created_at, expires_at, consumed_at, is_current)
+       VALUES (?, NULL, '2026-08-12T20:00:00.000Z', '2026-08-12T20:30:00.000Z', NULL, 1)`,
+    );
+    const firstHash = "a".repeat(43);
+    const secondHash = "b".repeat(43);
+
+    insert.run(firstHash);
+    expect(() => insert.run(secondHash)).toThrow(/UNIQUE constraint failed/u);
+
+    database.prepare(
+      "UPDATE notion_webhook_setup_nonces SET is_current = 0 WHERE nonce_hash = ?",
+    ).run(firstHash);
+    insert.run(secondHash);
+    expect(database.prepare(
+      "SELECT nonce_hash FROM notion_webhook_setup_nonces WHERE is_current = 1",
+    ).all()).toEqual([{ nonce_hash: secondHash }]);
+    database.close();
+  });
 });

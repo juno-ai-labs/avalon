@@ -261,7 +261,8 @@ without putting either setup material or its signing secret into logs:
    subscription immediately.
 2. Run `pnpm notion:webhook:copy-token` after Notion posts the challenge. Paste
    the copied value into **Verify subscription**. The command prints only the
-   capture timestamp, not the token.
+   capture timestamp, not the token, and refuses until the stored ciphertext is
+   proven to belong to the current consumed setup generation.
 3. If the nonce expires or setup must be restarted, run the prepare command
    again. The new command invalidates any earlier unconsumed URL; never recover a
    nonce or verification token from Workers Logs or Logpush.
