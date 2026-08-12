@@ -18,6 +18,11 @@ import {
 import { z } from "zod";
 
 import type { Env } from "../env";
+import {
+  DISMISSAL_RUN_LIMIT,
+  dismissalRunCutoff,
+  suggestionAdmission,
+} from "../services/activity-routing-feedback";
 import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
@@ -25,7 +30,7 @@ import { automationModelOverride, scheduledWorkstreamModel } from "../services/a
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
-import { logWarn } from "../observability/logger";
+import { logInfo, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 
 interface ActivityRow {
@@ -847,12 +852,51 @@ async function startActivityAutomation(
   return run.workstream_id;
 }
 
+/**
+ * The speculative half of routing: no watch and no automation asked for this
+ * activity, so a model is asked whether one of the work streams a person is
+ * already using is about it, and a card offering the attachment is written if
+ * it says yes.
+ *
+ * Nothing here is asked for, which is why every gate below withholds rather
+ * than admits. `docs/contextual-routing.md` owns the whole of it.
+ */
 async function routeContextually(
   env: Env,
   activity: ActivityRow,
   excludedWorkstreamIds: Set<string>
 ): Promise<boolean> {
   if (!env.OPENROUTER_API_KEY) return false;
+  // A suggestion card is a stronger interruption than a digest line, not a
+  // weaker one: it lands in a transcript with two buttons and is rebuilt on
+  // every refetch until somebody clicks one, where a digest line is a row in a
+  // batch read on the reader's own schedule. So the question the manifest
+  // already answers — would a person who was away for a day want this read back
+  // to them? — decides this too, and an event type that is not worth telling
+  // someone about on a schedule is not worth asking them about here. Watches
+  // and automations upstream are deliberately not filtered this way: those were
+  // asked for by name.
+  if (!activityIsDigestible(env, activity)) return false;
+
+  const admission = await suggestionAdmission(env, {
+    workspaceId: activity.workspace_id,
+    provider: activity.provider,
+    eventType: activity.event_type,
+  });
+  // Asked before the candidates are selected and before the model is called: an
+  // event type this workspace has only ever dismissed cannot produce a card at
+  // any confidence, so buying an inference to discover that is pure waste.
+  if (admission.suppressed) {
+    // Suppression is invisible from the outside — the absence of a card looks
+    // exactly like a model that declined — so it says so once per activity.
+    logInfo(env, "contextual_routing_event_type_suppressed", {
+      workspace_id: activity.workspace_id,
+      provider: activity.provider,
+      event_type: activity.event_type,
+      dismissed: admission.dismissed,
+    });
+    return false;
+  }
   const restrictedUserIds = restrictedActivityUserIds(activity);
   const restrictedUserIdsJson = restrictedUserIds == null ? null : JSON.stringify(restrictedUserIds);
   const candidates = await env.DB.prepare(
@@ -870,10 +914,30 @@ async function routeContextually(
                 AND wp.removed_at IS NULL
            )
         ))
+        -- A work stream whose last few suggestions were all dismissed stops
+        -- being offered one. Counted here rather than after the LIMIT so a
+        -- suppressed work stream is replaced by the next eligible one instead
+        -- of costing the model a candidate; counted only since the most recent
+        -- acceptance so a single acceptance clears the run, and only within the
+        -- window so a work stream that never gets another suggestion is not
+        -- excluded forever by dismissals nobody remembers.
+        AND (
+          SELECT COUNT(*)
+            FROM activity_suggestions dismissed
+           WHERE dismissed.workstream_id = w.id
+             AND dismissed.status = 'dismissed'
+             AND dismissed.resolved_at >= ?3
+             AND dismissed.resolved_at > COALESCE((
+               SELECT MAX(accepted.resolved_at)
+                 FROM activity_suggestions accepted
+                WHERE accepted.workstream_id = w.id
+                  AND accepted.status = 'accepted'
+             ), '')
+        ) < ?4
       ORDER BY w.last_activity_at DESC
       LIMIT 12`
   )
-    .bind(activity.workspace_id, restrictedUserIdsJson)
+    .bind(activity.workspace_id, restrictedUserIdsJson, dismissalRunCutoff(), DISMISSAL_RUN_LIMIT)
     .all<WorkstreamCandidate>();
   const eligible = candidates.results.filter((candidate) => !excludedWorkstreamIds.has(candidate.id));
   if (eligible.length === 0) return false;
@@ -902,7 +966,11 @@ async function routeContextually(
     parse: (value) => ActivityRoutingResultSchema.parse(value)
   });
 
-  if (!result.suggest || result.confidence < 0.8 || !result.candidateWorkstreamId) return false;
+  // The floor is the event type's own record in this workspace rather than a
+  // constant. `confidence` is the model grading its own answer, so it is not
+  // evidence about a type whose past high-confidence matches were all dismissed
+  // — raising the bar under it is the only thing that reaches that case.
+  if (!result.suggest || result.confidence < admission.confidenceFloor || !result.candidateWorkstreamId) return false;
   if (!eligible.some((candidate) => candidate.id === result.candidateWorkstreamId)) return false;
   await createActivitySuggestion(env, {
     region: activity.workspace_region,
@@ -942,6 +1010,7 @@ export const __testing = {
   matchesFilters,
   projectActivityEvent,
   restrictedActivityUserIds,
+  routeContextually,
   runMatchingAutomations,
   triggerMatches,
 };
