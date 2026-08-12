@@ -3,11 +3,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { WorkstreamDetail } from './types';
+import { dismissedSuggestionIdsQueryKey } from './transcript';
+import type { Message, WorkstreamDetail } from './types';
 import { type WorkstreamSocketApi, useWorkstreamSocket } from './use-workstream-socket';
 
 const workstreamId = '00000000-0000-7000-8000-000000000210';
 const suggestionId = '00000000-0000-7000-8000-000000000211';
+const dismissedSuggestionId = '00000000-0000-7000-8000-000000000213';
 
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
@@ -58,6 +60,31 @@ const wireSuggestion = {
   resolvedAt: null,
 };
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+function pendingMessage(id = suggestionId): Message {
+  return {
+    id: `suggestion-${id}`,
+    workstreamId,
+    sequenceNumber: 1,
+    authorType: 'system',
+    messageType: 'activity_suggestion',
+    createdAt: wireSuggestion.createdAt,
+    activitySuggestion: {
+      id,
+      title: wireSuggestion.title,
+      source: 'Activity',
+      occurredAt: wireSuggestion.createdAt,
+      reason: wireSuggestion.reason,
+      status: 'pending',
+    },
+  };
+}
+
 function detail(): WorkstreamDetail {
   return {
     id: workstreamId,
@@ -86,7 +113,7 @@ function detail(): WorkstreamDetail {
 }
 
 describe('activity suggestions over the work-stream socket', () => {
-  it('takes a resolved suggestion out of the detail its cards are rebuilt from', async () => {
+  it('keeps an accepted card in the feed and removes a dismissed one', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail());
@@ -134,5 +161,105 @@ describe('activity suggestions over the work-stream socket', () => {
     // its pending state on the next message fetch, offering buttons whose
     // request the API has already resolved.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions).toEqual([]);
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((message) => ({
+      id: message.activitySuggestion?.id,
+      status: message.activitySuggestion?.status,
+    }))).toEqual([{ id: suggestionId, status: 'accepted' }]);
+
+    act(() => socket.message({
+      type: 'activity_suggestion_created',
+      sequence: 3,
+      occurredAt: '2026-08-10T22:22:01.158Z',
+      suggestion: { ...wireSuggestion, id: dismissedSuggestionId },
+    }));
+    act(() => socket.message({
+      type: 'activity_suggestion_resolved',
+      sequence: 4,
+      occurredAt: '2026-08-10T22:22:03.158Z',
+      suggestion: {
+        ...wireSuggestion,
+        id: dismissedSuggestionId,
+        status: 'dismissed',
+        resolvedAt: '2026-08-10T22:22:03.158Z',
+      },
+    }));
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions).toEqual([]);
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((message) => ({
+      id: message.activitySuggestion?.id,
+      status: message.activitySuggestion?.status,
+    }))).toEqual([{ id: suggestionId, status: 'accepted' }]);
+    expect(queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)))
+      .toEqual([dismissedSuggestionId]);
+  });
+
+  it('does not let an in-flight canonical fetch restore a dismissed suggestion', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const staleMessages = deferred<Message[]>();
+    const staleDetail: WorkstreamDetail = {
+      ...detail(),
+      harnessStatus: 'running',
+      suggestions: [pendingMessage().activitySuggestion!],
+    };
+    queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], staleDetail);
+    const getMessages = vi.fn()
+      .mockImplementationOnce(() => staleMessages.promise)
+      .mockResolvedValueOnce([]);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      getWorkstream: vi.fn(async () => staleDetail),
+      getMessages,
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
+    } satisfies WorkstreamSocketApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
+        return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+      },
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'activity_suggestion_created',
+      sequence: 1,
+      occurredAt: wireSuggestion.createdAt,
+      suggestion: wireSuggestion,
+    }));
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 2,
+      occurredAt: '2026-08-10T22:20:00.000Z',
+      status: 'running',
+    }));
+    expect(getMessages).toHaveBeenCalledOnce();
+
+    act(() => socket.message({
+      type: 'activity_suggestion_resolved',
+      sequence: 3,
+      occurredAt: '2026-08-10T22:21:01.158Z',
+      suggestion: { ...wireSuggestion, status: 'dismissed', resolvedAt: '2026-08-10T22:21:01.158Z' },
+    }));
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([]);
+
+    await act(async () => {
+      staleMessages.resolve([pendingMessage()]);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getMessages).toHaveBeenCalledTimes(2);
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([]);
+    expect(queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)))
+      .toEqual([suggestionId]);
   });
 });

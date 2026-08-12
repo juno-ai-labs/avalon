@@ -52,7 +52,7 @@ import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
-import { createElicitationMessage, upsertTranscriptMessage } from './transcript';
+import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
 import type {
   ActivitySuggestionData,
   AgentModelOverride,
@@ -491,7 +491,11 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
   };
 }
 
-export function messagesWithTransientBlocks(mapped: Message[], detail: WorkstreamDetail): Message[] {
+export function messagesWithTransientBlocks(
+  mapped: Message[],
+  detail: WorkstreamDetail,
+  dismissedSuggestionIds: readonly string[] = [],
+): Message[] {
   // Both the question and its durable human response remain separate rows in
   // the model transcript. mapMessage intentionally gives those rows one UI
   // identity, so collapse the canonical page before React and the virtualizer
@@ -522,7 +526,10 @@ export function messagesWithTransientBlocks(mapped: Message[], detail: Workstrea
     createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
     activitySuggestion: suggestion,
   }));
-  return [...canonicalMessages, ...elicitationMessages, ...suggestionMessages];
+  return visibleTranscriptMessages(
+    [...canonicalMessages, ...elicitationMessages, ...suggestionMessages],
+    dismissedSuggestionIds,
+  );
 }
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
@@ -1317,7 +1324,11 @@ export class AvalonApi {
       schema: wireMessagePageSchema,
       ...(options.signal ? { signal: options.signal } : {}),
     });
-    return { items: page.items.map(mapMessage), nextCursor: page.nextCursor, newerCursor: page.newerCursor };
+    return {
+      items: visibleTranscriptMessages(page.items.map(mapMessage)),
+      nextCursor: page.nextCursor,
+      newerCursor: page.newerCursor,
+    };
   }
 
   async getMessages(id: string, signal?: AbortSignal): Promise<Message[]> {
