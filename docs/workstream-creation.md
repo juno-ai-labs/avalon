@@ -275,6 +275,40 @@ with the backfill first. See [`REGIONALIZATION.md`](REGIONALIZATION.md).
 
 ## Changelog
 
+### 2026-08-12 — One markdown renderer, so there is one place to fix markdown
+
+**What changed:** The note detail screen and the meeting Control Tower briefing
+render `MarkdownBody` instead of mounting `ReactMarkdown` themselves. The
+per-container marker, list-geometry, and first/last-child rules those two
+surfaces carried are gone; `.markdown-body` owns all of it. Each keeps exactly
+one override — a note's descending heading scale, a briefing's flat one — and the
+stylesheet test asserts that neither host states any other markdown element
+styling.
+
+**Why:** The entry below restored the list markers by naming all three containers
+in every rule. That worked and was the right shape for a fix under review, but it
+left the underlying condition in place: three renderers, three copies of the
+element styling, and no mechanism that makes a fix to one reach the others. The
+copies had already drifted — list indents of 20px, 22px, and 26px, line heights
+of 1.6, 1.65, and 1.68, none of it decided — and the reason the markers went
+missing on two surfaces for as long as they did is that a reasonable person
+fixing `.markdown-body` had no way to discover the other two. Converging is what
+removes the next instance of that, not another exhaustive selector list.
+
+**Consequences:** A note's body text is now `.markdown-body`'s `#dfded9` at
+line-height 1.6 rather than `--ink-soft` at 1.68, and a briefing's is 1.6 rather
+than 1.65. Those differences were drift, and collapsing them is the point; if any
+surface ever wants its own again it should say so in one declaration and say why.
+What must be respected: element styling for markdown goes in the `.markdown-body`
+group and nowhere else. A rule like `.note-detail-article ul` competes with the
+shared one on equal specificity, decided by source order, and the stylesheet test
+fails on it deliberately. Overriding typography — a heading scale, a measure — is
+still legitimate on a host, because that is a property of the surface rather than
+of markdown; the two headings rules that remain are the model for it. Both
+screens were checked in a real window against a fixture covering `h1`–`h6`,
+three-level mixed `ol`/`ul` nesting, task lists, nested blockquotes, code in a
+list item, tables, and `hr`.
+
 ### 2026-08-12 — Markdown lists get their markers back, on every surface that renders one
 
 **What changed:** `list-style` is declared for `ul` and `ol` under each of the

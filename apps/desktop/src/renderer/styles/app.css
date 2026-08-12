@@ -1842,17 +1842,19 @@ pre {
    numbers. Nested levels are restated for the same reason: the browser's own
    `disc → circle → square` cascade is part of what preflight removed.
 
-   The group is every container that renders markdown, not just `.markdown-body`:
-   a note and a meeting briefing render `ReactMarkdown` under a class of their
-   own, and styling only the shared component leaves those two markerless in a
-   way that reads as fixed. Depth counts list ancestors of either kind, so an
-   `ol` holding a `ul` gets the second level's `circle` rather than falling back
-   to the first level's `disc` — the same pairs the HTML spec's suggested
-   rendering names. */
-:is(.markdown-body, .note-detail-article, .meeting-generated-notes) ul { list-style: disc; }
-:is(.markdown-body, .note-detail-article, .meeting-generated-notes) :is(ul, ol) ul { list-style: circle; }
-:is(.markdown-body, .note-detail-article, .meeting-generated-notes) :is(ul, ol) :is(ul, ol) ul { list-style: square; }
-:is(.markdown-body, .note-detail-article, .meeting-generated-notes) ol { list-style: decimal; }
+   Depth counts list ancestors of either kind, so an `ol` holding a `ul` gets the
+   second level's `circle` rather than falling back to the first level's `disc` —
+   the same pairs the HTML spec's suggested rendering names.
+
+   One container, because there is now one renderer. These rules briefly named
+   three: a note and a meeting briefing rendered `ReactMarkdown` under classes of
+   their own, and each surface that did so had to be listed here or silently keep
+   the preflight's `none`. Both go through `MarkdownBody` now, which is what makes
+   naming `.markdown-body` alone correct rather than an oversight. */
+.markdown-body ul { list-style: disc; }
+.markdown-body :is(ul, ol) ul { list-style: circle; }
+.markdown-body :is(ul, ol) :is(ul, ol) ul { list-style: square; }
+.markdown-body ol { list-style: decimal; }
 .markdown-body ul,
 .markdown-body ol { margin: 9px 0 15px; padding-left: 26px; }
 .markdown-body li { margin: 5px 0; padding-left: 1px; }
@@ -1860,12 +1862,8 @@ pre {
 .markdown-body li::marker { color: #d7d6d1; }
 /* Keeps its own `none`: a task list draws checkboxes, and a bullet beside each
    one is what this exception exists to prevent. It carries two classes to the
-   marker rules' one, so it survives them — and it covers the same three
-   containers, because `remark-gfm` renders task lists on all of them. */
-:is(.markdown-body, .note-detail-article, .meeting-generated-notes) .contains-task-list {
-  list-style: none;
-  padding-left: 4px;
-}
+   marker rules' one, so it survives them. */
+.markdown-body .contains-task-list { list-style: none; padding-left: 4px; }
 .markdown-body .task-list-item { align-items: baseline; display: flex; gap: 9px; }
 .markdown-body .task-list-item > input { accent-color: var(--blue); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
 .markdown-inline-code { background: #343432; border-radius: 5px; color: #dfded9; font-size: 0.88em; padding: 2px 4px; }
@@ -2544,17 +2542,19 @@ pre {
   padding: 58px 54px 100px;
   width: 100%;
 }
-.note-detail-article > :first-child { margin-top: 0; }
-.note-detail-article > :last-child { margin-bottom: 0; }
-.note-detail-article h1,
-.note-detail-article h2,
-.note-detail-article h3 { color: var(--ink); margin: 28px 0 10px; }
+/* The body of a note is a `.markdown-body`, so everything about how its markdown
+   is drawn — lists, code, quotes, tables, the first/last-child margin trim —
+   comes from that container. A note reads as a document page rather than a chat
+   turn, and its heading scale is the one thing worth saying twice: 22/17/14
+   against the shared 18/16/14.5, which stays close together because a transcript
+   turn is too short for a hierarchy to be worth much.
+   Nothing else belongs here. This surface used to restate the list geometry too,
+   and restating it is precisely how it came to be missing a marker rule the
+   shared container had. The declarations above still cover the empty state. */
+.note-detail-article :is(h1, h2, h3, h4, h5, h6) { color: var(--ink); margin: 28px 0 10px; }
 .note-detail-article h1 { font-size: 22px; }
 .note-detail-article h2 { font-size: 17px; }
-.note-detail-article h3 { font-size: 14px; }
-.note-detail-article ul,
-.note-detail-article ol { padding-left: 22px; }
-.note-detail-article li + li { margin-top: 5px; }
+.note-detail-article :is(h3, h4, h5, h6) { font-size: 14px; }
 .note-detail-empty,
 .note-transcript-empty {
   align-items: center;
@@ -2743,21 +2743,18 @@ pre {
   overflow-y: auto;
 }
 
+/* Sizes the timestamp, the error line and the empty state; the briefing itself
+   is a `.markdown-body` and carries its own. */
 .meeting-notes-body { font-size: 14px; line-height: 1.65; padding: 12px 8px 20px; }
 .meeting-notes-body > :first-child { margin-top: 0; }
-.meeting-generated-notes > :first-child { margin-top: 0; }
-.meeting-generated-notes > :last-child { margin-bottom: 0; }
-.meeting-notes-body h1,
-.meeting-notes-body h2,
-.meeting-notes-body h3 {
+/* The one deliberate departure from the shared renderer, for the same reason the
+   note above has one: this briefing lives in a narrow rail beside a transcript,
+   where a descending heading scale mostly wastes the width, so every level sits
+   at one size. Everything else the briefing draws is `.markdown-body`'s. */
+.meeting-notes-body :is(h1, h2, h3, h4, h5, h6) {
   font-size: 15px;
   margin: 22px 0 8px;
 }
-/* `ol` as well as `ul`: with markers restored, a numbered list in a briefing
-   draws its numbers in the indent, and without one they sit against the edge. */
-.meeting-notes-body ul,
-.meeting-notes-body ol { padding-left: 20px; }
-.meeting-notes-body li + li { margin-top: 5px; }
 .meeting-summary-progress {
   align-items: center;
   color: var(--muted);
