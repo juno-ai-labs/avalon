@@ -255,6 +255,38 @@ id" leaves the model guessing. This composes with principle 3: a reference the
 model can reasonably know by name should accept the name, but anywhere the value
 must be a particular identifier, validate the family and hint on mismatch.
 
+## Attachment contract registry
+
+Attachment tools use the shared contracts in
+`packages/contracts/src/attachment-contracts.ts`. The registry is the single
+source for classification, JSON-schema enums, runtime validation, and the text a
+model reads. It exposes eight natural-language kinds: `image`, `markdown`,
+`pdf`, `document`, `spreadsheet`, `presentation`, `text`, and `other`. A list
+tool must include the explanation for every value in its description; a model is
+never expected to know or guess a MIME value.
+
+The classifier trusts a verified MIME type before a filename. It consults a
+sanitized extension only when MIME is absent or explicitly generic. This order
+prevents a misleading filename from routing bytes to an unsafe converter while
+still making historical generic uploads discoverable by a useful kind.
+
+All attachment argument schemas are strict and share the same bounds. A first
+list or read call carries human-meaningful arguments; a continuation carries
+only an authenticated opaque cursor. The cursor is purpose-separated and binds
+the execution principal and owning scope, but it remains a name rather than
+authority: an executor still performs its normal authorization query.
+
+An authorized wrong-tool call may carry a bounded `suggestedCall` for exactly
+`workstream_read_resource` or `workstream_view_resource`. The structured-failure
+sanitizer accepts only those strict shapes, the eight registered kinds, bounded
+MIME/reason values, and the existing fixed recovery fields. It does not forward
+converter, provider, or attachment-authored objects.
+
+The runtime attachment tools are introduced additively. Until the durable
+derivative and authorization phases land, existing work-stream projection and
+resource reads remain the active behavior; the shared contracts do not by
+themselves grant a new capability.
+
 ## Mechanics — where the rules are enforced
 
 - **Authorize through the frozen run scope, never a one-off check.** A tool's
