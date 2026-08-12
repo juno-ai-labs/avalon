@@ -12,8 +12,11 @@ import {
   slackOriginSource,
   SlackActivityEventTypes,
   SlackCapabilities,
+  SlackPersonalOptionalUserScopes,
   SlackWorkspaceCapabilities,
   SlackWorkspaceBotScopes,
+  SlackWorkspaceOptionalBotScopes,
+  SlackWorkspaceRequestedBotScopes,
   slackTools,
   verifySlackRequest,
 } from "./slack";
@@ -234,6 +237,9 @@ describe("Slack connector", () => {
     const workspaceUrl = new URL(workspace.url);
     expect(workspaceUrl.pathname).toBe("/oauth/v2/authorize");
     expect(workspaceUrl.searchParams.get("scope")?.split(",")).toContain("assistant:write");
+    expect(workspaceUrl.searchParams.get("scope")?.split(",")).toEqual(
+      expect.arrayContaining([...SlackWorkspaceOptionalBotScopes]),
+    );
     expect(workspaceUrl.searchParams.has("user_scope")).toBe(false);
     await expect(adapter.handleAuthorizationCallback!({ code: "bot-code", connectionScope: "workspace" })).resolves.toMatchObject({
       providerAccountId: "TACME",
@@ -284,6 +290,32 @@ describe("Slack connector", () => {
     expect(SlackWorkspaceBotScopes).toContain("search:read.files");
     expect(SlackWorkspaceBotScopes).toContain("search:read.users");
     expect(SlackWorkspaceBotScopes).not.toContain("search:read.private");
+    expect(SlackWorkspaceRequestedBotScopes).toEqual([
+      ...SlackWorkspaceBotScopes,
+      ...SlackWorkspaceOptionalBotScopes,
+    ]);
+    expect(SlackWorkspaceOptionalBotScopes).toEqual([
+      "bookmarks:read",
+      "bookmarks:write",
+      "channels:write.invites",
+      "channels:write.topic",
+      "dnd:read",
+      "emoji:read",
+      "files:write",
+      "groups:write.invites",
+      "groups:write.topic",
+      "lists:read",
+      "lists:write",
+      "metadata.message:read",
+      "pins:read",
+      "pins:write",
+      "team:read",
+      "usergroups:read",
+      "users.profile:read",
+    ]);
+    expect(SlackPersonalOptionalUserScopes).toEqual(
+      SlackWorkspaceOptionalBotScopes.filter((scope) => scope !== "metadata.message:read"),
+    );
   });
 
   it("exposes every requested read and write tool to workspace Slack connections", () => {

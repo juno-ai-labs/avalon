@@ -71,7 +71,22 @@ Raw Slack APIs are the workspace Agent and workspace-tool plane:
 
 Slack's hosted MCP server is the user tool plane. Avalon initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered tool and its input contract, invokes `tools/call`, and closes the session when Slack assigns one. SSE responses are rejected because Slack does not support them. The static connector capabilities constrain which discovered tools can be offered to the model. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target.
 
-Personal authorization is incremental. **Slack knowledge** requests the read/search capabilities; **Slack actions** requests user-attributed writes. Adding the second preset expands the existing personal Slack connection instead of replacing its earlier grants. Workspace Agent scopes remain a separate administrator-controlled installation with one reviewed capability bundle, including `reactions:read` for activity triggers and `reactions:write` for the deterministic activation acknowledgement and workspace reaction tool. Existing workspace installations must reconnect after the workspace-tool scope expansion before health checks and tool calls succeed.
+The **Connect for me** button and Slack account link both request the full current
+personal capability set. A connection made before that convergence may carry a
+narrower grant, and the current flow expands it rather than replacing earlier
+authority. Workspace Agent scopes remain a separate administrator-controlled
+installation with one reviewed required capability bundle, including
+`reactions:read` for activity triggers and `reactions:write` for the deterministic
+activation acknowledgement and workspace reaction tool.
+
+The app registration additionally carries future-facing optional bot and user
+scopes for Slack-native bookmarks, channel membership and topics, DND-aware
+delivery, custom emoji, artifact uploads, Lists, message metadata, pins,
+workspace identity, user groups, and detailed profiles. Workspace authorization
+offers all optional bot scopes during installation, but connection health and
+current capabilities depend only on `SlackWorkspaceBotScopes`; declining an
+optional permission cannot break the Agent. The current personal capability set
+does not request the optional user scopes until a tool is implemented for them.
 
 ### Data behavior
 
@@ -84,6 +99,12 @@ When a prompt is denied because the channel classification or Agent policy needs
 Natural public- and private-channel follow-ups require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Avalon OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Avalon's routing and retention restrictions above remain narrower than the provider grant.
 
 Real-time Search API responses are transient context for the active model turn. Avalon stores only the generic tool-completion summary for replay, not the retrieved search payload, and disables optional inference-payload logging after a Slack search result enters the model context. The event `action_token` remains hidden runtime authorization and is not copied into the work-stream transcript, Slack session context, tool input, tool output, or inference payload log.
+
+An optional OAuth grant is dormant authority, not an active feature. Avalon
+does not call an API, collect provider data, register another event, or expose a
+model capability merely because Slack returned one of the future-facing scopes.
+The implementation that eventually consumes one must add its own capability,
+authorization checks, confirmation policy for writes, tests, and documentation.
 
 Normal product use can persist information in the resources that use it. A user prompt, bounded trigger record, Slack context used for the task, model-authored summary, workstream message, tool receipt, or automation result may remain in Avalon. That is purpose-bound Avalon work, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Avalon holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Avalon resources.
 
@@ -503,9 +524,9 @@ For a Global-only local acceptance pass:
 8. Open the app's Home tab in Slack, choose **Connect Avalon**, and let the local
    site hand off the one-time fragment token to the signed-in desktop. Reopen
    Home and confirm the linked member view.
-9. Optionally choose **Slack knowledge** and/or **Slack actions → Connect for
-   me** in Avalon Settings to incrementally authorize the personal hosted-MCP
-   tool plane.
+9. Choose **Connect for me** in Avalon Settings to authorize the current personal
+   hosted-MCP tool plane, or complete the same grant through the Slack account-link
+   flow.
 
 The local site is required for account-link handoff because development sets
 `PUBLIC_WEB_BASE_URL=http://127.0.0.1:5174`. The browser and desktop must run on
@@ -530,20 +551,70 @@ briefing's three/one/zero-result cases.
 
 1. Set `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` in both regional Workers. Keep the public app identity identical.
 2. Deploy migrations through `0046` and both Workers, including the Global/EU Slack service bindings and `slack.with-avalon.com` custom domain.
-3. Run `slack manifest validate`; then create/update the Marketplace app from `config/provider-apps/slack.json`.
-4. Reconnect existing Slack workspace installations so Slack grants the expanded bot scopes, then exercise the acceptance cases in `docs/e2e.md`.
+3. Run `slack manifest validate` against a development or staging app. Do not
+   update the public Marketplace app from `config/provider-apps/slack.json` until
+   the optional-scope review gate below is satisfied.
+4. Existing Slack workspace installations remain healthy because the newly registered future scopes are optional. New installations may grant them up front; an existing installation gains them only through a later administrator authorization. Exercise the acceptance cases in `docs/e2e.md` against both a required-only grant and a grant that includes the optional set.
 5. Confirm paid-plan eligibility for Agent/automation features and document the `team.billing:read` use in review materials.
 6. Provide working privacy, support, installation landing, pricing, AI disclosure, data-use, and deletion pages. Respond to support within two business days.
 7. Before submission, meet Slack's active-workspace and weekly-active-user thresholds, complete preliminary review, and budget for functional review.
 8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why public-channel membership does not ingest ordinary channel traffic, how account linking works, and how automation approval/delivery binding works.
 
-The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Validation does not replace deployment or Marketplace review.
+Slack CLI 4.6.0 accepted the optional-scope fields on 2026-08-12, then the
+linked development app refused validation at the unchanged
+`oauth_config.pkce_enabled: true` field with `cannot_disable_once_enabled`.
+Resolve that linked-app state and rerun validation before applying the manifest;
+schema validation does not replace deployment or Marketplace review.
+
+Slack's [Marketplace scope rules](https://docs.slack.dev/slack-marketplace/slack-marketplace-app-guidelines-and-requirements/#scope--data-access)
+require both required and optional scopes to map to functionality Slack can test,
+and explicitly reject scopes reserved for future, unimplemented behavior. This PR
+stages the registration and runtime boundary requested by product, but the manifest
+must not be submitted to or applied to the public Marketplace app until every
+optional behavior is testable or Slack gives an explicit written exception. Until
+then, validate the optional set only on a development or staging app.
 
 ## Changelog
 
 This document predates the [module document](module-documents.md) convention and
-had no changelog until the entry below; the reasoning behind everything above it
-was not recorded and is not reconstructed here.
+had no changelog until the entries below; the reasoning behind everything above
+them was not recorded and is not reconstructed here.
+
+### 2026-08-12 — Likely Slack-native extensions are offered as optional scopes
+
+**What changed:** The Slack app registration now offers seventeen optional bot
+scopes for likely future Slack-native behaviors and sixteen corresponding user
+scopes; `metadata.message:read` is the bot-only exception. Workspace OAuth asks
+for the full registered bot set, while callback, refresh, and health checks
+continue to require only the existing `SlackWorkspaceBotScopes`. No existing
+permission was removed or made optional.
+
+**Why:** Every new required bot scope forces an installed customer to complete
+workspace authorization again before Avalon's strict health check will accept
+the connection. Bookmarks, richer channel creation, DND-aware delivery, custom
+emoji, file delivery, Lists, metadata, pins, workspace identity, user groups,
+and detailed profiles are close enough to Avalon's existing Agent and resource
+boundaries that a new customer should be able to grant them at first install.
+They are not current capabilities, however, and treating speculative authority
+as required would make an installer accept broader access merely to use the
+Agent that works without it.
+
+**Considered and rejected:** Adding the scopes directly to
+`SlackWorkspaceBotScopes`. That would guarantee the grants but would also mark
+every existing installation unhealthy immediately and violate the rule that
+connection health reflects current product requirements. Also rejected:
+waiting to register every scope until its tool ships, which preserves the
+narrowest first-install screen but guarantees another administrator consent
+round for customers who adopt those features later.
+
+**Consequences:** Optional scopes must remain a separate constant and the bot
+manifest must equal the required-plus-optional union. A future feature cannot
+assume an optional grant: it must inspect the recorded OAuth scopes and degrade
+or request authorization when absent. The current personal capability set does
+not include future user scopes, so registering one does not silently broaden an
+individual's token. The optional set also cannot be applied to the public
+Marketplace registration until the features are testable or Slack approves an
+exception.
 
 ### 2026-08-12 — Linking became one step, and a stored status stopped gating events
 

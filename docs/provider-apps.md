@@ -229,6 +229,17 @@ job, and enforces a 2.6-second end-to-end response budget.
 App Home, zero-copy behavior, automation delivery, review evidence, and acceptance
 tests.
 
+The manifest preserves one required workspace-bot scope bundle and separately
+marks future-facing bot and user scopes optional. Runtime installation health
+checks only `SlackWorkspaceBotScopes`; registering optional scopes must not make
+an existing installation reconnect-required or expose a capability before its
+implementation checks the actual grant.
+
+Slack Marketplace review does not approve optional scopes for unimplemented
+future functionality. Keep this expanded manifest on development or staging apps
+until each optional behavior is testable or Slack grants a written exception; do
+not apply it to the public Marketplace app merely because schema validation passes.
+
 ### Regional Worker secrets
 
 Install the platform login client **only on the Global Worker**:
@@ -361,9 +372,24 @@ repository. What can be:
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the registrations above — beyond the reasons already written inline — was not
-recorded here and was not reconstructed. `git log` and the PRDs under `docs/PRDs/`
-are what exist. The next substantial change to a provider registration starts the
-record, and that entry is that change, written in full.
+This document predates the [module document](module-documents.md) convention and
+had no changelog until the entry below; earlier registration reasoning was not
+reconstructed.
+
+### 2026-08-12 — Slack gained optional future grants
+
+**What changed:** The Slack registration now carries seventeen optional bot scopes
+and sixteen optional user scopes alongside its unchanged required permissions.
+
+**Why:** Offering likely future grants to new customers can avoid another
+administrator consent round, while keeping them optional preserves current Agent
+health and existing installations.
+
+**Considered and rejected:** Adding them to the required bundle would make
+speculative permissions a current product dependency; waiting for every feature
+would guarantee later reauthorization.
+
+**Consequences:** Registration and runtime declarations must keep required and
+optional scopes distinct, future features must verify the token's actual grant,
+and the expanded manifest remains blocked from the public Marketplace app until
+the optional behaviors are testable or Slack approves an exception.
