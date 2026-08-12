@@ -112,10 +112,6 @@ export interface Env {
   CONNECTOR_CREDENTIALS_KEY_VERSION: string;
   CONNECTOR_CREDENTIALS_KEYS_JSON?: string;
 
-  HARNESS_MAX_MODEL_ITERATIONS: string;
-  HARNESS_MAX_TOOL_CALLS: string;
-  HARNESS_MAX_WALL_CLOCK_MS: string;
-  HARNESS_MAX_COST_CENTS?: string;
   HARNESS_MAX_PLUGIN_CATALOG_TOKENS?: string;
   HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS?: string;
   HARNESS_TTFT_TIMEOUT_MS?: string;
@@ -223,9 +219,6 @@ const EnvContractSchema = z.object({
   CONNECTOR_CREDENTIALS_KEY_VERSION: numericString,
 
   // Required by the interface, so required here.
-  HARNESS_MAX_MODEL_ITERATIONS: numericString,
-  HARNESS_MAX_TOOL_CALLS: numericString,
-  HARNESS_MAX_WALL_CLOCK_MS: numericString,
   TOOL_DEFAULT_TIMEOUT_MS: numericString,
   WEB_SEARCH_MAX_RESULTS: numericString,
   WEB_FETCH_MAX_BYTES: numericString,
@@ -235,7 +228,6 @@ const EnvContractSchema = z.object({
   // Optional, but a value that is present must be readable. This is the half
   // `numericEnv` cannot express: absent legitimately means "use the default",
   // while unparseable means someone typed it wrong and nobody found out.
-  HARNESS_MAX_COST_CENTS: numericString.optional(),
   HARNESS_MAX_PLUGIN_CATALOG_TOKENS: numericString.optional(),
   HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS: numericString.optional(),
   HARNESS_TTFT_TIMEOUT_MS: numericString.optional(),
@@ -366,10 +358,6 @@ export function assertEnvContract(env: Env): void {
 export function numericEnv(
   env: Env,
   key:
-    | "HARNESS_MAX_MODEL_ITERATIONS"
-    | "HARNESS_MAX_TOOL_CALLS"
-    | "HARNESS_MAX_WALL_CLOCK_MS"
-    | "HARNESS_MAX_COST_CENTS"
     | "HARNESS_MAX_PLUGIN_CATALOG_TOKENS"
     | "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS"
     | "HARNESS_TTFT_TIMEOUT_MS"
