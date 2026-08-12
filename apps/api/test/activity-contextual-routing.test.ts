@@ -165,14 +165,16 @@ function recordResolution(
     resolvedAt: string;
     /** Who clicked. Defaults to one person, which is what leaves a type unsuppressed. */
     resolvedBy?: string;
+    /** Which producer's card it was. Defaults to this module's own. */
+    source?: "contextual_routing" | "suggested_work" | "unknown";
   },
 ): void {
   const activityId = `00000000-0000-7000-8000-0000000f${input.suffix.padStart(4, "0")}`;
   insertActivity(database, { id: activityId, eventType: input.eventType });
   database.prepare(
     `INSERT INTO activity_suggestions
-       (id, workspace_id, activity_id, workstream_id, confidence, reason, status, created_at, resolved_at, resolved_by_user_id)
-     VALUES (?, ?, ?, ?, 0.9, 'A past match', ?, ?, ?, ?)`,
+       (id, workspace_id, activity_id, workstream_id, confidence, reason, status, created_at, resolved_at, resolved_by_user_id, source)
+     VALUES (?, ?, ?, ?, 0.9, 'A past match', ?, ?, ?, ?, ?)`,
   ).run(
     `00000000-0000-7000-8000-0000005${input.suffix.padStart(5, "0")}`,
     WORKSPACE,
@@ -182,6 +184,7 @@ function recordResolution(
     input.resolvedAt,
     input.resolvedAt,
     input.resolvedBy ?? MEMBER,
+    input.source ?? "contextual_routing",
   );
 }
 
@@ -286,6 +289,24 @@ describe("contextual routing: a work stream's run of dismissals", () => {
 
     expect(offeredCandidates()).not.toContain(STREAM_A);
     expect(offeredCandidates()).toContain(STREAM_B);
+  });
+
+  it("keeps a work stream whose dismissals came from another producer", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    // A work stream must not lose its place in this module's candidate pool
+    // over three dismissals of suggested-work's cards.
+    for (const [index, day] of [1, 2, 3].entries()) {
+      recordResolution(database, {
+        suffix: `c${index}`, workstreamId: STREAM_A, eventType: OTHER_NEWS, status: "dismissed", resolvedAt: daysAgo(day),
+        source: "suggested_work",
+      });
+    }
+    modelAnswers({ confidence: 0.9 });
+
+    await routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000103", eventType: NEWS }), new Set());
+
+    expect(offeredCandidates()).toContain(STREAM_A);
   });
 
   it("lets one acceptance clear the run", async () => {
@@ -465,6 +486,48 @@ describe("contextual routing: an event type's record in this workspace", () => {
     await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fa", eventType: NEWS }), new Set()))
       .resolves.toBe(true);
     expect(suggestionCount(database)).toBe(1);
+  });
+
+  it("ignores another producer's cards when scoring an event type", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    // The suggested-work path publishes the same card through the same helper
+    // and it is resolved by the same endpoint. Four dismissals of *its* cards,
+    // by two people, would suppress this type if the score counted them — but
+    // they are evidence about a deliberate whole-window decision, not about
+    // this module's per-event guess.
+    for (const [index, day] of [1, 2, 3, 4].entries()) {
+      recordResolution(database, {
+        suffix: `a${index}`, workstreamId: STREAM_HISTORY, eventType: NEWS, status: "dismissed", resolvedAt: daysAgo(day),
+        resolvedBy: index < 2 ? MEMBER : COLLEAGUE,
+        source: "suggested_work",
+      });
+    }
+    modelAnswers({ confidence: 0.82 });
+
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000101", eventType: NEWS }), new Set()))
+      .resolves.toBe(true);
+    expect(runStructuredInference).toHaveBeenCalledOnce();
+    expect(suggestionCount(database)).toBe(1);
+  });
+
+  it("ignores resolutions written before the producer was recorded", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    // Rows predating the `source` column cannot be attributed to either
+    // producer, so they count for neither rather than being guessed into this
+    // module's evidence.
+    for (const [index, day] of [1, 2, 3, 4].entries()) {
+      recordResolution(database, {
+        suffix: `b${index}`, workstreamId: STREAM_HISTORY, eventType: NEWS, status: "dismissed", resolvedAt: daysAgo(day),
+        resolvedBy: index < 2 ? MEMBER : COLLEAGUE,
+        source: "unknown",
+      });
+    }
+    modelAnswers({ confidence: 0.82 });
+
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000102", eventType: NEWS }), new Set()))
+      .resolves.toBe(true);
   });
 
   it("forgets resolutions older than the event-type window", async () => {

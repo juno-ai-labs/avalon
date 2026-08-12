@@ -959,16 +959,22 @@ async function routeContextually(
         -- acceptance so a single acceptance clears the run, and only within the
         -- window so a work stream that never gets another suggestion is not
         -- excluded forever by dismissals nobody remembers.
+        -- Both halves are scoped to this module's own cards: the suggested-work
+        -- path writes the same table, and a work stream must not lose its place
+        -- in contextual routing's candidate pool over dismissals of a different
+        -- agent's suggestions.
         AND (
           SELECT COUNT(*)
             FROM activity_suggestions dismissed
            WHERE dismissed.workstream_id = w.id
+             AND dismissed.source = 'contextual_routing'
              AND dismissed.status = 'dismissed'
              AND dismissed.resolved_at >= ?3
              AND dismissed.resolved_at > COALESCE((
                SELECT MAX(accepted.resolved_at)
                  FROM activity_suggestions accepted
                 WHERE accepted.workstream_id = w.id
+                  AND accepted.source = 'contextual_routing'
                   AND accepted.status = 'accepted'
              ), '')
         ) < ?4
@@ -1034,6 +1040,7 @@ async function routeContextually(
     confidence: result.confidence,
     reason: result.reason,
     matchedEntities: result.matchedEntities,
+    source: "contextual_routing",
   });
   return true;
 }

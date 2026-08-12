@@ -23,7 +23,8 @@ that feeds it.
 | `apps/api/src/queues/activity-consumer.ts` → `routeContextually` | The whole decision: the prior, the candidate query, the one inference, the write. The only caller. |
 | `apps/api/src/queues/activity-consumer.ts` → `declaredConfidenceFloor` | Reads the connector manifest's digestibility partition as a starting bar. The one place that translation is made. |
 | `apps/api/src/services/activity-routing-feedback.ts` | Every threshold and window, and both reads of past accept/dismiss decisions. The single source of what the feedback means. |
-| `apps/api/src/services/activity-suggestion-service.ts` | Inserts the suggestion and publishes `activity_suggestion_created` to the work-stream room. |
+| `apps/api/src/services/activity-suggestion-service.ts` | Inserts the suggestion and publishes `activity_suggestion_created` to the work-stream room. Shared with the other producer, which is why it takes a required `source`. |
+| `apps/api/src/services/work-opportunity-service.ts` → `routeExistingDecision` | **The other producer of the same card.** Not part of this module; listed because every feedback read here has to exclude it. |
 | `packages/agent-harness/src/prompts/activity-routing.ts` | The classifier prompt and its output schema. |
 | `apps/api/src/services/workstream-service.ts` → `resolveSuggestion` | Records `accepted`/`dismissed` and who clicked. The only writer of the signal both feedback reads consume. |
 | `packages/db/migrations/0066_activity_suggestion_feedback.sql` | The two indexes those reads seek on. |
@@ -112,6 +113,11 @@ along with who clicked, which is what steps 2–4 read on the next activity.
   `LIMIT 12` silently shrinks the list the model sees, so an excluded work stream
   costs a *different* work stream its chance to be matched. This applies to the
   dismissal run and to the already-routed set alike.
+- **Every read of `activity_suggestions` as evidence filters on `source`.** The
+  table has two producers writing identical-looking rows — this module and
+  suggested work's `routeExistingDecision` — so an unscoped count answers "was
+  this card useful" when the question asked was "was *this module* right". Both
+  feedback reads, and any added later, name the producer they are scoring.
 - **`resolveSuggestion` is the only writer of the feedback signal.** Anything
   else that resolves a suggestion — a bulk cleanup, a cascade, a backfill —
   writes training data for these gates, and what it writes into
@@ -132,8 +138,11 @@ It does not own: resource watches or automation triggers (`consumeActivityQueue`
 [`CONNECTORS.md`](CONNECTORS.md#activity-ingestion)), which are deterministic and
 deliberately exempt from everything here because they were asked for by name; the
 home-screen suggestions ([`SUGGESTED_WORK.md`](SUGGESTED_WORK.md)), which are a
-separate admission agent over a batched window and keep their own per-user
-dismissal state; the digest ([`DIGESTS.md`](DIGESTS.md)), which owns the
+separate admission agent over a batched window — but note that its
+`routeExistingDecision` branch is a **second producer of the same card**, writing
+`activity_suggestions` rows through the same `createActivitySuggestion` and
+resolved by the same endpoint, so its opportunity-level state is not the only
+state it keeps; the digest ([`DIGESTS.md`](DIGESTS.md)), which owns the
 `digestible` declaration this module reads; or the accept/dismiss endpoints and
 their idempotency ([`CONNECTORS.md`](CONNECTORS.md#activity-ingestion)).
 
@@ -161,11 +170,18 @@ policies that will drift.
   fallback here does not log again.
 - **No `OPENROUTER_API_KEY`.** Contextual routing is skipped entirely; watches
   and automations are unaffected.
-- **A suppressed activity is not dropped.** Every path here returns `false`,
-  which is the same answer "the model declined" gives, so the activity continues
-  to suggested-work batching. Noise removed here does not vanish from the
-  product; it moves to a surface with its own admission agent and its own
-  dismissal feedback.
+- **A suppressed activity is not dropped, and suppression governs this module's
+  output rather than the card type.** Every path here returns `false`, which is
+  the same answer "the model declined" gives, so the activity continues to
+  suggested-work batching. That surface's `routeExistingDecision` can then
+  publish a card of its own for the same activity — a genuinely different
+  decision, made over a whole window with `confidence: 1` rather than per event,
+  and scored separately — but it is the same card in the same transcript, so a
+  suppressed event type is not a guarantee that no card about it appears. It is a
+  guarantee that *this* module stops producing them. The two are told apart by
+  `activity_suggestions.source`; extending one agent's suppression over the other
+  is a product decision nobody has made, and would belong in
+  [`SUGGESTED_WORK.md`](SUGGESTED_WORK.md) rather than here.
 - **A window rolling past a cluster of dismissals resets the record, not just
   one card.** Suppression is not lifted gradually: four dismissals resolved in
   the same afternoon all age out on the same day, `resolved` drops to zero, and
@@ -210,8 +226,21 @@ the digestibility declaration being turned back into a veto.
 
 No tables of its own. `activity_suggestions` (see
 [`DATA_MODEL.md`](DATA_MODEL.md)) is both the output and the training data: one
-row per card, `UNIQUE (activity_id, workstream_id)`, `status` carrying the label
-and `resolved_by_user_id` carrying who applied it. A row is written at the moment
+row per card, `UNIQUE (activity_id, workstream_id)`, `status` carrying the label,
+`resolved_by_user_id` carrying who applied it, and `source` carrying which
+producer wrote it.
+
+**The table is not this module's alone, and that is the trap in it.**
+`createActivitySuggestion` has two callers — `routeContextually` here, and
+`routeExistingDecision` on the suggested-work batching path — writing rows that
+are indistinguishable in the transcript and resolved by the same endpoint.
+`source` is what makes them distinguishable to a feedback read, and **every read
+of this table as evidence must filter on it**. Rows written before the column
+exists are `'unknown'` and count for nobody: the two producers cannot be told
+apart retroactively, and attributing them would seed these gates with another
+agent's record. A third producer must add its own value rather than borrowing one.
+
+A row is written at the moment
 the card is published, so every row was seen by somebody and no separate
 impression count is needed — unlike `work_opportunity_user_states`, which tracks
 impressions because an opportunity can be ranked without ever being shown. Note
@@ -236,6 +265,9 @@ SELECT a.provider,
   FROM activity_suggestions s
   JOIN activities a ON a.id = s.activity_id
  WHERE s.workspace_id = ?1
+   -- Without this the count includes suggested work's cards, and reports a
+   -- suppression production is not applying.
+   AND s.source = 'contextual_routing'
    AND s.status IN ('accepted', 'dismissed')
    -- ISO with the `T`, not `datetime()`. `resolved_at` is written by `nowIso()`
    -- and compared as text, and `datetime()` emits a space where that format has
@@ -269,7 +301,8 @@ dismissals from two or more distinct people is turned off before the inference
 is bought. A work stream with three dismissals in thirty days and no acceptance
 since drops out of the candidate pool. Both that exclusion and the pre-existing
 already-routed exclusion moved inside the candidate query.
-`activity_suggestions` gained the two indexes these reads seek on.
+`activity_suggestions` gained a `source` column naming which producer wrote each
+card, which both feedback reads filter on, and two indexes leading with it.
 
 **Why:** The only quality control was a constant compared against a number the
 model made up about its own answer, and nothing ever read the resolution back.
@@ -312,13 +345,34 @@ Also rejected: raising the constant to 0.9 for everyone. It trades recall
 everywhere for precision in the workspaces that were complaining, and still
 compares against a self-reported score.
 
+Also rejected: reading `activity_suggestions` as though it were this module's
+table. It is not, and review caught the assumption before it shipped:
+`createActivitySuggestion` has a second caller in suggested work's
+`routeExistingDecision`, writing rows that are identical in the transcript and
+resolved by the same endpoint. Unscoped, four dismissals of *that* agent's
+whole-window decisions would have suppressed an event type here, and a work
+stream could have lost its place in the candidate pool over cards this module
+never produced — a feedback loop that also re-armed its own counters, since a
+suppressed activity falls through to batching where the other producer can
+publish the same card. Attributing the pre-column rows to either producer was
+rejected for the same reason: they cannot be told apart, and a guess would seed
+the gates with the wrong agent's record.
+
 Also rejected: an unwindowed accept rate, and workspace-wide suppression on a
 single person's dismissals. The first makes suppression permanent, because a
 suppressed type can never earn the acceptance that would lift it. The second lets
 one member clear four cards on a quiet afternoon and turn a type off for
 everybody, with the same no-way-back problem one level down.
 
-**Consequences:** `digestible` is now read by two surfaces with different
+**Consequences:** Suppression is a promise about this module's output, not about
+the card type: the suggested-work path can still publish a card for a suppressed
+event type, and deliberately keeps its own record. Whether one agent's
+suppression should silence the other is a real product question this change does
+not answer, and answering it belongs in [`SUGGESTED_WORK.md`](SUGGESTED_WORK.md).
+Anything added to `activity_suggestions` from here has to declare its `source`,
+and any new read of that table as evidence has to filter on it.
+
+`digestible` is now read by two surfaces with different
 questions, which is a standing hazard: the next reader outside the digest will be
 tempted to treat it as a verdict again, and the invariants above exist to be
 quoted at that change. The prior is deliberately weak — 0.1 of confidence —
