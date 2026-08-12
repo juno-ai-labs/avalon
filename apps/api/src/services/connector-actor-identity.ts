@@ -61,7 +61,7 @@ export async function resolveConnectorActorIdentity(
     `SELECT c.owner_user_id FROM connector_connections c
      JOIN workspace_members wm ON wm.workspace_id = c.workspace_id AND wm.user_id = c.owner_user_id
      WHERE c.workspace_id = ? AND c.connector_type = ? AND c.scope = 'personal'
-       AND c.status = 'healthy' AND c.owner_user_id IS NOT NULL AND wm.status = 'active'
+       AND c.status <> 'disabled' AND c.owner_user_id IS NOT NULL AND wm.status = 'active'
        AND COALESCE(json_extract(c.config_json, '$.providerUserId'), c.provider_account_id) = ?
        AND COALESCE(json_extract(c.config_json, '$.providerTenantId'), c.provider_account_id) = ?
      LIMIT 2`,

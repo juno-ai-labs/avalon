@@ -44,35 +44,26 @@ export async function withAuthorizedConnection<T>(
     /** Refresh a credential expiring within this window. */
     minimumValidityMs?: number;
     /**
-     * The connection's stored status, for the callers that can hold one which
-     * is not healthy.
+     * The connection's stored status.
      *
-     * Rotation requires a healthy row — the refresh coordinator filters both
-     * its lease claim and its credential reload on `status = 'healthy'` — so
-     * for anything else a refresh cannot succeed and would only replace the
-     * provider's answer with `Connector authorization is unavailable`. The
-     * diagnostic paths that exist precisely to ask a broken connection what is
-     * wrong with it (testing one, revoking one on disconnect) pass what they
-     * loaded and reach the provider with the credentials on hand. Omitting
-     * this asks for a refresh, which is the safe default: every other caller
-     * selects healthy rows to begin with.
+     * Retained for callers that still pass it, but it no longer decides
+     * anything: the refresh coordinator serves every row that is not
+     * `disabled`, so a connection this row believes is broken is refreshed and
+     * rotated like any other, and the provider gets to say whether the belief
+     * was still true. It usually is not — the belief is a record of one past
+     * moment, and nothing re-checks it.
      */
     connectionStatus?: string;
   },
   operation: (connection: AuthorizedConnectorConnection) => Promise<T>,
 ): Promise<T> {
   const { connection, adapter, signal } = input;
-  // Both the refresh and the rotation below claim a lease filtered on
-  // `status = 'healthy'`, so neither can succeed for a connection D1 holds in
-  // any other state. Gating them together is what keeps a diagnostic path
-  // reaching the provider: with no rotation registered,
-  // `withProviderReauthorization` falls back to the adapter's own refresh, and
-  // the provider's answer survives instead of being replaced by an
-  // availability error from a lease that could never have been claimed.
-  const rotatable = input.connectionStatus === undefined || input.connectionStatus === "healthy";
-  if (rotatable) {
-    await ensureFreshConnectorCredentials(env, connection, adapter, signal, input.minimumValidityMs);
-  }
+  // Refreshed unconditionally. This used to be gated on a healthy row, because
+  // the coordinator's lease was too and a refusal there replaced the provider's
+  // answer with `Connector authorization is unavailable`. Both halves of that
+  // are gone: the coordinator serves any row that is not `disabled`, and a
+  // stored status is not evidence about the grant — only the provider is.
+  await ensureFreshConnectorCredentials(env, connection, adapter, signal, input.minimumValidityMs);
   let credentialsBefore = JSON.stringify(connection.credentials);
   const persistIfChanged = async () => {
     if (JSON.stringify(connection.credentials) === credentialsBefore) return;
@@ -87,20 +78,18 @@ export async function withAuthorizedConnection<T>(
     // makes afterwards are written again below.
     return await operation(authorizedConnection(
       connection,
-      rotatable
-        ? async (refused, rotateSignal) => {
-            const rotated = await rotateConnectorCredentials(env, connection, adapter, rotateSignal, refused);
-            credentialsBefore = JSON.stringify(rotated);
-            return rotated;
-          }
-        : undefined,
+      async (refused, rotateSignal) => {
+        const rotated = await rotateConnectorCredentials(env, connection, adapter, rotateSignal, refused);
+        credentialsBefore = JSON.stringify(rotated);
+        return rotated;
+      },
     ));
   } catch (error) {
     if (!isReconnectRequiredConnectorError(error)) throw error;
-    // Persisted before the row leaves `healthy`: `persistConnectorCredentials`
-    // filters on that status, so marking first would silently discard a
-    // credential the adapter had rotated in place and leave only a spent one
-    // stored.
+    // Persisted before the row is marked. The ordering no longer decides
+    // whether the write lands — `persistConnectorCredentials` accepts any row
+    // that is not `disabled` — but a credential the adapter rotated in place is
+    // still worth storing ahead of the verdict that follows it.
     await persistIfChanged();
     const reason = reconnectReason(error);
     await markConnectorNeedsReconnect(env.DB, connection, reason);
@@ -150,9 +139,13 @@ export async function persistConnectorCredentials(
     connection.id,
   );
   await env.DB.prepare(
+    // Any row a person has not disabled. Filtered on `status = 'healthy'`, this
+    // silently dropped every credential an adapter rotated on a connection the
+    // row believed was broken — the one case where the rotation was most likely
+    // to be the thing that fixed it.
     `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
      credential_key_version = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+     WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
   ).bind(
     encrypted.ciphertext,
     encrypted.iv,

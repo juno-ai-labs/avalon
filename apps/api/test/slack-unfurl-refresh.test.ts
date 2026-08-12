@@ -302,11 +302,26 @@ describe("Slack work-stream unfurl refresh", () => {
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
 
-  it("ignores rows on a connection that is no longer healthy", async () => {
-    // Otherwise they match the predicate again on every sweep for 30 days,
-    // spending budget that can never produce a posted card.
+  it("still refreshes rows on a connection the database believes is broken", async () => {
+    // A `needs_reconnect` row records one past moment and nothing re-checks it.
+    // Skipping the sweep on that belief left cards permanently stale on
+    // installations that had already been repaired, and Slack is the only
+    // thing that can say whether the token still works.
     const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
     database.prepare("UPDATE connector_connections SET status = 'needs_reconnect' WHERE id = ?")
+      .run(connectionId);
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
+  it("skips rows on a connection a person disabled", async () => {
+    // The one status that is a decision rather than a belief.
+    const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
+    database.prepare("UPDATE connector_connections SET status = 'disabled' WHERE id = ?")
       .run(connectionId);
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));

@@ -105,7 +105,7 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
               ) AS connection_rank
          FROM slack_unfurled_links l
          JOIN workstreams w ON w.id = l.workstream_id AND w.workspace_id = l.workspace_id
-         JOIN connector_connections c ON c.id = l.connection_id AND c.status = 'healthy'
+         JOIN connector_connections c ON c.id = l.connection_id AND c.status <> 'disabled'
          ${WORKSTREAM_UNFURL_JOINS}
         WHERE l.shared_at >= ?1
           AND w.archived_at IS NULL
@@ -163,7 +163,7 @@ async function refreshConnectionUnfurls(
   const connection = await env.DB.prepare(
     `SELECT id, workspace_id, encrypted_credentials, credential_iv, credential_key_version
        FROM connector_connections
-      WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy'`,
+      WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
   ).bind(connectionId).first<SlackUnfurlConnection>();
   if (!connection) return;
   const token = await workspaceBotToken(env, connection);
