@@ -20,6 +20,7 @@ those boundaries move.
 | `packages/contracts/src/index.ts` | Sanitizes bounded structured recovery data before Bind puts it in a model-visible failed tool result. |
 | `apps/api/src/lib/attachment-cursor.ts` | Signs, verifies, scopes, expires, and bounds opaque attachment continuations. |
 | `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
+| `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives and bounded range indexes, then atomically selects their regional objects. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/services/attachment-model-content.ts` | Current upload-to-model extraction and image normalization path; it remains eager until the derivative cutover. |
 | `apps/api/src/services/integrations.ts` | Current message projection and work-stream resource-tool registration. |
@@ -83,6 +84,28 @@ object reference into `resource_object_deletion_outbox` before cascading the
 catalog. Scheduled cleanup reaps at most 100 references per pass. A failed R2
 deletion increments bounded retry metadata and remains queued.
 
+### Reusable derivatives
+
+The derivative service accepts a resource that its caller has already
+authorized. It reads the exact original R2 object, claims conversion through a
+conditional D1 update, writes versioned content and index objects, then advances
+the current resource pointer only when both objects are complete. A concurrent
+caller sees `processing`; an unchanged source hash and extractor version reuses
+the selected objects without reading or converting the original again.
+
+UTF-8 text retains its full ordering and is rejected rather than replacement-
+decoded when invalid. DOCX becomes semantic Markdown with headings, lists,
+tables, hyperlinks, headers, footers, footnotes, and endnotes. PPTX preserves
+slide order, tables, and speaker-note text. XLSX identifies sheets, cell
+references, display values, and formulas. PDFs are page-delimited; a bounded OCR
+adapter is required when the text layer is materially empty, and incomplete OCR
+is a failure rather than empty success.
+
+The companion index stores only UTF-16 ranges, section labels, and bounded
+normalized terms. It never duplicates the complete derivative. Tool reads and
+searches can therefore load exact passages from the versioned derivative while
+checking offsets against the same hash and extractor version.
+
 ## Invariants
 
 - A verified MIME type outranks a filename extension, so renamed hostile bytes
@@ -107,6 +130,10 @@ deletion increments bounded retry metadata and remains queued.
   lifecycle.
 - Original content identity describes the exact selected R2 bytes, so a cursor or
   derivative version cannot silently cross into newly hydrated content.
+- A model derivative becomes current only after its content and bounded index
+  objects are complete; losing a concurrent claim cannot expose either object.
+- Index offsets use JavaScript UTF-16 units and do not split surrogate pairs, so
+  the later read contract and persisted index agree exactly.
 
 ## Boundary
 
@@ -144,6 +171,14 @@ generic tool execution/receipt loop is owned by
   entire attachment was inspected.
 - Object cleanup reads at most 100 outbox rows per pass. Failures keep their row
   and store only a bounded machine error code.
+- Derivative conversion admits at most 50 MiB of source bytes, 40 MiB of expanded
+  Office data, 8 MiB per selected XML part, 500 PDF pages, 20 million output
+  characters, 5,000 index chunks, and 30 seconds of converter time. Image pixel,
+  source, derivative, and frame limits remain owned by the existing normalized
+  image path until projection is split at cutover.
+- Invalid UTF-8, XML entity declarations, corrupt/oversized Office archives,
+  encrypted/oversized PDFs, missing OCR, incomplete OCR, timeouts, unsupported
+  formats, and missing source objects have distinct bounded failure codes.
 
 ## Testing
 
@@ -157,6 +192,10 @@ generic tool execution/receipt loop is owned by
   attachment tool wire name.
 - Existing eager projection behavior remains covered by
   `apps/api/test/attachment-model-content.test.ts` until its replacement phase.
+- `apps/api/test/attachment-derivative-service.test.ts` covers complete long
+  Markdown, semantic Office structures, page/OCR extraction, malformed and
+  unsupported inputs, exact UTF-16 indexing, concurrent claims, atomic
+  selection, and ready-version reuse.
 - `packages/db/test/migrations.test.ts`,
   `apps/api/test/resource-upload.test.ts`,
   `apps/api/test/attachment-derivative-state.test.ts`, and
@@ -181,9 +220,9 @@ authoritative.
 
 ## Regional impact
 
-Contracts and lifecycle execute identically in both regions. Cursor
+Contracts, lifecycle, and conversion execute identically in both regions. Cursor
 signing happens inside the Worker that handles the owning regional run. Existing
-originals and image derivatives remain in that region's R2 bucket and
+originals and model derivatives remain in that region's R2 bucket and
 relationship, lifecycle, and outbox rows in its D1 database. Scheduled cleanup
 uses the same regional R2 binding. No new Global-plane storage or bridge payload
 is introduced by this phase.
@@ -215,11 +254,39 @@ ID and object kind, never object key.
 ## Performance and cost
 
 Kind classification is constant-time over bounded metadata. Cursor verification
-performs two HMAC operations and parses at most 2,048 characters. The contracts
-do not add a provider call or read file bytes. Later phases must preserve those
-cheap discovery and continuation paths even when extraction itself is expensive.
+performs two HMAC operations and parses at most 2,048 characters. Conversion is
+lazy and reused by exact original hash plus extractor version; only scanned PDFs
+need the injected provider OCR path. Index storage grows with bounded chunks and
+terms rather than duplicating attachment text. Later phases must preserve those
+cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Complete derivatives replace trigger-specific conversion
+
+**What changed:** Avalon can now lazily create complete, reusable UTF-8,
+semantic Office, and page-delimited PDF derivatives with a bounded range/term
+index. Regional D1 conditionally claims work and atomically selects finished R2
+objects; unchanged source and extractor versions reuse the current result.
+
+**Why:** The old trigger converter discarded everything after 60,000 characters
+and could not support deterministic page/search continuation. Moving the same
+helpers behind a reusable boundary also lets work-stream and automation tools
+share conversion without sharing authorization.
+
+**Considered and rejected:** Persisting chunk text in the index, accepting lossy
+UTF-8 replacement, and treating an empty PDF text layer as a successful empty
+file. Those choices respectively create a second unbounded content copy, hide
+corrupt input, or let a scanned document masquerade as inspected.
+
+**Consequences:** Callers authorize before invoking this service and supply the
+bounded OCR adapter for scanned PDFs. Future text tools slice the versioned
+derivative using UTF-16 ranges and must not read the source directly. A new
+extractor version creates new versioned objects and lets lifecycle cleanup reap
+the superseded pair.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Derivative state and cleanup follow the resource lifecycle
 
