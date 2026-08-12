@@ -806,25 +806,6 @@ async function startActivityAutomation(
       ).bind(runId, workstreamId, activity.workspace_id)
     ]);
     run = { id: runId, workstream_id: workstreamId, workflow_instance_id: null, status: "running" };
-    // The activity is the whole reason this work stream exists, so the object
-    // behind it is attached before the Workflow starts — the run's first
-    // context read then already names the issue, page, or thread it is about.
-    // Ownerless on purpose: an automation fired, nobody attached anything.
-    const originResource = await describeWorkstreamOrigin(env, {
-      connectorType: activity.connector_type,
-      connectionId: activity.connection_id,
-      provider: activity.provider,
-      locator: activityOriginLocator(activity),
-      contentRef: activity.payload_ref,
-    });
-    if (originResource) {
-      await attachWorkstreamOriginResource(env, {
-        workspaceId: activity.workspace_id,
-        workstreamId,
-        attachedByUserId: null,
-        descriptor: originResource,
-      });
-    }
   } else {
     const harness = await env.DB.prepare(
       `SELECT id FROM harness_runs
@@ -843,6 +824,32 @@ async function startActivityAutomation(
     workspaceId: activity.workspace_id,
     workstreamId: run.workstream_id,
   });
+
+  // The activity is the whole reason this work stream exists, so the object
+  // behind it is attached before the Workflow starts — the run's first context
+  // read then already names the issue, page, or thread it is about. Ownerless on
+  // purpose: an automation fired, nobody attached anything.
+  //
+  // On both run paths, not only the one that just created the work stream. A
+  // queue invocation killed after the batch commits but before this write leaves
+  // the run durable and the origin missing; the redelivery then takes the
+  // existing-run branch and would launch the Workflow permanently without it.
+  // Both writes behind this are `ON CONFLICT DO NOTHING`, so repeating it costs
+  // one lookup and fixes that.
+  const originResource = await describeWorkstreamOrigin(env, {
+    connectorType: activity.connector_type,
+    connectionId: activity.connection_id,
+    provider: activity.provider,
+    locator: activityOriginLocator(activity),
+  });
+  if (originResource) {
+    await attachWorkstreamOriginResource(env, {
+      workspaceId: activity.workspace_id,
+      workstreamId: run.workstream_id,
+      attachedByUserId: null,
+      descriptor: originResource,
+    });
+  }
 
   if (["completed", "failed", "needs_input"].includes(run.status)) return run.workstream_id;
   const workflowId = `activity-${subscription.id}-${activity.id}`;

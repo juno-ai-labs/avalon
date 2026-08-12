@@ -472,7 +472,7 @@ export function slackOriginSource(fetcher: FetchLike = fetch): ConnectorOriginSo
       const session = SlackAgentSessionOriginSchema.parse(locator.session);
       return {
         resourceType: "slack_thread",
-        providerResourceId: `${session.channelId}:${session.threadTs}`,
+        providerResourceId: slackThreadResourceId(session.channelId, session.threadTs),
         title: slackOriginTitle(session),
         canonicalUrl: null,
         metadata: {
@@ -508,10 +508,26 @@ export function slackOriginSource(fetcher: FetchLike = fetch): ConnectorOriginSo
     };
   }
 
+/**
+ * A thread's identity, kept distinct from its root message's.
+ *
+ * `normalizeSlackActivity` already identifies a message as `<channel>:<ts>`, and
+ * for the root of a thread that `ts` *is* the `thread_ts` — so the obvious
+ * `<channel>:<threadTs>` would be the same string, and the resource identity
+ * tuple does not include the resource type. The two would collide on one row:
+ * whichever arrived first would win, and a thread origin resolved against an
+ * earlier `slack_message` row would keep that row's type, title, and missing
+ * permalink. The `thread` segment is what keeps a conversation and the message
+ * it hangs from two objects, which is what they are.
+ */
+function slackThreadResourceId(channelId: string, threadTs: string): string {
+  return `${channelId}:thread:${threadTs}`;
+}
+
 function splitSlackThreadResourceId(value: string): [string | null, string | null] {
-  const separator = value.indexOf(":");
-  if (separator <= 0) return [null, null];
-  return [value.slice(0, separator), value.slice(separator + 1) || null];
+  const parts = value.split(":");
+  if (parts.length !== 3 || parts[1] !== "thread") return [null, null];
+  return [parts[0] || null, parts[2] || null];
 }
 
 function slackOriginTitle(session: z.output<typeof SlackAgentSessionOriginSchema>): string {

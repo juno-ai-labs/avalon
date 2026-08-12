@@ -2373,7 +2373,15 @@ export class WorkstreamService {
     if (!activity) return null;
     const descriptor = await this.describeActivityOrigin(activity);
     if (!descriptor) return null;
-    const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, descriptor);
+    // The one path that keeps the activity's payload reference. This attachment
+    // is a person accepting a card about *this* activity, and reading its
+    // content is the point; an origin carries none, which is why
+    // `describeWorkstreamOrigin` clears it and this restores it here rather than
+    // the other way round.
+    const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, {
+      ...descriptor,
+      contentRef: typeof activity.payload_ref === "string" ? activity.payload_ref : null,
+    });
     if (!resourceId) throw new ApiError(500, "resource_write_failed", "The suggested resource could not be stored");
     await this.attachResource(workstreamId, resourceId);
     return resourceId;
@@ -2437,7 +2445,6 @@ export class WorkstreamService {
       connectionId: row.connection_id,
       provider: row.provider,
       locator: activityOriginLocator(row),
-      contentRef: typeof row.payload_ref === "string" ? row.payload_ref : null,
     });
   }
 }
