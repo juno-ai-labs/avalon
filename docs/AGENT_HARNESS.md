@@ -246,9 +246,10 @@ reason for any of it.
 ### 2026-08-12 — Artifacts are gone; a run's output is its final message
 
 **What changed:** `workstream_create_artifact` was removed from
-`avalon_workstream`, along with the `artifact.write` capability prefix, the
-`artifacts` table, the R2 write behind it, the download route, and the transcript
-block that rendered one. A run that is asked to produce something now produces it
+`avalon_workstream`, along with the `artifact.write` capability prefix, the R2
+write behind it, the download route, and the transcript block that rendered one.
+The `artifacts` table itself is retained for one release and dropped in the
+next — see **Consequences**. A run that is asked to produce something now produces it
 as text, as a resource, or through a connector write. The workstream prompt's
 "create the requested durable artifact" clause went with it.
 
@@ -275,9 +276,20 @@ runs, which leaves ordinary work streams writing into a store nothing reads.
 which is the intended constraint — anything durable that a person should be able
 to open belongs in `resources`. `message_type` no longer admits `'artifact'`;
 the enum is enforced by trigger rather than by rebuilding `messages`, so a writer
-that tries one aborts loudly. The R2 objects under
-`<region>/<workspace>/artifacts/` outlive their pointers and must be swept by
-prefix out of band — a migration cannot reach the bucket.
+that tries one aborts loudly.
+
+**The retirement is unfinished on purpose, and owes two more steps.** The deploy
+job migrates both regions before it deploys either Worker, so the Worker still
+live during a migration is the *previous* one — and it calls `loadArtifacts` on
+every `GET /workstreams/:id/context`. Dropping the table alongside this code
+removal would fail every context request in both regions for the length of the
+rollout, and indefinitely if the deploy failed after the migration step. So
+`0068_retire_artifact_messages.sql` retires only the message type, a later
+release owes the `DROP TABLE`, and the R2 objects under
+`<region>/<workspace>/artifacts/` have to be swept before that drop takes their
+only pointers with it. [The runbook](RUNBOOK.md#finishing-the-artifact-retirement)
+carries the sequence.
+
 ### 2026-08-12 — Compaction moved to its own document
 
 **What changed:** Compaction policy — the threshold, the summary prompt, the

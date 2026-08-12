@@ -713,8 +713,8 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
 
 export const WorkstreamContextSchema = z.object({
   /**
-   * Always empty, and read by nothing. Artifacts were removed in `0068`, but a
-   * desktop build in the wild bundles the schema that *required* this field —
+   * Always empty, and read by nothing. Artifacts were removed in this release,
+   * but a desktop build in the wild bundles a schema that *requires* this field —
    * unlike `WorkstreamDetailSchema`, which defaulted it — so omitting it fails
    * the whole response, and `GET /:id/context` is what fills the work-stream
    * context rail. The route parses its own response through this schema, so the

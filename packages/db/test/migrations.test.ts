@@ -1756,7 +1756,7 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("records where each past digest ran without breaking the Worker still reading the old column", () => {
+  it("retires the artifact message type while leaving the table for the old Worker", () => {
     const database = migrateDatabaseThrough("0067_harness_run_trigger_message.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -1888,7 +1888,7 @@ describe("database migrations", () => {
     `);
 
     database.exec(readFileSync(
-      new URL("../migrations/0068_remove_artifacts.sql", import.meta.url),
+      new URL("../migrations/0068_retire_artifact_messages.sql", import.meta.url),
       "utf8",
     ));
 
