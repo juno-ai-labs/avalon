@@ -2,7 +2,7 @@ import {
   renderActivityRoutingMessages,
   renderSemanticTriggerMessages,
 } from "@avalon/agent-harness";
-import { ConnectorError, connectorRetryAfterMs } from "@avalon/connectors";
+import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@avalon/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
@@ -32,8 +32,14 @@ import { automationModelOverride, scheduledWorkstreamModel } from "../services/a
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
+import {
+  activityOriginLocator,
+  attachWorkstreamOriginResource,
+  describeWorkstreamOrigin,
+} from "../services/workstream-origin-resource";
 import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { restrictedActivityUserIds } from "../lib/activity-visibility";
 
 interface ActivityRow {
   id: string;
@@ -48,6 +54,7 @@ interface ActivityRow {
   event_type: string;
   resource_type: string | null;
   provider_resource_id: string | null;
+  payload_ref: string | null;
   actor_json: string;
   occurred_at: string;
   received_at: string;
@@ -143,20 +150,6 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
     ...metadata
   };
   return Object.entries(filters).every(([key, expected]) => deepEqual(available[key], expected));
-}
-
-function restrictedActivityUserIds(activity: ActivityRow): string[] | null {
-  if (activity.connection_scope === "personal") {
-    return activity.connection_owner_user_id ? [activity.connection_owner_user_id] : [];
-  }
-  const explicitTargets = parseStrings(activity.target_user_ids_json);
-  const visibility = parseRecord(activity.visibility_json);
-  if (explicitTargets.length > 0) return explicitTargets;
-  for (const candidate of [visibility.targetUserIds, visibility.allowedUserIds]) {
-    const restricted = z.array(z.string()).safeParse(candidate);
-    if (restricted.success && restricted.data.length > 0) return [...new Set(restricted.data)];
-  }
-  return visibility.workspaceAutomationAllowed === false ? [] : null;
 }
 
 function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boolean {
@@ -349,7 +342,7 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
     actorLabel: connectorActorLabel(activity),
     title: activity.title,
     body: activity.summary || activity.text_snippet,
-    canonicalUrl: connectorActivityUrl(activity),
+    canonicalUrl: connectorOriginUrl(parseRecord(activity.metadata_json)),
     occurredAt: activity.occurred_at,
     sourceKind: "activity",
     sourceId: activity.id,
@@ -438,15 +431,6 @@ function connectorActorLabel(activity: ActivityRow): string {
   const displayName = parseRecord(activity.actor_json).displayName;
   if (typeof displayName === "string" && displayName.length > 0) return displayName;
   return activity.provider;
-}
-
-function connectorActivityUrl(activity: ActivityRow): string | null {
-  const metadata = parseRecord(activity.metadata_json);
-  // Providers disagree on the key; take the first that is actually a link.
-  for (const candidate of [metadata.canonicalUrl, metadata.url, metadata.htmlUrl, metadata.permalink]) {
-    if (typeof candidate === "string" && /^https?:\/\//u.test(candidate)) return candidate;
-  }
-  return null;
 }
 
 async function loadActivity(env: Env, input: ActivityQueueMessage): Promise<ActivityRow | null> {
@@ -827,6 +811,32 @@ async function startActivityAutomation(
     workspaceId: activity.workspace_id,
     workstreamId: run.workstream_id,
   });
+
+  // The activity is the whole reason this work stream exists, so the object
+  // behind it is attached before the Workflow starts — the run's first context
+  // read then already names the issue, page, or thread it is about. Ownerless on
+  // purpose: an automation fired, nobody attached anything.
+  //
+  // On both run paths, not only the one that just created the work stream. A
+  // queue invocation killed after the batch commits but before this write leaves
+  // the run durable and the origin missing; the redelivery then takes the
+  // existing-run branch and would launch the Workflow permanently without it.
+  // Both writes behind this are `ON CONFLICT DO NOTHING`, so repeating it costs
+  // one lookup and fixes that.
+  const originResource = await describeWorkstreamOrigin(env, {
+    connectorType: activity.connector_type,
+    connectionId: activity.connection_id,
+    provider: activity.provider,
+    locator: activityOriginLocator(activity),
+  });
+  if (originResource) {
+    await attachWorkstreamOriginResource(env, {
+      workspaceId: activity.workspace_id,
+      workstreamId: run.workstream_id,
+      attachedByUserId: null,
+      descriptor: originResource,
+    });
+  }
 
   if (["completed", "failed", "needs_input"].includes(run.status)) return run.workstream_id;
   const workflowId = `activity-${subscription.id}-${activity.id}`;

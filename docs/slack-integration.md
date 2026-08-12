@@ -190,6 +190,8 @@ with the workspace principal, and the opening message keeps its external Slack a
 
 A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Avalon workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Avalon` mention. Avalon ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
 
+The workstream also carries the thread it was summoned from as an attached `slack_thread` resource, so a member reading it in Avalon can get back to the conversation. That attachment holds identifiers, the channel name, and Slack's own permalink — origin metadata, not message content, consistent with the retention boundary above. See [work-stream origin attachments](workstream-origin-attachments.md).
+
 On a prompt Avalon:
 
 1. adds an `eyes` reaction when the invocation has a source message;
