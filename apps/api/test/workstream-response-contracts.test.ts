@@ -124,7 +124,13 @@ describe("work-stream response contracts, driven through the real queries", () =
     // here, and only once these rows exist. A 200 means both matched the
     // columns their queries actually select.
     expect(response.status).toBe(200);
-    const body = WorkstreamContextSchema.parse(await response.json());
+    const payload = await response.json();
+    // Asserted on the raw body rather than through the schema, which would
+    // supply the default itself. A desktop build in the wild requires this
+    // field and fails the whole response without it, so what matters is that
+    // it is actually serialized — see `WorkstreamContextSchema`.
+    expect(payload).toMatchObject({ artifacts: [] });
+    const body = WorkstreamContextSchema.parse(payload);
     expect(body.backgroundTasks).toEqual([
       expect.objectContaining({ id: RUN, taskType: "agent", status: "completed", tokenCount: 50 }),
       expect.objectContaining({ id: TOOL_CALL, taskType: "tool", status: "completed" }),

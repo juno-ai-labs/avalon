@@ -430,6 +430,8 @@ export function renderDigestBrief(
     `You are writing the scheduled digest for ${schedule.user_name} in the ${schedule.workspace_name} workspace.`,
     `Their timezone is ${schedule.timezone}. Everything below happened since their last digest and is already filtered to what they are allowed to see.`,
     "",
+    "Your final message in this run is the digest, and its text is mailed verbatim. There is nowhere else to put it: do not summarize what you wrote, do not report that you wrote it, and do not close with a sentence about the task. If your last message is anything but the digest itself, that is what they receive instead of it.",
+    "",
     "Write the digest as Markdown addressed to them. It is rendered into an email, so structure is what makes it readable:",
     "",
     "- Open with one short sentence naming the single most important thing. No greeting — the email adds one.",

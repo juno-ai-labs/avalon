@@ -456,9 +456,11 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 
 ### 2026-08-12 — A digest run has nowhere to put its summary except the message it ends with
 
-**What changed:** Nothing in the digest path itself. The `create_artifact` tool
-that a digest run could reach — every digest executes the ordinary work-stream
-loop, so it loaded `avalon_workstream` like any other run — no longer exists. See
+**What changed:** `renderDigestBrief` now opens by telling the run that its final
+message *is* the digest and is mailed verbatim — that no summary of it, report
+about it, or closing sentence may take its place. The `create_artifact` tool a
+digest run could reach — every digest executes the ordinary work-stream loop, so
+it loaded `avalon_workstream` like any other run — no longer exists. See
 [`AGENT_HARNESS.md`](AGENT_HARNESS.md#changelog).
 
 **Why:** A run wrote its digest into an artifact and ended with "Outcome: Digest
@@ -475,10 +477,12 @@ receipt and a real digest are both just text.
 like a receipt. It puts a heuristic between a run and what gets mailed, and every
 delivery surface would need its own copy of it.
 
-**Consequences:** The brief in `buildDigestBrief` is now the only instruction
-about where the digest goes, and it should stay explicit that the final message
-is the deliverable — a future tool offering a run somewhere else to write
-re-opens this exactly as the artifact tool did.
+**Consequences:** `renderDigestBrief` is now the only place that establishes
+where a digest goes, and the sentence saying so has to stay. Removing the
+artifact tool closed the destination this run happened to find; it did not close
+the failure, because a run can still end on a sign-off and mail that instead.
+Keep the instruction whenever the brief is reworded, and treat any future tool
+that offers a run somewhere else to write as re-opening this.
 
 ### 2026-08-12 — Each occurrence gets its own work stream, because a shared one was an unbounded context channel between digests
 
