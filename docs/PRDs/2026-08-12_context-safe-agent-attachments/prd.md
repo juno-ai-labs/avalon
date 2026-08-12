@@ -8,6 +8,7 @@
 > brief](../2026-08-05_avalon-implementation-brief/prd.md). Governing runtime
 > documents: [`../../agent-harness.md`](../../agent-harness.md) and
 > [`../../context-compaction.md`](../../context-compaction.md).
+> Implementation: [`plan.md`](plan.md).
 
 ## Summary
 
