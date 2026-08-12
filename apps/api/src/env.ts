@@ -318,9 +318,20 @@ export function assertEnvContract(env: Env): void {
   if (validated.has(env)) return;
   const result = EnvContractSchema.safeParse(env);
   // An unrecognized region cannot select a region-scoped rule, so it is held to
-  // all of them. The schema reports the bad region separately; relaxing a secret
-  // requirement because the region was unreadable would fail open.
-  const knownRegion = env.AVALON_REGION === "global" || env.AVALON_REGION === "eu";
+  // all of them.
+  //
+  // This does not prevent a fail-open: `EnvContractSchema` types `AVALON_REGION`
+  // as an enum, so an unrecognized region already fails the parse and the throw
+  // happens either way. What it buys is a *complete* throw — every missing
+  // secret reported alongside the bad region, rather than a key list that
+  // quietly shrank because the region could not be read.
+  //
+  // Derived from that same enum rather than restating its members, because a
+  // third region added to the enum and missed here would land in "unknown, so
+  // it must carry every secret" — including the Global-only login pair it must
+  // not have. That is this outage, reissued for the next region, and the drift
+  // guard cannot catch it: none of these keys are in the schema.
+  const knownRegion = EnvContractSchema.shape.AVALON_REGION.safeParse(env.AVALON_REGION).success;
   const missingSecrets = env.APP_ENV === "production" || env.APP_ENV === "staging"
     ? productionOnlySecrets
         .filter((secret) => (!knownRegion || (secret.regions as readonly Region[]).includes(env.AVALON_REGION))
