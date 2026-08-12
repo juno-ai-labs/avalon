@@ -2,6 +2,7 @@ import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
 import type { ApiError } from './api';
+import type { Message } from './types';
 import type { DesktopSession } from '../../common/desktop';
 
 const timestamp = '2026-07-31T20:00:00.000Z';
@@ -560,6 +561,34 @@ describe('Avalon API wire adapter', () => {
       [answeredResponse, openQuestion],
       mapWorkstreamDetail(detail),
     )).toEqual([answeredResponse]);
+  });
+
+  it('omits dismissed suggestions from a reconstructed message feed', () => {
+    const acceptedSuggestion: Message = {
+      id: `suggestion-${taskId}`,
+      workstreamId,
+      sequenceNumber: 5,
+      authorType: 'system',
+      messageType: 'activity_suggestion',
+      createdAt: timestamp,
+      activitySuggestion: {
+        id: taskId,
+        title: 'Review the launch plan',
+        source: 'Activity',
+        reason: 'It matches the work stream objective.',
+        status: 'accepted',
+      },
+    };
+    const dismissedSuggestion: Message = {
+      ...acceptedSuggestion,
+      id: `suggestion-${noteId}`,
+      activitySuggestion: { ...acceptedSuggestion.activitySuggestion!, id: noteId, status: 'dismissed' },
+    };
+
+    expect(messagesWithTransientBlocks(
+      [dismissedSuggestion, acceptedSuggestion],
+      mapWorkstreamDetail(detail),
+    )).toEqual([acceptedSuggestion]);
   });
 
   it('maps background activity into the durable rail model', () => {

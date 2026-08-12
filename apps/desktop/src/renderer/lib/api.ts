@@ -500,7 +500,10 @@ export function messagesWithTransientBlocks(mapped: Message[], detail: Workstrea
   const canonicalMessages = mapped.reduce<Message[]>(
     (messages, message) => upsertTranscriptMessage(messages, message),
     [],
-  );
+  ).filter((message) => !(
+    message.messageType === 'activity_suggestion'
+    && message.activitySuggestion?.status === 'dismissed'
+  ));
   let sequence = canonicalMessages.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
   const canonicalIds = new Set(canonicalMessages.map((message) => message.id));
   const elicitationMessages = (detail.openElicitations ?? [])

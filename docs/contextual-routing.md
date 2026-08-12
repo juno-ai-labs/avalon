@@ -78,6 +78,9 @@ What survives is written by `createActivitySuggestion` as a `pending` row and
 published to the work-stream room, where the desktop client renders it as a
 transcript block. `resolveSuggestion` later stamps `accepted` or `dismissed`
 along with who clicked, which is what steps 2–4 read on the next activity.
+Accepted cards remain in the feed as a receipt that the resource was added;
+dismissed cards leave the feed immediately while their database rows remain as
+routing feedback.
 
 ## Invariants
 
@@ -132,6 +135,12 @@ along with who clicked, which is what steps 2–4 read on the next activity.
   notice. Stamped with the original resolvers, or with several identities, it
   clears the corroboration bar and suppresses those types outright. Neither is a
   decision anybody made about routing.
+- **A dismissal removes the card, not the feedback.** The desktop filters a
+  dismissed suggestion out of canonical reconstruction and removes it on both
+  the live resolution event and a successful request without a socket. Leaving
+  any of those paths out lets a rejected interruption reappear or accumulate in
+  the message feed, while deleting the row would erase the evidence the routing
+  thresholds need.
 
 ## Boundary
 
@@ -211,6 +220,10 @@ migrated in-memory SQLite database:
 ```bash
 pnpm --filter @avalon/api exec vitest run test/activity-contextual-routing.test.ts
 ```
+
+`apps/desktop/src/renderer/lib/api.test.ts` covers canonical feed reconstruction,
+and `apps/desktop/src/renderer/lib/use-workstream-socket-suggestions.test.tsx`
+covers accepted and dismissed resolution events in the live feed.
 
 Four traps. **GitHub credentials in the fake env are load-bearing** — the registry
 is what answers digestibility, and `GITHUB_APP_PRIVATE_KEY` must be PEM-shaped or
@@ -292,6 +305,33 @@ suppressed type. The prior is `connector-digestibility.md` plus whether that
 connector declares any digestible type at all.
 
 ## Changelog
+
+### 2026-08-12 — Dismissing a suggestion removes it from the message feed
+
+**What changed:** The desktop now removes dismissed Suggested context cards on
+the live resolution event, after a successful dismissal request when the socket
+is unavailable, and during canonical feed reconstruction. Accepted cards remain
+visible as confirmation that their resource was added, and the dismissed row
+remains stored for routing feedback.
+
+**Why:** A resolution event replaced the pending card with a resolved card whose
+footer said “Dismissed.” Repeating the action therefore accumulated rejected
+suggestions in the message feed—the surface the person was trying to clear—and
+made the routing feedback improvement feel like more noise rather than less.
+
+**Considered and rejected:** Hiding the resolved content only inside the card
+component. The virtualized feed would still own and measure an empty transcript
+row, and stale dismissed messages would remain in its cache. Also rejected was
+keeping a compact dismissal receipt: acceptance has a durable side effect worth
+confirming, while dismissal is specifically the decision that this unsolicited
+context does not belong in the work stream.
+
+**Consequences:** Every path that introduces or reconciles suggestion messages
+must preserve the same visibility rule. Dismissal is presentation removal only;
+future cleanup must not delete the `activity_suggestions` row, because its status
+and resolver are the evidence used to reduce later routing noise.
+
+Shipped in #135.
 
 ### 2026-08-12 — The workspace's own dismissals set the bar; the manifest only nudges it
 
