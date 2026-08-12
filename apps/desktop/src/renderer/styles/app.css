@@ -1835,11 +1835,23 @@ pre {
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Markers are restated because Tailwind's preflight sets `list-style: none` on
+   every `ol` and `ul`, and the rules below never took it back — they set the
+   indent a marker needs and a colour for a marker that was not being drawn, so
+   a bulleted list rendered as indented paragraphs and a numbered one lost its
+   numbers. Nested levels are restated for the same reason: the browser's own
+   `disc → circle → square` cascade is part of what preflight removed. */
+.markdown-body ul { list-style: disc; }
+.markdown-body ul ul { list-style: circle; }
+.markdown-body ul ul ul { list-style: square; }
+.markdown-body ol { list-style: decimal; }
 .markdown-body ul,
 .markdown-body ol { margin: 9px 0 15px; padding-left: 26px; }
 .markdown-body li { margin: 5px 0; padding-left: 1px; }
 .markdown-body li > p { margin-bottom: 7px; }
 .markdown-body li::marker { color: #d7d6d1; }
+/* Keeps its own `none`: a task list draws checkboxes, and it is more specific
+   than the rules above, so this exception survives them. */
 .markdown-body .contains-task-list { list-style: none; padding-left: 4px; }
 .markdown-body .task-list-item { align-items: baseline; display: flex; gap: 9px; }
 .markdown-body .task-list-item > input { accent-color: var(--blue); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
