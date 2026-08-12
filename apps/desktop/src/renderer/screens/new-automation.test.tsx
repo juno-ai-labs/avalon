@@ -1,16 +1,19 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes, useLocation, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../lib/api';
 import type { AutomationAssistantStreamEvent } from '../lib/api';
 import type { Workspace } from '../lib/types';
-import { clearAllDrafts } from '../lib/draft-cache';
-import { NewAutomationScreen } from './new-automation';
+import { clearAllDrafts, readDraftText } from '../lib/draft-cache';
+import { newAutomationDraftKey } from '../lib/draft-keys';
+import { NewAutomationScreen, retainableNarration } from './new-automation';
 
 const api = vi.hoisted(() => ({
   compileAutomation: vi.fn(),
   createAutomation: vi.fn(),
+  resumeAutomationDraft: vi.fn(),
   deleteDraftResource: vi.fn(),
   getAutomationDraftSystemPrompt: vi.fn(),
   getConnections: vi.fn(),
@@ -53,14 +56,26 @@ vi.mock('thinking-orbs', () => ({
   ),
 }));
 
-function renderScreen(): void {
+/** The address bar, readable from a test. The screen writes the draft it is on
+ * into the query string, and the sidebar reads that back to mark the row. */
+function LocationProbe(): React.JSX.Element {
+  const location = useLocation();
+  return <span data-testid="location-search">{location.search}</span>;
+}
+
+function renderScreen(entry: InitialEntry = '/automations/new'): void {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/automations/new']}>
+        <MemoryRouter initialEntries={[entry]}>
+          <LocationProbe />
+          {/* What the sidebar offers: the same route with and without a draft
+              named in the query, so neither remounts the screen. */}
+          <Link to="/automations/new">back to nothing</Link>
+          <Link to="/automations/new?draft=draft-9">open draft 9</Link>
           <Routes>
             <Route element={<NewAutomationScreen workspace={workspace} />} path="/automations/new" />
           </Routes>
@@ -80,6 +95,9 @@ describe('New automation composer', () => {
     await clearAllDrafts();
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
+    // Loud by default: a test that resumes a draft says so, and one that does
+    // not must never have a stale conversation swapped in under it.
+    api.resumeAutomationDraft.mockRejectedValue(new Error('no draft was meant to be resumed'));
     api.compileAutomation.mockResolvedValue({
       draftId: 'draft-1',
       assistantMessage: 'What should the automation monitor?',
@@ -205,6 +223,309 @@ describe('New automation composer', () => {
     expect(copyText).toHaveBeenCalledWith('draft-1');
   });
 
+  it('reopens a draft from the sidebar on the turn it was left at', async () => {
+    api.resumeAutomationDraft.mockResolvedValue({
+      draft: {
+        draftId: 'draft-9',
+        assistantMessage: 'Which blog should I monitor?',
+        question: {
+          id: 'question-9',
+          prompt: 'Which blog should I monitor?',
+          responseType: 'free_text',
+          options: [],
+          allowOther: false,
+        },
+      },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    });
+    renderScreen('/automations/new?draft=draft-9');
+
+    await waitFor(() => expect(api.resumeAutomationDraft).toHaveBeenCalledWith('draft-9', expect.anything()));
+    expect(await screen.findByText('Watch my blog.')).toBeVisible();
+    // The question the conversation ended on is a question again, not a
+    // sentence describing one.
+    expect(await screen.findByRole('textbox', { name: 'Which blog should I monitor?' })).toBeVisible();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Which blog should I monitor?' }), {
+      target: { value: 'https://example.com/blog' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    // Continuing writes back to the same draft rather than starting another.
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith(
+      { message: 'https://example.com/blog', draftId: 'draft-9' },
+      expect.any(Function),
+    ));
+  });
+
+  it('resumes on a fresh mount whatever the history entry carries', async () => {
+    api.resumeAutomationDraft.mockResolvedValue({
+      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    });
+    // Whether a draft still needs loading is a fact about this screen, not
+    // about the history entry it is mounted on. A mark left in history state
+    // outlives the screen that set it, so a back gesture or a restored window
+    // would land here with the load switched off and show an empty builder for
+    // a draft that has a conversation.
+    renderScreen({
+      pathname: '/automations/new',
+      search: '?draft=draft-9',
+      state: { selfNamedDraft: true, anythingElse: true },
+    });
+
+    expect(await screen.findByText('Watch my blog.')).toBeVisible();
+    expect(api.resumeAutomationDraft).toHaveBeenCalledWith('draft-9', expect.anything());
+  });
+
+  it('reopens a continued draft at the turn it reached, not the one it was resumed from', async () => {
+    const resumed = {
+      draft: {
+        draftId: 'draft-9',
+        assistantMessage: 'Which blog should I monitor?',
+        question: {
+          id: 'question-9',
+          prompt: 'Which blog should I monitor?',
+          responseType: 'free_text',
+          options: [],
+          allowOther: false,
+        },
+      },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    };
+    api.resumeAutomationDraft.mockResolvedValue(resumed);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-9',
+      assistantMessage: 'How often should I check it?',
+    });
+    renderScreen('/automations/new?draft=draft-9');
+
+    await screen.findByText('Watch my blog.');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Which blog should I monitor?' }), {
+      target: { value: 'https://example.com/blog' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('How often should I check it?');
+
+    // Leaving and coming back must not serve the conversation from before the
+    // answer: the draft on the server has moved on, and a cached copy of the
+    // turn it was resumed at would silently roll it back.
+    fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+    api.resumeAutomationDraft.mockResolvedValue({
+      ...resumed,
+      messages: [
+        ...resumed.messages,
+        { role: 'user', content: 'https://example.com/blog' },
+        { role: 'assistant', content: 'How often should I check it?' },
+      ],
+    });
+    fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
+
+    expect(await screen.findByText('https://example.com/blog')).toBeVisible();
+    expect(api.resumeAutomationDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves an unsent message with the draft it was typed in', async () => {
+    api.resumeAutomationDraft.mockResolvedValue({
+      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    });
+    renderScreen('/automations/new?draft=draft-9');
+    await screen.findByText('Watch my blog.');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'https://example.com/blog' },
+    });
+
+    // Switching away must not carry the sentence — or the attachments staged
+    // beside it — into a conversation it was never meant for.
+    fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+
+    const fresh = await screen.findByRole('textbox', { name: 'Describe an automation' });
+    await waitFor(() => expect(fresh).toHaveValue(''));
+  });
+
+  it('says a draft could not be opened rather than offering a blank automation', async () => {
+    api.resumeAutomationDraft.mockRejectedValue(new ApiError('This draft’s conversation is no longer available.', 409, 'automation_draft_unavailable'));
+    renderScreen('/automations/new?draft=draft-9');
+
+    expect(await screen.findByRole('heading', { name: 'This draft could not be opened' })).toBeVisible();
+    expect(screen.getByText('This draft’s conversation is no longer available.')).toBeVisible();
+
+    // Sending here would compile with no draft id, opening a second draft while
+    // the sidebar still highlights the first.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'carry on then' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(api.compileAutomation).not.toHaveBeenCalled();
+  });
+
+  it('leaves an unsent message with a draft this screen named itself', async () => {
+    renderScreen();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('What should the automation monitor?');
+    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-1'));
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'What should the automation monitor?' }), {
+      target: { value: 'an unsent afterthought' },
+    });
+    fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+
+    // Every automation created through the product enters this way rather than
+    // through a resume, so the launcher's key is the one that has to stop being
+    // shared with the draft the first turn named.
+    const fresh = await screen.findByRole('textbox', { name: 'Describe an automation' });
+    await waitFor(() => expect(fresh).toHaveValue(''));
+  });
+
+  it('keeps a turn from landing on the draft the reader moved to', async () => {
+    let resolveCompile!: (value: unknown) => void;
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise((resolve) => {
+      resolveCompile = resolve;
+      stream = onStream;
+    }));
+    api.resumeAutomationDraft.mockResolvedValue({
+      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Check a blog every day');
+
+    // The reader opens another draft while that turn is still compiling.
+    fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
+    expect(await screen.findByText('Watch my blog.')).toBeVisible();
+
+    act(() => {
+      stream({ type: 'delta', delta: 'Which post types?', reset: false });
+      resolveCompile({ draftId: 'draft-1', assistantMessage: 'Which post types?' });
+    });
+
+    // Neither the streamed text nor the settled answer belongs to the
+    // conversation now on screen, and the turn must not drag the reader back to
+    // the draft it was sent from.
+    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-9'));
+    expect(screen.queryByText('Which post types?')).not.toBeInTheDocument();
+    expect(screen.queryByText('Check a blog every day')).not.toBeInTheDocument();
+  });
+
+  it('clears the conversation the moment another draft is chosen, before it loads', async () => {
+    let resolveResume!: (value: unknown) => void;
+    api.resumeAutomationDraft.mockImplementation(() => new Promise((resolve) => {
+      resolveResume = resolve;
+    }));
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('What should the automation monitor?');
+
+    fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
+
+    // Leaving the old transcript up while the new draft loads offers a Send
+    // that would answer a draft the sidebar says is closed — and a load that
+    // never arrives would leave it there for good.
+    await waitFor(() => expect(screen.queryByText('Check a blog every day')).not.toBeInTheDocument());
+    act(() => {
+      resolveResume({
+        draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+        messages: [
+          { role: 'user', content: 'Watch my blog.' },
+          { role: 'assistant', content: 'Which blog should I monitor?' },
+        ],
+      });
+    });
+    expect(await screen.findByText('Watch my blog.')).toBeVisible();
+  });
+
+  it('carries an answer typed during a turn onto the draft that turn named', async () => {
+    let resolveCompile!: (value: unknown) => void;
+    api.compileAutomation.mockImplementation(() => new Promise((resolve) => {
+      resolveCompile = resolve;
+    }));
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    // Typing ahead while the model works. The composer's cache moves to the new
+    // draft when the turn settles, and re-keying it empties the composer, so
+    // this is the sentence that would be lost.
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue(''));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Only weekdays' },
+    });
+
+    act(() => {
+      resolveCompile({ draftId: 'draft-1', assistantMessage: 'Noted.' });
+    });
+
+    await screen.findByText('Noted.');
+    expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue('Only weekdays');
+
+    // And it stays with that draft rather than the blank launcher.
+    fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+    // The cache is what this asserts on, and the composer only afterwards.
+    // Re-keying empties the composer synchronously and refills it when the read
+    // lands, so a value assertion alone is satisfied by that gap — which is how
+    // this test stayed green while the launcher's row still held the sentence,
+    // failing only on the runs where the read won the race. An empty row is what
+    // makes the empty composer permanent rather than momentary.
+    await waitFor(async () => {
+      expect(await readDraftText(newAutomationDraftKey('workspace-1'))).toBeNull();
+    });
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue(''));
+    // Moved, not dropped: the sentence is under the draft it was typed for.
+    await waitFor(async () => {
+      expect((await readDraftText(newAutomationDraftKey('workspace-1', 'draft-1')))?.text)
+        .toBe('Only weekdays');
+    });
+  });
+
+  it('names the draft it just wrote in the address bar, so its sidebar row is the open one', async () => {
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await screen.findByText('What should the automation monitor?');
+    // The screen adopts the API's id rather than the reverse: the turn wrote a
+    // draft automation, and the URL has to point at that row.
+    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-1'));
+    // Naming it is not the same as reopening it — the conversation on screen is
+    // already the current one.
+    expect(api.resumeAutomationDraft).not.toHaveBeenCalled();
+  });
+
   it('uses workstream chat messages while streaming research and the assistant response', async () => {
     let resolveCompile!: (value: unknown) => void;
     let stream!: (event: AutomationAssistantStreamEvent) => void;
@@ -312,6 +633,93 @@ describe('New automation composer', () => {
       'https://example.com/blog',
     );
     expect(screen.getAllByText(example)).toHaveLength(1);
+  });
+
+  it('retracts an abandoned narration turn without blanking the bubble', async () => {
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise(() => { stream = onStream; }));
+    renderScreen();
+
+    const example = 'Check this blog every 24 hours for a new post.';
+    fireEvent.click(screen.getByRole('button', { name: example }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+
+    // A model that opens a turn with a bare newline must not render a bubble
+    // before it has said anything.
+    act(() => {
+      stream({ type: 'started' });
+      stream({ type: 'delta', delta: '\n', reset: false });
+    });
+    expect(document.querySelector('.agent-message')).toBeNull();
+
+    act(() => {
+      stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
+      stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false });
+    });
+    expect(await screen.findByText(/Searching GitHub next\./)).toBeInTheDocument();
+
+    // The harness replays the settled text on a reset, so the abandoned turn
+    // disappears and the earlier update survives.
+    act(() => { stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: true }); });
+    expect(await screen.findByText('Checking the plugin catalog.')).toBeInTheDocument();
+    expect(screen.queryByText(/Searching GitHub next\./)).not.toBeInTheDocument();
+
+    // A reset with nothing to restore leaves no bubble at all.
+    act(() => { stream({ type: 'delta', delta: '', reset: true }); });
+    await waitFor(() => expect(document.querySelector('.agent-message')).toBeNull());
+  });
+
+  it('follows streaming narration to the bottom until the reader scrolls up', async () => {
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise(() => { stream = onStream; }));
+    renderScreen();
+
+    const example = 'Check this blog every 24 hours for a new post.';
+    fireEvent.click(screen.getByRole('button', { name: example }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+
+    const surface = document.querySelector('.new-automation-screen') as HTMLElement;
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
+    Object.defineProperty(surface, 'clientHeight', { configurable: true, value: 900 });
+
+    act(() => {
+      stream({ type: 'started' });
+      stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
+    });
+    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
+
+    // The follow's own scroll event is dispatched at frame time, by which
+    // point more narration has landed and the bottom has moved. Measuring
+    // that as the reader scrolling up would switch the follow off a second
+    // into every compile.
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 5_000 });
+    fireEvent.scroll(surface);
+    act(() => { stream({ type: 'delta', delta: ' Still following.', reset: false }); });
+    await waitFor(() => expect(surface.scrollTop).toBe(5_000));
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
+
+    // A few pixels above the bottom of the 3_100 scroll range is still the
+    // reader taking control. A larger tolerance would read this as "close
+    // enough" and yank them forward on the next fragment.
+    surface.scrollTop = 3_090;
+    fireEvent.scroll(surface);
+    act(() => { stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false }); });
+    await screen.findByText(/Searching GitHub next\./);
+    expect(surface.scrollTop).toBe(3_090);
+
+    surface.scrollTop = 1_000;
+    fireEvent.scroll(surface);
+    act(() => { stream({ type: 'delta', delta: '\n\nReading the workflow docs.', reset: false }); });
+    await screen.findByText(/Reading the workflow docs\./);
+    expect(surface.scrollTop).toBe(1_000);
+
+    // Back at the bottom by their own hand, the follow resumes. The one-pixel
+    // slack absorbs the fractional maximum a browser clamps a programmatic
+    // scroll to; it is not a "near the bottom" allowance.
+    surface.scrollTop = 3_099;
+    fireEvent.scroll(surface);
+    act(() => { stream({ type: 'delta', delta: '\n\nDrafting it now.', reset: false }); });
+    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
   });
 
   it('preloads Avalon’s plugin picks without a Default plugins section', async () => {
@@ -869,6 +1277,49 @@ describe('New automation composer', () => {
     expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
   });
 
+  it('drops the tail of a runaway narration rather than the explanation', () => {
+    const plan = 'Watching GitHub deployment runs on main.';
+    const spew = Array.from({ length: 120 }, (_, index) => `Wait! Column ${index} rejected.`).join('\n\n');
+
+    expect(retainableNarration(`  ${plan}  `)).toBe(plan);
+    const retained = retainableNarration(`${plan}\n\n${spew}`);
+    expect(retained.startsWith(plan)).toBe(true);
+    expect(retained.endsWith('\n\n…')).toBe(true);
+    expect(retained.length).toBeLessThan(1_600);
+    expect(retained).not.toContain('Wait! Column 119');
+  });
+
+  it('keeps the narration when a compile fails', async () => {
+    let rejectCompile!: (reason: unknown) => void;
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise((_resolve, reject) => {
+      rejectCompile = reject;
+      stream = onStream;
+    }));
+    renderScreen();
+
+    const example = 'Check this blog every 24 hours for a new post.';
+    fireEvent.click(screen.getByRole('button', { name: example }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+
+    act(() => {
+      stream({ type: 'started' });
+      stream({ type: 'delta', delta: 'No blog connector is authorized,', reset: false });
+      stream({ type: 'delta', delta: ' so I am checking the public web instead.', reset: false });
+    });
+    await screen.findByText(/No blog connector is authorized/);
+
+    // A compile that exhausts the wall clock is when the narration explains
+    // the most, so it settles into the transcript rather than being cleared.
+    await act(async () => { rejectCompile(new Error('Avalon took too long to refine the automation.')); });
+
+    const settled = (await screen.findByText(
+      'No blog connector is authorized, so I am checking the public web instead.',
+    )).closest('article');
+    expect(settled).toHaveClass('message-block', 'agent-message');
+    expect(await screen.findByText(/Avalon took too long/)).toBeInTheDocument();
+  });
+
   it('reapplies the elicitation answer when a failed follow-up is retried', async () => {
     api.compileAutomation
       .mockResolvedValueOnce({
@@ -949,6 +1400,9 @@ describe('New automation composer', () => {
       const section = screen.getByRole('region', { name: 'System prompt' });
       expect(within(section).queryByRole('button', { name: /Show|Hide/ })).not.toBeInTheDocument();
       expect(within(section).getByRole('button')).toHaveAccessibleName('Copy');
+      // The card sits inside the conversation's polite live region, and this is
+      // thousands of characters that must not be read out on every render.
+      expect(section).toHaveAttribute('aria-live', 'off');
       expect(section).toHaveTextContent(/^System prompt ?CopyYou are Avalon\./);
       // Nothing here is editable: the draft changes by describing the change.
       expect(within(section).queryByRole('textbox')).not.toBeInTheDocument();
@@ -977,7 +1431,10 @@ describe('New automation composer', () => {
       applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
       api.getAutomationDraftSystemPrompt
         .mockResolvedValueOnce('Prompt before the edit')
-        .mockResolvedValueOnce('Prompt after the edit');
+        .mockResolvedValueOnce('Prompt after the edit')
+        // A third fetch would resolve undefined, which React Query rejects with
+        // an error naming nothing. Fail on the count instead.
+        .mockResolvedValue('Unexpected extra render of the system prompt');
       await renderReadyDraft();
 
       expect(await screen.findByText('Prompt before the edit')).toBeInTheDocument();
@@ -991,6 +1448,31 @@ describe('New automation composer', () => {
 
       expect(await screen.findByText('Prompt after the edit')).toBeInTheDocument();
       expect(screen.queryByText('Prompt before the edit')).not.toBeInTheDocument();
+    });
+
+    it('drops the superseded prompt while the next one is still being rendered', async () => {
+      applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+      let releaseSecond: (prompt: string) => void = () => undefined;
+      api.getAutomationDraftSystemPrompt
+        .mockResolvedValueOnce('Prompt before the edit')
+        .mockImplementationOnce(() => new Promise<string>((resolve) => { releaseSecond = resolve; }));
+      await renderReadyDraft();
+      expect(await screen.findByText('Prompt before the edit')).toBeInTheDocument();
+
+      fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+        target: { value: 'Send it on Thursdays instead' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+      // The old prompt is not the new draft's, so it may not stay on screen —
+      // or on the clipboard — for the width of the request that replaces it.
+      expect(await screen.findByText('Rendering the system prompt…')).toBeInTheDocument();
+      expect(screen.queryByText('Prompt before the edit')).not.toBeInTheDocument();
+      const section = screen.getByRole('region', { name: 'System prompt' });
+      expect(within(section).queryByRole('button', { name: 'Copy' })).not.toBeInTheDocument();
+
+      await act(async () => { releaseSecond('Prompt after the edit'); });
+      expect(await screen.findByText('Prompt after the edit')).toBeInTheDocument();
     });
 
     it('says why the prompt is missing rather than showing an empty viewer', async () => {

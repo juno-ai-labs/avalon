@@ -42,7 +42,7 @@ remote bindings; see
 [the development environment guide](dev-environment.md#3-start-the-api-workers).
 
 The general fix is to widen the environment's network policy — the host list is
-in [the sandbox environment](SANDBOX.md#network-access). Do not work around a
+in [the sandbox environment](sandbox.md#network-access). Do not work around a
 policy denial by disabling TLS verification or unsetting `HTTPS_PROXY`.
 
 ## Failure 2 — the client breaks on the tunnel
@@ -77,7 +77,7 @@ With those exported, `node install.js` inside
 lands in `dist/`.
 
 The persistent list lives in `/etc/profile.d/zz-avalon-noproxy.sh`, written by
-the environment setup script in [the sandbox environment](SANDBOX.md#setup-script)
+the environment setup script in [the sandbox environment](sandbox.md#setup-script)
 and sourced by both login and interactive shells. To make a new host permanent,
 add it there and tell whoever maintains the environment; a session export alone
 disappears with the container.

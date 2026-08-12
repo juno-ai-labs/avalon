@@ -21,6 +21,7 @@ function stream(
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    pinPosition: null,
   };
 }
 

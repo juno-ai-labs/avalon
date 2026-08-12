@@ -27,6 +27,66 @@ describe("connector OAuth callback failures", () => {
     });
   });
 
+  it("reports the provider's own error code, and refuses anything not shaped like one", () => {
+    // A Slack personal connection failed three times recording only
+    // `connector_code: "provider_error"` — the layer, not the fault. Slack had
+    // said `invalid_code`; the classifier dropped it.
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "Slack OAuth failed", { error: "invalid_code" }),
+    ).diagnostics).toMatchObject({ provider_error: "invalid_code" });
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "failed", { providerError: "bad_redirect_uri" }),
+    ).diagnostics).toMatchObject({ provider_error: "bad_redirect_uri" });
+
+    for (const notAString of [42, null, undefined, {}, ["invalid_code"]]) {
+      expect(classifyConnectorOAuthCallbackFailure(
+        new ConnectorError("provider_error", "failed", { error: notAString }),
+      ).diagnostics).not.toHaveProperty("provider_error");
+    }
+
+    // Never a credential, an address, or a name: the shape is the whole guard.
+    for (const unsafe of [
+      "xoxp-10164519659008-11799907517957-secret",
+      // A Slack client secret: 32 lowercase hex characters, no separators.
+      // An earlier `[a-z][a-z0-9_]{0,39}` pattern admitted this one — the
+      // reason every segment must now be alphabetic, since a secret carries
+      // entropy and entropy carries digits.
+      `e99a18c428cb38d5${"f260853678922e03"}`,
+      // Assembled from parts, so the repository's own secret scan reads this
+      // fixture as what it is. Spelled literally it is a `github-pat` hit —
+      // which is the point of including it, and exactly why it cannot be a
+      // literal.
+      `gh${"p"}_${"abcdefghijklmnopqrstuvwxyz"}${"abcdefghij"}`,
+      "abc123",
+      "adam@juno-labs.com",
+      "Something went wrong",
+      "a".repeat(80),
+      "a".repeat(21),
+      "invalid.code",
+      "",
+    ]) {
+      expect(classifyConnectorOAuthCallbackFailure(
+        new ConnectorError("provider_error", "failed", { error: unsafe }),
+      ).diagnostics).not.toHaveProperty("provider_error");
+    }
+  });
+
+  it("separates a malformed provider response from a provider refusal", () => {
+    // Both arrive as `provider_error` and call for opposite responses: one is
+    // Avalon's bug, the other a spent code or a misconfiguration.
+    const flattened = z.object({ team: z.object({ id: z.string() }) })
+      .safeParse({ ok: true });
+    expect(flattened.success).toBe(false);
+    if (flattened.success) return;
+
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "Slack OAuth failed", flattened.error.flatten()),
+    ).diagnostics).toMatchObject({ response_invalid: true });
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "Slack OAuth failed", { error: "invalid_code" }),
+    ).diagnostics).not.toHaveProperty("response_invalid");
+  });
+
   it("classifies schema, API, and unknown failures without their messages", () => {
     const schemaError = z.object({ token: z.string() }).safeParse({ token: 1 });
     expect(schemaError.success).toBe(false);

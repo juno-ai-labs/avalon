@@ -28,6 +28,10 @@ import {
   isSharedLinearIngress,
 } from "./services/linear-routing-service";
 import {
+  isAllowedNotionIngressRoute,
+  isSharedNotionIngress,
+} from "./lib/notion-ingress";
+import {
   isAllowedSlackIngressRoute,
   isSharedSlackIngress,
 } from "./services/slack-routing-service";
@@ -62,6 +66,18 @@ export function createApp(): Hono<HonoAppEnv> {
     if (
       isSharedLinearIngress(c.env, c.req.url)
       && !isAllowedLinearIngressRoute(c.req.method, new URL(c.req.url).pathname)
+    ) {
+      return c.json({
+        error: {
+          code: "not_found",
+          message: "The requested API route does not exist",
+          requestId: c.get("requestId") ?? null,
+        },
+      }, 404);
+    }
+    if (
+      isSharedNotionIngress(c.env, c.req.url)
+      && !isAllowedNotionIngressRoute(c.req.method, new URL(c.req.url).pathname)
     ) {
       return c.json({
         error: {

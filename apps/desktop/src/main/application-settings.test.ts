@@ -4,13 +4,19 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   applicationSettingsFilePath,
+  defaultStoredApplicationSettings,
   parseStoredApplicationSettings,
   readStoredApplicationSettings,
   updateStoredApplicationSettings,
   writeStoredApplicationSettings,
+  type StoredApplicationSettings,
 } from './application-settings';
 
 const temporaryDirectories: string[] = [];
+
+function settings(patch: Partial<StoredApplicationSettings>): StoredApplicationSettings {
+  return { ...defaultStoredApplicationSettings, ...patch };
+}
 
 async function temporaryUserDataDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'avalon-application-settings-'));
@@ -24,66 +30,96 @@ afterEach(async () => {
 });
 
 describe('desktop application settings', () => {
-  it('defaults every preference to off for missing or invalid values', () => {
-    expect(parseStoredApplicationSettings(undefined))
-      .toEqual({ lockdownMode: false, debugEnabled: false });
+  it('defaults every preference for missing or invalid values', () => {
+    expect(parseStoredApplicationSettings(undefined)).toEqual(defaultStoredApplicationSettings);
     expect(parseStoredApplicationSettings({ version: 2, lockdownMode: true }))
-      .toEqual({ lockdownMode: false, debugEnabled: false });
+      .toEqual(defaultStoredApplicationSettings);
     expect(parseStoredApplicationSettings({ version: 1, lockdownMode: 'yes' }))
-      .toEqual({ lockdownMode: false, debugEnabled: false });
+      .toEqual(defaultStoredApplicationSettings);
   });
 
   it('keeps Lockdown mode when a preference predates the Developer section', () => {
     expect(parseStoredApplicationSettings({ version: 1, lockdownMode: true }))
-      .toEqual({ lockdownMode: true, debugEnabled: false });
+      .toEqual(settings({ lockdownMode: true }));
     expect(parseStoredApplicationSettings({ version: 1, lockdownMode: true, debugEnabled: 'yes' }))
-      .toEqual({ lockdownMode: true, debugEnabled: false });
+      .toEqual(settings({ lockdownMode: true }));
     expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false, debugEnabled: true }))
-      .toEqual({ lockdownMode: false, debugEnabled: true });
+      .toEqual(settings({ debugEnabled: true }));
+  });
+
+  it('reads a preference written before the menu bar item as menu bar on', () => {
+    // Withdrawing the status item from every upgraded device would be the one
+    // reading of a missing field nobody asked for.
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false }).menuBarEnabled)
+      .toBe(true);
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false, menuBarEnabled: 'no' }).menuBarEnabled)
+      .toBe(true);
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false, menuBarEnabled: false }).menuBarEnabled)
+      .toBe(false);
+  });
+
+  it('only treats the login-item default as applied when it says so exactly', () => {
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false })
+      .launchAtLoginDefaultApplied).toBe(false);
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false, launchAtLoginDefaultApplied: 1 })
+      .launchAtLoginDefaultApplied).toBe(false);
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false, launchAtLoginDefaultApplied: true })
+      .launchAtLoginDefaultApplied).toBe(true);
   });
 
   it('persists preferences in an owner-readable application file', async () => {
     const directory = await temporaryUserDataDirectory();
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: false, debugEnabled: false });
+      .resolves.toEqual(defaultStoredApplicationSettings);
 
-    await writeStoredApplicationSettings(directory, { lockdownMode: true, debugEnabled: true });
+    await writeStoredApplicationSettings(directory, settings({ lockdownMode: true, debugEnabled: true }));
 
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: true, debugEnabled: true });
+      .resolves.toEqual(settings({ lockdownMode: true, debugEnabled: true }));
     expect(JSON.parse(await readFile(applicationSettingsFilePath(directory), 'utf8')))
-      .toEqual({ version: 1, lockdownMode: true, debugEnabled: true });
+      .toEqual({
+        version: 1,
+        lockdownMode: true,
+        debugEnabled: true,
+        menuBarEnabled: true,
+        launchAtLoginDefaultApplied: false,
+      });
     expect((await stat(applicationSettingsFilePath(directory))).mode & 0o777).toBe(0o600);
   });
 
-  it('updates one preference without disturbing the other', async () => {
+  it('updates one preference without disturbing the others', async () => {
     const directory = await temporaryUserDataDirectory();
-    await writeStoredApplicationSettings(directory, { lockdownMode: true, debugEnabled: false });
+    await writeStoredApplicationSettings(directory, settings({ lockdownMode: true }));
 
     await updateStoredApplicationSettings(directory, { debugEnabled: true });
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: true, debugEnabled: true });
+      .resolves.toEqual(settings({ lockdownMode: true, debugEnabled: true }));
+
+    await updateStoredApplicationSettings(directory, { menuBarEnabled: false });
+    await expect(readStoredApplicationSettings(directory))
+      .resolves.toEqual(settings({ lockdownMode: true, debugEnabled: true, menuBarEnabled: false }));
 
     await updateStoredApplicationSettings(directory, { lockdownMode: false });
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: false, debugEnabled: true });
+      .resolves.toEqual(settings({ debugEnabled: true, menuBarEnabled: false }));
   });
 
   it('keeps concurrent patches from different preference owners', async () => {
     const directory = await temporaryUserDataDirectory();
-    await writeStoredApplicationSettings(directory, { lockdownMode: false, debugEnabled: false });
+    await writeStoredApplicationSettings(directory, defaultStoredApplicationSettings);
 
-    // Lockdown mode and the Developer section serialize only against
-    // themselves, so a Debug toggle can land while a Lockdown transition is
-    // committing. Neither patch may be lost: an on-disk `lockdownMode: false`
-    // against a Lockdown envelope is read at the next launch as an external
-    // downgrade, which deletes the stored credentials.
+    // Lockdown mode, the Developer section, and the menu bar item serialize
+    // only against themselves, so their patches can land together. None may be
+    // lost: an on-disk `lockdownMode: false` against a Lockdown envelope is
+    // read at the next launch as an external downgrade, which deletes the
+    // stored credentials.
     await Promise.all([
       updateStoredApplicationSettings(directory, { lockdownMode: true }),
       updateStoredApplicationSettings(directory, { debugEnabled: true }),
+      updateStoredApplicationSettings(directory, { menuBarEnabled: false }),
     ]);
 
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: true, debugEnabled: true });
+      .resolves.toEqual(settings({ lockdownMode: true, debugEnabled: true, menuBarEnabled: false }));
   });
 });

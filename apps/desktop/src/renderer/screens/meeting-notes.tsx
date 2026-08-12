@@ -12,22 +12,40 @@ import {
   WandSparkles,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import type { UpdateNoteRequest } from '@avalon/contracts';
+import { CONTROL_TOWER_REFRESH_SECONDS, type UpdateNoteRequest } from '@avalon/contracts';
 import type {
   DesktopMediaPermissionStatus,
   DesktopMeetingAudioPermissions,
   MeetingAudioPermissionKind,
 } from '../../common/desktop';
-import { Button, IconButton, InlineError } from '../components/primitives';
+import { Button, IconButton, InlineError, Modal } from '../components/primitives';
+import { MarkdownBody } from '../components/workstream-blocks';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
 import { useRealtimeDictation } from '../lib/use-realtime-dictation';
 
-export const MEETING_TRANSCRIPTION_SEGMENT_MS = 5 * 60 * 1_000;
-export const MEETING_NOTES_INTERVAL_MS = 5 * 60 * 1_000;
+/**
+ * The cadence this screen keeps when the service has not told it one.
+ *
+ * Control Tower is only useful while the conversation it describes is still
+ * happening, so one timer commits the transcript segment and asks for the next
+ * briefing — in that order, because the commit is what makes the last minute of
+ * speech visible to the refresh that follows it. One constant rather than two:
+ * a separate notes interval would be a second cadence for a loop that has one.
+ *
+ * The real cadence is served by the `control-tower-refresh-seconds` flag and
+ * read below; this is the fallback for a device that could not ask, and it
+ * matches the flag's checked-in default so both answers agree.
+ */
+export const DEFAULT_MEETING_NOTES_INTERVAL_MS = CONTROL_TOWER_REFRESH_SECONDS.default * 1_000;
+
+/**
+ * How long the cadence request may hold the first segment timer before this
+ * meeting settles on the default and records on that. A meeting must never wait
+ * on a feature flag; it must also not start one cadence and finish on another.
+ */
+export const MEETING_CADENCE_REQUEST_TIMEOUT_MS = 5_000;
 const NOTE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export function noteIdFromSearch(search: string, createId: () => string = () => crypto.randomUUID()): string {
@@ -53,6 +71,18 @@ export function appendMeetingSegment(committed: string, segment: string): string
   return committed.trim() ? `${committed.trimEnd()}\n\n${next}` : next;
 }
 
+/**
+ * How the refresh cadence is described to the person waiting for a briefing.
+ * The number is served, so the copy cannot name one: promising a briefing every
+ * minute on a five-minute cadence is worse than saying nothing.
+ */
+export function meetingRefreshCadenceLabel(intervalMs: number): string {
+  const seconds = Math.max(1, Math.round(intervalMs / 1_000));
+  if (seconds % 60 !== 0) return `every ${seconds} seconds`;
+  const minutes = seconds / 60;
+  return minutes === 1 ? 'every minute' : `every ${minutes} minutes`;
+}
+
 export function meetingRecordedMs(recordedBeforeActiveMs: number, activeStartedAtMs: number | null, nowMs: number): number {
   return recordedBeforeActiveMs + (
     activeStartedAtMs === null ? 0 : Math.max(0, nowMs - activeStartedAtMs)
@@ -67,7 +97,7 @@ export function mergeSavedMeetingSegmentDuration(
   // While recording, recordedBeforeActiveMs is the immutable duration from
   // earlier recording sessions. The active clock contributes this session's
   // elapsed time, so folding segment boundaries into the base would count the
-  // same active span again at every five-minute commit.
+  // same active span again at every segment commit.
   return activeStartedAtMs === null
     ? Math.max(recordedBeforeActiveMs, segmentEndOffsetMs)
     : recordedBeforeActiveMs;
@@ -106,6 +136,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [generatedAt, setGeneratedAt] = useState<string | undefined>();
   const [recording, setRecording] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notesPending, setNotesPending] = useState(false);
   const [savePending, setSavePending] = useState(false);
@@ -115,6 +146,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [notesError, setNotesError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [now, setNow] = useState(Date.now());
+  /** `null` until the cadence for this meeting settles; then never replaced. */
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState<number | null>(null);
   const noteRef = useRef<NoteDetail | null>(null);
   const segmentsRef = useRef<NoteTranscriptSegment[]>([]);
   const segmentRef = useRef('');
@@ -123,8 +156,9 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const activeRecordingStartedAtRef = useRef<number | null>(null);
   const currentSegmentStartedOffsetRef = useRef(0);
   const segmentBoundaryOffsetRef = useRef<number | null>(null);
-  const finalizationInFlightRef = useRef<Promise<void> | undefined>(undefined);
-  const generationTailRef = useRef<Promise<void>>(Promise.resolve());
+  const finalizationInFlightRef = useRef<Promise<boolean> | undefined>(undefined);
+  const generationTailRef = useRef<Promise<unknown>>(Promise.resolve());
+  const liveGenerationRef = useRef<Promise<boolean> | null>(null);
   const persistenceTailRef = useRef<Promise<void>>(Promise.resolve());
   const notesBodyRef = useRef<HTMLDivElement | null>(null);
   const transcriptBodyRef = useRef<HTMLDivElement | null>(null);
@@ -200,6 +234,39 @@ export function MeetingNotesScreen(): React.JSX.Element {
     });
     return () => { active = false; };
   }, [api, hydrateNote, initialTitle, noteId]);
+
+  useEffect(() => {
+    if (!api || refreshIntervalMs !== null) return undefined;
+    const controller = new AbortController();
+    // Asked once, when the screen opens, and never replaced: this window exists
+    // for one meeting, and a cadence arriving later would re-arm the segment
+    // timer mid-recording, moving a transcript boundary and leaving the
+    // briefing describing a schedule that had already changed under it.
+    //
+    // Capture is not made to wait for it. Recording starts as soon as the note
+    // loads; only the segment timer holds until this settles, which is why the
+    // request is bounded rather than left to the network — a device that cannot
+    // ask, or an older service that does not answer, settles on the checked-in
+    // default within the timeout and records on that.
+    const settle = (intervalMs: number): void => {
+      setRefreshIntervalMs((current) => current ?? intervalMs);
+    };
+    const timeout = window.setTimeout(
+      () => {
+        controller.abort();
+        settle(DEFAULT_MEETING_NOTES_INTERVAL_MS);
+      },
+      MEETING_CADENCE_REQUEST_TIMEOUT_MS,
+    );
+    void api.clientFeatureFlags(controller.signal)
+      .then((flags) => settle(flags.controlTowerRefreshSeconds * 1_000))
+      .catch(() => settle(DEFAULT_MEETING_NOTES_INTERVAL_MS))
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [api, refreshIntervalMs]);
 
   useEffect(() => {
     const current = noteRef.current;
@@ -302,12 +369,22 @@ export function MeetingNotesScreen(): React.JSX.Element {
     return recordedMsRef.current;
   }, []);
 
+  /** Resolves to whether the briefing was written; a failure resolves `false`. */
   const generateNotes = useCallback(
     (
       mode: 'live' | 'final' = 'live',
       transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
-    ): Promise<void> => {
-      if (!api || !noteRef.current || readOnly) return Promise.resolve();
+    ): Promise<boolean> => {
+      if (!api || !noteRef.current || readOnly) return Promise.resolve(false);
+      // A live briefing replaces the last one rather than adding to it, so a
+      // refresh raised while one is still running has nothing of its own to
+      // contribute: its segments are already durable, and the pass in flight —
+      // or the next one — summarizes the transcript through its newest segment
+      // either way. Coalescing rather than queueing is what keeps a pass slower
+      // than the cadence from building a backlog of inferences that also has to
+      // drain before finalization can start. A final pass never coalesces: it
+      // is the one summary that must run over the completed transcript.
+      if (mode === 'live' && liveGenerationRef.current) return liveGenerationRef.current;
       setNotesPending(true);
       setNotesError(undefined);
       const operation = generationTailRef.current.catch(() => undefined).then(async () => {
@@ -315,20 +392,29 @@ export function MeetingNotesScreen(): React.JSX.Element {
         // final summary of the segments that reached the server when the most
         // recent segment save failed.
         await persistenceTailRef.current.catch(() => undefined);
-        const updated = await api.generateNoteNotes(noteId, mode, transcriptStatus);
+        // The cadence this meeting settled on travels with the request, so the
+        // briefing is written for the schedule actually being kept rather than
+        // for whatever the flag says at the moment the server reads it.
+        const updated = await api.generateNoteNotes(noteId, mode, transcriptStatus, refreshIntervalMs === null
+          ? undefined
+          : Math.round(refreshIntervalMs / 1_000));
         applyGeneratedNote(updated);
+        return true;
       }).catch((error: unknown) => {
         setNotesError(error instanceof Error
           ? error.message
           : mode === 'final'
             ? 'Avalon could not create the final meeting summary.'
             : 'Avalon could not update Control Tower.');
+        return false;
       }).finally(() => {
         if (generationTailRef.current === operation) setNotesPending(false);
+        if (liveGenerationRef.current === operation) liveGenerationRef.current = null;
       });
       generationTailRef.current = operation;
+      if (mode === 'live') liveGenerationRef.current = operation;
       return operation;
-    }, [api, applyGeneratedNote, noteId, readOnly]);
+    }, [api, applyGeneratedNote, noteId, readOnly, refreshIntervalMs]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -336,6 +422,9 @@ export function MeetingNotesScreen(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
+    // No timer until this meeting has a cadence. Arming on the default and
+    // re-arming on the served value would move the first segment boundary.
+    if (refreshIntervalMs === null) return undefined;
     if (dictation.state !== 'listening' || !recordingIntentRef.current) return undefined;
     const timer = window.setTimeout(() => {
       if (!recordingIntentRef.current) return;
@@ -358,9 +447,12 @@ export function MeetingNotesScreen(): React.JSX.Element {
           segmentBoundaryOffsetRef.current = null;
         }
       });
-    }, MEETING_TRANSCRIPTION_SEGMENT_MS);
+    }, refreshIntervalMs);
     return () => window.clearTimeout(timer);
-  }, [commitSegment, currentRecordedMs, dictation.commit, dictation.state, generateNotes]);
+    // The timer re-arms because `dictation.state` leaves `listening` for the
+    // commit and returns; a served cadence arriving mid-meeting re-arms it the
+    // same way, at the new interval.
+  }, [commitSegment, currentRecordedMs, dictation.commit, dictation.state, generateNotes, refreshIntervalMs]);
 
   const startRecording = useCallback(async (): Promise<void> => {
     if (!api || !noteRef.current || readOnly || recordingIntentRef.current || finalizationInFlightRef.current) return;
@@ -430,17 +522,26 @@ export function MeetingNotesScreen(): React.JSX.Element {
     void startRecording();
   }, [loading, note, readOnly, startRecording]);
 
-  const finalizeRecording = useCallback((): Promise<void> => {
+  /**
+   * Resolves to whether the meeting finished cleanly — the transcript closed,
+   * the final summary written, and the note marked complete. Anything less
+   * still finishes as much as it can, but the answer is `false`, because the
+   * caller that closes this window has to know whether it would be closing over
+   * an error nothing else reports.
+   */
+  const finalizeRecording = useCallback((): Promise<boolean> => {
     if (finalizationInFlightRef.current) return finalizationInFlightRef.current;
-    if (!api || !noteRef.current || readOnly) return Promise.resolve();
+    if (!api || !noteRef.current || readOnly) return Promise.resolve(false);
     recordingIntentRef.current = false;
     const finalRecordedMs = stopRecordingClock();
     setRecording(false);
     setFinalizing(true);
     setSavePending(true);
     setSaveError(undefined);
-    const operation = (async (): Promise<void> => {
+    const operation = (async (): Promise<boolean> => {
+      let complete = true;
       let transcriptStatus: 'complete' | 'partial' = dictation.state === 'error' ? 'partial' : 'complete';
+      if (dictation.state === 'error') complete = false;
       if (dictation.state !== 'idle' && dictation.state !== 'error') {
         try {
           await dictation.stop();
@@ -448,6 +549,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           // Keep the best partial transcript visible and persist it below. The
           // recording has already stopped, so retrying capture cannot recover
           // audio that the provider failed to finalize.
+          complete = false;
           transcriptStatus = 'partial';
           setSaveError(error instanceof Error ? error.message : 'Avalon could not finalize the transcript.');
         }
@@ -458,16 +560,22 @@ export function MeetingNotesScreen(): React.JSX.Element {
         // Earlier segments are already durable and still useful for the final
         // summary. Keep the visible save error, mark the transcript partial,
         // and finish the note instead of abandoning all finalization work.
+        complete = false;
         transcriptStatus = 'partial';
       }
       segmentBoundaryOffsetRef.current = null;
-      await generateNotes('final', transcriptStatus);
+      // A failed summary sets its own visible error and does not reject, so it
+      // is only reported here — and it is the failure most worth keeping a
+      // window open for, since nothing in the note screen can ask for the
+      // summary again.
+      if (!await generateNotes('final', transcriptStatus)) complete = false;
       const patch = {
         recordingStatus: 'complete',
         recordedMs: finalRecordedMs,
         endedAt: new Date().toISOString(),
       } as const;
       applyNotePatch(await api.updateNote(noteId, patch), patch);
+      return complete;
     })().catch((error: unknown) => {
       setSaveError(error instanceof Error ? error.message : 'Avalon could not finish saving this note.');
       throw error;
@@ -485,18 +593,41 @@ export function MeetingNotesScreen(): React.JSX.Element {
     void finalizeRecording().catch(() => undefined);
   }, [dictation.state, finalizeRecording]);
 
+  const finalizeAndClose = useCallback((): void => {
+    const bridge = desktopBridge();
+    const shouldFinalize = Boolean(finalizationInFlightRef.current)
+      || recordingIntentRef.current
+      || !['idle', 'error'].includes(dictation.state);
+    const pending = shouldFinalize ? finalizeRecording() : Promise.resolve();
+    // An explicit native close must not strand the window—or block app quit—
+    // when the final network save fails. Incremental segments remain durable.
+    void pending.catch(() => undefined).finally(() => bridge.closeMeetingNotes());
+  }, [dictation.state, finalizeRecording]);
+
+  // A recording can end on its own — a dictation error finalizes the meeting —
+  // and the question stops applying with it. Leaving the dialog up would ask
+  // about a recording that has already stopped, over a window whose only
+  // remaining news might be the error that stopped it.
+  useEffect(() => {
+    if (!recording) setCloseConfirmationOpen(false);
+  }, [recording]);
+
   useEffect(() => {
     const bridge = desktopBridge();
-    return bridge.onMeetingCloseRequested(() => {
-      const shouldFinalize = Boolean(finalizationInFlightRef.current)
-        || recordingIntentRef.current
-        || !['idle', 'error'].includes(dictation.state);
-      const pending = shouldFinalize ? finalizeRecording() : Promise.resolve();
-      // An explicit native close must not strand the window—or block app quit—
-      // when the final network save fails. Incremental segments remain durable.
-      void pending.catch(() => undefined).finally(() => bridge.closeMeetingNotes());
+    return bridge.onMeetingCloseRequested((reason) => {
+      // Until finalization lands, this window is the meeting: the transcript
+      // tail, the final summary, and the note's completion all depend on it
+      // staying up long enough to finish. A close the person performed on it
+      // while that is true is worth one question. A quit is not asked, because
+      // a window waiting on an answer is a window that vetoes the quit — and
+      // finalization already runs on that path, so nothing is lost by it.
+      if (reason === 'user' && recording) {
+        setCloseConfirmationOpen(true);
+        return;
+      }
+      finalizeAndClose();
     });
-  }, [dictation.state, finalizeRecording]);
+  }, [finalizeAndClose, recording]);
 
   useEffect(() => () => {
     recordingIntentRef.current = false;
@@ -504,7 +635,16 @@ export function MeetingNotesScreen(): React.JSX.Element {
   }, [dictation.stop]);
 
   const stopRecording = async (): Promise<void> => {
-    await finalizeRecording();
+    // The meeting is over and the note is the artifact, so the window's job is
+    // done: it closes and hands the main window to the note it just produced.
+    // Only when the meeting actually finished, though — a failed transcript
+    // close, segment save, or final summary leaves an error that this window is
+    // the only place to read, and closing over it would strand the person with
+    // a note that is quietly missing its summary. The native close path stays
+    // as it was: it closes regardless, because a window that will not shut also
+    // blocks app quit.
+    if (!await finalizeRecording()) return;
+    await desktopBridge().closeMeetingNotes(noteId).catch(() => undefined);
   };
 
   const pauseRecording = async (): Promise<void> => {
@@ -645,14 +785,16 @@ export function MeetingNotesScreen(): React.JSX.Element {
               {generatedAt && <p className="meeting-updated-at">Updated {new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(generatedAt))}</p>}
               {notesError && <InlineError>{notesError}</InlineError>}
               {notes ? (
-                <div className="meeting-generated-notes">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{notes}</ReactMarkdown>
-                </div>
+                <MarkdownBody>{notes}</MarkdownBody>
               ) : (
                 <div className="meeting-empty-state">
                   <WandSparkles aria-hidden="true" size={24} />
                   <strong>Your live meeting briefing will appear here</strong>
-                  <p>Control Tower keeps you current every five minutes, then creates a complete summary when recording ends.</p>
+                  <p>
+                    Control Tower keeps you current{' '}
+                    {meetingRefreshCadenceLabel(refreshIntervalMs ?? DEFAULT_MEETING_NOTES_INTERVAL_MS)},
+                    then creates a complete summary when recording ends.
+                  </p>
                 </div>
               )}
               {notesPending && (
@@ -724,6 +866,28 @@ export function MeetingNotesScreen(): React.JSX.Element {
         )}
         <span aria-hidden="true" />
       </footer>
+
+      <Modal
+        description="Closing this window ends the meeting. Avalon saves the last of the transcript and writes the final summary before it goes."
+        footer={(
+          <>
+            <Button onClick={() => setCloseConfirmationOpen(false)}>Keep recording</Button>
+            <Button
+              className="button-primary"
+              onClick={() => {
+                setCloseConfirmationOpen(false);
+                finalizeAndClose();
+              }}
+            >
+              <Square fill="currentColor" size={12} />
+              End and close
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => setCloseConfirmationOpen(open)}
+        open={closeConfirmationOpen}
+        title="This meeting is still recording"
+      />
     </div>
   );
 }

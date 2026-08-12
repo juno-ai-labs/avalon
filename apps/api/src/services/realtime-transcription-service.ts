@@ -4,8 +4,10 @@ import { logError } from "../observability/logger";
 import {
   isAllowedSocketOrigin,
   issueTranscriptionSocketTicket,
+  socketTicketFromRequest,
   type TranscriptionSocketClaims,
   verifyTranscriptionSocketTicket,
+  withNegotiatedSubprotocol,
 } from "./socket-service";
 
 const MAX_CLIENT_FRAME_CHARACTERS = 256_000;
@@ -216,14 +218,17 @@ export class RealtimeTranscriptionService {
     return { url: url.toString(), ticket };
   }
 
-  async upgrade(ticket: string, request: Request): Promise<Response> {
+  async upgrade(queryTicket: string | undefined, request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
     }
     if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
       throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
     }
-    const claims = await verifyTranscriptionSocketTicket(this.env, ticket);
+    const claims = await verifyTranscriptionSocketTicket(
+      this.env,
+      socketTicketFromRequest(request, queryTicket),
+    );
     if (claims.region !== this.env.AVALON_REGION) {
       throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket belongs to another region");
     }
@@ -355,7 +360,7 @@ export class RealtimeTranscriptionService {
         closeSocket(upstream, 1011, "Azure realtime setup failed");
         throw new ApiError(502, "azure_realtime_unavailable", "Azure OpenAI rejected the realtime setup");
       }
-      return new Response(null, { status: 101, webSocket: client });
+      return withNegotiatedSubprotocol(request, new Response(null, { status: 101, webSocket: client }));
     } catch (error) {
       await releaseAndReport();
       throw error;

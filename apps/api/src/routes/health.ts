@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { HonoAppEnv } from "../env";
+import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
@@ -28,6 +28,44 @@ export const healthRoutes = new Hono<HonoAppEnv>();
 
 healthRoutes.get("/", async (c) => {
   const checks: Record<string, { ok: boolean; message: string }> = {};
+  // The counterpart to the entrypoint's exemption for this route.
+  //
+  // `index.ts` refuses every *other* route when the environment contract fails,
+  // and answers a body that deliberately names nothing, because the offending
+  // keys are secrets. This route is exempt so that it can still answer — and
+  // until now that was all it did: it answered, cheerfully, while the Worker
+  // could not serve a single request. A probe that cannot fail on the one fault
+  // that stops everything is not a probe. So run the assertion here, catch it
+  // rather than throw, and report it as a required check: the response says
+  // which keys, and `ok` goes false so `pnpm health:regions` and every uptime
+  // monitor above it see the outage.
+  try {
+    assertEnvContract(c.env);
+    checks.envContract = { ok: true, message: "satisfied" };
+  } catch (error) {
+    // A contract failure is the only expected result. Anything else is a defect
+    // in the assertion itself, and folding it into a 503 health response would
+    // hide it behind a plausible answer — `assertEnvContractOrLog` rethrows for
+    // the same reason.
+    if (!(error instanceof EnvContractError)) throw error;
+    // Every other fallible check here logs; this one is the most severe the
+    // probe can report and, because `/health` is the request the entrypoint
+    // never asserts on, it is the only path where `env_contract_failed` would
+    // otherwise never be written for the fault that stops the Worker.
+    logEvent(c, "error", "env_contract_failed", { keys: error.keys });
+    checks.envContract = {
+      ok: false,
+      // The key list is the diagnosis, and it is also an inventory of which
+      // secrets this Worker is currently running without — including the
+      // signing and encryption keys — on a route with no authentication,
+      // mounted ahead of `protectedApi`. So the names go to the log an operator
+      // can read, and reach the body only outside a deployed environment, the
+      // same narrowing the Durable Object and registry checks above apply.
+      message: c.env.APP_ENV === "development"
+        ? `the Worker cannot serve requests: ${error.keys.join(", ")}`
+        : "the Worker cannot serve requests; see the env_contract_failed log",
+    };
+  }
   try {
     const row = await c.env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
     checks.d1 = { ok: row?.ok === 1, message: row?.ok === 1 ? "available" : "query failed" };
@@ -74,10 +112,30 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL),
     message: c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL ? "configured" : "not configured",
   };
-  checks.googleLoginOAuth = {
-    ok: Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET),
-    message: c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET ? "configured" : "not configured",
-  };
+  // Identity sign-in is a Global-only surface, so EU reporting "not configured"
+  // forever was a permanent false negative — noise that a real fault would have
+  // had to be spotted inside.
+  const googleLoginConfigured = Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET);
+  // Exempts EU by name rather than "not Global": an unreadable region is the
+  // case where this probe most needs to complain, and the env contract holds
+  // one to every rule. `/health` is reachable when the region is invalid
+  // precisely so it can say so, and it must not answer "not required" then.
+  if (c.env.AVALON_REGION !== "eu") {
+    // Global, and any region too malformed to read — the state this probe most
+    // needs to complain in, since the entrypoint is failing on this very key
+    // while `/health` stays exempt so it can say so.
+    checks.googleLoginOAuth = {
+      ok: googleLoginConfigured,
+      message: googleLoginConfigured ? "configured" : "not configured",
+    };
+  } else if (googleLoginConfigured) {
+    // Not a healthy state to confirm: the runbook installs this pair on Global
+    // alone, so an EU Worker holding it is a platform login secret sitting
+    // outside its blast radius — something to go remove, not to reassure about.
+    checks.googleLoginOAuth = { ok: false, message: "configured outside Global; remove it from this region" };
+  } else {
+    checks.googleLoginOAuth = { ok: true, message: "not required outside Global" };
+  }
   checks.googleConnectorOAuth = {
     ok: Boolean(c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET),
     message: c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET
@@ -134,6 +192,7 @@ healthRoutes.get("/", async (c) => {
     message: inboundConfigured ? "configured" : "not configured",
   };
   const required = [
+    checks.envContract,
     checks.d1,
     checks.r2,
     checks.durableObjects,
@@ -145,7 +204,16 @@ healthRoutes.get("/", async (c) => {
   if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);
   return c.json(
-    HealthResponseSchema.parse({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }),
+    // Absent, not merely malformed. Both fields are part of the contract this
+    // route now reports on, and `z.string()` rejects `undefined` — so without a
+    // fallback a Worker missing either one answers a bare 500 instead of the
+    // 503 naming it, which is the failure this route exists to describe.
+    HealthResponseSchema.parse({
+      ok,
+      region: c.env.AVALON_REGION ?? "unset",
+      environment: c.env.APP_ENV ?? "unset",
+      checks,
+    }),
     ok ? 200 : 503,
   );
 });

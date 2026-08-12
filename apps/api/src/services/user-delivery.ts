@@ -114,7 +114,11 @@ export async function resolveUserDelivery(
   connections: Array<{ id: string; connector_type: unknown; status: unknown }>,
 ): Promise<UserDeliveryByConnectionId> {
   const declared = connections.flatMap((connection) => {
-    if (connection.status !== "healthy") return [];
+    // Only a person's decision removes a surface. A `needs_reconnect` belief
+    // used to silently drop the destination, so an automation delivered
+    // nowhere and said nothing about it; the send itself is what discovers
+    // whether the credential still works.
+    if (connection.status === "disabled") return [];
     const delivery = declaredUserDelivery(env, String(connection.connector_type));
     return delivery ? [{ connectionId: connection.id, delivery }] : [];
   });

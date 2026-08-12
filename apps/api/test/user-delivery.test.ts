@@ -54,12 +54,25 @@ describe("connector-declared user delivery", () => {
     expect(resolved.has("connection-slack-unlinked")).toBe(false);
   });
 
-  it("leaves out unhealthy connections and connectors that declare no delivery", async () => {
+  it("keeps a connection the row believes is broken, and leaves out connectors that declare no delivery", async () => {
+    // `needs_reconnect` is a belief about one past moment. Dropping the
+    // destination on it delivered an automation result nowhere and said
+    // nothing; the send is what discovers whether the credential still works.
     const { env } = environment(["connection-slack-reconnect"]);
 
     const resolved = await resolveUserDelivery(env, identity, [
       { id: "connection-slack-reconnect", connector_type: "slack", status: "needs_reconnect" },
       { id: "connection-github", connector_type: "github", status: "healthy" },
+    ]);
+
+    expect([...resolved.keys()]).toEqual(["connection-slack-reconnect"]);
+  });
+
+  it("leaves out a connection a person disabled", async () => {
+    const { env } = environment(["connection-slack-disabled"]);
+
+    const resolved = await resolveUserDelivery(env, identity, [
+      { id: "connection-slack-disabled", connector_type: "slack", status: "disabled" },
     ]);
 
     expect(resolved.size).toBe(0);
@@ -104,8 +117,8 @@ describe("connector-declared user delivery", () => {
       targetType: "slack_agent_dm",
     })).resolves.toBeNull();
 
-    const unhealthy = routedEnvironment({ scope: "workspace", linked: true, status: "needs_reconnect" });
-    await expect(resolveFrozenDeliveryIdentity(unhealthy.env, {
+    const disabled = routedEnvironment({ scope: "workspace", linked: true, status: "disabled" });
+    await expect(resolveFrozenDeliveryIdentity(disabled.env, {
       ...identity,
       connectionId: "connection-slack",
       targetType: "slack_agent_dm",

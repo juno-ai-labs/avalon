@@ -1,10 +1,10 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
-import { WorkspaceSettingsScreen } from './workspace-settings';
+import { escapeClosesSettings, WorkspaceSettingsScreen } from './workspace-settings';
 
 const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
@@ -23,6 +23,8 @@ const api = vi.hoisted(() => ({
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
   updateWorkspaceLogAgentInference: vi.fn(),
+  getDigestSchedule: vi.fn(),
+  updateDigestSchedule: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
@@ -32,6 +34,8 @@ const resetApplicationIcon = vi.hoisted(() => vi.fn());
 const getApplicationSettings = vi.hoisted(() => vi.fn());
 const setLockdownMode = vi.hoisted(() => vi.fn());
 const setDebugEnabled = vi.hoisted(() => vi.fn());
+const setMenuBarEnabled = vi.hoisted(() => vi.fn());
+const setLaunchAtLogin = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 const settingsSectionRequest = vi.hoisted(() => ({
@@ -58,6 +62,8 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings,
     setLockdownMode,
     setDebugEnabled,
+    setMenuBarEnabled,
+    setLaunchAtLogin,
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettingsListeners.add(listener);
       return () => applicationSettingsListeners.delete(listener);
@@ -104,17 +110,21 @@ function createTestQueryClient(): QueryClient {
   });
 }
 
-function renderSettings(nextWorkspace: Workspace = workspace, client = createTestQueryClient()): void {
+function renderSettings(
+  nextWorkspace: Workspace = workspace,
+  client = createTestQueryClient(),
+  standaloneWindow = false,
+): void {
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={client}>
-        <WorkspaceSettingsScreen workspace={nextWorkspace} />
+        <WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} />
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
 }
 
-function openSettingsSection(name: 'Account' | 'Workspace' | 'Connections' | 'Application'): void {
+function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'Application'): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
 }
@@ -192,18 +202,55 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     setLockdownMode.mockImplementation(async (lockdownMode: boolean) => ({
       lockdownMode,
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     }));
     setDebugEnabled.mockImplementation(async (debugEnabled: boolean) => ({
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled,
       developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    }));
+    setMenuBarEnabled.mockImplementation(async (menuBarEnabled: boolean) => ({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    }));
+    setLaunchAtLogin.mockImplementation(async (launchAtLogin: boolean) => ({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin,
+      launchAtLoginAvailable: true,
     }));
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
@@ -930,6 +977,11 @@ describe('Workspace settings', () => {
       lockdownAvailable: false,
       debugEnabled: false,
       developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -947,6 +999,11 @@ describe('Workspace settings', () => {
       lockdownAvailable: false,
       debugEnabled: false,
       developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -957,6 +1014,145 @@ describe('Workspace settings', () => {
     fireEvent.click(toggle);
 
     await waitFor(() => expect(setLockdownMode).toHaveBeenCalledWith(false));
+  });
+
+  it('toggles the menu bar item from Appearance, on by default and above the icon picker', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Show Avalon in the menu bar' });
+    expect(toggle).toBeChecked();
+
+    // Above the app icon, inside Appearance: the row has to precede the picker
+    // in the document, which is what decides where it lands on screen.
+    const picker = screen.getByRole('group', { name: 'App icon' });
+    expect(toggle.compareDocumentPosition(picker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setMenuBarEnabled).toHaveBeenCalledWith(false));
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setMenuBarEnabled).toHaveBeenCalledWith(true));
+    expect(toggle).toBeChecked();
+  });
+
+  it('toggles opening at login from Startup, and offers it nowhere in the menu bar', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Open Avalon at login' });
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalledWith(false));
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalledWith(true));
+    expect(toggle).toBeChecked();
+  });
+
+  it('reports what macOS holds rather than what was asked for', async () => {
+    // A registration macOS is still waiting to have approved leaves the login
+    // item off. Showing the toggle on because the write succeeded would tell
+    // someone Avalon opens at login when it does not.
+    setLaunchAtLogin.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: false,
+      launchAtLoginAvailable: true,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Open Avalon at login' });
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalled());
+    await waitFor(() => expect(toggle).not.toBeChecked());
+  });
+
+  it('offers no login toggle where there are no login items', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: false,
+      launchAtLoginAvailable: false,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    await screen.findByRole('switch', { name: 'Lockdown mode' });
+    expect(screen.queryByRole('switch', { name: 'Open Avalon at login' })).toBeNull();
+  });
+
+  it('says so when the status item could not be added, instead of a switch beside an empty menu bar', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      // The write succeeded; creating the item did not.
+      menuBarPresent: false,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByRole('switch', { name: 'Show Avalon in the menu bar' })).toBeChecked();
+    expect(await screen.findByText(/could not add itself to the menu bar/u)).toBeVisible();
+  });
+
+  it('says nothing about a missing status item while the preference is off', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: false,
+      menuBarAvailable: true,
+      menuBarPresent: false,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByRole('switch', { name: 'Show Avalon in the menu bar' })).not.toBeChecked();
+    expect(screen.queryByText(/could not add itself to the menu bar/u)).toBeNull();
+  });
+
+  it('offers no menu bar toggle where there is no menu bar to put Avalon in', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: false,
+      menuBarPresent: false,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    await screen.findByRole('switch', { name: 'Lockdown mode' });
+    expect(screen.queryByRole('switch', { name: 'Show Avalon in the menu bar' })).toBeNull();
   });
 
   it('toggles the Developer debug preference and leaves it off by default', async () => {
@@ -981,6 +1177,11 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     await screen.findByRole('navigation', { name: 'Settings sections' });
@@ -1012,6 +1213,11 @@ describe('Workspace settings', () => {
       // reports the effective value, so this reads off however the file reads.
       debugEnabled: false,
       developerSettingsAvailable: false,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1028,6 +1234,11 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1045,6 +1256,11 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: true,
       developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     expect(screen.getByRole('switch', { name: 'Debug enabled' })).toBeChecked();
 
@@ -1055,6 +1271,11 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
   });
@@ -1065,5 +1286,218 @@ describe('Workspace settings', () => {
     openSettingsSection('Application');
 
     expect(await screen.findByText('Application settings could not be read.')).toBeVisible();
+  });
+});
+
+describe('Closing the settings window with Escape', () => {
+  let close: MockInstance<() => void>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    });
+    api.getWorkspaceMembers.mockResolvedValue([owner]);
+    api.getWorkspaceInvitations.mockResolvedValue([]);
+    api.getConnections.mockResolvedValue([]);
+    api.getAvailableConnectorTypes.mockResolvedValue([]);
+    api.getDigestSchedule.mockResolvedValue({
+      id: '00000000-0000-4000-8000-000000000001',
+      enabled: true,
+      days: [1, 2, 3, 4, 5],
+      times: [9 * 60],
+      timezone: 'Europe/London',
+      deliveryTargets: [
+        { type: 'email', connectionId: null, displayName: 'adam@avalon.local', status: 'active', lastDeliveredAt: null },
+      ],
+      nextRunAt: null,
+      lastDeliveredAt: null,
+    });
+    getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+  });
+
+  it('closes the settings window', () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the main window open when settings is a route inside it', () => {
+    // Away from Electron the same screen is a route in the only window there
+    // is, and Escape there would close the workspace rather than a panel.
+    renderSettings(workspace, createTestQueryClient(), false);
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('keeps typing that has nowhere else to come from', () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+
+    fireEvent.change(search, { target: { value: 'connections' } });
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
+
+    // An empty field holds nothing to lose, so the window still closes.
+    fireEvent.change(search, { target: { value: '' } });
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an invitation draft the caret has already left', async () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+    openSettingsSection('Workspace');
+
+    const email = await screen.findByPlaceholderText('teammate@company.com');
+    fireEvent.change(email, { target: { value: 'teammate@company.com' } });
+
+    // Typing the address and reaching for the Role select or Send is the normal
+    // way to fill this in; the draft is no less unsaved for the caret moving.
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Role' }), { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
+
+    fireEvent.change(email, { target: { value: '' } });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('closes over a digest time, which is a picker rather than a draft', async () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+    openSettingsSection('Digest');
+
+    // `New digest time` is initialised to 09:00 and is never empty, so counting
+    // it as unsaved text would leave Escape permanently dead in this section.
+    const time = await screen.findByLabelText('New digest time');
+    fireEvent.change(time, { target: { value: '10:30' } });
+    fireEvent.keyDown(time, { key: 'Escape' });
+
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('still closes from every section when nothing has been typed', async () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+
+    // The pane sweep asks the panes a question about themselves: the first one
+    // to render a saved value into a writable text field would make Escape
+    // permanently dead in that section, and the symptom is a key that quietly
+    // stopped working rather than a failing assertion anywhere near the cause.
+    for (const section of ['Account', 'Digest', 'Workspace', 'Connections', 'Application'] as const) {
+      openSettingsSection(section);
+      await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(section));
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(close, `Escape is dead in ${section}`).toHaveBeenCalled();
+      close.mockClear();
+    }
+  });
+
+  it('dismisses an open dialog without taking the window with it', async () => {
+    api.getAvailableConnectorTypes.mockResolvedValue(['granola']);
+    renderSettings(workspace, createTestQueryClient(), true);
+    openSettingsSection('Connections');
+
+    const granolaCard = (await screen.findByText('Granola')).closest('article');
+    await waitFor(() => expect(within(granolaCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    fireEvent.click(within(granolaCard!).getByRole('button', { name: 'Connect workspace' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
+
+    // Radix closes the dialog on this keystroke itself. The window listener sees
+    // the same event, and closing over a confirmation is exactly what the guard
+    // on dismissable layers exists to prevent.
+    fireEvent.keyDown(within(dialog).getByLabelText('Workspace API key'), { key: 'Escape' });
+
+    expect(close).not.toHaveBeenCalled();
+  });
+});
+
+describe('escapeClosesSettings', () => {
+  function escapeOn(target: EventTarget, init: KeyboardEventInit = {}, pane: Element | null = null): boolean {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', ...init });
+    target.dispatchEvent(event);
+    return escapeClosesSettings(event, pane);
+  }
+
+  it('answers only a bare, unclaimed Escape', () => {
+    const field = document.createElement('input');
+    document.body.append(field);
+
+    expect(escapeOn(field)).toBe(true);
+    expect(escapeOn(field, { key: 'Enter' })).toBe(false);
+    // A shortcut that happens to contain Escape belongs to whoever bound it.
+    expect(escapeOn(field, { metaKey: true })).toBe(false);
+    expect(escapeOn(field, { shiftKey: true })).toBe(false);
+
+    field.addEventListener('keydown', (event) => event.preventDefault(), { once: true });
+    expect(escapeOn(field)).toBe(false);
+    field.remove();
+  });
+
+  it('yields to the layer the keystroke was aimed at', () => {
+    const layer = document.createElement('div');
+    layer.setAttribute('role', 'listbox');
+    const option = document.createElement('button');
+    layer.append(option);
+    document.body.append(layer);
+
+    // A select menu is dismissed by this Escape; the window is not.
+    expect(escapeOn(option)).toBe(false);
+    layer.remove();
+  });
+
+  it('ignores controls that hold no typing', () => {
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.checked = true;
+    document.body.append(toggle);
+
+    // A checked box carries a value of its own; it is not unsaved text.
+    expect(escapeOn(toggle)).toBe(true);
+    toggle.remove();
+  });
+
+  it('sweeps the pane for text no element currently holds focus over', () => {
+    const pane = document.createElement('div');
+    const draft = document.createElement('input');
+    const elsewhere = document.createElement('button');
+    pane.append(draft);
+    document.body.append(pane, elsewhere);
+
+    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
+    draft.value = 'teammate@company.com';
+    expect(escapeOn(elsewhere, {}, pane)).toBe(false);
+
+    // Values that are already saved, or that cannot be edited at all, are not
+    // drafts — a generated endpoint and a disabled field both read as text.
+    draft.readOnly = true;
+    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
+    draft.readOnly = false;
+    draft.disabled = true;
+    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
+
+    // A picker that ships with a value is never empty, so counting it would
+    // leave Escape permanently dead in whichever section shows one.
+    draft.disabled = false;
+    draft.type = 'time';
+    draft.value = '10:30';
+    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
+
+    pane.remove();
+    elsewhere.remove();
   });
 });

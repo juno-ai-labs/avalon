@@ -39,3 +39,22 @@ export class UnusableCredentialError extends Error {
 export function refreshFailureIsTerminal(error: unknown): boolean {
   return definitivelyInvalidatesStoredCredential(error) || error instanceof UnusableCredentialError;
 }
+
+/**
+ * Decodes a successful Avalon response, tolerating one that carries no body.
+ *
+ * `Response.ok` is true for a 204, and `response.json()` on an empty body
+ * rejects with a `SyntaxError` — so a caller that decodes unconditionally reads
+ * every successful no-content reply as a failure. Avalon has several of those:
+ * `POST /work-opportunities/impressions` answers `c.body(null, 204)`, and it is
+ * the shape any future fire-and-forget endpoint will take.
+ *
+ * The length check covers a 200 with an empty body, which is not something
+ * Avalon returns today but costs nothing to survive.
+ */
+export async function readJsonBody(response: Response): Promise<unknown> {
+  if (response.status === 204 || response.headers.get('content-length') === '0') return null;
+  const body = await response.text();
+  if (body.trim().length === 0) return null;
+  return JSON.parse(body) as unknown;
+}

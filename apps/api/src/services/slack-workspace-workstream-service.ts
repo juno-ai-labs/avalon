@@ -13,6 +13,10 @@ import { publishWorkstreamEvent } from "./integrations";
 import { launchWorkstreamHarness } from "./workstream-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
+import {
+  attachWorkstreamOriginResource,
+  type OriginResourceDescriptor,
+} from "./workstream-origin-resource";
 
 const OpenElicitationRowSchema = z.object({
   id: z.string().min(1),
@@ -58,6 +62,7 @@ export class SlackWorkspaceWorkstreamService {
     title?: string;
     objective: string;
     creatorUserId?: string | null;
+    originResource?: OriginResourceDescriptor;
   }) {
     const actor = ExternalActorSchema.parse(input.actor);
     const title = input.title ?? provisionalWorkstreamTitle(input.objective, "Slack task");
@@ -100,6 +105,18 @@ export class SlackWorkspaceWorkstreamService {
         message.id,
         actor,
       );
+    }
+    // Before the launch, so the run's first context read already holds the
+    // Slack thread it was summoned from. The attribution matches the work
+    // stream's: an unmapped Slack member is not an Avalon user and leaves the
+    // attachment ownerless rather than crediting it to nobody in particular.
+    if (input.originResource) {
+      await attachWorkstreamOriginResource(this.env, {
+        workspaceId: this.workspaceId,
+        workstreamId: created.workstream.id,
+        attachedByUserId: input.creatorUserId ?? null,
+        descriptor: input.originResource,
+      });
     }
     const harnessRunId = await launchWorkstreamHarness(this.env, {
       workspaceId: this.workspaceId,

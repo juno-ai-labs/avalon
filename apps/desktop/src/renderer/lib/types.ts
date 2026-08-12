@@ -118,6 +118,12 @@ export interface WorkstreamSummary {
    * this decides whether it is listed, that decides who may read it.
    */
   systemKind?: 'digest';
+  /**
+   * Where this work stream sits in *this viewer's* pinned list, or `null` when
+   * they have not pinned it. Per-person like the read-state fields above: the
+   * same work stream is pinned for one member and not for another.
+   */
+  pinPosition: number | null;
 }
 
 export interface Participant extends WorkspaceMember {
@@ -191,17 +197,6 @@ export interface ThoughtEventData {
   durationMs: number;
   /** Client receipt time for the currently streaming inference attempt. */
   startedAt?: number;
-}
-
-export interface ArtifactData {
-  id: string;
-  title: string;
-  artifactType: string;
-  previewText?: string;
-  status?: string;
-  mimeType?: string;
-  harnessRunId?: string;
-  createdAt?: string;
 }
 
 export interface ElicitationData {
@@ -294,7 +289,6 @@ export interface Message {
     | 'text'
     | 'thought'
     | 'tool_event'
-    | 'artifact'
     | 'elicitation'
     | 'activity_suggestion'
     | 'system';
@@ -318,7 +312,6 @@ export interface Message {
   };
   toolEvent?: ToolEventData;
   thoughtEvent?: ThoughtEventData;
-  artifact?: ArtifactData;
   elicitation?: ElicitationData;
   activitySuggestion?: ActivitySuggestionData;
 }
@@ -401,7 +394,6 @@ export interface WorkstreamDetail extends WorkstreamSummary {
   viewers: Participant[];
   resources: WorkstreamResource[];
   connections: WorkstreamConnection[];
-  artifacts: ArtifactData[];
   backgroundTasks: BackgroundTask[];
   automationRuns: AutomationRunSummary[];
   automationSubscriptionId?: string;
@@ -414,7 +406,6 @@ export interface WorkstreamDetail extends WorkstreamSummary {
 }
 
 export interface WorkstreamDeferredContext {
-  artifacts: ArtifactData[];
   backgroundTasks: BackgroundTask[];
   automationRuns: AutomationRunSummary[];
   automationSubscription?: WorkstreamAutomationSubscription;
@@ -425,6 +416,12 @@ export interface CreatedWorkstream {
   messageId: string;
   clientMessageId: string;
   createdAt: string;
+  /**
+   * The run the opening message started. Seeded into the work stream's detail so
+   * the work timer the launch surface started keeps counting across the
+   * navigation instead of disappearing until the first refetch answers.
+   */
+  harnessRunId: string | null;
 }
 
 export interface WorkOpportunity {
@@ -525,8 +522,15 @@ export interface WorkspaceTemplate {
 }
 
 export interface SocketTicket {
+  /**
+   * The handshake URL with the deprecated `?ticket=` stripped: the credential
+   * travels in `protocols` instead, because Cloudflare captures request URLs
+   * into stores no redaction here can reach.
+   */
   url: string;
   ticket: string;
+  /** Pass as the `WebSocket` constructor's second argument. */
+  protocols: [string, string];
 }
 
 export type WorkstreamSocketEvent =

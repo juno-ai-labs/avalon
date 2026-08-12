@@ -9,5 +9,11 @@
     },
     "types": ["vite/client", "vitest/globals"]
   },
-  "include": ["src/common/**/*.ts", "src/renderer/**/*.ts", "src/renderer/**/*.tsx"]
+  "include": ["src/common/**/*.ts", "src/renderer/**/*.ts", "src/renderer/**/*.tsx"],
+  // A `.node.test.ts` reads the renderer's own source files from disk to assert
+  // something the DOM cannot show — that the launch surface inherits the
+  // work-stream screen's geometry rather than copying it. It is typed by
+  // `tsconfig.node.json` instead, so that `node:fs` stays unavailable to
+  // everything the renderer actually ships.
+  "exclude": ["src/renderer/**/*.node.test.ts"]
 }

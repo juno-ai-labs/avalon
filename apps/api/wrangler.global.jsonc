@@ -15,6 +15,7 @@
     "PUBLIC_WEB_BASE_URL": "https://with-avalon.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.with-avalon.com",
     "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
+    "NOTION_INGRESS_BASE_URL": "https://notion.with-avalon.com",
     "SLACK_INGRESS_BASE_URL": "https://slack.with-avalon.com",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://avalon",
@@ -63,7 +64,7 @@
     }
   ],
   "ai": { "binding": "AI" },
-  // Agent model routing; see docs/FEATURE_FLAGS.md. Both regions bind the one
+  // Agent model routing; see docs/feature-flags.md. Both regions bind the one
   // `avalon-api` app; a rollout is staged per region by targeting `region`.
   "flagship": [
     { "binding": "FLAGS", "app_id": "bec01d3a-d6b6-4d8c-b89a-37440ed63b8c", "remote": true }
@@ -75,6 +76,7 @@
     { "pattern": "api.with-avalon.com", "custom_domain": true },
     { "pattern": "github.with-avalon.com", "custom_domain": true },
     { "pattern": "linear.with-avalon.com", "custom_domain": true },
+    { "pattern": "notion.with-avalon.com", "custom_domain": true },
     { "pattern": "slack.with-avalon.com", "custom_domain": true }
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
@@ -98,6 +100,11 @@
       "binding": "EU_LINEAR_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "LinearRegionalBridge"
+    },
+    {
+      "binding": "EU_NOTION_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "NotionRegionalBridge"
     },
     {
       "binding": "EU_SLACK_BRIDGE",
@@ -126,7 +133,16 @@
       {
         "queue": "avalon-global-activities",
         "max_batch_size": 10,
-        "max_batch_timeout": 5,
+        // The consumer handles every message independently
+        // (`consumeActivityQueue` is a bare `Promise.all` over the batch), so a
+        // batch buys fewer invocations and nothing else — no coalescing, no
+        // shared statement, no merged provider call. At Avalon's volume the
+        // batch almost never fills, so the timeout was the whole latency: a
+        // Slack `link_shared` waited the full five seconds before anything ran,
+        // and an unfurl that took a second to build appeared six seconds after
+        // the message was posted. One second is the smallest wait that still
+        // groups a genuine burst.
+        "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-global-activities-dead-letter"
       }

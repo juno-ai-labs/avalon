@@ -47,11 +47,6 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Read an attached resource",
     failed: "Could not read an attached resource",
   },
-  workstream_create_artifact: {
-    started: "Creating an artifact",
-    settled: "Created an artifact",
-    failed: "Could not create an artifact",
-  },
   memory_search: {
     started: "Searching memory",
     settled: "Searched memory",
@@ -142,27 +137,51 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Loaded a plugin",
     failed: "Could not load a plugin",
   },
+
+  // Retired tools. A row is worded from its stored `tool_name` every time it is
+  // read, so an entry deleted with its tool takes the wording of every row that
+  // tool ever wrote with it — they fall through to the humanized wire name,
+  // which is the raw-name fallback this module exists to prevent. Entries here
+  // outlive their tools and are removed only when the rows are.
+  workstream_create_artifact: {
+    started: "Creating an artifact",
+    settled: "Created an artifact",
+    failed: "Could not create an artifact",
+  },
 };
 
 /**
- * The action a connector tool performs, taken from the last segment of its wire
- * name (`..._drive_search` → `search`). Naming every connector row "Reviewed
- * <connector>" would label writes as reads and give every call on one
- * connection the same label.
+ * The action a connector tool performs, taken from whichever end of its wire
+ * name carries the verb (`..._drive_search` → `search`, `..._send_message` →
+ * `send`). Naming every connector row "Reviewed <connector>" would label writes
+ * as reads and give every call on one connection the same label.
+ *
+ * The whole name has to be searched because connectors do not agree on word
+ * order: Slack, Linear, Notion, X, and Granola put the verb first; Google and
+ * GitHub put it last, except where an area prefix pushes it into the middle
+ * (`calendar_create_event`). Reading only the last segment left 63 of 75
+ * connector tools — `send_message`, `create_issue`, `create_page`, and
+ * `calendar_create_event` among them — rendering as "Reviewed <connector>",
+ * which shows a write to another person as though the run had merely looked at
+ * something.
  */
 const CONNECTOR_ACTION_PROSE: Record<string, { started: string; settled: string; preposition?: string }> = {
   search: { started: "Searching", settled: "Searched" },
+  find: { started: "Searching", settled: "Searched" },
   query: { started: "Querying", settled: "Queried" },
   list: { started: "Listing", settled: "Listed" },
   read: { started: "Reading", settled: "Read" },
   get: { started: "Fetching", settled: "Fetched", preposition: "from" },
+  retrieve: { started: "Fetching", settled: "Fetched", preposition: "from" },
   fetch: { started: "Fetching", settled: "Fetched", preposition: "from" },
   download: { started: "Downloading", settled: "Downloaded", preposition: "from" },
+  export: { started: "Exporting", settled: "Exported", preposition: "from" },
   create: { started: "Creating", settled: "Created", preposition: "in" },
   add: { started: "Adding", settled: "Added", preposition: "to" },
   append: { started: "Appending", settled: "Appended", preposition: "to" },
   update: { started: "Updating", settled: "Updated", preposition: "in" },
   upsert: { started: "Updating", settled: "Updated", preposition: "in" },
+  replace: { started: "Replacing text in", settled: "Replaced text in" },
   delete: { started: "Deleting", settled: "Deleted", preposition: "in" },
   archive: { started: "Archiving", settled: "Archived", preposition: "in" },
   send: { started: "Sending", settled: "Sent", preposition: "through" },
@@ -175,12 +194,20 @@ const CONNECTOR_ACTION_PROSE: Record<string, { started: string; settled: string;
  * Tools whose name ends in their object rather than their verb, keyed by the
  * whole action path.
  *
- * A leaf key cannot express these: `gmail.read_profile` and Slack's
- * `read_user_profile` both end in `profile`, so a leaf-keyed entry for one
- * labels the other — reading a colleague's Slack profile as "the connected
- * account". The leaf map above is verbs, which collide harmlessly because they
- * mean the same thing wherever they appear; anything named for its object has
- * to carry the surface it belongs to.
+ * A segment key cannot express these: `gmail.read_profile` and Slack's
+ * `read_user_profile` both end in `profile`, so a shared entry for one labels
+ * the other — reading a colleague's Slack profile as "the connected account".
+ * The map above is verbs, which collide harmlessly because they mean the same
+ * thing wherever they appear; anything named for its object has to carry the
+ * surface it belongs to.
+ *
+ * Reach for this only where the verb reading is actually wrong — `create_draft`
+ * rendering as a review of a message the run had in fact written. A merely
+ * vague reading is not enough: every entry here is one more thing to keep in
+ * step with a connector by hand, and an action path carries no connector
+ * namespace of its own unless the tool name happens to start with an area
+ * segment, so a bare path like `read_user_profile` would claim that name for
+ * every connector at once.
  */
 const CONNECTOR_TOOL_PROSE: Record<string, { started: string; settled: string; preposition?: string }> = {
   gmail_find_contacts: { started: "Looking up contacts in", settled: "Looked up contacts in" },
@@ -198,9 +225,33 @@ function connectorActionPath(toolName: string, pluginId: string): string {
   return prefix && toolName.startsWith(`${prefix}_`) ? toolName.slice(prefix.length + 1) : toolName;
 }
 
+/**
+ * The verb of a connector action: the last segment of its name that is one.
+ *
+ * Every segment has to be considered, because the verb sits in a different
+ * place in each convention — `drive_search` ends with it, `send_message` starts
+ * with it, and `calendar_create_event` and `pull_requests_create_review` bury
+ * it in the middle behind an area prefix. Reading one fixed position is what
+ * left 63 of 75 connector tools rendering as "Reviewed <connector>", including
+ * `calendar.create_event` and `pull_requests.create_review` on the two
+ * connectors whose naming looked compliant.
+ *
+ * Last match wins so a name ending in its object keeps the more specific
+ * reading: `create_comment` is "Commented in" rather than "Created in". That
+ * only reaches the singular object segments the verb map happens to carry —
+ * GitHub's `issue_comments.create` matches on `create` and reads "Created in",
+ * so the same act is worded two ways across connectors. Adding plural object
+ * keys would even that out and break something worse: `list_comments` would
+ * then match `comments` and label a read as a comment written. The
+ * inconsistency is cosmetic; mislabelling a read as a write is not.
+ */
 function connectorActionKey(toolName: string, pluginId: string): string {
   const segments = connectorActionPath(toolName, pluginId).split("_").filter(Boolean);
-  return segments[segments.length - 1] ?? "";
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index]!;
+    if (Object.hasOwn(CONNECTOR_ACTION_PROSE, segment)) return segment;
+  }
+  return "";
 }
 
 /** Whether a wire name has Avalon prose, used to guard against drift. */

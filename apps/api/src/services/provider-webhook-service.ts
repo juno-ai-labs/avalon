@@ -30,6 +30,7 @@ import { newId, nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { encryptString, timingSafeEqualText } from "../lib/crypto";
+import { withAuthorizedConnection } from "./connector-connection-access";
 import { connectorRegistryForEnv, linearConnectorConfig } from "../lib/connector-registry";
 import { decryptVersionedConnectorCredentials, decryptVersionedCredentialValue } from "./connector-credential-envelope";
 
@@ -86,7 +87,6 @@ interface VerifiedIngestion {
   routingUserId?: string;
   bodyHash: string;
   raw: ExactRawBody;
-  includeRecoverableConnections?: boolean;
   normalize: (
     connection: ConnectorConnectionContext,
     payloadRef: string,
@@ -171,7 +171,6 @@ export class ProviderWebhookService {
         ...(routingUserId ? { routingUserId } : {}),
         bodyHash: delivery.rawContentHash,
         raw,
-        includeRecoverableConnections: lifecycle !== null,
         normalize: (connection, payloadRef) => source
           ? source.normalize(connection, verifiedEnvelope, payloadRef)
           : normalizeGitHubWebhook(connection, delivery, payloadRef),
@@ -255,7 +254,6 @@ export class ProviderWebhookService {
         eventType: verified.eventName,
         accountId: verified.organizationId,
         ...(linearAuthorizationUserId ? { routingUserId: linearAuthorizationUserId } : {}),
-        includeRecoverableConnections: lifecycle !== null,
         bodyHash: verified.bodyHash,
         raw,
         normalize: (connection, payloadRef) => source
@@ -296,15 +294,7 @@ export class ProviderWebhookService {
         return this.captureNotionChallenge(verificationToken, setupToken);
       }
 
-      const challenge = await this.env.DB.prepare(
-        `SELECT encrypted_token, token_iv, credential_key_version
-         FROM provider_webhook_challenges
-         WHERE provider = 'notion' AND region = ?`,
-      ).bind(this.env.AVALON_REGION).first<{
-        encrypted_token: string;
-        token_iv: string;
-        credential_key_version: number;
-      }>();
+      const challenge = await this.loadNotionChallenge();
       if (!challenge) {
         throw new ConnectorError(
           "invalid_configuration",
@@ -387,15 +377,7 @@ export class ProviderWebhookService {
       );
     }
 
-    const existing = await this.env.DB.prepare(
-      `SELECT encrypted_token, token_iv, credential_key_version
-       FROM provider_webhook_challenges
-       WHERE provider = 'notion' AND region = ?`,
-    ).bind(this.env.AVALON_REGION).first<{
-      encrypted_token: string;
-      token_iv: string;
-      credential_key_version: number;
-    }>();
+    const existing = await this.loadNotionChallenge();
     if (existing) {
       const existingToken = await this.decryptNotionChallenge(existing);
       if (timingSafeEqualText(existingToken, verificationToken)) {
@@ -443,15 +425,7 @@ export class ProviderWebhookService {
       nowIso(),
     ).run();
     if (resultChanges(inserted) === 0) {
-      const winner = await this.env.DB.prepare(
-        `SELECT encrypted_token, token_iv, credential_key_version
-         FROM provider_webhook_challenges
-         WHERE provider = 'notion' AND region = ?`,
-      ).bind(this.env.AVALON_REGION).first<{
-        encrypted_token: string;
-        token_iv: string;
-        credential_key_version: number;
-      }>();
+      const winner = await this.loadNotionChallenge();
       if (!winner) {
         throw new ConnectorError(
           "provider_error",
@@ -497,7 +471,6 @@ export class ProviderWebhookService {
     let connections = await this.loadMatchingConnections(
       input.provider,
       input.accountId,
-      input.includeRecoverableConnections ?? false,
       input.routingAccountIds,
       input.routingUserId,
     );
@@ -890,7 +863,6 @@ export class ProviderWebhookService {
   private async loadMatchingConnections(
     provider: Provider,
     accountId: string | null,
-    includeRecoverable: boolean,
     routingAccountIds: string[] | undefined,
     routingUserId: string | undefined,
   ): Promise<ConnectorConnectionContext[]> {
@@ -899,9 +871,13 @@ export class ProviderWebhookService {
     if (provider === "notion" && (!routingAccountIds || routingAccountIds.length === 0)) {
       return [];
     }
-    const statusClause = includeRecoverable
-      ? "status IN ('healthy', 'error', 'needs_reconnect')"
-      : "status = 'healthy'";
+    // One clause, and no parameter selecting between two. The old
+    // `includeRecoverable` split let some inbound deliveries reach a connection
+    // this row believed was broken while others could not, which made whether a
+    // provider's event was processed depend on a belief rather than on the
+    // event. A webhook is a request Avalon can usually answer, so it is
+    // answered; `disabled` is the person's decision and stays excluded.
+    const statusClause = "status <> 'disabled'";
     const query = provider === "notion"
       ? `SELECT * FROM connector_connections
          WHERE connector_type = 'notion' AND scope = 'personal'
@@ -977,17 +953,23 @@ export class ProviderWebhookService {
       // Repository activity must never fan out solely because two users share
       // an installation. Prove access with the personal user token first.
       if (!repositoryFullName || !config) continue;
-      const before = JSON.stringify(connection.credentials);
       try {
-        const hasAccess = await canGitHubPersonalConnectionAccessRepository(
-          config,
-          connection,
-          repositoryFullName,
-          AbortSignal.timeout(15_000),
+        // Through the credential door: this probe refreshes a near-expiry
+        // token, and several deliveries for one connection can be in flight at
+        // once. Without the door's serialized rotation each would redeem the
+        // same single-use refresh token privately. The door also persists what
+        // it rotated, which is what the manual write here used to do.
+        const signal = AbortSignal.timeout(15_000);
+        const hasAccess = await withAuthorizedConnection(
+          this.env,
+          { connection, adapter: connectorRegistryForEnv(this.env).get("github"), signal },
+          (authorized) => canGitHubPersonalConnectionAccessRepository(
+            config,
+            authorized,
+            repositoryFullName,
+            signal,
+          ),
         );
-        if (JSON.stringify(connection.credentials) !== before) {
-          await this.persistConnectionCredentials(connection);
-        }
         if (hasAccess) accepted.push(connection);
       } catch (error) {
         if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
@@ -1075,7 +1057,7 @@ export class ProviderWebhookService {
       `UPDATE connector_connections
        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
            updated_at = ?
-       WHERE id = ? AND status = 'healthy'`,
+       WHERE id = ? AND status <> 'disabled'`,
     ).bind(
       encrypted.ciphertext,
       encrypted.iv,
@@ -1160,6 +1142,75 @@ export class ProviderWebhookService {
       "PROVIDER_WEBHOOK_MAX_BYTES",
       DEFAULT_PROVIDER_WEBHOOK_MAX_BYTES,
     );
+  }
+
+  /**
+   * The stored regional verification token.
+   *
+   * The shared Global ingress has to verify a delivery's signature before it can
+   * read which Notion workspace — and so which region — the delivery belongs to.
+   */
+  async notionVerificationToken(): Promise<string> {
+    const challenge = await this.loadNotionChallenge();
+    if (!challenge) {
+      throw new ConnectorError(
+        "invalid_configuration",
+        "Notion webhook verification has not been completed for this region",
+      );
+    }
+    return this.decryptNotionChallenge(challenge);
+  }
+
+  /**
+   * Records the verification token the shared ingress captured.
+   *
+   * One public Notion connection means one subscription and one challenge, sent
+   * to whichever host is registered. EU never receives that request and could
+   * not otherwise verify a forwarded delivery for itself — so Global replicates
+   * the token rather than have EU trust the hop. The operator setup token was
+   * checked where the challenge arrived; this is reachable only over the
+   * account-internal bridge and has no URL of its own.
+   */
+  async storeNotionChallengeToken(verificationToken: string): Promise<void> {
+    const encrypted = await encryptString(
+      verificationToken,
+      this.env.CONNECTOR_CREDENTIALS_KEY,
+      this.notionChallengeAad(),
+    );
+    await this.env.DB.prepare(
+      `INSERT INTO provider_webhook_challenges
+       (provider, region, encrypted_token, token_iv, credential_key_version,
+        created_at, consumed_at)
+       VALUES ('notion', ?, ?, ?, ?, ?, NULL)
+       ON CONFLICT(provider, region) DO UPDATE SET
+         encrypted_token = excluded.encrypted_token,
+         token_iv = excluded.token_iv,
+         credential_key_version = excluded.credential_key_version,
+         created_at = excluded.created_at,
+         consumed_at = NULL`,
+    ).bind(
+      this.env.AVALON_REGION,
+      encrypted.ciphertext,
+      encrypted.iv,
+      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      nowIso(),
+    ).run();
+  }
+
+  private async loadNotionChallenge(): Promise<{
+    encrypted_token: string;
+    token_iv: string;
+    credential_key_version: number;
+  } | null> {
+    return this.env.DB.prepare(
+      `SELECT encrypted_token, token_iv, credential_key_version
+       FROM provider_webhook_challenges
+       WHERE provider = 'notion' AND region = ?`,
+    ).bind(this.env.AVALON_REGION).first<{
+      encrypted_token: string;
+      token_iv: string;
+      credential_key_version: number;
+    }>();
   }
 
   private notionChallengeAad(): string {

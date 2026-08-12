@@ -18,7 +18,9 @@ import {
   MessageSquare,
   MonitorCog,
   Newspaper,
+  PanelTop,
   Plug,
+  Power,
   RefreshCcw,
   Search,
   ShieldCheck,
@@ -32,7 +34,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@avalon/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
@@ -40,6 +42,7 @@ import type { DesktopApplicationSettings } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { DigestSettings } from '../components/digest-settings';
+import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
@@ -99,7 +102,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance menu bar status item startup login dock customize version platform api realtime diagnostics', icon: MonitorCog },
     ],
   },
 ];
@@ -186,17 +189,7 @@ const connectorProviders = [
     description: 'Messages, files, people, canvases, conversations, and the Avalon workspace Agent.',
     icon: MessageSquare,
     scopes: ['you', 'workspace'] as const,
-    personalCapabilities: [
-      'slack.search',
-      'slack.messages.read',
-      'slack.files.read',
-      'slack.users.read',
-      'slack.messages.write',
-      'slack.conversations.write',
-      'slack.reactions.write',
-      'slack.canvases.read',
-      'slack.canvases.write',
-    ],
+    personalCapabilities: SLACK_PERSONAL_CAPABILITIES,
     capabilities: ['slack.agent', 'slack.notifications.write'],
   },
   {
@@ -292,10 +285,76 @@ function initialSettingsSection(): SettingsSection {
   return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section')) ?? 'account';
 }
 
-export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
+/** Input types Escape may close the window over: the rest hold no typing. */
+const TEXT_ENTRY_INPUT_TYPES = new Set(['email', 'number', 'password', 'search', 'tel', 'text', 'url']);
+
+function holdsUnsavedText(target: Element | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return target.value.trim() !== '';
+  if (target instanceof HTMLInputElement) {
+    return TEXT_ENTRY_INPUT_TYPES.has(target.type) && target.value.trim() !== '';
+  }
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
+/**
+ * Whether the visible settings pane holds typing, wherever focus happens to be.
+ *
+ * A draft is abandoned by the window closing, not by the caret leaving it: an
+ * invitation typed and then left while its Role select or Send button takes
+ * focus is the same unsaved text it was a keystroke earlier. Scoping the sweep
+ * to the pane is what keeps that from becoming "any text anywhere" — the
+ * sidebar's search box is a filter rather than a draft, a generated endpoint or
+ * signing secret is `readOnly` and already saved, and Radix portals every
+ * dialog's fields out of this subtree, where an open dialog owns Escape anyway.
+ * A pane that is not the active one is not in the DOM, so what is protected is
+ * what the person can see.
+ */
+function paneHoldsUnsavedText(pane: Element | null): boolean {
+  if (!pane) return false;
+  return [...pane.querySelectorAll('input, textarea')].some((field) => {
+    if (field instanceof HTMLInputElement && !TEXT_ENTRY_INPUT_TYPES.has(field.type)) return false;
+    const editable = field as HTMLInputElement | HTMLTextAreaElement;
+    return !editable.readOnly && !editable.disabled && editable.value.trim() !== '';
+  });
+}
+
+/**
+ * Whether an Escape keystroke is a request to close the Settings window.
+ *
+ * macOS spends Escape on *cancelling* — a sheet, a popover, an operation in
+ * flight — and closes an ordinary window like this one with Command-W, so
+ * Escape here is a convenience rather than the platform gesture. It is offered
+ * because every other desktop application has trained people to expect it, and
+ * it is answered only when nothing nearer has a claim on the keystroke:
+ *
+ * - Radix renders dialogs and select menus into portals and dismisses them on
+ *   Escape itself. That keystroke belongs to the layer on top; taking the
+ *   window with it would close Settings out from under a confirmation.
+ * - Settings applies every change immediately and has no undo. An Escape aimed
+ *   at a half-written invitation, endpoint, or API key would discard text with
+ *   nowhere else to come from — the loss Apple's rule exists to prevent. The
+ *   focused element is checked for the sidebar's search box, which sits outside
+ *   the pane; the pane itself is swept because a draft does not stop being one
+ *   when focus moves off it.
+ */
+export function escapeClosesSettings(event: KeyboardEvent, pane: Element | null): boolean {
+  if (event.key !== 'Escape' || event.defaultPrevented) return false;
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  const target = event.target instanceof Element ? event.target : null;
+  const dismissableLayer = target?.closest(
+    '[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"], [data-radix-popper-content-wrapper]',
+  );
+  return !dismissableLayer && !holdsUnsavedText(target) && !paneHoldsUnsavedText(pane);
+}
+
+export function WorkspaceSettingsScreen({
+  standaloneWindow = false,
+  workspace,
+}: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
   const { api, runtime, session, signOut } = useAppSession();
   const queryClient = useQueryClient();
   const bridge = useMemo(() => desktopBridge(), []);
+  const contentRef = useRef<HTMLElement | null>(null);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
   const [navigationQuery, setNavigationQuery] = useState('');
   const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('all');
@@ -467,6 +526,14 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     mutationFn: (enabled: boolean) => bridge.setDebugEnabled(enabled),
     onSuccess: setApplicationSettings,
   });
+  const updateMenuBarEnabled = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setMenuBarEnabled(enabled),
+    onSuccess: setApplicationSettings,
+  });
+  const updateLaunchAtLogin = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setLaunchAtLogin(enabled),
+    onSuccess: setApplicationSettings,
+  });
   const pendingInvitations = useMemo(
     () => (invitations.data ?? []).filter((invitation) => invitation.status === 'pending'),
     [invitations.data],
@@ -508,6 +575,18 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     const first = filteredNavigation[0]?.items[0]?.id;
     if (first) setActiveSection(first);
   }, [activeSection, availableSections, filteredNavigation]);
+
+  // Only the Settings window closes on Escape. The same screen is also a route
+  // inside the main window on surfaces with no separate window to open, and
+  // there the keystroke would shut the workspace itself.
+  useEffect(() => {
+    if (!standaloneWindow) return undefined;
+    const close = (event: KeyboardEvent): void => {
+      if (escapeClosesSettings(event, contentRef.current)) window.close();
+    };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [standaloneWindow]);
 
   useEffect(() => bridge.onSettingsSectionRequested((section) => {
     const nextSection = parseDesktopSettingsSection(section);
@@ -641,7 +720,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
           </nav>
         </aside>
 
-        <main className="settings-content">
+        <main className="settings-content" ref={contentRef}>
           <header className="settings-content-header window-drag">
             <h1 id="settings-title">{sectionTitle}</h1>
             <button aria-label="Close settings" className="settings-close window-no-drag" onClick={() => window.close()} type="button">
@@ -1042,7 +1121,86 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   <InlineError>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</InlineError>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
+                {applicationSettings?.menuBarAvailable !== false && (
+                  <>
+                    <div className="settings-list-card">
+                      <label className="settings-preference-row">
+                        <span className="settings-row-icon"><PanelTop aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>Show Avalon in the menu bar</strong>
+                          <small>Keep the Avalon mark in the menu bar for a new meeting or note, a new automation, what Avalon suggests next, and your recent work streams.</small>
+                        </span>
+                        <span className="settings-toggle">
+                          <input
+                            aria-label="Show Avalon in the menu bar"
+                            checked={applicationSettings?.menuBarEnabled ?? true}
+                            /* One preference file behind all three toggles, and
+                             * a Lockdown transition holds it for as long as it
+                             * takes to re-encrypt the session. Keep one write in
+                             * flight. */
+                            disabled={
+                              applicationSettings === null
+                              || updateMenuBarEnabled.isPending
+                              || updateLockdownMode.isPending
+                            }
+                            onChange={(event) => updateMenuBarEnabled.mutate(event.currentTarget.checked)}
+                            role="switch"
+                            type="checkbox"
+                          />
+                          <span aria-hidden="true" />
+                        </span>
+                      </label>
+                    </div>
+                    {updateMenuBarEnabled.error && <InlineError>{updateMenuBarEnabled.error.message}</InlineError>}
+                    {/* The write succeeded and the item still is not there —
+                      * creating one can fail, and without this the switch reads
+                      * on beside an empty menu bar with nothing said about it. */}
+                    {applicationSettings?.menuBarEnabled
+                      && applicationSettings.menuBarAvailable
+                      && !applicationSettings.menuBarPresent
+                      && !updateMenuBarEnabled.isPending
+                      && (
+                        <InlineError>
+                          Avalon could not add itself to the menu bar. Turn this off and on to try again, or restart Avalon.
+                        </InlineError>
+                      )}
+                  </>
+                )}
                 <ApplicationIconPicker />
+                {applicationSettings?.launchAtLoginAvailable !== false && (
+                  <>
+                    <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Startup</h2><p>Decide whether this Mac starts Avalon for you.</p></div>
+                    <div className="settings-list-card">
+                      <label className="settings-preference-row">
+                        <span className="settings-row-icon"><Power aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>Open Avalon at login</strong>
+                          <small>Start Avalon when you log in. With Avalon in the menu bar it starts there quietly, with no window; without it, a window opens as usual.</small>
+                        </span>
+                        <span className="settings-toggle">
+                          <input
+                            aria-label="Open Avalon at login"
+                            /* macOS owns this, not Avalon's preference file, so
+                             * the checked state is what the system reports back
+                             * after the write — which is how a registration it
+                             * is still waiting to have approved shows honestly. */
+                            checked={applicationSettings?.launchAtLogin ?? false}
+                            disabled={
+                              applicationSettings === null
+                              || updateLaunchAtLogin.isPending
+                              || updateLockdownMode.isPending
+                            }
+                            onChange={(event) => updateLaunchAtLogin.mutate(event.currentTarget.checked)}
+                            role="switch"
+                            type="checkbox"
+                          />
+                          <span aria-hidden="true" />
+                        </span>
+                      </label>
+                    </div>
+                    {updateLaunchAtLogin.error && <InlineError>{updateLaunchAtLogin.error.message}</InlineError>}
+                  </>
+                )}
                 {/* The service decides whether this section exists at all, and
                   * answers on a poll, so it can appear or disappear without the
                   * window reloading. It is absent rather than disabled: a

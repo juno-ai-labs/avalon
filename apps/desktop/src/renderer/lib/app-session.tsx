@@ -12,6 +12,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { IdSchema } from '@avalon/contracts';
 import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
+import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { AvalonApi } from './api';
 import { clearAllDrafts } from './draft-cache';
 import {
@@ -345,6 +346,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         setDeepLinkError('Avalon received an invalid sign-in link.');
         return;
       }
+      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
+        if (!session?.workspace) {
+          setDeepLinkError('Sign in before starting a work stream.');
+          return;
+        }
+        setDeepLinkError(null);
+        window.location.hash = '/workstreams/new';
+        return;
+      }
       if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams') {
         const workstreamId = deepLink.pathname.slice(1);
         if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(workstreamId)) {
@@ -353,6 +363,25 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
         setDeepLinkError(null);
         window.location.hash = `/workstreams/${workstreamId}`;
+        return;
+      }
+      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'notes') {
+        // Sent by the main process when a meeting window closes, so that the
+        // recording a person just ended hands them to the note it produced.
+        const noteId = deepLink.pathname.slice(1);
+        // Two different problems, and telling them apart is the difference
+        // between an instruction someone can act on and one that cannot help:
+        // signing in again does nothing about a link that names no note.
+        if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(noteId)) {
+          setDeepLinkError('Avalon could not open that note link.');
+          return;
+        }
+        if (!session?.workspace) {
+          setDeepLinkError('Sign in before opening this note.');
+          return;
+        }
+        setDeepLinkError(null);
+        window.location.hash = `/notes/${noteId}`;
         return;
       }
       if (
@@ -390,14 +419,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           && [...deepLink.searchParams.keys()].every((key) => key === 'token')
           && deepLink.searchParams.getAll('token').length === 1;
         if (!exactToken || !session?.workspace || !api) {
-          setDeepLinkError('Sign in to the matching Avalon workspace before connecting Slack.');
+          setDeepLinkError('Sign in to the matching Avalon workspace before connecting your Slack account.');
           return;
         }
         setDeepLinkError(null);
         void api.previewSlackUserLink(token)
           .then((preview) => {
             const confirmed = window.confirm(
-              `Connect Slack user ${preview.slackUserId} from ${preview.workspaceName} to your current Avalon account?`,
+              `Connect Slack user ${preview.slackUserId} from ${preview.workspaceName} to your Avalon account, `
+              + 'and let Avalon search and act in Slack as you?',
             );
             if (!confirmed) return null;
             return api.linkSlackUser(token);
@@ -408,10 +438,38 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               queryClient.invalidateQueries({ queryKey: ['connections'] }),
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
-            await desktopBridge().openSettings('connections');
+            // One button, both halves. Linking records who this Slack person is;
+            // the personal connection is what lets Avalon act as them. Split
+            // across two buttons that both said "Connect", members reasonably
+            // believed the first had done the second — App Home said
+            // "Welcome, <name>" while personal tools stayed unconnected. The
+            // authorization is continued into here rather than left as a second
+            // errand. Its own callback re-establishes the link, so whichever
+            // half a member reaches first, both end up done.
+            try {
+              // Inside the same try as the authorization: this rejecting is not
+              // the link failing, and reporting "your Slack account could not be
+              // linked" for a link that committed is the error the whole change
+              // is about.
+              await desktopBridge().openSettings('connections');
+              const authorization = await api.startProviderConnection(
+                'slack',
+                'you',
+                [...SLACK_PERSONAL_CAPABILITIES],
+              );
+              await desktopBridge().openExternal(authorization.url);
+            } catch (error: unknown) {
+              // The link committed and is useful on its own. Surface the
+              // failure without retracting what already succeeded.
+              setDeepLinkError(
+                error instanceof Error
+                  ? `Slack was linked, but personal Slack tools could not be connected: ${error.message}`
+                  : 'Slack was linked, but personal Slack tools could not be connected.',
+              );
+            }
           })
           .catch((error: unknown) => {
-            setDeepLinkError(error instanceof Error ? error.message : 'Slack could not be connected.');
+            setDeepLinkError(error instanceof Error ? error.message : 'Your Slack account could not be linked.');
           });
         return;
       }

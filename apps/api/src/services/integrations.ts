@@ -18,6 +18,7 @@ import {
   compileAutomation,
   composeBeforeToolCallHooks,
   canonicalToolInputHash,
+  createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
   renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
@@ -38,6 +39,7 @@ import {
   type HarnessTool,
   type ModelMessage,
   type PluginAuthorization,
+  type PluginAuthorizationOccasion,
   type StructuredModelDiagnostic,
   toolActivityName,
 } from "@avalon/agent-harness";
@@ -74,6 +76,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
+import { markWorkflowInstanceCreated } from "../lib/workflow-launch-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
@@ -563,34 +566,56 @@ async function persistWorkstreamContextCompaction(
  * Load the immutable transcript visible to this attempt.
  *
  * Work-stream messages can continue arriving while an earlier attempt waits
- * for its lease. Resolve the trigger's durable sequence first, then page
+ * for its lease. Resolve the boundary's durable sequence first, then page
  * backward from that immutable SQL boundary until the prior compaction
  * checkpoint (or the start of the work stream). The `+ 1` converts the
- * repository's exclusive cursor into an inclusive trigger boundary.
+ * repository's exclusive cursor into an inclusive boundary.
+ *
+ * The boundary is normally the trigger, and for every run started *by* a
+ * message the two are the same thing. They are separable because the trigger
+ * has a second job: `projectModelProtocolTranscript` admits a suggested-work
+ * brief and an inbound email only when they are the trigger, so the id also
+ * carries identity. A `retry` needs to keep that identity — the failed run's
+ * trigger — while seeing everything the work stream has accumulated since,
+ * including a correction a teammate posted that started no run of its own.
+ * `transcriptFenceMessageId` is how it says so; it is resolved once at launch
+ * and travels in the durable workflow input, so a replayed attempt reads the
+ * same window rather than whatever has arrived by the time it runs.
  */
 async function loadTriggerFencedTranscriptMessages(
   env: Pick<Env, "DB">,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
+    & Partial<Pick<WorkstreamWorkflowInput, "transcriptFenceMessageId">>,
   listMessages: TranscriptMessageLister,
   afterSequence = -1,
   pageSize = 250,
 ): Promise<Message[]> {
-  let beforeSequence: number | undefined;
-  let triggerSequence: number | undefined;
-  if (input.triggerMessageId) {
-    const trigger = await env.DB.prepare(
+  const sequenceOf = async (messageId: string, code: string): Promise<number> => {
+    const row = await env.DB.prepare(
       `SELECT sequence_number
          FROM messages
         WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3`,
-    ).bind(input.triggerMessageId, input.workspaceId, input.workstreamId)
+    ).bind(messageId, input.workspaceId, input.workstreamId)
       .first<{ sequence_number: number }>();
-    triggerSequence = trigger?.sequence_number;
-    if (!Number.isSafeInteger(triggerSequence) || (triggerSequence ?? -1) < 0) {
-      throw Object.assign(new Error("The run trigger message is not available in this work stream"), {
-        code: "trigger_message_not_found",
-      });
+    const sequence = row?.sequence_number;
+    if (!Number.isSafeInteger(sequence) || (sequence ?? -1) < 0) {
+      throw Object.assign(new Error("The run trigger message is not available in this work stream"), { code });
     }
-    beforeSequence = triggerSequence! + 1;
+    return sequence!;
+  };
+
+  let beforeSequence: number | undefined;
+  let triggerSequence: number | undefined;
+  if (input.triggerMessageId) {
+    triggerSequence = await sequenceOf(input.triggerMessageId, "trigger_message_not_found");
+    beforeSequence = triggerSequence + 1;
+  }
+  if (input.transcriptFenceMessageId && input.transcriptFenceMessageId !== input.triggerMessageId) {
+    const fenceSequence = await sequenceOf(input.transcriptFenceMessageId, "fence_message_not_found");
+    // Never below the trigger: a fence that excluded the trigger would fail the
+    // window check below, and a caller asking for less than the run's own
+    // trigger is asking for something this function has no way to honour.
+    beforeSequence = Math.max(beforeSequence ?? 0, fenceSequence + 1);
   }
 
   const messages: Message[] = [];
@@ -764,6 +789,11 @@ async function projectModelProtocolTranscript(
     }
     flushTools();
 
+    // Matched on its structured content, ahead of the author dispatch below and
+    // deliberately independent of it. The brief is stored as the selecting
+    // member's own turn, so the ordinary human branch would otherwise replay it
+    // as plain instruction — dropping the label that marks the connector
+    // evidence quoted inside it as evidence rather than orders.
     if (message.structuredContent?.kind === "suggested_work_expansion") {
       if (message.id === input.triggerMessageId) {
         projected.push({
@@ -794,8 +824,8 @@ async function projectModelProtocolTranscript(
       continue;
     }
 
-    // Artifact, suggestion, and system rows are UI state. Their relevant
-    // durable content is represented separately.
+    // Suggestion and system rows are UI state. Their relevant durable content
+    // is represented separately.
     if (message.messageType !== "text") continue;
     const content = modelMessageContent(message);
     if (content.trim().length === 0 && message.attachments.length === 0) {
@@ -1095,7 +1125,7 @@ async function loadAutomationCreatorPluginCatalog(
 ): Promise<AutomationCreatorPluginCatalogEntry[]> {
   const result = await env.DB.prepare(
     `SELECT * FROM connector_connections
-     WHERE workspace_id = ? AND status = 'healthy'
+     WHERE workspace_id = ? AND status <> 'disabled'
        AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))
      ORDER BY created_at ASC`,
   ).bind(workspaceId, userId).all<Record<string, unknown>>();
@@ -1128,7 +1158,7 @@ async function loadAutomationCreatorPluginCatalog(
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
-      searchAliases: [adapter.manifest.type, adapter.agentPlugin.wireNamePrefix],
+      searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
     catalog.push({
@@ -1249,7 +1279,7 @@ async function assertAutomationCreatorConnectionAuthorized(
       WHERE id = ? AND workspace_id = ?`,
   ).bind(frozen.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (
-    !row || row.status !== "healthy" || row.connector_type !== frozen.connectorType ||
+    !row || row.status === "disabled" || row.connector_type !== frozen.connectorType ||
     row.scope !== frozen.scope || String(row.model_plugin_id ?? "") !== frozen.modelPluginId ||
     (row.owner_user_id == null ? null : String(row.owner_user_id)) !== frozen.ownerUserId
   ) {
@@ -1272,9 +1302,33 @@ export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflo
   } catch (error) {
     // Workflow IDs are deterministic, so a duplicate means an earlier attempt
     // reached Cloudflare but failed before Avalon could persist the launch.
+    // Either way an instance now exists, which is what the marker below reports.
     if (!workflowAlreadyExists(error)) throw error;
   }
   const launchedAt = nowIso();
+  try {
+    return await recordWorkflowLaunch(env, input, instanceId, launchedAt);
+  } catch (error) {
+    // The instance is live and this failure is only about recording it, so the
+    // caller must not undo the work the run is already executing against. Said
+    // on the error rather than left to be inferred from a row: the run row is
+    // marked `failed` by the caller's own handler moments later, so its status
+    // cannot answer "is something still running here".
+    throw markWorkflowInstanceCreated(
+      new Error(
+        `Recording the workflow launch failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        { cause: error },
+      ),
+    );
+  }
+}
+
+async function recordWorkflowLaunch(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  instanceId: string,
+  launchedAt: string,
+): Promise<string> {
   await env.DB.batch([
     env.DB.prepare(
       `UPDATE harness_runs
@@ -1304,11 +1358,6 @@ export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflo
 
 function workflowAlreadyExists(error: unknown): boolean {
   return error instanceof Error && /(already exists|duplicate|conflict)/iu.test(error.message);
-}
-
-interface StreamDeltaBatcher {
-  push(delta: string): Promise<void>;
-  flush(): Promise<void>;
 }
 
 interface SequencedStreamDeltaBatcher {
@@ -1351,35 +1400,6 @@ function createSequencedStreamDeltaBatcher(
         ? { ...event, delta: pending.delta + event.delta }
         : event;
       if (pending.delta.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
-        await flush();
-      }
-    },
-    flush,
-  };
-}
-
-function createStreamDeltaBatcher(
-  publish: (delta: string) => Promise<void>,
-  options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
-): StreamDeltaBatcher {
-  const maxCharacters = options.maxCharacters ?? 2_048;
-  const maxDelayMs = options.maxDelayMs ?? 75;
-  const now = options.now ?? Date.now;
-  let pending = "";
-  let lastFlushAt = now();
-
-  const flush = async (): Promise<void> => {
-    if (!pending) return;
-    const delta = pending;
-    pending = "";
-    lastFlushAt = now();
-    await publish(delta);
-  };
-
-  return {
-    async push(delta: string): Promise<void> {
-      pending += delta;
-      if (pending.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
         await flush();
       }
     },
@@ -1639,7 +1659,7 @@ export async function runWorkstreamHarness(
     async (pluginId) => {
       const frozen = harnessTools.frozenConnections.get(pluginId);
       return frozen
-        ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal)
+        ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal, "activation")
         : builtinPluginAuthorization(pluginId, harnessTools);
     },
     async (pluginId) => {
@@ -1783,7 +1803,7 @@ export async function runWorkstreamHarness(
       activationHints,
       includeWebSearch: false,
       signal: harnessSignal,
-      reauthorizePlugin: async (pluginId) => {
+      reauthorizePlugin: async (pluginId, occasion) => {
         const frozen = harnessTools.frozenConnections.get(pluginId);
         if (!frozen) return builtinPluginAuthorization(pluginId, harnessTools);
         // Cancellable: this runs inside the bind loop's Workflow step, so an
@@ -1794,7 +1814,7 @@ export async function runWorkstreamHarness(
           numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         );
         try {
-          return await reauthorizeFrozenPlugin(env, input, frozen, deadline.signal);
+          return await reauthorizeFrozenPlugin(env, input, frozen, deadline.signal, occasion);
         } finally {
           deadline.dispose();
         }
@@ -2806,6 +2826,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   childInput,
                   frozen,
                   childSignal,
+                  "activation",
                   assertChildOwned,
                 )
               : builtinPluginAuthorization(pluginId, childHarnessTools);
@@ -2867,7 +2888,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           activationHints,
           includeWebSearch: false,
           signal: childSignal,
-          reauthorizePlugin: async (pluginId) => {
+          reauthorizePlugin: async (pluginId, occasion) => {
             await assertChildOwned();
             const frozen = childFrozenConnections.get(pluginId);
             return frozen
@@ -2876,6 +2897,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   childInput,
                   frozen,
                   childSignal,
+                  occasion,
                   assertChildOwned,
                 )
               : builtinPluginAuthorization(pluginId, childHarnessTools);
@@ -3671,7 +3693,7 @@ async function loadHarnessTools(
        WHERE wr.workstream_id = ? AND r.workspace_id = ? AND r.connection_id IS NOT NULL`,
     ).bind(input.workstreamId, input.workspaceId).all<{ connection_id: string }>(),
     env.DB.prepare(
-      `SELECT * FROM connector_connections WHERE workspace_id = ? AND status = 'healthy'
+      `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
     ).bind(input.workspaceId).all<Record<string, unknown>>(),
   ]);
@@ -3745,7 +3767,7 @@ async function loadHarnessTools(
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
-      searchAliases: [adapter.manifest.type, adapter.agentPlugin.wireNamePrefix],
+      searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
     const frozen: FrozenConnectorPlugin = {
@@ -3902,6 +3924,44 @@ function googleFilesWorkedExamples(wirePrefix: string, granted: ReadonlySet<stri
   return examples.length ? `Worked examples:\n${examples.map((example) => `- ${example}`).join("\n")}` : "";
 }
 
+/**
+ * What a request has to say to find a connector in the plugin catalog.
+ *
+ * The provider type and wire prefix were once the whole list, which made every
+ * connector reachable only by its own product name: "file a ticket" matched no
+ * plugin, and a run whose visible tool list held no connector tools reads that
+ * as the capability being absent. A connector declares the vocabulary of the
+ * work it does; the brand is added here so a descriptor never has to repeat it.
+ */
+function connectorSearchAliases(adapter: { manifest: { type: string }; agentPlugin: { wireNamePrefix: string; searchAliases?: readonly string[] } }): string[] {
+  return [...new Set([
+    adapter.manifest.type,
+    adapter.agentPlugin.wireNamePrefix,
+    ...(adapter.agentPlugin.searchAliases ?? []),
+  ])];
+}
+
+/**
+ * A rebuilt presentation's aliases: the brand identifiers every plugin is
+ * addressable by, plus the vocabulary this credential's scopes actually earn.
+ *
+ * A branch that returned a bare literal dropped the provider type and wire
+ * prefix the host adds for every other connector. What it deliberately does
+ * *not* inherit is the descriptor's own alias list: for Google that list is the
+ * union of every product, and matching "spreadsheet" on a mail-only credential
+ * would send a run to load a plugin that cannot help it. Google's presentation
+ * is capability-gated by design, so its aliases are too — the descriptor's list
+ * is the floor for a credential holding no recognized scope, and a new
+ * capability's vocabulary belongs in the branch that grants it.
+ */
+function catalogAliases(
+  connectorType: string,
+  wirePrefix: string,
+  scoped: readonly string[],
+): string[] {
+  return [...new Set([connectorType, wirePrefix, ...scoped])];
+}
+
 function connectorPluginPresentation(
   connectorType: string,
   grantedScopes: readonly string[],
@@ -3954,7 +4014,7 @@ function connectorPluginPresentation(
     return {
       displayName: "Google Mail + Calendar",
       description: `Work with ${capabilities.join(" and ")}, limited to this credential's granted tools. Load this plugin for email, inbox, mail, meeting, schedule, or calendar requests.`,
-      searchAliases: ["google", "gmail", "mail", "email", "inbox", "calendar", "gcal", "meetings", "schedule"],
+      searchAliases: catalogAliases(connectorType, wirePrefix, ["gmail", "mail", "email", "inbox", "calendar", "gcal", "meetings", "schedule"]),
       systemMessage: [
         [
           "Use only the Google Mail and Calendar tools exposed by this credential plugin.",
@@ -3977,7 +4037,7 @@ function connectorPluginPresentation(
     return {
       displayName: "Google Drive + Docs + Sheets",
       description: `Work with ${capabilities.join(", ")}, limited to this credential's granted tools. Load this plugin for file, document, spreadsheet, Drive, Docs, or Sheets requests.`,
-      searchAliases: ["google", "drive", "files", "documents", "docs", "spreadsheets", "sheets"],
+      searchAliases: catalogAliases(connectorType, wirePrefix, ["drive", "files", "documents", "docs", "spreadsheets", "sheets"]),
       systemMessage: [
         [
           "Use only the Google Drive, Docs, and Sheets tools exposed by this credential plugin.",
@@ -3993,17 +4053,45 @@ function connectorPluginPresentation(
   // Both halves at once. This branch used to hand back the connector's static
   // fallback message, so the one credential shape that can do everything was
   // also the only one told nothing about how.
+  // The load-me sentence has to be rebuilt here rather than inherited from the
+  // fallback, because this branch names a different set of work than the
+  // descriptor does — and the credential that can do everything was the one
+  // shape not being told when it applies.
+  // Nothing recognized to gate on, so there is nothing this function knows that
+  // the descriptor does not. Composing anyway produced "Work with , limited to
+  // …" and an alias list of just "google" — a credential findable only by
+  // brand, which is the state this whole change exists to remove.
+  if (!hasCommunication && !hasFiles) return fallback;
+
+  const combinedCapabilities = [
+    ...(hasMail ? ["authorized Gmail messages, threads, drafts, and sending"] : []),
+    ...(hasCalendar ? ["authorized Google calendars and events"] : []),
+    ...(hasDrive ? ["authorized Google Drive files"] : []),
+    ...(hasDocs ? ["Google Docs"] : []),
+    ...(hasSheets ? ["Google Sheets"] : []),
+  ];
+  const combinedRequests = [
+    ...(hasMail ? ["email", "inbox", "mail"] : []),
+    ...(hasCalendar ? ["meeting", "schedule", "calendar"] : []),
+    ...(hasDrive ? ["file", "Drive"] : []),
+    ...(hasDocs ? ["document", "Docs"] : []),
+    ...(hasSheets ? ["spreadsheet", "Sheets"] : []),
+  ];
   return {
     displayName: "Google Workspace",
-    description: `${fallback.description} Capabilities are limited to this credential's granted tools.`,
-    searchAliases: [
-      "google",
+    // Composed here rather than appended to the descriptor's line, which
+    // carries its own load-me sentence for the no-recognized-scopes floor and
+    // would otherwise be repeated back with a second, differently worded one.
+    description: `Work with ${combinedCapabilities.join(", ")}, limited to this credential's granted tools.${
+      combinedRequests.length ? ` Load this plugin for ${combinedRequests.join(", ")} requests.` : ""
+    }`,
+    searchAliases: catalogAliases(connectorType, wirePrefix, [
       ...(hasMail ? ["gmail", "mail", "email", "inbox"] : []),
       ...(hasCalendar ? ["calendar", "gcal", "meetings", "schedule"] : []),
       ...(hasDrive ? ["drive", "files"] : []),
       ...(hasDocs ? ["documents", "docs"] : []),
       ...(hasSheets ? ["spreadsheets", "sheets"] : []),
-    ],
+    ]),
     systemMessage: [
       [
         "Use only the Google tools exposed by this credential plugin.",
@@ -4183,10 +4271,10 @@ async function assertFrozenConnectionAuthorized(
       WHERE id = ? AND workspace_id = ?`,
   ).bind(frozen.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (
-    !row || row.status !== "healthy" || row.connector_type !== frozen.connectorType ||
+    !row || row.status === "disabled" || row.connector_type !== frozen.connectorType ||
     row.scope !== frozen.scope || (row.owner_user_id == null ? null : String(row.owner_user_id)) !== frozen.ownerUserId
   ) {
-    throw new ConnectorError("unauthorized", "Connector is no longer healthy or authorized for this run");
+    throw new ConnectorError("unauthorized", "Connector is no longer authorized for this run");
   }
   if (frozen.scope === "personal" && (
     input.executionPrincipal.type !== "user" || input.executionPrincipal.userId !== frozen.ownerUserId
@@ -4395,10 +4483,34 @@ async function reauthorizeFrozenPlugin(
   input: WorkstreamWorkflowInput,
   frozen: FrozenConnectorPlugin,
   signal: AbortSignal,
+  occasion: PluginAuthorizationOccasion,
   ownershipGuard?: () => Promise<void>,
 ): Promise<PluginAuthorization> {
   try {
     await ownershipGuard?.();
+    if (occasion === "continuation") {
+      // The caller's deadline still bounds this branch. Without it a cancelled
+      // or timed-out run would answer `authorized` from records it read after
+      // the run stopped being allowed to proceed, and the disposable deadline
+      // wrapped around this call would bound nothing.
+      signal.throwIfAborted();
+      // Between turns, authority is exactly what Avalon's own records say: the
+      // principal, the work stream, the automation authority, the connection's
+      // identity, scope, owner, grants, and stored health. This check runs
+      // before every inference, so re-asking the provider would spend a round
+      // trip per active plugin per turn — up to eight rounds a run — to
+      // rediscover something already known here, and would decrypt credentials
+      // nothing is about to use. A provider that has since refused the
+      // credential still surfaces on the next tool call, which recovers.
+      await assertFrozenConnectionAuthorized(env, input, frozen);
+      // Again after the reads, not only before them. A deadline that fires
+      // while D1 is answering would otherwise leave the one check already
+      // passed, and this branch would report `authorized` for a run that had
+      // stopped being allowed to proceed.
+      signal.throwIfAborted();
+      await ownershipGuard?.();
+      return "authorized";
+    }
     const { connection, adapter } = await loadAuthorizedConnectionContext(
       env,
       input,
@@ -4440,9 +4552,25 @@ async function pluginAuthorizationFromHealth(
   env: Env,
   input: WorkstreamWorkflowInput,
   frozen: FrozenConnectorPlugin,
-  health: { ok: boolean; message: string; reconnectRequired?: boolean },
+  health: { ok: boolean; message: string; reconnectRequired?: boolean; warning?: string },
 ): Promise<PluginAuthorization> {
-  if (health.ok) return "authorized";
+  if (health.ok) {
+    // A healthy connection can still be degraded, and this is the only place
+    // that learns it: a warning dropped here is an outage nobody is told
+    // about until somebody happens to test the connection.
+    if (health.warning) {
+      logStructuredEvent(env, "warn", "connector_health_warning", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        plugin_id: frozen.pluginId,
+        connection_id: frozen.connectionId,
+        connector_type: frozen.connectorType,
+        warning: health.warning,
+      });
+    }
+    return "authorized";
+  }
   logPluginAuthorizationFailure(env, input, frozen, health.message);
   // An adapter reports a withdrawn grant as `reconnectRequired`. Every other
   // unhealthy result — an unreachable provider, a malformed response — says
@@ -4690,7 +4818,7 @@ function connectorSelectionPriority(
 }
 
 async function coreWriteEntityId(
-  kind: "artifact" | "elicitation",
+  kind: "elicitation",
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   providerIdempotencyKey: string,
 ): Promise<string> {
@@ -4816,7 +4944,6 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
   const workstreamCapabilities = [
     "workstream.",
     "resource.",
-    "artifact.",
     "subagent.",
   ];
   const workstreamTools = tools.filter((tool) =>
@@ -4827,8 +4954,8 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
     modelId: "avalon_workstream",
     shortWireName: "workstream",
     displayName: "Workstream",
-    searchAliases: ["task", "resources", "artifacts", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
-    description: "Read and update the current workstream, its resources, artifacts, and execution lifecycle, including waking it up later to act on a prompt.",
+    searchAliases: ["task", "resources", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
+    description: "Read and update the current workstream, its resources, and execution lifecycle, including waking it up later to act on a prompt.",
     systemMessage: [
       "Use these tools only for the current authorized workstream and its attached resources.",
       "Use workstream_schedule_wakeup when work genuinely has to happen later — waiting on an external result, or a time a person named — instead of promising it in text. Do the work now when it can be done now.",
@@ -4989,54 +5116,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         if (!object) throw new Error("Attached resource content is unavailable");
         const text = await object.text();
         return { output: { title: row.title, text }, summary: `Read ${text.length} characters from ${row.title}` };
-      },
-    },
-    {
-      definition: {
-        name: "create_artifact",
-        description: "Create a durable text artifact in this work stream.",
-        capability: "artifact.write",
-        mode: "write",
-        idempotency: "provider_key",
-        inputSchema: {
-          type: "object", additionalProperties: false,
-          properties: {
-            title: { type: "string", minLength: 1, maxLength: 300 },
-            artifactType: { type: "string", minLength: 1, maxLength: 80 },
-            content: { type: "string", maxLength: 500000 },
-          },
-          required: ["title", "artifactType", "content"],
-        },
-      },
-      execute: async (raw, context) => {
-        const args = z.object({ title: z.string().min(1).max(300), artifactType: z.string().min(1).max(80), content: z.string().max(500_000) }).parse(raw);
-        const providerIdempotencyKey = requireProviderIdempotencyKey(
-          "workstream_create_artifact",
-          context.providerIdempotencyKey,
-        );
-        const id = await coreWriteEntityId("artifact", input, providerIdempotencyKey);
-        const existing = await env.DB.prepare(
-          `SELECT id FROM artifacts
-           WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND harness_run_id = ?`,
-        ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId).first<{ id: string }>();
-        if (existing) {
-          return {
-            output: { artifactId: id, title: args.title },
-            summary: `Created artifact “${args.title}”`,
-            providerOperationId: id,
-          };
-        }
-        const key = `${env.AVALON_REGION}/${input.workspaceId}/artifacts/${id}.txt`;
-        await env.PAYLOADS.put(key, args.content, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
-        const at = nowIso();
-        await env.DB.prepare(
-          `INSERT INTO artifacts
-           (id, workspace_id, workstream_id, harness_run_id, artifact_type, title,
-            content_ref, preview_text, status, metadata_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'complete', '{}', ?, ?)
-           ON CONFLICT(id) DO NOTHING`,
-        ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.artifactType, args.title, key, args.content.slice(0, 1_000), at, at).run();
-        return { output: { artifactId: id, title: args.title }, summary: `Created artifact “${args.title}”`, providerOperationId: id };
       },
     },
     {
@@ -5558,7 +5637,7 @@ export async function pollConnectorConnection(
   streamErrors?: ConnectorActivityStreamError[];
 }> {
   const row = await env.DB.prepare(
-    `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+    `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
   ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (!row) throw new Error("Connector connection is unavailable");
   let credentials: Record<string, unknown> = {};
@@ -5624,7 +5703,7 @@ export async function hydrateConnectorActivitySource(
 ): Promise<unknown | null> {
   const row = await env.DB.prepare(
     `SELECT * FROM connector_connections
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+     WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
   ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (!row) return null;
   let credentials: Record<string, unknown> = {};
@@ -5748,14 +5827,22 @@ export async function commitConnectorCursor(
     ? JSON.stringify({ code: "connector_activity_streams_degraded", streams: result.streamErrors })
     : null;
   const updated = await database.prepare(
+    // `error_json` moves only for a row this poll's success actually speaks to.
+    // Gated on `status = 'healthy'` this could never touch a marked row; once
+    // the poll runs for any non-disabled connection it can, and writing
+    // `error_json = NULL` onto a `needs_reconnect` row leaves it marked with no
+    // reason at all — worse than either endpoint, and the same destruction of a
+    // specific diagnosis this work exists to stop. A poll succeeding is not
+    // evidence the authorization is whole (it may not have needed the missing
+    // scope), so the status is left for the paths that do know.
     `UPDATE connector_connections
         SET cursor_json = ?1,
             last_sync_at = ?2,
-            error_json = ?6,
+            error_json = CASE WHEN status = 'healthy' THEN ?6 ELSE error_json END,
             updated_at = ?2
       WHERE id = ?3
         AND workspace_id = ?4
-        AND status = 'healthy'
+        AND status <> 'disabled'
         AND cursor_json = ?5`,
   )
     .bind(result.cursorJson, now, input.connectionId, input.workspaceId, result.baseCursorJson, errorJson)
@@ -5765,7 +5852,7 @@ export async function commitConnectorCursor(
   const current = await database.prepare(
     `SELECT cursor_json
        FROM connector_connections
-      WHERE id = ?1 AND workspace_id = ?2 AND status = 'healthy'
+      WHERE id = ?1 AND workspace_id = ?2 AND status <> 'disabled'
       LIMIT 1`,
   )
     .bind(input.connectionId, input.workspaceId)
@@ -5985,6 +6072,8 @@ export const __integrationTesting = {
   createAvalonTools,
   createInlineChildHarnessSurface,
   childRunLimits,
+  connectorSearchAliases,
+  connectorPluginPresentation,
   hyperSightSubmissionPlugin,
   hyperSightBlockOutcome,
   installInlineChildAgentTool,
@@ -6005,7 +6094,8 @@ export const __integrationTesting = {
   persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
-  createStreamDeltaBatcher,
+  reauthorizeFrozenPlugin,
+  createTextDeltaBatcher,
   classifyHarnessToolFailure,
   createConnectorToolContext,
   resolveHarnessToolReceiptPolicy,

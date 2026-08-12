@@ -48,7 +48,7 @@ paragraph of context before the diff makes sense, the context belongs in
 - **A component, a helper, a bug fix, a rename.** Local code that is understood
   by reading it.
 - **Anything an existing document already owns.** One module, one owner: extend
-  [`AGENT_HARNESS.md`](AGENT_HARNESS.md) rather than adding a second document
+  [`agent-harness.md`](agent-harness.md) rather than adding a second document
   about the harness. Fragmenting an area across two files means neither is
   trusted, and the changelog for that area stops being a single record. Split a
   document only when it has grown a genuinely separate subsystem inside it, and
@@ -56,7 +56,7 @@ paragraph of context before the diff makes sense, the context belongs in
 - **A point-in-time proposal.** That is a [PRD](prds.md).
 - **A house specification or a process guide.** [`prds.md`](prds.md),
   [`pull-requests.md`](pull-requests.md), [`dev-environment.md`](dev-environment.md),
-  [`SANDBOX.md`](SANDBOX.md), [`E2E.md`](E2E.md), and this document describe how
+  [`sandbox.md`](sandbox.md), [`e2e.md`](e2e.md), and this document describe how
   we work rather than a subsystem of the running product. They live in `docs/`
   and are registered like everything else, but they are not module documents and
   carry no changelog.
@@ -71,10 +71,19 @@ docs/<lower-kebab-name>.md
 
 Named for the subsystem the way the team says it aloud — `composer-drafts.md`,
 `workstream-descriptions.md` — so a person searching for it guesses the filename.
-The `SCREAMING_SNAKE_CASE` names in the folder predate this convention and stay
-as they are; do not add new ones, and do not rename the old ones for consistency
-alone, because every inbound link is a cost and none of it buys a reader
-anything.
+Every document in the folder now follows it; the `SCREAMING_SNAKE_CASE` names
+that predated the convention were renamed in one pass, with every inbound
+reference in `docs/`, the repository root, the workflows, and the source updated
+in the same change. `README.md` keeps its conventional name.
+
+Three migration files mention a document in a comment and were deliberately left
+naming the old path. The rule being applied is that **a deployed migration file is
+not edited at all** — not the narrower invariant in
+[`data-model.md`](data-model.md#invariants), which is about schema divergence and
+which a comment could not cause. The bright line is worth more than the exception
+would save: "no edits" is checkable at a glance, while "no edits that change
+behavior" invites a judgement call about what counts, on the one class of file
+where being wrong is expensive. A stale comment is the accepted cost.
 
 **Register it in [the documentation index](README.md)** in the same change, in
 the table that matches its area, with a scope line saying what to read and update
@@ -143,20 +152,20 @@ was asked rather than skipped.
 Include these when they apply, between **Testing** and **Changelog**:
 
 - **Data model** — The tables and columns the module owns and how rows are
-  keyed. The migrations and [`DATA_MODEL.md`](DATA_MODEL.md) stay authoritative;
+  keyed. The migrations and [`data-model.md`](data-model.md) stay authoritative;
   this is the module's view of them.
 - **Regional impact** — What differs between Global and the European Union, what
   crosses the boundary, and where data comes to rest. **Required in spirit** for
   anything touching identity, the Global registry, cross-region bridges, provider
-  ingress routing, or residency; read [`REGIONALIZATION.md`](REGIONALIZATION.md)
+  ingress routing, or residency; read [`regionalization.md`](regionalization.md)
   first.
 - **Security and trust model** — The trust surface the module sits on: what it
   treats as untrusted, which credentials it can reach, what it validates.
   **Required in spirit** whenever the module touches any of the boundaries in
-  [`SECURITY.md`](SECURITY.md).
+  [`security.md`](security.md).
 - **Operations** — What to look at when it misbehaves in production: the logs,
   the queries, the dashboards, the manual recovery. Deep procedures belong in
-  [`RUNBOOK.md`](RUNBOOK.md); link rather than duplicate.
+  [`runbook.md`](runbook.md); link rather than duplicate.
 - **Performance and cost** — The budget the design is built to, and the
   measurement behind it, where a later change could quietly blow it.
 - **Open questions** — What is genuinely undecided and what each answer would
@@ -370,7 +379,7 @@ The record starts where the record starts.
 | What the module is and how it behaves now | The module document's body. |
 | A proposal for a change not yet built | A [PRD](prds.md) under `docs/PRDs/`. |
 | A decision that moved a PRD's goals or scope while it was being built | That PRD's [decision log](prds.md#the-decision-log), which freezes when the PRD completes. The module document's changelog carries the durable consequence. |
-| A low-level ambiguity resolved without changing the product contract | [`ASSUMPTIONS.md`](ASSUMPTIONS.md). |
+| A low-level ambiguity resolved without changing the product contract | [`assumptions.md`](assumptions.md). |
 | A purely internal choice with no consequence for anyone changing the module | The pull request description. |
 
 ## Working with one
@@ -411,6 +420,6 @@ as shown above.
   change. The PR explains the change to a reviewer today; the module document
   explains the module to a stranger in a year. The overlap is intentional and
   they are written for different readers.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) stays the map of how the surfaces fit
+- [`architecture.md`](architecture.md) stays the map of how the surfaces fit
   together. A new module is added to that map and documented in its own file;
   the map does not absorb it.

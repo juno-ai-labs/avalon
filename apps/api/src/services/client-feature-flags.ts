@@ -1,6 +1,7 @@
 import type { ClientFeatureFlags } from "@avalon/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
+import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /**
@@ -10,10 +11,18 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * these decide what the desktop is allowed to offer. Keeping them apart keeps
  * a client-visible flag from inheriting the model resolver's open default.
  *
- * Every flag here fails **closed**. A model flag falls back to the Worker
- * variables because an agent still has to run; a client flag has nothing it
+ * Every *feature* here fails **closed**. A model flag falls back to the Worker
+ * variables because an agent still has to run; a client feature has nothing it
  * must do, so an unbound binding, an unreachable Flagship, a missing flag, and
  * a mistyped value all resolve to off.
+ *
+ * One field in the response is not a feature and does not follow that rule:
+ * `controlTowerRefreshSeconds` is a cadence, and a recording that never
+ * refreshes is not a safe answer to an outage. It is resolved by
+ * `control-tower-flags.ts`, which fails to a checked-in default the way a model
+ * flag does, and is served here because this is the one route a client asks for
+ * server-decided values. Anything else added here that has no off state belongs
+ * in a module of its own for the same reason.
  *
  * **Who gets a feature is a Flagship targeting rule, never a condition in this
  * file.** A cohort encoded here would be invisible from the Flagship console,
@@ -22,7 +31,7 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * same loader the model flags evaluate through — a client flag describes its
  * subject in the one vocabulary rules are already written in, and inherits the
  * boundary that keeps a person's data out of a flag-targeting system. See
- * `docs/FEATURE_FLAGS.md` for the rules each flag is provisioned with.
+ * `docs/feature-flags.md` for the rules each flag is provisioned with.
  */
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
@@ -116,12 +125,17 @@ export async function resolveClientFeatureFlags(
     userId: auth.userId,
     ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
   };
-  return {
-    developerSettings: await resolveBooleanClientFlag(
-      env,
-      auth,
-      DEVELOPER_SETTINGS_FLAG_KEY,
-      context,
-    ),
-  };
+  const [developerSettings, controlTowerRefreshSeconds] = await Promise.all([
+    resolveBooleanClientFlag(env, auth, DEVELOPER_SETTINGS_FLAG_KEY, context),
+    // Resolved through its own module: a cadence fails to a working default
+    // rather than to off. It reuses this request's loaded attributes through
+    // the loader's isolate cache rather than being handed `context`, so both
+    // callers of that resolver — this route and the meeting-notes generator —
+    // describe the subject identically.
+    resolveControlTowerRefreshSeconds(env, {
+      userId: auth.userId,
+      ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
+    }),
+  ]);
+  return { developerSettings, controlTowerRefreshSeconds };
 }

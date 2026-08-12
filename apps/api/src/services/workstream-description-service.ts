@@ -64,7 +64,7 @@ export const MAXIMUM_DESCRIPTION_WINDOW_MESSAGES = 600;
  *
  * 600 messages bounded individually at 800 characters is a ~480,000-character
  * prompt — well past the context of a model this role could reasonably be
- * retargeted to, and `FEATURE_FLAGS.md` names it as the role most likely to be
+ * retargeted to, and `feature-flags.md` names it as the role most likely to be
  * retargeted. A row cap alone therefore makes the ceiling depend on which model
  * the flag happens to point at, and the failure mode is a hard rejection on the
  * largest windows rather than a smaller one. Budgeting characters too keeps the

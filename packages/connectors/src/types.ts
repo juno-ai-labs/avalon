@@ -1,9 +1,14 @@
-import { ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY } from "@avalon/contracts";
+import {
+  ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
+  ConnectorOriginResourceSchema,
+} from "@avalon/contracts";
 import type {
   ConnectorActivityFilterField,
   ConnectorActivityTriggerDescriptor,
   ConnectorManifest,
   ConnectorManifestInput,
+  ConnectorOriginResource,
+  ConnectorOriginResourceInput,
   ExecutionPrincipal,
   NormalizedActivity,
   Scope,
@@ -44,6 +49,13 @@ function humanizeActivityEventType(eventType: string): string {
  * belongs in this way — **would a person who was away for a day want this read
  * back to them?** A pull request opened, yes. The eleven check runs it started,
  * no.
+ *
+ * One surface besides the digest reads this: contextual routing starts an
+ * operational type at a higher confidence bar before offering it as context
+ * (`docs/contextual-routing.md`). It is a prior only — a workspace's own
+ * acceptances overrule it, and a connector that classifies nothing as
+ * digestible is read as having drawn no line rather than as having said no —
+ * so answer the digest question here and nothing else.
  */
 export interface ConnectorActivityTypePartition {
   /** Read back to a person in their digest. */
@@ -243,6 +255,160 @@ export interface ConnectorPollingActivitySource {
     highWatermark: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<ConnectorPollingActivityResult>;
+}
+
+/**
+ * The subset of a normalized activity that can name a provider object. Both a
+ * live `NormalizedActivity` and a stored `activities` row satisfy it, which is
+ * what lets the host describe an origin from either without a translation layer
+ * in between.
+ */
+export interface ConnectorOriginActivity {
+  resourceType?: string | null;
+  providerResourceId?: string | null;
+  title?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * What the host is asking a connector to describe.
+ *
+ * Two kinds, because there are two ways a work stream comes to exist from a
+ * provider. An **activity** is already normalized, so the base can describe it
+ * for every connector without a line of adapter code. An **agent session** is
+ * the provider's own conversation — a Slack thread, a Linear agent session —
+ * which no activity describes and which only the adapter can parse, so its
+ * payload stays provider-native and opaque here.
+ */
+export type ConnectorOriginLocator =
+  | { readonly kind: "activity"; readonly activity: ConnectorOriginActivity }
+  | { readonly kind: "agent_session"; readonly session: unknown };
+
+/**
+ * A connector's ability to say *where* something it produced lives, so the work
+ * stream started from it can link back.
+ *
+ * Optional on every adapter, and only worth implementing for the parts the base
+ * cannot derive: `describe` returning null for a locator hands it back to
+ * `connectorOriginFromActivity`. A connector that pulls its canonical URL from
+ * the provider rather than from activity metadata implements
+ * `resolveCanonicalUrl`; the host calls it under its credential door and treats
+ * a failure as "no URL" rather than as no origin.
+ */
+export interface ConnectorOriginSource {
+  describe(locator: ConnectorOriginLocator): ConnectorOriginResourceInput | null;
+  resolveCanonicalUrl?(
+    connection: AuthorizedConnectorConnection,
+    origin: ConnectorOriginResource,
+    signal: AbortSignal,
+  ): Promise<string | null>;
+}
+
+/**
+ * Providers disagree on the key; take the first that is actually a link.
+ *
+ * "Actually" is carried by `ConnectorOriginResourceSchema` itself rather than by
+ * a prefix test. The two used to disagree — `/^https?:\/\//` accepts the string
+ * `"https://"`, which `HttpUrlSchema` rejects — so a provider that put that in
+ * its metadata produced a derived origin the contract refused, and the whole
+ * origin was lost over an optional field. A producer that can only emit values
+ * its own contract accepts cannot reopen that gap.
+ */
+export function connectorOriginUrl(metadata: Record<string, unknown> | undefined): string | null {
+  for (const candidate of [metadata?.canonicalUrl, metadata?.url, metadata?.htmlUrl, metadata?.permalink]) {
+    if (typeof candidate !== "string") continue;
+    if (ConnectorOriginResourceSchema.shape.canonicalUrl.safeParse(candidate).success) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The origin every activity-emitting connector gets without writing any code.
+ *
+ * An activity already carries the provider object it is about — normalization
+ * put it there — so the derivation is the same for all of them, and a connector
+ * only overrides it when the activity's own object is not the place a person
+ * would want to be sent. An activity naming no provider resource describes
+ * something with nowhere to point at and yields null rather than an origin
+ * nobody can open.
+ */
+export function connectorOriginFromActivity(
+  activity: ConnectorOriginActivity,
+): ConnectorOriginResourceInput | null {
+  const providerResourceId = activity.providerResourceId;
+  if (typeof providerResourceId !== "string" || providerResourceId.length === 0) return null;
+  const title = typeof activity.title === "string" && activity.title.length > 0
+    ? activity.title
+    : providerResourceId;
+  return {
+    // Every field the contract bounds is bounded here. A stored
+    // `activities.resource_type` is not capped at the schema's 80, and an
+    // over-long one used to fail the parse — losing the origin entirely rather
+    // than the surplus characters.
+    resourceType: activity.resourceType && activity.resourceType.length > 0
+      ? activity.resourceType.slice(0, 80)
+      : "activity",
+    providerResourceId: providerResourceId.slice(0, 500),
+    title: title.slice(0, 300),
+    canonicalUrl: connectorOriginUrl(activity.metadata),
+    metadata: activity.metadata ?? {},
+  };
+}
+
+/**
+ * Describe the place a work stream is being started from, for any connector.
+ *
+ * The one entry point the host uses. It prefers the adapter's own description,
+ * falls back to the shared activity derivation, and — when handed an authorized
+ * connection — lets the adapter replace a missing URL with one only the provider
+ * can give. The provider call is best-effort by design: an origin that records
+ * *which* Slack thread but cannot link to it is still the only record of where
+ * the work stream came from, and losing it to a timeout would be the worse
+ * trade.
+ *
+ * An adapter-authored `resourceType` is checked against the manifest, which is
+ * the connector's own enumeration of what it produces. A derived one is not:
+ * it came out of normalization, so the connector has already vouched for it,
+ * and rejecting it here would silently drop attachments over a manifest that
+ * had drifted rather than over a real mistake.
+ */
+export async function describeConnectorOrigin(
+  adapter: Pick<ConnectorAdapter, "manifest" | "origin">,
+  locator: ConnectorOriginLocator,
+  options: {
+    connection?: AuthorizedConnectorConnection;
+    signal?: AbortSignal;
+  } = {},
+): Promise<ConnectorOriginResource | null> {
+  const authored = adapter.origin?.describe(locator) ?? null;
+  if (authored && !adapter.manifest.resourceTypes.includes(authored.resourceType)) {
+    throw new ConnectorError(
+      "invalid_configuration",
+      `${adapter.manifest.type} describes an origin as an undeclared resource type: ${authored.resourceType}`,
+    );
+  }
+  const described = authored
+    ?? (locator.kind === "activity" ? connectorOriginFromActivity(locator.activity) : null);
+  if (!described) return null;
+  const origin = ConnectorOriginResourceSchema.parse(described);
+  if (origin.canonicalUrl || !adapter.origin?.resolveCanonicalUrl) return origin;
+  if (!options.connection || !options.signal) return origin;
+  try {
+    const canonicalUrl = await adapter.origin.resolveCanonicalUrl(
+      options.connection,
+      origin,
+      options.signal,
+    );
+    if (!canonicalUrl) return origin;
+    // Re-parsed rather than spread in: what a provider just handed back is the
+    // least trusted value in this function, and it ends up behind a link a
+    // person clicks. Parsing inside the `catch` is deliberate — a URL that
+    // fails the contract leaves the origin without one, exactly as an
+    // unreachable provider would.
+    return ConnectorOriginResourceSchema.parse({ ...origin, canonicalUrl });
+  } catch {
+    return origin;
+  }
 }
 
 export interface ConnectorWebhookVerificationInput {
@@ -474,6 +640,15 @@ export interface ConnectorAgentPluginDescriptor {
   readonly wireNamePrefix: string;
   /** Compact trusted description shown in the progressive plugin catalog. */
   readonly description: string;
+  /**
+   * Words a request would use for this provider's work, matched by plugin
+   * search. Without them a connector is reachable only by its own product name,
+   * so "file a ticket" finds nothing and the run concludes the capability is
+   * absent — the recorded failure mode that catalog wording exists to prevent.
+   * The provider type and wire prefix are added by the host; list the task
+   * vocabulary here, not the brand.
+   */
+  readonly searchAliases?: readonly string[];
   /** Static provider guidance included only while this plugin is active. */
   readonly systemMessage: string;
   /** Provider tool definitions. Runtime capability grants may narrow this set. */
@@ -512,19 +687,42 @@ export interface ConnectorAdapter {
   /** @deprecated Implement pollingActivity for new connectors. */
   poll?(connection: AuthorizedConnectorConnection, signal: AbortSignal): Promise<ConnectorPollResult>;
   hydrateResource?(connection: AuthorizedConnectorConnection, resource: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
+  /**
+   * Where the things this connector produces live, so a work stream started
+   * from one can link back to it. Omitted by a connector whose activities are
+   * already described well enough by `connectorOriginFromActivity`.
+   */
+  origin?: ConnectorOriginSource;
   executeTool(name: string, args: unknown, context: ConnectorToolContext): Promise<ConnectorToolResult>;
+  /**
+   * Restores provider-side state a connection needs but that has drifted —
+   * a disabled webhook endpoint, a lapsed subscription.
+   *
+   * Separate from `healthCheck` because it writes. A health check runs on every
+   * plugin activation, and a read-shaped call that quietly mutates provider
+   * state on that cadence is a surprise; this runs only when someone explicitly
+   * tests a connection.
+   */
+  repair?(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+  ): Promise<{ repaired: boolean; message?: string }>;
   /**
    * `reconnectRequired` separates the two ways a check fails: the provider
    * refused this authorization, or the check could not be completed at all.
    * A caller deciding whether authority was withdrawn must not read an
-   * unreachable provider as a revoked grant.
-   */
-  /**
+   * unreachable provider as a revoked grant — the host maps the first to a
+   * denial that marks the connection, and the second to an indeterminate
+   * verdict that leaves it alone.
+   *
    * `signal` is threaded from the caller rather than timed internally.
    * Reauthorization runs inside a Workflow step, and an `AbortSignal.timeout`
    * created here is not disposable — it keeps the invocation alive until it
    * fires, long after the check returned. An adapter falls back to its own
    * timeout only when a caller supplies none.
+   *
+   * A health check must not write. State that needs restoring belongs in
+   * `repair`.
    */
   healthCheck(
     connection?: AuthorizedConnectorConnection,
@@ -533,6 +731,15 @@ export interface ConnectorAdapter {
     ok: boolean;
     message: string;
     reconnectRequired?: boolean;
+    /**
+     * A condition worth acting on that does not make the connection unusable —
+     * provider-side state that has drifted, delivery that has stopped. The
+     * host logs it on the healthy path, so a connector that removes a repair
+     * from its health check still leaves a trail; without one, a degraded
+     * connection is indistinguishable from a well one until somebody thinks to
+     * press Test.
+     */
+    warning?: string;
   }>;
 }
 
@@ -553,6 +760,43 @@ export function connectorCapabilitySupportsScope(
 export type ResolvedConnectorAdapter = Omit<ConnectorAdapter, "manifest"> & {
   manifest: ConnectorManifest;
 };
+
+/**
+ * The refusal every connector gives when a run reaches for a tool this
+ * credential does not carry.
+ *
+ * It used to name only the missing capability, which is the one thing the model
+ * cannot act on: it already asked for that tool, and a bare "not granted"
+ * leaves it guessing whether to retry, rephrase, or give up. Naming what the
+ * connection *does* hold turns a dead end into a one-step correction, and
+ * `available` is forwarded to the model with the failure.
+ *
+ * `available` is the capabilities of the connector's **tools**, intersected
+ * with the grant — not the raw grant. A connection carries capabilities that
+ * back no tool at all: `slack.agent` and `slack.notifications.write` are
+ * control-plane grants with nothing model-callable behind them, and listing
+ * them would answer "what can I do instead?" with things the model cannot do,
+ * which is worse than the bare refusal it replaced. Restricted this way it also
+ * discloses nothing beyond the run's own tool list.
+ */
+export function connectorCapabilityRefused(
+  providerLabel: string,
+  requested: string,
+  tools: readonly ToolDefinition[],
+  grantedCapabilities: readonly string[],
+): ConnectorError {
+  const granted = new Set(grantedCapabilities);
+  const available = [...new Set(
+    tools.map((tool) => tool.capability).filter((capability) => granted.has(capability)),
+  )].sort();
+  return new ConnectorError(
+    "unsupported_capability",
+    available.length
+      ? `The ${providerLabel} connection has not granted ${requested}. Its usable capabilities on this run are: ${available.join(", ")}.`
+      : `The ${providerLabel} connection has not granted ${requested}, and has no usable tool capabilities on this run.`,
+    { reason: "capability_not_granted", field: requested, available },
+  );
+}
 
 export class ConnectorError extends Error {
   constructor(

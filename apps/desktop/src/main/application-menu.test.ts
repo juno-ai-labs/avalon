@@ -54,4 +54,34 @@ describe('application menu update lifecycle', () => {
       click: callbacks.openWebsite,
     }));
   });
+
+  it('gives macOS a File menu whose only item closes the focused window', () => {
+    const template = applicationMenuTemplate({
+      appName: 'Avalon',
+      platform: 'darwin',
+      updateStatus: { kind: 'idle' },
+      actions: actions(),
+    });
+    const fileMenu = template.find((item) => item.label === 'File');
+
+    // Command-W is a menu key equivalent on macOS: with no item carrying the
+    // `close` role, the shortcut does nothing in any Avalon window.
+    expect(fileMenu?.submenu).toEqual([{ role: 'close' }]);
+  });
+
+  it('leaves the close item to the Window menu away from macOS', () => {
+    const template = applicationMenuTemplate({
+      appName: 'Avalon',
+      platform: 'win32',
+      updateStatus: { kind: 'idle' },
+      actions: actions(),
+    });
+    const leadingItems = template[0]!.submenu as MenuItemConstructorOptions[];
+
+    // Electron's `windowMenu` role already carries Close off darwin, so a File
+    // entry here would put the same shortcut in the menu bar twice.
+    expect(template.filter((item) => item.label === 'File')).toHaveLength(1);
+    expect(leadingItems.some((item) => item.role === 'close')).toBe(false);
+    expect(template.some((item) => item.role === 'windowMenu')).toBe(true);
+  });
 });

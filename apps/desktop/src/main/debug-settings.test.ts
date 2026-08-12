@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  defaultStoredApplicationSettings,
   readStoredApplicationSettings,
   updateStoredApplicationSettings,
   writeStoredApplicationSettings,
@@ -38,7 +39,7 @@ describe('debug settings controller', () => {
     const directory = await temporaryUserDataDirectory();
     await expect(diskController(directory).initialize()).resolves.toBe(false);
 
-    await writeStoredApplicationSettings(directory, { lockdownMode: false, debugEnabled: true });
+    await writeStoredApplicationSettings(directory, { ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: true });
     const controller = diskController(directory);
 
     await expect(controller.initialize()).resolves.toBe(true);
@@ -56,19 +57,19 @@ describe('debug settings controller', () => {
 
     expect(onChange.mock.calls).toEqual([[true]]);
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: false, debugEnabled: true });
+      .resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: true });
   });
 
   it('never writes Lockdown mode while changing the Developer preference', async () => {
     const directory = await temporaryUserDataDirectory();
-    await writeStoredApplicationSettings(directory, { lockdownMode: true, debugEnabled: false });
+    await writeStoredApplicationSettings(directory, { ...defaultStoredApplicationSettings, lockdownMode: true, debugEnabled: false });
     const controller = diskController(directory);
     await controller.initialize();
 
     await controller.set(true);
 
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: true, debugEnabled: true });
+      .resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: true, debugEnabled: true });
   });
 
   it('serializes concurrent toggles so the last one wins on disk', async () => {
@@ -80,7 +81,7 @@ describe('debug settings controller', () => {
 
     expect(controller.enabled()).toBe(true);
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: false, debugEnabled: true });
+      .resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: true });
   });
 
   it('rejects a non-boolean value without touching the stored preference', async () => {
@@ -94,6 +95,6 @@ describe('debug settings controller', () => {
     expect(controller.enabled()).toBe(false);
     expect(onChange).not.toHaveBeenCalled();
     await expect(readStoredApplicationSettings(directory))
-      .resolves.toEqual({ lockdownMode: false, debugEnabled: false });
+      .resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: false });
   });
 });

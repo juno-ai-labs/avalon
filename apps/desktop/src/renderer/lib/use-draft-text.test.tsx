@@ -59,6 +59,21 @@ describe('useDraftText', () => {
     await waitFor(async () => expect((await readDraftText(draftKey))?.text).toBe('typed and gone'));
   });
 
+  it('commits a draft typed before the cache answered, when the composer unmounts', async () => {
+    // Nothing is awaited between the render and the edit, so the hydration read
+    // cannot have resolved: the save effect is still standing down and the
+    // unmount flush has nothing armed to write. This ordering used to lose the
+    // draft outright, and it reached CI as an intermittent failure of the test
+    // below — which types after an `await` and so usually hydrates first.
+    const { result, unmount } = renderHook(() => useDraftText(draftKey));
+    act(() => result.current.setText('typed before the cache answered'));
+
+    unmount();
+
+    await waitFor(async () =>
+      expect((await readDraftText(draftKey))?.text).toBe('typed before the cache answered'));
+  });
+
   it('does not restamp a draft it only read, so the expiry clock keeps running', async () => {
     await writeDraftText(draftKey, 'written once');
     const writtenAt = (await readDraftText(draftKey))!.updatedAt;
@@ -70,6 +85,73 @@ describe('useDraftText', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect((await readDraftText(draftKey))?.updatedAt).toBe(writtenAt);
+  });
+
+  it('leaves nothing behind when a released draft is re-keyed onto another', async () => {
+    // The new-automation screen carries the sentence typed while a turn was
+    // compiling onto the draft that turn created. Carrying it is a copy unless
+    // the original goes, and both ways it can be left behind are covered here:
+    // the debounce has already written this one to the cache, and the pending
+    // write would be flushed a second time by the key change.
+    const { result, rerender } = renderHook(({ key }) => useDraftText(key), { initialProps: { key: draftKey } });
+    await waitFor(() => expect(result.current.text).toBe(''));
+    act(() => result.current.setText('typed while the turn compiled'));
+    await waitFor(async () => expect((await readDraftText(draftKey))?.text).toBe('typed while the turn compiled'));
+
+    // Exactly what the screen does: take the draft, then re-key in the same
+    // batch, then write it back under the new key.
+    act(() => {
+      result.current.releaseDraft();
+      rerender({ key: 'new-automation:workspace:draft-1' });
+    });
+    act(() => result.current.setText('typed while the turn compiled'));
+
+    await waitFor(async () =>
+      expect((await readDraftText('new-automation:workspace:draft-1'))?.text).toBe('typed while the turn compiled'));
+    // The sentence moved. The key it was typed under — which the blank launcher
+    // shares — must not still be holding it.
+    expect(await readDraftText(draftKey)).toBeNull();
+  });
+
+  it('leaves nothing behind when a released draft never reached the cache', async () => {
+    // The same move, but re-keyed inside the save debounce — which is the real
+    // ordering, because the turn settles the moment the model answers. Nothing
+    // is on disk yet, so clearing the key is a no-op and the only thing that can
+    // leave the sentence behind is the pending write the key change flushes.
+    const { result, rerender } = renderHook(({ key }) => useDraftText(key), { initialProps: { key: draftKey } });
+    await waitFor(() => expect(result.current.text).toBe(''));
+
+    // Committed on its own so the save effect actually arms the debounce —
+    // batching the edit with the release leaves nothing pending and tests
+    // nothing. Deliberately not awaited: the write must still be in the timer.
+    act(() => result.current.setText('typed while the turn compiled'));
+
+    act(() => {
+      result.current.releaseDraft();
+      rerender({ key: 'new-automation:workspace:draft-1' });
+    });
+    act(() => result.current.setText('typed while the turn compiled'));
+
+    await waitFor(async () =>
+      expect((await readDraftText('new-automation:workspace:draft-1'))?.text).toBe('typed while the turn compiled'));
+    // Long enough that a flushed debounce would have landed by now.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await readDraftText(draftKey)).toBeNull();
+  });
+
+  it('commits a draft typed before the cache answered when the key changes, under the key it was typed in', async () => {
+    // The unmount case above, reached by the other exit. Nothing is awaited
+    // before the edit, so the read is still in flight: neither the save effect
+    // nor the hydration handler will write it, and the key it belongs to is the
+    // one being left rather than the one arriving.
+    const { result, rerender } = renderHook(({ key }) => useDraftText(key), { initialProps: { key: draftKey } });
+    act(() => result.current.setText('typed while the read was in flight'));
+
+    rerender({ key: 'workstream:other' });
+
+    await waitFor(async () =>
+      expect((await readDraftText(draftKey))?.text).toBe('typed while the read was in flight'));
+    expect(await readDraftText('workstream:other')).toBeNull();
   });
 
   it('swaps drafts when the key changes and keeps each one separate', async () => {

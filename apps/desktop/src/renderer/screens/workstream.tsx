@@ -25,7 +25,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
@@ -40,6 +40,7 @@ import { createTextMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
+import { useTextClipped } from '../lib/use-text-clipped';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
@@ -48,7 +49,7 @@ import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
-import { MessageBlock } from '../components/workstream-blocks';
+import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { HyperSightPanel, HyperSightRail } from '../components/hypersight-panel';
 import { useRailCrossFade } from '../components/rail-surface';
@@ -277,6 +278,8 @@ function useNamingSkeleton(workstream: WorkstreamDetail): boolean {
   return naming && !expired;
 }
 
+const RENAME_HINT = 'Double-click to rename';
+
 export function WorkstreamHeader({
   workstream,
   socketState,
@@ -334,6 +337,18 @@ export function WorkstreamHeader({
     returnFocusToTitle.current = false;
     titleButton.current?.focus();
   }, [renameDraft]);
+  // The measurement needs the same element, but as state rather than a ref: the
+  // heading is swapped out for the editor and for the naming skeleton, and a
+  // mutable ref changing does not re-run an effect, so the button coming back
+  // would otherwise go unmeasured. The ref above stays because focus is set
+  // during an effect, where reading the current node is the point.
+  const [titleNode, setTitleNode] = useState<HTMLButtonElement | null>(null);
+  const attachTitleButton = useCallback((node: HTMLButtonElement | null) => {
+    titleButton.current = node;
+    setTitleNode(node);
+  }, []);
+  const titleClipped = useTextClipped(titleNode, workstream.title);
+  const renameHintId = useId();
   const startRename = (): void => {
     setRenameDraft(workstream.title);
     setRenameError(null);
@@ -407,32 +422,45 @@ export function WorkstreamHeader({
             {naming ? (
               <h1><TitleSkeleton className="title-skeleton-header" /></h1>
             ) : renameDraft === null ? (
-              <h1>
-                {/* A heading cannot carry the interaction itself: a focusable
-                    h1 is still announced as a heading, so a screen-reader user
-                    is never told there is anything to activate. A real button
-                    inside it is announced as one, and the heading keeps its
-                    name from the button's text. A mouse click reports a detail
-                    of 1 or more and is ignored — only a double click opens the
-                    editor — while keyboard activation reports 0. */}
-                <button
-                  aria-keyshortcuts="Enter F2"
-                  className="workstream-title-button"
-                  onClick={(event) => { if (event.detail === 0) startRename(); }}
-                  onDoubleClick={startRename}
-                  onKeyDown={(event) => {
-                    if (event.key === 'F2') {
-                      event.preventDefault();
-                      startRename();
-                    }
-                  }}
-                  ref={titleButton}
-                  title="Double-click to rename"
-                  type="button"
-                >
-                  {workstream.title}
-                </button>
-              </h1>
+              <>
+                <h1>
+                  {/* A heading cannot carry the interaction itself: a focusable
+                      h1 is still announced as a heading, so a screen-reader user
+                      is never told there is anything to activate. A real button
+                      inside it is announced as one, and the heading keeps its
+                      name from the button's text. A mouse click reports a detail
+                      of 1 or more and is ignored — only a double click opens the
+                      editor — while keyboard activation reports 0. */}
+                  <button
+                    aria-describedby={renameHintId}
+                    aria-keyshortcuts="Enter F2"
+                    className="workstream-title-button"
+                    onClick={(event) => { if (event.detail === 0) startRename(); }}
+                    onDoubleClick={startRename}
+                    onKeyDown={(event) => {
+                      if (event.key === 'F2') {
+                        event.preventDefault();
+                        startRename();
+                      }
+                    }}
+                    ref={attachTitleButton}
+                    // A clipped title is unreadable anywhere else on the screen,
+                    // so the tooltip leads with the name and keeps the hint under
+                    // it. The tooltip is for the reader who cannot see the name:
+                    // the button's accessible name is its text, which is the
+                    // whole title however little of it fits, so `aria-describedby`
+                    // above keeps the description down to the hint rather than
+                    // letting `title` announce the name a second time.
+                    title={titleClipped ? `${workstream.title}\n${RENAME_HINT}` : RENAME_HINT}
+                    type="button"
+                  >
+                    {workstream.title}
+                  </button>
+                </h1>
+                {/* Outside the heading on purpose: inside it, this text would
+                    join the heading's own name and be read as part of it. */}
+                <span className="sr-only" id={renameHintId}>{RENAME_HINT}</span>
+              </>
             ) : (
               <form
                 className="workstream-title-edit"
@@ -814,6 +842,18 @@ export function WorkstreamScreen(): React.JSX.Element {
     workstream.isSuccess && messages.isSuccess,
   );
   const transcript = messages.data ?? [];
+  // Held here rather than in the row: the virtualizer unmounts a row that
+  // leaves the window but keeps the height it measured, so an open row that
+  // came back closed would shrink under a cache that still expects it open.
+  const [expandedSystemRows, setExpandedSystemRows] = useState<ReadonlySet<string>>(() => new Set());
+  const systemRowDisclosure = useMemo<SystemRowDisclosure>(() => ({
+    expanded: expandedSystemRows,
+    onToggle: (messageId) => setExpandedSystemRows((current) => {
+      const next = new Set(current);
+      if (!next.delete(messageId)) next.add(messageId);
+      return next;
+    }),
+  }), [expandedSystemRows]);
   const transcriptVirtualizer = useVirtualizer({
     count: transcript.length,
     estimateSize: () => 140,
@@ -1304,7 +1344,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       message.realtimeOrder === undefined && message.sequenceNumber >= firstUnreadSequenceNumber);
   const displayedDetail: WorkstreamDetail = {
     ...detail,
-    artifacts: deferredContext.data?.artifacts ?? detail.artifacts,
     automationRuns: deferredContext.data?.automationRuns ?? detail.automationRuns,
     ...(deferredContext.data?.automationSubscription
       ? { automationSubscription: deferredContext.data.automationSubscription }
@@ -1387,7 +1426,12 @@ export function WorkstreamScreen(): React.JSX.Element {
             </div>
           )}
           {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
-          {visibleTranscript.length === 0 && !activeElicitation ? (
+          {/* Not while a run is going. A work stream opened the instant it was
+              created has an empty transcript and an agent already working on
+              it, and inviting the person to start it is both wrong and the
+              opposite of what the timer below says. The turn arrives moments
+              later; until then the timer is the whole of the state. */}
+          {visibleTranscript.length === 0 && !activeElicitation && !runTiming?.active ? (
             <EmptyState title="Ready to begin" description="Send a message to start work in this stream." />
           ) : (
             <div
@@ -1421,6 +1465,7 @@ export function WorkstreamScreen(): React.JSX.Element {
                       onAnswerElicitation={answerElicitation}
                       onOpenAttachment={setAttachmentPreview}
                       onResolveSuggestion={resolveSuggestion}
+                      systemRowDisclosure={systemRowDisclosure}
                     />
                   </div>
                 );

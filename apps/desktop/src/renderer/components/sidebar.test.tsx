@@ -1,16 +1,17 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
-import { Sidebar } from './sidebar';
+import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
 const copyText = vi.hoisted(() => vi.fn());
 const openSettings = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
-  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true },
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
 }));
 
@@ -51,6 +52,8 @@ const defaultActions = {
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
+  onPinWorkstream: async (): Promise<boolean> => true,
+  onReorderPinnedWorkstreams: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
   onRunAutomation: async (): Promise<void> => undefined,
 };
@@ -84,8 +87,14 @@ function workstream(
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    pinPosition: null,
     lastActivityAt,
   };
+}
+
+/** The same work stream, pinned by the viewer at `position`. */
+function pinned(workstream: WorkstreamSummary, position: number): WorkstreamSummary {
+  return { ...workstream, pinPosition: position };
 }
 
 function note(id: string, title: string, lastActivityAt: string): NoteSummary {
@@ -112,7 +121,7 @@ describe('Sidebar work-stream markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
     copyText.mockReset().mockResolvedValue(undefined);
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
     vi.stubGlobal('ResizeObserver', class {
@@ -408,6 +417,11 @@ describe('Sidebar work-stream markers', () => {
     expect(draftRow).toHaveClass('is-draft');
     expect(draftRow.querySelector('.mini-state.draft')).not.toBeNull();
     expect(within(draftRow).getByText('Draft')).toBeVisible();
+    // A draft has no overview worth opening — it has never run. Its row goes
+    // back to the conversation that was left unfinished.
+    expect(draftRow).toHaveAttribute('href', '/automations/new?draft=automation-2');
+    expect(screen.getByRole('link', { name: /Daily product brief/u }))
+      .toHaveAttribute('href', '/automations/automation-1');
 
     fireEvent.contextMenu(draftRow, { clientX: 120, clientY: 90 });
 
@@ -415,6 +429,42 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('menuitem', { name: 'Archive' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Archive draft' }));
     await waitFor(() => expect(onArchiveDraftAutomation).toHaveBeenCalledWith(staleDraft));
+  });
+
+  it('marks only the open draft, and not New automation, as the active entry', () => {
+    const openDraft: AutomationSummary = {
+      id: 'automation-2',
+      name: 'Ad hoc competitor scan',
+      scope: 'you',
+      status: 'draft',
+      updatedAt: '2026-07-28T11:00:00.000Z',
+    };
+    const otherDraft: AutomationSummary = {
+      id: 'automation-3',
+      name: 'A support escalation digest',
+      scope: 'you',
+      status: 'draft',
+      updatedAt: '2026-08-02T11:00:00.000Z',
+    };
+    render(
+      <MemoryRouter initialEntries={['/automations/new?draft=automation-2']}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[openDraft, otherDraft]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    // Every draft row shares the builder's path and differs only in the query,
+    // so nothing but the query can tell them apart.
+    expect(screen.getByRole('link', { name: /Ad hoc competitor scan/u })).toHaveClass('is-active');
+    expect(screen.getByRole('link', { name: /A support escalation digest/u })).not.toHaveClass('is-active');
+    expect(screen.getByRole('link', { name: 'New automation' })).not.toHaveClass('is-active');
   });
 
   it('reports an archive that the server rejected instead of failing silently', async () => {
@@ -800,7 +850,7 @@ describe('Sidebar work-stream markers', () => {
 
     // The Settings window owns the preference; the sidebar learns about a
     // change through the application-settings broadcast.
-    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true });
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true });
 
     fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work stream link' }));
@@ -1028,5 +1078,706 @@ describe('private work streams', () => {
     expect(within(dialog).getByText('The work stream is still visible to the workspace. Try again in a moment.'))
       .toBeVisible();
     expect(within(dialog).getByText('The work stream could not be reached.')).toBeVisible();
+  });
+});
+
+describe('pinned work streams', () => {
+  // jsdom implements no layout and therefore no `scrollIntoView`; the sidebar
+  // calls it optionally for that reason, so a test that wants to observe the
+  // call has to put one there.
+  const scrollIntoView = vi.fn();
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    scrollIntoView.mockClear();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // Deleting rather than restoring: jsdom never defined it in the first
+    // place, so leaving the stub behind would hide this same gap from any test
+    // that runs after these.
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
+  function renderWith(
+    streams: WorkstreamSummary[],
+    actions: Partial<{
+      onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<boolean>;
+      onReorderPinnedWorkstreams: (workstreamIds: string[]) => Promise<void>;
+    }> = {},
+  ): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            {...actions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={streams}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  /** The pinned section's rows, in the order they are rendered. */
+  function pinnedRowTitles(): string[] {
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    return within(section).getAllByRole('link').map((row) => row.textContent ?? '');
+  }
+
+  /** The `sidebar-context-target` wrapper that carries a row's drag handlers. */
+  function dragTarget(name: RegExp): HTMLElement {
+    const wrapper = screen.getByRole('link', { name }).parentElement;
+    if (!wrapper) throw new Error('The work-stream row has no drag wrapper');
+    return wrapper;
+  }
+
+  /**
+   * jsdom implements no `DataTransfer`. `dropEffect` is the field that matters:
+   * a drag the pinned list accepted reports `move` back on `dragend`, and one
+   * cancelled with Escape or released off the list reports `none`.
+   */
+  function dataTransfer(dropEffect: 'move' | 'none' = 'move'): {
+    dropEffect: string;
+    effectAllowed: string;
+    setData: () => void;
+  } {
+    return { dropEffect, effectAllowed: '', setData: () => undefined };
+  }
+
+  it('lifts a pinned work stream out of the recent list into its own section', () => {
+    renderWith([
+      pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0),
+      workstream('ws-recent', 'Quarterly planning', 'completed'),
+    ]);
+
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    expect(within(section).getByRole('link', { name: /Launch tracking/u })).toBeVisible();
+    // Once, not twice: the recent list keeps only what is not pinned.
+    expect(screen.getAllByRole('link', { name: /Launch tracking/u })).toHaveLength(1);
+    expect(within(section).queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument();
+  });
+
+  it('shows no Pinned section until something is pinned', () => {
+    renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+  });
+
+  it('renders pinned rows in their stored order rather than by activity', () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed', 'ad_hoc', '2026-07-31T20:00:00.000Z'), 1),
+      pinned(workstream('ws-b', 'Bravo', 'completed', 'ad_hoc', '2026-07-20T20:00:00.000Z'), 0),
+    ]);
+
+    expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+  });
+
+  it('offers Pin on a recent row and Unpin on a pinned one', async () => {
+    const onPinWorkstream = vi.fn(async (): Promise<boolean> => true);
+    renderWith(
+      [
+        pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0),
+        workstream('ws-recent', 'Quarterly planning', 'completed'),
+      ],
+      { onPinWorkstream },
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(onPinWorkstream)
+      .toHaveBeenCalledWith(expect.objectContaining({ id: 'ws-recent' }), true));
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch tracking/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+    await waitFor(() => expect(onPinWorkstream)
+      .toHaveBeenCalledWith(expect.objectContaining({ id: 'ws-pinned' }), false));
+  });
+
+  it('reorders under the pointer during a drag and sends the whole arrangement on drop', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+        pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    fireEvent.dragStart(dragTarget(/Charlie/u), { dataTransfer: dataTransfer() });
+    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: dataTransfer() });
+
+    // The list settles before anything is sent, so the drop lands where the
+    // pointer is rather than where the server last agreed it was.
+    expect(pinnedRowTitles()).toEqual([
+      expect.stringContaining('Charlie'),
+      expect.stringContaining('Alpha'),
+      expect.stringContaining('Bravo'),
+    ]);
+
+    fireEvent.dragEnd(dragTarget(/Charlie/u), { dataTransfer: dataTransfer('move') });
+    await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-c', 'ws-a', 'ws-b']));
+  });
+
+  it('sends nothing when a drag ends where it started', () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: dataTransfer() });
+    fireEvent.dragEnd(dragTarget(/Alpha/u), { dataTransfer: dataTransfer('move') });
+
+    expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+  });
+
+  // Backing out of a drag has to mean backing out of it. The rows have already
+  // moved under the pointer by then, so treating the release the same way a
+  // drop is treated would make Escape the slowest possible way to reorder.
+  it('abandons the arrangement when a drag is cancelled rather than dropped', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: dataTransfer() });
+    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: dataTransfer() });
+    expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+
+    // Escape, or a release anywhere nothing accepted the drop.
+    fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: dataTransfer('none') });
+
+    expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+    await waitFor(() => expect(pinnedRowTitles())
+      .toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]));
+  });
+
+  it('moves a pinned row with the keyboard, so the order is not pointer-only', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    // Fired on the row itself, which is what holds focus: the handler sits on
+    // the wrapper around it and only ever sees the event by bubbling.
+    fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
+    await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-b', 'ws-a']));
+
+    // The top row has nowhere further to go, and saying so costs a request.
+    onReorderPinnedWorkstreams.mockClear();
+    fireEvent.keyDown(screen.getByRole('link', { name: /Alpha/u }), { key: 'ArrowUp', altKey: true });
+    expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+  });
+
+  // Two moves in a row overlap, because the first request is still in flight
+  // when the second is made. Whichever lands first must not put the list back
+  // to an order the reader has already moved past.
+  it('holds the newer arrangement when an older reorder finishes underneath it', async () => {
+    const settle: (() => void)[] = [];
+    const onReorderPinnedWorkstreams = vi.fn(
+      () => new Promise<void>((resolve) => settle.push(resolve)),
+    );
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+        pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /Charlie/u }), { key: 'ArrowUp', altKey: true });
+    fireEvent.keyDown(screen.getByRole('link', { name: /Charlie/u }), { key: 'ArrowUp', altKey: true });
+    expect(onReorderPinnedWorkstreams).toHaveBeenNthCalledWith(1, ['ws-a', 'ws-c', 'ws-b']);
+    expect(onReorderPinnedWorkstreams).toHaveBeenNthCalledWith(2, ['ws-c', 'ws-a', 'ws-b']);
+
+    await act(async () => {
+      settle[0]?.();
+    });
+
+    // Not [Alpha, Bravo, Charlie], which is what the unchanged props still say.
+    expect(pinnedRowTitles()).toEqual([
+      expect.stringContaining('Charlie'),
+      expect.stringContaining('Alpha'),
+      expect.stringContaining('Bravo'),
+    ]);
+
+    await act(async () => {
+      settle[1]?.();
+    });
+  });
+
+  // A release over the heading is a release inside the list the reader is
+  // arranging. Leaving it uncovered would read as a cancellation and throw the
+  // arrangement away a few pixels above the first row.
+  it('accepts a drop anywhere in the section, heading included', () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    const heading = screen.getByRole('heading', { name: 'Pinned' });
+    const transfer = dataTransfer('none');
+    fireEvent.dragOver(heading, { dataTransfer: transfer });
+
+    // The section handled it, so a release here reports a move rather than the
+    // `none` that `dragend` reads as a drag backed out of.
+    expect(transfer.dropEffect).toBe('move');
+  });
+
+  it('says how to reorder once for the section, not on every row', () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+    ]);
+
+    // The instruction is one element the section points at. On the rows it
+    // would land inside each link's accessible name and be read out again
+    // before every title.
+    expect(screen.getAllByText(/Hold Alt and press the up or down arrow/u)).toHaveLength(1);
+    expect(screen.getByRole('region', { name: 'Pinned' }))
+      .toHaveAccessibleDescription(/Hold Alt and press the up or down arrow/u);
+    expect(screen.getByRole('link', { name: /Alpha/u })).toHaveAccessibleName(/Pinned, 1 of 2\.$/u);
+  });
+
+  /**
+   * The sidebar the way the shell drives it: pinning updates the list this
+   * component is given, a tick after the action resolves.
+   *
+   * A mock that resolves without moving the row would let the reveal appear to
+   * work while scrolling to where the row used to be — which is precisely the
+   * bug this harness exists to catch, so the delay is deliberate rather than
+   * incidental.
+   */
+  function renderPinnable(streams: WorkstreamSummary[]): { pins: string[] } {
+    const pins: string[] = [];
+    function Harness(): React.JSX.Element {
+      const [workstreams, setWorkstreams] = useState(streams);
+      return (
+        <Sidebar
+          {...defaultActions}
+          automations={[]}
+          onPinWorkstream={async (workstream, pinned) => {
+            pins.push(`${pinned ? 'pin' : 'unpin'}:${workstream.id}`);
+            await Promise.resolve();
+            setWorkstreams((current) => current.map((item) => item.id === workstream.id
+              ? { ...item, pinPosition: pinned ? 0 : null }
+              : item));
+            return true;
+          }}
+          onSignOut={vi.fn()}
+          workspace={workspace}
+          workstreams={workstreams}
+        />
+      );
+    }
+    render(<MemoryRouter><Tooltip.Provider><Harness /></Tooltip.Provider></MemoryRouter>);
+    return { pins };
+  }
+
+  // Pinning moves the row to a section the reader is very likely scrolled away
+  // from — they pinned it because they were tired of hunting for it down the
+  // list — so without this the action reads as the row vanishing.
+  it('brings a work stream back into view once the list carries the pin', async () => {
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    // The row scrolled to is the one in the Pinned section, not the one the
+    // recent list was still showing when the request came back.
+    const scrolled = scrollIntoView.mock.instances[0] as Element;
+    expect(scrolled).toHaveAttribute('data-workstream-id', 'ws-recent');
+    expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(scrolled as HTMLElement);
+    // `nearest` is what keeps a row already on screen from being yanked around.
+    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'nearest' }));
+  });
+
+  // Motion is what lets the reader follow the row, so it is the default — but
+  // it is exactly the kind of movement somebody turns off, and asserting only
+  // on `block` would let that preference be ignored silently.
+  it.each([
+    { reduced: false, behavior: 'smooth' },
+    { reduced: true, behavior: 'auto' },
+  ])('scrolls with $behavior when reduced motion is $reduced', async ({ reduced, behavior }) => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: reduced && query.includes('prefers-reduced-motion'),
+    }));
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior })));
+  });
+
+  // jsdom does not define `matchMedia` at all, and neither does an Electron
+  // window in some startup states, so the sidebar has to reach it optionally.
+  it('still scrolls where the preference cannot be read', async () => {
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' })));
+  });
+
+  // The two sections are separate subtrees, so the row is unmounted and
+  // remounted as it moves and Radix has nothing left to restore focus to. For
+  // somebody driving the sidebar from the keyboard, "where I was" is focus, not
+  // scrollTop, and the next Tab otherwise restarts at the top of the window.
+  it('takes focus with the row, since scrollTop is only half of following it', async () => {
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    const moved = await screen.findByRole('region', { name: 'Pinned' });
+    await waitFor(() => expect(document.activeElement)
+      .toBe(within(moved).getByRole('link', { name: /Quarterly planning/u })));
+  });
+
+  it('leaves focus alone when it is somewhere real', async () => {
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    // Whoever put focus here owns it, and a pin is not a reason to take it.
+    const elsewhere = screen.getByRole('button', { name: 'Open navigation' });
+    elsewhere.focus();
+
+    await screen.findByRole('region', { name: 'Pinned' });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it('brings it back into view after unpinning too, since that moves it as far', async () => {
+    renderPinnable([pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0)]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch tracking/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    const scrolled = scrollIntoView.mock.instances[0] as Element;
+    expect(scrolled).toHaveAttribute('data-workstream-id', 'ws-pinned');
+    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+  });
+
+  // The shell discards a pin response a later one has superseded, so the action
+  // behind it has no row movement to follow — and dragging the viewport back to
+  // the row the reader has already finished with is worse than doing nothing.
+  it('scrolls nothing when a later pin superseded this one', async () => {
+    // The list still ends up showing the row pinned, because the newer
+    // request's response carried it. Without that the reveal would simply never
+    // match and the test would pass whatever the code did.
+    function Superseded(): React.JSX.Element {
+      const [streams, setStreams] = useState([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+      return (
+        <Sidebar
+          {...defaultActions}
+          automations={[]}
+          onPinWorkstream={async () => {
+            await Promise.resolve();
+            setStreams((current) => current.map((item) => ({ ...item, pinPosition: 0 })));
+            return false;
+          }}
+          onSignOut={vi.fn()}
+          workspace={workspace}
+          workstreams={streams}
+        />
+      );
+    }
+    render(<MemoryRouter><Tooltip.Provider><Superseded /></Tooltip.Provider></MemoryRouter>);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    await screen.findByRole('region', { name: 'Pinned' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  // Arming the reveal for a row the list does not carry would leave it waiting
+  // indefinitely, ready to seize the viewport whenever that work stream
+  // reappeared — seconds later, on an unrelated poll.
+  it('does not stay armed for a row that leaves the list', async () => {
+    const row = workstream('ws-gone', 'Quarterly planning', 'completed');
+    function Vanishing(): React.JSX.Element {
+      const [streams, setStreams] = useState([row]);
+      return (
+        <>
+          <button onClick={() => setStreams([{ ...row, pinPosition: 0 }])} type="button">Bring it back</button>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onPinWorkstream={async () => {
+              await Promise.resolve();
+              setStreams([]);
+              return true;
+            }}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={streams}
+          />
+        </>
+      );
+    }
+    render(<MemoryRouter><Tooltip.Provider><Vanishing /></Tooltip.Provider></MemoryRouter>);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument());
+
+    // The row reappearing later — a poll, an unarchive — is not a reason to
+    // scroll to it. The pin that would have asked for that is long finished.
+    fireEvent.click(screen.getByRole('button', { name: 'Bring it back' }));
+    await screen.findByRole('region', { name: 'Pinned' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  // A reveal the list never honours would otherwise be re-evaluated on every
+  // fifteen-second poll and fire whenever the state happened to match, moving
+  // the sidebar under somebody who pinned something a minute ago.
+  it('gives up on a reveal the list never honours', async () => {
+    const row = workstream('ws-slow', 'Quarterly planning', 'completed');
+    function Slow(): React.JSX.Element {
+      const [streams, setStreams] = useState([row]);
+      return (
+        <>
+          <button onClick={() => setStreams([{ ...row, pinPosition: 0 }])} type="button">Let it land</button>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            // Reports applied, but the list does not follow — the shape of a
+            // response overtaken by a change from another device.
+            onPinWorkstream={async () => true}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={streams}
+          />
+        </>
+      );
+    }
+    render(<MemoryRouter><Tooltip.Provider><Slow /></Tooltip.Provider></MemoryRouter>);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Pin' })).not.toBeInTheDocument());
+
+    // Real time rather than fake: this asserts on a `setTimeout` the component
+    // owns, and driving the clock out from under React's effects here made the
+    // deadline appear to fire without the state having settled.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, REVEAL_DEADLINE_MS + 200));
+    });
+
+    // The state arriving late is not a reason to scroll: the action that asked
+    // for it is long finished.
+    fireEvent.click(screen.getByRole('button', { name: 'Let it land' }));
+    await screen.findByRole('region', { name: 'Pinned' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it('scrolls nothing when the pin was refused', async () => {
+    renderWith(
+      [workstream('ws-recent', 'Quarterly planning', 'completed')],
+      {
+        onPinWorkstream: vi.fn(async () => {
+          throw new Error('The work stream could not be reached.');
+        }),
+      },
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    // The row never moved, so following it somewhere would be following it
+    // nowhere — on top of the dialog already explaining what happened.
+    await screen.findByRole('dialog', { name: 'Work stream could not be pinned' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('does not scroll again on a later render', async () => {
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+    // The list re-renders on every poll. Scrolling the reader on each one
+    // would make the sidebar unusable while they read something else.
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize navigation' }), { key: 'ArrowRight' });
+    await waitFor(() => expect(screen.getByRole('separator', { name: 'Resize navigation' }))
+      .toHaveAttribute('aria-valuenow', '316'));
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a recent row undraggable, since its order is activity and not a choice', () => {
+    renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    expect(dragTarget(/Quarterly planning/u)).not.toHaveAttribute('draggable', 'true');
+  });
+
+  it('reports a rejected reorder and falls back to the order the server holds', async () => {
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      ],
+      {
+        onReorderPinnedWorkstreams: vi.fn(async () => {
+          throw new Error('The pinned list could not be reached.');
+        }),
+      },
+    );
+
+    // Fired on the row itself, which is what holds focus: the handler sits on
+    // the wrapper around it and only ever sees the event by bubbling.
+    fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
+
+    const dialog = await screen.findByRole('dialog', { name: 'Pinned work streams could not be reordered' });
+    expect(within(dialog).getByText('The pinned list is back in the order it was in. Try again in a moment.'))
+      .toBeVisible();
+    // The open dialog hides the sidebar from the accessibility tree, so the
+    // order can only be read once it is dismissed.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(pinnedRowTitles()).toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]);
+  });
+
+  it('reports a pin the server refused', async () => {
+    renderWith(
+      [workstream('ws-recent', 'Quarterly planning', 'completed')],
+      {
+        onPinWorkstream: vi.fn(async () => {
+          throw new Error('The work stream could not be reached.');
+        }),
+      },
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Work stream could not be pinned' });
+    expect(within(dialog).getByText('The work stream could not be reached.')).toBeVisible();
+  });
+});
+
+describe('Sidebar work-stream paging', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.listeners.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function renderWithPaging(overrides: {
+    hasMoreWorkstreams?: boolean;
+    loadingMoreWorkstreams?: boolean;
+    onLoadMoreWorkstreams?: () => void;
+  }): HTMLElement {
+    const { container } = render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('one', 'Launch brief', 'completed')]}
+            {...overrides}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    // The scroll container is an unnamed `nav` landmark inside the labelled
+    // `aside`, so there is no accessible name to query it by.
+    return container.querySelector('.sidebar-scroll') as HTMLElement;
+  }
+
+  /** jsdom lays nothing out, so the scroll geometry is declared outright. */
+  function scrollTo(nav: HTMLElement, scrollTop: number): void {
+    Object.defineProperty(nav, 'scrollHeight', { configurable: true, value: 2_000 });
+    Object.defineProperty(nav, 'clientHeight', { configurable: true, value: 800 });
+    Object.defineProperty(nav, 'scrollTop', { configurable: true, value: scrollTop });
+    fireEvent.scroll(nav);
+  }
+
+  it('asks for the next page as the scroll approaches the end', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    const nav = renderWithPaging({ hasMoreWorkstreams: true, onLoadMoreWorkstreams });
+
+    // 1000px of list still below the fold: too early to spend a request.
+    scrollTo(nav, 200);
+    expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
+
+    // Within the threshold, and ahead of the end rather than at it, so the rows
+    // are usually there by the time the reader arrives.
+    scrollTo(nav, 900);
+    expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks once while a page is in flight', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    // A flick fires a scroll event per frame, and the list is one cache entry
+    // that a second response would append to twice.
+    const nav = renderWithPaging({
+      hasMoreWorkstreams: true,
+      loadingMoreWorkstreams: true,
+      onLoadMoreWorkstreams,
+    });
+
+    scrollTo(nav, 1_100);
+    scrollTo(nav, 1_150);
+
+    expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
+    expect(screen.getByText('Loading more…')).toBeInTheDocument();
+  });
+
+  it('does not ask at the end of the list', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    const nav = renderWithPaging({ hasMoreWorkstreams: false, onLoadMoreWorkstreams });
+
+    scrollTo(nav, 1_200);
+
+    expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
+    // No standing invitation to scroll: a list that ends on a page boundary
+    // would otherwise claim forever that there is more.
+    expect(screen.queryByText('Loading more…')).not.toBeInTheDocument();
   });
 });

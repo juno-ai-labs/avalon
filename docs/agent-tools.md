@@ -3,8 +3,8 @@
 How to design the tools an Avalon agent calls, so they are usable, safe, and
 hard to misuse. The mechanics of registering a plugin, narrowing it to a
 connection's frozen grants, and recording receipts live in
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md); the connector manifests those tools hang
-off live in [`CONNECTORS.md`](CONNECTORS.md). This document is about *design* —
+[`agent-harness.md`](agent-harness.md); the connector manifests those tools hang
+off live in [`connectors.md`](connectors.md). This document is about *design* —
 the decisions that make a tool work well for the model calling it. Its skill
 analogue is [`writing-skills.md`](writing-skills.md).
 
@@ -17,7 +17,7 @@ reasoning; smaller ones do not. They follow the schema and the names literally,
 rarely re-read a long system message, seldom recover from a vague error, and do
 not infer hidden conventions. Avalon makes this concrete rather than
 hypothetical: model routing is a flag with configured fallback stages
-([`FEATURE_FLAGS.md`](FEATURE_FLAGS.md)), classifier and structured-output work
+([`feature-flags.md`](feature-flags.md)), classifier and structured-output work
 already runs on a small model, and a failure that only shows up after a fallback
 is a failure in production.
 
@@ -57,7 +57,7 @@ decides whether Bind may overlap the call with other reads or must run it
 sequentially; `idempotency` decides what is durably recorded before execution
 and what a replay is allowed to do; `timeoutMs` bounds it inside the run's
 overall limits. Getting any of them wrong is a correctness bug, not a style
-issue — see [durable receipts](AGENT_HARNESS.md#durable-receipts-and-terminal-state).
+issue — see [durable receipts](agent-harness.md#durable-receipts-and-terminal-state).
 
 Canonical names are **local to their owning plugin** and must not repeat the
 plugin prefix: Bind prepends the plugin's short wire name when it renders the
@@ -137,7 +137,7 @@ Two different jobs:
   would disclose whether a foreign resource exists, or that another workspace's
   record is there, return one flat "not found" and log the real reason
   server-side. Never reveal the zero-versus-many distinction when the
-  distinction itself is the disclosure. [`SECURITY.md`](SECURITY.md) owns which
+  distinction itself is the disclosure. [`security.md`](security.md) owns which
   boundaries these are.
 - **Be recoverable everywhere else.** Every other failure carries a
   fixed-vocabulary error code **and its remediation inside `output`** — "narrow
@@ -286,8 +286,8 @@ must be a particular identifier, validate the family and hint on mismatch.
   describes. Never let provider content, a remote label, or a resource title
   become part of that trusted prose.
 - **Update the docs in the same change.** A new or changed connector tool
-  belongs in [`CONNECTORS.md`](CONNECTORS.md); a change to activation, receipts,
-  or limits belongs in [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
+  belongs in [`connectors.md`](connectors.md); a change to activation, receipts,
+  or limits belongs in [`agent-harness.md`](agent-harness.md).
 
 ## Checklist for a new tool
 
@@ -316,13 +316,13 @@ must be a particular identifier, validate the family and hint on mismatch.
 
 ## See also
 
-- [`AGENT_HARNESS.md`](AGENT_HARNESS.md) — plugin registration, frozen scope,
+- [`agent-harness.md`](agent-harness.md) — plugin registration, frozen scope,
   activation, receipts, limits, and the loop the tool runs inside.
-- [`CONNECTORS.md`](CONNECTORS.md) — the manifest model, capabilities, and the
+- [`connectors.md`](connectors.md) — the manifest model, capabilities, and the
   per-provider tool surfaces.
 - [`writing-skills.md`](writing-skills.md) — when the right answer is a
   *procedure*, not a capability.
 - [`writing-prompts.md`](writing-prompts.md) — the standing policy and plugin
   system messages that tell the model when to reach for a tool.
-- [`SECURITY.md`](SECURITY.md) — trust boundaries and what is treated as
+- [`security.md`](security.md) — trust boundaries and what is treated as
   untrusted.

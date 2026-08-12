@@ -28,6 +28,7 @@ import {
   toWorkstream,
   WORKSTREAM_VIEWER_COLUMNS_SQL,
   WORKSTREAM_VIEWER_JOINS_SQL,
+  workstreamViewerBindings,
 } from "../mappers/workstream";
 import {
   isCanonicalPersonMention,
@@ -39,6 +40,7 @@ import {
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
 } from "./integrations";
+import { markWorkflowInstanceCreated, workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
@@ -50,10 +52,18 @@ import {
   refreshWorkstreamName,
 } from "./workstream-naming-service";
 import { ResourceService } from "./resource-service";
+import {
+  activityOriginLocator,
+  attachWorkstreamOriginResource,
+  describeWorkstreamOrigin,
+  resolveOriginResource,
+  type OriginResourceDescriptor,
+} from "./workstream-origin-resource";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunities } from "./work-opportunity-batching";
 import { recordActivityEvent } from "./activity-event-service";
+import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
 import {
   claimDueWorkstreamWakeup,
   releaseClaimedWorkstreamWakeup,
@@ -71,6 +81,14 @@ import {
  */
 type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema> & {
   descriptionSource?: "authored" | "derived";
+  /**
+   * The connector place this work stream is being started from, when there is
+   * one. Not part of `CreateWorkstreamRequestSchema` and deliberately so: a
+   * caller on the wire cannot assert an origin, because an origin is something
+   * an ingress *knows* — the Slack thread it read the mention out of — rather
+   * than something a request may claim about itself.
+   */
+  originResource?: OriginResourceDescriptor;
 };
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
 type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema>;
@@ -80,10 +98,14 @@ interface AcknowledgeReadInput {
   observedManualUnreadGeneration: number;
 }
 
-const ACTIVITY_RESOURCE_LOOKUP_SQL = `SELECT id FROM resources
-  WHERE workspace_id = ?
-    AND ((connection_id = ?) OR (connection_id IS NULL AND ? IS NULL))
-    AND provider = ? AND provider_resource_id = ?`;
+/**
+ * How many of a suggestion's connector sources become attachments. A batched
+ * opportunity can be built from a run of related events, and the rail is a
+ * reading surface before it is an index; the cap is generous against what
+ * admission actually produces and is stated in
+ * `docs/workstream-origin-attachments.md` rather than left to be discovered.
+ */
+const MAX_OPPORTUNITY_ORIGIN_RESOURCES = 8;
 
 const ATTACH_RESOURCE_SQL = `INSERT INTO workstream_resources
   (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
@@ -110,11 +132,6 @@ const WORKSTREAM_RESOURCES_SQL = `SELECT r.*,
         AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?)
     ))
   ORDER BY wr.attached_at DESC`;
-
-const WORKSTREAM_ARTIFACTS_SQL = `SELECT * FROM artifacts
-  WHERE workspace_id = ? AND workstream_id = ?
-  ORDER BY created_at DESC
-  LIMIT 250`;
 
 const WORKSTREAM_HARNESS_TASKS_SQL = `SELECT hr.*,
     m.id AS transcript_message_id,
@@ -158,6 +175,11 @@ export async function launchWorkstreamHarness(
     workspaceId: string;
     workstreamId: string;
     triggerMessageId: string | null;
+    /**
+     * The newest message the run may see, when that is not the trigger. Only
+     * `retry` sets it; see the field's contract for why the two come apart.
+     */
+    transcriptFenceMessageId?: string | null;
     origin: string;
     executionPrincipal: ExecutionPrincipal;
     slackOrigin?: SlackOriginContext;
@@ -187,8 +209,8 @@ export async function launchWorkstreamHarness(
     env.DB.prepare(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
-        status, started_at, model, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+        status, started_at, model, created_at, trigger_message_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
     ).bind(
       id,
       input.workspaceId,
@@ -199,6 +221,10 @@ export async function launchWorkstreamHarness(
       at,
       model,
       at,
+      // Stored, not merely passed to the Workflow: it is what `retry` replays
+      // against, and reconstructing it later is a guess that gets the answer
+      // wrong for every run whose trigger was not the newest human message.
+      input.triggerMessageId,
     ),
     env.DB.prepare(
       `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
@@ -214,6 +240,9 @@ export async function launchWorkstreamHarness(
     automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: input.executionPrincipal,
+    ...(input.transcriptFenceMessageId
+      ? { transcriptFenceMessageId: input.transcriptFenceMessageId }
+      : {}),
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
     ...(input.digestDeliveryId ? { digestDeliveryId: input.digestDeliveryId } : {}),
     ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
@@ -222,6 +251,16 @@ export async function launchWorkstreamHarness(
       : {}),
     reason: input.origin,
   };
+  /*
+   * The Workflows round trip stays on the caller's path, and it is the slowest
+   * step in a create. Handing it to `waitUntil` was tried and reverted: the run
+   * row above already says `running` while `attempt_id` and `lease_expires_at`
+   * stay NULL until the Workflow admits the run, and nothing reaps that shape.
+   * A dropped deferral therefore left a work stream permanently "working" —
+   * `stop` only records a request a live workflow has to observe, `retry`
+   * refuses a `running` stream, and no screen offers either. Losing the start
+   * here instead fails loudly, in front of the person who asked for it.
+   */
   try {
     await startWorkstreamWorkflow(env, workflowInput);
   } catch (error) {
@@ -245,7 +284,21 @@ export async function launchWorkstreamHarness(
         "UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?",
       ).bind(nowIso(), input.workstreamId),
     ]);
-    throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+    // The work stream and its run exist whatever the caller does with the 503,
+    // so anyone already watching is told the run failed rather than left on a
+    // `running` row that nothing will move.
+    await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+      type: "harness_status_changed",
+      status: "failed",
+    });
+    // Carried onto the member-safe error so a caller that cleans up after a
+    // failed launch can tell "nothing started" from "started, and only the
+    // record of it failed". The run row above is `failed` either way, so it
+    // cannot answer that question and must not be read as if it could.
+    // The member-safe error carries forward whether an instance is live, so a
+    // caller undoing its own preparation is answering the right question.
+    const memberSafe = new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+    throw workflowInstanceWasCreated(error) ? markWorkflowInstanceCreated(memberSafe) : memberSafe;
   }
   await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
     type: "harness_status_changed",
@@ -404,23 +457,6 @@ const ResourceRowSchema = z.object({
   updated_at: rowTimestamp,
 });
 
-const ArtifactRowSchema = z.object({
-  id: rowId,
-  workspace_id: rowId,
-  workstream_id: rowId,
-  harness_run_id: rowId.nullish(),
-  artifact_type: rowText,
-  // Safe today only because `workstream_create_artifact` is the sole writer and
-  // bounds it to 300. Bounding it here too makes the context panel structurally
-  // safe against a second writer rather than conventionally safe.
-  title: displayText(300),
-  preview_text: rowText.nullish(),
-  status: rowText,
-  metadata_json: rowText.nullish(),
-  created_at: rowTimestamp,
-  updated_at: rowTimestamp,
-});
-
 const HarnessTaskRowSchema = z.object({
   id: rowId,
   origin: rowText,
@@ -563,22 +599,58 @@ export class WorkstreamService {
     // Two different questions. `system_kind` says this is machinery, which
     // decides whether it is listed at all; `scope` says who may read it, and is
     // enforced below whatever the caller asked to see.
+    //
+    // Machinery is paged with everything else rather than lifted out and
+    // bounded. Digest work streams accumulate one per occurrence and nothing
+    // reaps them, so with Debug enabled they do take the newest pages — but the
+    // sidebar follows `nextCursor` as it scrolls, so that costs a scroll rather
+    // than the rows themselves, and the alternative was a second population
+    // inside this method with its own cap and its own ordering rules. One list,
+    // one order.
     const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
+    // A pinned work stream leaves the recency order altogether rather than
+    // being paged with everything else, which is the same thing the sidebar
+    // does when it lifts one out of the recent list into the Pinned section.
+    // Being in both would mean being returned twice — once appended to the
+    // first page below, and again on whichever cursor page its own
+    // `last_activity_at` falls in.
     const statement = this.env.DB.prepare(
       `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
        FROM workstreams w
        ${WORKSTREAM_VIEWER_JOINS_SQL}
-       WHERE w.workspace_id = ? AND w.archived_at IS NULL ${systemClause} ${cursorClause}
+       WHERE w.workspace_id = ? AND w.archived_at IS NULL AND pin.user_id IS NULL
+         ${systemClause} ${cursorClause}
          AND ${WORKSTREAM_VISIBILITY_SQL}
        ORDER BY w.last_activity_at DESC LIMIT ?`,
     );
     const visibility = workstreamVisibilityBindings(this.auth.userId);
+    const viewer = workstreamViewerBindings(this.auth.userId);
     const result = before
-      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, ...visibility, limit + 1).all<Record<string, unknown>>()
-      : await statement.bind(this.auth.userId, this.auth.workspaceId, ...visibility, limit + 1).all<Record<string, unknown>>();
+      ? await statement.bind(...viewer, this.auth.workspaceId, before, ...visibility, limit + 1).all<Record<string, unknown>>()
+      : await statement.bind(...viewer, this.auth.workspaceId, ...visibility, limit + 1).all<Record<string, unknown>>();
     const rows = result.results ?? [];
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.pop();
+    const nextCursor = hasMore ? String(rows.at(-1)?.last_activity_at ?? "") || null : null;
+    // Every pin arrives on the first page, whatever its activity, because it is
+    // rendered in a section the recency order does not reach: one that has gone
+    // quiet would otherwise fall past `limit` and vanish from the one place the
+    // reader deliberately put it. They are appended after the paged rows and
+    // are excluded from the query above, so each work stream is returned
+    // exactly once across the whole pagination. The first page can therefore
+    // hold more than `limit` items — one more per pin, and nothing caps how
+    // many a person has — which is why `nextCursor` comes from the paged rows
+    // rather than from the last item returned.
+    if (!before) rows.push(...await this.loadPinnedWorkstreamRows(includeSystem));
+    // Machinery is never given an inbound address. Reserving one activates a
+    // route in the global registry — a cross-region RPC from the EU — and
+    // nothing reclaims it, so with one work stream per digest occurrence this
+    // would mint a permanent mailbox per occurrence, hundreds a year per person.
+    // It would also make a work stream emailable whose entire point is that its
+    // context is exactly one frozen window. A digest work stream carries no
+    // address and needs none: nobody writes to a run.
     const unreconciledAddressRows = rows.filter((row) =>
-      row.email_address == null || row.email_route_status !== "active");
+      row.system_kind == null && (row.email_address == null || row.email_route_status !== "active"));
     if (unreconciledAddressRows.length > 0) {
       const routes = await new WorkstreamEmailRoutingService(this.env).backfillWorkstreamAddresses(
         unreconciledAddressRows.map((row) => ({
@@ -593,10 +665,7 @@ export class WorkstreamService {
         row.email_route_status = "active";
       }
     }
-    const items = rows.map(toWorkstream);
-    const hasMore = items.length > limit;
-    if (hasMore) items.pop();
-    return { items, nextCursor: hasMore ? items.at(-1)?.lastActivityAt ?? null : null };
+    return { items: rows.map(toWorkstream), nextCursor };
   }
 
   async create(
@@ -604,9 +673,24 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
-    await this.assertMembersExist(input.participantUserIds);
     const attachmentIds = [...new Set(input.attachmentIds)];
-    await this.assertDraftAttachments(attachmentIds);
+    // Two independent reads, and both return without touching D1 when there is
+    // nothing to check — which is the common case, so this costs nothing there
+    // and saves a round trip whenever a create names people or carries files.
+    // They still run ahead of the reservation below: a create that is going to
+    // be refused should not leave an email address reserved for a work stream
+    // that never exists.
+    //
+    // Settled rather than raced, and rethrown in a fixed order: a request that
+    // violates both would otherwise get whichever 422 happened to reject first,
+    // so the code a client sees for one bad request would not be stable.
+    const preflight = await Promise.allSettled([
+      this.assertMembersExist(input.participantUserIds),
+      this.assertDraftAttachments(attachmentIds),
+    ]);
+    for (const outcome of preflight) {
+      if (outcome.status === "rejected") throw outcome.reason;
+    }
     const objective = input.objective
       ?? (input.openingMessage.trim() || "Review the attached files");
     const title = input.title ?? provisionalWorkstreamTitle(objective, "New work stream");
@@ -638,10 +722,29 @@ export class WorkstreamService {
       // run this create starts already resolve to the pinned model.
       modelOverride: input.modelOverride ?? null,
     });
+    // Deferring this was tried and reverted. It costs a second hop to the
+    // Global registry outside Global, but the create that would have saved it
+    // immediately invalidates the work-stream list, and `list` backfills every
+    // route that is not yet `active` — so the same hop was paid a moment later
+    // by the refresh, against extra D1 reads, with two activations of one route
+    // able to overlap and fail each other's reconcile.
     await emailRouting.activateWorkstreamRoute(routeInput);
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
     const message = messages[0];
+    // Ahead of the harness launch below rather than beside it: both land in the
+    // same Durable Object log, and a client resyncing from a sequence must not
+    // see the run start before the message that triggered it.
     if (message) await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
+    // Ahead of the launch so the run's first context read already contains the
+    // place it was started from, rather than acquiring it a turn later.
+    if (input.originResource) {
+      await attachWorkstreamOriginResource(this.env, {
+        workspaceId: this.auth.workspaceId,
+        workstreamId: created.workstream.id,
+        attachedByUserId: this.auth.userId,
+        descriptor: input.originResource,
+      });
+    }
     const harnessRunId = await this.launchHarness(
       created.workstream.id,
       created.messageId,
@@ -688,7 +791,17 @@ export class WorkstreamService {
       objective: input.displayPrompt,
       emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
-      openingAuthor: { type: "agent" },
+      // The person who selected the suggestion, not the agent that expanded it.
+      // Selecting is the request; the brief is that request written out. Under
+      // agent authorship the transcript opened with Avalon instructing itself,
+      // and the work stream held no human turn at all — which mattered because
+      // `retry` used to resolve its trigger as the latest human message, found
+      // none here, and replayed the run with the brief projected away. `retry`
+      // now inherits the failed run's stored trigger instead, so that particular
+      // hazard is gone either way; the attribution is what this line is for. The
+      // structured content below keeps the distinction honest: the turn is
+      // theirs, the words are Avalon's, and the label says so.
+      openingAuthor: { type: "human", userId: this.auth.userId },
       openingMessage: input.executionPrompt,
       openingStructuredContent: {
         kind: "suggested_work_expansion",
@@ -715,6 +828,7 @@ export class WorkstreamService {
         message,
       });
     }
+    await this.attachOpportunityOriginResources(created.workstream.id, input.opportunityId);
     const harnessRunId = await this.launchHarness(created.workstream.id, created.messageId, "suggested_work");
     await this.nameInBackground({
       workstreamId: created.workstream.id,
@@ -777,7 +891,6 @@ export class WorkstreamService {
       viewers: [],
       resources,
       connections,
-      artifacts: [],
       backgroundTasks: [],
       openElicitations,
       suggestions,
@@ -798,11 +911,7 @@ export class WorkstreamService {
 
   async context(id: string) {
     await this.requireWorkstream(id);
-    const [artifacts, backgroundTasks] = await Promise.all([
-      this.loadArtifacts(id),
-      this.loadBackgroundTasks(id),
-    ]);
-    return { artifacts, backgroundTasks };
+    return { backgroundTasks: await this.loadBackgroundTasks(id) };
   }
 
   async update(id: string, input: UpdateWorkstreamInput) {
@@ -1074,6 +1183,159 @@ export class WorkstreamService {
       at,
     ).run();
     return this.requireWorkstream(id);
+  }
+
+  /**
+   * Pin a work stream for the calling user, at the end of their pinned list.
+   *
+   * The end rather than the top: the list is arranged by hand, so the only
+   * position Avalon can pick without overruling that arrangement is the one
+   * that disturbs none of it. Pinning something already pinned changes nothing,
+   * so a second window acting on a stale menu cannot move a row.
+   *
+   * There is no limit on how many a person may pin. A cap here was tried and
+   * removed: counting stored rows let pins whose work streams had gone out of
+   * sight spend slots nobody could free, and counting only the visible ones
+   * meant the list could legitimately grow past the number the reorder request
+   * would accept, which left it unreorderable. Both failures came from the cap
+   * rather than from the size of anyone's list.
+   */
+  async pin(id: string) {
+    // Only a work stream this person may read may be pinned. Everything after
+    // this point is the viewer's own row, and is not gated again.
+    await this.requireWorkstream(id);
+    const at = nowIso();
+    // The position is chosen inside the statement rather than read out first
+    // and bound back in. A read-then-write hands the same number to two pins
+    // made at once, and it also collides with a hole — a work stream deleted
+    // outright takes its pin with it by cascade, leaving a run whose length is
+    // no longer its next free position.
+    await this.env.DB.prepare(
+      `INSERT INTO workstream_pins
+       (workspace_id, workstream_id, user_id, position, created_at, updated_at)
+       SELECT ?, ?, ?, COALESCE(
+         (SELECT MAX(existing.position) + 1 FROM workstream_pins existing
+           WHERE existing.workspace_id = ? AND existing.user_id = ?), 0), ?, ?
+       ON CONFLICT(workstream_id, user_id) DO NOTHING`,
+    ).bind(
+      this.auth.workspaceId,
+      id,
+      this.auth.userId,
+      this.auth.workspaceId,
+      this.auth.userId,
+      at,
+      at,
+    ).run();
+    return this.pinnedList();
+  }
+
+  /**
+   * Unpin a work stream for the calling user and close the gap it leaves, so
+   * the surviving positions stay the dense run every other path assumes.
+   *
+   * Deliberately not gated on `requireWorkstream`: a pin is the viewer's own
+   * row, so removing one is never a question about the work stream. A pin whose
+   * work stream has gone out of sight renders nothing and cannot be reached
+   * from the sidebar at all — the way to be rid of it is a caller that already
+   * knows the id, and refusing them a 404 would be refusing the only route left.
+   */
+  async unpin(id: string) {
+    const removed = await this.env.DB.prepare(
+      "DELETE FROM workstream_pins WHERE workstream_id = ? AND user_id = ? AND workspace_id = ?",
+    ).bind(id, this.auth.userId, this.auth.workspaceId).run();
+    if ((removed.meta?.changes ?? 0) > 0) await this.rewritePinPositions(await this.loadPinnedWorkstreamIds());
+    return this.pinnedList();
+  }
+
+  /**
+   * Rearrange the caller's pinned list into the order they dropped it in.
+   *
+   * Tolerant by construction, because a client sending an arrangement is
+   * describing a list it painted some moments ago: an id it names that is no
+   * longer pinned is dropped, and a pin it does not name is appended behind the
+   * ones it did, keeping its position relative to its unnamed neighbours.
+   * Rejecting the whole call instead would turn a pin made in another window
+   * into a failed drag here, which is the one outcome that loses an
+   * arrangement the person can see.
+   */
+  async reorderPins(workstreamIds: string[]) {
+    const current = await this.loadPinnedWorkstreamIds();
+    const pinned = new Set(current);
+    const requested = [...new Set(workstreamIds)].filter((id) => pinned.has(id));
+    const requestedSet = new Set(requested);
+    await this.rewritePinPositions([...requested, ...current.filter((id) => !requestedSet.has(id))]);
+    return this.pinnedList();
+  }
+
+  /**
+   * What every pin mutation answers with: the caller's whole pinned list, in
+   * order. One shape for all three, because a client that replaces its pinned
+   * list wholesale cannot end up holding a position the server disagrees with —
+   * which is exactly what a response describing only the row that moved would
+   * let it do after a concurrent change from another window.
+   */
+  private async pinnedList() {
+    return { items: await this.loadPinnedWorkstreams() };
+  }
+
+  /**
+   * The caller's pins, in their stored order — every row, including any whose
+   * work stream this person can no longer see, because a rewrite that skipped
+   * those would strand them at positions the visible run is about to reuse.
+   *
+   * The `workstream_id` tiebreak matches {@link loadPinnedWorkstreamRows}. Two
+   * readers of one list that break a tie differently disagree about the order,
+   * and the disagreement only becomes visible when a rewrite silently swaps a
+   * pair the reader never touched.
+   */
+  private async loadPinnedWorkstreamIds(): Promise<string[]> {
+    const result = await this.env.DB.prepare(
+      `SELECT workstream_id FROM workstream_pins
+        WHERE workspace_id = ? AND user_id = ?
+        ORDER BY position, workstream_id`,
+    ).bind(this.auth.workspaceId, this.auth.userId).all<{ workstream_id: string }>();
+    return (result.results ?? []).map((row) => row.workstream_id);
+  }
+
+  /**
+   * The caller's pinned work streams, as work streams.
+   *
+   * Filtered by the same visibility rule every other read applies, so a pin
+   * left behind by a work stream that has been archived, or made private
+   * without this person in it, contributes a row to nothing. The pin itself
+   * survives, because the work stream may come back and its place with it,
+   * which is also why `unpin` refuses to check visibility.
+   */
+  private async loadPinnedWorkstreams(includeSystem = true) {
+    return (await this.loadPinnedWorkstreamRows(includeSystem)).map(toWorkstream);
+  }
+
+  /** {@link loadPinnedWorkstreams} before mapping, for callers that merge rows. */
+  private async loadPinnedWorkstreamRows(includeSystem: boolean): Promise<Record<string, unknown>[]> {
+    const result = await this.env.DB.prepare(
+      `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
+       FROM workstreams w
+       ${WORKSTREAM_VIEWER_JOINS_SQL}
+       WHERE w.workspace_id = ? AND w.archived_at IS NULL AND pin.user_id IS NOT NULL
+         ${includeSystem ? "" : "AND w.system_kind IS NULL"}
+         AND ${WORKSTREAM_VISIBILITY_SQL}
+       ORDER BY pin.position, pin.workstream_id`,
+    ).bind(
+      ...workstreamViewerBindings(this.auth.userId),
+      this.auth.workspaceId,
+      ...workstreamVisibilityBindings(this.auth.userId),
+    ).all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  /** Write `ids` as positions `0..n-1`. The caller decides the order. */
+  private async rewritePinPositions(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const at = nowIso();
+    await this.env.DB.batch(ids.map((id, position) => this.env.DB.prepare(
+      `UPDATE workstream_pins SET position = ?, updated_at = ?
+        WHERE workstream_id = ? AND user_id = ? AND workspace_id = ?`,
+    ).bind(position, at, id, this.auth.userId, this.auth.workspaceId)));
   }
 
   async createMessage(
@@ -1515,21 +1777,50 @@ export class WorkstreamService {
       throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
     }
     const latest = await this.env.DB.prepare(
-      `SELECT status FROM harness_runs
+      `SELECT status, trigger_message_id FROM harness_runs
        WHERE workspace_id = ? AND workstream_id = ?
          AND parent_tool_call_id IS NULL
          AND origin != 'hypersight_block'
        ORDER BY created_at DESC LIMIT 1`,
-    ).bind(this.auth.workspaceId, id).first<{ status: string }>();
+    ).bind(this.auth.workspaceId, id).first<{ status: string; trigger_message_id: string | null }>();
     if (!latest || (latest.status !== "failed" && latest.status !== "stopped")) {
       throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
     }
-    const trigger = await this.env.DB.prepare(
+    // The failed run's own trigger, not the newest human message. The two agree
+    // only when nothing has happened since, so guessing sent the replay after
+    // whatever message happened to be closest whenever the run being retried
+    // had no message trigger of its own, or had one older than the last thing
+    // somebody said. A run written before that id was stored, and a run that
+    // genuinely had no trigger, both read as NULL here.
+    //
+    // The fence is separate, and has to be: the trigger is also the transcript's
+    // upper bound, so replaying against it alone would hide anything said since
+    // the run failed — including the correction somebody posts *because* it
+    // failed, which starts no run of its own when the work stream has other
+    // participants and the message was not for the agent. A retry therefore
+    // keeps the identity and moves the bound to the newest message there is.
+    const newest = await this.env.DB.prepare(
       `SELECT id FROM messages
-       WHERE workspace_id = ? AND workstream_id = ? AND author_type = 'human'
+       WHERE workspace_id = ? AND workstream_id = ?
        ORDER BY sequence_number DESC LIMIT 1`,
     ).bind(this.auth.workspaceId, id).first<{ id: string }>();
-    return { harnessRunId: await this.launchHarness(id, trigger?.id ?? null, "manual_retry") };
+    // Launched through the module function rather than the private wrapper: the
+    // wrapper's tail is positional, and a fence passed behind three `undefined`
+    // Slack arguments is a call nobody can read.
+    return {
+      harnessRunId: await launchWorkstreamHarness(this.env, {
+        workspaceId: this.auth.workspaceId,
+        workstreamId: id,
+        triggerMessageId: latest.trigger_message_id,
+        origin: "manual_retry",
+        executionPrincipal: { type: "user", userId: this.auth.userId },
+        // Only when it actually moves the bound. Passing the trigger back as its
+        // own fence is a no-op the projection would have to reason about.
+        ...(newest && newest.id !== latest.trigger_message_id
+          ? { transcriptFenceMessageId: newest.id }
+          : {}),
+      }),
+    };
   }
 
   async socketTicket(id: string) {
@@ -1540,29 +1831,6 @@ export class WorkstreamService {
     url.pathname = `/socket/workstreams/${id}`;
     url.search = new URLSearchParams({ ticket }).toString();
     return { url: url.toString(), ticket };
-  }
-
-  async artifactContent(id: string, artifactId: string): Promise<{
-    body: ReadableStream;
-    contentType: string;
-    fileName: string;
-  }> {
-    await this.requireWorkstream(id);
-    const artifact = await this.env.DB.prepare(
-      `SELECT id, title, artifact_type, content_ref, metadata_json
-       FROM artifacts WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(artifactId, this.auth.workspaceId, id).first<Record<string, unknown>>();
-    if (!artifact) throw new ApiError(404, "artifact_not_found", "Artifact not found");
-    if (artifact.content_ref == null) throw new ApiError(409, "artifact_not_ready", "This artifact is not ready to download");
-    const object = await this.env.PAYLOADS.get(String(artifact.content_ref));
-    if (!object) throw new ApiError(404, "artifact_content_not_found", "Artifact content is no longer available");
-    const metadata = json<{ mimeType?: string; fileName?: string }>(artifact.metadata_json, {});
-    const contentType = object.httpMetadata?.contentType ?? metadata.mimeType ?? mimeTypeForArtifact(String(artifact.artifact_type));
-    return {
-      body: object.body,
-      contentType,
-      fileName: safeArtifactFileName(metadata.fileName ?? String(artifact.title), String(artifact.artifact_type)),
-    };
   }
 
   private async requireWorkstream(id: string) {
@@ -1587,8 +1855,12 @@ export class WorkstreamService {
        WHERE w.id = ? AND w.workspace_id = ?
          ${includeArchived ? "" : "AND w.archived_at IS NULL"}
          AND ${WORKSTREAM_VISIBILITY_SQL}`,
-    ).bind(this.auth.userId, id, this.auth.workspaceId, ...workstreamVisibilityBindings(this.auth.userId))
-      .first<Record<string, unknown>>();
+    ).bind(
+      ...workstreamViewerBindings(this.auth.userId),
+      id,
+      this.auth.workspaceId,
+      ...workstreamVisibilityBindings(this.auth.userId),
+    ).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     return row;
   }
@@ -1959,28 +2231,6 @@ export class WorkstreamService {
     return (result.results ?? []).map((row) => connectionFromRow(row));
   }
 
-  private async loadArtifacts(id: string) {
-    const result = await this.env.DB.prepare(WORKSTREAM_ARTIFACTS_SQL)
-      .bind(this.auth.workspaceId, id).all<Record<string, unknown>>();
-    return (result.results ?? []).map((input) => {
-      const row = ArtifactRowSchema.parse(input);
-      const metadata = json<{ mimeType?: string }>(row.metadata_json, {});
-      return {
-        id: row.id,
-        workspaceId: row.workspace_id,
-        workstreamId: row.workstream_id,
-        harnessRunId: row.harness_run_id ?? null,
-        artifactType: row.artifact_type,
-        title: row.title,
-        previewText: row.preview_text == null ? null : row.preview_text.slice(0, 4_000),
-        status: row.status,
-        mimeType: metadata.mimeType ?? mimeTypeForArtifact(row.artifact_type),
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      };
-    });
-  }
-
   private async loadBackgroundTasks(id: string) {
     const [harnessResult, toolResult] = await Promise.all([
       this.env.DB.prepare(WORKSTREAM_HARNESS_TASKS_SQL)
@@ -2103,40 +2353,125 @@ export class WorkstreamService {
     if (values.length < minimum || (maximum != null && values.length > maximum)) throw new ApiError(422, "invalid_selection_count", "The answer has an invalid number of selections");
   }
 
+  /**
+   * The resource behind an accepted contextual-routing suggestion.
+   *
+   * The row it resolves is the same one an origin attachment would resolve —
+   * `workstream-origin-resource.ts` owns that shape for every path — so a
+   * suggestion accepted against an object a work stream already started from
+   * lands on the existing row instead of a second copy of it. The attach itself
+   * stays here because this one is a person's decision and goes through the
+   * authorized path, unlike an origin, which is a fact about how the work
+   * stream began.
+   */
   private async attachActivityResource(workstreamId: string, activityId: string): Promise<string | null> {
-    const activity = await this.env.DB.prepare("SELECT * FROM activities WHERE id = ? AND workspace_id = ?")
-      .bind(activityId, this.auth.workspaceId).first<Record<string, unknown>>();
-    if (!activity || activity.provider_resource_id == null) return null;
-    let resource = await this.env.DB.prepare(
-      ACTIVITY_RESOURCE_LOOKUP_SQL,
-    ).bind(
-      this.auth.workspaceId,
-      activity.connection_id,
-      activity.connection_id,
-      activity.provider,
-      activity.provider_resource_id,
-    ).first<{ id: string }>();
-    if (!resource) {
-      const id = newId();
-      const at = nowIso();
-      await this.env.DB.prepare(
-        `INSERT INTO resources
-         (id, workspace_id, connection_id, resource_type, provider, provider_resource_id, title,
-          content_ref, metadata_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT DO NOTHING`,
-      ).bind(id, this.auth.workspaceId, activity.connection_id, activity.resource_type ?? "activity", activity.provider, activity.provider_resource_id, truncateUtf16Safe(String(activity.title), 300), activity.payload_ref, activity.metadata_json ?? "{}", at, at).run();
-      resource = await this.env.DB.prepare(ACTIVITY_RESOURCE_LOOKUP_SQL).bind(
+    const activity = await this.env.DB.prepare(
+      `SELECT a.*, c.connector_type
+         FROM activities a
+         JOIN connector_connections c ON c.id = a.connection_id
+        WHERE a.id = ? AND a.workspace_id = ?`,
+    ).bind(activityId, this.auth.workspaceId).first<Record<string, unknown>>();
+    if (!activity) return null;
+    const descriptor = await this.describeActivityOrigin(activity);
+    if (!descriptor) return null;
+    // The one path that keeps the activity's payload reference. This attachment
+    // is a person accepting a card about *this* activity, and reading its
+    // content is the point; an origin carries none, which is why
+    // `describeWorkstreamOrigin` clears it and this restores it here rather than
+    // the other way round.
+    const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, {
+      ...descriptor,
+      contentRef: typeof activity.payload_ref === "string" ? activity.payload_ref : null,
+    });
+    if (!resourceId) throw new ApiError(500, "resource_write_failed", "The suggested resource could not be stored");
+    await this.attachResource(workstreamId, resourceId);
+    return resourceId;
+  }
+
+  /**
+   * The connector activity a suggestion was built out of.
+   *
+   * A suggestion's provenance roots are what the ranking model was shown, so
+   * they are exactly the places the work stream came from; the non-activity
+   * kinds (an Avalon message, an identity) have no connector object to point
+   * at and are left out. Personal connections are filtered to the selecting
+   * member, because a resource row is listed to everyone the work stream is —
+   * the same rule `attachResource` enforces for a manual attach.
+   */
+  private async attachOpportunityOriginResources(workstreamId: string, opportunityId: string): Promise<void> {
+    try {
+      const roots = await this.env.DB.prepare(
+        `SELECT a.connection_id, a.provider, a.resource_type, a.provider_resource_id,
+                a.title, a.metadata_json, a.payload_ref, a.connection_scope,
+                a.connection_owner_user_id, a.target_user_ids_json, a.visibility_json,
+                c.connector_type
+           FROM work_opportunity_provenance_roots root
+           JOIN opportunity_provenance_nodes node ON node.id = root.node_id
+           JOIN activities a ON a.id = node.source_id AND a.workspace_id = node.workspace_id
+           JOIN connector_connections c ON c.id = a.connection_id
+          WHERE root.opportunity_id = ? AND node.workspace_id = ? AND node.node_kind = 'activity'
+            AND (c.scope = 'workspace' OR c.owner_user_id = ?)
+          ORDER BY root.position ASC
+          LIMIT ?`,
+      ).bind(
+        opportunityId,
         this.auth.workspaceId,
-        activity.connection_id,
-        activity.connection_id,
-        activity.provider,
-        activity.provider_resource_id,
-      ).first<{ id: string }>();
-      if (!resource) throw new ApiError(500, "resource_write_failed", "The suggested resource could not be stored");
+        this.auth.userId,
+        MAX_OPPORTUNITY_ORIGIN_RESOURCES,
+      ).all<Record<string, unknown>>();
+      for (const row of roots.results ?? []) {
+        // Both filters, not one instead of the other. The clause above reads the
+        // connection's scope, which is authoritative for the credential; this
+        // reads the activity's own restriction, which the connection cannot
+        // express. The connection's scope is not the whole question, and reading
+        // only it was the gap: a message in a private Slack channel arrives on the
+        // *workspace* Slack connection and carries its restriction in
+        // `visibility` — `workspaceAutomationAllowed: false` with an explicit
+        // `allowedUserIds`. Attaching that produced a workspace-visible row, and
+        // broadcast it, for an object the rest of the pipeline had correctly
+        // withheld.
+        if (!activityIsWorkspaceVisible(row)) continue;
+        const descriptor = await this.describeActivityOrigin(row);
+        if (!descriptor) continue;
+        await attachWorkstreamOriginResource(this.env, {
+          workspaceId: this.auth.workspaceId,
+          workstreamId,
+          attachedByUserId: this.auth.userId,
+          descriptor,
+        });
+      }
+    } catch (error) {
+      // Sits between the work stream's commit and `launchHarness`. Whatever went
+      // wrong reading provenance, it must not leave a work stream at
+      // `harness_status = 'running'` with no run behind it.
+      logWarn(this.env, "workstream_opportunity_origin_attach_failed", {
+        workspace_id: this.auth.workspaceId,
+        workstream_id: workstreamId,
+        opportunity_id: opportunityId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
     }
-    await this.attachResource(workstreamId, resource.id);
-    return resource.id;
+  }
+
+  /**
+   * Hand a stored activity row to its own connector to be described. No
+   * authorized connection is passed: both callers run inside a request a person
+   * is waiting on, and an activity's canonical URL is already in the metadata
+   * normalization recorded — a provider round trip would buy a link the row
+   * usually holds anyway.
+   */
+  private async describeActivityOrigin(
+    row: Record<string, unknown>,
+  ): Promise<OriginResourceDescriptor | null> {
+    if (typeof row.connection_id !== "string") return null;
+    if (typeof row.provider !== "string") return null;
+    if (typeof row.connector_type !== "string") return null;
+    return describeWorkstreamOrigin(this.env, {
+      connectorType: row.connector_type,
+      connectionId: row.connection_id,
+      provider: row.provider,
+      locator: activityOriginLocator(row),
+    });
   }
 }
 
@@ -2144,26 +2479,28 @@ export class WorkstreamService {
 export const workstreamRowSchemas = {
   participants: ParticipantRowSchema,
   resources: ResourceRowSchema,
-  artifacts: ArtifactRowSchema,
   elicitations: ElicitationRowSchema,
   suggestions: SuggestionRowSchema,
 } as const;
 
 export const __workstreamServiceTesting = {
-  activityResourceLookupSql: ACTIVITY_RESOURCE_LOOKUP_SQL,
   attachResourceSql: ATTACH_RESOURCE_SQL,
   workstreamResourcesSql: WORKSTREAM_RESOURCES_SQL,
-  workstreamArtifactsSql: WORKSTREAM_ARTIFACTS_SQL,
   workstreamHarnessTasksSql: WORKSTREAM_HARNESS_TASKS_SQL,
   workstreamToolTasksSql: WORKSTREAM_TOOL_TASKS_SQL,
   backgroundTaskStatus,
   harnessTaskTitle,
   memberSafeHarnessError,
-  mimeTypeForArtifact,
-  safeArtifactFileName,
 };
 
-function memberSafeHarnessError(value: unknown): { code: string; message: string } | null {
+/**
+ * The run failure a member may be shown, or null when there is none.
+ *
+ * Exported because the work-stream room's snapshot has to describe the latest
+ * run exactly as `GET /workstreams/:id` does. Two mappings would drift, and the
+ * one that drifted would be the one deciding what an error says to a person.
+ */
+export function memberSafeHarnessError(value: unknown): { code: string; message: string } | null {
   if (value == null) return null;
   const parsed = typeof value === "string" ? json<unknown>(value, null) : value;
   const rawCode = parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -2215,27 +2552,3 @@ function toolTaskTitle(toolName: string): string {
   const leaf = toolName.split(".").at(-1) ?? toolName;
   return leaf.replaceAll("_", " ").replace(/\b\w/gu, (character) => character.toUpperCase());
 }
-
-function mimeTypeForArtifact(artifactType: string): string {
-  switch (artifactType.trim().toLowerCase()) {
-    case "markdown":
-    case "md": return "text/markdown; charset=utf-8";
-    case "csv": return "text/csv; charset=utf-8";
-    case "json": return "application/json; charset=utf-8";
-    case "html": return "text/html; charset=utf-8";
-    default: return "text/plain; charset=utf-8";
-  }
-}
-
-function safeArtifactFileName(title: string, artifactType: string): string {
-  const clean = Array.from(title, (character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return codePoint <= 0x1f || codePoint === 0x7f || '\\/:*?"<>|'.includes(character)
-      ? "-"
-      : character;
-  }).join("").trim().replace(/^[.\s-]+/u, "").slice(0, 180) || "avalon-output";
-  if (/\.[a-z0-9]{1,12}$/iu.test(clean)) return clean;
-  const extension = ({ markdown: "md", md: "md", csv: "csv", json: "json", html: "html" } as Record<string, string>)[artifactType.trim().toLowerCase()] ?? "txt";
-  return `${clean}.${extension}`;
-}
-

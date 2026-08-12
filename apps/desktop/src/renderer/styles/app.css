@@ -578,6 +578,14 @@ pre {
 .sidebar-context-target { min-width: 0; }
 .sidebar-context-target .sidebar-row { width: 100%; }
 
+/* The pinned list is arranged by hand, so the grab cursor is the only standing
+   sign that it can be. The row keeps its place in the flow while it is dragged
+   and is faded instead of hidden, so the list's height never changes underneath
+   the pointer mid-drag. */
+.sidebar-context-target.is-draggable { cursor: grab; }
+.sidebar-context-target.is-dragging { cursor: grabbing; opacity: 0.45; }
+.sidebar-context-target.is-dragging .sidebar-row { background: #22231f; }
+
 .sidebar-row {
   font-size: 12.5px;
   gap: 5px;
@@ -1601,7 +1609,6 @@ pre {
 
 /* New work stream */
 
-.new-workstream-screen { display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; }
 .new-workstream-home { margin: 0 auto; max-width: 860px; overflow-y: auto; padding: 92px 34px 34px; width: 100%; }
 .new-workstream-welcome { align-items: center; display: flex; gap: 10px; }
 .new-workstream-welcome h1 { font-size: 25px; font-weight: 510; letter-spacing: -0.03em; line-height: 1.15; margin: 0; }
@@ -1636,7 +1643,6 @@ pre {
 .onboarding-items > button.is-complete .onboarding-check { background: var(--brand); border-color: var(--brand); }
 .onboarding-items > button.is-complete strong { color: var(--muted); text-decoration: line-through; }
 .onboarding-items > button.is-complete small { opacity: 0.68; }
-.new-workstream-launcher { margin: 0 auto; max-width: 860px; padding: 12px 34px 28px; width: 100%; }
 .new-workstream-modifiers { display: flex; gap: 6px; margin: 0 auto 8px; max-width: 690px; }
 .participant-modifier,
 .participant-modifier-add { align-items: center; background: #292a26; border: 1px solid #30312c; border-radius: 7px; color: var(--muted); display: inline-flex; min-height: 34px; }
@@ -1651,13 +1657,6 @@ pre {
 .participant-modifier .avatar-overflow { border-color: #292a26; }
 .participant-modifier:hover .avatar-stack .avatar,
 .participant-modifier:hover .avatar-overflow { border-color: #30312d; }
-/* Text metrics come from `.workstream-composer`, which this element also carries. */
-.hero-composer { background: #242521; border: 1px solid #3b3c36; border-radius: 11px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15); margin: 0 auto; max-width: 690px; overflow: hidden; }
-.hero-composer textarea { background: transparent; border: 0; color: var(--ink); display: block; min-height: 84px; outline: 0; resize: none; width: 100%; }
-.hero-composer textarea::placeholder { color: #76766f; }
-.hero-composer .composer-toolbar { padding: 3px 10px 10px; }
-.hero-composer .composer-hint { color: #77766f; }
-.new-workstream-launcher > .composer-error-slot { margin: 0 auto; max-width: 690px; }
 .member-picker-list,
 .member-action-list { display: grid; gap: 4px; }
 .member-picker-row,
@@ -1836,11 +1835,34 @@ pre {
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Markers are restated because Tailwind's preflight sets `list-style: none` on
+   every `ol` and `ul`, and nothing took it back — the rules around this set the
+   indent a marker needs and a colour for a marker that was not being drawn, so
+   a bulleted list rendered as indented paragraphs and a numbered one lost its
+   numbers. Nested levels are restated for the same reason: the browser's own
+   `disc → circle → square` cascade is part of what preflight removed.
+
+   Depth counts list ancestors of either kind, so an `ol` holding a `ul` gets the
+   second level's `circle` rather than falling back to the first level's `disc` —
+   the same pairs the HTML spec's suggested rendering names.
+
+   One container, because there is now one renderer. These rules briefly named
+   three: a note and a meeting briefing rendered `ReactMarkdown` under classes of
+   their own, and each surface that did so had to be listed here or silently keep
+   the preflight's `none`. Both go through `MarkdownBody` now, which is what makes
+   naming `.markdown-body` alone correct rather than an oversight. */
+.markdown-body ul { list-style: disc; }
+.markdown-body :is(ul, ol) ul { list-style: circle; }
+.markdown-body :is(ul, ol) :is(ul, ol) ul { list-style: square; }
+.markdown-body ol { list-style: decimal; }
 .markdown-body ul,
 .markdown-body ol { margin: 9px 0 15px; padding-left: 26px; }
 .markdown-body li { margin: 5px 0; padding-left: 1px; }
 .markdown-body li > p { margin-bottom: 7px; }
 .markdown-body li::marker { color: #d7d6d1; }
+/* Keeps its own `none`: a task list draws checkboxes, and a bullet beside each
+   one is what this exception exists to prevent. It carries two classes to the
+   marker rules' one, so it survives them. */
 .markdown-body .contains-task-list { list-style: none; padding-left: 4px; }
 .markdown-body .task-list-item { align-items: baseline; display: flex; gap: 9px; }
 .markdown-body .task-list-item > input { accent-color: var(--blue); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
@@ -1868,8 +1890,16 @@ pre {
 .agent-message-actions button:hover { color: var(--ink); }
 .streaming-caret { animation: active-pulse 0.9s infinite; background: var(--orange); display: inline-block; height: 13px; margin-left: 2px; vertical-align: text-bottom; width: 2px; }
 .transcript-event { margin: 0 0 16px; }
-.system-message { align-items: center; color: #77766f; display: flex; font-size: 10.5px; gap: 8px; margin: 20px 0; }
-.system-message > span { background: #565750; border-radius: 50%; height: 4px; width: 4px; }
+.system-message { --system-message-lines: 5; align-items: flex-start; color: #77766f; display: flex; font-size: 10.5px; gap: 8px; line-height: 1.55; margin: 20px 0; }
+.system-message-dot { background: #565750; border-radius: 50%; flex: none; height: 4px; margin-top: 6px; width: 4px; }
+.system-message-body { min-width: 0; }
+.system-message-text { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.system-message-text:not([data-expanded]) { -webkit-box-orient: vertical; -webkit-line-clamp: var(--system-message-lines); display: -webkit-box; overflow: hidden; }
+.system-message-text[data-expanded] { max-height: 320px; overflow-y: auto; }
+.system-message-toggle { align-items: center; background: transparent; color: #918f88; display: flex; font-size: 10.5px; gap: 2px; margin-top: 3px; padding: 0; }
+.system-message-toggle:hover { color: var(--ink-soft); }
+.system-message-toggle svg { transition: transform 140ms; }
+.system-message-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
 
 .tool-block { background: #20211e; border: 1px solid #30312c; border-radius: 7px; color: var(--muted); overflow: hidden; }
 .tool-block summary { align-items: center; display: grid; gap: 8px; grid-template-columns: 22px minmax(0, 1fr) auto auto 14px; list-style: none; min-height: 38px; padding: 5px 10px; }
@@ -1890,14 +1920,6 @@ pre {
 .tool-details h4 { color: var(--muted); font-size: 9px; letter-spacing: 0.06em; margin: 0 0 5px; text-transform: uppercase; }
 .tool-details pre { background: #171815; border-radius: 5px; color: #aaa9a2; font-size: 10px; margin: 0; max-height: 220px; overflow: auto; padding: 9px; white-space: pre-wrap; }
 .tool-warning { color: #dda49e; font-size: 11px; margin: 0; }
-
-.artifact-block { align-items: center; background: #252621; border: 1px solid #393a34; border-radius: 8px; color: var(--ink-soft); display: grid; gap: 10px; grid-template-columns: 34px minmax(0, 1fr) 18px; padding: 10px; text-align: left; width: 100%; }
-.artifact-block:hover { background: #2a2b27; border-color: #4a4b44; }
-.artifact-icon { align-items: center; background: #363731; border-radius: 6px; display: flex; height: 34px; justify-content: center; width: 34px; }
-.artifact-block > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; }
-.artifact-block small { color: var(--muted); font-size: 9px; text-transform: uppercase; }
-.artifact-block strong { font-size: 12px; }
-.artifact-block p { color: var(--muted); font-size: 10.5px; margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .suggestion-block { background: #24241f; border: 1px solid #484434; border-radius: 9px; padding: 14px; }
 .suggestion-block > header { align-items: flex-start; display: flex; gap: 10px; }
@@ -2516,8 +2538,11 @@ pre {
 }
 .note-detail-main { display: grid; grid-template-rows: 55px minmax(0, 1fr); min-width: 0; }
 .note-detail-scroll { min-height: 0; overflow-y: auto; }
+/* `font-size` and `line-height` are the empty state's; the markdown carries its
+   own. No `color` here: `.markdown-body` sets one on itself and a declaration
+   beats inheritance, so a colour stated on this element would reach the markdown
+   not at all and the empty state — which sets `--muted-2` below — not either. */
 .note-detail-article {
-  color: var(--ink-soft);
   font-size: 14px;
   line-height: 1.68;
   margin: 0 auto;
@@ -2525,17 +2550,25 @@ pre {
   padding: 58px 54px 100px;
   width: 100%;
 }
-.note-detail-article > :first-child { margin-top: 0; }
-.note-detail-article > :last-child { margin-bottom: 0; }
-.note-detail-article h1,
-.note-detail-article h2,
-.note-detail-article h3 { color: var(--ink); margin: 28px 0 10px; }
-.note-detail-article h1 { font-size: 22px; }
-.note-detail-article h2 { font-size: 17px; }
-.note-detail-article h3 { font-size: 14px; }
-.note-detail-article ul,
-.note-detail-article ol { padding-left: 22px; }
-.note-detail-article li + li { margin-top: 5px; }
+/* The body of a note is a `.markdown-body`, so everything about how its markdown
+   is drawn — lists, code, quotes, tables, the first/last-child margin trim —
+   comes from that container. A note reads as a document page rather than a chat
+   turn, and its heading scale is the one thing worth saying twice: 22/17/14
+   against the shared 18/16/14.5, which stays close together because a transcript
+   turn is too short for a hierarchy to be worth much. Nothing else belongs here.
+   This surface used to restate the list geometry too, and restating it is
+   precisely how it came to be missing a marker rule the shared container had.
+
+   `.markdown-body` is named in the selector so these win on **specificity**
+   rather than on sitting lower in the file than the shared scale. Written as
+   `.note-detail-article :is(h1, …)` they tied `.markdown-body h1` at (0,1,1) and
+   won only by source order — which is the precise hazard this arrangement exists
+   to avoid, so splitting the stylesheet or moving either block would have put a
+   note quietly back on the transcript's headings with nothing going red. */
+.note-detail-article .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--ink); margin: 28px 0 10px; }
+.note-detail-article .markdown-body h1 { font-size: 22px; }
+.note-detail-article .markdown-body h2 { font-size: 17px; }
+.note-detail-article .markdown-body :is(h3, h4, h5, h6) { font-size: 14px; }
 .note-detail-empty,
 .note-transcript-empty {
   align-items: center;
@@ -2724,18 +2757,20 @@ pre {
   overflow-y: auto;
 }
 
+/* Sizes the timestamp, the error line and the empty state; the briefing itself
+   is a `.markdown-body` and carries its own. */
 .meeting-notes-body { font-size: 14px; line-height: 1.65; padding: 12px 8px 20px; }
 .meeting-notes-body > :first-child { margin-top: 0; }
-.meeting-generated-notes > :first-child { margin-top: 0; }
-.meeting-generated-notes > :last-child { margin-bottom: 0; }
-.meeting-notes-body h1,
-.meeting-notes-body h2,
-.meeting-notes-body h3 {
+/* The one deliberate departure from the shared renderer, for the same reason the
+   note above has one: this briefing lives in a narrow rail beside a transcript,
+   where a descending heading scale mostly wastes the width, so every level sits
+   at one size. Everything else the briefing draws is `.markdown-body`'s — which
+   is also named here, so this wins on specificity rather than on source order.
+   See the note's block for why that distinction is worth a class. */
+.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6) {
   font-size: 15px;
   margin: 22px 0 8px;
 }
-.meeting-notes-body ul { padding-left: 20px; }
-.meeting-notes-body li + li { margin-top: 5px; }
 .meeting-summary-progress {
   align-items: center;
   color: var(--muted);
@@ -2844,7 +2879,7 @@ pre {
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
   .new-workstream-home { padding: 82px 16px 24px; }
-  .new-workstream-launcher { padding: 10px 16px 18px; }
+  .workstream-launch-screen:not(.is-launching) > .launch-dock { padding: 10px 16px 18px; }
   .waiting-workstream-row { grid-template-columns: auto minmax(0, 1fr) 15px; }
   .waiting-workstream-source,
   .waiting-workstream-row time,
@@ -3269,6 +3304,186 @@ pre {
   }
 
   .workstream-screen .composer-dock {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* Starting a work stream.
+
+   One element tree carries both the launcher and the work stream being created,
+   so the change between them is a change of geometry rather than a change of
+   screen. The composer is the fixed point: it never unmounts, and every rule
+   below that moves it does so with a transition, which is what lets the eye
+   follow one object from the middle of the launcher down into the dock instead
+   of watching one screen replace another.
+
+   The launching state deliberately states no geometry of its own. Its root also
+   carries `.workstream-screen`, so it inherits that screen's dock padding,
+   column width, and composer treatment from the same rules the real screen uses.
+   Anything restyled for the launcher is therefore written under
+   `:not(.is-launching)` — the moment the class lands, the element is already
+   dressed exactly as the screen it is about to become, and the navigation that
+   follows changes only the data. */
+
+/* The one thing the launching state does not take from `.workstream-screen` is
+   this template, and it cannot: that screen's header row is a fixed `55px`, and
+   inheriting it would snap the row to full height on the frame the class lands,
+   shoving the transcript down — the jump this whole block exists to remove. An
+   `auto` row lets the header animate its own height into place instead, and at
+   rest the two resolve to the same 55px. */
+.workstream-launch-screen {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Collapsed rather than absent: a header that mounted at the swap would push
+   the transcript down by its own height on the frame it arrived. Only the
+   collapsed values are stated here — while launching the border and padding are
+   `.workstream-header`'s own. */
+.workstream-launch-screen > .launch-header {
+  overflow: hidden;
+  transition: height 220ms cubic-bezier(.32, .72, 0, 1);
+}
+
+.workstream-launch-screen:not(.is-launching) > .launch-header {
+  border-bottom-width: 0;
+  height: 0;
+  padding-bottom: 0;
+  padding-top: 0;
+}
+
+/* The single launching value this block states, and it is the animation's
+   endpoint rather than a style: a grid track sized `auto` cannot be animated,
+   so the header's own height is what grows. It has to equal the
+   `.workstream-screen` header row, and `app.css.node.test.ts` asserts that it does. */
+.workstream-launch-screen.is-launching > .launch-header {
+  height: 55px;
+}
+
+/* Both layers share one grid cell, so the home content can fade out over the
+   transcript that replaced it without being taken out of flow first. */
+.workstream-launch-screen > .launch-body {
+  display: grid;
+  min-height: 0;
+}
+
+.workstream-launch-screen > .launch-body > * {
+  grid-area: 1 / 1;
+  min-height: 0;
+}
+
+.launch-home-layer {
+  display: grid;
+  min-height: 0;
+}
+
+.launch-home-layer.is-leaving {
+  animation: launch-home-leave 190ms ease forwards;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+@keyframes launch-home-leave {
+  to { opacity: 0; transform: translateY(10px); }
+}
+
+.launch-transcript-layer {
+  z-index: 1;
+}
+
+/* The turn and the work timer settle in behind the home content rather than
+   with it, so the transcript reads as being assembled instead of revealed. */
+.launch-arrival {
+  animation: launch-arrival 240ms cubic-bezier(.32, .72, 0, 1) both;
+  animation-delay: calc(var(--arrival-index, 0) * 70ms + 60ms);
+}
+
+@keyframes launch-arrival {
+  from { opacity: 0; transform: translateY(7px); }
+}
+
+/* Only the transition is stated for both states. Every value the launching
+   state settles on is the destination's own — `.workstream-screen .composer-dock`
+   and `.workstream-screen .composer-stack` — so a later change to the real dock
+   flows into the launch surface instead of leaving a copy of the old geometry
+   behind to jump against. */
+.workstream-launch-screen > .launch-dock {
+  transition: padding 240ms cubic-bezier(.32, .72, 0, 1);
+}
+
+.workstream-launch-screen:not(.is-launching) > .launch-dock {
+  background: none;
+  bottom: auto;
+  left: auto;
+  padding: 12px 34px 28px;
+  position: relative;
+  right: auto;
+}
+
+.workstream-launch-screen .composer-stack {
+  transition: max-width 240ms cubic-bezier(.32, .72, 0, 1);
+}
+
+.workstream-launch-screen:not(.is-launching) .composer-stack {
+  max-width: 690px;
+}
+
+/* Participants are chosen before the work stream exists and are part of the
+   header afterwards, so the row leaves rather than moves. */
+.launch-modifiers {
+  max-height: 46px;
+  overflow: hidden;
+  transition: max-height 220ms cubic-bezier(.32, .72, 0, 1), opacity 140ms ease;
+}
+
+.workstream-launch-screen.is-launching .launch-modifiers {
+  max-height: 0;
+  opacity: 0;
+}
+
+.launch-composer {
+  transition:
+    background-color 240ms ease,
+    border-color 240ms ease,
+    border-radius 240ms ease,
+    box-shadow 240ms ease;
+}
+
+.launch-composer textarea {
+  transition: min-height 240ms cubic-bezier(.32, .72, 0, 1);
+}
+
+.workstream-launch-screen:not(.is-launching) .launch-composer {
+  background: #242521;
+  border-color: #3b3c36;
+  border-radius: 11px;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 15%);
+}
+
+.workstream-launch-screen:not(.is-launching) .launch-composer textarea {
+  min-height: 84px;
+}
+
+.workstream-launch-screen:not(.is-launching) .launch-composer textarea::placeholder {
+  color: #76766f;
+}
+
+.workstream-launch-screen:not(.is-launching) .launch-composer .composer-toolbar {
+  padding: 3px 10px 10px;
+}
+
+.workstream-launch-screen:not(.is-launching) .launch-composer .composer-hint {
+  color: #77766f;
+}
+
+@media (max-width: 760px) {
+  .workstream-launch-screen:not(.is-launching) > .launch-dock {
     padding-left: 16px;
     padding-right: 16px;
   }

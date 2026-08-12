@@ -1,8 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { AudioLines, Globe2, Lock, NotebookText, RefreshCcw } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { useParams } from 'react-router-dom';
-import remarkGfm from 'remark-gfm';
+import { MarkdownBody } from '../components/workstream-blocks';
 import { Button, EmptyState, LoadingState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 
@@ -59,7 +58,7 @@ export function NoteDetailScreen(): React.JSX.Element {
         <div className="note-detail-scroll">
           <article className="note-detail-article">
             {body ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+              <MarkdownBody>{body}</MarkdownBody>
             ) : (
               <div className="note-detail-empty">
                 <NotebookText aria-hidden="true" size={22} />

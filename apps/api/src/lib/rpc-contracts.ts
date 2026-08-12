@@ -11,7 +11,7 @@ import { ApiError } from "./api-error";
  * a TypeScript interface only. Those interfaces are erased at build time, so an
  * argument arriving over the binding was whatever the caller happened to send.
  *
- * That matters most on the Global/EU pair. `REGIONALIZATION.md` treats the
+ * That matters most on the Global/EU pair. `regionalization.md` treats the
  * boundary as the line a workspace's data must not cross, and the value that
  * decides which side a record lands on — `region`, `workspaceId` — was reaching
  * the data plane unchecked. Same account is not the same thing as same
@@ -59,6 +59,35 @@ export const LinearRouteInputSchema = z.object({
   connectionId: IdSchema,
 });
 export const LinearRouteStatusInputSchema = LinearRouteInputSchema.extend({ status: statusFlag });
+
+export const NotionRouteInputSchema = z.object({
+  notionWorkspaceId: providerId,
+  region: RegionSchema,
+  workspaceId: IdSchema,
+  connectionId: IdSchema,
+});
+export const NotionRouteStatusInputSchema = NotionRouteInputSchema.extend({ status: statusFlag });
+
+/**
+ * Notion's single redirect URI puts an authorization code on this hop. The code
+ * is short-lived, single-use, and useless without the connection's client
+ * secret, but it is still the one credential that crosses the boundary here, so
+ * it is bounded and shaped like everything else rather than passed through raw.
+ */
+export const NotionCallbackInputSchema = z.object({
+  code: z.string().min(1).max(4_096),
+  state: z.string().min(1).max(4_096),
+});
+export const NotionCallbackStateInputSchema = z.object({
+  state: z.string().min(1).max(4_096),
+});
+export const NotionCallbackFailureInputSchema = z.object({
+  state: z.string().min(1).max(4_096),
+  errorCode: z.string().min(1).max(200),
+});
+export const NotionChallengeInputSchema = z.object({
+  verificationToken: z.string().min(1).max(1_000),
+});
 
 export const SlackRouteInputSchema = z.object({
   teamId: providerId,

@@ -4,6 +4,7 @@ import { zValidator } from "../middleware/validation";
 import {
   AutomationDetailSchema,
   AutomationDraftSchema,
+  AutomationDraftStateSchema,
   AutomationDraftStreamEventSchema,
   AutomationRunSchema,
   AutomationSummarySchema,
@@ -22,7 +23,6 @@ import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { getAuth } from "../middleware/auth";
 import { logEvent } from "../observability/logger";
-import { renderAutomationDraftSystemPrompt } from "../services/automation-draft-system-prompt";
 import { AutomationService } from "../services/automation-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -31,6 +31,13 @@ const updateBody = z.object({ name: z.string().min(1).max(140).optional(), descr
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
 const AutomationPageSchema = z.object({ items: z.array(AutomationSummarySchema) });
+/** The non-streaming twin of the stream's `completed` event, down to the id of
+ * the draft subscription the turn wrote. */
+const CompiledDraftSchema = z.object({
+  draftId: IdSchema,
+  draft: AutomationDraftSchema,
+  assistantMessage: z.string().min(1),
+});
 const AutomationRunPageSchema = z.object({ items: z.array(AutomationRunSchema) });
 const NextRunSchema = z.object({
   /** Null when the automation is paused or has no enabled schedule. */
@@ -56,7 +63,7 @@ const TemplatePageSchema = z.object({
     activitySources: z.array(ConnectorActivityTriggerDescriptorSchema),
   })),
 });
-const DraftSystemPromptRequestSchema = z.object({ draft: AutomationDraftSchema, scope: ScopeSchema });
+const DraftSystemPromptRequestSchema = z.object({ draftId: IdSchema, scope: ScopeSchema });
 const DraftSystemPromptSchema = z.object({ systemPrompt: z.string().min(1) });
 const PublishedTemplateSchema = z.object({ templateId: IdSchema, latestVersionId: IdSchema });
 const SharedSubscriptionSchema = z.object({ templateId: IdSchema });
@@ -72,7 +79,7 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
   logEvent(c, "info", "automation_draft_compile_started", { draft_id: input.draftId });
   return streamSSE(c, async (stream) => {
     try {
-      const draft = await service.compile(input, requestId, {
+      const compiled = await service.compile(input, requestId, {
         signal: c.req.raw.signal,
         onStreamEvent: async (event) => {
           if (event.type === "completed") return;
@@ -84,10 +91,9 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
       });
       const completed = AutomationDraftStreamEventSchema.parse({
         type: "completed",
-        draft,
-        assistantMessage: draft.elicitation?.prompt
-          ?? draft.followUpQuestion
-          ?? (draft.ready ? "The automation is ready to create." : "I need one more detail before I can create this automation."),
+        draftId: compiled.draftId,
+        draft: compiled.draft,
+        assistantMessage: compiled.assistantMessage,
       });
       await stream.writeSSE({ event: completed.type, data: JSON.stringify(completed) });
     } catch (error) {
@@ -111,23 +117,33 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
 automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchema), async (c) => {
   const input = c.req.valid("json");
   logEvent(c, "info", "automation_draft_compile_started", { draft_id: input.draftId });
-  return c.json(AutomationDraftSchema.parse(
-    await new AutomationService(c.env, getAuth(c)).compile(input, c.get("requestId"))));
+  const compiled = await new AutomationService(c.env, getAuth(c)).compile(input, c.get("requestId"));
+  return c.json(CompiledDraftSchema.parse({
+    draftId: compiled.draftId,
+    draft: AutomationDraftSchema.parse(compiled.draft),
+    assistantMessage: compiled.assistantMessage,
+  }));
 });
 /**
  * The system prompt a run of this draft would start from, for the create
- * screen's developer-mode viewer. It reads nothing and writes nothing: the
- * draft travels in the request the way it does to `POST /automations`, because
- * a draft lives in the client until it is created.
+ * screen's developer-mode viewer. A POST because it names a draft and a scope
+ * and returns a rendering of them, but it writes nothing: the draft is read
+ * through the same gate `GET /automations/:id/draft` reads it through.
  *
  * Deliberately not gated on `assertScopeAllowed`. The architect can suggest a
  * workspace automation to a member who may not create one, and refusing to
  * render their own draft's prompt would take the viewer away from exactly the
  * person looking at that suggestion. Nothing here is privileged: the response
- * is the caller's own draft rendered into standing policy text.
+ * is a draft the caller may already reopen, rendered into standing policy text.
  */
-automationRoutes.post("/draft/system-prompt", zValidator("json", DraftSystemPromptRequestSchema), (c) =>
-  c.json(DraftSystemPromptSchema.parse({ systemPrompt: renderAutomationDraftSystemPrompt(c.req.valid("json")) })));
+automationRoutes.post("/draft/system-prompt", zValidator("json", DraftSystemPromptRequestSchema), async (c) => {
+  const { draftId, scope } = c.req.valid("json");
+  return c.json(DraftSystemPromptSchema.parse(
+    await new AutomationService(c.env, getAuth(c)).draftSystemPrompt(draftId, scope)));
+});
+automationRoutes.get("/:id/draft", zValidator("param", idParam), async (c) =>
+  c.json(AutomationDraftStateSchema.parse(
+    await new AutomationService(c.env, getAuth(c)).draftState(c.req.valid("param").id))));
 automationRoutes.post("/", zValidator("json", CreateAutomationRequestSchema), async (c) =>
   c.json(AutomationDetailSchema.parse(await new AutomationService(c.env, getAuth(c)).create(c.req.valid("json"))), 201));
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>

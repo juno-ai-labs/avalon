@@ -23,6 +23,16 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // The browser fallback has no main process to poll the service, so the
   // Developer section is simply not on offer there.
   developerSettingsAvailable: false,
+  // A tab has no status item. The preference reads as on so the desktop and the
+  // browser agree about what the stored default is, and unavailable so the
+  // toggle is offered nowhere it cannot work.
+  menuBarEnabled: true,
+  menuBarAvailable: false,
+  menuBarPresent: false,
+  // A tab is not a login item either. Both read as unavailable so neither
+  // toggle is offered where it could not work.
+  launchAtLogin: false,
+  launchAtLoginAvailable: false,
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
@@ -200,6 +210,12 @@ const browserBridge: AvalonDesktopBridge = {
     }
     return { ...browserApplicationSettings };
   },
+  async setMenuBarEnabled() {
+    throw new Error('The menu bar item is available only in the Avalon desktop app.');
+  },
+  async setLaunchAtLogin() {
+    throw new Error('Opening at login is available only in the Avalon desktop app.');
+  },
   onApplicationSettingsChanged(listener) {
     browserApplicationSettingsListeners.add(listener);
     return () => browserApplicationSettingsListeners.delete(listener);
@@ -336,7 +352,10 @@ const browserBridge: AvalonDesktopBridge = {
     target.hash = '/meeting';
     window.open(target.toString(), '_blank', 'noopener,noreferrer,width=1120,height=820');
   },
-  async closeMeetingNotes() {
+  async closeMeetingNotes(noteId) {
+    // A browser tab has no sibling window to hand the note to; the opener may
+    // not even be reachable. Closing is the whole of what this can do here.
+    void noteId;
     window.close();
   },
   async getMeetingAudioPermissions() {

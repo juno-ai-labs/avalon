@@ -7,7 +7,7 @@ import { desktopBridge } from './platform';
  * while the service's `developer-settings` flag stands behind it, so a surface
  * reading this can never reveal a debugging affordance the account is not
  * entitled to. The gate lives there rather than here so every reader inherits
- * it — see `docs/FEATURE_FLAGS.md`.
+ * it — see `docs/feature-flags.md`.
  *
  * The preference lives in the main process, so a change made in the Settings
  * window — or a poll that finds the flag withdrawn — reaches the main window

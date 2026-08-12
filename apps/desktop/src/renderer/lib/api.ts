@@ -2,8 +2,10 @@ import {
   ActivitySuggestionSchema as WireActivitySuggestionSchema,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationDraftSchema as WireAutomationDraftSchema,
+  AutomationDraftStateSchema as WireAutomationDraftStateSchema,
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
+  ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
@@ -33,6 +35,7 @@ import {
   type AutomationDraftStreamEvent as WireAutomationDraftStreamEvent,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
+  type ClientFeatureFlags,
   type Connection as WireConnection,
   type ConnectorOAuthAttempt,
   type ConnectorOAuthStart,
@@ -41,9 +44,9 @@ import {
   type Resource as WireResource,
   type User as WireUser,
   type Workstream as WireWorkstream,
-  type WorkstreamArtifact as WireWorkstreamArtifact,
   type WorkstreamDetail as WireWorkstreamDetail,
 } from '@avalon/contracts';
+import { socketTicketProtocols, socketUrlWithoutTicket } from '@avalon/contracts/socket-tickets';
 import { HttpUrlSchema } from '@avalon/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
@@ -53,7 +56,6 @@ import { createElicitationMessage, upsertTranscriptMessage } from './transcript'
 import type {
   ActivitySuggestionData,
   AgentModelOverride,
-  ArtifactData,
   AutomationCreateOptions,
   AutomationDeliveryTargetType,
   AutomationDetail,
@@ -214,7 +216,18 @@ export interface MentionIdentity {
   connectorType: string | null;
 }
 
+/**
+ * How many work streams one sidebar page asks for.
+ *
+ * The service's ceiling, kept there rather than lowered now that the list pages:
+ * a first page this size means the overwhelming majority of workspaces are one
+ * request as they always were, and paging engages only where it was needed —
+ * past the point a single page could hold the list at all.
+ */
+const WORKSTREAM_PAGE_SIZE = 250;
+
 const wireWorkstreamPageSchema = CursorPageSchema(WireWorkstreamSchema);
+const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireMessagePageSchema = CursorPageSchema(WireMessageSchema).extend({
   newerCursor: z.string().nullable().default(null),
 });
@@ -256,8 +269,16 @@ const runNowResponseSchema = z.object({
   harnessRunId: z.string().optional(),
   reused: z.boolean(),
 });
-const socketTicketSchema = z.object({ url: z.string(), ticket: z.string() });
-const automationDraftSystemPromptSchema = z.object({ systemPrompt: z.string() });
+// The issuing endpoints still put the ticket in the URL for desktop builds
+// released before the subprotocol scheme. Strip it on the way in, so no call
+// site can open a socket whose URL carries the credential.
+const socketTicketSchema = z.object({ url: z.string(), ticket: z.string() })
+  .transform(({ url, ticket }): SocketTicket => ({
+    url: socketUrlWithoutTicket(url),
+    ticket,
+    protocols: socketTicketProtocols(ticket),
+  }));
+const automationDraftSystemPromptSchema = z.object({ systemPrompt: z.string().min(1) });
 
 export function normalizeHarnessStatus(status: WireWorkstream['harnessStatus']): HarnessStatus {
   return status === 'idle' ? 'completed' : status;
@@ -338,6 +359,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
+    pinPosition: workstream.pinPosition,
     preview: workstream.objective,
   };
 }
@@ -390,19 +412,6 @@ export function mapBackgroundTask(task: WireBackgroundTask): BackgroundTask {
   };
 }
 
-export function mapWorkstreamArtifact(artifact: WireWorkstreamArtifact): ArtifactData {
-  return {
-    id: artifact.id,
-    title: artifact.title,
-    artifactType: artifact.artifactType,
-    ...(artifact.previewText ? { previewText: artifact.previewText } : {}),
-    status: artifact.status,
-    mimeType: artifact.mimeType,
-    ...(artifact.harnessRunId ? { harnessRunId: artifact.harnessRunId } : {}),
-    createdAt: artifact.createdAt,
-  };
-}
-
 export function mapMessage(message: WireMessage): Message {
   const structured = message.structuredContent ?? {};
   const invocation = WireToolInvocationSchema.safeParse('invocation' in structured ? structured['invocation'] : structured);
@@ -442,16 +451,6 @@ export function mapMessage(message: WireMessage): Message {
     attachments: message.attachments.map((attachment) => ({ ...attachment })),
     createdAt: message.createdAt,
     ...(invocation.success ? { toolEvent: mapToolInvocation(invocation.data) } : {}),
-    ...(message.messageType === 'artifact'
-      ? {
-          artifact: {
-            id: typeof structured['id'] === 'string' ? structured['id'] : message.id,
-            title: typeof structured['title'] === 'string' ? structured['title'] : message.textContent || 'Artifact',
-            artifactType: typeof structured['artifactType'] === 'string' ? structured['artifactType'] : 'artifact',
-            ...(typeof structured['previewText'] === 'string' ? { previewText: structured['previewText'] } : {}),
-          },
-        }
-      : {}),
     ...(elicitation.success ? { elicitation: mapElicitation(elicitation.data) } : {}),
     ...(suggestion.success ? { activitySuggestion: mapSuggestion(suggestion.data) } : {}),
   };
@@ -469,7 +468,6 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     viewers: workstream.viewers.map(mapViewer),
     resources: workstream.resources.map(mapResource),
     connections: workstream.connections.map(mapConnection),
-    artifacts: (workstream.artifacts ?? []).map(mapWorkstreamArtifact),
     backgroundTasks: (workstream.backgroundTasks ?? []).map(mapBackgroundTask),
     openElicitations: workstream.openElicitations.map(mapElicitation),
     suggestions: workstream.suggestions.map(mapSuggestion),
@@ -968,6 +966,7 @@ export class AvalonApi {
       manualUnreadGeneration: 0,
       hasUnread: false,
       firstUnreadSequenceNumber: null,
+      pinPosition: null,
     };
   }
 
@@ -975,12 +974,25 @@ export class AvalonApi {
    * `includeSystem` widens what the sidebar shows, not who may see it: the API
    * still only returns a system work stream to someone who participates in it.
    */
-  async getWorkstreams(signal?: AbortSignal, includeSystem = false): Promise<WorkstreamSummary[]> {
+  /**
+   * One page of the work-stream list, with the cursor for the next one.
+   *
+   * `before` is the previous page's `nextCursor`, which the service derives from
+   * the paged rows alone — pinned and system work streams arrive appended to the
+   * first page and are excluded from the paging, so following the cursor never
+   * returns them twice.
+   */
+  async getWorkstreams(
+    signal?: AbortSignal,
+    includeSystem = false,
+    before?: string,
+  ): Promise<{ items: WorkstreamSummary[]; nextCursor: string | null }> {
     const page = await this.request(
-      `/workstreams?limit=250${includeSystem ? '&includeSystem=true' : ''}`,
+      `/workstreams?limit=${WORKSTREAM_PAGE_SIZE}${includeSystem ? '&includeSystem=true' : ''}`
+      + `${before ? `&before=${encodeURIComponent(before)}` : ''}`,
       { schema: wireWorkstreamPageSchema, signal },
     );
-    return page.items.map(mapWorkstreamSummary);
+    return { items: page.items.map(mapWorkstreamSummary), nextCursor: page.nextCursor };
   }
 
   async getWorkOpportunities(signal?: AbortSignal): Promise<WorkOpportunity[]> {
@@ -1013,6 +1025,7 @@ export class AvalonApi {
       messageId: response.messageId,
       clientMessageId: `opportunity:${id}:v${version}`,
       createdAt: response.workstream.createdAt,
+      harnessRunId: response.harnessRunId,
     };
   }
 
@@ -1074,14 +1087,35 @@ export class AvalonApi {
     });
   }
 
+  /**
+   * The server-decided values this device is allowed to see, for the signed-in
+   * person. The main process polls the same route for Application → Developer;
+   * a renderer asks directly for a value only it acts on, rather than adding an
+   * IPC hop and a second reader of the same answer.
+   */
+  clientFeatureFlags(signal?: AbortSignal): Promise<ClientFeatureFlags> {
+    return this.request('/feature-flags', { schema: WireClientFeatureFlagsSchema, signal });
+  }
+
+  /**
+   * `refreshSeconds` is the cadence this meeting settled on. It travels with
+   * the request so the briefing is written for the schedule the client is
+   * actually keeping, rather than for whatever the flag says when the server
+   * happens to read it.
+   */
   generateNoteNotes(
     id: string,
     mode: 'live' | 'final' = 'live',
     transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
+    refreshSeconds?: number,
   ): Promise<NoteDetail> {
     return this.request(`/notes/${encodeURIComponent(id)}/generate`, {
       method: 'POST',
-      body: { mode, transcriptStatus },
+      body: {
+        mode,
+        transcriptStatus,
+        ...(refreshSeconds === undefined ? {} : { refreshSeconds }),
+      },
       schema: WireNoteDetailSchema,
     });
   }
@@ -1131,6 +1165,45 @@ export class AvalonApi {
     return mapWorkstreamSummary(workstream);
   }
 
+  /**
+   * Pin a work stream for the signed-in person, across every device they use.
+   *
+   * All three pin calls answer with the whole pinned list in its stored order,
+   * so the caller replaces what it holds rather than reasoning about which row
+   * moved — see {@link ApiClient.reorderWorkstreamPins}.
+   */
+  async pinWorkstream(id: string): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'PUT');
+  }
+
+  async unpinWorkstream(id: string): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'DELETE');
+  }
+
+  /**
+   * Send the pinned list's new order after a drag.
+   *
+   * The whole arrangement travels, not the row that moved: the server writes it
+   * as dense positions, and the list it sends back is the one to render. Ids
+   * that have been unpinned elsewhere are ignored rather than refused.
+   */
+  async reorderWorkstreamPins(workstreamIds: string[]): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams('/workstreams/pins', 'PUT', { workstreamIds });
+  }
+
+  private async readPinnedWorkstreams(
+    path: string,
+    method: 'PUT' | 'DELETE',
+    body?: unknown,
+  ): Promise<WorkstreamSummary[]> {
+    const page = await this.request(path, {
+      method,
+      ...(body === undefined ? {} : { body }),
+      schema: wirePinnedWorkstreamsSchema,
+    });
+    return page.items.map(mapWorkstreamSummary);
+  }
+
   async createWorkstream(input: {
     openingMessage: string;
     participantIds: string[];
@@ -1156,6 +1229,7 @@ export class AvalonApi {
       messageId: response.messageId,
       clientMessageId,
       createdAt: response.workstream.createdAt,
+      harnessRunId: response.harnessRunId,
     };
   }
 
@@ -1207,7 +1281,6 @@ export class AvalonApi {
       signal,
     });
     const context: WorkstreamDeferredContext = {
-      artifacts: raw.artifacts.map(mapWorkstreamArtifact),
       backgroundTasks: raw.backgroundTasks.map(mapBackgroundTask),
       automationRuns: [],
     };
@@ -1251,29 +1324,6 @@ export class AvalonApi {
 
   async getMessages(id: string, signal?: AbortSignal): Promise<Message[]> {
     return (await this.getMessagePage(id, { signal })).items;
-  }
-
-  async downloadArtifact(workstreamId: string, artifactId: string, signal?: AbortSignal): Promise<{
-    blob: Blob;
-    fileName: string;
-  }> {
-    const response = await this.execute(
-      `/workstreams/${encodeURIComponent(workstreamId)}/artifacts/${encodeURIComponent(artifactId)}/content`,
-      { method: 'GET', ...(signal ? { signal } : {}) },
-    );
-    if (!response.ok) return this.throwResponseError(response);
-    const disposition = response.headers.get('Content-Disposition') ?? '';
-    const encodedName = /filename\*=UTF-8''([^;]+)/iu.exec(disposition)?.[1];
-    const quotedName = /filename="([^"]+)"/iu.exec(disposition)?.[1];
-    let fileName = quotedName ?? `avalon-output-${artifactId}.txt`;
-    if (encodedName) {
-      try {
-        fileName = decodeURIComponent(encodedName);
-      } catch {
-        // Keep the conservative quoted filename when the extended form is malformed.
-      }
-    }
-    return { blob: await response.blob(), fileName };
   }
 
   private async mentionPayload(workstreamId: string, text: string, selected: MentionIdentity[] = []): Promise<Array<{
@@ -1518,8 +1568,13 @@ export class AvalonApi {
     input: { message: string; draftId?: string; templateId?: string; attachmentIds?: string[] },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
   ): Promise<AutomationDraftResponse> {
-    const draftId = input.draftId ?? crypto.randomUUID();
-    const previous = this.drafts.get(draftId) ?? { attachmentIds: [], messages: [], draft: null };
+    // The first turn has no draft to continue. Every later one names the draft
+    // subscription the API wrote, which is the automation's real id — the
+    // renderer never mints one, because a key only this process knows could not
+    // put the draft in the sidebar or bring it back after a restart.
+    const previous = input.draftId
+      ? this.drafts.get(input.draftId) ?? { attachmentIds: [], messages: [], draft: null }
+      : { attachmentIds: [], messages: [], draft: null };
     const messages = [...previous.messages, { role: 'user' as const, content: input.message }];
     const attachmentIds = [...new Set([...previous.attachmentIds, ...(input.attachmentIds ?? [])])];
     const response = await this.execute('/automations/draft/stream', {
@@ -1529,7 +1584,7 @@ export class AvalonApi {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        draftId,
+        ...(input.draftId ? { draftId: input.draftId } : {}),
         messages,
         currentDraft: previous.draft,
         attachmentIds,
@@ -1572,11 +1627,23 @@ export class AvalonApi {
     }
     const raw = WireAutomationDraftSchema.parse(completed.draft);
     const assistantMessage = completed.assistantMessage;
+    const draftId = completed.draftId;
     this.drafts.set(draftId, {
       attachmentIds,
       messages: [...messages, { role: 'assistant', content: assistantMessage }],
       draft: raw,
     });
+    return this.automationDraftResponse(draftId, raw, assistantMessage);
+  }
+
+  /** The one place a compiled draft becomes what the builder screen renders,
+   * so a draft picked back up out of the sidebar reads exactly like the turn
+   * that produced it. */
+  private automationDraftResponse(
+    draftId: string,
+    raw: WireAutomationDraft,
+    assistantMessage: string,
+  ): AutomationDraftResponse {
     const elicitation = raw.elicitation;
     return {
       draftId,
@@ -1617,6 +1684,30 @@ export class AvalonApi {
     };
   }
 
+  /** Reopens a draft left in the sidebar. The conversation comes back from the
+   * API rather than from this process's memory, which is the whole point: the
+   * draft outlived the screen it was written on. */
+  async resumeAutomationDraft(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<{ draft: AutomationDraftResponse; messages: Array<{ role: 'user' | 'assistant'; content: string }> }> {
+    const state = await this.request(`/automations/${encodeURIComponent(id)}/draft`, {
+      schema: WireAutomationDraftStateSchema,
+      signal,
+    });
+    this.drafts.set(state.draftId, {
+      attachmentIds: state.attachmentIds,
+      messages: state.messages,
+      draft: state.draft,
+    });
+    const assistantMessage = [...state.messages].reverse()
+      .find((message) => message.role === 'assistant')?.content ?? '';
+    return {
+      draft: this.automationDraftResponse(state.draftId, state.draft, assistantMessage),
+      messages: state.messages,
+    };
+  }
+
   async createAutomation(
     draftId: string,
     defaultPluginIds: string[],
@@ -1629,6 +1720,7 @@ export class AvalonApi {
     const raw = await this.request('/automations', {
       method: 'POST',
       body: {
+        draftId,
         draft: state.draft,
         scope: options.scope === undefined
           ? state.draft.suggestedScope
@@ -1652,21 +1744,17 @@ export class AvalonApi {
   /**
    * The system prompt a run of this draft would start from.
    *
-   * Rendered by the service rather than here: the standing policy the prompt is
-   * mostly made of lives in `@avalon/agent-harness`, which the renderer does not
-   * carry, and a copy of it in the client would be a second prompt that drifts
-   * from the one runs actually receive. The draft is sent from this cache the
-   * way creation sends it — `Runs as` decides the run's execution authority, so
-   * it travels with it.
+   * Rendered by the service rather than here, and from the draft's own row
+   * rather than from anything this process is holding: the standing policy the
+   * prompt is mostly made of lives in `@avalon/agent-harness`, which the
+   * renderer does not carry, and the draft is a saved automation the API reads
+   * behind the same gate that reopens it. Only `Runs as` travels, because the
+   * scope is chosen on the create card and is not in the row until creation.
    */
   async getAutomationDraftSystemPrompt(draftId: string, scope: AutomationScope, signal?: AbortSignal): Promise<string> {
-    const state = this.drafts.get(draftId);
-    if (!state?.draft) {
-      throw new ApiError('This automation draft is no longer available.', 404, 'automation_draft_not_found');
-    }
     const raw = await this.request('/automations/draft/system-prompt', {
       method: 'POST',
-      body: { draft: state.draft, scope: scope === 'you' ? 'personal' : 'workspace' },
+      body: { draftId, scope: scope === 'you' ? 'personal' : 'workspace' },
       schema: automationDraftSystemPromptSchema,
       signal,
     });

@@ -1755,4 +1755,223 @@ describe("database migrations", () => {
     `)).toThrow();
     database.close();
   });
+
+  it("records where each past digest ran, then drops the old column once no Worker reads it", () => {
+    const database = migrateDatabaseThrough("0067_harness_run_trigger_message.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-digest', 'google-digest', 'digest@example.com', 'Digest User', '2026-08-10', '2026-08-10');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-digest', 'Digest Workspace', 'digest-workspace', 'global',
+              'user-digest', '2026-08-10', '2026-08-10');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+         last_activity_at, created_at, updated_at, system_kind, scope)
+      VALUES ('workstream-digest-shared', 'workspace-digest', 'Digest · Digest User', '',
+              'ad_hoc', 'user-digest', 'idle', '2026-08-10', '2026-08-10', '2026-08-10',
+              'digest', 'personal');
+      INSERT INTO digest_schedules
+        (id, workspace_id, user_id, day_mask, enabled, system_workstream_id,
+         execution_principal_json, version, created_at, updated_at)
+      VALUES ('schedule-digest', 'workspace-digest', 'user-digest', 62, 1, 'workstream-digest-shared',
+              '{"type":"user","userId":"user-digest"}', 1, '2026-08-10', '2026-08-10');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('run-digest', 'workspace-digest', 'workstream-digest-shared', 'scheduled_digest',
+              '{"type":"user","userId":"user-digest"}', 'completed', '2026-08-10');
+      INSERT INTO digest_deliveries
+        (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_from, cursor_through,
+         event_count, highlight_count, harness_run_id, status, created_at, updated_at)
+      VALUES
+        ('delivery-ran', 'workspace-digest', 'schedule-digest', 'user-digest', '2026-08-10T08:00:00.000Z',
+         NULL, 12, 4, 1, 'run-digest', 'delivered', '2026-08-10', '2026-08-10'),
+        ('delivery-empty', 'workspace-digest', 'schedule-digest', 'user-digest', '2026-08-11T08:00:00.000Z',
+         12, 12, 0, 0, NULL, 'empty', '2026-08-11', '2026-08-11');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0068_digest_workstream_per_occurrence.sql", import.meta.url),
+      "utf8",
+    ));
+
+    // Where each one actually ran, which for everything before this migration
+    // is the shared work stream. An occurrence that never reached a harness has
+    // no work stream, and NULL is the accurate answer rather than a gap.
+    expect(database.prepare(
+      "SELECT id, workstream_id FROM digest_deliveries ORDER BY planned_for",
+    ).all()).toEqual([
+      { id: "delivery-ran", workstream_id: "workstream-digest-shared" },
+      { id: "delivery-empty", workstream_id: null },
+    ]);
+    // The old column survives this migration on purpose. Migrations land before
+    // either Worker deploys, so the previous Worker is still selecting and
+    // writing it while this schema is live; dropping it here would make digest
+    // firing, the reconciler and the settings read fail with `no such column`
+    // for the length of a deployment — hours if that deployment fails. A later
+    // migration drops it once nothing reads it.
+    const scheduleColumns = database.prepare("PRAGMA table_info(digest_schedules)")
+      .all() as Array<{ name: string }>;
+    expect(scheduleColumns.map((column) => column.name)).toContain("system_workstream_id");
+    // The two writes the previous Worker still performs against it.
+    expect(() => database.exec(
+      "UPDATE digest_schedules SET system_workstream_id = 'workstream-digest-shared' WHERE id = 'schedule-digest'",
+    )).not.toThrow();
+    expect(database.prepare(
+      "SELECT system_workstream_id FROM digest_schedules WHERE id = 'schedule-digest'",
+    ).get()).toEqual({ system_workstream_id: "workstream-digest-shared" });
+    // The transcripts themselves stay: their owners can still open them, and
+    // dropping a pointer is not a reason to delete somebody's history.
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM workstreams WHERE id = 'workstream-digest-shared'",
+    ).get()).toEqual({ count: 1 });
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+
+    // And the phase that was waiting on the deployment window: once every live
+    // Worker ignores the column, it goes, taking nothing with it. The delivery
+    // link, the transcripts, and the delivery rows that carry the cursor all
+    // survive — a schedule losing a pointer must not lose a person's history or
+    // let a window be digested twice.
+    database.exec(readFileSync(
+      new URL("../migrations/0070_drop_digest_schedule_workstream.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect((database.prepare("PRAGMA table_info(digest_schedules)").all() as Array<{ name: string }>)
+      .map((column) => column.name)).not.toContain("system_workstream_id");
+    expect(database.prepare(
+      "SELECT id, workstream_id FROM digest_deliveries ORDER BY planned_for",
+    ).all()).toEqual([
+      { id: "delivery-ran", workstream_id: "workstream-digest-shared" },
+      { id: "delivery-empty", workstream_id: null },
+    ]);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM workstreams WHERE id = 'workstream-digest-shared'",
+    ).get()).toEqual({ count: 1 });
+    // The schedule itself is intact and still usable — the drop is a column, not
+    // a rebuild, so nothing around it was restated and nothing could be lost.
+    expect(database.prepare(
+      "SELECT id, day_mask, enabled FROM digest_schedules WHERE id = 'schedule-digest'",
+    ).get()).toEqual({ id: "schedule-digest", day_mask: 62, enabled: 1 });
+    // The dropped column took its foreign key with it and left the other two
+    // alone. This is what makes the drop legal without a table rebuild — SQLite
+    // refuses `DROP COLUMN` for a column named in a constraint it cannot remove
+    // — so it is asserted rather than assumed: a future column added here with a
+    // reference that outlives it would fail this rather than fail a deployment.
+    expect((database.prepare("PRAGMA foreign_key_list(digest_schedules)")
+      .all() as Array<{ table: string; from: string }>)
+      .map((key) => `${key.from} -> ${key.table}`).sort()).toEqual([
+        "user_id -> users",
+        "workspace_id -> workspaces",
+      ]);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
+  it("gives the ordinary sidebar list a recency index it can seek rather than filter", () => {
+    const database = migrateFreshDatabase();
+    // The list seeks `(workspace_id, last_activity_at DESC)` and then walks, so
+    // on the shared index every ordinary listing steps over each digest row
+    // newer than the last row it returns — and those accumulate one per
+    // occurrence. A partial index is only usable when the query's WHERE implies
+    // its predicate, so this asserts the exact clause the query states.
+    const planFor = (predicate: string): string =>
+      (database.prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT w.id FROM workstreams w
+          WHERE w.workspace_id = 'ws' AND w.archived_at IS NULL AND ${predicate}
+          ORDER BY w.last_activity_at DESC LIMIT 25`,
+      ).all() as Array<{ detail: string }>).map((row) => row.detail).join("\n");
+
+    expect(planFor("w.system_kind IS NULL")).toContain("workstreams_sidebar_recency_ordinary_idx");
+    expect(planFor("w.system_kind IS NULL")).not.toContain("SCAN");
+    // A listing that asks for machinery has no `system_kind` predicate at all —
+    // it asks for everything and pages — so it keeps the general index rather
+    // than reaching one it could never imply.
+    expect(planFor("1 = 1")).toContain("workstreams_sidebar_recency_idx");
+    expect(planFor("1 = 1")).not.toContain("SCAN");
+    database.close();
+  });
+
+  it("retires the artifact message type while leaving the table for the old Worker", () => {
+    const database = migrateDatabaseThrough("0068_digest_workstream_per_occurrence.sql");
+    database.exec(`
+      PRAGMA ignore_check_constraints = ON;
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-artifact', 'google-artifact', 'artifact@example.com', 'Artifact Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-artifact', 'Artifact', 'artifact', 'global', 'user-artifact', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-artifact', 'workspace-artifact', 'Launch', 'Ship it', 'ad_hoc',
+              'user-artifact', 'idle', 3, '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO artifacts
+        (id, workspace_id, workstream_id, artifact_type, title, content_ref, preview_text,
+         status, metadata_json, created_at, updated_at)
+      VALUES ('artifact-legacy', 'workspace-artifact', 'workstream-artifact', 'markdown',
+              'Launch brief', 'global/workspace-artifact/artifacts/artifact-legacy.txt',
+              'A summary.', 'complete', '{}', '2026-01-01', '2026-01-01');
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, message_type, text_content,
+         sequence_number, created_at)
+      VALUES ('message-artifact', 'workspace-artifact', 'workstream-artifact', 'agent',
+              'artifact', 'Launch brief', 1, '2026-01-01');
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, message_type, text_content,
+         sequence_number, created_at)
+      VALUES ('message-text', 'workspace-artifact', 'workstream-artifact', 'agent',
+              'text', 'Here is the brief.', 2, '2026-01-01');
+      PRAGMA ignore_check_constraints = OFF;
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0069_retire_artifact_messages.sql", import.meta.url),
+      "utf8",
+    ));
+
+    // The table stays until a later release. The deploy job migrates both
+    // regions before it deploys either Worker, and the Worker still live at
+    // that moment reads `artifacts` on every `GET /workstreams/:id/context`.
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'artifacts'",
+    ).get()).toEqual({ name: "artifacts" });
+    expect(database.prepare(
+      "SELECT id FROM artifacts WHERE id = 'artifact-legacy'",
+    ).get()).toEqual({ id: "artifact-legacy" });
+    expect(database.prepare(
+      "SELECT id FROM messages WHERE id = 'message-artifact'",
+    ).get()).toBeUndefined();
+    // Only the retired type goes. A gap in `sequence_number` is expected, and
+    // the surrounding transcript has to survive it.
+    expect(database.prepare(
+      "SELECT id, sequence_number FROM messages WHERE workstream_id = 'workstream-artifact'",
+    ).all()).toEqual([{ id: "message-text", sequence_number: 2 }]);
+
+    expect(() => database.exec(`
+      PRAGMA ignore_check_constraints = ON;
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, message_type, text_content,
+         sequence_number, created_at)
+      VALUES ('message-artifact-new', 'workspace-artifact', 'workstream-artifact', 'agent',
+              'artifact', 'Back again', 3, '2026-01-01');
+    `)).toThrow(/have been removed/u);
+    expect(() => database.exec(`
+      PRAGMA ignore_check_constraints = ON;
+      UPDATE messages SET message_type = 'artifact' WHERE id = 'message-text';
+    `)).toThrow(/have been removed/u);
+    // The abort is the type, not the write: an ordinary row still lands.
+    database.exec(`
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, message_type, text_content,
+         sequence_number, created_at)
+      VALUES ('message-after', 'workspace-artifact', 'workstream-artifact', 'agent',
+              'text', 'Still writing.', 4, '2026-01-01');
+    `);
+    expect(database.prepare(
+      "SELECT message_type FROM messages WHERE id = 'message-after'",
+    ).get()).toEqual({ message_type: "text" });
+    database.close();
+  });
 });
