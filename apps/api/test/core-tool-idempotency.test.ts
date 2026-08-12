@@ -63,9 +63,10 @@ function sqliteD1(database: DatabaseSync): D1Database {
 }
 
 /**
- * Enough of R2 for the tools under test to read what they wrote. It carried
- * put-recording and a timeout injector for `create_artifact`, which was the one
- * provider-key tool that wrote an object before its row; no tool here writes R2
+ * The `PAYLOADS` binding the tools under test need in order to construct, kept
+ * behaviourally honest so a read finds whatever a fixture put there. It also
+ * carried put-recording and a timeout injector for `create_artifact`, the one
+ * provider-key tool that wrote an object before its row; nothing here writes R2
  * any more, so asserting on puts would only be asserting on this class.
  */
 class MemoryBucket {

@@ -657,16 +657,20 @@ describe("boundary contracts", () => {
     })).toMatchObject({ taskType: "agent", tokenCount: 1250, toolUses: 3 });
   });
 
-  it("keeps serving an empty artifacts field to desktop builds that still require it", () => {
-    // The route parses its own response through this schema, so the default is
-    // what puts the field on the wire for a client that predates the removal.
+  it("tolerates artifacts in both directions of a rollout", () => {
+    // Old client, new server: the route parses its own response through this
+    // schema, so the default is what puts the field on the wire for a client
+    // that predates the removal and still requires it.
     expect(WorkstreamContextSchema.parse({ backgroundTasks: [] }))
       .toEqual({ artifacts: [], backgroundTasks: [] });
-    // Nothing may put one back: the compat field is empty or it is a mismatch.
+    // New client, old server: one region runs the previous Worker for part of
+    // every rollout, and that Worker still returns real rows here. Rejecting
+    // them would fail the whole response — the same breakage this field exists
+    // to prevent, one direction over.
     expect(WorkstreamContextSchema.safeParse({
-      artifacts: [{ id }],
+      artifacts: [{ id, title: "Launch brief" }],
       backgroundTasks: [],
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it("defaults invitations to members and never permits owner grants", () => {
