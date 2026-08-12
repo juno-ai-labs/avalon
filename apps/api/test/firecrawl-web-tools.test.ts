@@ -219,8 +219,9 @@ describe("Avalon Firecrawl harness tools", () => {
 
     expect(tools).not.toContain("search");
     expect(tools).not.toContain("fetch");
-    expect(tools).toContain("read");
+    expect(tools).toContain("list_resources");
     expect(tools).toContain("read_resource");
+    expect(tools).toContain("search_resource");
   });
 
   it("returns link-only search output without exposing Firecrawl credit telemetry", async () => {

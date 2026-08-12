@@ -6,11 +6,11 @@ cursor, or extracted byte an authorization grant. It owns the vocabulary and
 limits used at the model boundary; the original resource relationships remain
 the source of truth for display, scope, retention, and deletion.
 
-The subsystem is being introduced additively. The shared kind, argument, output,
-failure, cursor, and transcript-activity contracts exist now. Runtime projection
-still uses the legacy eager attachment path until the derivative and authorized
-hydration phases are deployed; this document will change in the same commits as
-those boundaries move.
+The subsystem is being introduced additively. Shared contracts, lifecycle,
+derivatives, and authorized work-stream list/read/search operations exist now.
+Runtime message projection still uses the legacy eager attachment path until
+draft-scoped hydration and durable manifests make the cutover safe; this
+document changes in the same commits as those boundaries move.
 
 ## Where the code lives
 
@@ -22,6 +22,8 @@ those boundaries move.
 | `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
 | `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives and bounded range indexes, then atomically selects their regional objects. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
+| `apps/api/src/services/workstream-resource-visibility.ts` | Applies the sidebar/list/read/search principal boundary and fingerprints the visible inventory. |
+| `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
 | `apps/api/src/services/attachment-model-content.ts` | Current upload-to-model extraction and image normalization path; it remains eager until the derivative cutover. |
 | `apps/api/src/services/integrations.ts` | Current message projection and work-stream resource-tool registration. |
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
@@ -59,15 +61,35 @@ understands attachment kind and one strict suggested read or view call, while
 discarding arbitrary provider, converter, credential, and file-authored objects.
 The presence of a suggestion never executes it automatically.
 
-### Current runtime boundary
+### Current projection boundary
 
 Message projection still calls `buildAttachmentModelParts`. It eagerly extracts
 bounded text/Office content, sends small PDFs as provider file parts, and admits
 normalized current-turn images. Historical projection is not yet a durable
-manifest, and the work-stream plugin still has its legacy index/read pair. The
-new contracts are intentionally inert until the regional derivative lifecycle
-and authorized tools can replace that behavior without making attachments
-invisible.
+manifest, and triggering non-image attachments remain eagerly projected until
+the draft-scoped tools and manifest phase makes cutover safe. Work-stream
+discovery and hydration no longer use the legacy hard-capped index/read pair.
+
+### Authorized work-stream discovery and text hydration
+
+The right sidebar, list tool, read tool, and search tool all call one visibility
+loader. It binds the work stream to its workspace and applies current note scope,
+ownership, and archive state for the execution principal. A workspace principal
+never inherits a user's private-note view. Knowledge of a resource ID or cursor
+does not bypass this query.
+
+`workstream_list_resources` returns 25 rows by default and at most 50, optionally
+filtered by one of the eight natural-language kinds. Continuations bind the
+principal, work stream, filters, size, ordering position, and a fingerprint of
+the complete visible inventory. Any membership or visibility change invalidates
+the scan rather than mixing old and new pages.
+
+`workstream_read_resource` targets 12,000 and never exceeds 24,000 UTF-16
+characters. Every result reports exact range, total, and character counts on
+both sides, with independently usable previous and next cursors.
+`workstream_search_resource` ranks the bounded term index deterministically,
+returns no more than five passages or 20,000 passage characters, and gives every
+passage a read cursor against the same derivative version.
 
 ### Regional lifecycle
 
@@ -134,6 +156,10 @@ checking offsets against the same hash and extractor version.
   objects are complete; losing a concurrent claim cannot expose either object.
 - Index offsets use JavaScript UTF-16 units and do not split surrogate pairs, so
   the later read contract and persisted index agree exactly.
+- The sidebar and agent inventory share one visibility function; adding a second
+  resource-visibility query is a contract change, not a local optimization.
+- `nextCursor: null` is the only evidence that a filtered listing is exhausted,
+  while zero characters on both sides is the only whole-resource read.
 
 ## Boundary
 
@@ -196,6 +222,11 @@ generic tool execution/receipt loop is owned by
   Markdown, semantic Office structures, page/OCR extraction, malformed and
   unsupported inputs, exact UTF-16 indexing, concurrent claims, atomic
   selection, and ready-version reuse.
+- `apps/api/test/workstream-attachment-tools.test.ts` covers more-than-fifty
+  pagination, natural-language filtering, exact two-sided read arithmetic,
+  tampering/version invalidation, bounded search, and workspace/private-note
+  equivalence. `apps/api/test/workstream-read-state.test.ts` proves the sidebar
+  uses the same boundary.
 - `packages/db/test/migrations.test.ts`,
   `apps/api/test/resource-upload.test.ts`,
   `apps/api/test/attachment-derivative-state.test.ts`, and
@@ -261,6 +292,32 @@ terms rather than duplicating attachment text. Later phases must preserve those
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Sidebar-parity discovery and bounded text hydration ship
+
+**What changed:** `workstream_list_resources` replaces the hard-capped
+`workstream_read` index, and work-stream runs can page, filter, read exact
+character ranges in either direction, and search one versioned derivative. One
+principal-aware loader now supplies both agent inventory and sidebar resources.
+
+**Why:** A model cannot inspect what it cannot completely discover, and a
+separate fifty-row tool query could silently drift from the person's Resources
+rail. Whole-file text results also recreate the context failure the derivative
+was meant to solve.
+
+**Considered and rejected:** Offset pagination without an inventory fingerprint,
+MIME filters, and a read response with only `complete`. Those respectively mix
+changed inventories, force smaller models to guess provider formats, and hide
+how much context remains on either side of a passage.
+
+**Consequences:** Every attachment dereference re-runs current visibility and
+checks the selected derivative version. Models follow list cursors until null
+for complete inventory coverage and use the explicit before/after counts for
+complete document coverage. Later compaction aggregation must call the same
+visibility loader.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Complete derivatives replace trigger-specific conversion
 

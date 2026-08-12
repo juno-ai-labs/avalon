@@ -37,11 +37,6 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Asked for a decision",
     failed: "Could not ask for a decision",
   },
-  workstream_read: {
-    started: "Reading the work stream",
-    settled: "Read the work stream",
-    failed: "Could not read the work stream",
-  },
   workstream_read_resource: {
     started: "Reading an attached resource",
     settled: "Read an attached resource",
