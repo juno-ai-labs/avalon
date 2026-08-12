@@ -50,10 +50,11 @@ migration change to these bars:
   justify the split, and escalate only if the justification is "they're related but I
   kept them separate."
 - **No numbering collision.** A new migration's prefix must be unique and strictly
-  greater than every prefix on `main` — and the repository already carries one
-  duplicate pair (`0066_activity_suggestion_feedback.sql` and
-  `0066_shared_notion_connection_routing.sql`), which is what the failure looks like:
-  two branches each grabbing the next free number in parallel. Because the runner
+  greater than every prefix on `main` — and this is not hypothetical: `0039`, `0041`,
+  `0046`, `0053`, `0056`, and `0066` are each already claimed by two files, which is
+  exactly what the failure looks like when two branches grab the next free number in
+  parallel. (`docs/pull-requests.md` and the PR template still name only the first
+  three; check the directory rather than the list.) Because the runner
   records applied files by name and applies pending ones in order, a collision or a
   late-merged lower prefix makes execution order diverge between a fresh local
   database and a hosted one that already applied a higher number. Check the highest
