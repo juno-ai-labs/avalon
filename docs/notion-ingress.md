@@ -91,6 +91,14 @@ persists the payload in its own R2.
 - **The shared host serves only its three routes.** It is a public name that
   exists because a third party demanded a single URL; the rest of the Global API
   is not part of what Notion was given.
+- **The ingress is a different host from the regional API, and a request to the
+  region's own `PUBLIC_API_BASE_URL` is never the shared ingress.** The route gate
+  is the reason the ingress gets its own name; applied to the regional API it
+  would 404 everything except the three ingress routes — which is precisely what
+  happens in development, where the ingress must name a locally reachable address.
+  `/health` stays reachable either way, so a health-only smoke check will not
+  notice. Configuring the two to the same host in production would instead
+  silently disable cross-region callbacks.
 
 ## Boundary
 
@@ -128,10 +136,17 @@ constructor seams (`completeInRegion`, `ingestInRegion`, `storeChallengeInRegion
 routing assertions. Two cases drive the real `createApp()` to prove the host gate
 and the callback wiring, not just the helpers.
 
-The trap: `isSharedNotionIngress` compares `host`, not `hostname`, because
-development points the ingress at `127.0.0.1:8787` where both regional Workers
-share a hostname. A test that asserts on hostname alone will pass while the EU
-Worker mistakenly claims to be the ingress.
+The traps, both from the same root — development has to point the ingress at a
+locally reachable address, so the ingress and the regional API stop being
+obviously different hosts:
+
+- `isSharedNotionIngress` compares `host`, not `hostname`, because both local
+  Workers are `127.0.0.1` and differ only by port. A test asserting on hostname
+  alone passes while the EU Worker mistakenly claims to be the ingress.
+- It also declines the region's own `PUBLIC_API_BASE_URL`. The case worth keeping
+  covered is the app-level one: drive `createApp()` with the ingress and the API
+  set to the same host and assert an ordinary route still answers. Asserting only
+  on `/health` proves nothing, because `/health` is on the ingress allowlist.
 
 Provider-side Notion webhook verification and normalization are covered by
 `apps/api/test/provider-webhooks.test.ts` and
@@ -156,6 +171,23 @@ before the connection is registered with Notion. Both Workers need
 [`PROVIDER_APPS.md`](PROVIDER_APPS.md).
 
 ## Changelog
+
+### 2026-08-12 — The ingress never claims the Worker's own regional API
+
+**What changed:** `isSharedNotionIngress` returns false for a request to the
+region's own `PUBLIC_API_BASE_URL`, and `sync-dev-env.mjs` points each region's
+development ingress at that region's own Worker instead of at the Global one.
+
+**Why:** The first cut defaulted development to `http://127.0.0.1:8787`, the
+local Global Worker's own address. That made every local request match the shared
+ingress, so the three-route gate applied to the entire API and 404'd everything
+but `/health`, `GET /connections/notion/callback`, and `POST /ingest/notion` —
+and `/health` being on the allowlist meant the documented smoke check still
+passed while local development was broken. GitHub, Linear, and Slack never hit
+this because nothing derives a URL from their ingress values, so they are simply
+left at production names locally; Notion's redirect URI is built from this one,
+so it has to name something reachable. Guarding on the regional host keeps that
+possible without letting the gate escape the host it was written for.
 
 ### 2026-08-12 — One public Notion connection, routed through a Global ingress
 
