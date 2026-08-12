@@ -44,6 +44,13 @@ function humanizeActivityEventType(eventType: string): string {
  * belongs in this way — **would a person who was away for a day want this read
  * back to them?** A pull request opened, yes. The eleven check runs it started,
  * no.
+ *
+ * One surface besides the digest reads this: contextual routing starts an
+ * operational type at a higher confidence bar before offering it as context
+ * (`docs/contextual-routing.md`). It is a prior only — a workspace's own
+ * acceptances overrule it, and a connector that classifies nothing as
+ * digestible is read as having drawn no line rather than as having said no —
+ * so answer the digest question here and nothing else.
  */
 export interface ConnectorActivityTypePartition {
   /** Read back to a person in their digest. */

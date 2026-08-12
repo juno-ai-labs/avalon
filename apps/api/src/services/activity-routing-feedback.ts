@@ -52,8 +52,37 @@ const EVENT_TYPE_WINDOW_MS = 90 * 24 * 60 * 60_000;
  */
 const EVENT_TYPE_SAMPLE_MINIMUM = 4;
 
+/**
+ * Distinct people whose dismissals it takes to turn an event type off for the
+ * whole workspace.
+ *
+ * A card sits in a shared transcript and anybody may resolve it, so a
+ * workspace-wide decision made on one person's clicking is a decision one
+ * person made for everybody. Corroboration is the cheapest guard; note that a
+ * deleted user's dismissals stop corroborating, because `resolved_by_user_id`
+ * is nulled on delete and `COUNT(DISTINCT …)` skips nulls. That fails toward
+ * the maximum floor rather than toward suppression, which is the safe side.
+ */
+const EVENT_TYPE_SUPPRESSION_DISMISSERS = 2;
+
 /** The floor an event type with no usable history is held to. */
 export const BASE_CONFIDENCE_FLOOR = 0.8;
+
+/**
+ * The floor for an event type its own connector put on the operational side of
+ * a line it actually drew.
+ *
+ * A prior, not a veto. `digestible` answers "should this be read back to
+ * somebody on a schedule", and three different noes are spelled the same way:
+ * *not news* (a check run finishing), *would render badly in a digest* (the
+ * generic webhook, whose payload Avalon cannot parse), and *too many events per
+ * piece of news* (Drive's change feed reporting every save). Only the first says
+ * anything about whether the activity is relevant to a work stream — a Google
+ * Doc being edited is prime context and a poor digest line — so the declaration
+ * raises the bar rather than closing the door, and the workspace's own record
+ * overrules it in either direction once there is one.
+ */
+export const OPERATIONAL_CONFIDENCE_FLOOR = 0.9;
 
 /**
  * The highest floor an accept rate may raise the bar to.
@@ -84,6 +113,8 @@ export interface SuggestionAdmission {
   confidenceFloor: number;
   accepted: number;
   dismissed: number;
+  /** Distinct people whose dismissals are behind `dismissed`. */
+  dismissers: number;
 }
 
 /**
@@ -94,10 +125,15 @@ export interface SuggestionAdmission {
  * workspace that finds review requests useful and check runs useless is the
  * normal case, and a single workspace-wide rate would average the two into a
  * number that describes neither.
+ *
+ * `declaredFloor` is where the type starts, from its connector's own
+ * declaration. Observed resolutions replace it rather than adding to it — in
+ * both directions — because a workspace that has accepted a type it was told is
+ * machinery has said something the manifest cannot know.
  */
 export async function suggestionAdmission(
   env: Env,
-  input: { workspaceId: string; provider: string; eventType: string },
+  input: { workspaceId: string; provider: string; eventType: string; declaredFloor: number },
   now: Date = new Date(),
 ): Promise<SuggestionAdmission> {
   const since = new Date(now.getTime() - EVENT_TYPE_WINDOW_MS).toISOString();
@@ -107,7 +143,8 @@ export async function suggestionAdmission(
   // first would read most of it.
   const row = await env.DB.prepare(
     `SELECT COALESCE(SUM(CASE WHEN s.status = 'accepted' THEN 1 ELSE 0 END), 0) AS accepted,
-            COALESCE(SUM(CASE WHEN s.status = 'dismissed' THEN 1 ELSE 0 END), 0) AS dismissed
+            COALESCE(SUM(CASE WHEN s.status = 'dismissed' THEN 1 ELSE 0 END), 0) AS dismissed,
+            COUNT(DISTINCT CASE WHEN s.status = 'dismissed' THEN s.resolved_by_user_id END) AS dismissers
        FROM activity_suggestions s
        JOIN activities a ON a.id = s.activity_id
       WHERE s.workspace_id = ?1
@@ -118,31 +155,44 @@ export async function suggestionAdmission(
   ).bind(input.workspaceId, since, input.provider, input.eventType).first<{
     accepted: number;
     dismissed: number;
+    dismissers: number;
   }>();
 
   const accepted = Number(row?.accepted ?? 0);
   const dismissed = Number(row?.dismissed ?? 0);
+  const dismissers = Number(row?.dismissers ?? 0);
   const resolved = accepted + dismissed;
   if (resolved < EVENT_TYPE_SAMPLE_MINIMUM) {
-    return { suppressed: false, confidenceFloor: BASE_CONFIDENCE_FLOOR, accepted, dismissed };
+    return { suppressed: false, confidenceFloor: input.declaredFloor, accepted, dismissed, dismissers };
   }
-  // Never once useful, with enough decisions behind it to mean something. The
-  // model's confidence is not evidence against this: it is the same model that
-  // scored every one of the dismissed suggestions highly enough to create them.
   if (accepted === 0) {
-    return { suppressed: true, confidenceFloor: MAXIMUM_CONFIDENCE_FLOOR, accepted, dismissed };
+    // Never once useful, with enough decisions behind it to mean something —
+    // but turning a type off for everybody is a workspace-wide act, and one
+    // person clearing four cards in an afternoon is as likely to be somebody
+    // tidying a transcript they had already dealt with elsewhere. One person's
+    // dismissals raise the bar to its maximum; it takes a second person's
+    // agreement to close the door, and until then the type can still earn the
+    // acceptance that would reopen it.
+    return {
+      suppressed: dismissers >= EVENT_TYPE_SUPPRESSION_DISMISSERS,
+      confidenceFloor: MAXIMUM_CONFIDENCE_FLOOR,
+      accepted,
+      dismissed,
+      dismissers,
+    };
   }
   const acceptRate = accepted / resolved;
   return {
     suppressed: false,
-    // Linear between the two floors, so a type that is usually right keeps
-    // today's bar and one that is usually wrong has to be nearly certain. A
-    // step would put a cliff somewhere the data does not have one.
+    // Linear between the two floors, so a type that is usually right keeps the
+    // base bar and one that is usually wrong has to be nearly certain. A step
+    // would put a cliff somewhere the data does not have one.
     confidenceFloor: Math.min(
       MAXIMUM_CONFIDENCE_FLOOR,
       BASE_CONFIDENCE_FLOOR + (MAXIMUM_CONFIDENCE_FLOOR - BASE_CONFIDENCE_FLOOR) * (1 - acceptRate),
     ),
     accepted,
     dismissed,
+    dismissers,
   };
 }
