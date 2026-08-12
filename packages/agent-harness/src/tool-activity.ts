@@ -47,11 +47,6 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Read an attached resource",
     failed: "Could not read an attached resource",
   },
-  workstream_create_artifact: {
-    started: "Creating an artifact",
-    settled: "Created an artifact",
-    failed: "Could not create an artifact",
-  },
   memory_search: {
     started: "Searching memory",
     settled: "Searched memory",
@@ -141,6 +136,17 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     started: "Loading a plugin",
     settled: "Loaded a plugin",
     failed: "Could not load a plugin",
+  },
+
+  // Retired tools. A row is worded from its stored `tool_name` every time it is
+  // read, so an entry deleted with its tool takes the wording of every row that
+  // tool ever wrote with it — they fall through to the humanized wire name,
+  // which is the raw-name fallback this module exists to prevent. Entries here
+  // outlive their tools and are removed only when the rows are.
+  workstream_create_artifact: {
+    started: "Creating an artifact",
+    settled: "Created an artifact",
+    failed: "Could not create an artifact",
   },
 };
 

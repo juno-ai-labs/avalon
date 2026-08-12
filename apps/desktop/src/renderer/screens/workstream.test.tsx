@@ -45,7 +45,6 @@ const headerWorkstream: WorkstreamDetail = {
   viewers: [],
   resources: [],
   connections: [],
-  artifacts: [],
   backgroundTasks: [],
   automationRuns: [],
 };

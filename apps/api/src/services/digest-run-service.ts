@@ -270,7 +270,7 @@ function digestWorkstreamTitle(plannedFor: string, timezone: string): string {
  * The hidden work stream one digest occurrence executes in.
  *
  * The agent loop is work-stream shaped end to end — transcript, compaction, tool
- * invocations, artifacts and the realtime room all key off `workstream_id` — so
+ * invocations and the realtime room all key off `workstream_id` — so
  * running the *normal* loop rather than a bespoke one means having a work
  * stream. `system_kind` keeps it out of every listing surface.
  *
@@ -429,6 +429,8 @@ export function renderDigestBrief(
   const brief = [
     `You are writing the scheduled digest for ${schedule.user_name} in the ${schedule.workspace_name} workspace.`,
     `Their timezone is ${schedule.timezone}. Everything below happened since their last digest and is already filtered to what they are allowed to see.`,
+    "",
+    "Your final message in this run is the digest, and its text is mailed verbatim. There is nowhere else to put it: do not summarize what you wrote, do not report that you wrote it, and do not close with a sentence about the task. If your last message is anything but the digest itself, that is what they receive instead of it.",
     "",
     "Write the digest as Markdown addressed to them. It is rendered into an email, so structure is what makes it readable:",
     "",
