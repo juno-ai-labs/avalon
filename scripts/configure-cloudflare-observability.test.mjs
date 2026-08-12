@@ -11,7 +11,7 @@ import {
 } from "./configure-cloudflare-observability.mjs";
 
 test("saved views cover both regional APIs and every documented failure mode", () => {
-  assert.equal(SAVED_QUERY_DEFINITIONS.length, 6);
+  assert.equal(SAVED_QUERY_DEFINITIONS.length, 8);
   assert.deepEqual(
     SAVED_QUERY_DEFINITIONS.map((definition) => definition.name),
     [
@@ -21,6 +21,8 @@ test("saved views cover both regional APIs and every documented failure mode", (
       "Avalon · Degraded connector workflows",
       "Avalon · Rejected model calls",
       "Avalon · Broken response contracts",
+      "Avalon · Harness run outcomes",
+      "Avalon · Slow root runs",
     ],
   );
   for (const definition of SAVED_QUERY_DEFINITIONS) {

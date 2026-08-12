@@ -8,6 +8,11 @@ import { workstreamRoomName } from "../durable-objects/workstream-room";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import {
+  HarnessRunMetricsSchema,
+  recordHarnessRunObservation,
+} from "../observability/harness-run-observability";
+import { logWarn } from "../observability/logger";
+import {
   claimHarnessAttempt,
   reapStaleHarnessRuns,
   terminalizeQueuedHarnessRun,
@@ -15,7 +20,6 @@ import {
   type AttemptIdentity,
   type AttemptLease,
 } from "../runtime/harness-run-runtime";
-import { logWarn } from "../observability/logger";
 import { runWorkstreamHarness } from "../services/integrations";
 import {
   hyperSightBlockRunFromRow,
@@ -27,10 +31,12 @@ import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
+import { workstreamWorkflowStepTimeout } from "../services/workstream-run-policy";
 
 const HarnessWorkflowOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
   messageId: z.string().uuid().optional(),
+  metrics: HarnessRunMetricsSchema.optional(),
   error: z
     .object({ code: z.string(), message: z.string() })
     .optional(),
@@ -209,7 +215,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         "run-authorized-bind-loop",
         {
           retries: { limit: 1, delay: "1 second", backoff: "constant" },
-          timeout: "5 minutes",
+          timeout: workstreamWorkflowStepTimeout(),
         },
         async () => HarnessWorkflowOutcomeSchema.parse(await runWorkstreamHarness(
           this.env,
@@ -245,6 +251,21 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       });
       if (!hyperSightRun) await this.finalizeAutomation(input, effectiveOutcome, lease!);
     });
+
+    const runMetrics = outcome.metrics;
+    if (runMetrics) {
+      await step.do("record-terminal-harness-observation", async () => {
+        recordHarnessRunObservation(this.env, {
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          harnessRunId: input.harnessRunId,
+          source: hyperSightRun ? "hypersight" : "workstream",
+          status: effectiveOutcome.status,
+          ...(effectiveOutcome.error ? { failureCode: effectiveOutcome.error.code } : {}),
+          metrics: runMetrics,
+        });
+      });
+    }
 
     if (hyperSightRun) {
       await step.do("publish-hypersight-terminal", async () => {

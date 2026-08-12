@@ -86,6 +86,10 @@ import {
   FirecrawlClient,
   FirecrawlError,
 } from "../lib/firecrawl";
+import {
+  summarizeHarnessRun,
+  type HarnessRunMetrics,
+} from "../observability/harness-run-observability";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
@@ -145,6 +149,7 @@ import {
   createMemoryTableTools,
   loadAutomationMemoryTableContext,
 } from "./memory-table-service";
+import { workstreamRunLimits } from "./workstream-run-policy";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -248,6 +253,7 @@ type WorkstreamHarnessResult = {
   status: "completed" | "needs_input" | "failed" | "stopped";
   messageId?: string;
   error?: { code: string; message: string };
+  metrics?: HarnessRunMetrics;
 };
 
 type WorkstreamContextCompaction = {
@@ -1475,6 +1481,7 @@ export async function runWorkstreamHarness(
   onEvent?: (event: Record<string, unknown>) => void | Promise<void>,
   runtime?: { lease: AttemptLease },
 ): Promise<WorkstreamHarnessResult> {
+  const runStartedAtMs = Date.now();
   const database = createDatabase(env.DB);
   const workstream = await database.workstreams.get(input.workspaceId, input.workstreamId);
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
@@ -1607,11 +1614,9 @@ export async function runWorkstreamHarness(
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
   let suppressInferencePayloadLogging = false;
-  const runLimits = {
-    maxIterations: numericEnv(env, "HARNESS_MAX_MODEL_ITERATIONS", 8),
-    maxToolCalls: numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24),
-    maxWallClockMs: numericEnv(env, "HARNESS_MAX_WALL_CLOCK_MS", 240_000),
-    maxCostCents: numericEnv(env, "HARNESS_MAX_COST_CENTS", 500),
+  const runLimits = workstreamRunLimits();
+  const runScopeLimits = {
+    ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
   };
   await persistImmutableRunScope(env.DB, input, liveness.lease, {
@@ -1643,7 +1648,7 @@ export async function runWorkstreamHarness(
     promptVersion: WORKSTREAM_PROMPT_VERSION,
     toolSurfaceHash: await stableRunToolSurfaceHash(harnessTools),
     memoryContextHash: promptContext.memoryContextHash,
-    limits: runLimits,
+    limits: runScopeLimits,
   });
   const priorHints = await loadAuthorizedActivationHints(
     env,
@@ -1757,13 +1762,10 @@ export async function runWorkstreamHarness(
         fallbackModels: modelRouting.fallbackModels,
         appUrl: env.PUBLIC_API_BASE_URL,
         appName: "Avalon",
-        maxIterations: runLimits.maxIterations,
-        maxToolCalls: runLimits.maxToolCalls,
-        maxWallClockMs: runLimits.maxWallClockMs,
+        ...runLimits,
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
-        maxCostCents: runLimits.maxCostCents,
-        maxCatalogTokens: runLimits.maxCatalogTokens,
+        maxCatalogTokens: runScopeLimits.maxCatalogTokens,
         requestEstablishmentTimeoutMs: numericEnv(env, "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS", 20_000),
         ttftTimeoutMs: numericEnv(env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
         streamIdleTimeoutMs: numericEnv(env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
@@ -2249,9 +2251,12 @@ export async function runWorkstreamHarness(
   const submitted = hyperSightRun
     ? hyperSightBlock.markdown ?? await readHyperSightBlockMarkdown(env, input, hyperSightRun.id)
     : null;
+  const finalTerminalResult = hyperSightRun
+    ? hyperSightBlockOutcome(terminalResult, submitted)
+    : terminalResult;
   if (hyperSightRun) {
     const at = nowIso();
-    const { status: blockStatus, error } = hyperSightBlockOutcome(terminalResult, submitted);
+    const { status: blockStatus, error } = finalTerminalResult;
     const result = await env.DB.prepare(
       `UPDATE hypersight_block_runs
           SET status = ?, markdown = ?, error_json = ?, completed_at = ?
@@ -2301,8 +2306,10 @@ export async function runWorkstreamHarness(
     liveness.lease.attemptId,
     liveness.lease.owner,
   ).run();
-  if (!hyperSightRun) return terminalResult;
-  return hyperSightBlockOutcome(terminalResult, submitted);
+  return {
+    ...finalTerminalResult,
+    metrics: summarizeHarnessRun(outcome, Date.now() - runStartedAtMs),
+  };
 }
 
 /**
