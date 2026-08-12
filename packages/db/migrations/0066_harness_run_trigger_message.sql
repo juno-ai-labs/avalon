@@ -17,6 +17,13 @@
 -- perform: a retry of a legacy run sees more context than it strictly needs
 -- rather than silently less.
 --
+-- The id stored here is the run's trigger, which is a narrower claim than "the
+-- transcript it saw". A retry keeps this identity — it is what admits a
+-- suggested-work brief or an inbound email to the model — and widens the window
+-- separately through `transcriptFenceMessageId`, so a message posted after the
+-- failed run is still visible to the replay. Reading this column as the whole
+-- window is the mistake to avoid.
+--
 -- ON DELETE SET NULL rather than CASCADE: a deleted message must not take the
 -- record of a run with it.
 ALTER TABLE harness_runs ADD COLUMN trigger_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL;

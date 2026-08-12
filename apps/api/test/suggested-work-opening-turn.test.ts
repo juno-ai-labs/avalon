@@ -32,9 +32,16 @@ const displayPrompt = "Chase the failed release and prepare the fix";
 const executionPrompt = "Trace the failed release, identify the owner, and prepare the fix.";
 const databases: DatabaseSync[] = [];
 
+// `clearAllMocks` and not `restoreAllMocks`: restoring wipes the
+// implementations the module factory above installed, and only the ones a test
+// happens to read back would be noticed. Today `publishWorkstreamEvent` and
+// `classifyWorkstreamMessage` are merely awaited, so returning `undefined`
+// passes — but a `.catch()` on either would make every test after the first
+// fail in a way that looks nothing like its cause. Clearing keeps the
+// implementations and drops only the recorded calls. The explicit reset below
+// is for a queued `mockImplementationOnce`, which clearing does not consume.
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
-  vi.restoreAllMocks();
   vi.clearAllMocks();
   vi.mocked(startWorkstreamWorkflow).mockReset();
   vi.mocked(startWorkstreamWorkflow).mockImplementation(async () => "unused");
@@ -131,12 +138,63 @@ describe("starting a suggestion", () => {
 
     expect(lastWorkflowInput()?.triggerMessageId).toBeNull();
   });
+
+  it("lets a retry see a message posted after the run it is retrying", async () => {
+    // The trigger is also the transcript's upper bound, so keeping the failed
+    // run's trigger without moving the bound would replay the request while
+    // hiding the correction somebody posted because it failed. That message
+    // starts no run of its own when the work stream has other participants and
+    // it was not addressed to the agent, so nothing else brings it into view.
+    const database = seededDatabase();
+    const service = new WorkstreamService(environment(database), auth(), () => undefined);
+    const created = await service.createFromOpportunity(opportunityRequest());
+    failLatestRun(database, created.workstream.id);
+    const correction = insertHumanMessage(database, created.workstream.id, "You used the wrong account");
+
+    await service.retry(created.workstream.id);
+
+    // Identity stays the brief — it is what admits the brief to the model at
+    // all — while the window now reaches the correction.
+    expect(lastWorkflowInput()?.triggerMessageId).toBe(created.messageId);
+    expect(lastWorkflowInput()?.transcriptFenceMessageId).toBe(correction);
+  });
+
+  it("does not fence a retry behind a message that is already the trigger", async () => {
+    const database = seededDatabase();
+    const service = new WorkstreamService(environment(database), auth(), () => undefined);
+    const created = await service.createFromOpportunity(opportunityRequest());
+    failLatestRun(database, created.workstream.id);
+
+    await service.retry(created.workstream.id);
+
+    expect(lastWorkflowInput()?.transcriptFenceMessageId).toBeUndefined();
+  });
 });
 
-function lastWorkflowInput(): { triggerMessageId: string | null } | undefined {
+function lastWorkflowInput(): {
+  triggerMessageId: string | null;
+  transcriptFenceMessageId?: string | null;
+} | undefined {
   return vi.mocked(startWorkstreamWorkflow).mock.calls
-    .map((call) => call[1] as { triggerMessageId: string | null })
+    .map((call) => call[1] as { triggerMessageId: string | null; transcriptFenceMessageId?: string | null })
     .at(-1);
+}
+
+/** A later human turn, of the kind that starts no run of its own. */
+function insertHumanMessage(database: DatabaseSync, workstreamId: string, text: string): string {
+  const id = "00000000-0000-7000-8000-0000000000c1";
+  const sequence = Number((database.prepare(
+    "SELECT next_sequence_number AS next FROM workstreams WHERE id = ?",
+  ).get(workstreamId) as { next: number }).next);
+  database.prepare(
+    `INSERT INTO messages
+     (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+      message_type, text_content, sequence_number, created_at)
+     VALUES (?, ?, ?, ?, 'human', ?, 'text', ?, ?, ?)`,
+  ).run(id, `client-${id}`, workspaceId, workstreamId, selectorId, text, sequence, at);
+  database.prepare("UPDATE workstreams SET next_sequence_number = ? WHERE id = ?")
+    .run(sequence + 1, workstreamId);
+  return id;
 }
 
 function opportunityRequest() {

@@ -26,6 +26,8 @@ A launch is never split across the response that asked for it. The `harness_runs
 
 A run records the message it was triggered by in `harness_runs.trigger_message_id`, because that id is what fences the transcript the run may see — everything up to and including the trigger, nothing after. `retry` creates a new run for a failed one and inherits that stored id rather than reconstructing it: a run with no message behind it (a scheduled wakeup, an activity, an automation run with no opening message, a HyperSight block) stores NULL and replays the whole available transcript, and so does a row written before the column existed. A scheduled digest is not one of these — it appends its brief and launches against that message — and neither is an automation run that has one. Reconstructing the trigger as "the latest human message" — which is what `retry` did before the column existed — is right only while nothing has happened since, and fences finished work out of the replay whenever it has.
 
+The trigger's two jobs come apart on a retry, and `transcriptFenceMessageId` is what separates them. As *identity* the trigger is what admits a suggested-work brief or an inbound email to the model at all; as *bound* it is the newest message the run may see. A retry has to keep the first and move the second, or replaying the failed run would hide anything said since it failed — including the correction a teammate posts *because* it failed, which starts no run of its own when the work stream has other participants and the message was not for the agent. The fence is resolved once at launch and travels in the durable workflow input, never re-read at projection time: an attempt that replays must read the same window it read the first time. Absent, the trigger is the bound, which is correct for every run a message started.
+
 After admission Avalon validates the execution principal and persists an immutable, canonically hashed run scope: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A replay must reproduce that scope. Connections installed or expanded later cannot enter it; subsequent membership, ownership, grant, health, and policy checks may only remove authority.
 
 ## Context and stable prompts
@@ -246,7 +248,10 @@ reason for any of it.
 **What changed:** `harness_runs` gained `trigger_message_id`, written by
 `launchWorkstreamHarness` and by the automation run insert that builds its row
 by hand. `retry` reads it from the run it is retrying instead of resolving "the
-latest human message in this work stream".
+latest human message in this work stream", and passes the newest message in the
+work stream as `transcriptFenceMessageId` — a new optional field on
+`WorkstreamWorkflowInput` that moves the transcript's upper bound without moving
+the trigger's identity.
 
 **Why:** The trigger fences the transcript — the projection loads up to and
 including it and nothing after — so guessing it wrong does not merely mislabel a
@@ -260,11 +265,28 @@ Making the suggested-work brief a human turn is what exposed this; the same
 shape was already reachable for any work stream whose last human message was
 older than the run being retried.
 
+Storing the trigger alone then broke the same thing from the other side, and
+review caught it before it landed. Because the trigger is *also* the bound, a
+retry pinned to the failed run's trigger could no longer see anything posted
+after that run started — and the message most likely to be sitting there is a
+correction explaining why the run was wrong, which `sendMessage` stores without
+launching a run whenever the work stream has other participants and the message
+was not addressed to the agent. Retrying right after a teammate says "you used
+the wrong account" would have re-issued the identical failing request. Splitting
+identity from bound is what makes both cases right at once.
+
 **Considered and rejected:** *Deriving the trigger from the failed run's
 `origin`* — no migration, but `manual_retry` has no origin of its own to derive
 from, so retrying a retry has to walk backwards through runs to find the last
 one that meant something. *Leaving `retry` alone and special-casing
 suggested-work work streams* — the wrong shape was reachable without them.
+*Resolving the retry's trigger as `MAX(stored trigger, newest human message)`* —
+one line, and it restores the correction case, but the brief is admitted to the
+model only *as* the trigger, so moving the trigger forward silently drops it
+from the run that most needs it. That trade is what the fence/identity split
+exists to avoid. *Reading the newest message at projection time instead of
+storing a fence* — an attempt that replays would read a different window than
+the one it read first, which is the whole reason the transcript is fenced.
 
 **Consequences:** NULL keeps its existing meaning, which is what makes the
 absent backfill safe: a legacy row replays the whole transcript rather than
@@ -272,7 +294,9 @@ silently less of it. Any new path that inserts a `harness_runs` row directly
 rather than through `launchWorkstreamHarness` has to write this column too, or
 its runs become unretryable-in-place in the same quiet way — the sub-agent,
 hypersight, activity, and scheduler inserts leave it NULL correctly, because
-none of them has a trigger message.
+none of them has a trigger message. And anything else that ever wants to pin a
+run to a trigger without narrowing what it can see now has the field to say so;
+the fence is clamped to the trigger, so it can only ever widen the window.
 
 ### 2026-08-11 — The automation architect narrates its research
 
