@@ -43,11 +43,27 @@ healthRoutes.get("/", async (c) => {
     assertEnvContract(c.env);
     checks.envContract = { ok: true, message: "satisfied" };
   } catch (error) {
+    // A contract failure is the only expected result. Anything else is a defect
+    // in the assertion itself, and folding it into a 503 health response would
+    // hide it behind a plausible answer — `assertEnvContractOrLog` rethrows for
+    // the same reason.
+    if (!(error instanceof EnvContractError)) throw error;
+    // Every other fallible check here logs; this one is the most severe the
+    // probe can report and, because `/health` is the request the entrypoint
+    // never asserts on, it is the only path where `env_contract_failed` would
+    // otherwise never be written for the fault that stops the Worker.
+    logEvent(c, "error", "env_contract_failed", { keys: error.keys });
     checks.envContract = {
       ok: false,
-      message: error instanceof EnvContractError
+      // The key list is the diagnosis, and it is also an inventory of which
+      // secrets this Worker is currently running without — including the
+      // signing and encryption keys — on a route with no authentication,
+      // mounted ahead of `protectedApi`. So the names go to the log an operator
+      // can read, and reach the body only outside a deployed environment, the
+      // same narrowing the Durable Object and registry checks above apply.
+      message: c.env.APP_ENV === "development"
         ? `the Worker cannot serve requests: ${error.keys.join(", ")}`
-        : "the Worker cannot serve requests",
+        : "the Worker cannot serve requests; see the env_contract_failed log",
     };
   }
   try {
@@ -188,7 +204,16 @@ healthRoutes.get("/", async (c) => {
   if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);
   return c.json(
-    HealthResponseSchema.parse({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }),
+    // Absent, not merely malformed. Both fields are part of the contract this
+    // route now reports on, and `z.string()` rejects `undefined` — so without a
+    // fallback a Worker missing either one answers a bare 500 instead of the
+    // 503 naming it, which is the failure this route exists to describe.
+    HealthResponseSchema.parse({
+      ok,
+      region: c.env.AVALON_REGION ?? "unset",
+      environment: c.env.APP_ENV ?? "unset",
+      checks,
+    }),
     ok ? 200 : 503,
   );
 });

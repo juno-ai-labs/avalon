@@ -131,10 +131,37 @@ describe("the health probe under a misconfigured environment", () => {
       expect(body.checks[name]).toEqual({ ok: true, message: expect.any(String) });
     }
     expect(body.checks.envContract?.ok).toBe(false);
+    // Development names them, which is the half of the disclosure split that
+    // reaches a body at all.
+    expect(body.checks.envContract?.message).toContain("SESSION_SIGNING_KEY is missing");
     // So this can only be the contract. Drop `envContract` from the required
     // set and both of these become 200/true — which is the bug being fixed.
     expect(body.ok).toBe(false);
     expect(response.status).toBe(503);
+  });
+
+  it("still answers when the region and environment are absent entirely", async () => {
+    // The two fields the response itself is built from are contract fields
+    // too. `z.string()` rejects `undefined`, so without a fallback a Worker
+    // missing either one throws inside the parse and answers a bare 500 —
+    // failing on two of the very violations this route exists to report.
+    const app = new Hono<HonoAppEnv>();
+    app.route("/health", healthRoutes);
+    const response = await app.request("/health", undefined, {
+      DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
+      PAYLOADS: { list: async () => ({ objects: [] }) },
+    } as unknown as Env);
+
+    expect(response.status).toBe(503);
+    const body = await response.json() as {
+      region: string;
+      environment: string;
+      checks: { envContract?: { ok: boolean; message: string } };
+    };
+    expect(body.region).toBe("unset");
+    expect(body.environment).toBe("unset");
+    expect(body.checks.envContract?.ok).toBe(false);
+    expect(body.checks.envContract?.message).toContain("the Worker cannot serve requests");
   });
 
   it("fails on the one fault that stops every other route, and names its keys", async () => {
@@ -159,9 +186,12 @@ describe("the health probe under a misconfigured environment", () => {
     };
     expect(body.ok).toBe(false);
     expect(body.checks.envContract.ok).toBe(false);
-    expect(body.checks.envContract.message).toContain("the Worker cannot serve requests");
-    // The Global-only login pair is required here, so the probe names it.
-    expect(body.checks.envContract.message).toContain("GOOGLE_OAUTH_CLIENT_ID is missing");
+    // Production withholds the key list: it is an inventory of the secrets this
+    // Worker is running without, and nothing authenticates this route. The
+    // names go to `env_contract_failed` instead.
+    expect(body.checks.envContract.message)
+      .toBe("the Worker cannot serve requests; see the env_contract_failed log");
+    expect(body.checks.envContract.message).not.toContain("GOOGLE_OAUTH_CLIENT_ID");
   });
 
   it("reports the Global-only login secrets as required in every region but EU", async () => {
