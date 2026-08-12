@@ -317,6 +317,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onSignOut={() => {
           void signOut().catch(() => undefined);
         }}
+        hasMoreWorkstreams={workstreams.hasMore}
+        loadingMoreWorkstreams={workstreams.isFetchingMore}
+        onLoadMoreWorkstreams={workstreams.fetchMore}
         workspace={workspace}
         workstreams={workstreams.data ?? []}
       />

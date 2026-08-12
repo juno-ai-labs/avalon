@@ -76,6 +76,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
+import { markWorkflowInstanceCreated } from "../lib/workflow-launch-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
@@ -1301,9 +1302,33 @@ export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflo
   } catch (error) {
     // Workflow IDs are deterministic, so a duplicate means an earlier attempt
     // reached Cloudflare but failed before Avalon could persist the launch.
+    // Either way an instance now exists, which is what the marker below reports.
     if (!workflowAlreadyExists(error)) throw error;
   }
   const launchedAt = nowIso();
+  try {
+    return await recordWorkflowLaunch(env, input, instanceId, launchedAt);
+  } catch (error) {
+    // The instance is live and this failure is only about recording it, so the
+    // caller must not undo the work the run is already executing against. Said
+    // on the error rather than left to be inferred from a row: the run row is
+    // marked `failed` by the caller's own handler moments later, so its status
+    // cannot answer "is something still running here".
+    throw markWorkflowInstanceCreated(
+      new Error(
+        `Recording the workflow launch failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        { cause: error },
+      ),
+    );
+  }
+}
+
+async function recordWorkflowLaunch(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  instanceId: string,
+  launchedAt: string,
+): Promise<string> {
   await env.DB.batch([
     env.DB.prepare(
       `UPDATE harness_runs

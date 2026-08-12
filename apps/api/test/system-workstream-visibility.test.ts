@@ -5,10 +5,15 @@ import type { AuthContext, Env } from "../src/env";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
+/** Which work streams the list asked to have an inbound address reserved for. */
+const backfilled: string[] = [];
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
     async ensureWorkstreamAddress() { return { emailAddress: null }; }
-    async backfillWorkstreamAddresses() { return []; }
+    async backfillWorkstreamAddresses(rows: Array<{ workstreamId: string }>) {
+      backfilled.push(...rows.map((row) => row.workstreamId));
+      return [];
+    }
   },
 }));
 
@@ -21,6 +26,7 @@ const HIDDEN = "00000000-0000-7000-8000-000000000005";
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  backfilled.length = 0;
 });
 
 function serviceFor(database: DatabaseSync, userId: string): WorkstreamService {
@@ -91,9 +97,9 @@ describe("system work streams", () => {
   it("never costs ordinary work streams their place on the page", async () => {
     const database = seededDatabase();
     // A digest work stream per occurrence, all of them newer than the ordinary
-    // one. On recency alone they would take the whole page, and the sidebar
-    // asks for one page and discards the cursor — so the work somebody is
-    // actually doing would fall off the only list a debugging account requests.
+    // one. On recency alone they would take the whole first page, leaving the
+    // work somebody is actually doing behind a scroll through months of
+    // machinery.
     const occurrences = Array.from({ length: 40 }, (unused, index) =>
       `('00000000-0000-7000-8000-0000000100${String(index).padStart(2, "0")}', '${WORKSPACE}',
         'Digest · 12 Aug · ${String(index).padStart(2, "0")}:00 AM', '',
@@ -121,6 +127,35 @@ describe("system work streams", () => {
     // And the cursor still describes the ordinary rows, so paging past them is
     // unaffected by however much machinery was appended.
     expect(page.nextCursor).toBeNull();
+  });
+
+  it("never reserves an inbound mailbox for machinery", async () => {
+    const database = seededDatabase();
+    const occurrence = '00000000-0000-7000-8000-000000000009';
+    // Inserted exactly as `createDigestWorkstream` writes one — no address, no
+    // route — rather than blanking the seeded row, which a trigger refuses:
+    // work-stream addresses are immutable once assigned.
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+         next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
+      VALUES ('${occurrence}', '${WORKSPACE}', 'Digest · 12 Aug · 9:00 AM', '', 'ad_hoc',
+              '${OWNER}', 'idle', 1, '2026-01-04T00:00:00.000Z', '2026-01-04T00:00:00.000Z',
+              '2026-01-04T00:00:00.000Z', 'digest', 'personal');
+      INSERT INTO workstream_participants
+        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+      VALUES ('${occurrence}', '${OWNER}', '${OWNER}', 'creator', '2026-01-04T00:00:00.000Z');
+    `);
+
+    const page = await serviceFor(database, OWNER).list(20, undefined, true);
+
+    expect(page.items.map((item) => item.id)).toContain(occurrence);
+
+    // Reserving one activates a route in the global registry and nothing
+    // reclaims it, so with a work stream per digest occurrence this would mint
+    // a permanent mailbox per occurrence — and make a run emailable.
+    expect(backfilled).toEqual([]);
+    expect(page.items.find((item) => item.id === occurrence)?.emailAddress ?? null).toBeNull();
   });
 
   it("stays invisible to another member even when they ask for system rows", async () => {
