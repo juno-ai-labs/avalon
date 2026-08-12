@@ -1415,7 +1415,7 @@ describe("agent harness", () => {
       .toBe("This run could not fit safely in the selected model context");
   });
 
-  it("compacts after 80% using OpenRouter usage and carries the summary into the next turn", async () => {
+  it("compacts after 80% into a single synthetic message carrying only the summary", async () => {
     const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
     const responses = [
       streamResponse([{
@@ -1470,20 +1470,95 @@ describe("agent harness", () => {
       contextWindowTokens: 100,
       summary: "The record was read; return the result.",
       messages: [
-        expect.objectContaining({ role: "user", content: "Do the work" }),
-        expect.objectContaining({ role: "assistant", content: expect.stringContaining("Compacted context summary") }),
-        expect.objectContaining({ role: "user", content: expect.stringContaining("Compaction checkpoint") }),
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining("The record was read; return the result."),
+        }),
       ],
     }));
+    // The compacted transcript is the stable system prompt plus one freshly
+    // synthesized message. Nothing from the original conversation — not the
+    // first user message, not the assistant turns — is carried verbatim, so a
+    // stale trigger window cannot be pinned across compactions.
     expect(requestBodies[2]?.messages.map((message) => message.role)).toEqual([
       "system",
       "user",
-      "assistant",
-      "user",
     ]);
+    expect(requestBodies[2]?.messages[1]).toMatchObject({
+      role: "user",
+      content: expect.stringContaining("Compaction checkpoint"),
+    });
+    expect(JSON.stringify(requestBodies[2]?.messages)).not.toContain("Do the work");
     expect(events.filter((event) => event.type === "stream_delta").map((event) =>
       event.type === "stream_delta" ? event.delta : ""
     ).join("")).toBe("done");
+  });
+
+  it("replaces the previous checkpoint instead of accumulating one per compaction", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-read-1", "read_once")] },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "First summary of the work." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 5 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-read-2", "read_once")] },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 90, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "Second summary of the work." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 91, completion_tokens: 5 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 24, completion_tokens: 2 },
+      }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const persist = vi.fn();
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
+      compaction: {
+        contextWindowTokensByModel: { "test/model": 100 },
+        persist,
+      },
+    })).resolves.toMatchObject({ status: "completed", content: "done" });
+
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist.mock.calls[1]?.[0]).toMatchObject({
+      summary: "Second summary of the work.",
+      messages: [expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("Second summary of the work."),
+      })],
+    });
+    // The second compaction summarizes the first checkpoint rather than
+    // stacking on top of it, so the live context stays two messages wide and
+    // no earlier checkpoint text is replayed verbatim.
+    const finalTurn = requestBodies[4];
+    expect(finalTurn?.messages.map((message) => message.role)).toEqual(["system", "user"]);
+    expect(JSON.stringify(finalTurn?.messages)).toContain("Second summary of the work.");
+    expect(JSON.stringify(finalTurn?.messages)).not.toContain("First summary of the work.");
   });
 
   it("does not compact at exactly 80%", async () => {
