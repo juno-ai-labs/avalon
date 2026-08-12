@@ -2,11 +2,13 @@
 
 A Notion public connection accepts exactly one OAuth redirect URI and delivers
 its webhook subscription to exactly one URL, for every Notion workspace that
-installs it. Avalon runs two regional Workers. This module is how one connection
-serves both: `notion.with-avalon.com` is bound to the Global Worker, answers the
-one callback and the one webhook, and hands each to the region that owns the
-Avalon workspace involved. Read it before changing Notion authorization, Notion
-webhook ingestion, or anything that assumes a connector's callback is regional —
+installs it. Avalon's personal connection to Notion's official hosted MCP server
+also uses the connector's registered redirect. Avalon runs two regional Workers.
+This module is how both authorization modes, and the workspace mode's webhook,
+serve both: `notion.with-avalon.com` is bound to the Global Worker, answers the
+callback and webhook, and hands each to the region that owns the Avalon
+workspace involved. Read it before changing Notion authorization, Notion webhook
+ingestion, or anything that assumes a connector's callback is regional —
 Notion's is not.
 
 Everything else about the Notion connector — its tools, capabilities, and page
@@ -26,6 +28,7 @@ boundary this module bends is defined in
 | `apps/api/src/lib/connector-registry.ts` | Builds the connector's `redirectUri` from the shared host in **both** regions. |
 | `packages/db/migrations/0066_shared_notion_connection_routing.sql` | The `notion_workspace_routes` directory, Global only. |
 | `packages/db/migrations/0071_notion_webhook_setup_nonces.sql` | Short-lived setup nonces and their link to the active encrypted verification token. |
+| `packages/db/migrations/0072_notion_connection_scope_split.sql` | Converts historical public-integration bot grants from personal to workspace scope without touching hosted-MCP rows. |
 | `scripts/notion-webhook-setup.mjs` | Prepares a one-time subscription URL and copies the captured token without server-side plaintext output. |
 
 ## How it works
@@ -38,18 +41,33 @@ region that started the attempt. The authorize URL carries the shared redirect
 URI, so Notion returns the user to `notion.with-avalon.com` whichever region they
 belong to.
 
+The connection scope chooses the provider protocol after that shared routing.
+Any member may start a personal authorization: the adapter discovers the hosted
+MCP authorization server, dynamically registers Avalon, and uses authorization
+code plus PKCE. An Avalon owner or administrator may start the workspace public
+integration authorization. Notion's required `owner=user` parameter on that
+public flow identifies the approver, while the installed bot and selected pages
+are the shared grant; the provider parameter never changes Avalon's workspace
+scope.
+
 The callback route reads the region from the state prefix and calls
 `ConnectionService.completeProvider` — locally when the prefix says `global`,
 over `EU_NOTION_BRIDGE` when it says `eu`. The token exchange, the credential
 encryption, and the connection row all happen in the owning region; Global holds
-none of them. Denials and failures route the same way, so a user who cancels in
-EU still lands on their own region's attempt record.
+none of them. The workspace connection row has `scope = 'workspace'` and no user owner;
+the approving Notion user's identity stays in encrypted credential metadata.
+Denials and failures route the same way, so a user who cancels in EU still lands
+on their own region's attempt record.
 
-On success the owning region registers `notion_workspace_routes` through
+On a successful **workspace** connection the owning region registers `notion_workspace_routes` through
 `NotionRoutingService.registerConnection`, which writes locally in Global and
 calls `GLOBAL_NOTION_ROUTER` from EU. A registration failure marks the connection
 `error` with `notion_route_registration_failed` rather than leaving a connection
 whose events can never be delivered.
+
+A successful personal MCP connection stores its DCR client and rotating tokens
+only in the owning region and creates no webhook route. The official MCP server
+is an on-demand user tool plane, not the public integration's bot subscription.
 
 ### Webhooks
 
@@ -89,7 +107,9 @@ expected integration ID, then routed on the `workspace_id` the verified envelope
 carries. Exact bytes go to each active region for that Notion workspace; the
 regional `ProviderWebhookService` verifies the signature again before it
 normalizes, matches the delivery against its own connections by bot ID, and
-persists the payload in its own R2.
+persists the payload in its own R2. Normalized activity retains the workspace
+connection scope and has no target user; the OAuth approver is not an activity
+audience.
 
 ## Invariants
 
@@ -119,6 +139,12 @@ persists the payload in its own R2.
   That column holds the installed bot, and a delivery names the workspace it
   happened in. The bot ID is what the *regional* service matches connections on,
   through `accessible_by`.
+- **The workspace OAuth approver is not the execution principal.** Notion's public flow is
+  user-authorized, but the returned bot performs API actions and Avalon stores
+  the grant as a workspace connection. Deriving Avalon scope from the provider's
+  `owner=user` field would turn an approval record into an authorization rule.
+  The personal MCP flow is deliberately different: its Avalon owner is the
+  member who completed that personal authorization.
 - **The shared host serves only its three routes.** It is a public name that
   exists because a third party demanded a single URL; the rest of the Global API
   is not part of what Notion was given.
@@ -165,6 +191,7 @@ otherwise.
 | Challenge replication to EU fails | The whole setup request fails. Re-sending the verification from Notion's dashboard is idempotent: Global recognizes the same token and replicates again. |
 | Webhook body over `PROVIDER_WEBHOOK_MAX_BYTES` (2 MB default) | `payload_too_large`, before parsing. |
 | `GLOBAL_NOTION_ROUTER` unavailable from EU at connect time | Connection is marked `error` with `notion_route_registration_failed`; a connection test re-registers it. |
+| Personal MCP connection succeeds while the route bridge is unavailable | The connection still succeeds; personal MCP has no webhook route to register. |
 
 ## Testing
 
@@ -225,6 +252,62 @@ subscription handshake. Registration steps are in
 [`provider-apps.md`](provider-apps.md).
 
 ## Changelog
+
+### 2026-08-12 — Existing bot routes retain their migrated connection
+
+**What changed:** Historical Notion public-integration rows are migrated from
+personal to workspace scope when they do not carry `notion.personal.mcp`.
+
+**Why:** Those bot grants already registered their Notion workspace route under
+the earlier connection flow. Treating them as the new personal MCP credential
+dialect broke refresh without creating a replacement route or authorization.
+
+**Considered and rejected:** Re-registering every route in the migration. EU D1
+cannot write the Global route directory from SQL, and the routes already exist
+from original authorization; connection tests remain the repair path for a
+missing route.
+
+**Consequences:** The connection ID and existing Global route remain stable
+while its regional authorization semantics become workspace-scoped. New
+personal MCP connections create no route and are excluded by capability.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — The shared callback also admits personal hosted MCP OAuth
+
+**What changed:** Notion's region-routed callback now completes either a
+personal official-MCP authorization or a workspace public-integration install.
+Only the workspace branch creates, tests, or retires a webhook route.
+
+**Why:** The two connections need different provider identities but Notion is
+still one Avalon connector with one registered callback. Treating every Notion
+success as a bot install would put a personal MCP workspace ID into the Global
+webhook directory and make route health part of a connection that receives no
+webhooks.
+
+**Considered and rejected:** A second regional callback dedicated to MCP. It
+would duplicate the routing and state-consumption path without changing where
+the encrypted DCR client and tokens must land.
+
+**Consequences:** Authorization routing is shared, while webhook routing remains
+workspace-only. Any future Notion connection mode must declare explicitly
+whether it creates provider ingress rather than inheriting that behavior from
+the provider name.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — User-approved OAuth installs one workspace bot grant
+
+**What changed:** The regional connection created after a routed Notion callback
+is now workspace-scoped with no Avalon user owner. The approving Notion identity
+remains encrypted credential metadata, webhook activity has no personal target,
+and only an Avalon owner or administrator may start or complete the flow.
+
+**Why:** Notion requires a user to approve public OAuth but returns an installed
+bot that authors later API mutations. The ingress previously carried that grant
+into a personal row and therefore routed shared workspace events to the approver.
+Making `owner=user` an Avalon scope decision was rejected: it is provider
+protocol metadata, while Avalon's workspace principal is the authority boundary.
 
 ### 2026-08-12 — Subscription setup becomes one-time and locally retrievable
 

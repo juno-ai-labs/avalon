@@ -540,6 +540,35 @@ describe("connector tools selected for harness runs", () => {
     });
   });
 
+  it("inherits tools committed into a deferred parent plugin after activation", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+    ]);
+    const parentInput = workflowInput();
+    const runtimeEnv = env(database);
+    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
+    const pluginId = `connection:${WORKSPACE_CONNECTION_ID}`;
+    const parentPlugin = parentTools.plugins.find((plugin) => plugin.canonicalId === pluginId);
+    if (!parentPlugin) throw new Error("expected workspace plugin");
+    const discoveredReadTool = parentPlugin.tools.find((tool) => tool.definition.name === "drive.search");
+    if (!discoveredReadTool) throw new Error("expected a read tool fixture");
+    const hostArray = parentPlugin.tools;
+    hostArray.splice(0);
+
+    expect(__integrationTesting.installDynamicPluginTools(hostArray, [discoveredReadTool])).toBe(hostArray);
+    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
+      env: runtimeEnv,
+      parentInput,
+      childInput: childWorkflowInput(parentInput),
+      parentHarnessTools: parentTools,
+      selectedPluginIds: [pluginId],
+      assertChildOwned: async () => undefined,
+    });
+
+    expect(childTools.plugins.find((plugin) => plugin.canonicalId === pluginId)
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["drive.search"]);
+  });
+
   it("does not give an inbound-email child an outbound Firecrawl channel", async () => {
     const database = new ToolSelectionDatabase([]);
     const parentInput = workflowInput();

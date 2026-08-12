@@ -1209,11 +1209,36 @@ async function createPluginRuntime(
   skills: SkillRuntime;
 }> {
   let registry: ToolRegistry<BindPlugin> | null = null;
+  const dynamicPluginSources = new Map(
+    (input.plugins ?? [])
+      .filter((plugin) => plugin.loadTools)
+      .map((plugin) => [plugin.canonicalId, plugin] as const),
+  );
+  const loadedDynamicPlugins = new Set<string>();
+  const dynamicPluginLoads = new Map<string, Promise<void>>();
   const eligibleIds = new Set<string>();
   const canonicalByModelId = new Map<string, string>();
   const requireRegistry = (): ToolRegistry<BindPlugin> => {
     if (!registry) throw new Error("Plugin registry is not initialized");
     return registry;
+  };
+  const ensurePluginTools = async (id: string): Promise<void> => {
+    const source = dynamicPluginSources.get(id);
+    if (!source || loadedDynamicPlugins.has(id)) return;
+    const existing = dynamicPluginLoads.get(id);
+    if (existing) return existing;
+    const pending = (async () => {
+      const tools = await source.loadTools!();
+      if (!tools.length) throw new Error(`Dynamic plugin ${id} exposed no usable tools`);
+      requireRegistry().register(toBindPlugin({ ...source, tools }));
+      loadedDynamicPlugins.add(id);
+    })();
+    dynamicPluginLoads.set(id, pending);
+    try {
+      await pending;
+    } finally {
+      dynamicPluginLoads.delete(id);
+    }
   };
   // A host that supplies no port authorizes everything it made eligible.
   const reauthorize = async (
@@ -1274,6 +1299,14 @@ async function createPluginRuntime(
           return {
             output: { error: "plugin_authorization_unavailable" },
             summary: "Plugin authorization could not be verified",
+          };
+        }
+        try {
+          await ensurePluginTools(id);
+        } catch {
+          return {
+            output: { error: "plugin_tools_unavailable" },
+            summary: "Plugin tools could not be loaded",
           };
         }
         await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
@@ -1385,7 +1418,13 @@ async function createPluginRuntime(
       // Bind's rehydration vocabulary has one drop reason, so a denial and an
       // unverifiable plugin both land on `unreachable`; the host distinguishes
       // them in its own log when it produces the verdict.
-      return await reauthorize(id, "activation") === "authorized" ? true : "unreachable";
+      if (await reauthorize(id, "activation") !== "authorized") return "unreachable";
+      try {
+        await ensurePluginTools(id);
+        return true;
+      } catch {
+        return "unreachable";
+      }
     },
   });
   for (const id of restored.active) active.add(id);

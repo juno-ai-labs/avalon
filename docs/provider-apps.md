@@ -190,6 +190,18 @@ surface model, event matrix, and that gate.
 
 ### Notion public connection
 
+The personal Notion connection uses the official hosted MCP server at
+`https://mcp.notion.com/mcp`. It requires no second Notion Developer portal app,
+client ID, client secret, webhook, or checked-in provider manifest. Avalon uses
+MCP OAuth discovery and dynamic client registration for each authorization,
+with PKCE and the shared
+`https://notion.with-avalon.com/connections/notion/callback` redirect. The DCR
+client and rotating credentials are encrypted in the member's owning region.
+The public connection below is still required for the separate workspace bot
+and webhook mode. The API registers personal Notion even when the public client
+ID and secret are absent; attempting workspace authorization in that state fails
+with an explicit configuration error rather than hiding personal MCP too.
+
 Create **one** public Notion connection in the Notion Developer portal, serving
 both regions:
 
@@ -199,6 +211,13 @@ both regions:
 | Installation scope | Any workspace |
 | Redirect URI | `https://notion.with-avalon.com/connections/notion/callback` |
 | Webhook URL | Run `pnpm notion:webhook:prepare` and paste the URL it copies |
+
+An Avalon workspace owner or administrator initiates installation. The authorize
+URL deliberately uses Notion's `owner=user`, because public OAuth needs a human
+approver and page picker; do not change that parameter to model Avalon scope.
+Avalon stores the resulting bot grant as a workspace connection with no user
+owner. The approver's Notion identity remains encrypted metadata, while edits and
+comments made through the API appear as the Avalon integration bot.
 
 A Notion connection accepts one redirect URI and delivers to one webhook URL, and
 it has no way to know which region a Notion workspace belongs to — so unlike Linear
@@ -373,6 +392,64 @@ repository. What can be:
   what this document says. A change here that is not exercised there is unverified.
 
 ## Changelog
+
+### 2026-08-12 — Public Notion credentials gate only workspace mode
+
+**What changed:** The Notion adapter is registered with its shared redirect URI
+even when no public-integration client ID and secret are configured. Workspace
+OAuth operations require the pair at the point of use.
+
+**Why:** Personal hosted MCP dynamically registers its own OAuth client and does
+not use the public integration. Gating the whole adapter on workspace secrets
+made the supposedly independent personal mode unavailable.
+
+**Considered and rejected:** Registering two Notion provider types. They share
+one product card and callback router, and splitting them would duplicate the
+connection lifecycle merely to express optional configuration.
+
+**Consequences:** Personal-only environments can connect Notion. The workspace
+button may still be shown by the connector-level catalog, but starting it returns
+the specific missing-public-integration error; production environments offering
+workspace mode continue storing the same credentials in both Workers.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Personal Notion MCP needs no developer registration
+
+**What changed:** The registration guide now separates the hosted personal MCP
+flow, which discovers and dynamically registers an OAuth client, from the one
+public integration used for workspace bot installs and webhooks.
+
+**Why:** Reusing `NOTION_OAUTH_CLIENT_ID` and its public-integration secret for a
+personal MCP connection would couple two provider identities and bypass the
+official server's advertised authorization flow. Asking operators to create a
+second static registration would duplicate something the server creates through
+DCR.
+
+**Considered and rejected:** A separate callback or a second manually registered
+Notion connection for personal use. Neither changes the regional destination of
+the token, and both add provider configuration the standards-based flow does not
+need.
+
+**Consequences:** The existing Notion secrets remain required in both Workers
+for workspace mode only. A personal MCP outage or DCR change is diagnosed at
+the hosted server boundary, not by editing the public connection dashboard.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Notion's user approver installs an Avalon workspace bot
+
+**What changed:** The registration guide now distinguishes Notion's required
+`owner=user` OAuth parameter from Avalon's workspace-only connection scope. An
+Avalon owner or administrator authorizes the selected pages, the regional row has
+no user owner, and the installed bot is the provider actor.
+
+**Why:** The provider dashboard and token response name the approving user, which
+made it tempting to classify the connection as personal. That classification was
+wrong for the product surface: the integration bot authors mutations and the
+selected pages are intended as a shared Avalon workspace capability. Changing the
+provider parameter was rejected because it would break the public OAuth contract
+rather than change Avalon's authorization model.
 
 ### 2026-08-12 — Notion setup secrets leave the webhook URL and Cloudflare logs
 

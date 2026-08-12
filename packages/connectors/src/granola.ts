@@ -1,5 +1,4 @@
 import type { ToolDefinition } from "@avalon/contracts";
-import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
   isProviderCredentialRejection,
@@ -7,13 +6,13 @@ import {
   isRevokedGrantError,
   jsonHeaders,
   providerJson,
-  readResponseBytes,
   recordArray,
   sha256Hex,
   stringValue,
   withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
+import { createHostedMcpPassthrough } from "./hosted-mcp";
 import {
   assertPrincipalAccess,
   ConnectorError,
@@ -26,7 +25,6 @@ import {
 
 const DEFAULT_API_BASE_URL = "https://public-api.granola.ai";
 const DEFAULT_MCP_URL = "https://mcp.granola.ai/mcp";
-const MCP_PROTOCOL_VERSION = "2025-06-18";
 const GRANOLA_RESPONSE_BYTES = 2_000_000;
 const GRANOLA_TEXT_CHARS = 80_000;
 const GRANOLA_ARRAY_ITEMS = 500;
@@ -229,83 +227,6 @@ const listFoldersInput = z.object({
   cursor: z.string().max(4_096).nullable().optional(),
   pageSize: z.number().int().min(1).max(30).optional(),
 }).strict();
-const personalMcpInputSchemas = {
-  query_granola_meetings: z.object({ query: z.string().min(1).max(8_000) }).passthrough(),
-  list_meeting_folders: z.object({}).passthrough(),
-  list_meetings: z.record(z.string(), z.unknown()),
-  get_meetings: z.object({ meetingIds: z.array(z.string().min(1).max(200)).min(1).max(25) }).passthrough(),
-  get_meeting_transcript: z.object({ meetingId: z.string().min(1).max(200) }).passthrough(),
-  get_account_info: z.object({}).strict(),
-} as const;
-export type GranolaMcpTool = keyof typeof personalMcpInputSchemas;
-
-const ResourceMetadataSchema = z.object({
-  resource: HttpsUrlSchema,
-  authorization_servers: z.array(HttpsUrlSchema).min(1),
-  scopes_supported: z.array(z.string()).optional(),
-}).passthrough();
-const AuthorizationServerMetadataSchema = z.object({
-  authorization_endpoint: HttpsUrlSchema,
-  token_endpoint: HttpsUrlSchema,
-  registration_endpoint: HttpsUrlSchema,
-  code_challenge_methods_supported: z.array(z.string()).optional(),
-  token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
-}).passthrough();
-const ClientRegistrationSchema = z.object({
-  client_id: z.string().min(1),
-  client_secret: z.string().min(1).optional(),
-  token_endpoint_auth_method: z.enum(["none", "client_secret_post", "client_secret_basic"]).optional(),
-}).passthrough();
-const TokenResponseSchema = z.object({
-  access_token: z.string().min(1),
-  token_type: z.string().min(1).default("Bearer"),
-  expires_in: z.number().int().positive().optional(),
-  refresh_token: z.string().min(1).optional(),
-  scope: z.string().optional(),
-}).passthrough();
-
-interface GranolaOAuthState extends Record<string, unknown> {
-  resource: string;
-  authorizationEndpoint: string;
-  tokenEndpoint: string;
-  clientId: string;
-  clientSecret?: string;
-  tokenEndpointAuthMethod: "none" | "client_secret_post" | "client_secret_basic";
-  scope: string;
-}
-
-const McpToolSchema = z.object({
-  name: z.string().min(1),
-  inputSchema: z.object({
-    type: z.literal("object"),
-    properties: z.record(z.string(), z.unknown()).optional(),
-    required: z.array(z.string()).optional(),
-    additionalProperties: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
-  }).passthrough(),
-}).passthrough();
-const McpInitializeResultSchema = z.object({
-  protocolVersion: z.string().min(1),
-  capabilities: z.record(z.string(), z.unknown()),
-  serverInfo: z.object({ name: z.string().min(1), version: z.string().optional() }).passthrough(),
-}).passthrough();
-const McpToolsListResultSchema = z.object({
-  tools: z.array(McpToolSchema),
-  nextCursor: z.string().min(1).optional(),
-}).passthrough();
-const McpCallToolResultSchema = z.object({
-  content: z.array(z.record(z.string(), z.unknown())).default([]),
-  structuredContent: z.record(z.string(), z.unknown()).optional(),
-  isError: z.boolean().optional(),
-}).passthrough();
-const McpJsonRpcResponseSchema = z.object({
-  jsonrpc: z.literal("2.0"),
-  id: z.union([z.string(), z.number().int()]),
-  result: z.unknown().optional(),
-  error: z.object({ code: z.number().int(), message: z.string(), data: z.unknown().optional() }).optional(),
-}).refine((value) => (value.result === undefined) !== (value.error === undefined), {
-  message: "JSON-RPC response must contain exactly one of result or error",
-});
-
 export interface GranolaWebhookEndpoint {
   id: string;
   signingSecret: string;
@@ -433,78 +354,38 @@ export async function verifyGranolaWebhook(input: {
   return { ...event, signatureHash: await sha256Hex(`${input.webhookId}.${input.webhookTimestamp}.${input.webhookSignature}`) };
 }
 
-export async function callGranolaMcp(
-  token: string,
-  requestedTool: GranolaMcpTool,
-  args: Record<string, unknown>,
-  signal: AbortSignal,
-  fetcher: FetchLike = fetch,
-  mcpUrl = DEFAULT_MCP_URL,
-): Promise<Record<string, unknown>> {
-  let sessionId: string | null = null;
-  try {
-    const initialized = await mcpRequest(fetcher, mcpUrl, token, {
-      jsonrpc: "2.0",
-      id: crypto.randomUUID(),
-      method: "initialize",
-      params: {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: "Avalon", version: "1.18.0" },
-      },
-    }, signal, null, false);
-    sessionId = initialized.sessionId;
-    const initialization = McpInitializeResultSchema.parse(initialized.result);
-    if (initialization.protocolVersion !== MCP_PROTOCOL_VERSION) {
-      throw new ConnectorError("unsupported_capability", `Granola MCP negotiated unsupported protocol ${initialization.protocolVersion}`);
-    }
-    await mcpNotification(fetcher, mcpUrl, token, {
-      jsonrpc: "2.0",
-      method: "notifications/initialized",
-    }, signal, sessionId);
-
-    const tools: z.infer<typeof McpToolSchema>[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-    do {
-      const listed = await mcpRequest(fetcher, mcpUrl, token, {
-        jsonrpc: "2.0",
-        id: crypto.randomUUID(),
-        method: "tools/list",
-        params: cursor ? { cursor } : {},
-      }, signal, sessionId, true);
-      const page = McpToolsListResultSchema.parse(listed.result);
-      tools.push(...page.tools);
-      cursor = page.nextCursor;
-      if (cursor && seenCursors.has(cursor)) {
-        throw new ConnectorError("provider_error", "Granola MCP returned a repeated pagination cursor");
-      }
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-
-    const tool = tools.find((candidate) => candidate.name === requestedTool);
-    if (!tool) throw new ConnectorError("unsupported_capability", `Granola MCP does not expose ${requestedTool}`);
-    const adaptedArgs = adaptMcpArguments(tool, args);
-    const called = await mcpRequest(fetcher, mcpUrl, token, {
-      jsonrpc: "2.0",
-      id: crypto.randomUUID(),
-      method: "tools/call",
-      params: { name: tool.name, arguments: adaptedArgs },
-    }, signal, sessionId, true);
-    const result = McpCallToolResultSchema.parse(called.result);
-    if (result.isError) throw new ConnectorError("provider_error", `Granola MCP tool ${requestedTool} failed`, result);
-    return result;
-  } finally {
-    if (sessionId) await closeMcpSession(fetcher, mcpUrl, token, sessionId);
-  }
-}
-
 export function createGranolaConnector(config: GranolaConnectorConfig): ConnectorAdapter {
   const fetcher = config.fetch ?? fetch;
   const now = config.now ?? Date.now;
   const apiBaseUrl = normalizeHttpsOrigin(config.apiBaseUrl ?? DEFAULT_API_BASE_URL);
   const mcpUrl = normalizeHttpsUrl(config.mcpUrl ?? DEFAULT_MCP_URL);
   const redirectUri = new URL(config.redirectUri).toString();
+  const personalMcp = createHostedMcpPassthrough({
+    providerName: "Granola",
+    serverUrl: mcpUrl,
+    capabilities: [GranolaCapabilities.personalRead],
+    connectionScopes: ["personal"],
+    capabilityForConnection: () => GranolaCapabilities.personalRead,
+    withAccessToken: (connection, signal, operation) => reauthorizingMcpCall(
+      connection,
+      signal,
+      operation,
+    ),
+    oauth: {
+      redirectUri,
+      allowedAuthorizationOrigins: [new URL(mcpUrl).origin, "https://mcp-auth.granola.ai"],
+      additionalScopes: ["offline_access"],
+    },
+    fetch: fetcher,
+    maxResponseBytes: GRANOLA_RESPONSE_BYTES,
+  });
+  const hostedAuthorization = personalMcp.authorization;
+  const callPersonalMcp = async (
+    accessToken: string,
+    name: string,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<unknown> => (await personalMcp.call(accessToken, name, args, signal)).output;
 
   async function refreshCredentials(
     connection: ConnectorConnectionContext,
@@ -518,7 +399,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         reason: "missing_refresh_token",
       });
     }
-    const authorizationState = parseOAuthState({
+    const authorizationState = hostedAuthorization.parseState({
       resource: connection.credentials.resource,
       authorizationEndpoint: "https://unused.invalid",
       tokenEndpoint: connection.credentials.tokenEndpoint,
@@ -532,23 +413,17 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
     // arrives as an `unauthorized` carrying no verdict, and a revoked Granola
     // grant leaves the row `healthy` forever: every run drops the plugin, no
     // member is ever prompted, and only a manual connection test recovers it.
-    let token: z.infer<typeof TokenResponseSchema>;
-    try {
-      token = await exchangeToken(fetcher, authorizationState, {
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        resource: authorizationState.resource,
-      }, signal);
-    } catch (error) {
-      if (isRevokedGrantError(error)) {
-        throw new ConnectorError("unauthorized", "The Granola authorization is no longer valid", {
-          status: isRecord(error.details) ? error.details.status : 401,
-          reconnectRequired: true,
-          reason: "refresh_rejected",
-        });
-      }
-      throw error;
-    }
+    const token = await hostedAuthorization.refresh(authorizationState, refreshToken, signal)
+      .catch((error: unknown) => {
+        if (isRevokedGrantError(error)) {
+          throw new ConnectorError("unauthorized", "The Granola authorization is no longer valid", {
+            status: isRecord(error.details) ? error.details.status : 401,
+            reconnectRequired: true,
+            reason: "refresh_rejected",
+          });
+        }
+        throw error;
+      });
     return {
       ...connection.credentials,
       accessToken: token.access_token,
@@ -589,6 +464,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
 
   return {
     agentPlugin: GranolaAgentPluginDescriptor,
+    dynamicAgentTools: personalMcp.dynamicAgentTools,
     webhookActivity: {
       async verify(input) {
         if (!input.verificationSecret) {
@@ -691,82 +567,10 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       if (input.connectionScope !== "personal") {
         throw new ConnectorError("invalid_configuration", "Granola MCP OAuth is available only for personal connections");
       }
-      const resourceMetadataUrl = new URL("/.well-known/oauth-protected-resource", mcpUrl);
-      const resourceMetadata = ResourceMetadataSchema.parse(await providerJson(
-        fetcher,
-        resourceMetadataUrl,
-        { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) },
-        GRANOLA_RESPONSE_BYTES,
-      ));
-      if (resourceMetadata.resource !== mcpUrl) {
-        throw new ConnectorError("invalid_configuration", "Granola MCP advertised an unexpected protected resource");
-      }
-      const authorizationServer = normalizeHttpsOrigin(resourceMetadata.authorization_servers[0]!);
-      const metadata = AuthorizationServerMetadataSchema.parse(await providerJson(
-        fetcher,
-        new URL("/.well-known/oauth-authorization-server", authorizationServer),
-        { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) },
-        GRANOLA_RESPONSE_BYTES,
-      ));
-      if (!(metadata.code_challenge_methods_supported ?? []).includes("S256")) {
-        throw new ConnectorError("unsupported_capability", "Granola OAuth does not advertise PKCE S256 support");
-      }
-      const supportedAuthMethods = metadata.token_endpoint_auth_methods_supported ?? ["none"];
-      const tokenEndpointAuthMethod = supportedAuthMethods.includes("client_secret_post")
-        ? "client_secret_post" as const
-        : supportedAuthMethods.includes("none")
-          ? "none" as const
-          : supportedAuthMethods.includes("client_secret_basic")
-            ? "client_secret_basic" as const
-            : null;
-      if (!tokenEndpointAuthMethod) {
-        throw new ConnectorError("unsupported_capability", "Granola OAuth does not advertise a supported token authentication method");
-      }
-      const requestedScopes = [...new Set([
-        ...(resourceMetadata.scopes_supported ?? ["mcp"]),
-        "offline_access",
-      ])];
-      const registered = ClientRegistrationSchema.parse(await providerJson(
-        fetcher,
-        normalizeHttpsUrl(metadata.registration_endpoint),
-        {
-          method: "POST",
-          headers: { accept: "application/json", "content-type": "application/json" },
-          body: JSON.stringify({
-            client_name: "Avalon",
-            redirect_uris: [redirectUri],
-            grant_types: ["authorization_code", "refresh_token"],
-            response_types: ["code"],
-            token_endpoint_auth_method: tokenEndpointAuthMethod,
-            scope: requestedScopes.join(" "),
-          }),
-          signal: AbortSignal.timeout(15_000),
-        },
-        GRANOLA_RESPONSE_BYTES,
-      ));
-      const registeredAuthMethod = registered.token_endpoint_auth_method ?? tokenEndpointAuthMethod;
-      if (registeredAuthMethod !== "none" && !registered.client_secret) {
-        throw new ConnectorError("provider_error", "Granola OAuth client registration did not return its client secret");
-      }
-      const authorizationState: GranolaOAuthState = {
-        resource: resourceMetadata.resource,
-        authorizationEndpoint: normalizeHttpsUrl(metadata.authorization_endpoint),
-        tokenEndpoint: normalizeHttpsUrl(metadata.token_endpoint),
-        clientId: registered.client_id,
-        ...(registered.client_secret ? { clientSecret: registered.client_secret } : {}),
-        tokenEndpointAuthMethod: registeredAuthMethod,
-        scope: requestedScopes.join(" "),
-      };
-      const url = new URL(authorizationState.authorizationEndpoint);
-      url.searchParams.set("response_type", "code");
-      url.searchParams.set("client_id", authorizationState.clientId);
-      url.searchParams.set("redirect_uri", redirectUri);
-      url.searchParams.set("state", String(input.state ?? ""));
-      url.searchParams.set("code_challenge", String(input.codeChallenge ?? ""));
-      url.searchParams.set("code_challenge_method", "S256");
-      url.searchParams.set("resource", authorizationState.resource);
-      url.searchParams.set("scope", authorizationState.scope);
-      return { url: url.toString(), state: authorizationState };
+      return hostedAuthorization.begin({
+        state: String(input.state ?? ""),
+        codeChallenge: String(input.codeChallenge ?? ""),
+      });
     },
     async handleAuthorizationCallback(input) {
       if (input.connectionScope !== "personal") {
@@ -774,22 +578,17 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       }
       const authorizationState = await granolaOAuthCallbackStage(
         "state_validation",
-        () => parseOAuthState(input.authorizationState),
+        () => hostedAuthorization.parseState(input.authorizationState),
       );
-      const token = await granolaOAuthCallbackStage("token_exchange", () => exchangeToken(fetcher, authorizationState, {
-        grant_type: "authorization_code",
-        code: String(input.code ?? ""),
-        code_verifier: String(input.codeVerifier ?? ""),
-        redirect_uri: redirectUri,
-        resource: authorizationState.resource,
-      }, AbortSignal.timeout(15_000)));
-      const accountResult = await granolaOAuthCallbackStage("mcp_account_lookup", () => callGranolaMcp(
+      const token = await granolaOAuthCallbackStage("token_exchange", () => hostedAuthorization.exchangeCode(
+        authorizationState,
+        { code: String(input.code ?? ""), codeVerifier: String(input.codeVerifier ?? "") },
+      ));
+      const accountResult = await granolaOAuthCallbackStage("mcp_account_lookup", () => callPersonalMcp(
         token.access_token,
         "get_account_info",
         {},
         AbortSignal.timeout(15_000),
-        fetcher,
-        mcpUrl,
       ));
       const { account, providerAccountId } = await granolaOAuthCallbackStage("account_identity", async () => {
         const account = extractAccountInfo(accountResult);
@@ -837,13 +636,15 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
     },
     async executeTool(name, rawArgs, context) {
       assertPrincipalAccess(context.connection, context.principal);
+      if (context.connection.scope === "personal") {
+        return personalMcp.execute(context.connection, name, rawArgs, context.signal);
+      }
       const definition = granolaTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
         throw connectorCapabilityRefused("Granola", definition?.capability ?? name, granolaTools, context.connection.grantedScopes);
       }
-      if (context.connection.scope === "workspace") {
-        const apiKey = requireWorkspaceApiKey(context.connection);
-        if (name === "list_notes") {
+      const apiKey = requireWorkspaceApiKey(context.connection);
+      if (name === "list_notes") {
           const args = listNotesInput.parse(rawArgs);
           const output = await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/notes", {
             created_before: args.createdBefore,
@@ -854,34 +655,23 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
             page_size: args.pageSize,
           }, context.signal);
           return { output: boundGranolaValue(output), summary: "Listed Granola workspace notes" };
-        }
-        if (name === "get_note") {
+      }
+      if (name === "get_note") {
           const args = getNoteInput.parse(rawArgs);
           const output = await granolaApi(fetcher, apiBaseUrl, apiKey, `/v1/notes/${encodeURIComponent(args.noteId)}`, {
             include: args.includeTranscript ? "transcript" : null,
           }, context.signal);
           return { output: boundGranolaValue(output), summary: `Read Granola note ${args.noteId}` };
-        }
-        if (name === "list_folders") {
+      }
+      if (name === "list_folders") {
           const args = listFoldersInput.parse(rawArgs);
           const output = await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/folders", {
             cursor: args.cursor,
             page_size: args.pageSize,
           }, context.signal);
           return { output: boundGranolaValue(output), summary: "Listed Granola workspace folders" };
-        }
-        throw new ConnectorError("unsupported_capability", `Granola workspace API does not expose ${name}`);
       }
-      if (!isPersonalMcpTool(name)) {
-        throw new ConnectorError("unsupported_capability", `Granola personal MCP does not expose ${name}`);
-      }
-      const args = personalMcpInputSchemas[name].parse(rawArgs) as Record<string, unknown>;
-      const output = await reauthorizingMcpCall(
-        context.connection,
-        context.signal,
-        (token) => callGranolaMcp(token, name, args, context.signal, fetcher, mcpUrl),
-      );
-      return { output: boundGranolaValue(output), summary: `Read Granola with ${name}` };
+      throw new ConnectorError("unsupported_capability", `Granola workspace API does not expose ${name}`);
     },
     async repair(connection, signal) {
       // Granola stops delivering when its webhook endpoint is disabled, and
@@ -949,7 +739,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           const accountResult = await reauthorizingMcpCall(
             connection,
             signal,
-            (token) => callGranolaMcp(token, "get_account_info", {}, signal, fetcher, mcpUrl),
+            (token) => callPersonalMcp(token, "get_account_info", {}, signal),
           );
           const account = extractAccountInfo(accountResult);
           const digest = await sha256Hex(`${account.email.toLowerCase()}\n${account.workspaceIdentity}`);
@@ -1026,181 +816,18 @@ async function granolaApi(
   }, GRANOLA_RESPONSE_BYTES);
 }
 
-async function exchangeToken(
-  fetcher: FetchLike,
-  state: GranolaOAuthState,
-  values: Record<string, string>,
-  signal?: AbortSignal,
-): Promise<z.infer<typeof TokenResponseSchema>> {
-  const form = new URLSearchParams(values);
-  form.set("client_id", state.clientId);
-  const headers = new Headers({ accept: "application/json", "content-type": "application/x-www-form-urlencoded" });
-  if (state.tokenEndpointAuthMethod === "client_secret_post") {
-    if (!state.clientSecret) throw new ConnectorError("unauthorized", "Granola OAuth client secret is unavailable");
-    form.set("client_secret", state.clientSecret);
-  } else if (state.tokenEndpointAuthMethod === "client_secret_basic") {
-    if (!state.clientSecret) throw new ConnectorError("unauthorized", "Granola OAuth client secret is unavailable");
-    headers.set("authorization", `Basic ${base64(`${state.clientId}:${state.clientSecret}`)}`);
-  }
-  return TokenResponseSchema.parse(await providerJson(fetcher, state.tokenEndpoint, {
-    method: "POST",
-    headers,
-    body: form,
-    ...(signal ? { signal } : {}),
-  }, GRANOLA_RESPONSE_BYTES));
-}
-
-function parseOAuthState(value: unknown): GranolaOAuthState {
-  const parsed = z.object({
-    resource: HttpsUrlSchema,
-    authorizationEndpoint: HttpsUrlSchema,
-    tokenEndpoint: HttpsUrlSchema,
-    clientId: z.string().min(1),
-    clientSecret: z.string().min(1).nullable().optional(),
-    tokenEndpointAuthMethod: z.enum(["none", "client_secret_post", "client_secret_basic"]),
-    scope: z.string().min(1),
-  }).parse(value);
-  return {
-    resource: normalizeHttpsUrl(parsed.resource),
-    authorizationEndpoint: normalizeHttpsUrl(parsed.authorizationEndpoint),
-    tokenEndpoint: normalizeHttpsUrl(parsed.tokenEndpoint),
-    clientId: parsed.clientId,
-    tokenEndpointAuthMethod: parsed.tokenEndpointAuthMethod,
-    scope: parsed.scope,
-    ...(parsed.clientSecret ? { clientSecret: parsed.clientSecret } : {}),
-  };
-}
-
-async function mcpRequest(
-  fetcher: FetchLike,
-  mcpUrl: string,
-  token: string,
-  request: Record<string, unknown> & { id: string | number },
-  signal: AbortSignal,
-  sessionId: string | null,
-  initialized: boolean,
-): Promise<{ result: unknown; sessionId: string | null }> {
-  const response = await fetchMcp(fetcher, mcpUrl, token, "POST", request, signal, sessionId, initialized);
-  const payload = McpJsonRpcResponseSchema.parse(await readMcpResponse(response));
-  if (payload.id !== request.id) throw new ConnectorError("provider_error", "Granola MCP returned a mismatched JSON-RPC response id");
-  if (payload.error) throw new ConnectorError("provider_error", payload.error.message, payload.error);
-  return { result: payload.result, sessionId: response.headers.get("mcp-session-id") ?? sessionId };
-}
-
-async function mcpNotification(
-  fetcher: FetchLike,
-  mcpUrl: string,
-  token: string,
-  request: Record<string, unknown>,
-  signal: AbortSignal,
-  sessionId: string | null,
-): Promise<void> {
-  const response = await fetchMcp(fetcher, mcpUrl, token, "POST", request, signal, sessionId, true);
-  if (response.status === 202 || response.status === 204) return;
-  if (response.ok) await response.body?.cancel().catch(() => undefined);
-}
-
-async function fetchMcp(
-  fetcher: FetchLike,
-  mcpUrl: string,
-  token: string,
-  method: "POST" | "DELETE",
-  request: Record<string, unknown> | null,
-  signal: AbortSignal,
-  sessionId: string | null,
-  initialized: boolean,
-): Promise<Response> {
-  const headers = jsonHeaders(token);
-  headers.set("accept", "application/json, text/event-stream");
-  if (initialized) headers.set("mcp-protocol-version", MCP_PROTOCOL_VERSION);
-  if (sessionId) headers.set("mcp-session-id", sessionId);
-  let response: Response;
-  try {
-    response = await fetcher(mcpUrl, {
-      method,
-      headers,
-      ...(request ? { body: JSON.stringify(request) } : {}),
-      signal,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw error;
-    throw new ConnectorError("provider_error", "Granola MCP request could not be completed", error);
-  }
-  if (!response.ok) {
-    const retryAfter = response.headers.get("retry-after");
-    const retryAfterMs = retryAfter && /^\d+(?:\.\d+)?$/u.test(retryAfter.trim())
-      ? Math.max(0, Math.ceil(Number(retryAfter) * 1_000))
-      : null;
-    await response.body?.cancel().catch(() => undefined);
-    throw new ConnectorError(
-      response.status === 401 || response.status === 403 ? "unauthorized" : "provider_error",
-      `Granola MCP returned HTTP ${response.status}`,
-      { status: response.status, ...(retryAfterMs != null ? { retryAfterMs } : {}) },
-    );
-  }
-  return response;
-}
-
-async function readMcpResponse(response: Response): Promise<unknown> {
-  const bytes = await readResponseBytes(response, GRANOLA_RESPONSE_BYTES);
-  const text = new TextDecoder().decode(bytes);
-  if (!text) throw new ConnectorError("provider_error", "Granola MCP returned an empty JSON-RPC response");
-  try {
-    if (!response.headers.get("content-type")?.includes("text/event-stream")) return JSON.parse(text) as unknown;
-    const messages = text.split(/\r?\n\r?\n/u).flatMap((event) => {
-      const data = event.split(/\r?\n/u)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trim())
-        .join("\n");
-      if (!data || data === "[DONE]") return [];
-      return [JSON.parse(data) as unknown];
-    });
-    const message = messages.at(-1);
-    if (!message) throw new Error("No SSE data message");
-    return message;
-  } catch (error) {
-    throw new ConnectorError("provider_error", "Granola MCP returned malformed JSON-RPC", error);
-  }
-}
-
-async function closeMcpSession(fetcher: FetchLike, mcpUrl: string, token: string, sessionId: string): Promise<void> {
-  try {
-    await fetchMcp(fetcher, mcpUrl, token, "DELETE", null, AbortSignal.timeout(2_000), sessionId, true);
-  } catch {
-    // Session cleanup is best effort after the requested result has been received.
-  }
-}
-
-function adaptMcpArguments(tool: z.infer<typeof McpToolSchema>, args: Record<string, unknown>): Record<string, unknown> {
-  const properties = tool.inputSchema.properties ?? {};
-  const adapted: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(args)) {
-    const candidates = [key, camelToSnake(key), snakeToCamel(key)];
-    const target = candidates.find((candidate) => candidate in properties) ?? key;
-    adapted[target] = value;
-  }
-  for (const required of tool.inputSchema.required ?? []) {
-    if (!(required in adapted)) {
-      throw new ConnectorError("unsupported_capability", `Granola MCP requires argument ${required} for ${tool.name}`);
-    }
-  }
-  if (tool.inputSchema.additionalProperties === false) {
-    for (const key of Object.keys(adapted)) {
-      if (!(key in properties)) throw new ConnectorError("unsupported_capability", `Granola MCP does not accept argument ${key} for ${tool.name}`);
-    }
-  }
-  return adapted;
-}
-
-function extractAccountInfo(result: Record<string, unknown>): {
+function extractAccountInfo(result: unknown): {
   email: string;
   workspaceName: string;
   workspaceIdentity: string;
 } {
   const values: Record<string, unknown>[] = [];
-  if (isRecord(result.structuredContent)) values.push(result.structuredContent);
-  if (Array.isArray(result.content)) {
-    for (const item of result.content) {
+  if (isRecord(result)) values.push(result);
+  const structuredContent = isRecord(result) ? result.structuredContent : null;
+  if (isRecord(structuredContent)) values.push(structuredContent);
+  const content = isRecord(result) ? result.content : Array.isArray(result) ? result : null;
+  if (Array.isArray(content)) {
+    for (const item of content) {
       if (!isRecord(item)) continue;
       if (isRecord(item.resource)) values.push(item.resource);
       if (typeof item.text === "string") {
@@ -1326,13 +953,6 @@ function decodeBase64(value: string): Uint8Array {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
-function base64(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
   if (left.byteLength !== right.byteLength) return false;
   let difference = 0;
@@ -1358,16 +978,4 @@ function normalizeHttpsUrl(value: string): string {
 
 function expiresAt(expiresIn: number | undefined, now: number): string | null {
   return expiresIn ? new Date(now + expiresIn * 1_000).toISOString() : null;
-}
-
-function isPersonalMcpTool(name: string): name is GranolaMcpTool {
-  return Object.prototype.hasOwnProperty.call(personalMcpInputSchemas, name);
-}
-
-function camelToSnake(value: string): string {
-  return value.replace(/[A-Z]/gu, (character) => `_${character.toLowerCase()}`);
-}
-
-function snakeToCamel(value: string): string {
-  return value.replace(/_([a-z])/gu, (_match, character: string) => character.toUpperCase());
 }

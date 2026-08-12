@@ -338,6 +338,31 @@ describe('Workspace settings', () => {
     expect(openExternal).toHaveBeenCalledTimes(2);
   });
 
+  it('offers personal Notion MCP separately from the shared workspace bot connection', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const notionCard = (await screen.findByText('Notion')).closest('article');
+    expect(notionCard).not.toBeNull();
+    expect(screen.getByText(/workspace automations use only the connections explicitly bound to them/iu)).toBeVisible();
+    const personalButton = within(notionCard!).getByRole('button', { name: 'Connect for me' });
+    fireEvent.click(personalButton);
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
+      'notion',
+      'you',
+      ['notion.personal.mcp'],
+    ));
+    const workspaceButton = within(notionCard!).getByRole('button', { name: 'Connect workspace' });
+    await waitFor(() => expect(workspaceButton).toBeEnabled());
+    fireEvent.click(workspaceButton);
+
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
+      'notion',
+      'workspace',
+      ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
+    ));
+  });
+
   it('reconciles a denied connector attempt from the regional API when no deep link arrives', async () => {
     api.getConnectorOAuthAttempt.mockResolvedValueOnce({
       attemptId: 'a'.repeat(43),
@@ -509,17 +534,7 @@ describe('Workspace settings', () => {
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'slack',
       'you',
-      [
-        'slack.search',
-        'slack.messages.read',
-        'slack.files.read',
-        'slack.users.read',
-        'slack.messages.write',
-        'slack.conversations.write',
-        'slack.reactions.write',
-        'slack.canvases.read',
-        'slack.canvases.write',
-      ],
+      ['slack.personal.mcp'],
     ));
 
     await waitFor(() => expect(within(slackCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
