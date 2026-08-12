@@ -6,8 +6,10 @@ import {
   copyNotionVerificationToken,
   credentialKeyForVersion,
   credentialVersionFromWranglerConfig,
+  d1BatchRows,
   d1Rows,
   databaseIdFromWranglerConfig,
+  globalCredentialEnvironment,
   prepareNotionWebhook,
   sha256Base64Url,
 } from "./notion-webhook-setup.mjs";
@@ -21,7 +23,10 @@ test("prepares a hashed 30-minute nonce and copies only the webhook URL", async 
   const random = Buffer.alloc(32, 7);
   const cloudflare = async (path, init) => {
     requests.push({ path, body: JSON.parse(init.body) });
-    return [{ success: true, results: [] }];
+    return [
+      { success: true, results: [] },
+      { success: true, results: [] },
+    ];
   };
 
   const result = await prepareNotionWebhook({
@@ -34,11 +39,12 @@ test("prepares a hashed 30-minute nonce and copies only the webhook URL", async 
   });
 
   assert.equal(result.expiresAt, "2026-08-12T20:30:00.000Z");
-  assert.equal(requests.length, 2);
-  assert.match(requests[0].body.sql, /DELETE FROM notion_webhook_setup_nonces/u);
-  assert.match(requests[1].body.sql, /INSERT INTO notion_webhook_setup_nonces/u);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].body.batch.length, 2);
+  assert.match(requests[0].body.batch[0].sql, /SET is_current = 0/u);
+  assert.match(requests[0].body.batch[1].sql, /INSERT INTO notion_webhook_setup_nonces/u);
   const nonce = random.toString("base64url");
-  assert.equal(requests[1].body.params[0], sha256Base64Url(nonce));
+  assert.equal(requests[0].body.batch[1].params[0], sha256Base64Url(nonce));
   assert.doesNotMatch(JSON.stringify(requests), new RegExp(nonce));
   assert.equal(clipboard[0], `https://notion.example/ingest/notion?setup=${nonce}`);
 });
@@ -51,14 +57,19 @@ test("decrypts the stored Global token and sends plaintext only to the clipboard
   };
   const encrypted = await encryptToken("notion-verification-secret", keyBytes);
   const clipboard = [];
-  const cloudflare = async () => [{
-    success: true,
-    results: [{
-      ...encrypted,
-      credential_key_version: 2,
-      created_at: "2026-08-12T20:01:00.000Z",
-    }],
-  }];
+  const requests = [];
+  const cloudflare = async (_path, init) => {
+    requests.push(JSON.parse(init.body));
+    return [{
+      success: true,
+      results: [{
+        ...encrypted,
+        credential_key_version: 2,
+        created_at: "2026-08-12T20:01:00.000Z",
+        verification_token_hash: sha256Base64Url("notion-verification-secret"),
+      }],
+    }];
+  };
 
   const result = await copyNotionVerificationToken({
     cloudflare,
@@ -69,6 +80,8 @@ test("decrypts the stored Global token and sends plaintext only to the clipboard
 
   assert.deepEqual(result, { createdAt: "2026-08-12T20:01:00.000Z" });
   assert.deepEqual(clipboard, ["notion-verification-secret"]);
+  assert.match(requests[0].sql, /nonce\.is_current = 1/u);
+  assert.match(requests[0].sql, /nonce\.nonce_hash = challenge\.setup_nonce_hash/u);
 });
 
 test("selects the historical Global credential key for an older row", () => {
@@ -82,14 +95,50 @@ test("selects the historical Global credential key for an older row", () => {
   ), "old");
 });
 
+test("uses the checked-in Global key version instead of an unsuffixed local version", () => {
+  const configured = globalCredentialEnvironment(
+    {
+      CONNECTOR_CREDENTIALS_KEY_GLOBAL: "production-current-key",
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    },
+    `{ "vars": { "CONNECTOR_CREDENTIALS_KEY_VERSION": "7" } }`,
+  );
+
+  assert.equal(configured.CONNECTOR_CREDENTIALS_KEY_VERSION_GLOBAL, "7");
+  assert.equal(credentialKeyForVersion({ credential_key_version: 7 }, configured), "production-current-key");
+});
+
+test("refuses a ciphertext that does not match the current nonce binding", async () => {
+  const keyBytes = Buffer.alloc(32, 11);
+  const encrypted = await encryptToken("previous-verification-secret", keyBytes);
+  await assert.rejects(copyNotionVerificationToken({
+    cloudflare: async () => [{
+      success: true,
+      results: [{
+        ...encrypted,
+        credential_key_version: 2,
+        created_at: "2026-08-12T20:01:00.000Z",
+        verification_token_hash: sha256Base64Url("new-verification-secret"),
+      }],
+    }],
+    databaseId: DATABASE_ID,
+    environment: {
+      CONNECTOR_CREDENTIALS_KEY_GLOBAL: keyBytes.toString("base64url"),
+      CONNECTOR_CREDENTIALS_KEY_VERSION_GLOBAL: "2",
+    },
+    copy: async () => assert.fail("A stale token must not reach the clipboard"),
+  }), /has not finished being stored/u);
+});
+
 test("rejects malformed Cloudflare query results and missing challenge rows", async () => {
   assert.throws(() => d1Rows([{ success: false, results: [] }]), /invalid D1 query result/u);
+  assert.throws(() => d1BatchRows([{ success: true, results: [] }], 2), /invalid D1 batch result/u);
   await assert.rejects(copyNotionVerificationToken({
     cloudflare: async () => [{ success: true, results: [] }],
     databaseId: DATABASE_ID,
     environment: {},
     copy: async () => {},
-  }), /No Notion verification token/u);
+  }), /No current Notion verification token/u);
 });
 
 test("reads the Global D1 identifier from the checked-in Wrangler shape", () => {

@@ -270,10 +270,13 @@ includes it. Knowing an object ID is never sufficient authorization.
   capabilities, cursors, and health.
 - `notion_webhook_setup_nonces` exists in both regional schemas but is used only
   by Global. It stores a SHA-256 nonce hash, a 30-minute expiry, and — only after
-  consumption — the hash of the Notion verification token that claimed it.
+  consumption — the hash of the Notion verification token that claimed it. Its
+  partial unique index permits exactly one `is_current = 1` setup generation.
   `provider_webhook_challenges.setup_nonce_hash` links the active encrypted token
-  to the nonce allowed to retry it, so a newer subscription setup makes older
-  nonce/token pairs unable to restore a superseded signing secret.
+  to the nonce allowed to retry it, and `setup_generation` carries that nonce's
+  monotonic row generation into EU. A newer subscription setup therefore makes
+  older nonce/token pairs unable to restore a superseded signing secret in either
+  region, even when regional RPC calls arrive out of order.
 - `slack_installation_routes` is the opaque Global team-to-region directory;
   `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`
   remain regional.
@@ -404,20 +407,25 @@ service's suite under `apps/api`, not here.
 ### 2026-08-12 — Notion setup nonces are token-bound and superseding
 
 **What changed:** `notion_webhook_setup_nonces` stores short-lived nonce hashes
-and the verification-token hash fixed by first use.
+and the verification-token hash fixed by first use. A partial unique index permits
+one current generation, which the operator replaces in one D1 transaction.
 `provider_webhook_challenges.setup_nonce_hash` identifies the setup that owns the
-active ciphertext, and a database trigger updates that link in the same statement
-that consumes a nonce.
+active ciphertext; the challenge upsert succeeds only when that nonce is still the
+current consumed generation and is bound to the same token hash.
+`setup_generation` records the nonce row's monotonic generation on Global and EU.
 
 **Why:** Notion cannot sign the challenge that establishes its later signing
 secret, while Cloudflare records every webhook query string. A reusable URL guard
 therefore leaked into observability, and a plain consumed flag was insufficient:
 after a subscription rotation, replaying the old valid nonce/token pair could
-otherwise restore the old secret. Linking consumption to the challenge inside
-the same SQLite statement preserves a retry if the Worker fails before encrypted
-storage and prevents a superseded setup from winning later. A separate public
-token-retrieval table or endpoint was rejected; the existing encrypted challenge
-row is read and decrypted only by local operator tooling.
+otherwise restore the old secret. Rechecking current ownership in the ciphertext
+write preserves a retry if the Worker fails after claiming the nonce while also
+preventing an older paused request from winning after a newer claim. A separate
+public token-retrieval table or endpoint was rejected; the existing encrypted
+challenge row is joined to the current nonce, read, and decrypted only by local
+operator tooling. Replicating the numeric generation rather than relying on RPC
+arrival order lets EU reject an older request that crossed the regional boundary
+more slowly than its replacement.
 
 This document predates the changelog rule; reasoning for earlier schema decisions
 beyond the inline prose was not reconstructed. The migrations, `git log`, and the

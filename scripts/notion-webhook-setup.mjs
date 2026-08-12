@@ -39,12 +39,31 @@ export function d1Rows(result) {
   return queries[0].results;
 }
 
+export function d1BatchRows(result, expectedCount) {
+  const queries = Array.isArray(result) ? result : [result];
+  if (
+    queries.length !== expectedCount
+    || queries.some((query) => query?.success !== true || !Array.isArray(query.results))
+  ) {
+    throw new Error("Cloudflare returned an invalid D1 batch result");
+  }
+  return queries.map((query) => query.results);
+}
+
 export async function queryD1(cloudflare, databaseId, sql, params = []) {
   const result = await cloudflare(`/d1/database/${databaseId}/query`, {
     method: "POST",
     body: JSON.stringify({ sql, params }),
   });
   return d1Rows(result);
+}
+
+export async function queryD1Batch(cloudflare, databaseId, batch) {
+  const result = await cloudflare(`/d1/database/${databaseId}/query`, {
+    method: "POST",
+    body: JSON.stringify({ batch }),
+  });
+  return d1BatchRows(result, batch.length);
 }
 
 function decodeBase64Url(value) {
@@ -97,6 +116,18 @@ export function credentialKeyForVersion(row, environment) {
       ?? environment.CONNECTOR_CREDENTIALS_KEYS_JSON,
   );
   return historical[String(storedVersion)];
+}
+
+export function globalCredentialEnvironment(environment, wranglerConfig) {
+  const version = credentialVersionFromWranglerConfig(wranglerConfig);
+  return {
+    ...environment,
+    // This command reads the production Global database selected by the same
+    // checked-in config. An unsuffixed local development version must not
+    // reinterpret that production row after a key rotation.
+    CONNECTOR_CREDENTIALS_KEY_VERSION_GLOBAL: version,
+    CONNECTOR_CREDENTIALS_KEY_VERSION: version,
+  };
 }
 
 export async function decryptStoredNotionToken(row, environment) {
@@ -160,21 +191,24 @@ export async function prepareNotionWebhook({
   const createdAt = new Date(createdAtMs).toISOString();
   const expiresAt = new Date(createdAtMs + NONCE_TTL_MS).toISOString();
 
-  // Preparing a second URL deliberately invalidates any earlier unconsumed one;
-  // an operator should never have two live setup doors and have to remember
-  // which clipboard value is authoritative.
-  await queryD1(
+  // One D1 batch is one SQL transaction. The partial unique index on
+  // is_current is the backstop that makes two concurrent batches serialize to
+  // one current setup generation rather than leave two usable URLs.
+  await queryD1Batch(
     cloudflare,
     databaseId,
-    "DELETE FROM notion_webhook_setup_nonces WHERE consumed_at IS NULL",
-  );
-  await queryD1(
-    cloudflare,
-    databaseId,
-    `INSERT INTO notion_webhook_setup_nonces
-     (nonce_hash, verification_token_hash, created_at, expires_at, consumed_at)
-     VALUES (?, NULL, ?, ?, NULL)`,
-    [nonceHash, createdAt, expiresAt],
+    [
+      {
+        sql: "UPDATE notion_webhook_setup_nonces SET is_current = 0 WHERE is_current = 1",
+        params: [],
+      },
+      {
+        sql: `INSERT INTO notion_webhook_setup_nonces
+          (nonce_hash, verification_token_hash, created_at, expires_at, consumed_at, is_current)
+          VALUES (?, NULL, ?, ?, NULL, 1)`,
+        params: [nonceHash, createdAt, expiresAt],
+      },
+    ],
   );
 
   const url = new URL("/ingest/notion", environment.NOTION_INGRESS_BASE_URL || DEFAULT_NOTION_INGRESS_BASE_URL);
@@ -192,13 +226,21 @@ export async function copyNotionVerificationToken({
   const rows = await queryD1(
     cloudflare,
     databaseId,
-    `SELECT encrypted_token, token_iv, credential_key_version, created_at
-     FROM provider_webhook_challenges
-     WHERE provider = 'notion' AND region = 'global'`,
+    `SELECT challenge.encrypted_token, challenge.token_iv,
+            challenge.credential_key_version, challenge.created_at,
+            nonce.verification_token_hash
+     FROM provider_webhook_challenges AS challenge
+     INNER JOIN notion_webhook_setup_nonces AS nonce
+       ON nonce.nonce_hash = challenge.setup_nonce_hash
+     WHERE challenge.provider = 'notion' AND challenge.region = 'global'
+       AND nonce.is_current = 1 AND nonce.consumed_at IS NOT NULL`,
   );
   const row = rows[0];
-  if (!row) throw new Error("No Notion verification token has reached the Global ingress yet");
+  if (!row) throw new Error("No current Notion verification token has reached the Global ingress yet");
   const token = await decryptStoredNotionToken(row, environment);
+  if (sha256Base64Url(token) !== row.verification_token_hash) {
+    throw new Error("The current Notion verification token has not finished being stored yet");
+  }
   await copy(token);
   return { createdAt: row.created_at };
 }
@@ -221,13 +263,7 @@ export async function notionWebhookSetupCli({
   const config = await readFile(globalWranglerConfigPath, "utf8");
   const databaseId = databaseIdFromWranglerConfig(config);
   const cloudflare = createCloudflareClient({ accountId, apiToken, fetchImplementation });
-  const configuredEnvironment = {
-    ...environment,
-    CONNECTOR_CREDENTIALS_KEY_VERSION:
-      environment.CONNECTOR_CREDENTIALS_KEY_VERSION_GLOBAL
-      ?? environment.CONNECTOR_CREDENTIALS_KEY_VERSION
-      ?? credentialVersionFromWranglerConfig(config),
-  };
+  const configuredEnvironment = globalCredentialEnvironment(environment, config);
 
   if (mode === "prepare") {
     const { expiresAt } = await prepareNotionWebhook({
