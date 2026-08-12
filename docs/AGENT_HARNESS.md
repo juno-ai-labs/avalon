@@ -109,7 +109,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 ## Limits
 
-Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the live tail with an LLM continuation summary. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages.
+Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary. No earlier message survives a compaction verbatim — not even the conversation's first — so the summary is asked to restate the original request, its constraints, and whatever attachment content still matters. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`RUNBOOK.md`](RUNBOOK.md).
 
@@ -242,6 +242,36 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
+
+### 2026-08-12 — A compaction keeps nothing but its own summary
+
+**What changed:** Compaction no longer pins the transcript's first user message.
+The compacted context is now the stable system prompt plus a single synthetic
+user message built from the continuation summary, and the summary prompt asks
+for the original request, its constraints, and any attachment content that still
+matters, because nothing else survives to carry them. The assistant-summary plus
+stub-user pair collapsed into that one message, and the attachment scrubbing that
+ran over a preserved message before it was persisted went with it — a `data:`
+URL or file part can no longer reach a stored checkpoint at all.
+
+**Why:** The pin was not preserving "the initial user message" in any durable
+sense. A work-stream run replays its stored checkpoint as the transcript prefix,
+so whatever sat at index 1 of the previous run became index 1 of the next one and
+was pinned again. On a long-lived work stream that fixed point was a trigger
+window from months earlier — an untrusted evidence blob the summary had already
+superseded — and every compaction re-spent context on it while dropping the
+recent work that mattered. Rebuilding index 1 from the summary each time is what
+makes compaction converge instead of accumulating: the checkpoint is derived
+state, and the only thing a compaction is entitled to carry forward is what it
+just summarized.
+
+The alternative considered was keeping the pin but re-resolving it to the *current*
+trigger message on each run. It was rejected because it keeps the shape that
+caused the bug — a verbatim message with an authority the compaction cannot check
+— and the current trigger already enters the next run through the transcript
+projection, so pinning it duplicates it. A future change may add messages back
+beneath the system prompt, but it must not reintroduce a slot whose content
+outlives the compaction that produced it.
 
 ### 2026-08-12 — A run records what triggered it, so a retry stops guessing
 
