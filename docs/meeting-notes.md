@@ -133,9 +133,21 @@ place any of those is reported and the note screen cannot ask for a summary
 again. `finalizeRecording` resolves to whether the meeting finished cleanly for
 exactly this decision; a failure that only sets a visible error, as the summary
 does, would otherwise be indistinguishable from success. And a **native window
-close** — the traffic-light button, or app quit — finalizes and then closes
-regardless, since a window that refuses to shut also blocks quit; it does not
-navigate, because closing a window is not a request to be taken somewhere.
+close** — the traffic-light button, Command-W, or app quit — finalizes and then
+closes regardless, since a window that refuses to shut also blocks quit; it does
+not navigate, because closing a window is not a request to be taken somewhere.
+
+The main process says **who asked**, and the window is allowed to stop and ask
+only for one of the two answers. A `user` close — that window's traffic light or
+Command-W — while a recording is still running raises a confirmation, because
+until finalization lands this window *is* the meeting: the transcript tail is
+still buffered in it, the final summary has not been written, and the note is not
+marked complete. **End and close** takes the native path from there; **Keep
+recording** leaves the window and the capture exactly as they were. A `quit`
+close is never asked, and this is the load-bearing half: `before-quit` sets the
+flag for the cascade that follows, so a meeting window that stopped to confirm
+would veto the quit and leave Avalon running with a dialog nobody went looking
+for. Anything the preload cannot read as `user` is treated as a quit.
 
 ### Landing a briefing
 
@@ -181,6 +193,10 @@ briefings.
   of any meeting the flag moved under.
 - **The meeting window closes only when the meeting finished cleanly.** Anything
   that closes it on a failure discards the only report of that failure.
+- **Only a `user` close may stop to ask.** A quit that a window can answer with a
+  dialog is a quit that can be vetoed by one, and the veto is silent — Avalon
+  stays up with no window in front of anyone. A close whose reason cannot be read
+  is a quit.
 - **Only the owner may record, append, or generate.** Every statement binds
   `workspace_id` and `owner_user_id`; the screen is read-only for anyone else.
 
@@ -339,6 +355,46 @@ already reads it, so that step is a scheduler and a budget rather than a new
 knob.
 
 ## Changelog
+
+### 2026-08-12 — Closing a recording window asks first, and Command-W can now do the closing
+
+**What changed:** `meeting:close-requested` carries a reason — `user` or `quit`.
+A `user` close arriving while the recording is still running opens a
+confirmation instead of finalizing immediately; **End and close** runs the path
+that was already there, **Keep recording** does nothing at all. A `quit` close
+behaves exactly as before. The same change added `File → Close Window` to the
+macOS application menu, which is what made this urgent: Command-W was unbound in
+every Avalon window, so the only ways to close a meeting were the traffic light
+and **End**.
+
+**Why:** Command-W is the gesture macOS names first for closing a window, and it
+was missing because Electron's `windowMenu` role carries `close` on every
+platform except darwin, where Apple keeps it in File. Adding it put a
+one-keystroke, no-aim close on a window that can be holding an unfinalized
+meeting — a transcript tail still buffered in the renderer, no final summary, and
+a note not yet marked complete. Finalization does run on that path, but it takes
+seconds and a network round trip, and a person who hit the wrong key has no way
+to say so. The traffic light had the same exposure and simply had not been worth
+a dialog when it took a deliberate mouse trip to reach.
+
+**Considered and rejected:** Prompting on every native close, which is the
+smaller diff and the wrong behavior — during a quit, a window waiting on an
+answer is a window that vetoes the quit, and Avalon would be left running with
+its status item alive and a dialog nobody went looking for. That is the same
+hazard the `will-quit` comment in `main/index.ts` already guards, from the other
+direction. So the reason is decided in the main process, where the quit cascade
+is visible, rather than inferred in the renderer, which cannot see one. Also
+rejected: keeping the window open when finalization fails after a confirmation,
+by analogy with **End**. **End** is a request to finish the meeting and stay;
+this is a request to close, already confirmed once, and asking twice about the
+same intent is how a window becomes impossible to shut.
+
+**What a future change has to respect:** the quit path stays unprompted, and the
+`quitting` flag is cleared on the next turn of the loop rather than at
+`will-quit` — a meeting window finalizes asynchronously and therefore vetoes the
+very quit that set it, so a flag left standing would silence the confirmation for
+the rest of the session. An unreadable reason must keep resolving to `quit`:
+failing to ask closes a window, failing to close hangs a quit.
 
 ### 2026-08-11 — One meeting keeps one cadence, and the client is what keeps it
 

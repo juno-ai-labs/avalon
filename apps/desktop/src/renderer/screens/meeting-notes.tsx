@@ -20,7 +20,7 @@ import type {
   DesktopMeetingAudioPermissions,
   MeetingAudioPermissionKind,
 } from '../../common/desktop';
-import { Button, IconButton, InlineError } from '../components/primitives';
+import { Button, IconButton, InlineError, Modal } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
@@ -137,6 +137,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [generatedAt, setGeneratedAt] = useState<string | undefined>();
   const [recording, setRecording] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notesPending, setNotesPending] = useState(false);
   const [savePending, setSavePending] = useState(false);
@@ -593,18 +594,33 @@ export function MeetingNotesScreen(): React.JSX.Element {
     void finalizeRecording().catch(() => undefined);
   }, [dictation.state, finalizeRecording]);
 
+  const finalizeAndClose = useCallback((): void => {
+    const bridge = desktopBridge();
+    const shouldFinalize = Boolean(finalizationInFlightRef.current)
+      || recordingIntentRef.current
+      || !['idle', 'error'].includes(dictation.state);
+    const pending = shouldFinalize ? finalizeRecording() : Promise.resolve();
+    // An explicit native close must not strand the window—or block app quit—
+    // when the final network save fails. Incremental segments remain durable.
+    void pending.catch(() => undefined).finally(() => bridge.closeMeetingNotes());
+  }, [dictation.state, finalizeRecording]);
+
   useEffect(() => {
     const bridge = desktopBridge();
-    return bridge.onMeetingCloseRequested(() => {
-      const shouldFinalize = Boolean(finalizationInFlightRef.current)
-        || recordingIntentRef.current
-        || !['idle', 'error'].includes(dictation.state);
-      const pending = shouldFinalize ? finalizeRecording() : Promise.resolve();
-      // An explicit native close must not strand the window—or block app quit—
-      // when the final network save fails. Incremental segments remain durable.
-      void pending.catch(() => undefined).finally(() => bridge.closeMeetingNotes());
+    return bridge.onMeetingCloseRequested((reason) => {
+      // Until finalization lands, this window is the meeting: the transcript
+      // tail, the final summary, and the note's completion all depend on it
+      // staying up long enough to finish. A close the person performed on it
+      // while that is true is worth one question. A quit is not asked, because
+      // a window waiting on an answer is a window that vetoes the quit — and
+      // finalization already runs on that path, so nothing is lost by it.
+      if (reason === 'user' && recording) {
+        setCloseConfirmationOpen(true);
+        return;
+      }
+      finalizeAndClose();
     });
-  }, [dictation.state, finalizeRecording]);
+  }, [finalizeAndClose, recording]);
 
   useEffect(() => () => {
     recordingIntentRef.current = false;
@@ -845,6 +861,28 @@ export function MeetingNotesScreen(): React.JSX.Element {
         )}
         <span aria-hidden="true" />
       </footer>
+
+      <Modal
+        description="Closing this window ends the meeting. Avalon saves the last of the transcript and writes the final summary before it goes."
+        footer={(
+          <>
+            <Button onClick={() => setCloseConfirmationOpen(false)}>Keep recording</Button>
+            <Button
+              className="button-primary"
+              onClick={() => {
+                setCloseConfirmationOpen(false);
+                finalizeAndClose();
+              }}
+            >
+              <Square fill="currentColor" size={12} />
+              End and close
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => setCloseConfirmationOpen(open)}
+        open={closeConfirmationOpen}
+        title="This meeting is still recording"
+      />
     </div>
   );
 }

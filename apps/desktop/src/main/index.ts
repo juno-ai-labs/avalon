@@ -163,6 +163,7 @@ let settingsWindow: BrowserWindow | null = null;
 const meetingWindows = new Set<BrowserWindow>();
 const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
 let rendererReady = false;
+let quitting = false;
 let inMemoryAuth: StoredAuth | null = null;
 let inMemorySession: WireSession | null = null;
 let refreshInFlight: Promise<DesktopSession> | null = null;
@@ -2045,7 +2046,11 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
   meetingWindow.on('close', (event) => {
     if (meetingWindowsAllowedToClose.has(meetingWindow)) return;
     event.preventDefault();
-    meetingContents.send('meeting:close-requested');
+    // The screen finalizes the recording and closes the window itself. It may
+    // also stop and ask first, but only for a close the person performed on
+    // this window: during a quit, a window that waits for an answer is a
+    // window that never shuts, and the quit dies with it.
+    meetingContents.send('meeting:close-requested', quitting ? 'quit' : 'user');
   });
   meetingWindow.on('closed', () => {
     void nativeSystemAudioController.stop(meetingContents).catch((error) => {
@@ -2305,6 +2310,20 @@ app.on('window-all-closed', () => {
   // left — a login launch opens no window at all. Quitting here would take it
   // away the first time someone closed the last window.
   if (process.platform !== 'darwin') app.quit();
+});
+
+// A quit asks every window to close in one cascade, and this is what tells a
+// meeting window that the close it is answering is a quit rather than the
+// person closing that window — the difference between finalizing and asking
+// first. The flag is cleared on the next turn of the loop, once the cascade is
+// over: a meeting window finalizes asynchronously and so vetoes this quit
+// anyway, and a flag left standing would silence the confirmation for every
+// close that followed in the same session.
+app.on('before-quit', () => {
+  quitting = true;
+  setImmediate(() => {
+    quitting = false;
+  });
 });
 
 // `will-quit`, not `before-quit`: the latter fires before any window is asked to

@@ -1,10 +1,10 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
-import { WorkspaceSettingsScreen } from './workspace-settings';
+import { escapeClosesSettings, WorkspaceSettingsScreen } from './workspace-settings';
 
 const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
@@ -108,11 +108,15 @@ function createTestQueryClient(): QueryClient {
   });
 }
 
-function renderSettings(nextWorkspace: Workspace = workspace, client = createTestQueryClient()): void {
+function renderSettings(
+  nextWorkspace: Workspace = workspace,
+  client = createTestQueryClient(),
+  standaloneWindow = false,
+): void {
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={client}>
-        <WorkspaceSettingsScreen workspace={nextWorkspace} />
+        <WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} />
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
@@ -1280,5 +1284,126 @@ describe('Workspace settings', () => {
     openSettingsSection('Application');
 
     expect(await screen.findByText('Application settings could not be read.')).toBeVisible();
+  });
+});
+
+describe('Closing the settings window with Escape', () => {
+  let close: MockInstance<() => void>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    });
+    api.getWorkspaceMembers.mockResolvedValue([owner]);
+    api.getWorkspaceInvitations.mockResolvedValue([]);
+    api.getConnections.mockResolvedValue([]);
+    api.getAvailableConnectorTypes.mockResolvedValue([]);
+    getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+  });
+
+  it('closes the settings window', () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the main window open when settings is a route inside it', () => {
+    // Away from Electron the same screen is a route in the only window there
+    // is, and Escape there would close the workspace rather than a panel.
+    renderSettings(workspace, createTestQueryClient(), false);
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('keeps typing that has nowhere else to come from', () => {
+    renderSettings(workspace, createTestQueryClient(), true);
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+
+    fireEvent.change(search, { target: { value: 'connections' } });
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
+
+    // An empty field holds nothing to lose, so the window still closes.
+    fireEvent.change(search, { target: { value: '' } });
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('dismisses an open dialog without taking the window with it', async () => {
+    api.getAvailableConnectorTypes.mockResolvedValue(['granola']);
+    renderSettings(workspace, createTestQueryClient(), true);
+    openSettingsSection('Connections');
+
+    const granolaCard = (await screen.findByText('Granola')).closest('article');
+    await waitFor(() => expect(within(granolaCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    fireEvent.click(within(granolaCard!).getByRole('button', { name: 'Connect workspace' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
+
+    // Radix closes the dialog on this keystroke itself. The window listener sees
+    // the same event, and closing over a confirmation is exactly what the guard
+    // on dismissable layers exists to prevent.
+    fireEvent.keyDown(within(dialog).getByLabelText('Workspace API key'), { key: 'Escape' });
+
+    expect(close).not.toHaveBeenCalled();
+  });
+});
+
+describe('escapeClosesSettings', () => {
+  function escapeOn(target: EventTarget, init: KeyboardEventInit = {}): boolean {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', ...init });
+    target.dispatchEvent(event);
+    return escapeClosesSettings(event);
+  }
+
+  it('answers only a bare, unclaimed Escape', () => {
+    const field = document.createElement('input');
+    document.body.append(field);
+
+    expect(escapeOn(field)).toBe(true);
+    expect(escapeOn(field, { key: 'Enter' })).toBe(false);
+    // A shortcut that happens to contain Escape belongs to whoever bound it.
+    expect(escapeOn(field, { metaKey: true })).toBe(false);
+    expect(escapeOn(field, { shiftKey: true })).toBe(false);
+
+    field.addEventListener('keydown', (event) => event.preventDefault(), { once: true });
+    expect(escapeOn(field)).toBe(false);
+    field.remove();
+  });
+
+  it('yields to the layer the keystroke was aimed at', () => {
+    const layer = document.createElement('div');
+    layer.setAttribute('role', 'listbox');
+    const option = document.createElement('button');
+    layer.append(option);
+    document.body.append(layer);
+
+    // A select menu is dismissed by this Escape; the window is not.
+    expect(escapeOn(option)).toBe(false);
+    layer.remove();
+  });
+
+  it('ignores controls that hold no typing', () => {
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.checked = true;
+    document.body.append(toggle);
+
+    // A checked box carries a value of its own; it is not unsaved text.
+    expect(escapeOn(toggle)).toBe(true);
+    toggle.remove();
   });
 });

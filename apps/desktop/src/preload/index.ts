@@ -7,6 +7,7 @@ import type {
   DesktopSession,
   DesktopSystemAudioCaptureInfo,
   DesktopWorkspaceOnboardingState,
+  MeetingCloseReason,
   RuntimeConfig,
 } from '../common/desktop';
 import type { ApplicationIconId, DesktopApplicationIconState } from '../common/application-icons';
@@ -17,8 +18,8 @@ const deepLinkListeners = new Set<(url: string) => void>();
 const queuedDeepLinks: string[] = [];
 const settingsSectionListeners = new Set<(section: DesktopSettingsSection) => void>();
 let queuedSettingsSection: DesktopSettingsSection | null = null;
-const meetingCloseListeners = new Set<() => void>();
-let meetingCloseQueued = false;
+const meetingCloseListeners = new Set<(reason: MeetingCloseReason) => void>();
+let meetingCloseQueued: MeetingCloseReason | null = null;
 
 // Install the privileged listener before React starts. Session changes can
 // briefly replace the renderer callback; a native OAuth/invitation callback
@@ -46,12 +47,19 @@ ipcRenderer.on('settings:section-requested', (_event, rawSection: unknown) => {
   for (const listener of settingsSectionListeners) listener(section);
 });
 
-ipcRenderer.on('meeting:close-requested', () => {
+ipcRenderer.on('meeting:close-requested', (_event, rawReason: unknown) => {
+  // Anything but an explicit user close is treated as a quit. Prompting when
+  // the application is shutting down is the failure that hangs a quit; closing
+  // without a prompt only skips a confirmation.
+  const reason: MeetingCloseReason = rawReason === 'user' ? 'user' : 'quit';
   if (meetingCloseListeners.size === 0) {
-    meetingCloseQueued = true;
+    // A quit already in the queue outranks a close the person performed
+    // earlier: the window has to shut either way, and only one of the two may
+    // stop to ask.
+    meetingCloseQueued = meetingCloseQueued === 'quit' ? 'quit' : reason;
     return;
   }
-  for (const listener of meetingCloseListeners) listener();
+  for (const listener of meetingCloseListeners) listener(reason);
 });
 
 const bridge: AvalonDesktopBridge = {
@@ -118,10 +126,11 @@ const bridge: AvalonDesktopBridge = {
     ipcRenderer.invoke('meeting-audio:open-settings', permission) as Promise<void>,
   onMeetingCloseRequested: (listener) => {
     meetingCloseListeners.add(listener);
-    if (meetingCloseQueued) {
-      meetingCloseQueued = false;
+    const pending = meetingCloseQueued;
+    if (pending) {
+      meetingCloseQueued = null;
       queueMicrotask(() => {
-        if (meetingCloseListeners.has(listener)) listener();
+        if (meetingCloseListeners.has(listener)) listener(pending);
       });
     }
     return () => meetingCloseListeners.delete(listener);
