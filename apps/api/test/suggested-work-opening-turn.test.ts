@@ -32,14 +32,13 @@ const displayPrompt = "Chase the failed release and prepare the fix";
 const executionPrompt = "Trace the failed release, identify the owner, and prepare the fix.";
 const databases: DatabaseSync[] = [];
 
-// `clearAllMocks` and not `restoreAllMocks`: restoring wipes the
-// implementations the module factory above installed, and only the ones a test
-// happens to read back would be noticed. Today `publishWorkstreamEvent` and
-// `classifyWorkstreamMessage` are merely awaited, so returning `undefined`
-// passes — but a `.catch()` on either would make every test after the first
-// fail in a way that looks nothing like its cause. Clearing keeps the
-// implementations and drops only the recorded calls. The explicit reset below
-// is for a queued `mockImplementationOnce`, which clearing does not consume.
+// `clearAllMocks` and not `restoreAllMocks`: nothing here is a `vi.spyOn`, so
+// restoring had nothing of its own to undo, and since Vitest 3 it does not touch
+// a `vi.fn()` implementation either — it was a no-op in both directions. This
+// comment previously claimed restoring wiped the module factory's
+// implementations, which was true through Vitest 2 and is not true on the 4.x
+// this repo runs. The explicit reset below is a separate matter: it clears a
+// queued `mockImplementationOnce`, which clearing does not consume.
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   vi.clearAllMocks();
