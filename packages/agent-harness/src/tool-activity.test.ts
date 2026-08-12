@@ -121,6 +121,15 @@ describe("tool activity names", () => {
       .toBe("Memory prune failed");
   });
 
+  it("keeps wording rows a retired tool already wrote", () => {
+    // `workstream_create_artifact` no longer exists, but the rows it wrote do,
+    // and they are worded from the stored name every time they are read.
+    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "completed" }))
+      .toBe("Created an artifact");
+    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "failed" }))
+      .toBe("Could not create an artifact");
+  });
+
   it("reads an unrecognized unattributed tool as a phrase rather than a symbol", () => {
     expect(toolActivityName({ toolName: "memory_prune", status: "completed" }))
       .toBe("Memory prune");

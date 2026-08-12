@@ -62,18 +62,17 @@ function sqliteD1(database: DatabaseSync): D1Database {
   } as unknown as D1Database;
 }
 
+/**
+ * Enough of R2 for the tools under test to read what they wrote. It carried
+ * put-recording and a timeout injector for `create_artifact`, which was the one
+ * provider-key tool that wrote an object before its row; no tool here writes R2
+ * any more, so asserting on puts would only be asserting on this class.
+ */
 class MemoryBucket {
-  readonly objects = new Map<string, string>();
-  readonly puts: string[] = [];
-  failAfterNextPut = false;
+  private readonly objects = new Map<string, string>();
 
   async put(key: string, value: string): Promise<void> {
-    this.puts.push(key);
     this.objects.set(key, value);
-    if (this.failAfterNextPut) {
-      this.failAfterNextPut = false;
-      throw new DOMException("The storage request timed out", "TimeoutError");
-    }
   }
 
   async get(key: string): Promise<{ text: () => Promise<string> } | null> {
@@ -92,7 +91,7 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function fixture(): { database: DatabaseSync; env: Env; bucket: MemoryBucket } {
+function fixture(): { database: DatabaseSync; env: Env } {
   const database = new DatabaseSync(":memory:");
   openDatabases.push(database);
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
@@ -115,13 +114,11 @@ function fixture(): { database: DatabaseSync; env: Env; bucket: MemoryBucket } {
     VALUES ('${HARNESS_RUN_ID}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'test',
             '{"type":"user","userId":"${USER_ID}"}', 'running', '2026-08-03');
   `);
-  const bucket = new MemoryBucket();
   return {
     database,
-    bucket,
     env: {
       DB: sqliteD1(database),
-      PAYLOADS: bucket as unknown as R2Bucket,
+      PAYLOADS: new MemoryBucket() as unknown as R2Bucket,
       AVALON_REGION: "global",
       APP_ENV: "test",
     } as Env,

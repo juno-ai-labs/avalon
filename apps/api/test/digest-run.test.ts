@@ -480,6 +480,17 @@ describe("the brief a digest run is triggered with", () => {
     expect(brief).not.toContain("delivered");
   });
 
+  it("tells the run its final message is the thing that gets mailed", () => {
+    // `settleDigestRun` mails `message.textContent` of the last message and has
+    // no way to tell a digest from a sign-off, so the brief is the only place
+    // this can be established. A run that ended with "Outcome: Digest artifact
+    // created (id …)" mailed that sentence, and it settled as delivered.
+    const brief = renderDigestBrief(schedule, [event()]);
+
+    expect(brief).toContain("Your final message in this run is the digest");
+    expect(brief).toContain("mailed verbatim");
+  });
+
   it("hands the run the real link so the digest can point rather than describe", () => {
     const brief = renderDigestBrief(schedule, [
       event({ canonical_url: "https://with-avalon.com/app/workstreams/c1" }),
