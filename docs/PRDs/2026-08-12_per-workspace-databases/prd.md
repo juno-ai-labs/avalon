@@ -34,7 +34,7 @@ instead of sharing a regional ceiling.
 Four pressures, all present now:
 
 1. **Migration cadence.** The schema changes almost every other pull request —
-   76 migration files in the first three months — and every one of them rides a
+   76 migration files already — and every one of them rides a
    deploy pipeline that applies SQL to both regions *before* deploying either
    Worker. That ordering is correct and still bit us: the window where the
    previous Worker writes into the new schema turned `0063`'s fail-open default
@@ -44,7 +44,8 @@ Four pressures, all present now:
    operational weight than a prototype schema should ever need.
 2. **Isolation is query discipline.** Invariant 1 of the data model — every
    tenant-owned table carries `workspace_id`, every lookup includes it — is
-   enforced at roughly 268 predicates today, and each new query is a new
+   enforced at roughly 460 `workspace_id = ?` predicates today (447 in
+   `apps/api/src`, 13 in `packages/db/src`), and each new query is a new
    opportunity to omit one. The document itself calls such an omission "a
    cross-tenant read waiting for an ID to leak."
 3. **Capacity has a shared ceiling.** All Global workspaces share one 10 GB D1
@@ -54,7 +55,7 @@ Four pressures, all present now:
    Avalon on the path to a CASA assessment for restricted OAuth scopes, and an
    ISO 27001 posture is a matter of time for a product asking businesses to
    connect their email. Both examine tenant isolation; structural isolation is
-   materially easier to evidence than 268 correct `WHERE` clauses.
+   materially easier to evidence than 460 correct `WHERE` clauses.
 
 Now is the cheapest this change will ever be: the only users are the team, the
 data is disposable, and every week adds queries, tables, and cron sweeps to the
@@ -181,8 +182,14 @@ None yet.
    it would take).
 4. **The object exposes SQL over RPC in the existing `D1DatabaseLike` shape,
    not domain methods.** Repositories and services keep their architecture;
-   the handle changes type, not contract, and the seam already exists in
-   `packages/db`. Rejected alternative: moving the service layer into the
+   the handle changes type while keeping the statement contract, and the seam
+   already exists in `packages/db`. The priced exception: the 57 statements
+   that today join workspace-owned tables to `users`, `workspace_members`, or
+   `workspaces` cannot cross the split as one statement and are reworked per
+   the rules in
+   [`design.md`](./design.md#cross-store-reads-the-57-joins-that-split) —
+   the largest mechanical cost of the cutover, named as such. Rejected
+   alternative: moving the service layer into the
    workspace object (the workspace-actor model) — a defensible end state, but
    it couples this change to a rewrite of every service boundary at once, and
    the RPC handle does not foreclose it later.
@@ -216,6 +223,17 @@ table assignment):
   log, connector connections, notes, audit events. Inside a workspace
   database the `workspace_id` columns are removed: the database is the
   workspace, and a redundant column would be a fossil of the old discipline.
+- **Cross-store references:** the schema declares 86 `REFERENCES
+  workspaces(id)` and 68 `REFERENCES users(id)` constraints — 42 of the
+  latter `ON DELETE CASCADE` — overwhelmingly on tables that move, and none
+  of them can be declared across the split. Foreign keys between moved tables
+  stay declared inside the workspace database; references to control-plane
+  rows become plain IDs whose integrity the application owns, and user
+  deletion becomes an explicit control-plane operation that fans out to every
+  workspace database the user belonged to. The credential-bearing
+  `connector_connections.owner_user_id` cascade is the row this fan-out
+  exists for; the design is in
+  [`design.md`](./design.md#cross-store-references-and-deletion).
 - **Backfill:** none — non-goal 3. The new baseline schema is written fresh
   as migration step 0.
 
@@ -229,7 +247,11 @@ The Global/EU boundary is preserved and sharpened. Workspace database objects
 are named through the existing shared namespace helper, so EU workspaces'
 databases are created with `jurisdiction("eu")` — the same mechanism, and the
 same residency semantics, as the EU's `WorkstreamRoom` and
-`WorkspaceScheduler` objects today. The control-plane databases remain exactly
+`WorkspaceScheduler` objects today. That helper's one existing softening
+carries over: in local development it returns the unpinned namespace, because
+Miniflare does not implement jurisdictions — the documented dev-only tradeoff
+that goal 7's single-command setup continues to lean on, never a production
+path. The control-plane databases remain exactly
 the two regional D1 databases that exist now, holding no workspace content.
 Nothing new crosses the boundary; the named-RPC bridges, shared provider
 ingresses, and the identity flow are untouched. The standing caveat in
@@ -255,10 +277,27 @@ read every tenant in both regions, violating the rule that Cloudflare
 administration credentials never become Worker variables.
 
 **One surface becomes security-critical and is named as such:** the
-workspace-ID-to-object-name derivation. It is written once, in the shared
+derivation of a workspace database handle. It is written once, in the shared
 namespace helper, imported everywhere — the same single-expression rule the
 codebase applies to work-stream visibility, and the natural place for the
-tests that prove a request cannot reach another workspace's name.
+tests that prove a request cannot reach another workspace's name. The session
+path is the easy case; the system's other entry points hold no session, and
+each class gets its own stated rule for what authorizes the handle:
+
+- **Queue messages and Workflow parameters** carry workspace IDs the Worker
+  itself minted, and the consumer re-resolves the ID against the control-plane
+  registry at the hop before constructing a handle — the same
+  parse-at-the-boundary rule the RPC bridges already enforce.
+- **Provider webhooks and inbound email** never name a workspace directly: a
+  delivery is signature-verified first, resolved through the verified routing
+  directories (`github_installation_routes`, `workstream_email_routes`, and
+  peers) second, and only the directory's answer — a control-plane row —
+  becomes a handle. Untrusted input selects a directory key; it never selects
+  a database.
+- **The cron and the schedulers** enumerate the workspace registry itself.
+
+In every class the handle follows a control-plane row; no value that entered
+from outside the trust boundary is ever used as an object name.
 
 **CASA.** The Cloud Application Security Assessment (App Defense Alliance,
 required by Google for restricted OAuth scopes) verifies the application
@@ -313,8 +352,13 @@ No flag, by design decision 5 — the phases are pull requests, not toggles:
 4. Day 30: delete the legacy regional databases' moved tables and close the
    rollback window.
 
-Turning it off: within the window, redeploy the previous Worker — the legacy
-databases were never written by the new path. After the window, fix forward.
+Turning it off: within the window, redeploy the previous Worker. The *moved
+tables* in the regional databases were never written by the new path, so
+every pre-cutover workspace serves exactly as it did — but the control plane
+is those same two databases and stays live, so a workspace created after
+cutover appears to the old Worker with no tenant rows behind it and serves as
+empty. Accepted: such workspaces are the team's own and are recreated, the
+same reset the cutover itself performs. After the window, fix forward.
 
 ## Acceptance
 
