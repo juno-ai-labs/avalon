@@ -1852,4 +1852,87 @@ describe("database migrations", () => {
     expect(planFor("1 = 1")).not.toContain("SCAN");
     database.close();
   });
+
+  it("retires the artifact message type while leaving the table for the old Worker", () => {
+    const database = migrateDatabaseThrough("0068_digest_workstream_per_occurrence.sql");
+    database.exec(`
+      PRAGMA ignore_check_constraints = ON;
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-artifact', 'google-artifact', 'artifact@example.com', 'Artifact Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-artifact', 'Artifact', 'artifact', 'global', 'user-artifact', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-artifact', 'workspace-artifact', 'Launch', 'Ship it', 'ad_hoc',
+              'user-artifact', 'idle', 3, '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO artifacts
+        (id, workspace_id, workstream_id, artifact_type, title, content_ref, preview_text,
+         status, metadata_json, created_at, updated_at)
+      VALUES ('artifact-legacy', 'workspace-artifact', 'workstream-artifact', 'markdown',
+              'Launch brief', 'global/workspace-artifact/artifacts/artifact-legacy.txt',
+              'A summary.', 'complete', '{}', '2026-01-01', '2026-01-01');
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, message_type, text_content,
+         sequence_number, created_at)
+      VALUES ('message-artifact', 'workspace-artifact', 'workstream-artifact', 'agent',
+              'artifact', 'Launch brief', 1, '2026-01-01');
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, message_type, text_content,
+         sequence_number, created_at)
+      VALUES ('message-text', 'workspace-artifact', 'workstream-artifact', 'agent',
+              'text', 'Here is the brief.', 2, '2026-01-01');
+      PRAGMA ignore_check_constraints = OFF;
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0068_remove_artifacts.sql", import.meta.url),
+      "utf8",
+    ));
+
+    // The table stays until a later release. The deploy job migrates both
+    // regions before it deploys either Worker, and the Worker still live at
+    // that moment reads `artifacts` on every `GET /workstreams/:id/context`.
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'artifacts'",
+    ).get()).toEqual({ name: "artifacts" });
+    expect(database.prepare(
+      "SELECT id FROM artifacts WHERE id = 'artifact-legacy'",
+    ).get()).toEqual({ id: "artifact-legacy" });
+    expect(database.prepare(
+      "SELECT id FROM messages WHERE id = 'message-artifact'",
+    ).get()).toBeUndefined();
+    // Only the retired type goes. A gap in `sequence_number` is expected, and
+    // the surrounding transcript has to survive it.
+    expect(database.prepare(
+      "SELECT id, sequence_number FROM messages WHERE workstream_id = 'workstream-artifact'",
+    ).all()).toEqual([{ id: "message-text", sequence_number: 2 }]);
+
+    expect(() => database.exec(`
+      PRAGMA ignore_check_constraints = ON;
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, message_type, text_content,
+         sequence_number, created_at)
+      VALUES ('message-artifact-new', 'workspace-artifact', 'workstream-artifact', 'agent',
+              'artifact', 'Back again', 3, '2026-01-01');
+    `)).toThrow(/have been removed/u);
+    expect(() => database.exec(`
+      PRAGMA ignore_check_constraints = ON;
+      UPDATE messages SET message_type = 'artifact' WHERE id = 'message-text';
+    `)).toThrow(/have been removed/u);
+    // The abort is the type, not the write: an ordinary row still lands.
+    database.exec(`
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, message_type, text_content,
+         sequence_number, created_at)
+      VALUES ('message-after', 'workspace-artifact', 'workstream-artifact', 'agent',
+              'text', 'Still writing.', 4, '2026-01-01');
+    `);
+    expect(database.prepare(
+      "SELECT message_type FROM messages WHERE id = 'message-after'",
+    ).get()).toEqual({ message_type: "text" });
+    database.close();
+  });
 });

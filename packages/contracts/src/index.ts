@@ -712,6 +712,18 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
 });
 
 export const WorkstreamContextSchema = z.object({
+  /**
+   * Always empty, and read by nothing. Artifacts were removed in `0068`, but a
+   * desktop build in the wild bundles the schema that *required* this field —
+   * unlike `WorkstreamDetailSchema`, which defaulted it — so omitting it fails
+   * the whole response, and `GET /:id/context` is what fills the work-stream
+   * context rail. The route parses its own response through this schema, so the
+   * default is what actually puts the field on the wire.
+   *
+   * Drop it, and the `never` that keeps it empty, once no build older than
+   * 1.77.0 is in the wild. Same two-release staging the socket ticket used.
+   */
+  artifacts: z.array(z.never()).default([]),
   backgroundTasks: z.array(BackgroundTaskSchema)
 });
 

@@ -292,6 +292,16 @@ prompted the split (a first-user-message pin that outlived the conversation it
 came from) needed more explanation than a harness-wide log should carry. The
 reasoning for that change is the first entry there, not here.
 
+Two pieces of the feature deliberately outlive it, and neither is leftover.
+`AVALON_TOOL_PROSE` keeps its `workstream_create_artifact` entry: a transcript
+row is worded from its stored `tool_name` every time it is read, so deleting the
+entry would re-word every row the tool ever wrote as "Workstream create
+artifact" — the raw-name fallback that module exists to prevent. And
+`WorkstreamContextSchema` still carries an always-empty `artifacts`, because a
+released desktop build bundles the schema that *required* it and would fail the
+whole context response without it. That one is temporary and dated in place;
+the prose entry is removed only when the rows are.
+
 ### 2026-08-12 — A run records what triggered it, so a retry stops guessing
 
 **What changed:** `harness_runs` gained `trigger_message_id`, written by

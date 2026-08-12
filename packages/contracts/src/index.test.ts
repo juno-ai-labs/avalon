@@ -31,6 +31,7 @@ import {
   UpdateHyperSightRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
+  WorkstreamContextSchema,
   WorkstreamWorkflowInputSchema
 } from "./index";
 
@@ -654,6 +655,18 @@ describe("boundary contracts", () => {
       toolUses: 3,
       transcriptMessageId: id
     })).toMatchObject({ taskType: "agent", tokenCount: 1250, toolUses: 3 });
+  });
+
+  it("keeps serving an empty artifacts field to desktop builds that still require it", () => {
+    // The route parses its own response through this schema, so the default is
+    // what puts the field on the wire for a client that predates the removal.
+    expect(WorkstreamContextSchema.parse({ backgroundTasks: [] }))
+      .toEqual({ artifacts: [], backgroundTasks: [] });
+    // Nothing may put one back: the compat field is empty or it is a mismatch.
+    expect(WorkstreamContextSchema.safeParse({
+      artifacts: [{ id }],
+      backgroundTasks: [],
+    }).success).toBe(false);
   });
 
   it("defaults invitations to members and never permits owner grants", () => {
