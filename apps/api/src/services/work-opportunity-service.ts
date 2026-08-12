@@ -938,6 +938,12 @@ async function routeExistingDecision(
     confidence: 1,
     reason,
     matchedEntities: source.entityKeys,
+    // This path publishes the same card contextual routing does, and the
+    // resolution feeds routing's feedback gates. Saying so is what keeps a
+    // dismissal of *this* agent's deliberate whole-window decision from being
+    // counted as evidence that *that* one's per-event guess was wrong.
+    // `docs/contextual-routing.md` owns what the distinction is used for.
+    source: "suggested_work",
   })));
   return routed.some(Boolean);
 }
