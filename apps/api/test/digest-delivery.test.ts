@@ -197,7 +197,7 @@ describe("settling a digest run", () => {
     const database = seededDatabase();
     withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
 
-    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+    await settleDigestRun(envFor(database), DELIVERY, "completed", DIGEST);
 
     // Resolved through the delivery's own `workstream_id`, so it lands whether
     // or not the launch recorded a `harness_run_id` to join back through. A
@@ -230,7 +230,7 @@ describe("settling a digest run", () => {
          SET workstream_id = NULL, harness_run_id = '${RUN}' WHERE id = '${DELIVERY}';
     `);
 
-    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+    await settleDigestRun(envFor(database), DELIVERY, "completed", DIGEST);
 
     expect(database.prepare(
       "SELECT workstream_id FROM messages WHERE client_message_id = ?",
