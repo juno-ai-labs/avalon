@@ -145,9 +145,9 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 - **A work stream is returned exactly once across `GET /workstreams`.** Pins are
   excluded from the paged query and appended to the first page instead. Leaving
   them in both would return a quiet pin twice — once appended, once on whichever
-  cursor page its `last_activity_at` falls in. System work streams are appended
-  the same way when `includeSystem` asks for them, and are excluded from the pin
-  append in turn, so a pinned digest arrives once and as a pin.
+  cursor page its `last_activity_at` falls in. Pins are the only rows that leave
+  the order: a system work stream is paged like any other when `includeSystem`
+  asks for it, and is appended only when it is also pinned.
 - **The sidebar pages.** It requests one page and follows `nextCursor` when the
   scroll approaches the bottom, so a rule that only holds on the first page no
   longer holds where anybody looks. Any future merge into the first page has to
@@ -238,9 +238,9 @@ allocated — `MAX(position) + 1` inside the insert — rather than by the schem
 
 **What changed:** `getWorkstreams` returns `nextCursor` instead of discarding it,
 and `useWorkstreamsQuery` walks pages: the sidebar asks for the next one as the
-scroll comes within 400px of the bottom, and appends it. System work streams
-joined pins in being appended to the first page rather than paged, and each
-partition gained its own recency index.
+scroll comes within 400px of the bottom, and appends it. The ordinary list also
+gained a partial recency index, since it now steps over a population that grows
+on its own.
 
 **Why:** The list was one request for 250 rows, and everything past that was
 simply not in the product — `nextCursor` was parsed and dropped. That was

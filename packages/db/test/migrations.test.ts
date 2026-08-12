@@ -1828,14 +1828,13 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("gives each sidebar partition a recency index it can seek rather than filter", () => {
+  it("gives the ordinary sidebar list a recency index it can seek rather than filter", () => {
     const database = migrateFreshDatabase();
-    // Both listing queries seek `(workspace_id, last_activity_at DESC)` and then
-    // walk. Sharing one index means the ordinary list walks past every digest
-    // row newer than its last result, and digest rows accumulate per occurrence
-    // — a scan that grows without bound for a result set that does not. A
-    // partial index is only usable when the query's WHERE implies its
-    // predicate, so these assert the exact clauses the two queries state.
+    // The list seeks `(workspace_id, last_activity_at DESC)` and then walks, so
+    // on the shared index every ordinary listing steps over each digest row
+    // newer than the last row it returns — and those accumulate one per
+    // occurrence. A partial index is only usable when the query's WHERE implies
+    // its predicate, so this asserts the exact clause the query states.
     const planFor = (predicate: string): string =>
       (database.prepare(
         `EXPLAIN QUERY PLAN
@@ -1845,10 +1844,12 @@ describe("database migrations", () => {
       ).all() as Array<{ detail: string }>).map((row) => row.detail).join("\n");
 
     expect(planFor("w.system_kind IS NULL")).toContain("workstreams_sidebar_recency_ordinary_idx");
-    expect(planFor("w.system_kind IS NOT NULL")).toContain("workstreams_sidebar_recency_system_idx");
-    // Neither may fall back to a scan of the whole workspace.
     expect(planFor("w.system_kind IS NULL")).not.toContain("SCAN");
-    expect(planFor("w.system_kind IS NOT NULL")).not.toContain("SCAN");
+    // A listing that asks for machinery has no `system_kind` predicate at all —
+    // it asks for everything and pages — so it keeps the general index rather
+    // than reaching one it could never imply.
+    expect(planFor("1 = 1")).toContain("workstreams_sidebar_recency_idx");
+    expect(planFor("1 = 1")).not.toContain("SCAN");
     database.close();
   });
 });
