@@ -196,7 +196,7 @@ Notion uses public connections with an `Any workspace` installation scope and th
 
 Notion's search matches **titles only** — a provider limitation, not a gap Avalon can close from this side. That makes an empty result the most misleading thing this connector can return, so the plugin message states the limit and names the two ways past it: query the data source that would hold the record, or retrieve a page found by title and read its content. Compare Drive and Linear, where searching contents was possible and is now the default.
 
-Notion's one-time webhook verification token is accepted through a guarded regional setup URL, encrypted in D1, and then used to verify every later webhook signature before normalization and queueing.
+Notion's one-time webhook verification token is accepted through a guarded setup URL, encrypted in D1, and then used to verify every later webhook signature before normalization and queueing. Unlike every other connector here, Notion's OAuth callback and webhook are not regional: one public connection issues one redirect URI and one webhook URL for both regions, so both arrive at a Global ingress that routes them to the owning region — see [`notion-ingress.md`](notion-ingress.md).
 
 ## Granola
 

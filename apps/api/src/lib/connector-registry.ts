@@ -8,6 +8,7 @@ import {
   type XConnectorConfig,
 } from "@avalon/connectors";
 import type { Env } from "../env";
+import { notionCallbackUrl } from "./notion-ingress";
 
 export function githubConnectorConfig(env: Env): GitHubConnectorConfig | null {
   if (
@@ -44,12 +45,19 @@ export function linearConnectorConfig(env: Env): LinearConnectorConfig | null {
   };
 }
 
+/**
+ * Both regions authorize against one public Notion connection, so both send the
+ * same shared-ingress redirect URI — a Notion connection accepts exactly one,
+ * and the token exchange replays it. The EU Worker therefore names a Global
+ * host here on purpose; `NotionRoutingService` carries the callback back to the
+ * region that started it. See `docs/notion-ingress.md`.
+ */
 export function notionConnectorConfig(env: Env): NotionConnectorConfig | null {
   if (!env.NOTION_OAUTH_CLIENT_ID || !env.NOTION_OAUTH_CLIENT_SECRET) return null;
   return {
     clientId: env.NOTION_OAUTH_CLIENT_ID,
     clientSecret: env.NOTION_OAUTH_CLIENT_SECRET,
-    redirectUri: new URL("/connections/notion/callback", env.PUBLIC_API_BASE_URL).toString(),
+    redirectUri: notionCallbackUrl(env),
     ...(env.NOTION_INTEGRATION_ID ? { integrationId: env.NOTION_INTEGRATION_ID } : {}),
   };
 }

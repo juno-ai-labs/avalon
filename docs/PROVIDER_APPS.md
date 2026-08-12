@@ -111,18 +111,20 @@ Store the same client ID, client secret, and webhook signing secret in both regi
 
 ## Notion public connection
 
-Create two public Notion connections in the Notion Developer portal:
+Create **one** public Notion connection in the Notion Developer portal, serving both regions:
 
-| Setting | Global | EU |
-| --- | --- | --- |
-| Name | Avalon Global | Avalon EU |
-| Installation scope | Any workspace | Any workspace |
-| Redirect URI | `https://api.with-avalon.com/connections/notion/callback` | `https://eu.api.with-avalon.com/connections/notion/callback` |
-| Webhook URL | `https://api.with-avalon.com/ingest/notion?setup=<regional setup token>` | `https://eu.api.with-avalon.com/ingest/notion?setup=<regional setup token>` |
+| Setting | Value |
+| --- | --- |
+| Name | Avalon |
+| Installation scope | Any workspace |
+| Redirect URI | `https://notion.with-avalon.com/connections/notion/callback` |
+| Webhook URL | `https://notion.with-avalon.com/ingest/notion?setup=<Global setup token>` |
+
+A Notion connection accepts one redirect URI and delivers to one webhook URL, and it has no way to know which region a Notion workspace belongs to — so unlike Linear and Slack, its callbacks cannot be regional. Both URLs are the Global ingress, which routes each callback and delivery to the owning region; `notion.with-avalon.com` must exist as a custom domain on `avalon-api-global` before registration. [`notion-ingress.md`](notion-ingress.md) owns that design.
 
 Use the read, insert, update, comment-read, and comment-insert capabilities and upload `assets/brand/avalon-mark.png`. A public Notion connection can be installed into any workspace permitted by its immutable installation scope. Marketplace publication is a separate, optional review.
 
-When the webhook subscription is created, Notion sends a one-time `verification_token`. Avalon accepts it only when the regional setup token matches, encrypts it in D1, and uses it for every later `X-Notion-Signature` check. Do not paste that token into logs or source control.
+When the webhook subscription is created, Notion sends a one-time `verification_token`. Avalon accepts it only when the Global setup token matches, encrypts it in D1, replicates it to the EU Worker so that region can verify signatures for itself, and uses it for every later `X-Notion-Signature` check. Do not paste that token into logs or source control.
 
 ## Regional Worker secrets
 
@@ -155,9 +157,9 @@ See `docs/SLACK_PERMISSIONS.md` for the exact scope-to-tool mapping and
 `docs/SLACK_INTEGRATION.md` for scope rationale, user linking, App Home,
 zero-copy behavior, automation delivery, review evidence, and acceptance tests.
 
-Global and EU each need region-specific values for:
+Global and EU use the same single public Notion connection identity:
 
-- `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_INTEGRATION_ID`, `NOTION_WEBHOOK_SETUP_TOKEN`
+- `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_INTEGRATION_ID` — identical in both regions, because there is one connection. `NOTION_WEBHOOK_SETUP_TOKEN` stays region-specific; only Global's guards the live subscription.
 
 Both regions need `TWITTER_API_IO_API_KEY` to expose the read-only X connector.
 

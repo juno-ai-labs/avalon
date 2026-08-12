@@ -1,17 +1,18 @@
 import type { Region } from "@avalon/contracts";
-import { ApiError } from "./api-error";
+import {
+  createRegionRoutedState,
+  regionFromRoutedState,
+} from "./region-routed-state";
 
+/**
+ * The public GitHub App has one setup URL. These are the GitHub-labelled names
+ * for the shared region-routed state; Notion's single redirect URI uses the same
+ * scheme through `region-routed-state.ts`.
+ */
 export function createGitHubInstallState(region: Region, randomValue: string): string {
-  if (!/^[A-Za-z0-9_-]{20,}$/u.test(randomValue)) {
-    throw new Error("GitHub installation state entropy is invalid");
-  }
-  return `${region}.${randomValue}`;
+  return createRegionRoutedState(region, randomValue);
 }
 
 export function githubRegionFromInstallState(state: string): Region {
-  const match = /^(global|eu)\.[A-Za-z0-9_-]{20,}$/u.exec(state);
-  if (!match) {
-    throw new ApiError(401, "invalid_oauth_state", "GitHub installation state is invalid or expired");
-  }
-  return match[1] as Region;
+  return regionFromRoutedState(state, "GitHub installation");
 }
