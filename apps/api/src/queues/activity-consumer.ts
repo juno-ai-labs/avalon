@@ -2,7 +2,7 @@ import {
   renderActivityRoutingMessages,
   renderSemanticTriggerMessages,
 } from "@avalon/agent-harness";
-import { ConnectorError, connectorRetryAfterMs } from "@avalon/connectors";
+import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@avalon/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
@@ -33,9 +33,9 @@ import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
 import {
-  activityOriginResourceDescriptor,
+  activityOriginLocator,
   attachWorkstreamOriginResource,
-  connectorActivityUrl,
+  describeWorkstreamOrigin,
 } from "../services/workstream-origin-resource";
 import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -53,6 +53,7 @@ interface ActivityRow {
   event_type: string;
   resource_type: string | null;
   provider_resource_id: string | null;
+  payload_ref: string | null;
   actor_json: string;
   occurred_at: string;
   received_at: string;
@@ -354,7 +355,7 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
     actorLabel: connectorActorLabel(activity),
     title: activity.title,
     body: activity.summary || activity.text_snippet,
-    canonicalUrl: connectorActivityUrl(activity.metadata_json),
+    canonicalUrl: connectorOriginUrl(parseRecord(activity.metadata_json)),
     occurredAt: activity.occurred_at,
     sourceKind: "activity",
     sourceId: activity.id,
@@ -809,7 +810,13 @@ async function startActivityAutomation(
     // behind it is attached before the Workflow starts — the run's first
     // context read then already names the issue, page, or thread it is about.
     // Ownerless on purpose: an automation fired, nobody attached anything.
-    const originResource = activityOriginResourceDescriptor(activity);
+    const originResource = await describeWorkstreamOrigin(env, {
+      connectorType: activity.connector_type,
+      connectionId: activity.connection_id,
+      provider: activity.provider,
+      locator: activityOriginLocator(activity),
+      contentRef: activity.payload_ref,
+    });
     if (originResource) {
       await attachWorkstreamOriginResource(env, {
         workspaceId: activity.workspace_id,
