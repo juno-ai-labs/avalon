@@ -1852,6 +1852,17 @@ describe("database migrations", () => {
     expect(database.prepare(
       "SELECT id, day_mask, enabled FROM digest_schedules WHERE id = 'schedule-digest'",
     ).get()).toEqual({ id: "schedule-digest", day_mask: 62, enabled: 1 });
+    // The dropped column took its foreign key with it and left the other two
+    // alone. This is what makes the drop legal without a table rebuild — SQLite
+    // refuses `DROP COLUMN` for a column named in a constraint it cannot remove
+    // — so it is asserted rather than assumed: a future column added here with a
+    // reference that outlives it would fail this rather than fail a deployment.
+    expect((database.prepare("PRAGMA foreign_key_list(digest_schedules)")
+      .all() as Array<{ table: string; from: string }>)
+      .map((key) => `${key.from} -> ${key.table}`).sort()).toEqual([
+        "user_id -> users",
+        "workspace_id -> workspaces",
+      ]);
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });
