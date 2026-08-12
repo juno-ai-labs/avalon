@@ -910,34 +910,6 @@ export class ConnectionService {
         });
       }
     }
-    if (provider === "slack" && stateData.scope === "personal") {
-      // Connecting personal Slack *is* linking the identity — Slack completed
-      // the OAuth and named the user, which is a stronger proof than the link
-      // challenge. Doing it here is what lets one button accomplish both,
-      // instead of asking a member to run two near-identical ceremonies whose
-      // buttons say the same word.
-      const slackUserId = stringField(credentials, "slackUserId") ?? providerAccountId.split(":")[1] ?? null;
-      const teamId = stringField(credentials, "teamId") ?? providerAccountId.split(":")[0] ?? null;
-      if (slackUserId && teamId) {
-        try {
-          await new SlackAgentService(this.env).establishIdentityLinkFromPersonalConnection({
-            workspaceId: String(row.workspace_id),
-            userId: String(row.user_id),
-            teamId,
-            slackUserId,
-          });
-        } catch (error) {
-          // The personal connection is committed and usable. A link that could
-          // not be recorded is a smaller thing than an OAuth reporting failure
-          // after the credential was stored, so it is logged and the member is
-          // left connected.
-          logWarn(this.env, "slack_identity_link_from_personal_connection_failed", {
-            connection_id: connectionId,
-            reason: error instanceof Error ? error.message : "unknown",
-          });
-        }
-      }
-    }
     await this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
@@ -1116,7 +1088,6 @@ export class ConnectionService {
           connection: context,
           adapter,
           signal: AbortSignal.timeout(10_000),
-          connectionStatus: String(connection.status),
         },
         async (authorized) => {
           // Testing a connection is the one moment somebody has asked Avalon to
@@ -1132,8 +1103,21 @@ export class ConnectionService {
         },
       );
     } catch (error) {
-      if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
-      result = { ok: false, message: error.message, reconnectRequired: true };
+      // Every failure is an answer here, not a 500. Testing a connection is the
+      // affordance a member reaches for *because* it is broken, so the one
+      // thing it must not do is fail to report. This used to be narrower and
+      // could afford to be: a non-healthy row skipped the refresh entirely.
+      // Now the door refreshes for any row, which puts two more failures on
+      // this path — the ten-second abort (a `DOMException`, not a
+      // `ConnectorError`) and the lease compare-and-swap losing under a
+      // concurrent refresh — and either one would have escaped as a 5xx, with
+      // the terminal status write below skipped as well.
+      const reconnectRequired = error instanceof ConnectorError && error.code === "unauthorized";
+      result = {
+        ok: false,
+        message: error instanceof Error ? error.message : "The connection test failed",
+        ...(reconnectRequired ? { reconnectRequired: true } : {}),
+      };
     }
     if (result.ok && connection.connector_type === "linear") {
       const organizationId = connection.provider_account_id == null
@@ -1247,7 +1231,6 @@ export class ConnectionService {
             connection: await this.context(connection),
             adapter,
             signal,
-            connectionStatus: String(connection.status),
           },
           (authorized) => adapter.revoke!(authorized, signal),
         );

@@ -43,17 +43,6 @@ export async function withAuthorizedConnection<T>(
     signal: AbortSignal;
     /** Refresh a credential expiring within this window. */
     minimumValidityMs?: number;
-    /**
-     * The connection's stored status.
-     *
-     * Retained for callers that still pass it, but it no longer decides
-     * anything: the refresh coordinator serves every row that is not
-     * `disabled`, so a connection this row believes is broken is refreshed and
-     * rotated like any other, and the provider gets to say whether the belief
-     * was still true. It usually is not — the belief is a record of one past
-     * moment, and nothing re-checks it.
-     */
-    connectionStatus?: string;
   },
   operation: (connection: AuthorizedConnectorConnection) => Promise<T>,
 ): Promise<T> {
@@ -162,8 +151,14 @@ export async function markConnectorNeedsReconnect(
   reason: string,
 ): Promise<void> {
   await database.prepare(
+    // `= 'healthy'`, not `!= 'disabled'`. This write carries a diagnosis, and a
+    // row that is already marked holds the first and most specific one. The
+    // door now runs for marked connections, so without this every later attempt
+    // would re-stamp them — which is exactly how a `missing_scopes:
+    // reactions:read` verdict was replaced by a bare `unauthorized` hours after
+    // the fact.
     `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status != 'disabled'`,
+     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
   ).bind(
     JSON.stringify({
       code: "connector_reauthorization_required",

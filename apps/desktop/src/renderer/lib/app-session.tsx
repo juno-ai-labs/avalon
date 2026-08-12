@@ -446,8 +446,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             // authorization is continued into here rather than left as a second
             // errand. Its own callback re-establishes the link, so whichever
             // half a member reaches first, both end up done.
-            await desktopBridge().openSettings('connections');
             try {
+              // Inside the same try as the authorization: this rejecting is not
+              // the link failing, and reporting "your Slack account could not be
+              // linked" for a link that committed is the error the whole change
+              // is about.
+              await desktopBridge().openSettings('connections');
               const authorization = await api.startProviderConnection(
                 'slack',
                 'you',
