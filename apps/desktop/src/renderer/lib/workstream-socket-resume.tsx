@@ -1,0 +1,60 @@
+import { createContext, useContext, useRef, type PropsWithChildren } from 'react';
+
+export interface StreamCursor {
+  readonly turnId: string;
+  readonly epoch: number;
+  readonly streamSeq: number;
+  readonly seenTurnIds: ReadonlySet<string>;
+  readonly turnStartText: string;
+  readonly roomSequence: number;
+  readonly completed: boolean;
+}
+
+export interface WorkstreamSocketResumeState {
+  lastSequence: number;
+  readonly streamCursors: Map<string, StreamCursor>;
+}
+
+type WorkstreamSocketResumeRegistry = Map<string, WorkstreamSocketResumeState>;
+
+const WorkstreamSocketResumeContext = createContext<WorkstreamSocketResumeRegistry | null>(null);
+
+/**
+ * Keeps ephemeral room and Bind cursors for one signed-in workspace. The scope
+ * changes whenever the user or workspace changes, so a sequence learned under
+ * one authorization boundary can never be offered under another one.
+ */
+export function WorkstreamSocketResumeProvider({
+  children,
+  scope,
+}: PropsWithChildren<{ scope: string }>): React.JSX.Element {
+  const scopedRegistry = useRef<{
+    scope: string;
+    registry: WorkstreamSocketResumeRegistry;
+  } | null>(null);
+  if (scopedRegistry.current?.scope !== scope) {
+    scopedRegistry.current = { scope, registry: new Map() };
+  }
+  return (
+    <WorkstreamSocketResumeContext.Provider value={scopedRegistry.current.registry}>
+      {children}
+    </WorkstreamSocketResumeContext.Provider>
+  );
+}
+
+/**
+ * A provider shares resume state across the foreground screen and the shell's
+ * background subscriber. The local registry preserves the old standalone-hook
+ * behavior for isolated consumers and unit tests.
+ */
+export function useWorkstreamSocketResumeState(workstreamId: string): WorkstreamSocketResumeState {
+  const sharedRegistry = useContext(WorkstreamSocketResumeContext);
+  const localRegistry = useRef<WorkstreamSocketResumeRegistry>(new Map());
+  const registry = sharedRegistry ?? localRegistry.current;
+  let resumeState = registry.get(workstreamId);
+  if (!resumeState) {
+    resumeState = { lastSequence: 0, streamCursors: new Map() };
+    registry.set(workstreamId, resumeState);
+  }
+  return resumeState;
+}
