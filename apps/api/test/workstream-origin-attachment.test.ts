@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SlackOriginContext } from "@avalon/contracts";
 import type { AuthContext, Env } from "../src/env";
 import type * as NamingService from "../src/services/workstream-naming-service";
+import { authorizedConnection, type AuthorizedConnectorConnection } from "@avalon/connectors";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 vi.mock("../src/services/integrations", () => ({
@@ -43,10 +44,9 @@ import { publishWorkstreamEvent } from "../src/services/integrations";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import {
-  activityOriginResourceDescriptor,
   attachWorkstreamOriginResource,
-  connectorActivityUrl,
-  slackOriginResourceDescriptor,
+  describeWorkstreamOrigin,
+  type OriginResourceDescriptor,
 } from "../src/services/workstream-origin-resource";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
@@ -66,6 +66,7 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 /**
@@ -74,136 +75,24 @@ afterEach(() => {
  * work stream a week later can get back to where it started. See
  * `docs/workstream-origin-attachments.md`.
  */
-describe("Slack origin descriptors", () => {
-  it("keys the origin on the thread, and names the channel it is in", () => {
-    const descriptor = slackOriginResourceDescriptor({
-      connectionId,
-      channelId: "C0A4UF9RWAU",
-      threadTs: "1786491700.928349",
-      origin: slackOrigin(),
-      permalink: "https://avalon.slack.com/archives/C0A4UF9RWAU/p1786491700928349",
-    });
-
-    expect(descriptor).toEqual({
-      connectionId,
-      provider: "slack",
-      resourceType: "slack_thread",
-      providerResourceId: "C0A4UF9RWAU:1786491700.928349",
-      title: "Thread in #operations",
-      canonicalUrl: "https://avalon.slack.com/archives/C0A4UF9RWAU/p1786491700928349",
-      metadata: {
-        teamId: "T0A4UF9KD08",
-        channelId: "C0A4UF9RWAU",
-        channelName: "operations",
-        threadTs: "1786491700.928349",
-        channelType: "public",
-        invocationType: "app_mention",
-      },
-      contentRef: null,
-    });
-  });
-
-  it("stores no Slack message content, only where the message was", () => {
-    const descriptor = slackOriginResourceDescriptor({
-      connectionId,
-      channelId: "C1",
-      threadTs: "1.1",
-      origin: slackOrigin({
-        nearbyMessages: [{
-          userId: "U9",
-          text: "the quarterly numbers are wrong",
-          timestamp: "1.0",
-          attachments: [],
-        }],
-      }),
-    });
-
-    expect(JSON.stringify(descriptor)).not.toContain("quarterly");
-  });
-
-  it("names a direct message as one rather than as a channel nobody can open", () => {
-    expect(slackOriginResourceDescriptor({
-      connectionId,
-      channelId: "D1",
-      threadTs: "1.1",
-      origin: slackOrigin({ channelType: "im", channelName: null, invocationType: "direct_message" }),
-    }).title).toBe("Slack direct message");
-  });
-
-  it("falls back to an unqualified thread when Slack did not name the channel", () => {
-    expect(slackOriginResourceDescriptor({
-      connectionId,
-      channelId: "C1",
-      threadTs: "1.1",
-      origin: slackOrigin({ channelName: null }),
-    }).title).toBe("Slack thread");
-  });
-
-  it("keeps a null URL rather than inventing one Slack never returned", () => {
-    expect(slackOriginResourceDescriptor({
-      connectionId,
-      channelId: "C1",
-      threadTs: "1.1",
-      origin: slackOrigin(),
-    }).canonicalUrl).toBeNull();
-  });
-});
-
-describe("connector activity origin descriptors", () => {
-  it("describes the provider object an activity is about", () => {
-    expect(activityOriginResourceDescriptor({
-      connection_id: connectionId,
-      provider: "linear",
-      resource_type: "linear_issue",
-      provider_resource_id: "ISS-42",
-      title: "Comment on ISS-42",
-      metadata_json: JSON.stringify({ url: "https://linear.app/avalon/issue/ISS-42" }),
-      payload_ref: "payloads/activity.json",
-    })).toEqual({
-      connectionId,
-      provider: "linear",
-      resourceType: "linear_issue",
-      providerResourceId: "ISS-42",
-      title: "Comment on ISS-42",
-      canonicalUrl: "https://linear.app/avalon/issue/ISS-42",
-      metadata: { url: "https://linear.app/avalon/issue/ISS-42" },
-      contentRef: "payloads/activity.json",
-    });
-  });
-
-  it("declines an activity that names no provider object to point at", () => {
-    expect(activityOriginResourceDescriptor({
-      connection_id: connectionId,
-      provider: "slack",
-      resource_type: null,
-      provider_resource_id: null,
-      title: "Someone reacted",
-      metadata_json: "{}",
-      payload_ref: null,
-    })).toBeNull();
-  });
-
-  it("takes whichever link key the provider happens to use", () => {
-    expect(connectorActivityUrl(JSON.stringify({ htmlUrl: "https://github.com/a/b/pull/1" })))
-      .toBe("https://github.com/a/b/pull/1");
-    expect(connectorActivityUrl(JSON.stringify({ url: "not-a-link" }))).toBeNull();
-    expect(connectorActivityUrl("not json at all")).toBeNull();
-  });
-});
-
 describe("attaching a work stream's origin", () => {
   it("attaches the Slack thread a linked member's work stream was started from", async () => {
     const database = seededDatabase();
-    const service = new WorkstreamService(environment(database), auth(), () => undefined);
+
+    const environmentValue = environment(database);
+    const service = new WorkstreamService(environmentValue, auth(), () => undefined);
+    // The permalink is the Slack adapter's own call, made under the credential
+    // door; stubbing the provider is what proves the chain reaches it.
+    vi.stubGlobal("fetch", async () => new Response(
+      JSON.stringify({ ok: true, permalink: "https://avalon.slack.com/archives/C1/p1786491700928349" }),
+      { headers: { "content-type": "application/json" } },
+    ));
 
     const created = await service.create({
       ...request(),
-      originResource: slackOriginResourceDescriptor({
-        connectionId,
-        channelId: "C1",
+      originResource: await slackOrigin(environmentValue, {
         threadTs: "1786491700.928349",
-        origin: slackOrigin(),
-        permalink: "https://avalon.slack.com/archives/C1/p1786491700928349",
+        connection: slackConnection(),
       }),
     });
 
@@ -225,12 +114,7 @@ describe("attaching a work stream's origin", () => {
 
     const created = await service.create({
       ...request(),
-      originResource: slackOriginResourceDescriptor({
-        connectionId,
-        channelId: "C1",
-        threadTs: "1.1",
-        origin: slackOrigin(),
-      }),
+      originResource: await slackOrigin(environment(database)),
     });
 
     const attached = database.prepare(
@@ -250,12 +134,7 @@ describe("attaching a work stream's origin", () => {
   it("reuses the one resource row when a second work stream starts in the same thread", async () => {
     const database = seededDatabase();
     const environmentValue = environment(database);
-    const originResource = slackOriginResourceDescriptor({
-      connectionId,
-      channelId: "C1",
-      threadTs: "1.1",
-      origin: slackOrigin(),
-    });
+    const originResource = await slackOrigin(environmentValue);
 
     const first = await new WorkstreamService(environmentValue, auth(), () => undefined)
       .create({ ...request(), originResource });
@@ -284,13 +163,8 @@ describe("attaching a work stream's origin", () => {
       objective: "Investigate the alert",
       text: "Investigate the alert",
       clientMessageId: "event:opening",
-      slackOrigin: slackOrigin(),
-      originResource: slackOriginResourceDescriptor({
-        connectionId,
-        channelId: "C1",
-        threadTs: "1.1",
-        origin: slackOrigin(),
-      }),
+      slackOrigin: slackOriginContext(),
+      originResource: await slackOrigin(environment(database)),
     });
 
     expect(attachments(database, created.workstream.id)).toEqual([expect.objectContaining({
@@ -307,11 +181,8 @@ describe("attaching a work stream's origin", () => {
     // key. The person's request still has to produce a work stream and a run.
     const created = await service.create({
       ...request(),
-      originResource: slackOriginResourceDescriptor({
+      originResource: await slackOrigin(environment(database), {
         connectionId: "00000000-0000-7000-8000-0000000000ff",
-        channelId: "C1",
-        threadTs: "1.1",
-        origin: slackOrigin(),
       }),
     });
 
@@ -329,12 +200,7 @@ describe("attaching a work stream's origin", () => {
       workspaceId,
       workstreamId: created.workstream.id,
       attachedByUserId: memberId,
-      descriptor: slackOriginResourceDescriptor({
-        connectionId,
-        channelId: "C1",
-        threadTs: "1.1",
-        origin: slackOrigin(),
-      }),
+      descriptor: await slackOrigin(environmentValue),
     });
 
     // The resource is resolved before the attachment, so the failure leaves the
@@ -349,23 +215,10 @@ describe("a work stream a connector activity created", () => {
     const database = seededDatabase();
     seedActivityAutomation(database);
 
-    await activityConsumerTesting.runMatchingAutomations(automationEnvironment(database), {
-      id: activityId,
-      workspace_id: workspaceId,
-      workspace_region: "global",
-      connection_id: connectionId,
-      connection_scope: "workspace",
-      connector_type: "linear",
-      provider: "linear",
-      event_type: "linear.issue.assigned",
-      resource_type: "linear_issue",
-      provider_resource_id: "ISS-42",
-      title: "Assigned ISS-42",
-      summary: "",
-      text_snippet: "",
-      metadata_json: JSON.stringify({ url: "https://linear.app/avalon/issue/ISS-42" }),
-      visibility_json: "{}",
-    } as never);
+    await activityConsumerTesting.runMatchingAutomations(
+      automationEnvironment(database),
+      linearActivityRow() as never,
+    );
 
     const workstream = database.prepare(
       "SELECT id FROM workstreams WHERE automation_subscription_id = ?",
@@ -380,6 +233,31 @@ describe("a work stream a connector activity created", () => {
       title: "Assigned ISS-42",
       canonical_url: "https://linear.app/avalon/issue/ISS-42",
     }]);
+  });
+
+  it("still records the object when that connector is not configured in this region", async () => {
+    // A registry that cannot be built is one absent credential taking every
+    // connector down with it. An activity needs no adapter to be described, so
+    // the base derivation keeps the provenance rather than losing it to a
+    // signing secret that was never set here.
+    const database = seededDatabase();
+    seedActivityAutomation(database);
+    const env = {
+      ...automationEnvironment(database),
+      LINEAR_OAUTH_CLIENT_ID: undefined,
+      LINEAR_OAUTH_CLIENT_SECRET: undefined,
+    } as unknown as Env;
+
+    await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
+
+    const workstream = database.prepare(
+      "SELECT id FROM workstreams WHERE automation_subscription_id = ?",
+    ).get(subscriptionId) as { id: string };
+    expect(attachments(database, workstream.id)).toEqual([expect.objectContaining({
+      resource_type: "linear_issue",
+      provider_resource_id: "ISS-42",
+      canonical_url: "https://linear.app/avalon/issue/ISS-42",
+    })]);
   });
 });
 
@@ -415,7 +293,54 @@ describe("a work stream started from a suggestion", () => {
   });
 });
 
-function slackOrigin(overrides: Partial<SlackOriginContext> = {}): SlackOriginContext {
+/**
+ * A Slack origin as the ingress produces one: through the registry, described
+ * by the Slack adapter. No test here writes a descriptor by hand, because a
+ * descriptor written by hand would not notice the connector no longer producing
+ * that shape.
+ */
+async function slackOrigin(env: Env, overrides: {
+  connectionId?: string;
+  threadTs?: string;
+  connection?: AuthorizedConnectorConnection;
+} = {}): Promise<OriginResourceDescriptor> {
+  const descriptor = await describeWorkstreamOrigin(env, {
+    connectorType: "slack",
+    connectionId: overrides.connectionId ?? connectionId,
+    provider: "slack",
+    locator: {
+      kind: "agent_session",
+      session: {
+        teamId: "T0A4UF9KD08",
+        channelId: "C1",
+        threadTs: overrides.threadTs ?? "1.1",
+        channelName: "operations",
+        channelType: "public",
+        invocationType: "app_mention",
+      },
+    },
+    ...(overrides.connection
+      ? { connection: overrides.connection, signal: AbortSignal.timeout(2_000) }
+      : {}),
+  });
+  if (!descriptor) throw new Error("The Slack connector described no origin");
+  return descriptor;
+}
+
+function slackConnection(): AuthorizedConnectorConnection {
+  return authorizedConnection({
+    id: connectionId,
+    workspaceId,
+    scope: "workspace",
+    ownerUserId: null,
+    grantedScopes: [],
+    credentials: { botAccessToken: "xoxb-test" },
+    cursor: {},
+    config: {},
+  });
+}
+
+function slackOriginContext(overrides: Partial<SlackOriginContext> = {}): SlackOriginContext {
   return {
     teamId: "T0A4UF9KD08",
     channelId: "C0A4UF9RWAU",
@@ -457,6 +382,14 @@ function environment(database: DatabaseSync): Env {
     AVALON_REGION: "global",
     LOG_LEVEL: "error",
     SESSION_SIGNING_KEY: "session-signing-key-for-workstream-origin-attachment",
+    // Enough for the registry to build the two adapters these tests describe
+    // origins with; an unconfigured connector is a separate case below.
+    PUBLIC_API_BASE_URL: "https://api.example.com",
+    SLACK_CLIENT_ID: "slack-client",
+    SLACK_CLIENT_SECRET: "slack-secret",
+    SLACK_SIGNING_SECRET: "slack-signing",
+    LINEAR_OAUTH_CLIENT_ID: "linear-client",
+    LINEAR_OAUTH_CLIENT_SECRET: "linear-secret",
     OPENROUTER_PRIMARY_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
@@ -472,6 +405,27 @@ function opportunityRequest() {
     displayPromptHash: "display-hash",
     executionPromptHash: "execution-hash",
     idempotencyKey: "start-the-suggestion",
+  };
+}
+
+function linearActivityRow() {
+  return {
+    id: activityId,
+    workspace_id: workspaceId,
+    workspace_region: "global",
+    connection_id: connectionId,
+    connection_scope: "workspace",
+    connector_type: "linear",
+    provider: "linear",
+    event_type: "linear.issue.assigned",
+    resource_type: "linear_issue",
+    provider_resource_id: "ISS-42",
+    payload_ref: null,
+    title: "Assigned ISS-42",
+    summary: "",
+    text_snippet: "",
+    metadata_json: JSON.stringify({ url: "https://linear.app/avalon/issue/ISS-42" }),
+    visibility_json: "{}",
   };
 }
 
