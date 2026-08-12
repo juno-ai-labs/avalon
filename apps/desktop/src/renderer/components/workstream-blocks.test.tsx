@@ -580,6 +580,109 @@ describe('MessageBlock markdown', () => {
   });
 });
 
+describe('MessageBlock system rows', () => {
+  const systemMessage = (id: string, text: string): Message => ({
+    ...baseMessage,
+    id,
+    authorType: 'system',
+    author: undefined,
+    messageType: 'system',
+    text,
+  });
+
+  /**
+   * jsdom lays nothing out, so the clamp cannot cut a real block here. These
+   * getters stand in for one, and they answer the way a real clamped block
+   * does: `clientHeight` is the five-line cap until the clamp comes off, and
+   * `scrollHeight` is the whole content throughout. Modelling the lifted clamp
+   * rather than freezing two numbers is the point — it is the state in which a
+   * block that measured itself would report that it fits.
+   */
+  function stubHeights(contentHeight: number): void {
+    const clampHeight = 82;
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.hasAttribute('data-expanded') ? contentHeight : Math.min(contentHeight, clampHeight); },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => contentHeight });
+  }
+
+  afterEach(() => {
+    for (const name of ['clientHeight', 'scrollHeight']) Reflect.deleteProperty(HTMLElement.prototype, name);
+  });
+
+  const openControl = (): HTMLElement => screen.getByRole('button', { name: 'Show this note in full' });
+  const closeControl = (): HTMLElement => screen.getByRole('button', { name: 'Show less of this note' });
+
+  it('leaves a one-line note alone', () => {
+    stubHeights(20);
+
+    render(<MessageBlock {...actions} message={systemMessage('message-woken', 'Avalon woke this work stream up as scheduled.')} />);
+
+    expect(screen.getByText('Avalon woke this work stream up as scheduled.')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('renders a row whose text never arrived without a control or a crash', () => {
+    stubHeights(0);
+
+    render(<MessageBlock {...actions} message={{ ...systemMessage('message-empty', ''), text: undefined }} />);
+
+    // The transcript deep-links to a row by this id, so the rewrite from a bare
+    // div to a component has to keep it on the outermost element.
+    expect(document.getElementById('message-message-empty')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('clamps a run prompt, opens it, and closes it again', () => {
+    stubHeights(1_640);
+    const brief = 'You are writing the scheduled digest for Morgan Ellis in the Juno Labs workspace.';
+
+    render(<MessageBlock {...actions} message={systemMessage('message-brief', brief)} />);
+
+    // Clamped, not truncated: the whole brief is in the document from the
+    // start, so opening it needs no fetch and a find on the page reaches it.
+    expect(screen.getByText(brief)).not.toHaveAttribute('data-expanded');
+    expect(openControl()).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(openControl());
+
+    // The open block no longer overflows anything, so the control survives on
+    // the last measurement taken while the clamp was on. Were it to re-measure
+    // here it would remove itself on the click that opened the text, leaving no
+    // way back to five lines.
+    expect(screen.getByText(brief)).toHaveAttribute('data-expanded', 'true');
+    expect(closeControl()).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(closeControl());
+
+    expect(screen.getByText(brief)).not.toHaveAttribute('data-expanded');
+    expect(openControl()).toBeInTheDocument();
+  });
+
+  it('takes its open state from the caller when the caller keeps it', () => {
+    // What a virtualizing transcript needs: the row is unmounted when it leaves
+    // the window and mounted again on the way back, and it has to come back the
+    // way the reader left it. Local state cannot survive that, and the
+    // virtualizer holds the measured height across the gap either way — so a
+    // row that returned closed would shrink under a cache that expects it open.
+    stubHeights(1_640);
+    const expanded = new Set<string>();
+    const disclosure = { expanded, onToggle: (id: string) => { expanded.add(id); } };
+    const message = systemMessage('message-kept', 'An automation run prompt of some length');
+
+    const { unmount } = render(<MessageBlock {...actions} message={message} systemRowDisclosure={disclosure} />);
+    fireEvent.click(openControl());
+    expect(expanded.has('message-kept')).toBe(true);
+    unmount();
+
+    render(<MessageBlock {...actions} message={message} systemRowDisclosure={disclosure} />);
+
+    expect(screen.getByText('An automation run prompt of some length')).toHaveAttribute('data-expanded', 'true');
+    expect(closeControl()).toBeInTheDocument();
+  });
+});
+
 describe('MessageBlock tool rows', () => {
   const toolMessage = (id: string, toolEvent: NonNullable<Message['toolEvent']>): Message => ({
     ...baseMessage,

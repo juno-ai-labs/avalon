@@ -25,7 +25,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
@@ -49,7 +49,7 @@ import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
-import { MessageBlock } from '../components/workstream-blocks';
+import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { HyperSightPanel, HyperSightRail } from '../components/hypersight-panel';
 import { useRailCrossFade } from '../components/rail-surface';
@@ -842,6 +842,18 @@ export function WorkstreamScreen(): React.JSX.Element {
     workstream.isSuccess && messages.isSuccess,
   );
   const transcript = messages.data ?? [];
+  // Held here rather than in the row: the virtualizer unmounts a row that
+  // leaves the window but keeps the height it measured, so an open row that
+  // came back closed would shrink under a cache that still expects it open.
+  const [expandedSystemRows, setExpandedSystemRows] = useState<ReadonlySet<string>>(() => new Set());
+  const systemRowDisclosure = useMemo<SystemRowDisclosure>(() => ({
+    expanded: expandedSystemRows,
+    onToggle: (messageId) => setExpandedSystemRows((current) => {
+      const next = new Set(current);
+      if (!next.delete(messageId)) next.add(messageId);
+      return next;
+    }),
+  }), [expandedSystemRows]);
   const transcriptVirtualizer = useVirtualizer({
     count: transcript.length,
     estimateSize: () => 140,
@@ -1454,6 +1466,7 @@ export function WorkstreamScreen(): React.JSX.Element {
                       onAnswerElicitation={answerElicitation}
                       onOpenAttachment={setAttachmentPreview}
                       onResolveSuggestion={resolveSuggestion}
+                      systemRowDisclosure={systemRowDisclosure}
                     />
                   </div>
                 );
