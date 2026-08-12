@@ -32,6 +32,11 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Checked the current time",
     failed: "Could not check the current time",
   },
+  core_show_connector_cards: {
+    started: "Offering connections",
+    settled: "Offered connections",
+    failed: "Could not offer connections",
+  },
   core_request_elicitation: {
     started: "Asking for a decision",
     settled: "Asked for a decision",

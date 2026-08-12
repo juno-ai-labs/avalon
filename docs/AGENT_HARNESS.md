@@ -129,6 +129,10 @@ Workspace admins may opt into **Log agent inference** from Workspace preferences
 
 The canonical `request_elicitation` tool belongs to `avalon:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. In a work stream, the work stream becomes `needs_input`; a valid answer persists a visible response, clears attention when no blockers remain, and starts a new generic Workflow linked to the previous run. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
 
+## Offering a connection
+
+`show_connector_cards` also belongs to `avalon:core` and reaches the model as `core_show_connector_cards`. It writes a block of connector cards into the work stream's transcript, each showing that connector's live state and connecting it in place. It is the deliberate opposite of elicitation in the one respect they could be confused: it does not pause the run, nothing has to be answered for the conversation to continue, and publishing a card grants the run no authority it did not already have. [`connector-cards.md`](connector-cards.md) owns the block, the offering registry it names, and what a card does when pressed.
+
 ## Durable receipts and terminal state
 
 Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before execution, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to D1 before Bind can observe it.

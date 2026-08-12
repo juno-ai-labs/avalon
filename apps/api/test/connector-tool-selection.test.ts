@@ -446,6 +446,7 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.corePlugins.find((plugin) => plugin.canonicalId === "avalon:core")
       ?.tools.map(({ definition }) => definition.name)).toEqual([
         "current_time",
+        "show_connector_cards",
         "request_elicitation",
       ]);
     expect(selected.plugins.find((plugin) =>

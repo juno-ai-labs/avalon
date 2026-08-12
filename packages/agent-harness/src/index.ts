@@ -10,7 +10,9 @@ import type {
 } from "@avalon/contracts";
 import {
   AddressingClassificationSchema,
-  AutomationDraftSchema
+  AutomationDraftSchema,
+  CONNECTOR_CARDS_MAX,
+  ConnectorOfferingIdSchema
 } from "@avalon/contracts";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
@@ -2192,6 +2194,38 @@ export const RequestElicitationInputSchema = z.object({
 });
 
 export type RequestElicitationInput = z.infer<typeof RequestElicitationInputSchema>;
+
+/**
+ * One card in a `show_connector_cards` call.
+ *
+ * `connector` takes the offering id rather than a provider name, because two of
+ * them — Google's mail and Drive halves — are the same provider with different
+ * grants, and a model that could only say "google" would be asking for whichever
+ * one the code happened to pick. The enum reaches the model in the JSON schema,
+ * so the valid values are discoverable from the tool alone.
+ */
+export const ShowConnectorCardsInputSchema = z.object({
+  connectors: z.array(
+    z.object({
+      connector: ConnectorOfferingIdSchema,
+      scope: z.enum(["personal", "workspace"]).nullable().default(null),
+      note: z.string().max(240).nullable().default(null),
+    }).strict(),
+  ).min(1).max(CONNECTOR_CARDS_MAX),
+  heading: z.string().max(120).nullable().default(null),
+}).strict();
+
+export type ShowConnectorCardsInput = z.infer<typeof ShowConnectorCardsInputSchema>;
+
+export const AVALON_SHOW_CONNECTOR_CARDS_TOOL_DEFINITION = {
+  name: "show_connector_cards",
+  description:
+    "Show connection cards for the named connectors in this work stream, so the person reading it can connect one without leaving the conversation. Each card displays that connector's live state — connected, needs reconnecting, or not connected — and cards for already-connected connectors are useful confirmation, so do not filter the list down to what is missing. Use this when a connection is what stands between the request and the work, or when introducing someone to what Avalon can reach. It shows an offer and returns immediately; it does not connect anything, does not wait for anyone, and grants this run no new authority, so do not call it and then assume the connection exists. Set scope only when the request needs a particular one: personal acts as that person, workspace is shared with everyone.",
+  capability: "connection.cards.write",
+  mode: "write",
+  idempotency: "provider_key",
+  inputSchema: z.toJSONSchema(ShowConnectorCardsInputSchema) as Record<string, unknown>,
+} as const satisfies ToolDefinition;
 
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   name: "request_elicitation",

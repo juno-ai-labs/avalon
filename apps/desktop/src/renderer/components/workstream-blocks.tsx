@@ -36,6 +36,7 @@ import { desktopBridge } from '../lib/platform';
 import { useTextClamped } from '../lib/use-text-clamped';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
+import { ConnectorCardsMessage } from './connector-cards';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Badge, Button, InlineError } from './primitives';
 
@@ -865,6 +866,9 @@ export function MessageBlock({
   }
   if (message.messageType === 'activity_suggestion' && message.activitySuggestion) {
     return <div className="transcript-event" id={`message-${message.id}`}><SuggestionBlock onResolve={(action) => onResolveSuggestion(message.activitySuggestion!.id, action)} suggestion={message.activitySuggestion} /></div>;
+  }
+  if (message.messageType === 'connector_cards' && message.connectorCards) {
+    return <div className="transcript-event" id={`message-${message.id}`}><ConnectorCardsMessage block={message.connectorCards} /></div>;
   }
   if (message.authorType === 'system' || message.messageType === 'system') {
     return <SystemMessageBlock disclosure={systemRowDisclosure} message={message} />;

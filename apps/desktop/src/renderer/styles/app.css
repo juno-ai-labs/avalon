@@ -1919,6 +1919,33 @@ pre {
 .suggestion-block.is-resolved { border-color: var(--line); opacity: 0.78; }
 .suggestion-resolution { align-items: center; color: var(--green); display: flex; font-size: 10.5px; gap: 5px; margin: 10px 0 0; }
 
+.connector-cards-block { background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 14px; }
+.connector-cards-block > header { align-items: flex-start; display: flex; gap: 10px; }
+.connector-cards-block > header > span { align-items: center; background: var(--raised); border-radius: 6px; color: var(--brand); display: flex; height: 28px; justify-content: center; width: 28px; }
+.connector-cards-block > header > div { flex: 1; min-width: 0; }
+.connector-cards-block header small { color: var(--brand); font-size: 9px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; }
+.connector-cards-block h3 { font-size: 13px; line-height: 1.38; margin: 2px 0 0; }
+.connector-card-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.connector-card { align-items: center; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 8px; display: grid; gap: 11px; grid-template-columns: 32px minmax(0, 1fr) auto; padding: 10px 11px; }
+.connector-card-icon { align-items: center; background: var(--raised); border-radius: 6px; color: var(--ink-soft); display: flex; height: 32px; justify-content: center; width: 32px; }
+.connector-card-copy { min-width: 0; }
+.connector-card-copy strong { display: block; font-size: 12.5px; }
+.connector-card-copy p { color: var(--muted); font-size: 11px; margin: 2px 0 0; }
+.connector-card-side { align-items: flex-end; display: flex; flex-direction: column; gap: 7px; }
+/* The state line is the point of the card, so it reads before the button. */
+.connector-card-state { align-items: center; color: var(--muted); display: flex; font-size: 10px; gap: 4px; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.connector-card-state small { color: var(--muted-2); font-size: 9.5px; letter-spacing: 0; text-transform: none; }
+.connector-card-connected .connector-card-state { color: var(--green); }
+.connector-card-needs_attention .connector-card-state { color: var(--yellow); }
+.connector-card-connected { border-color: #3a4a3c; }
+.connector-card-needs_attention { border-color: #4a4434; }
+.connector-card-scopes { display: flex; gap: 5px; margin-top: 7px; }
+.connector-card-scope { background: var(--raised); border: 1px solid transparent; border-radius: 999px; color: var(--muted); cursor: pointer; font-size: 10px; padding: 3px 9px; }
+.connector-card-scope:hover { background: var(--raised-hover); }
+.connector-card-scope.is-selected { background: var(--raised-hover); border-color: var(--brand); color: var(--ink); }
+.connector-cards-notice { color: var(--muted); font-size: 10.5px; margin: 10px 0 0; }
+.connector-cards-confirmation { align-items: center; color: var(--green); display: flex; font-size: 10.5px; gap: 5px; margin: 10px 0 0; }
+
 .agent-work-timing { align-items: center; color: #77766f; display: flex; font-size: 11.5px; gap: 7px; margin: 2px 0 26px; min-height: 20px; }
 .agent-work-timing-label { display: inline-block; font-weight: 480; }
 /* The stop positions and `background-size` are load-bearing and duplicated on

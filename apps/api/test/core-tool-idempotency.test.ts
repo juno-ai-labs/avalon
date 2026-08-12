@@ -353,6 +353,76 @@ describe("Avalon core write-tool idempotency", () => {
     });
   });
 
+  it("converges connector-card retries on one durable block", async () => {
+    const { database, env } = fixture();
+    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+      .find((candidate) => candidate.definition.name === "show_connector_cards");
+    expect(tool?.definition.idempotency).toBe("provider_key");
+
+    const args = {
+      heading: "Connect what you already use",
+      connectors: [
+        { connector: "slack", scope: "workspace", note: "So Avalon can answer in your channels" },
+        { connector: "github", scope: null, note: null },
+        // The same offering and scope twice is a model mistake, not a request
+        // for two identical cards with two Connect buttons.
+        { connector: "slack", scope: "workspace", note: null },
+      ],
+    };
+    const first = await tool!.execute(args, context("run:turn:1:tool:0"));
+    const second = await tool!.execute(args, context("run:turn:1:tool:0"));
+
+    expect(second).toEqual(first);
+    expect(first.output).toMatchObject({
+      state: "offered",
+      shown: [
+        { connector: "slack", scope: "workspace" },
+        { connector: "github", scope: "readers choice" },
+      ],
+    });
+    const rows = database.prepare(
+      `SELECT author_type, message_type, text_content, structured_content_json
+       FROM messages WHERE workstream_id = ?`,
+    ).all(WORKSTREAM_ID) as Array<Record<string, string>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ author_type: "agent", message_type: "system" });
+    // A client that does not know this block kind still renders a sentence.
+    expect(rows[0]!.text_content).toBe("Connect what you already use — Slack or GitHub");
+    expect(JSON.parse(rows[0]!.structured_content_json!)).toEqual({
+      kind: "connector_cards",
+      heading: "Connect what you already use",
+      cards: [
+        { offeringId: "slack", scope: "workspace", note: "So Avalon can answer in your channels" },
+        { offeringId: "github" },
+      ],
+    });
+    // The card block asks for something only a person can do, so it moves the
+    // attention marker — but unlike a question it does not pause the run.
+    expect(database.prepare(
+      `SELECT harness_status, next_sequence_number, latest_attention_sequence_number
+       FROM workstreams WHERE id = ?`,
+    ).get(WORKSTREAM_ID)).toEqual({
+      harness_status: "running",
+      next_sequence_number: 2,
+      latest_attention_sequence_number: 1,
+    });
+  });
+
+  it("tells the model which connector card scope it got wrong instead of failing the run", async () => {
+    const { database, env } = fixture();
+    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+      .find((candidate) => candidate.definition.name === "show_connector_cards");
+
+    const result = await tool!.execute(
+      { connectors: [{ connector: "notion", scope: "workspace", note: null }], heading: null },
+      context("run:turn:1:tool:1"),
+    );
+
+    expect(result.output).toMatchObject({ error: "connector_card_scope_unsupported" });
+    expect(String((result.output as { reason: string }).reason)).toContain("notion");
+    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 0 });
+  });
+
   it("refuses to execute provider-key writes without the receipt-derived key", async () => {
     const { env } = fixture();
     const tool = __integrationTesting.createAvalonTools(env, workflowInput())

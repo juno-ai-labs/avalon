@@ -470,6 +470,54 @@ describe('Avalon API wire adapter', () => {
     expect(mapped.toolEvent?.name).toBe('Searched the public web');
   });
 
+  it('reads a connector-cards block off a system row rather than a message type of its own', () => {
+    const mapped = mapMessage({
+      ...message,
+      id: 'connector-cards-message',
+      clientMessageId: 'connector-cards:00000000-0000-7000-8000-000000000099',
+      author: { type: 'agent' as const },
+      messageType: 'system' as const,
+      // The sentence is what a client that does not know this block renders,
+      // which is the reason the wire message type stays `system`.
+      textContent: 'Connect Slack or GitHub to Avalon.',
+      structuredContent: {
+        kind: 'connector_cards',
+        heading: 'Connect what you already use',
+        cards: [
+          { offeringId: 'slack', scope: 'workspace', note: 'So Avalon can answer in your channels' },
+          { offeringId: 'github' },
+        ],
+      },
+    });
+
+    expect(mapped).toMatchObject({
+      messageType: 'connector_cards',
+      text: 'Connect Slack or GitHub to Avalon.',
+      connectorCards: {
+        heading: 'Connect what you already use',
+        cards: [
+          // `personal`/`workspace` on the wire, `you`/`workspace` in the client.
+          { offeringId: 'slack', scope: 'workspace', note: 'So Avalon can answer in your channels' },
+          { offeringId: 'github' },
+        ],
+      },
+    });
+    expect(mapped.connectorCards?.cards[1]).not.toHaveProperty('scope');
+  });
+
+  it('leaves an ordinary system row alone', () => {
+    const mapped = mapMessage({
+      ...message,
+      author: { type: 'system' as const },
+      messageType: 'system' as const,
+      textContent: 'Scheduled run completed.',
+      structuredContent: null,
+    });
+
+    expect(mapped.messageType).toBe('system');
+    expect(mapped).not.toHaveProperty('connectorCards');
+  });
+
   it('gives the durable elicitation answer the same identity as its realtime question', () => {
     expect(mapMessage({
       ...message,

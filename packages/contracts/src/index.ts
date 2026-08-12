@@ -4,6 +4,26 @@ import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
+  CONNECTOR_CARDS_BLOCK_KIND,
+  CONNECTOR_CARDS_MAX,
+  CONNECTOR_OFFERINGS,
+  CONNECTOR_OFFERING_IDS,
+  ConnectorCardSchema,
+  ConnectorCardsBlockSchema,
+  ConnectorOfferingIconSchema,
+  ConnectorOfferingIdSchema,
+  ConnectorTypeSchema,
+  connectorCardsFallbackText,
+  connectorOffering,
+  connectorOfferingCapabilities,
+  type ConnectorCard,
+  type ConnectorCardsBlock,
+  type ConnectorOffering,
+  type ConnectorOfferingIcon,
+  type ConnectorOfferingId,
+  type ConnectorType,
+} from "./connector-offerings";
+export {
   WORKSTREAM_LINK_PATH_PREFIX,
   isWorkstreamId,
   parseWorkstreamLink,

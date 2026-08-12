@@ -7,6 +7,7 @@ import {
   AutomationSummarySchema as WireAutomationSummarySchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
+  ConnectorCardsBlockSchema as WireConnectorCardsBlockSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
@@ -65,6 +66,7 @@ import type {
   AutomationRunSummary,
   AutomationSummary,
   BackgroundTask,
+  ConnectorCardsData,
   CreatedWorkstream,
   DigestSchedule,
   ElicitationData,
@@ -369,6 +371,28 @@ export function mapSuggestion(suggestion: z.infer<typeof WireActivitySuggestionS
   };
 }
 
+/**
+ * A connector-cards block, which arrives as a `system` row discriminated by its
+ * structured content rather than by its own `messageType`.
+ *
+ * The wire message type is deliberately not extended for it: the row *is*
+ * system-authored interface state, every older client already renders one as
+ * the plain sentence stored in its text, and a new enum value would make every
+ * such client fail the whole transcript page instead.
+ */
+export function mapConnectorCards(
+  block: z.infer<typeof WireConnectorCardsBlockSchema>,
+): ConnectorCardsData {
+  return {
+    ...(block.heading ? { heading: block.heading } : {}),
+    cards: block.cards.map((card) => ({
+      offeringId: card.offeringId,
+      ...(card.scope ? { scope: card.scope === 'personal' ? ('you' as const) : ('workspace' as const) } : {}),
+      ...(card.note ? { note: card.note } : {}),
+    })),
+  };
+}
+
 export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationSchema>): ToolEventData {
   const started = invocation.startedAt ? Date.parse(invocation.startedAt) : Number.NaN;
   const completed = invocation.completedAt ? Date.parse(invocation.completedAt) : Number.NaN;
@@ -420,11 +444,14 @@ export function mapMessage(message: WireMessage): Message {
   const invocation = WireToolInvocationSchema.safeParse('invocation' in structured ? structured['invocation'] : structured);
   const elicitation = WireElicitationSchema.safeParse('elicitation' in structured ? structured['elicitation'] : structured);
   const suggestion = WireActivitySuggestionSchema.safeParse('suggestion' in structured ? structured['suggestion'] : structured);
+  const connectorCards = WireConnectorCardsBlockSchema.safeParse(structured);
   const messageType: Message['messageType'] = message.messageType === 'tool'
     ? 'tool_event'
     : message.messageType === 'suggestion'
       ? 'activity_suggestion'
-      : message.messageType;
+      : connectorCards.success
+        ? 'connector_cards'
+        : message.messageType;
   return {
     // The durable open question and its later durable answer are separate
     // transcript rows, while an unfetched open question can also be synthesized
@@ -466,6 +493,7 @@ export function mapMessage(message: WireMessage): Message {
       : {}),
     ...(elicitation.success ? { elicitation: mapElicitation(elicitation.data) } : {}),
     ...(suggestion.success ? { activitySuggestion: mapSuggestion(suggestion.data) } : {}),
+    ...(connectorCards.success ? { connectorCards: mapConnectorCards(connectorCards.data) } : {}),
   };
 }
 

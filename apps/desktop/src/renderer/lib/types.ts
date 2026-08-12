@@ -1,6 +1,7 @@
 import type {
   AgentModelOverride,
   AutomationPluginActivity,
+  ConnectorOfferingId,
   NoteDetail as ContractNoteDetail,
   NoteSummary as ContractNoteSummary,
   NoteTranscriptSegment as ContractNoteTranscriptSegment,
@@ -234,6 +235,23 @@ export interface ActivitySuggestionData {
   status: 'pending' | 'accepted' | 'dismissed';
 }
 
+export interface ConnectorCardData {
+  offeringId: ConnectorOfferingId;
+  /** Absent when the block left the choice of grant to the reader. */
+  scope?: Scope;
+  note?: string;
+}
+
+/**
+ * A block of connector cards in the transcript. It carries only *which*
+ * offerings were put in front of the reader — every card's connected state is
+ * resolved when it is rendered, from the connections that exist then.
+ */
+export interface ConnectorCardsData {
+  heading?: string;
+  cards: ConnectorCardData[];
+}
+
 export interface HyperSightBlockRun {
   id: string;
   blockId: string;
@@ -303,6 +321,7 @@ export interface Message {
     | 'artifact'
     | 'elicitation'
     | 'activity_suggestion'
+    | 'connector_cards'
     | 'system';
   text?: string;
   contextLabel?: string;
@@ -327,6 +346,7 @@ export interface Message {
   artifact?: ArtifactData;
   elicitation?: ElicitationData;
   activitySuggestion?: ActivitySuggestionData;
+  connectorCards?: ConnectorCardsData;
 }
 
 export interface MessagePage {

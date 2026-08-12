@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ElicitationData, Message } from '../lib/types';
@@ -5,8 +6,13 @@ import { createConnectorMentionToken, ElicitationPanel, MessageBlock, withConnec
 
 const copyText = vi.hoisted(() => vi.fn());
 
+const getConnections = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
+
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ copyText }),
+  desktopBridge: () => ({ copyText, openSettings: vi.fn(async () => undefined) }),
+}));
+vi.mock('../lib/app-session', () => ({
+  useAppSession: () => ({ api: { getConnections } }),
 }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
@@ -717,5 +723,47 @@ describe('MessageBlock tool rows', () => {
 
     expect(screen.queryByRole('img')).toBeNull();
     expect(screen.getByText('Searched the public web')).toBeVisible();
+  });
+});
+
+describe('MessageBlock connector cards', () => {
+  it('renders a connector-cards row as live cards rather than a system note', async () => {
+    getConnections.mockResolvedValueOnce([{
+      id: 'connection-slack',
+      modelPluginId: 'plugin',
+      connectorType: 'slack',
+      displayName: 'Slack',
+      scope: 'workspace',
+      status: 'healthy',
+      capabilities: ['slack.agent'],
+    }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MessageBlock
+          {...actions}
+          message={{
+            ...baseMessage,
+            id: 'message-connector-cards',
+            authorType: 'agent',
+            author: undefined,
+            messageType: 'connector_cards',
+            // The row still carries the sentence an older client would show,
+            // which must not be what this one renders.
+            text: 'Connect Slack or GitHub to Avalon.',
+            connectorCards: {
+              heading: 'Connect what you already use',
+              cards: [{ offeringId: 'slack', scope: 'workspace' }, { offeringId: 'github' }],
+            },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText('Connect Slack or GitHub to Avalon.')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Connect what you already use' })).toBeVisible();
+    await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
+    expect(screen.getByText('Not connected')).toBeVisible();
   });
 });

@@ -2,6 +2,8 @@
 
 Connectors are typed adapters behind a registry. A manifest declares OAuth needs, supported personal/workspace scopes, activity and resource types, tools, polling, webhooks, and watches. The adapter owns provider protocol details; Avalon owns tenancy, execution principals, persistence, retries, schedules, and audit.
 
+How a connection is *offered* to a person — the Settings pane's catalog, and the connector cards a work-stream transcript can carry — is a layer above this one. It renders from the offering registry in `packages/contracts/src/connector-offerings.ts`, where one connector can appear as more than one offering with different capabilities, and it is owned by [`connector-cards.md`](connector-cards.md).
+
 ## Authorization model
 
 - A personal connection can be used only by its owner principal.

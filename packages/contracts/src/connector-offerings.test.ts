@@ -1,0 +1,84 @@
+import { describe, expect, it } from "vitest";
+import {
+  CONNECTOR_CARDS_MAX,
+  CONNECTOR_OFFERINGS,
+  CONNECTOR_OFFERING_IDS,
+  ConnectorCardsBlockSchema,
+  ConnectorOfferingIdSchema,
+  connectorCardsFallbackText,
+  connectorOffering,
+  connectorOfferingCapabilities,
+} from "./connector-offerings";
+
+describe("connector offerings", () => {
+  it("keeps the id schema and the registry in step", () => {
+    // The schema is the gate every producer validates against and the registry
+    // is what every surface renders from. An offering missing from one of them
+    // is either an id nothing can render or a card nothing can publish.
+    expect([...ConnectorOfferingIdSchema.options].sort()).toEqual([...CONNECTOR_OFFERING_IDS].sort());
+  });
+
+  it("gives every offering a unique id", () => {
+    expect(new Set(CONNECTOR_OFFERING_IDS).size).toBe(CONNECTOR_OFFERINGS.length);
+  });
+
+  it("only claims an OAuth start for a scope the offering supports", () => {
+    for (const offering of CONNECTOR_OFFERINGS) {
+      for (const scope of offering.oauthScopes) {
+        expect(offering.scopes).toContain(scope);
+      }
+    }
+  });
+
+  it("declares capabilities for every scope it offers", () => {
+    for (const offering of CONNECTOR_OFFERINGS) {
+      for (const scope of offering.scopes) {
+        // The webhook and X offerings request no OAuth capabilities at all;
+        // every other scope a person can be sent to has to ask for something,
+        // or the authorization it starts grants nothing.
+        if (offering.oauthScopes.includes(scope)) {
+          expect(connectorOfferingCapabilities(offering, scope).length).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it("resolves an offering by id", () => {
+    expect(connectorOffering("slack").connectorType).toBe("slack");
+    expect(connectorOffering("google-drive-workspace").connectorType).toBe("google");
+  });
+
+  it("presents Google as two offerings of one connector type", () => {
+    const google = CONNECTOR_OFFERINGS.filter((offering) => offering.connectorType === "google");
+    expect(google).toHaveLength(2);
+    expect(google[0]!.personalCapabilities).not.toEqual(google[1]!.personalCapabilities);
+  });
+
+  it("rejects a block naming an unknown offering", () => {
+    const parsed = ConnectorCardsBlockSchema.safeParse({
+      kind: "connector_cards",
+      cards: [{ offeringId: "jira" }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects an empty block and one past the card limit", () => {
+    expect(ConnectorCardsBlockSchema.safeParse({ kind: "connector_cards", cards: [] }).success).toBe(false);
+    expect(ConnectorCardsBlockSchema.safeParse({
+      kind: "connector_cards",
+      cards: Array.from({ length: CONNECTOR_CARDS_MAX + 1 }, () => ({ offeringId: "slack" })),
+    }).success).toBe(false);
+  });
+
+  it("writes a fallback sentence naming every offering in the block", () => {
+    expect(connectorCardsFallbackText({
+      kind: "connector_cards",
+      cards: [{ offeringId: "slack" }, { offeringId: "github" }],
+    })).toBe("Connect Slack or GitHub to Avalon.");
+    expect(connectorCardsFallbackText({
+      kind: "connector_cards",
+      heading: "Pick where your work lives",
+      cards: [{ offeringId: "notion" }],
+    })).toBe("Pick where your work lives — Notion");
+  });
+});

@@ -1,21 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AtSign,
   Building2,
   Bug,
-  CalendarDays,
   Check,
   Clock3,
   Copy,
-  FileText,
-  GitBranch,
   Globe2,
-  HardDrive,
   LockKeyhole,
   LoaderCircle,
   LogOut,
   MailPlus,
-  MessageSquare,
   MonitorCog,
   Newspaper,
   PanelTop,
@@ -28,42 +22,31 @@ import {
   UserRound,
   Users,
   Wifi,
-  Webhook,
-  Workflow,
   Wrench,
   X,
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@avalon/contracts';
+import { CONNECTOR_OFFERINGS } from '@avalon/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { DigestSettings } from '../components/digest-settings';
-import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
+import {
+  connectionMatchesOffering,
+  connectorOfferingIcon,
+  offeringCapabilities,
+  offeringScopes,
+} from '../lib/connector-offerings';
+import { useConnectorAuthorization } from '../lib/use-connector-authorization';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
-
-interface PendingConnectorOAuth {
-  attemptId: string;
-  provider: ConnectorOAuthProvider;
-  startedAt: number;
-}
-
-const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
-  google: 'Google',
-  github: 'GitHub',
-  granola: 'Granola',
-  linear: 'Linear',
-  notion: 'Notion',
-  slack: 'Slack',
-};
 
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'google',
@@ -118,108 +101,31 @@ function navigationSearchTerms(item: SettingsNavItem, developerSettingsAvailable
     : item.searchTerms;
 }
 
-const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
   ? Intl.supportedValuesOf('timeZone')
   : ['America/Los_Angeles', 'Europe/London', 'UTC'];
 
-const connectorProviders = [
-  {
-    id: 'google-mail-calendar' as const,
-    provider: 'google' as const,
-    name: 'Google Mail + Calendar',
-    description: 'Search Gmail, create drafts, send mail, and work with calendar events.',
-    icon: CalendarDays,
-    scopes: ['you'] as const,
-    capabilities: ['gmail.read', 'gmail.draft', 'gmail.send', 'calendar.read', 'calendar.write'],
-  },
-  {
-    id: 'google-drive-workspace' as const,
-    provider: 'google' as const,
-    name: 'Google Drive + Docs + Sheets',
-    description: 'Read Drive files and work with Google Docs and Sheets content.',
-    icon: HardDrive,
-    scopes: ['you', 'workspace'] as const,
-    capabilities: ['drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write'],
-  },
-  {
-    id: 'github' as const,
-    provider: 'github' as const,
-    name: 'GitHub',
-    description: 'Repositories, issues, pull requests, checks, and development events.',
-    icon: GitBranch,
-    scopes: ['you', 'workspace'] as const,
-    capabilities: ['github.metadata.read', 'github.contents.read', 'github.issues.read', 'github.issues.write', 'github.pull_requests.read', 'github.pull_requests.write', 'github.actions.read', 'github.checks.read'],
-  },
-  {
-    id: 'granola' as const,
-    provider: 'granola' as const,
-    name: 'Granola',
-    description: 'Personal meeting context through Granola MCP, or workspace notes and transcripts through an admin API key.',
-    icon: FileText,
-    scopes: ['you', 'workspace'] as const,
-    personalCapabilities: ['granola.personal.read'],
-    capabilities: ['granola.workspace.read'],
-  },
-  {
-    id: 'linear' as const,
-    provider: 'linear' as const,
-    name: 'Linear',
-    description: 'Connect personally to act as you, or install Avalon for shared workspace access and real-time activity.',
-    icon: Workflow,
-    scopes: ['you', 'workspace'] as const,
-    personalCapabilities: [
-      'linear.read',
-      'linear.issue.create',
-      'linear.comment.create',
-      'linear.write',
-    ],
-    capabilities: [
-      'linear.read',
-      'linear.issue.create',
-      'linear.comment.create',
-      'linear.write',
-      ...(linearNativeAgentEnabled ? ['linear.agent'] : []),
-    ],
-  },
-  {
-    id: 'slack' as const,
-    provider: 'slack' as const,
-    name: 'Slack',
-    description: 'Messages, files, people, canvases, conversations, and the Avalon workspace Agent.',
-    icon: MessageSquare,
-    scopes: ['you', 'workspace'] as const,
-    personalCapabilities: SLACK_PERSONAL_CAPABILITIES,
-    capabilities: ['slack.agent', 'slack.notifications.write'],
-  },
-  {
-    id: 'notion' as const,
-    provider: 'notion' as const,
-    name: 'Notion',
-    description: 'Selected pages, data sources, comments, and change notifications.',
-    icon: FileText,
-    scopes: ['you'] as const,
-    capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
-  },
-  {
-    id: 'generic-webhook' as const,
-    provider: 'generic_webhook' as const,
-    name: 'Inbound webhook',
-    description: 'Receive signed activity from systems that do not have a native Avalon connector.',
-    icon: Webhook,
-    scopes: ['you', 'workspace'] as const,
-    capabilities: [],
-  },
-  {
-    id: 'x' as const,
-    provider: 'x' as const,
-    name: 'Public X via TwitterAPI.io',
-    description: 'Read-only public X timelines, threads, replies, and Lists using an Avalon-managed third-party API key.',
-    icon: AtSign,
-    scopes: ['workspace'] as const,
-    capabilities: ['x.read'],
-  },
-] as const;
+/**
+ * The offerings this pane lists, in display order, each paired with its icon.
+ *
+ * Names, descriptions, scopes, and — critically — capabilities come from
+ * `CONNECTOR_OFFERINGS`, the registry the connector cards in a work-stream
+ * transcript render from too. This pane used to hold its own copy of all of it,
+ * which meant a member could be granted a different Slack or Linear scope set
+ * depending on which surface they pressed Connect in, with nothing failing
+ * until a tool call did.
+ */
+const connectorProviders = CONNECTOR_OFFERINGS.map((offering) => ({
+  offering,
+  id: offering.id,
+  provider: offering.connectorType,
+  name: offering.name,
+  description: offering.description,
+  icon: connectorOfferingIcon(offering),
+  scopes: offeringScopes(offering),
+}));
+
+type SettingsConnectorProvider = (typeof connectorProviders)[number];
 
 function invitationStatusLabel(status: WorkspaceInvitation['status']): string {
   switch (status) {
@@ -231,21 +137,14 @@ function invitationStatusLabel(status: WorkspaceInvitation['status']): string {
 }
 
 function providerHasConnection(
-  provider: (typeof connectorProviders)[number],
+  provider: SettingsConnectorProvider,
   connections: WorkstreamConnection[],
 ): boolean {
-  const capabilities = [
-    ...provider.capabilities,
-    ...('personalCapabilities' in provider ? provider.personalCapabilities : []),
-  ];
-  return connections.some((connection) =>
-    connection.connectorType === provider.provider &&
-    (capabilities.length === 0 || capabilities.some((capability) => connection.capabilities?.includes(capability))),
-  );
+  return connections.some((connection) => connectionMatchesOffering(connection, provider.offering));
 }
 
 function providerHasActiveWorkspaceConnection(
-  provider: (typeof connectorProviders)[number],
+  provider: SettingsConnectorProvider,
   connections: WorkstreamConnection[],
 ): boolean {
   return connections.some((connection) =>
@@ -256,7 +155,7 @@ function providerHasActiveWorkspaceConnection(
 }
 
 function providerHasActivePersonalConnection(
-  provider: (typeof connectorProviders)[number],
+  provider: SettingsConnectorProvider,
   connections: WorkstreamConnection[],
 ): boolean {
   return (provider.provider === 'x' || provider.provider === 'granola') && connections.some((connection) =>
@@ -264,16 +163,6 @@ function providerHasActivePersonalConnection(
     connection.scope === 'you' &&
     connection.status !== 'disabled',
   );
-}
-
-function providerCapabilitiesForScope(
-  provider: (typeof connectorProviders)[number],
-  scope: 'you' | 'workspace',
-): string[] {
-  if (scope === 'you' && 'personalCapabilities' in provider) {
-    return [...provider.personalCapabilities];
-  }
-  return [...provider.capabilities];
 }
 
 function initialSettingsSection(): SettingsSection {
@@ -353,6 +242,10 @@ export function WorkspaceSettingsScreen({
 }: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
   const { api, runtime, session, signOut } = useAppSession();
   const queryClient = useQueryClient();
+  // The same authorization loop a connector card in a transcript runs, so both
+  // surfaces agree on when a connection exists and both refresh `connections`
+  // the moment one lands.
+  const connectorAuthorization = useConnectorAuthorization(api);
   const bridge = useMemo(() => desktopBridge(), []);
   const contentRef = useRef<HTMLElement | null>(null);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
@@ -368,10 +261,7 @@ export function WorkspaceSettingsScreen({
   const [logAgentInference, setLogAgentInference] = useState(workspace.logAgentInference);
   const [applicationSettings, setApplicationSettings] = useState<DesktopApplicationSettings | null>(null);
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
-  const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
-  const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);
-  const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
   const [granolaWorkspaceModalOpen, setGranolaWorkspaceModalOpen] = useState(false);
   const [granolaWorkspaceApiKey, setGranolaWorkspaceApiKey] = useState('');
   const [webhookModalScope, setWebhookModalScope] = useState<'you' | 'workspace' | null>(null);
@@ -418,28 +308,22 @@ export function WorkspaceSettingsScreen({
   });
   const connectProvider = useMutation({
     mutationFn: async (input: { provider: 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+      // X is created outright against an Avalon-managed key; every other
+      // provider is an authorization the member completes in their browser.
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
       }
-      const authorization = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
-      await desktopBridge().openExternal(authorization.url);
-      return { kind: 'oauth' as const, authorization, provider: input.provider };
-    },
-    onMutate: () => {
-      setConnectorOAuthMessage(null);
-      setConnectorOAuthError(null);
-    },
-    onSuccess: (result) => {
-      if (result.kind === 'direct') {
-        void queryClient.invalidateQueries({ queryKey: ['connections'] });
-        return;
-      }
-      setPendingConnectorOAuth({
-        attemptId: result.authorization.attemptId,
-        provider: result.provider,
-        startedAt: Date.now(),
+      await connectorAuthorization.begin({
+        provider: input.provider,
+        scope: input.scope,
+        capabilities: input.capabilities,
       });
+      return { kind: 'oauth' as const };
+    },
+    onMutate: () => connectorAuthorization.reset(),
+    onSuccess: (result) => {
+      if (result.kind === 'direct') void queryClient.invalidateQueries({ queryKey: ['connections'] });
     },
   });
   const createGranolaWorkspaceConnection = useMutation({
@@ -467,21 +351,8 @@ export function WorkspaceSettingsScreen({
     onSuccess: (result) => setWebhookSecretResult(result),
   });
   const reconnectConnection = useMutation({
-    mutationFn: async (connection: WorkstreamConnection) => {
-      const authorization: ConnectorOAuthStart = await api!.reconnectConnection(connection.id);
-      const attempt = await api!.getConnectorOAuthAttempt(authorization.attemptId);
-      await desktopBridge().openExternal(authorization.url);
-      return { authorization, provider: attempt.provider };
-    },
-    onMutate: () => {
-      setConnectorOAuthMessage(null);
-      setConnectorOAuthError(null);
-    },
-    onSuccess: ({ authorization, provider }) => setPendingConnectorOAuth({
-      attemptId: authorization.attemptId,
-      provider,
-      startedAt: Date.now(),
-    }),
+    mutationFn: (connection: WorkstreamConnection) => connectorAuthorization.reconnect(connection.id),
+    onMutate: () => connectorAuthorization.reset(),
   });
   const testConnection = useMutation({
     mutationFn: (id: string) => api!.testConnection(id),
@@ -616,60 +487,6 @@ export function WorkspaceSettingsScreen({
       unsubscribe();
     };
   }, [bridge]);
-
-  useEffect(() => {
-    if (!api || !pendingConnectorOAuth) return;
-    let cancelled = false;
-    let timer: number | undefined;
-    let retryDelayMs = 750;
-    const providerName = connectorProviderName[pendingConnectorOAuth.provider];
-
-    const poll = async (): Promise<void> => {
-      try {
-        const attempt = await api.getConnectorOAuthAttempt(pendingConnectorOAuth.attemptId);
-        if (cancelled) return;
-        if (attempt.status === 'pending') {
-          retryDelayMs = 1_000;
-          timer = window.setTimeout(() => void poll(), retryDelayMs);
-          return;
-        }
-        setPendingConnectorOAuth(null);
-        if (attempt.status === 'succeeded') {
-          setConnectorOAuthError(null);
-          setConnectorOAuthMessage(`${providerName} is connected.`);
-          void Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['connections'] }),
-            queryClient.invalidateQueries({ queryKey: ['workstream'] }),
-            queryClient.invalidateQueries({ queryKey: ['automation'] }),
-          ]);
-          return;
-        }
-        setConnectorOAuthMessage(null);
-        setConnectorOAuthError(
-          attempt.status === 'denied'
-            ? `${providerName} authorization was cancelled.`
-            : attempt.errorCode === 'oauth_attempt_expired'
-              ? `${providerName} authorization expired. Try connecting again.`
-              : `${providerName} could not be connected. Try again.`,
-        );
-      } catch {
-        if (cancelled) return;
-        if (Date.now() - pendingConnectorOAuth.startedAt >= 16 * 60_000) {
-          setPendingConnectorOAuth(null);
-          setConnectorOAuthError(`${providerName} authorization could not be confirmed. Refresh connections or try again.`);
-          return;
-        }
-        retryDelayMs = Math.min(5_000, retryDelayMs * 2);
-        timer = window.setTimeout(() => void poll(), retryDelayMs);
-      }
-    };
-
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [api, pendingConnectorOAuth, queryClient]);
 
   const copyInvitation = async (): Promise<void> => {
     if (!createdUrl) return;
@@ -943,7 +760,7 @@ export function WorkspaceSettingsScreen({
                         <button
                           aria-label={`Reconnect ${connection.displayName}`}
                           className="settings-icon-action"
-                          disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+                          disabled={reconnectConnection.isPending || Boolean(connectorAuthorization.pending)}
                           onClick={() => setReconnectTarget(connection)}
                           type="button"
                         >
@@ -992,13 +809,13 @@ export function WorkspaceSettingsScreen({
                       const Icon = provider.icon;
                       const connected = providerHasConnection(provider, connections.data ?? []);
                       const providerAvailable = connectorCatalog.data?.includes(provider.provider) ?? false;
-                      const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
+                      const awaitingProvider = connectorAuthorization.pending?.provider === provider.provider;
                       const hasActivePersonalConnection = provider.provider !== 'generic_webhook'
                         && providerHasActivePersonalConnection(provider, connections.data ?? []);
                       const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
                         && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
                       const personalConnectionStateUnavailable = provider.provider === 'granola' && (connections.isLoading || connections.isError);
-                      const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(connectorAuthorization.pending) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
@@ -1008,7 +825,7 @@ export function WorkspaceSettingsScreen({
                           : provider.provider === 'granola' && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
-                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(connectorAuthorization.pending) || hasActiveWorkspaceConnection;
                       const workspaceConnectTitle = hasActiveWorkspaceConnection
                         ? `A ${provider.name} workspace connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
@@ -1026,7 +843,7 @@ export function WorkspaceSettingsScreen({
                           </div>
                           <p>{provider.description}</p>
                             <div className="provider-actions">
-                              {provider.scopes.includes('you' as never) && (
+                              {provider.scopes.includes('you') && (
                                 <Button
                                   disabled={personalConnectDisabled}
                                   onClick={() => {
@@ -1040,12 +857,12 @@ export function WorkspaceSettingsScreen({
                                       setWebhookRotationTarget(null);
                                       return;
                                     }
-                                    connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
+                                    connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: offeringCapabilities(provider.offering, 'you') });
                                   }}
                                   title={personalConnectTitle}
                                 >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</Button>
                               )}
-                            {provider.scopes.includes('workspace' as never) && isAdmin && (
+                            {provider.scopes.includes('workspace') && isAdmin && (
                               <Button
                                 disabled={workspaceConnectDisabled}
                                 onClick={() => {
@@ -1063,7 +880,7 @@ export function WorkspaceSettingsScreen({
                                     setWebhookRotationTarget(null);
                                     return;
                                   }
-                                  connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') });
+                                  connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: offeringCapabilities(provider.offering, 'workspace') });
                                 }}
                                 title={workspaceConnectTitle}
                               >
@@ -1077,9 +894,9 @@ export function WorkspaceSettingsScreen({
                     {visibleProviders.length === 0 && <EmptyState title="No connectors here" description="Change the filter to see other available providers." />}
                   </div>
                 </div>
-                {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
-                {(connectorOAuthError || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
-                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
+                {connectorAuthorization.message && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorAuthorization.message}</p>}
+                {(connectorAuthorization.error || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
+                  <InlineError>{connectorAuthorization.error ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
                 )}
               </section>
             )}

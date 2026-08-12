@@ -4,6 +4,7 @@ import {
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_MEMORY_PLUGIN_ID,
   AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+  AVALON_SHOW_CONNECTOR_CARDS_TOOL_DEFINITION,
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILL_TOOL_DEFINITIONS,
   AVALON_TABLES_PLUGIN_ID,
@@ -12,6 +13,7 @@ import {
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   BUILT_IN_SKILLS,
   RequestElicitationInputSchema,
+  ShowConnectorCardsInputSchema,
   AutomationCompilerError,
   OpenRouterError,
   classifyAddressing,
@@ -45,6 +47,7 @@ import {
 } from "@avalon/agent-harness";
 import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import {
+  CONNECTOR_CARDS_BLOCK_KIND,
   ElicitationSchema,
   ModelPluginIdSchema,
   type AddressingClassification,
@@ -92,6 +95,11 @@ import {
   markConnectorNeedsReconnect,
   withAuthorizedConnection,
 } from "./connector-connection-access";
+import {
+  dedupeConnectorCards,
+  invalidConnectorCardScopes,
+  publishConnectorCards,
+} from "./connector-card-service";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
   buildAttachmentModelParts,
@@ -4793,7 +4801,7 @@ function connectorSelectionPriority(
 }
 
 async function coreWriteEntityId(
-  kind: "artifact" | "elicitation",
+  kind: "artifact" | "elicitation" | "connector_cards",
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   providerIdempotencyKey: string,
 ): Promise<string> {
@@ -4862,7 +4870,8 @@ function easyEnglishCurrentTime(
 function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
   const coreTools = tools.filter((tool) =>
     tool.definition.name === "current_time"
-    || tool.definition.name === "request_elicitation");
+    || tool.definition.name === "request_elicitation"
+    || tool.definition.name === "show_connector_cards");
   const memoryTools = tools.filter((tool) => tool.definition.capability.startsWith("memory."));
   const tableTools = tools.filter((tool) => tool.definition.capability.startsWith("table."));
   return [
@@ -4872,7 +4881,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           modelId: "avalon_core",
           shortWireName: "core",
           description: "Use Avalon's universally available core utilities.",
-          systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation for one structured blocking question that must pause the run for human input.",
+          systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation for one structured blocking question that must pause the run for human input. Use core_show_connector_cards when a missing connection is what blocks the work, or when introducing what Avalon can reach: it shows an offer and returns, so the connection does not exist because you called it, and asking for one in prose instead leaves the reader to find the right place in Settings.",
           tools: coreTools,
           preload: true,
           explicit: true,
@@ -5385,6 +5394,67 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           output: { wakeupId: args.wakeupId, status: "cancelled" },
           summary: "Cancelled a scheduled wake-up",
           providerOperationId: args.wakeupId,
+        };
+      },
+    },
+    {
+      definition: AVALON_SHOW_CONNECTOR_CARDS_TOOL_DEFINITION,
+      execute: async (raw, context) => {
+        const args = ShowConnectorCardsInputSchema.parse(raw);
+        const providerIdempotencyKey = requireProviderIdempotencyKey(
+          "core_show_connector_cards",
+          context.providerIdempotencyKey,
+        );
+        const block = dedupeConnectorCards({
+          kind: CONNECTOR_CARDS_BLOCK_KIND,
+          ...(args.heading ? { heading: args.heading } : {}),
+          cards: args.connectors.map((card) => ({
+            offeringId: card.connector,
+            ...(card.scope ? { scope: card.scope } : {}),
+            ...(card.note ? { note: card.note } : {}),
+          })),
+        });
+        // A scope the offering does not have is a fixable mistake, so it comes
+        // back as an instruction rather than a thrown error the run would
+        // retry unchanged. Notion has no workspace connection; X has no
+        // personal one.
+        const scopeProblems = invalidConnectorCardScopes(block);
+        if (scopeProblems.length > 0) {
+          return {
+            output: {
+              error: "connector_card_scope_unsupported",
+              reason: scopeProblems.join("; "),
+              hint: "Omit scope to let the reader choose, or name one the connector supports.",
+            },
+            summary: "Could not show connector cards: unsupported scope",
+          };
+        }
+        const published = await publishConnectorCards(env, {
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          block,
+          clientMessageId: `connector-cards:${await coreWriteEntityId(
+            "connector_cards",
+            input,
+            providerIdempotencyKey,
+          )}`,
+        });
+        return {
+          output: {
+            messageId: published.messageId,
+            // Named back so the model can see what it actually published after
+            // duplicates were dropped, and knows the cards are an offer with no
+            // answer attached — nothing here is connected yet.
+            shown: block.cards.map((card) => ({
+              connector: card.offeringId,
+              scope: card.scope ?? "readers choice",
+            })),
+            state: "offered",
+          },
+          summary: block.cards.length === 1
+            ? "Showed 1 connection card"
+            : `Showed ${block.cards.length} connection cards`,
+          providerOperationId: published.messageId,
         };
       },
     },
