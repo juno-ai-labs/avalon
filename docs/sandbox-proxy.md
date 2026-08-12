@@ -63,18 +63,25 @@ The download is 125 MB from `github.com`; `curl` streams the whole thing through
 the same proxy without complaint, so the tunnel is not the problem in itself.
 
 The fix is to let that host bypass the proxy and dial directly, which is
-CA-trusted and works. For the current shell:
+CA-trusted and works. `GLOBAL_AGENT_NO_PROXY` has to be extended alongside the
+conventional pair: the image sets `ELECTRON_GET_USE_PROXY=1`, which routes
+`@electron/get` through `global-agent`, and `global-agent` reads only its own
+`GLOBAL_AGENT_*` variables. Exporting `no_proxy` and `NO_PROXY` alone leaves the
+installer on the tunnel and it fails again with the identical assertion. For the
+current shell:
 
 ```sh
 for host in github.com objects.githubusercontent.com; do   # the host(s) that failed
-  case ",$no_proxy," in *",$host,"*) ;; *) export no_proxy="${no_proxy:+$no_proxy,}$host" ;; esac
-  case ",$NO_PROXY," in *",$host,"*) ;; *) export NO_PROXY="${NO_PROXY:+$NO_PROXY,}$host" ;; esac
+  for name in no_proxy NO_PROXY GLOBAL_AGENT_NO_PROXY; do
+    eval "current=\$$name"
+    case ",$current," in *",$host,"*) ;; *) export "$name=${current:+$current,}$host" ;; esac
+  done
 done
 ```
 
 With those exported, `node install.js` inside
-`node_modules/.pnpm/electron@*/node_modules/electron` completes and the binary
-lands in `dist/`.
+`node_modules/.pnpm/electron@*/node_modules/electron` completes and the 210 MB
+binary lands in `dist/`.
 
 The persistent list lives in `/etc/profile.d/zz-avalon-noproxy.sh`, written by
 the environment setup script in [the sandbox environment](SANDBOX.md#setup-script)

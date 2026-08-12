@@ -1867,8 +1867,15 @@ pre {
 .agent-message-actions button:hover { color: var(--ink); }
 .streaming-caret { animation: active-pulse 0.9s infinite; background: var(--orange); display: inline-block; height: 13px; margin-left: 2px; vertical-align: text-bottom; width: 2px; }
 .transcript-event { margin: 0 0 16px; }
-.system-message { align-items: center; color: #77766f; display: flex; font-size: 10.5px; gap: 8px; margin: 20px 0; }
-.system-message > span { background: #565750; border-radius: 50%; height: 4px; width: 4px; }
+.system-message { --system-message-lines: 5; align-items: flex-start; color: #77766f; display: flex; font-size: 10.5px; gap: 8px; line-height: 1.55; margin: 20px 0; }
+.system-message-dot { background: #565750; border-radius: 50%; flex: none; height: 4px; margin-top: 6px; width: 4px; }
+.system-message-body { min-width: 0; }
+.system-message-text { margin: 0; overflow-wrap: anywhere; }
+.system-message-text:not([data-expanded]) { -webkit-box-orient: vertical; -webkit-line-clamp: var(--system-message-lines); display: -webkit-box; overflow: hidden; }
+.system-message-toggle { align-items: center; background: transparent; color: #918f88; display: flex; font-size: 10.5px; gap: 2px; margin-top: 3px; padding: 0; }
+.system-message-toggle:hover { color: var(--ink-soft); }
+.system-message-toggle svg { transition: transform 140ms; }
+.system-message-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
 
 .tool-block { background: #20211e; border: 1px solid #30312c; border-radius: 7px; color: var(--muted); overflow: hidden; }
 .tool-block summary { align-items: center; display: grid; gap: 8px; grid-template-columns: 22px minmax(0, 1fr) auto auto 14px; list-style: none; min-height: 38px; padding: 5px 10px; }
