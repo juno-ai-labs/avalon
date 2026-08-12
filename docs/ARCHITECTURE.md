@@ -33,7 +33,7 @@ flowchart LR
   T --> M["Signed webhook"]
 ```
 
-Canonical product state lives in D1. Large activity payloads, uploads, snapshots, and artifacts live in R2 with relational metadata in D1. Durable Objects coordinate ordering, presence, sockets, and alarms but are not canonical stores.
+Canonical product state lives in D1. Large activity payloads, uploads, and snapshots live in R2 with relational metadata in D1. Durable Objects coordinate ordering, presence, sockets, and alarms but are not canonical stores.
 
 Users and workspaces each own a validated IANA timezone. The desktop detects the local system timezone during native authentication, while browser or unavailable detection falls back to `America/Los_Angeles`. Workspace defaults are `America/Los_Angeles` in Global and `Europe/London` in EU. Automation compilation preserves explicit trigger timezones and otherwise resolves personal or workspace defaults according to scope before final schema validation.
 

@@ -14,6 +14,24 @@ const TARGET = "00000000-0000-7000-8000-000000000007";
 const WORKSTREAM = "00000000-0000-7000-8000-000000000008";
 const RUN = "00000000-0000-7000-8000-000000000009";
 
+/**
+ * A digest of realistic shape. Settlement refuses text too short to be one, so
+ * a stand-in like "## Launch" now means "the run wrote a receipt" rather than
+ * "the run wrote a digest", and would exercise the wrong branch in every test
+ * below that is really about delivery.
+ */
+const DIGEST = [
+  "The pricing rollout needs a decision from you before Thursday.",
+  "",
+  "## Needs you",
+  "",
+  "- **Pricing rollout** is blocked on the tier names. Dana asked twice and nobody has answered.",
+  "",
+  "## Launch",
+  "",
+  "- Shipped it. The staged rollout finished at 14:20 with no errors reported.",
+].join("\n");
+
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
@@ -168,18 +186,18 @@ describe("settling a digest run", () => {
     const database = seededDatabase();
     withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
 
-    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch\n\n- Shipped it");
+    await settleDigestRun(envFor(database), DELIVERY, "completed", DIGEST);
 
     expect(deliveryStatus(database).status).toBe("delivered");
     expect(database.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
-      .toEqual({ summary_markdown: "## Launch\n\n- Shipped it" });
+      .toEqual({ summary_markdown: DIGEST });
   });
 
   it("notes the delivery in the occurrence's own work stream", async () => {
     const database = seededDatabase();
     withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
 
-    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+    await settleDigestRun(envFor(database), DELIVERY, "completed", DIGEST);
 
     // Resolved through the delivery's own `workstream_id`, so it lands whether
     // or not the launch recorded a `harness_run_id` to join back through. A
@@ -212,7 +230,7 @@ describe("settling a digest run", () => {
          SET workstream_id = NULL, harness_run_id = '${RUN}' WHERE id = '${DELIVERY}';
     `);
 
-    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+    await settleDigestRun(envFor(database), DELIVERY, "completed", DIGEST);
 
     expect(database.prepare(
       "SELECT workstream_id FROM messages WHERE client_message_id = ?",
@@ -230,13 +248,33 @@ describe("settling a digest run", () => {
     expect(deliveryStatus(database).error_json).toContain("digest_run_completed");
   });
 
+  it("refuses a final message too short to be a digest, and keeps the window", async () => {
+    const database = seededDatabase();
+    const request = withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+    // The exact shape of the failure that motivated removing artifacts: the run
+    // wrote its digest somewhere else and signed off with a receipt. It is
+    // non-empty and the run completed, so every other signal reads as success.
+    const receipt = "Outcome: Digest artifact created (id 9ba24c36-0665-5b6c-8c13-04c58415be68).\n"
+      + "No changes since last digest.";
+
+    await settleDigestRun(envFor(database), DELIVERY, "completed", receipt);
+
+    expect(deliveryStatus(database).status).toBe("failed");
+    expect(deliveryStatus(database).error_json).toContain("digest_run_completed");
+    // Nothing was mailed and nothing was stored, so the cursor did not move and
+    // this window is folded into the next occurrence rather than lost.
+    expect(request).not.toHaveBeenCalled();
+    expect(database.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
+      .toEqual({ summary_markdown: null });
+  });
+
   it("does not consume the window when every destination failed", async () => {
     const database = seededDatabase();
     // Permanently rejected, so `deliverDigest` records it and returns rather
     // than throwing — the path where a run could otherwise look successful.
     withTransport(() => new Response("bad recipient", { status: 422 }));
 
-    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+    await settleDigestRun(envFor(database), DELIVERY, "completed", DIGEST);
 
     expect(deliveryStatus(database).status).toBe("failed");
     expect(deliveryStatus(database).error_json).toContain("digest_not_delivered");
@@ -250,7 +288,7 @@ describe("settling a digest run", () => {
       `UPDATE digest_delivery_targets SET last_delivered_delivery_id = '${DELIVERY}' WHERE id = '${TARGET}'`,
     );
 
-    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+    await settleDigestRun(envFor(database), DELIVERY, "completed", DIGEST);
 
     expect(deliveryStatus(database).status).toBe("delivered");
   });
@@ -259,7 +297,7 @@ describe("settling a digest run", () => {
     const database = seededDatabase("delivered");
     withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
 
-    await settleDigestRun(envFor(database), DELIVERY, "completed", "## Launch");
+    await settleDigestRun(envFor(database), DELIVERY, "completed", DIGEST);
 
     expect(database.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
       .toEqual({ summary_markdown: null });

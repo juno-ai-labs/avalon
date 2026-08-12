@@ -31,7 +31,7 @@ import {
   UpdateHyperSightRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
-  WorkstreamArtifactSchema,
+  WorkstreamContextSchema,
   WorkstreamWorkflowInputSchema
 } from "./index";
 
@@ -642,20 +642,7 @@ describe("boundary contracts", () => {
     });
   });
 
-  it("carries durable work-stream outputs and task records across reloads", () => {
-    expect(WorkstreamArtifactSchema.parse({
-      id,
-      workspaceId: id,
-      workstreamId: id,
-      harnessRunId: id,
-      artifactType: "markdown",
-      title: "Launch brief",
-      previewText: "First persisted lines",
-      status: "complete",
-      mimeType: "text/markdown; charset=utf-8",
-      createdAt: "2026-07-31T20:00:00.000Z",
-      updatedAt: "2026-07-31T20:00:01.000Z"
-    })).toMatchObject({ title: "Launch brief", status: "complete" });
+  it("carries task records across reloads", () => {
     expect(BackgroundTaskSchema.parse({
       id,
       harnessRunId: id,
@@ -668,6 +655,22 @@ describe("boundary contracts", () => {
       toolUses: 3,
       transcriptMessageId: id
     })).toMatchObject({ taskType: "agent", tokenCount: 1250, toolUses: 3 });
+  });
+
+  it("tolerates artifacts in both directions of a rollout", () => {
+    // Old client, new server: the route parses its own response through this
+    // schema, so the default is what puts the field on the wire for a client
+    // that predates the removal and still requires it.
+    expect(WorkstreamContextSchema.parse({ backgroundTasks: [] }))
+      .toEqual({ artifacts: [], backgroundTasks: [] });
+    // New client, old server: one region runs the previous Worker for part of
+    // every rollout, and that Worker still returns real rows here. Rejecting
+    // them would fail the whole response — the same breakage this field exists
+    // to prevent, one direction over.
+    expect(WorkstreamContextSchema.safeParse({
+      artifacts: [{ id, title: "Launch brief" }],
+      backgroundTasks: [],
+    }).success).toBe(true);
   });
 
   it("defaults invitations to members and never permits owner grants", () => {

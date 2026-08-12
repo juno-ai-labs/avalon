@@ -54,8 +54,8 @@ so the emoji is never the only carrier of meaning; both come from one table in
 needs-input marks match App Home's task rows.
 
 The card carries no work-stream *contents*: no objective, no messages, no
-resources, no artifacts. Those still need the reader to open Avalon and pass its
-own authorization.
+resources. Those still need the reader to open Avalon and pass its own
+authorization.
 
 A Slack unfurl is one card per link per message, identical for everyone who can
 read the channel — `user_auth_required` gates the *sharer*, not the audience, so

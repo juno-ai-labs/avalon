@@ -15,7 +15,6 @@ const automationId = '00000000-0000-7000-8000-000000000008';
 const templateId = '00000000-0000-7000-8000-000000000009';
 const currentVersionId = '00000000-0000-7000-8000-000000000010';
 const nextVersionId = '00000000-0000-7000-8000-000000000011';
-const artifactId = '00000000-0000-7000-8000-000000000012';
 const taskId = '00000000-0000-7000-8000-000000000013';
 const noteId = '00000000-0000-7000-8000-000000000014';
 
@@ -73,7 +72,6 @@ const detail = {
     lastSyncAt: null,
     createdAt: timestamp,
   }],
-  artifacts: [],
   backgroundTasks: [],
   openElicitations: [],
   suggestions: [],
@@ -564,22 +562,9 @@ describe('Avalon API wire adapter', () => {
     )).toEqual([answeredResponse]);
   });
 
-  it('maps persisted artifacts and background activity into the durable rail model', () => {
+  it('maps background activity into the durable rail model', () => {
     expect(mapWorkstreamDetail({
       ...detail,
-      artifacts: [{
-        id: artifactId,
-        workspaceId,
-        workstreamId,
-        harnessRunId: messageId,
-        artifactType: 'markdown',
-        title: 'Launch brief.md',
-        previewText: '# Launch brief',
-        status: 'complete',
-        mimeType: 'text/markdown; charset=utf-8',
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }],
       backgroundTasks: [{
         id: taskId,
         harnessRunId: messageId,
@@ -593,7 +578,6 @@ describe('Avalon API wire adapter', () => {
         transcriptMessageId: messageId,
       }],
     })).toMatchObject({
-      artifacts: [{ id: artifactId, title: 'Launch brief.md', status: 'complete' }],
       backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000, tokenCount: 1_250, toolUses: 3 }],
     });
   });
@@ -602,19 +586,6 @@ describe('Avalon API wire adapter', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       void input;
       return json({
-        artifacts: [{
-          id: artifactId,
-          workspaceId,
-          workstreamId,
-          harnessRunId: messageId,
-          artifactType: 'markdown',
-          title: 'Launch brief.md',
-          previewText: '# Launch brief',
-          status: 'complete',
-          mimeType: 'text/markdown; charset=utf-8',
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        }],
         backgroundTasks: [{
           id: taskId,
           harnessRunId: messageId,
@@ -633,7 +604,6 @@ describe('Avalon API wire adapter', () => {
     const api = new AvalonApi('https://api.avalon.test', session);
 
     await expect(api.getWorkstreamContext(workstreamId)).resolves.toMatchObject({
-      artifacts: [{ id: artifactId, title: 'Launch brief.md' }],
       backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000 }],
       automationRuns: [],
     });
@@ -675,30 +645,6 @@ describe('Avalon API wire adapter', () => {
       `https://api.avalon.test/notes/${noteId}/archive`,
       expect.objectContaining({ method: 'POST' }),
     );
-  });
-
-  it('downloads an authenticated persisted artifact with its safe server filename', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void input;
-      void init;
-      return new Response('# Launch brief', {
-        headers: {
-          'Content-Type': 'text/markdown; charset=utf-8',
-          'Content-Disposition': `attachment; filename="Launch brief.md"; filename*=UTF-8''Launch%20brief.md`,
-        },
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
-
-    const result = await api.downloadArtifact(workstreamId, artifactId);
-
-    expect(result.fileName).toBe('Launch brief.md');
-    await expect(result.blob.text()).resolves.toBe('# Launch brief');
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `https://api.avalon.test/workstreams/${workstreamId}/artifacts/${artifactId}/content`,
-    );
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${session.accessToken}`);
   });
 
   it('uses the regional organization invitation contracts end to end', async () => {

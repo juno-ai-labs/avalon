@@ -112,13 +112,22 @@ describe("tool activity names", () => {
   it("never words a failed row as success", () => {
     expect(toolActivityName({ toolName: "web_search", status: "failed" }))
       .toBe("Could not search the public web");
-    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "failed" }))
-      .toBe("Could not create an artifact");
+    expect(toolActivityName({ toolName: "workstream_read_resource", status: "failed" }))
+      .toBe("Could not read an attached resource");
     // One wording for reads and writes alike: the call never reached the provider.
     expect(toolActivityName({ toolName: "github_1_issues_create", status: "failed", plugin: github }))
       .toBe("Could not reach GitHub");
     expect(toolActivityName({ toolName: "memory_prune", status: "failed" }))
       .toBe("Memory prune failed");
+  });
+
+  it("keeps wording rows a retired tool already wrote", () => {
+    // `workstream_create_artifact` no longer exists, but the rows it wrote do,
+    // and they are worded from the stored name every time they are read.
+    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "completed" }))
+      .toBe("Created an artifact");
+    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "failed" }))
+      .toBe("Could not create an artifact");
   });
 
   it("reads an unrecognized unattributed tool as a phrase rather than a symbol", () => {
