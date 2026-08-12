@@ -565,34 +565,56 @@ async function persistWorkstreamContextCompaction(
  * Load the immutable transcript visible to this attempt.
  *
  * Work-stream messages can continue arriving while an earlier attempt waits
- * for its lease. Resolve the trigger's durable sequence first, then page
+ * for its lease. Resolve the boundary's durable sequence first, then page
  * backward from that immutable SQL boundary until the prior compaction
  * checkpoint (or the start of the work stream). The `+ 1` converts the
- * repository's exclusive cursor into an inclusive trigger boundary.
+ * repository's exclusive cursor into an inclusive boundary.
+ *
+ * The boundary is normally the trigger, and for every run started *by* a
+ * message the two are the same thing. They are separable because the trigger
+ * has a second job: `projectModelProtocolTranscript` admits a suggested-work
+ * brief and an inbound email only when they are the trigger, so the id also
+ * carries identity. A `retry` needs to keep that identity — the failed run's
+ * trigger — while seeing everything the work stream has accumulated since,
+ * including a correction a teammate posted that started no run of its own.
+ * `transcriptFenceMessageId` is how it says so; it is resolved once at launch
+ * and travels in the durable workflow input, so a replayed attempt reads the
+ * same window rather than whatever has arrived by the time it runs.
  */
 async function loadTriggerFencedTranscriptMessages(
   env: Pick<Env, "DB">,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
+    & Partial<Pick<WorkstreamWorkflowInput, "transcriptFenceMessageId">>,
   listMessages: TranscriptMessageLister,
   afterSequence = -1,
   pageSize = 250,
 ): Promise<Message[]> {
-  let beforeSequence: number | undefined;
-  let triggerSequence: number | undefined;
-  if (input.triggerMessageId) {
-    const trigger = await env.DB.prepare(
+  const sequenceOf = async (messageId: string, code: string): Promise<number> => {
+    const row = await env.DB.prepare(
       `SELECT sequence_number
          FROM messages
         WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3`,
-    ).bind(input.triggerMessageId, input.workspaceId, input.workstreamId)
+    ).bind(messageId, input.workspaceId, input.workstreamId)
       .first<{ sequence_number: number }>();
-    triggerSequence = trigger?.sequence_number;
-    if (!Number.isSafeInteger(triggerSequence) || (triggerSequence ?? -1) < 0) {
-      throw Object.assign(new Error("The run trigger message is not available in this work stream"), {
-        code: "trigger_message_not_found",
-      });
+    const sequence = row?.sequence_number;
+    if (!Number.isSafeInteger(sequence) || (sequence ?? -1) < 0) {
+      throw Object.assign(new Error("The run trigger message is not available in this work stream"), { code });
     }
-    beforeSequence = triggerSequence! + 1;
+    return sequence!;
+  };
+
+  let beforeSequence: number | undefined;
+  let triggerSequence: number | undefined;
+  if (input.triggerMessageId) {
+    triggerSequence = await sequenceOf(input.triggerMessageId, "trigger_message_not_found");
+    beforeSequence = triggerSequence + 1;
+  }
+  if (input.transcriptFenceMessageId && input.transcriptFenceMessageId !== input.triggerMessageId) {
+    const fenceSequence = await sequenceOf(input.transcriptFenceMessageId, "fence_message_not_found");
+    // Never below the trigger: a fence that excluded the trigger would fail the
+    // window check below, and a caller asking for less than the run's own
+    // trigger is asking for something this function has no way to honour.
+    beforeSequence = Math.max(beforeSequence ?? 0, fenceSequence + 1);
   }
 
   const messages: Message[] = [];
@@ -766,6 +788,11 @@ async function projectModelProtocolTranscript(
     }
     flushTools();
 
+    // Matched on its structured content, ahead of the author dispatch below and
+    // deliberately independent of it. The brief is stored as the selecting
+    // member's own turn, so the ordinary human branch would otherwise replay it
+    // as plain instruction — dropping the label that marks the connector
+    // evidence quoted inside it as evidence rather than orders.
     if (message.structuredContent?.kind === "suggested_work_expansion") {
       if (message.id === input.triggerMessageId) {
         projected.push({

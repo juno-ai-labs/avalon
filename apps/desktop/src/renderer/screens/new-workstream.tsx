@@ -63,9 +63,10 @@ interface LaunchingWorkstream {
  * screen paints instead of loading.
  *
  * Both launchers seed through here. They differ only in what they can say about
- * the transcript — a typed create authored its opening turn, suggested work's is
- * the agent's — and if they differed in the detail as well, one of them would be
- * the path whose work timer silently stopped surviving the navigation.
+ * the transcript — a typed create holds the text of its opening turn, while
+ * suggested work's turn is expanded server-side and is not on the client at
+ * all — and if they differed in the detail as well, one of them would be the
+ * path whose work timer silently stopped surviving the navigation.
  */
 function launchedWorkstreamDetail(
   created: CreatedWorkstream,
@@ -339,9 +340,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       opportunityKeys.current.set(opportunity.id, key);
       return api!.startWorkOpportunity(opportunity.id, opportunity.version, key);
     },
-    // Suggested work opens onto the same surface, minus the opening turn: that
-    // one is written by the agent from the expanded prompt, so there is nothing
-    // here that could stand in for it without inventing what it says.
+    // Suggested work opens onto the same surface, minus the opening turn. That
+    // turn is attributed to the person selecting the suggestion, but its text is
+    // the expanded brief, which the server holds and this list has never seen —
+    // only the one-line `displayPrompt`. Standing that line in for the brief
+    // would show them a turn that is replaced by a different, much longer one
+    // the moment the refetch lands.
     onMutate: () => {
       const createdAt = new Date().toISOString();
       opportunityStartedAt.current = createdAt;
@@ -359,8 +363,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       // Seeded for the same reason the typed path is: without it the work-stream
       // screen has neither query and shows its full-screen `Opening work stream…`
       // state, cutting away from a surface that was already showing this work
-      // stream. The transcript is seeded empty rather than invented — the opening
-      // turn here is the agent's, and it arrives with the refetch a moment later.
+      // stream. The transcript is seeded empty rather than invented — the brief
+      // that opening turn carries is written server-side, and it arrives with the
+      // refetch a moment later.
       const detail = launchedWorkstreamDetail(created, {
         creator: workspace.currentUser,
         origin: 'suggested_work',
@@ -430,8 +435,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     : `${workspace.currentUser.name} +${participants.length - 1}`;
   // Text or files: `submit` accepts a create carrying only attachments, and
   // that turn is a bubble of tiles rather than an empty one. Suggested work is
-  // the only launch with no turn at all — its opening message is the agent's,
-  // written from the expanded prompt, and nothing here could stand in for it.
+  // the only launch with no turn at all — its opening turn is the selecting
+  // member's, but the brief it carries is expanded server-side and the client
+  // holds only the one-line suggestion, which is not the same text.
   const openingTurn: Message | null = launching?.origin === 'composer'
     ? {
       id: 'launching-opening-message',

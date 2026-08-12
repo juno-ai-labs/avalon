@@ -108,26 +108,32 @@ export function useDraftText(draftKey: string): DraftText {
   }, [draftKey, flush, mentions, text]);
 
   // Leaving the composer — for another draft or for good — commits whatever the
-  // debounce was still holding.
-  useEffect(() => () => flush(), [draftKey, flush]);
-
-  // The one edit the debounce never holds: one made before the cache read has
-  // landed. The save effect stands down until hydration, so a composer opened,
-  // typed into, and left inside that window has nothing armed to flush and the
-  // text goes nowhere — which is the same sentence the hydration handler above
-  // exists to protect, lost to a different order of events. Its own guard
-  // cancels it when the composer is already gone, so this is the only place
-  // left to write from.
+  // debounce was still holding, and whatever was typed before the cache read
+  // landed.
   //
-  // Deliberately keyed to unmount alone. A key change resets `edited`, so this
-  // cannot fire for one — and must not, because `latest` describes the key
-  // being switched to by the time a key-change cleanup runs.
-  const commitUnhydratedEdit = useCallback((): void => {
-    if (hydrated.current || !edited.current || pending.current) return;
-    pending.current = { ...latest.current };
+  // That second case is the one the debounce never holds: the save effect
+  // stands down until hydration, so a composer opened, typed into, and left
+  // inside that window has nothing armed to flush and the text would go
+  // nowhere. It is the same sentence the hydration handler above protects, lost
+  // to a different order of events — and the handler cannot cover it, because
+  // its own guard stands down once the composer is gone.
+  //
+  // The key it writes under comes from this effect's closure and not from
+  // `latest`, which by the time a key-change cleanup runs already describes the
+  // key being switched *to*. That distinction is what lets this cover a key
+  // change and not only an unmount — which matters for the composer that
+  // re-keys itself: re-keyed before the first read lands, the carried sentence
+  // has been hydrated under neither key and armed under neither, so nothing
+  // else would write it at all.
+  useEffect(() => () => {
+    if (!hydrated.current && edited.current && !pending.current) {
+      // Committed, so nothing is left uncommitted — a hydration that resolves
+      // after this must not write it a second time.
+      edited.current = false;
+      pending.current = { ...latest.current, draftKey };
+    }
     flush();
-  }, [flush]);
-  useEffect(() => () => commitUnhydratedEdit(), [commitUnhydratedEdit]);
+  }, [draftKey, flush]);
 
   // Reads the key off `latest` rather than the render's `draftKey` so a caller
   // that releases and re-keys in one handler cannot clear the key it is moving

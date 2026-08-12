@@ -811,10 +811,21 @@ export function MessageBlock({
       id={`message-${message.id}`}
       style={human ? { '--person-accent': personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id) } as React.CSSProperties : undefined}
     >
-      {!sending && (!human || !ownHumanMessage) && (
+      {/* Your own turn carries no identity line — you know who you are. A
+          context label is the exception, and the reason the header renders at
+          all here: a suggested-work brief is attributed to the person who
+          selected it but written by Avalon, so the line saying where the words
+          came from is the only thing standing between them and a turn they do
+          not remember typing. The name stays suppressed; only the label and the
+          time appear. */}
+      {!sending && (!human || !ownHumanMessage || message.contextLabel) && (
         <header>
-          {human && <span aria-hidden="true" className="message-author-dot" />}
-          <span className="message-author">{human ? humanAuthorName : 'Avalon'}</span>
+          {!ownHumanMessage && (
+            <>
+              {human && <span aria-hidden="true" className="message-author-dot" />}
+              <span className="message-author">{human ? humanAuthorName : 'Avalon'}</span>
+            </>
+          )}
           {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
           <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
         </header>
