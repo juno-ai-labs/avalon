@@ -1499,8 +1499,14 @@ describe("agent harness", () => {
     // what survives the checkpoint.
     const compactionRequest = requestBodies[1]?.messages ?? [];
     expect(compactionRequest[0]).toMatchObject({ role: "system" });
-    expect(String(compactionRequest[compactionRequest.length - 1]?.content ?? ""))
-      .toContain("Write the handoff summary for a context checkpoint.");
+    const compactionInstruction = String(compactionRequest[compactionRequest.length - 1]?.content ?? "");
+    expect(compactionInstruction).toContain("Write the handoff summary for a context checkpoint.");
+    // A checkpoint flattens the transcript's authority layers into one user-role
+    // message, so the instruction has to carry provenance forward itself:
+    // untrusted provider content must not be summarized into `# Request` as
+    // something a person in this work stream asked for.
+    expect(compactionInstruction).toContain("marked untrusted is not one of these");
+    expect(compactionInstruction).toContain("keeps that marking in your summary");
     // And it runs at the run's own reasoning effort: this call writes the only
     // record the rest of the run gets, so it is not the one to economize on.
     expect(requestBodies[1]?.reasoning).toEqual({ effort: "high" });
@@ -1574,6 +1580,97 @@ describe("agent harness", () => {
     expect(finalTurn?.messages.map((message) => message.role)).toEqual(["system", "user"]);
     expect(JSON.stringify(finalTurn?.messages)).toContain("Second summary of the work.");
     expect(JSON.stringify(finalTurn?.messages)).not.toContain("First summary of the work.");
+  });
+
+  it("retries a summary that hit the output cap and never checkpoints the truncated one", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-read", "read_once")] },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      // Cut off mid-sentence by the provider's output cap.
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "The record was read and then the" }, finish_reason: "length" }],
+        usage: { prompt_tokens: 82, completion_tokens: 8 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "Terse but complete summary." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 5 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 24, completion_tokens: 2 },
+      }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const persist = vi.fn();
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
+      compaction: {
+        contextWindowTokensByModel: { "test/model": 100 },
+        persist,
+      },
+    })).resolves.toMatchObject({ status: "completed", content: "done" });
+
+    // The retry asks for the same sections in less space, and the truncated text
+    // never reaches the transcript or the stored checkpoint — adopting it would
+    // lose everything after the cut with no signal that anything is missing.
+    const retryRequest = requestBodies[2]?.messages ?? [];
+    expect(String(retryRequest[retryRequest.length - 1]?.content ?? ""))
+      .toContain("The previous attempt ran past the output limit");
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledWith(expect.objectContaining({
+      summary: "Terse but complete summary.",
+    }));
+    expect(JSON.stringify(requestBodies[3]?.messages)).not.toContain("read and then the");
+  });
+
+  it("fails the run when even the shortened summary is truncated", async () => {
+    const truncated = () => streamResponse([{
+      model: "test/model",
+      choices: [{ delta: { content: "A summary that never ends" }, finish_reason: "length" }],
+      usage: { prompt_tokens: 82, completion_tokens: 8 },
+    }]);
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-read", "read_once")] },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      truncated(),
+      truncated(),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const persist = vi.fn();
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
+      compaction: {
+        contextWindowTokensByModel: { "test/model": 100 },
+        persist,
+      },
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { kind: "context", code: "context_limit_exceeded" },
+    });
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("does not compact at exactly 80%", async () => {
