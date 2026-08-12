@@ -4,6 +4,17 @@ import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 
+/**
+ * Which decision produced this card.
+ *
+ * Required rather than defaulted, because the two producers write rows that are
+ * identical in the transcript and are resolved by the same endpoint, and the
+ * routing feedback in `activity-routing-feedback.ts` reads a resolution as
+ * evidence about *the producer that made it*. A new producer that forgets to say
+ * who it is would silently donate its dismissals to contextual routing's gates.
+ */
+export type ActivitySuggestionSource = "contextual_routing" | "suggested_work";
+
 interface CreateActivitySuggestionInput {
   region: "global" | "eu";
   workspaceId: string;
@@ -14,6 +25,7 @@ interface CreateActivitySuggestionInput {
   confidence: number;
   reason: string;
   matchedEntities: string[];
+  source: ActivitySuggestionSource;
 }
 
 export async function publishWorkstreamRoomEvent(
@@ -48,8 +60,8 @@ export async function createActivitySuggestion(
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO activity_suggestions (
        id, workspace_id, activity_id, workstream_id, confidence, reason,
-       matched_entities_json, status, created_at, resolved_at, resolved_by_user_id
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL)`,
+       matched_entities_json, status, created_at, resolved_at, resolved_by_user_id, source
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, ?)`,
   ).bind(
     id,
     input.workspaceId,
@@ -59,6 +71,7 @@ export async function createActivitySuggestion(
     reason,
     JSON.stringify(input.matchedEntities.slice(0, 100)),
     createdAt,
+    input.source,
   ).run();
   if (Number(inserted.meta.changes ?? 0) === 0) return false;
 

@@ -39,6 +39,17 @@ watch, no matching automation, and no contextual routing suggestion. That gate
 is in the activity consumer, and it is deliberately exclusive: work that already
 has a home should not also be offered as new work.
 
+Note that "no contextual routing suggestion" now includes the case where
+contextual routing **suppressed** the event type rather than declining it, since
+both return the same answer. Admission's `route_existing` decision then writes an
+`activity_suggestions` row through the shared `createActivitySuggestion` — the
+same Suggested context card contextual routing produces — so this path can
+publish a card for an event type that module has stopped producing. The row is
+stamped `source = 'suggested_work'` so the two populations stay separable, and
+[`contextual-routing.md`](contextual-routing.md) requires every feedback read of
+that table to filter on it. Whether suppression on one side should silence the
+other is undecided; if it is ever decided yes, the gate belongs here.
+
 Admission itself is a model decision (`work_opportunity_admission`) and is
 biased toward `ignore`. It resolves the people named in the evidence against
 verified external identities, and it never lets an inference widen access: for a

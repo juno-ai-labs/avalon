@@ -553,7 +553,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [composerDraftId, setComposerDraftId] = useState<string | null>(resumeDraftId);
   const carriedInput = useRef<string | null>(null);
   const draftKey = newAutomationDraftKey(workspace.id, composerDraftId);
-  const { text: input, setText: setInput } = useDraftText(draftKey);
+  const { text: input, setText: setInput, releaseDraft } = useDraftText(draftKey);
   useEffect(() => {
     const carried = carriedInput.current;
     carriedInput.current = null;
@@ -907,6 +907,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       }
       if (composerDraftId !== response.draftId) {
         carriedInput.current = input;
+        // The sentence is *moving* to the new draft's key, so it has to leave
+        // the old one. Without this it is carried forward and left behind at
+        // once: the blank launcher this screen shares a key with would rehydrate
+        // a sentence the user had already sent into a draft.
+        releaseDraft();
         setComposerDraftId(response.draftId);
       }
       const responseMessage = response.question
