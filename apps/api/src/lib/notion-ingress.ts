@@ -50,6 +50,22 @@ export function isAllowedNotionIngressRoute(method: string, pathname: string): b
     || (method === "POST" && pathname === "/ingest/notion");
 }
 
+/**
+ * Whether the shared ingress is a host other than the one this request arrived
+ * at — that is, whether a request landed on a regional host while the single
+ * subscription and redirect URI point somewhere else.
+ *
+ * Distinct from `!isSharedNotionIngress`, which is also true in development
+ * where the ingress and the regional API are deliberately the same host.
+ */
+export function notionIngressUrl(env: Env): string {
+  return new URL("/ingest/notion", notionIngressBaseUrl(env)).toString();
+}
+
+export function notionIngressIsElsewhere(env: Env, requestUrl: string | URL): boolean {
+  return new URL(requestUrl).host.toLowerCase() !== new URL(notionIngressBaseUrl(env)).host.toLowerCase();
+}
+
 function notionIngressBaseUrl(env: Env): string {
   return env.NOTION_INGRESS_BASE_URL || DEFAULT_NOTION_INGRESS_BASE_URL;
 }

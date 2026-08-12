@@ -80,6 +80,10 @@ persists the payload in its own R2.
   through memory. A delivery with no active route is refused with a 503 rather
   than parked in Global — dropping it would lose an event, and storing it would
   put possibly EU-resident content in the wrong region.
+- **A retired route is answered, not retried.** `activeRegions` filtering would
+  make "disabled" and "never registered" the same fact, and only one of them
+  should ask Notion to come back. The route directory therefore reads status
+  rather than filtering on it.
 - **Both regions verify every delivery.** Global verifies to learn where a
   delivery goes; the owning region verifies again because a service binding is
   not a trust boundary. Removing the second check would make the bridge the only
@@ -120,8 +124,10 @@ otherwise.
 | --- | --- |
 | State carries no region prefix | `401 invalid_oauth_state`; the callback still redirects to the hosted desktop handoff with `status=failed`. |
 | `EU_NOTION_BRIDGE` unbound or EU unavailable | `503 notion_region_unavailable`. The authorization fails closed; the user retries. |
-| Delivery for a Notion workspace with no active route | `503 notion_route_pending`. Notion retries, by which time the OAuth callback has normally registered the route. |
-| Signature invalid, or signed for another integration | Rejected before any D1 access — `invalid_signature` / `unauthorized`. |
+| Delivery for a Notion workspace that has never been routed | `503 notion_route_pending`. Notion retries, by which time the OAuth callback has normally registered the route. |
+| Delivery for a Notion workspace whose every route is disabled | `{accepted, activityCount: 0}`. Disabling an Avalon connection does not uninstall the integration at Notion, so a retired workspace keeps delivering forever; retrying it would spend the full retry budget on every delivery, against the subscription every customer shares. |
+| Setup challenge posted to a regional host instead of the ingress | `400 notion_setup_wrong_host`, naming the right URL. Only the ingress replicates the token, so accepting it elsewhere would answer 200 and leave the other region unable to verify anything. |
+| Signature invalid, or signed for another integration | `invalid_signature` / `unauthorized`, before the route directory is consulted and before any payload is stored. Not before *all* D1 access: the stored verification token is read first, because verifying is what makes the delivery's workspace readable. |
 | Challenge replication to EU fails | The whole setup request fails. Re-sending the verification from Notion's dashboard is idempotent: Global recognizes the same token and replicates again. |
 | Webhook body over `PROVIDER_WEBHOOK_MAX_BYTES` (2 MB default) | `payload_too_large`, before parsing. |
 | `GLOBAL_NOTION_ROUTER` unavailable from EU at connect time | Connection is marked `error` with `notion_route_registration_failed`; a connection test re-registers it. |
@@ -164,13 +170,57 @@ redirect URI.
 ## Operations
 
 `notion.with-avalon.com` must exist as a custom domain on `avalon-api-global`
-before the connection is registered with Notion. Both Workers need
+before the connection is registered with Notion.
+
+**The release that first ships this module needs the three-stage Worker rollout
+in [`RUNBOOK.md`](RUNBOOK.md), by hand.** The two bridges are a circular pair —
+Global binds `EU_NOTION_BRIDGE` to an entrypoint EU does not export yet, and EU
+binds `GLOBAL_NOTION_ROUTER` to one Global does not export yet — so neither
+region can be deployed with its full configuration first, and the automatic
+EU-then-Global deployment cannot land this change. Both Workers need
 `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, and
 `NOTION_INTEGRATION_ID` — the *same* values, since there is one connection — plus
 `NOTION_WEBHOOK_SETUP_TOKEN`. Registration steps are in
 [`PROVIDER_APPS.md`](PROVIDER_APPS.md).
 
 ## Changelog
+
+### 2026-08-12 — A retired workspace is answered, and the challenge has one door
+
+**What changed:** A delivery whose every route is disabled now returns
+`{accepted, activityCount: 0}` instead of the retry-me 503, so the directory
+reads route status rather than filtering on it. A `setup=` challenge posted to a
+regional host is refused with `notion_setup_wrong_host` instead of being stored
+there. The four `default*InRegion` helpers regained the
+`AVALON_REGION === "global"` check the Linear equivalents carry.
+
+**Why:** Both are consequences of one subscription serving every customer, which
+is what makes this module different from the per-tenant webhooks it was modelled
+on. Disabling an Avalon connection does not uninstall the integration at Notion,
+so a retired workspace keeps delivering with nothing that will ever make its
+route active again; answering those with a 503 spends the full retry budget on
+each one and risks Notion disabling the subscription that every other customer
+depends on. And the challenge arrives exactly once: the regional handler would
+have stored it and answered 200 without replicating, which surfaces later as a
+total delivery failure for the region that never got a copy — the failure the
+replication exists to prevent, reached through the other door.
+
+### 2026-08-12 — The bridges ship as a staged rollout, not on the automatic deploy
+
+**What changed:** `RUNBOOK.md` gained a three-stage bootstrap for the release
+that first ships this module, and `Operations` above points at it. No code
+changed.
+
+**Why:** The two bridges are a circular pair: Global's config binds
+`EU_NOTION_BRIDGE` to an entrypoint EU does not export yet, and EU's binds
+`GLOBAL_NOTION_ROUTER` to one Global does not export yet. The automatic
+merge-triggered deployment runs EU then Global, and neither order can succeed —
+whichever goes first references an entrypoint that does not exist. The repository
+had already met this with work-stream inbound email and written the rule down;
+what it had not done was make the rule findable from the module that trips it.
+A future module that adds a cross-region entrypoint in only one direction does
+**not** need this, and should not copy the staging by reflex — the cost is a
+release that cannot be landed by merging.
 
 ### 2026-08-12 — The ingress never claims the Worker's own regional API
 
