@@ -4356,7 +4356,9 @@ async function connectorToolSurfaceHash(
     pluginId,
     tools: tools.map(({ definition }) => ({
       name: canonicalToolName(definition.name),
-      providerOperationName: definition.providerOperationName ?? null,
+      ...(definition.providerOperationName
+        ? { providerOperationName: definition.providerOperationName }
+        : {}),
       capability: definition.capability,
       mode: definition.mode,
       idempotency: definition.idempotency,
