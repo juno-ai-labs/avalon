@@ -8,6 +8,7 @@ import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { workstreamRoutes } from "../src/routes/workstreams";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * The response and row contracts driven through the real queries.
@@ -87,14 +88,14 @@ function seedAgentRun(database: DatabaseSync): void {
 }
 
 function envFor(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
     LOG_LEVEL: "error",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
-  } as unknown as Env;
+  });
 }
 
 function appFor(database: DatabaseSync) {

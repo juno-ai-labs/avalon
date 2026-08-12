@@ -11,10 +11,12 @@ import {
   MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM,
   MINIMUM_WAKEUP_DELAY_SECONDS,
   WakeupInputError,
+  WorkstreamWakeupRowSchema,
   parseWakeupDelay,
   resolveWakeupInstant,
   type WorkstreamWakeupRow,
 } from "../src/services/workstream-wakeup-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = "00000000-0000-4000-8000-000000000000";
@@ -34,7 +36,7 @@ class SqliteD1Statement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -42,17 +44,17 @@ class SqliteD1Statement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: { changes: 0 },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
-  return {
-    prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+  return createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
     batch: async (statements: D1PreparedStatement[]) => {
       const results: D1Result<unknown>[] = [];
       database.exec("BEGIN");
@@ -67,7 +69,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
         throw error;
       }
     },
-  } as unknown as D1Database;
+  });
 }
 
 const openDatabases: DatabaseSync[] = [];
@@ -116,7 +118,7 @@ function fixture(): Fixture {
 
   const schedulerRefreshes: string[] = [];
   const workflowCreations: Array<{ id: string; params: WorkstreamWorkflowInput }> = [];
-  const env = {
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -138,7 +140,7 @@ function fixture(): Fixture {
         workflowCreations.push(options);
       },
     },
-  } as unknown as Env;
+  });
   return { database, env, schedulerRefreshes, workflowCreations };
 }
 
@@ -178,11 +180,12 @@ function wakeupTools(env: Env) {
 }
 
 function pendingRow(database: DatabaseSync, wakeupId: string): WorkstreamWakeupRow {
-  return database.prepare(
+  const row = database.prepare(
     `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
             due_at, status, version, created_at
        FROM workstream_wakeups WHERE id = ?`,
-  ).get(wakeupId) as unknown as WorkstreamWakeupRow;
+  ).get(wakeupId);
+  return WorkstreamWakeupRowSchema.parse(row);
 }
 
 describe("wake-up delay grammar", () => {

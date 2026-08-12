@@ -7,6 +7,7 @@ import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { NoteService } from "../src/services/note-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = "00000000-0000-4000-8000-000000000000";
@@ -26,7 +27,7 @@ class SqliteD1Statement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -34,17 +35,17 @@ class SqliteD1Statement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: { changes: 0 },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
-  return {
-    prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+  return createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
     batch: async (statements: D1PreparedStatement[]) => {
       const results: D1Result<unknown>[] = [];
       database.exec("BEGIN");
@@ -59,7 +60,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
         throw error;
       }
     },
-  } as unknown as D1Database;
+  });
 }
 
 /**
@@ -117,12 +118,12 @@ function fixture(): { database: DatabaseSync; env: Env } {
   `);
   return {
     database,
-    env: {
+    env: createTestEnv({
       DB: sqliteD1(database),
-      PAYLOADS: new MemoryBucket() as unknown as R2Bucket,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>(new MemoryBucket()),
       AVALON_REGION: "global",
       APP_ENV: "test",
-    } as Env,
+    }),
   };
 }
 
@@ -264,9 +265,9 @@ describe("Avalon core write-tool idempotency", () => {
     const { database, env } = fixture();
     const databaseBinding = env.DB;
     let staleExistenceChecks = 0;
-    const staleExistenceEnv = {
+    const staleExistenceEnv = createTestEnv({
       ...env,
-      DB: {
+      DB: createTestD1Database({
         prepare: (sql: string) => {
           if (sql.includes("SELECT id FROM elicitations")) {
             staleExistenceChecks += 1;
@@ -274,13 +275,13 @@ describe("Avalon core write-tool idempotency", () => {
               bind: () => statement,
               first: async () => null,
             };
-            return statement as unknown as D1PreparedStatement;
+            return createTestD1PreparedStatement(statement);
           }
           return databaseBinding.prepare(sql);
         },
         batch: databaseBinding.batch.bind(databaseBinding),
-      } as D1Database,
-    } as Env;
+      }),
+    });
     const tool = __integrationTesting.createAvalonTools(staleExistenceEnv, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");

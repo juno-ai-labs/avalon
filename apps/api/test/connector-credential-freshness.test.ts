@@ -7,13 +7,18 @@ import {
   providerJson,
   withProviderReauthorization,
   type ConnectorConnectionContext,
-  type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { describe, expect, it, vi } from "vitest";
 import { encryptString } from "../src/lib/crypto";
 import { __connectionServiceTesting } from "../src/services/connection-service";
 import { withAuthorizedConnection } from "../src/services/connector-connection-access";
+import type { CredentialRefreshAdapter } from "../src/services/connector-credential-refresh";
 import { __integrationTesting } from "../src/services/integrations";
+import type {
+  PluginAuthorizationConnection,
+  PluginAuthorizationInput,
+} from "../src/services/integrations";
+import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * A connection reaches a provider only through `withAuthorizedConnection`,
@@ -66,7 +71,7 @@ describe("the credential door", () => {
         connection,
         adapter: {
           refreshCredentials: async () => ({ accessToken: FRESH_TOKEN }),
-        } as unknown as ResolvedConnectorAdapter,
+        } satisfies CredentialRefreshAdapter,
         signal: AbortSignal.timeout(2_000),
       },
       async () => undefined,
@@ -108,7 +113,7 @@ describe("the credential door", () => {
       { DB: database.d1, CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
       {
         connection,
-        adapter: { refreshCredentials } as unknown as ResolvedConnectorAdapter,
+        adapter: { refreshCredentials } satisfies CredentialRefreshAdapter,
         signal: AbortSignal.timeout(2_000),
       },
       async (authorized) => { seen.push(authorized.credentials.accessToken); },
@@ -134,7 +139,7 @@ describe("the credential door", () => {
       },
       {
         connection,
-        adapter: { refreshCredentials } as unknown as ResolvedConnectorAdapter,
+        adapter: { refreshCredentials } satisfies CredentialRefreshAdapter,
         signal: AbortSignal.timeout(2_000),
       },
       async () => undefined,
@@ -168,7 +173,7 @@ describe("the credential door", () => {
           refreshToken: "refresh-token",
           expiresAt: EXPIRED_AT,
         }),
-        adapter: { refreshCredentials } as unknown as ResolvedConnectorAdapter,
+        adapter: { refreshCredentials } satisfies CredentialRefreshAdapter,
         signal: AbortSignal.timeout(2_000),
       },
       async (authorized) => { reached.push(authorized.credentials.accessToken); },
@@ -193,7 +198,7 @@ describe("the credential door", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       return { accessToken: FRESH_TOKEN, refreshToken: "next-single-use-token" };
     });
-    const adapter = { refreshCredentials } as unknown as ResolvedConnectorAdapter;
+    const adapter = { refreshCredentials } satisfies CredentialRefreshAdapter;
     const env = {
       DB: database,
       CONNECTOR_CREDENTIALS_KEY: secret,
@@ -229,7 +234,7 @@ describe("the credential door", () => {
 
   it("marks a connection the provider refuses mid-operation for reconnect", async () => {
     const statements: string[] = [];
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         statements.push(sql);
         return {
@@ -237,13 +242,13 @@ describe("the credential door", () => {
           async run() { return { success: true, meta: { changes: 1 } }; },
         };
       },
-    } as unknown as D1Database;
+    });
 
     await expect(withAuthorizedConnection(
       { DB: database, CONNECTOR_CREDENTIALS_KEY: "k", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
       {
         connection: connectionContext({ accessToken: STALE_TOKEN }),
-        adapter: {} as ResolvedConnectorAdapter,
+        adapter: {} satisfies CredentialRefreshAdapter,
         signal: AbortSignal.timeout(2_000),
       },
       async () => {
@@ -264,26 +269,26 @@ describe("plugin revalidation verdicts", () => {
     connectionId: "00000000-0000-7000-8000-00000000c0de",
     workspaceId: "00000000-0000-7000-8000-00000000ffff",
     connectorType: "granola",
-  };
+  } satisfies PluginAuthorizationConnection;
   const input = {
     workspaceId: frozen.workspaceId,
     workstreamId: "00000000-0000-7000-8000-0000000000ws",
     harnessRunId: "00000000-0000-7000-8000-0000000000rn",
-  };
+  } satisfies PluginAuthorizationInput;
 
   function recordingEnv() {
     const statements: string[] = [];
     return {
       statements,
-      env: {
-        DB: {
+      env: createTestEnv({
+        DB: createTestD1Database({
           prepare(sql: string) {
             statements.push(sql);
             return { bind() { return this; }, async run() { return { success: true, meta: { changes: 1 } }; } };
           },
-        },
+        }),
         LOG_LEVEL: "error",
-      },
+      }),
     };
   }
 
@@ -294,9 +299,9 @@ describe("plugin revalidation verdicts", () => {
     const { env, statements } = recordingEnv();
 
     await expect(__integrationTesting.pluginAuthorizationFromHealth(
-      env as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[0],
-      input as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[1],
-      frozen as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[2],
+      env,
+      input,
+      frozen,
       { ok: false, message: "Granola authorization was revoked", reconnectRequired: true },
     )).resolves.toBe("denied");
 
@@ -307,9 +312,9 @@ describe("plugin revalidation verdicts", () => {
     const { env, statements } = recordingEnv();
 
     await expect(__integrationTesting.pluginAuthorizationFromHealth(
-      env as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[0],
-      input as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[1],
-      frozen as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[2],
+      env,
+      input,
+      frozen,
       { ok: false, message: "TwitterAPI.io has no remaining credits" },
     )).resolves.toBe("indeterminate");
 
@@ -322,9 +327,9 @@ describe("plugin revalidation verdicts", () => {
     const { env, statements } = recordingEnv();
 
     await expect(__integrationTesting.pluginAuthorizationFromHealth(
-      env as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[0],
-      input as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[1],
-      frozen as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[2],
+      env,
+      input,
+      frozen,
       { ok: true, message: "healthy" },
     )).resolves.toBe("authorized");
 
@@ -378,7 +383,7 @@ describe("what a failed refresh does to the row", () => {
   // the outcome — is the connection marked? — rather than a boolean.
   function refreshFailingWith(error: unknown): Promise<string[]> {
     return doorStatementsForFailedRefresh(
-      { refreshCredentials: async () => { throw error; } } as unknown as ResolvedConnectorAdapter,
+      { refreshCredentials: async () => { throw error; } } satisfies CredentialRefreshAdapter,
       { accessToken: STALE_TOKEN, refreshToken: "refresh-token" },
     );
   }
@@ -485,7 +490,7 @@ describe("adapter conformance: a revoked grant reaches the row", () => {
  * door issued, so a test can ask what the refusal did to the row.
  */
 async function doorStatementsForFailedRefresh(
-  adapter: ResolvedConnectorAdapter,
+  adapter: CredentialRefreshAdapter,
   credentials: Record<string, unknown>,
   scope: "personal" | "workspace" = "workspace",
 ): Promise<string[]> {
@@ -493,7 +498,7 @@ async function doorStatementsForFailedRefresh(
   const secret = "coordinator-key";
   const connection = connectionContext({ ...credentials, expiresAt: EXPIRED_AT }, scope);
   const encrypted = await encryptString(JSON.stringify(connection.credentials), secret, connection.id);
-  const database = {
+  const database = createTestD1Database({
     prepare(sql: string) {
       statements.push(sql.replace(/\s+/gu, " ").trim());
       return {
@@ -510,7 +515,7 @@ async function doorStatementsForFailedRefresh(
         async run() { return { success: true, meta: { changes: 1 } }; },
       };
     },
-  } as unknown as D1Database;
+  });
 
   await expect(withAuthorizedConnection(
     { DB: database, CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
@@ -592,7 +597,7 @@ describe("revalidation between model turns", () => {
     // exists to catch — a revoked grant, a removed member, an archived work
     // stream, a connection marked unhealthy — is already in D1.
     const statements: string[] = [];
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         statements.push(sql.replace(/\s+/gu, " ").trim().slice(0, 60));
         return {
@@ -622,7 +627,7 @@ describe("revalidation between model turns", () => {
           async run() { return { success: true, meta: { changes: 1 } }; },
         };
       },
-    } as unknown as D1Database;
+    });
     const fetcher = vi.fn(async () => new Response("{}"));
 
     await expect(__integrationTesting.reauthorizeFrozenPlugin(
@@ -647,7 +652,7 @@ describe("revalidation between model turns", () => {
 describe("continuation revalidation respects its deadline", () => {
   it("does not answer authorized when the deadline fires while D1 is answering", async () => {
     const controller = new AbortController();
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         return {
           bind() { return this; },
@@ -680,7 +685,7 @@ describe("continuation revalidation respects its deadline", () => {
           async run() { return { success: true, meta: { changes: 1 } }; },
         };
       },
-    } as unknown as D1Database;
+    });
 
     await expect(__integrationTesting.reauthorizeFrozenPlugin(
       { DB: database } as never,
@@ -1022,7 +1027,7 @@ function connectionContext(
 
 function credentialDatabase(encrypted: { ciphertext: string; iv: string }) {
   const row = { ...encrypted, leaseId: null as string | null };
-  const d1 = {
+  const d1 = createTestD1Database({
     prepare(sql: string) {
       return {
         bind(...values: unknown[]) {
@@ -1044,7 +1049,7 @@ function credentialDatabase(encrypted: { ciphertext: string; iv: string }) {
         },
       };
     },
-  } as unknown as D1Database;
+  });
   return { d1 };
 }
 
@@ -1059,7 +1064,7 @@ function leasedCredentialDatabase(
 ): D1Database {
   const row = { ...encrypted, leaseId: null as string | null };
   void secret;
-  return {
+  return createTestD1Database({
     prepare(sql: string) {
       return {
         bind(...values: unknown[]) {
@@ -1098,13 +1103,13 @@ function leasedCredentialDatabase(
         },
       };
     },
-  } as unknown as D1Database;
+  });
 }
 
 function unusableDatabase(): D1Database {
-  return {
+  return createTestD1Database({
     prepare() { throw new Error("The door must not touch D1 for a credential with remaining validity"); },
-  } as unknown as D1Database;
+  });
 }
 
 // The personal GitHub path under test never signs an App JWT, so a
@@ -1122,10 +1127,10 @@ function recordingLeasedDatabase(
   statements: string[],
 ): D1Database {
   const inner = leasedCredentialDatabase(encrypted, "door-credential-key");
-  return {
+  return createTestD1Database({
     prepare(sql: string) {
       statements.push(sql);
       return inner.prepare(sql);
     },
-  } as unknown as D1Database;
+  });
 }

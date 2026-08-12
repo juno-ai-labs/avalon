@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { decryptString, encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
 
 const connectionId = "00000000-0000-7000-8000-000000000031";
 const workspaceId = "00000000-0000-7000-8000-000000000032";
@@ -125,7 +126,7 @@ async function seedSlackConnection(database: DatabaseSync, refreshToken: string)
 }
 
 function environment(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     CONNECTOR_CREDENTIALS_KEY: credentialsKey,
@@ -135,7 +136,7 @@ function environment(database: DatabaseSync): Env {
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
-  } as unknown as Env;
+  });
 }
 
 function migratedDatabase(): DatabaseSync {
@@ -158,31 +159,31 @@ function sqliteD1(database: DatabaseSync): D1Database {
         return (database.prepare(sql).get(...values as SQLInputValue[]) as T | undefined) ?? null;
       },
       async all<T>() {
-        return {
+        return createTestD1Result<T>({
           success: true,
           results: database.prepare(sql).all(...values as SQLInputValue[]) as T[],
           meta: { changes: 0 },
-        } as unknown as D1Result<T>;
+        });
       },
       async run<T>() {
         const result = database.prepare(sql).run(...values as SQLInputValue[]);
-        return {
+        return createTestD1Result<T>({
           success: true,
           results: [],
           meta: { changes: Number(result.changes) },
-        } as unknown as D1Result<T>;
+        });
       },
     };
-    return statement as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(statement);
   };
-  return {
+  return createTestD1Database({
     prepare,
     async batch<T>(statements: D1PreparedStatement[]) {
       const results: D1Result<unknown>[] = [];
       for (const statement of statements) results.push(await statement.run());
-      return results as D1Result<T>[];
+      return createTestD1Results<T>(results);
     },
-  } as unknown as D1Database;
+  });
 }
 
 function response(value: unknown, headers: HeadersInit = {}): Response {

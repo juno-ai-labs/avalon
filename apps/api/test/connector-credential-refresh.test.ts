@@ -1,7 +1,11 @@
-import type { ConnectorConnectionContext, ResolvedConnectorAdapter } from "@avalon/connectors";
+import type { ConnectorConnectionContext } from "@avalon/connectors";
 import { describe, expect, it, vi } from "vitest";
 import { decryptString, encryptString } from "../src/lib/crypto";
-import { ensureFreshConnectorCredentials } from "../src/services/connector-credential-refresh";
+import {
+  ensureFreshConnectorCredentials,
+  type CredentialRefreshAdapter,
+} from "../src/services/connector-credential-refresh";
+import { createTestD1Database } from "./helpers/cloudflare-test";
 
 interface CredentialRow {
   id: string;
@@ -94,11 +98,11 @@ describe("connector credential refresh serialization", () => {
         expiresAt: "2099-01-01T00:00:00.000Z",
       };
     });
-    const adapter = { refreshCredentials } as unknown as ResolvedConnectorAdapter;
+    const adapter = { refreshCredentials } satisfies CredentialRefreshAdapter;
     const first = connection(stale);
     const second = connection(stale);
     const env = {
-      DB: database as unknown as D1Database,
+      DB: createTestD1Database(database),
       CONNECTOR_CREDENTIALS_KEY: secret,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
     };

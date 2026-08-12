@@ -10,6 +10,7 @@ import {
   type ProviderWebhookRawBody,
   type ProviderWebhookServiceOptions,
 } from "../src/services/provider-webhook-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const NOW = Date.parse("2026-08-01T18:00:00.000Z");
 const ENCRYPTION_KEY = "provider-webhook-test-encryption-key";
@@ -124,11 +125,11 @@ class FakeStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return this.database.all(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.all(this.sql, this.values));
   }
 
   async run<T>(): Promise<D1Result<T>> {
-    return this.database.run(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.run(this.sql, this.values));
   }
 }
 
@@ -1125,10 +1126,10 @@ describe("provider-wide webhook ingestion", () => {
         },
         body: rawBody,
       },
-      {
-        DB: database as unknown as D1Database,
-        PAYLOADS: new FakeBucket() as unknown as R2Bucket,
-        ACTIVITY_QUEUE: new FakeQueue() as unknown as Queue,
+      createTestEnv({
+        DB: createTestD1Database(database),
+        PAYLOADS: createCloudflareTestBinding<R2Bucket>(new FakeBucket()),
+        ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>(new FakeQueue()),
         AVALON_REGION: "global",
         PUBLIC_API_BASE_URL: "https://api.avalon.example",
         LINEAR_INGRESS_BASE_URL: "https://linear.with-avalon.com",
@@ -1137,7 +1138,7 @@ describe("provider-wide webhook ingestion", () => {
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
         WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
         PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
-      } as Env,
+      }),
     );
 
     expect(response.status).toBe(200);
@@ -1458,10 +1459,10 @@ function serviceFor(
   overrides: Partial<Env> = {},
   options: ProviderWebhookServiceOptions = {},
 ): ProviderWebhookService {
-  const env = {
-    DB: database as unknown as D1Database,
-    PAYLOADS: bucket as unknown as R2Bucket,
-    ACTIVITY_QUEUE: queue as unknown as Queue,
+  const env = createTestEnv({
+    DB: createTestD1Database(database),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
+    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>(queue),
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.avalon.example",
     GITHUB_WEBHOOK_SECRET: GITHUB_SECRET,
@@ -1472,7 +1473,7 @@ function serviceFor(
     WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
     PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
     ...overrides,
-  } as Env;
+  });
   return new ProviderWebhookService(env, { now: () => NOW, ...options });
 }
 

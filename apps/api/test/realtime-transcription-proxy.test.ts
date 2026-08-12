@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { RealtimeTranscriptionService } from "../src/services/realtime-transcription-service";
 import { issueTranscriptionSocketTicket } from "../src/services/socket-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 class SqliteD1Statement {
   constructor(
@@ -13,16 +14,16 @@ class SqliteD1Statement {
   ) {}
 
   bind(...values: SQLInputValue[]): D1PreparedStatement {
-    return new SqliteD1Statement(this.database, this.sql, values) as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(new SqliteD1Statement(this.database, this.sql, values));
   }
 
   async run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
     const result = this.database.prepare(this.sql).run(...this.values);
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: [],
       meta: { changes: Number(result.changes) },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
@@ -37,7 +38,7 @@ class SqliteD1Database {
   }
 
   prepare(sql: string): D1PreparedStatement {
-    return new SqliteD1Statement(this.database, sql) as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(new SqliteD1Statement(this.database, sql));
   }
 
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
@@ -121,15 +122,15 @@ function request(): Request {
 }
 
 function env(database: SqliteD1Database): Env {
-  return {
-    DB: database as unknown as D1Database,
+  return createTestEnv({
+    DB: createTestD1Database(database),
     SESSION_SIGNING_KEY: "test-signing-key",
     AVALON_REGION: "global",
     ALLOWED_ORIGINS: "app://avalon",
     AZURE_OPENAI_ENDPOINT: "https://avalon.openai.azure.com",
     AZURE_OPENAI_API_KEY: "test-api-key",
     AZURE_OPENAI_REALTIME_DEPLOYMENT: "gpt-live-transcribe",
-  } as Env;
+  });
 }
 
 function installSocketRuntime(upstream: FakeSocket): { pairs: Array<{ client: FakeSocket; server: FakeSocket }> } {

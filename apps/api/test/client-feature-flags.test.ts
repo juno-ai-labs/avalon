@@ -5,6 +5,7 @@ import type { Env, IdentityAuthContext } from "../src/env";
 import { resolveClientFeatureFlags } from "../src/services/client-feature-flags";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 const staffUserId = "00000000-0000-4000-8000-0000000000a1";
 const customerUserId = "00000000-0000-4000-8000-0000000000a2";
@@ -14,11 +15,11 @@ const createdAt = "2026-01-02T03:04:05.000Z";
 
 // APP_ENV production so the unreachable-binding path warns rather than staying
 // quiet the way it does in development.
-const baseEnv = {
+const baseEnv = createTestEnv({
   AVALON_REGION: "global",
   APP_ENV: "production",
   LOG_LEVEL: "error",
-} as unknown as Env;
+});
 
 afterEach(() => {
   // Attributes are cached in the isolate; a test must not inherit another's rows.
@@ -56,11 +57,11 @@ function envWithAccounts(
       )
       .run(workspaceId, id, createdAt);
   }
-  return {
+  return createTestEnv({
     ...baseEnv,
     DB: sqliteD1(database),
-    ...(flags ? { FLAGS: flags as unknown as Flagship } : {}),
-  } as Env;
+    ...(flags ? { FLAGS: createCloudflareTestBinding<Flagship>(flags) } : {}),
+  });
 }
 
 function auth(userId: string, workspace: string | null = workspaceId): IdentityAuthContext {
@@ -217,11 +218,11 @@ describe("client feature flags", () => {
 
   it("evaluates, without throwing, when the account store is unavailable", async () => {
     const flags = servingWhen((context) => context.userId === staffUserId);
-    const env = {
+    const env = createTestEnv({
       ...baseEnv,
-      DB: { prepare: () => { throw new Error("D1 unavailable"); } } as unknown as D1Database,
-      FLAGS: flags as unknown as Flagship,
-    } as Env;
+      DB: createTestD1Database({ prepare: () => { throw new Error("D1 unavailable"); } }),
+      FLAGS: createCloudflareTestBinding<Flagship>(flags),
+    });
 
     // Attributes are an enrichment, never a precondition: the identity still
     // reaches the flag, so a rule written on it still decides.
@@ -326,12 +327,12 @@ describe("client feature flags", () => {
 
 describe("GET /feature-flags", () => {
   function routeEnv(flags?: Partial<Flagship>): Env {
-    return {
+    return createTestEnv({
       ...envWithAccounts(flags),
       ALLOWED_ORIGINS: "app://avalon",
       APP_ENV: "development",
       AVALON_DEV_AUTH: "true",
-    } as Env;
+    });
   }
 
   function asStaff(): HeadersInit {

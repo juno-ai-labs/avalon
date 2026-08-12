@@ -49,7 +49,8 @@ import {
   useWorkstreamSocket,
 } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
+import { setCachedWorkstreams } from '../lib/workstreams-cache';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
@@ -959,7 +960,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
         current ? { ...current, title: updated.title } : current,
       );
-      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+      setCachedWorkstreams(queryClient, (current) =>
         current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
       );
     },
@@ -1289,7 +1290,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (activeWorkstreamIdRef.current !== id) return;
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
         current ? { ...current, ...updated } : current);
-      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+      setCachedWorkstreams(queryClient, (current) =>
         current?.map((item) => item.id === id ? { ...item, ...updated } : item));
     }).catch(() => {
       void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });

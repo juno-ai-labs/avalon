@@ -27,6 +27,7 @@ import { WorkstreamService } from "../src/services/workstream-service";
 import { sendWorkstreamMentionEmail } from "../src/services/mention-email-service";
 import { sendWorkstreamMentionSlack } from "../src/services/slack-mention-service";
 import { classifyWorkstreamMessage, startWorkstreamWorkflow } from "../src/services/integrations";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const authorId = "00000000-0000-7000-8000-000000000002";
@@ -385,14 +386,14 @@ function auth(): AuthContext {
 }
 
 function environment(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
     OPENROUTER_PRIMARY_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
-  } as unknown as Env;
+  });
 }
 
 function migratedDatabase(): DatabaseSync {
@@ -522,29 +523,29 @@ function sqliteD1(database: DatabaseSync): D1Database {
         return (database.prepare(sql).get(...values as never[]) ?? null) as T | null;
       },
       async all<T>() {
-        return {
+        return createTestD1Result<T>({
           results: database.prepare(sql).all(...values as never[]) as T[],
           success: true,
           meta: {},
-        } as unknown as D1Result<T>;
+        });
       },
       async run<T>() {
         const result = database.prepare(sql).run(...values as never[]);
-        return {
+        return createTestD1Result<T>({
           results: [],
           success: true,
           meta: { changes: Number(result.changes) },
-        } as unknown as D1Result<T>;
+        });
       },
     };
-    return statement as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(statement);
   };
-  return {
+  return createTestD1Database({
     prepare,
     async batch<T>(statements: D1PreparedStatement[]) {
       const results: D1Result<T>[] = [];
       for (const statement of statements) results.push(await statement.run<T>());
       return results;
     },
-  } as unknown as D1Database;
+  });
 }

@@ -140,6 +140,13 @@ Standalone structured-output agents enter through `runStructuredInference`. The 
 
 OpenRouter routing is deterministic and versioned. Empty completions and truncated tool calls receive a bounded same-endpoint defect retry. Other fallback-eligible failures traverse configured model stages under Bind's classified failure policy and a workspace-scoped circuit breaker; cancellation and host failures do not route onward. Because Avalon's stream is retractable, a later attempt explicitly resets partial text instead of concatenating two answers.
 
+The Bind/OpenAI/OpenRouter boundary is converted member by member rather than
+asserted through `unknown`. Model content parts and function tools are mapped to
+Avalon's wire types, unsupported tool variants fail at the boundary, and input
+audio admits only the `wav` and `mp3` formats the SDK contract supports. This
+keeps an SDK union or return-shape change visible to the compiler instead of
+letting it emerge later in a provider request.
+
 Every classified provider attempt appends an immutable inference-ledger row with its turn/route cursor, provider and model, routing decision, outcome, latency, available token/cache/cost counters, and hashed credential/workspace identities. Harness-run usage also stores turn/tool timings and counts. Provider error bodies and credentials are not retained in the ledger.
 
 ### Streaming stability
@@ -411,6 +418,32 @@ This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
 
+### 2026-08-12 — The provider SDK boundary is converted, not asserted
+
+**What changed:** Bind's OpenAI-compatible messages and tools are explicitly
+converted to Avalon's `ModelMessageContentPart` and `ModelRequestTool` wire
+types. The four production `as unknown as` assertions in the adapter are gone;
+unsupported custom tools fail immediately and input audio is restricted to the
+SDK-supported `wav` and `mp3` formats.
+
+**Why:** The repository-wide type-escape audit found that this shipped boundary
+could conceal the same category of contract drift as the work-stream cache
+failure: an upstream SDK can add a union member or alter a field while the
+double assertion continues to compile. Because the inference payload is also
+optionally persisted for diagnostics, silently passing a new shape through
+would make both provider behavior and its recorded account disagree with the
+types Avalon exposes.
+
+**Considered and rejected:** Keeping the assertions behind a named generic
+adapter. That would improve searchability but still accept every future SDK
+variant without a decision. Mapping the variants is slightly longer and makes
+the unsupported case explicit.
+
+**Consequences:** An OpenAI or Bind upgrade that changes message or tool unions
+must update the converter before typecheck passes. OpenRouter-specific request
+tools remain an explicit member of `ModelRequestTool`; they do not masquerade as
+OpenAI function tools.
+
 ### 2026-08-12 — HyperSight shares the root policy and records terminal analytics
 
 **What changed:** HyperSight no longer supplies its separate 8-iteration,
@@ -547,7 +580,6 @@ would duplicate an overlapping catch-up frame, and applying the cursor alone
 would truncate the visible response. Any future background-subscription policy
 must remain scoped to the signed-in workspace and bounded by active work rather
 than by total work-stream count.
-
 ### 2026-08-12 — Artifacts are gone; a run's output is its final message
 
 **What changed:** `workstream_create_artifact` was removed from

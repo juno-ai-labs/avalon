@@ -52,7 +52,9 @@ import {
   type HarnessToolContext,
   type HarnessToolPolicyIdentity,
   type HarnessToolResult,
-  type ModelMessage,
+  type ModelMessageContent,
+  type ModelMessageContentPart,
+  type ModelToolDefinition,
   type OpenRouterProviderError,
   type PluginAuthorization,
   type PluginAuthorizationOccasion,
@@ -974,6 +976,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         textStream.beginAttempt();
         try {
           const requestTools = args.tools ?? [];
+          const wireTools = toModelToolDefinitions(requestTools);
           const requestPlugins = modelMessagesContainFile(requestMessages)
             ? [{ id: "file-parser", pdf: { engine: "native" } }]
             : [];
@@ -982,8 +985,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             messages: requestMessages,
             stream: true as const,
             stream_options: { include_usage: true as const },
-            ...(requestTools.length > 0
-              ? { tools: requestTools as unknown as Array<Record<string, unknown>>, tool_choice: "auto" as const }
+            ...(wireTools.length > 0
+              ? { tools: wireTools, tool_choice: "auto" as const }
               : {}),
             ...(requestPlugins.length > 0 ? { plugins: requestPlugins } : {}),
             ...(args.reasoningEffort ?? args.input.config.reasoningEffort
@@ -1709,7 +1712,7 @@ function toOpenAiMessages(messages: RunHarnessInput["messages"]): OpenAI.ChatCom
     if (message.role === "assistant") {
       return {
         role: "assistant",
-        content: message.content as unknown as OpenAI.ChatCompletionAssistantMessageParam["content"],
+        content: toOpenAiAssistantContent(message.content),
         ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
       } as OpenAI.ChatCompletionAssistantMessageParam;
     }
@@ -1722,8 +1725,25 @@ function toOpenAiMessages(messages: RunHarnessInput["messages"]): OpenAI.ChatCom
     }
     return {
       role: message.role,
-      content: (message.content ?? "") as unknown as OpenAI.ChatCompletionMessageParam["content"],
+      content: toOpenAiUserContent(message.content),
     } as OpenAI.ChatCompletionMessageParam;
+  });
+}
+
+function toModelToolDefinitions(tools: OpenAI.ChatCompletionTool[]): ModelToolDefinition[] {
+  return tools.map((tool) => {
+    if (tool.type !== "function") {
+      throw new Error(`Unsupported model tool type: ${tool.type}`);
+    }
+    return {
+      type: "function",
+      function: {
+        name: tool.function.name,
+        ...(tool.function.description === undefined ? {} : { description: tool.function.description }),
+        ...(tool.function.parameters === undefined ? {} : { parameters: tool.function.parameters }),
+        ...(tool.function.strict == null ? {} : { strict: tool.function.strict }),
+      },
+    };
   });
 }
 
@@ -1750,7 +1770,7 @@ function fromOpenAiMessages(messages: OpenAI.ChatCompletionMessageParam[]): RunH
       result.push({
         role: message.role === "developer" ? "system" : message.role,
         content: message.role === "user" && Array.isArray(message.content)
-          ? message.content as unknown as ModelMessage["content"]
+          ? fromOpenAiUserContent(message.content)
           : typeof message.content === "string"
             ? message.content
             : JSON.stringify(message.content),
@@ -1758,6 +1778,56 @@ function fromOpenAiMessages(messages: OpenAI.ChatCompletionMessageParam[]): RunH
     }
   }
   return result;
+}
+
+function toOpenAiContentPart(
+  part: ModelMessageContentPart,
+): OpenAI.ChatCompletionContentPart {
+  switch (part.type) {
+    case "text":
+      return { type: "text", text: part.text };
+    case "image_url":
+      return { type: "image_url", image_url: { ...part.image_url } };
+    case "input_audio":
+      return { type: "input_audio", input_audio: { ...part.input_audio } };
+    case "file":
+      return { type: "file", file: { ...part.file } };
+  }
+}
+
+function toOpenAiUserContent(
+  content: ModelMessageContent,
+): OpenAI.ChatCompletionUserMessageParam["content"] {
+  if (!Array.isArray(content)) return content ?? "";
+  return content.map(toOpenAiContentPart);
+}
+
+function toOpenAiAssistantContent(
+  content: ModelMessageContent,
+): OpenAI.ChatCompletionAssistantMessageParam["content"] {
+  if (!Array.isArray(content)) return content;
+  return content
+    .filter((part): part is Extract<ModelMessageContentPart, { type: "text" }> => part.type === "text")
+    .map((part) => ({ type: "text" as const, text: part.text }));
+}
+
+function fromOpenAiUserContent(
+  content: OpenAI.ChatCompletionContentPart[],
+): ModelMessageContentPart[] {
+  return content.flatMap((part): ModelMessageContentPart[] => {
+    switch (part.type) {
+      case "text":
+        return [{ type: "text", text: part.text }];
+      case "image_url":
+        return [{ type: "image_url", image_url: { ...part.image_url } }];
+      case "input_audio":
+        return [{ type: "input_audio", input_audio: { ...part.input_audio } }];
+      case "file":
+        return part.file.file_data && part.file.filename
+          ? [{ type: "file", file: { file_data: part.file.file_data, filename: part.file.filename } }]
+          : [];
+    }
+  });
 }
 
 function modelMessagesContainFile(messages: RunHarnessInput["messages"]): boolean {

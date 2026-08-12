@@ -5,6 +5,7 @@ import type { AuthContext, Env } from "../src/env";
 import { enqueueActivityOpportunity } from "../src/services/work-opportunity-batching";
 import { __workOpportunityTesting, WorkOpportunityService } from "../src/services/work-opportunity-service";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const userOne = "00000000-0000-7000-8000-000000000002";
@@ -98,12 +99,12 @@ function insertActivity(
 }
 
 function environment(database: DatabaseSync, overrides: Partial<Env> = {}): Env {
-  return {
+  return createTestEnv({
     DB: new D1Adapter(database),
     APP_ENV: "development",
     AVALON_REGION: "global",
     ...overrides,
-  } as unknown as Env;
+  });
 }
 
 function insertOpportunity(database: DatabaseSync, id: string, version = 1): void {
@@ -199,7 +200,7 @@ describe("suggested-work aggregation", () => {
     });
 
     await enqueueActivityOpportunity(
-      environment(database, { DB: racingDatabase as unknown as D1Database }),
+      environment(database, { DB: createTestD1Database(racingDatabase) }),
       "00000000-0000-7000-8000-000000000108",
     );
 
@@ -376,10 +377,10 @@ describe("suggested-work aggregation", () => {
       "2026-08-07T00:00:00.000Z", "2026-08-07T00:00:00.000Z", "2026-08-07T00:00:00.000Z",
     );
     const roomFetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
-    const rooms = {
+    const rooms = createCloudflareTestBinding<DurableObjectNamespace>({
       idFromName: vi.fn().mockReturnValue({}),
       get: vi.fn().mockReturnValue({ fetch: roomFetch }),
-    } as unknown as DurableObjectNamespace;
+    });
     const routed = await __workOpportunityTesting.routeExistingDecision(
       environment(database, { WORKSTREAM_ROOMS: rooms }),
       {

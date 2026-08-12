@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import type * as Integrations from "../src/services/integrations";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
@@ -48,7 +49,7 @@ function serviceFor(database: DatabaseSync, userId: string): WorkstreamService {
     sessionId: "session-1", userId, workspaceId: WORKSPACE, region: "global", role: "member",
   };
   return new WorkstreamService(
-    { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env,
+    createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
     auth,
   );
 }
