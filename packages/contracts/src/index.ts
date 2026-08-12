@@ -713,17 +713,31 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
 
 export const WorkstreamContextSchema = z.object({
   /**
-   * Always empty, and read by nothing. Artifacts were removed in this release,
-   * but a desktop build in the wild bundles a schema that *requires* this field —
-   * unlike `WorkstreamDetailSchema`, which defaulted it — so omitting it fails
-   * the whole response, and `GET /:id/context` is what fills the work-stream
-   * context rail. The route parses its own response through this schema, so the
-   * default is what actually puts the field on the wire.
+   * Vestigial, and read by nothing. Artifacts were removed in this release, but
+   * this one schema is parsed on **both** sides of the wire — the route parses
+   * its own response with it, and the desktop parses that response with the same
+   * copy — so it has to tolerate both directions of version skew across a
+   * rollout, and `GET /:id/context` is what fills the work-stream context rail.
    *
-   * Drop it, and the `never` that keeps it empty, once no build older than
-   * 1.77.0 is in the wild. Same two-release staging the socket ticket used.
+   * Old client, new server: a build in the wild bundles a copy that *requires*
+   * the field — unlike `WorkstreamDetailSchema`, which defaulted it — so leaving
+   * it out fails the whole response. `.default([])` is what puts it on the wire.
+   *
+   * New client, old server: a Worker that predates this release still returns
+   * real rows here, and EU deploys before Global, so one region runs the old
+   * Worker for part of every rollout and indefinitely if the other half fails.
+   * The element type is therefore permissive rather than `never`: rejecting a
+   * populated array would fail the whole response for the same reason, one
+   * direction over. Emptiness is the *server's* invariant and is enforced where
+   * the server is — `WorkstreamService.context` returns only `backgroundTasks`,
+   * and `workstream-response-contracts.test.ts` asserts `[]` on the raw body.
+   *
+   * Drop the field one release after the build carrying this change ships. Do
+   * not write a fixed version number here: this comment already named one that
+   * went stale while the branch waited, when `main` shipped two releases without
+   * it.
    */
-  artifacts: z.array(z.never()).default([]),
+  artifacts: z.array(z.unknown()).default([]),
   backgroundTasks: z.array(BackgroundTaskSchema)
 });
 

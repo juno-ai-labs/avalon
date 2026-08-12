@@ -12,6 +12,29 @@ import { deliverDigest } from "./digest-delivery-service";
  * import the other's machinery, and the retry semantics of each stay their own.
  */
 
+/**
+ * The shortest final message this will accept as a digest.
+ *
+ * A bound on the one failure here cannot detect on its own. Settlement mails
+ * the run's last message and has no way to tell a digest from a sign-off, so a
+ * run that ended "Outcome: digest written (id …)" — 120 characters — settled as
+ * `delivered` and advanced `cursor_through` past events nobody was ever told
+ * about. That loss is silent and permanent: only settled deliveries move the
+ * cursor, so the window never comes back.
+ *
+ * This is a floor on *implausibility*, not a judgement about quality. A run only
+ * reaches settlement when the window held at least one event, and the brief
+ * mandates an opening sentence, `## ` sections, and `- ` bullets, so a real
+ * digest clears this by an order of magnitude. It is deliberately not a check
+ * that the text *looks* like a digest — that is the send-time heuristic this
+ * subsystem already rejected once; it only refuses text that cannot be one.
+ *
+ * The asymmetry is the whole argument. Rejecting a real digest costs one delayed
+ * occurrence, and the events return in the next one because a failed delivery
+ * does not move the cursor. Accepting a receipt costs the window forever.
+ */
+const MINIMUM_DIGEST_CHARACTERS = 200;
+
 interface DigestDeliveryRow {
   id: string;
   workspace_id: string;
@@ -52,7 +75,7 @@ export async function settleDigestRun(
   if (delivery.status === "delivered" || delivery.status === "failed") return;
 
   const summary = text?.trim() ?? "";
-  if (outcomeStatus !== "completed" || summary.length === 0) {
+  if (outcomeStatus !== "completed" || summary.length < MINIMUM_DIGEST_CHARACTERS) {
     // A run that could not write a digest sends nothing. The delivery is marked
     // failed rather than delivered, and because only settled deliveries advance
     // the cursor, this window is folded into the next digest rather than lost.
