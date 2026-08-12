@@ -267,12 +267,21 @@ module-level constant; the render function composes it with run state.
   for using it and the run is guaranteed to have it. Never name a connector tool that
   depends on the run's frozen scope. When a name is used, it must match the
   `ToolDefinition` exactly and both change in the same commit.
-- **Tests.** Prompt changes ship with golden tests that do a full exact-string
-  comparison against a complete fixture — `prompts.test.ts` renders byte-stable golden
-  prompts — never a substring assertion. The size caps in that file (under 8,000 bytes
-  for the work-stream policy, 9,000 for the automation compiler) are design
-  constraints: a diff that raises a cap instead of moving something out needs an
-  explicit justification, and its absence is a finding.
+- **Tests.** `packages/agent-harness/src/prompts.test.ts` is the contract, and
+  `docs/writing-prompts.md` ("Testing") lists what a prompt change owes it. Every
+  renderer is exercised on a fixed input and its **SHA-256 digest** asserted — so a
+  prompt edit is *supposed* to change the hash, and the review question is whether the
+  author read what moved before updating the constant. A golden hash updated with no
+  evidence of that reading is how an accidental interpolation ships, and is itself a
+  finding. Alongside it: the injection test extended for any new renderer carrying
+  outside content, an explicit assertion for any rule whose exact wording another
+  subsystem depends on, the byte ceiling for anything in a cached prefix, and — where
+  the renderer truncates — the cap, the retained window, and that the current item
+  survived. Do **not** demand a complete exact-string fixture or flag `toContain` on
+  sight: substring assertions are how the injection and load-bearing-line checks are
+  written here. The ceilings in that file (under 8,000 bytes for the work-stream
+  policy, 9,000 for the automation compiler) are design constraints — a diff that
+  raises one instead of moving something out needs an explicit justification.
 - **Skills.** A skill is prompt content: its body is rendered verbatim into
   `# Active Skill Instructions` once loaded. Built-ins live in
   `packages/agent-harness/src/built-in-skills.ts` (`deep-research` is the reference
@@ -333,12 +342,15 @@ than no test.
   finding.
 - Flag shared mutable state or an ordering dependency between tests.
 
-**4. Golden and contract tests.** Prompt and other golden tests compare the full
-rendered string against a complete fixture — flag a `toContain` standing in for one.
-(This overlaps the Prompt Engineer persona; review it anyway and note the overlap rather
-than assuming the other persona caught it.) Contract changes in `@avalon/contracts`
-must be tested from both sides, since the same schema is the server's validator and the
-client's parser.
+**4. Golden and contract tests.** Prompt renderers are pinned by an asserted SHA-256
+digest in `packages/agent-harness/src/prompts.test.ts`, not by an exact-string fixture,
+and the injection and load-bearing-line checks around it are deliberately substring
+assertions — so review whether a changed hash was updated *deliberately* (the diff
+shows the author read what moved), not whether a fixture file exists. (This overlaps
+the Prompt Engineer persona; review it anyway and note the overlap rather than assuming
+the other persona caught it.) Contract changes in `@avalon/contracts` must be tested
+from both sides, since the same schema is the server's validator and the client's
+parser.
 
 For each finding give the file/line, the missing case or violated rule, the concrete
 risk (what ships broken or flakes), and the minimal test or fix that closes it.
@@ -386,9 +398,11 @@ two configurations must stay in step.
 
 - Anything added to `apps/api/wrangler.global.jsonc` — a var, binding, queue, DO,
   workflow, migration path, cron — needs its EU counterpart in `wrangler.eu.jsonc`
-  (which additionally carries `jurisdiction`), and any new secret needs a `docs/RUNBOOK.md`
-  entry for both regions. Flag a one-region binding, and a Global-only value
-  (`EU_PUBLIC_API_BASE_URL` is the legitimate case) used unconditionally.
+  (which additionally carries `jurisdiction`). A **secret** goes in neither file: it is
+  installed per region with Wrangler and documented in `docs/RUNBOOK.md`, which is also
+  where a deliberately Global-only secret is recorded. Flag a one-region binding, a
+  Global-only value (`EU_PUBLIC_API_BASE_URL` is the legitimate case) used
+  unconditionally, and a secret proposed as a plaintext var.
 - Cross-region traffic goes only through the named RPC service bindings — the identity,
   GitHub, Linear, Notion, Slack, and inbound-email bridges. Flag a new public internal
   route, a direct fetch to the other region, or a read of another region's data.
@@ -462,13 +476,20 @@ which area, and each row states what to read and update it for.
   `docs/module-documents.md` defines the threshold and the required sections; an
   unregistered document is invisible to the next agent's planning sweep. `SCREAMING_SNAKE_CASE`
   names predate the convention — flag a new one.
-- **The changelog is the part most often skipped.** Every module document ends with a
-  running changelog, newest first, appended in the same change as the code, recording
-  what changed **and why** — the pressure that forced it, the alternative rejected, and
-  what a future change must respect. "Refactor" and "cleanup" are not a why. A change
-  to a documented module with no changelog entry is a P1; an entry that only restates
-  the diff is a P2. Where the earlier reasoning genuinely is not recorded, the entry
-  must say so rather than invent one.
+- **The changelog is the part most often skipped** — and the part most easily
+  over-demanded. Every module document ends with a running changelog, newest first,
+  append-only, written in the same change as the code, recording what changed **and
+  why** — the pressure that forced it, the alternative rejected, and what a future
+  change must respect. "Refactor" and "cleanup" are not a why. Apply
+  `docs/module-documents.md`'s own threshold rather than asking for an entry per
+  commit: *would a competent engineer, seeing this code fresh, plausibly undo it — and
+  be wrong to?* A replaced mechanism, a new or relaxed invariant, a moved boundary, a
+  changed limit or TTL, a deliberate trade-off, **scope quietly cut**, or an incident
+  fix always earns one, and its absence there is a P1. A rename, a typo, a formatting
+  pass, a dependency bump, or any change that leaves behavior and reasoning exactly as
+  they were earns nothing — flagging those is a false positive. An entry that only
+  restates the diff is a P2, and where the earlier reasoning genuinely is not recorded
+  the entry must say so rather than invent one.
 - **Don't over-correct.** Updating a document whose scope the change does not touch, or
   splitting an area across a second document instead of extending its owner, is its own
   smell.
@@ -481,10 +502,17 @@ configures from.
   short comment its neighbours carry — what it does, whether it is server-only, and
   what degrades when it is absent. Flag a new read with no entry, and an entry whose
   described default or required-ness no longer matches `assertEnvContract`.
-- A variable is also configuration in two more places: `vars` in **both**
-  `wrangler.global.jsonc` and `wrangler.eu.jsonc`, and — for a secret — the regional
-  secret procedure in `docs/RUNBOOK.md`. Flag a rename or removal that leaves any of
-  these behind.
+- **Where it goes next depends on what it is, and conflating the three is itself a
+  finding.** Non-secret Worker configuration belongs in `vars` in **both**
+  `wrangler.global.jsonc` and `wrangler.eu.jsonc`. A Worker **secret** never appears in
+  either file — it is set per region with Wrangler per `docs/RUNBOOK.md`, which also
+  records the few that are deliberately one-region (the `GOOGLE_OAUTH_*` login pair,
+  `RESEND_WEBHOOK_SIGNING_SECRET`, and `WORKSTREAM_EMAIL_ADDRESS_KEY` are Global-only).
+  And a value that is not the Worker's at all — a renderer `VITE_*` variable, or the
+  local-only `CLOUDFLARE_*` administration credentials — must never become Worker
+  configuration in any form (`CLAUDE.md`, Security). Flag a rename or removal that
+  leaves any of the applicable places behind, and flag a demand to add a secret to
+  `vars` as hard as a missing entry.
 - Never a server secret behind a `VITE_` name, and never a real value in
   `.env.example`.
 
