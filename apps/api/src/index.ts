@@ -54,6 +54,8 @@ export { InboundEmailRegionalBridge } from "./inbound-email-regional-bridge";
 export { WorkstreamEmailRoutingBridge } from "./workstream-email-routing-bridge";
 export { LinearRegionalBridge } from "./linear-regional-bridge";
 export { LinearRoutingBridge } from "./linear-routing-bridge";
+export { NotionRegionalBridge } from "./notion-regional-bridge";
+export { NotionRoutingBridge } from "./notion-routing-bridge";
 export { SlackRegionalBridge } from "./slack-regional-bridge";
 export { SlackRoutingBridge } from "./slack-routing-bridge";
 

@@ -38,11 +38,13 @@ import { encryptString, openString, randomToken, sealString, sha256 } from "../l
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
+import { createRegionRoutedState } from "../lib/region-routed-state";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
 import { LinearRoutingService } from "./linear-routing-service";
+import { NotionRoutingService } from "./notion-routing-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { SlackRoutingService } from "./slack-routing-service";
 import { resolveUserDelivery } from "./user-delivery";
@@ -362,7 +364,13 @@ export class ConnectionService {
     }
     const verifier = randomToken(64);
     const challenge = await sha256(verifier);
-    const state = randomToken(32);
+    // Notion accepts one redirect URI for the whole public connection, so its
+    // callback lands on the shared Global ingress whichever region started it,
+    // and the region prefix is the only thing that ingress can route on. Every
+    // other connector answers on its own regional host and needs no prefix.
+    const state = provider === "notion"
+      ? createRegionRoutedState(this.env.AVALON_REGION, randomToken(32))
+      : randomToken(32);
     const attemptId = randomToken(32);
     const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     const authorization = await adapter.beginAuthorization?.({
@@ -845,6 +853,37 @@ export class ConnectionService {
         throw error;
       }
     }
+    if (provider === "notion") {
+      // Routed on the Notion workspace rather than on `providerAccountId`: that
+      // is the installed bot, and a delivery names the workspace it happened in.
+      try {
+        const notionWorkspaceId = stringField(credentials, "notionWorkspaceId");
+        if (!notionWorkspaceId) {
+          throw new ApiError(502, "connector_identity_missing", "Notion did not return a workspace identity");
+        }
+        await new NotionRoutingService(this.env).registerConnection({
+          notionWorkspaceId,
+          region: this.env.AVALON_REGION,
+          workspaceId: String(row.workspace_id),
+          connectionId,
+        });
+      } catch (error) {
+        await this.env.DB.prepare(
+          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND connector_type = 'notion'`,
+        ).bind(
+          JSON.stringify({
+            code: "notion_route_registration_failed",
+            message: "The shared Notion webhook route could not be registered",
+            retryable: true,
+          }),
+          nowIso(),
+          connectionId,
+          row.workspace_id,
+        ).run();
+        throw error;
+      }
+    }
     if (provider === "slack" && stateData.scope === "workspace") {
       try {
         await new SlackRoutingService(this.env).registerConnection({
@@ -1088,6 +1127,23 @@ export class ConnectionService {
         }
       }
     }
+    if (result.ok && connection.connector_type === "notion") {
+      const notionWorkspaceId = notionWorkspaceIdFromConfig(connection.config_json);
+      if (!notionWorkspaceId) {
+        result = { ok: false, message: "The Notion workspace identity is missing", reconnectRequired: true };
+      } else {
+        try {
+          await new NotionRoutingService(this.env).registerConnection({
+            notionWorkspaceId,
+            region: this.env.AVALON_REGION,
+            workspaceId: connection.workspace_id,
+            connectionId: connection.id,
+          });
+        } catch {
+          result = { ok: false, message: "The shared Notion webhook route could not be registered" };
+        }
+      }
+    }
     if (result.ok && connection.connector_type === "slack" && connection.scope === "workspace") {
       const teamId = connection.provider_account_id == null ? null : String(connection.provider_account_id);
       if (!teamId) {
@@ -1231,6 +1287,28 @@ export class ConnectionService {
             connection_id: connection.id,
             reason: error instanceof Error ? error.message : "unknown route error",
           });
+        }
+      }
+      if (connection.connector_type === "notion") {
+        const notionWorkspaceId = notionWorkspaceIdFromConfig(connection.config_json);
+        if (notionWorkspaceId) {
+          try {
+            await new NotionRoutingService(this.env).setConnectionStatus({
+              notionWorkspaceId,
+              region: this.env.AVALON_REGION,
+              workspaceId: connection.workspace_id,
+              connectionId: connection.id,
+              status: "disabled",
+            });
+          } catch (error) {
+            // The regional connection is already disabled and cannot consume the
+            // event. Keep teardown recoverable; reconciliation can retire the
+            // opaque Global route later without restoring credentials.
+            logWarn(this.env, "notion_route_deactivation_failed", {
+              connection_id: connection.id,
+              reason: error instanceof Error ? error.message : "unknown route error",
+            });
+          }
         }
       }
       if (
@@ -2256,6 +2334,22 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
 function arrayField(record: Record<string, unknown>, key: string): string[] {
   const value = record[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/**
+ * The Notion workspace a connection was installed into, as recorded by
+ * `verifiedIdentityConfig`. Reading it from the connection's own config keeps
+ * route teardown and re-registration off the credential-decryption path.
+ */
+function notionWorkspaceIdFromConfig(configJson: unknown): string | null {
+  try {
+    const parsed = JSON.parse(String(configJson ?? "{}")) as unknown;
+    return parsed && typeof parsed === "object"
+      ? stringField(parsed as Record<string, unknown>, "providerTenantId")
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function verifiedIdentityConfig(

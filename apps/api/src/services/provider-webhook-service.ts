@@ -297,15 +297,7 @@ export class ProviderWebhookService {
         return this.captureNotionChallenge(verificationToken, setupToken);
       }
 
-      const challenge = await this.env.DB.prepare(
-        `SELECT encrypted_token, token_iv, credential_key_version
-         FROM provider_webhook_challenges
-         WHERE provider = 'notion' AND region = ?`,
-      ).bind(this.env.AVALON_REGION).first<{
-        encrypted_token: string;
-        token_iv: string;
-        credential_key_version: number;
-      }>();
+      const challenge = await this.loadNotionChallenge();
       if (!challenge) {
         throw new ConnectorError(
           "invalid_configuration",
@@ -388,15 +380,7 @@ export class ProviderWebhookService {
       );
     }
 
-    const existing = await this.env.DB.prepare(
-      `SELECT encrypted_token, token_iv, credential_key_version
-       FROM provider_webhook_challenges
-       WHERE provider = 'notion' AND region = ?`,
-    ).bind(this.env.AVALON_REGION).first<{
-      encrypted_token: string;
-      token_iv: string;
-      credential_key_version: number;
-    }>();
+    const existing = await this.loadNotionChallenge();
     if (existing) {
       const existingToken = await this.decryptNotionChallenge(existing);
       if (timingSafeEqualText(existingToken, verificationToken)) {
@@ -444,15 +428,7 @@ export class ProviderWebhookService {
       nowIso(),
     ).run();
     if (resultChanges(inserted) === 0) {
-      const winner = await this.env.DB.prepare(
-        `SELECT encrypted_token, token_iv, credential_key_version
-         FROM provider_webhook_challenges
-         WHERE provider = 'notion' AND region = ?`,
-      ).bind(this.env.AVALON_REGION).first<{
-        encrypted_token: string;
-        token_iv: string;
-        credential_key_version: number;
-      }>();
+      const winner = await this.loadNotionChallenge();
       if (!winner) {
         throw new ConnectorError(
           "provider_error",
@@ -1167,6 +1143,75 @@ export class ProviderWebhookService {
       "PROVIDER_WEBHOOK_MAX_BYTES",
       DEFAULT_PROVIDER_WEBHOOK_MAX_BYTES,
     );
+  }
+
+  /**
+   * The stored regional verification token.
+   *
+   * The shared Global ingress has to verify a delivery's signature before it can
+   * read which Notion workspace — and so which region — the delivery belongs to.
+   */
+  async notionVerificationToken(): Promise<string> {
+    const challenge = await this.loadNotionChallenge();
+    if (!challenge) {
+      throw new ConnectorError(
+        "invalid_configuration",
+        "Notion webhook verification has not been completed for this region",
+      );
+    }
+    return this.decryptNotionChallenge(challenge);
+  }
+
+  /**
+   * Records the verification token the shared ingress captured.
+   *
+   * One public Notion connection means one subscription and one challenge, sent
+   * to whichever host is registered. EU never receives that request and could
+   * not otherwise verify a forwarded delivery for itself — so Global replicates
+   * the token rather than have EU trust the hop. The operator setup token was
+   * checked where the challenge arrived; this is reachable only over the
+   * account-internal bridge and has no URL of its own.
+   */
+  async storeNotionChallengeToken(verificationToken: string): Promise<void> {
+    const encrypted = await encryptString(
+      verificationToken,
+      this.env.CONNECTOR_CREDENTIALS_KEY,
+      this.notionChallengeAad(),
+    );
+    await this.env.DB.prepare(
+      `INSERT INTO provider_webhook_challenges
+       (provider, region, encrypted_token, token_iv, credential_key_version,
+        created_at, consumed_at)
+       VALUES ('notion', ?, ?, ?, ?, ?, NULL)
+       ON CONFLICT(provider, region) DO UPDATE SET
+         encrypted_token = excluded.encrypted_token,
+         token_iv = excluded.token_iv,
+         credential_key_version = excluded.credential_key_version,
+         created_at = excluded.created_at,
+         consumed_at = NULL`,
+    ).bind(
+      this.env.AVALON_REGION,
+      encrypted.ciphertext,
+      encrypted.iv,
+      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      nowIso(),
+    ).run();
+  }
+
+  private async loadNotionChallenge(): Promise<{
+    encrypted_token: string;
+    token_iv: string;
+    credential_key_version: number;
+  } | null> {
+    return this.env.DB.prepare(
+      `SELECT encrypted_token, token_iv, credential_key_version
+       FROM provider_webhook_challenges
+       WHERE provider = 'notion' AND region = ?`,
+    ).bind(this.env.AVALON_REGION).first<{
+      encrypted_token: string;
+      token_iv: string;
+      credential_key_version: number;
+    }>();
   }
 
   private notionChallengeAad(): string {
