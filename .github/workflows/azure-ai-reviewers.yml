@@ -3,7 +3,10 @@ name: azure-cline-review
 on:
   # Review a PR once when it first requests review. Later commits are reviewed
   # only when a trusted repository participant comments `/cline review`.
-  pull_request:
+  # `pull_request_target` loads this workflow from the trusted base branch. A
+  # same-repository PR must not be able to rewrite the job that receives the
+  # Azure credential. No PR code is checked out or executed below.
+  pull_request_target:
     types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
@@ -34,7 +37,7 @@ jobs:
   review:
     name: review-${{ matrix.reviewer }}-cline
     if: >-
-      (github.event_name == 'pull_request' &&
+      (github.event_name == 'pull_request_target' &&
        github.event.pull_request.draft == false) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
@@ -124,7 +127,16 @@ jobs:
               ;;
           esac
           case "$path" in
-            ""|/api/projects/*) ;;
+            "") ;;
+            /api/projects/*)
+              project="${path#/api/projects/}"
+              case "$project" in
+                ""|*/*|*\?*|*\#*|*[[:space:]]*)
+                  echo "::error::AZURE_AI_API_ENDPOINT project path must contain exactly one non-empty URL segment."
+                  exit 1
+                  ;;
+              esac
+              ;;
             *)
               echo "::error::AZURE_AI_API_ENDPOINT path must be empty or /api/projects/<project>, optionally followed by /openai/v1 or /openai/v1/chat/completions (which this step strips)."
               exit 1

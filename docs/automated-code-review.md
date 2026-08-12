@@ -14,11 +14,12 @@ part of Avalon.
 
 ## How it works
 
-The workflow starts when a pull request is opened, reopened, or marked ready for
-review. Draft pull requests are excluded from this automatic path. A repository
-owner, member, or collaborator can request a fresh review of the current head by
-commenting `/cline review`; an acknowledgment job reacts to that comment with
-eyes while the reviewers run.
+The trusted base-branch workflow starts through `pull_request_target` when a
+pull request is opened, reopened, or marked ready for review. Draft pull
+requests are excluded from this automatic path. A repository owner, member, or
+collaborator can request a fresh review of the current head by commenting
+`/cline review`; an acknowledgment job reacts to that comment with eyes while
+the reviewers run.
 
 One matrix job runs three independent executions and posts separate comments:
 
@@ -49,6 +50,9 @@ updated head is ready.
 - The automatic trigger rejects drafts. The comment trigger accepts only pull
   request comments from owners, members, or collaborators, because it runs in
   the base repository's privileged context.
+- The automatic trigger is `pull_request_target`, so GitHub loads the workflow
+  definition from the trusted base branch. Do not change it to `pull_request`:
+  a same-repository PR could then modify the job that receives Azure credentials.
 - The workflow never checks out the PR. A trusted step reads metadata and the
   diff with `gh`, asks only for explicit JSON fields, and fails if that input is
   larger than 600,000 bytes.
@@ -92,6 +96,7 @@ Global and EU runtime boundary does not apply.
   `*.services.ai.azure.com` and `*.openai.azure.com` fails before Cline is
   installed. Resource roots and Foundry project endpoints are accepted, with an
   optional `/openai/v1/chat/completions` suffix stripped during normalization.
+  A project path must contain exactly one non-empty segment.
 - PR metadata and diff larger than 600,000 bytes fail before the model call.
   This avoids accidental truncation and forces oversized changes to be split.
 - A missing or empty review file is reported as a warning and nothing is posted.
@@ -116,10 +121,11 @@ pnpm test
 pnpm test:scripts
 ```
 
-The model calls and review posting require a real pull request. A comment-triggered
-run reads the workflow definition from the base branch, so changes to this
-workflow must first be exercised through a `pull_request` event such as
-`ready_for_review`.
+The model calls and review posting require a real pull request. Both trigger
+paths read the workflow definition from the base branch, so a newly added or
+changed workflow cannot execute itself from its own PR. Its first live review
+run occurs only after the change is merged and a later PR is opened, reopened,
+marked ready, or receives the trusted comment command.
 
 ## Security and trust model
 
@@ -160,6 +166,8 @@ provider errors.
 passed to Cline through stdin. Cline runs without a checkout or GitHub token,
 with automatic approval disabled and non-TTY approval denial enforced. The
 three duplicated jobs became one model matrix so the boundary has one owner.
+The automatic path uses `pull_request_target` so the workflow definition also
+comes from the trusted base branch.
 
 **Why:** Untrusted PR text can prompt-inject a model. Under Cline's automatic
 approval mode, that gave the model arbitrary shell execution in a process that
