@@ -6,23 +6,31 @@ describe("Bind host durability boundaries", () => {
   it("returns preload candidates to Bind only after their activation is persisted", async () => {
     const order: string[] = [];
     const persisted = new Set<string>();
+    const prepared = new Set<string>();
     let signalPersistStarted!: () => void;
     let releasePersistence!: () => void;
     const persistStarted = new Promise<void>((resolve) => { signalPersistStarted = resolve; });
     const persistenceGate = new Promise<void>((resolve) => { releasePersistence = resolve; });
 
     const preparing = __integrationTesting.persistInitialPluginActivations(
-      ["connection:preload", "connection:revoked", "connection:preload"],
+      ["connection:preload", "connection:revoked", "connection:unavailable", "connection:preload"],
       async (pluginId) => {
         order.push(`reauthorize:${pluginId}`);
         return pluginId === "connection:revoked" ? "denied" : "authorized";
       },
       async (pluginId) => {
+        expect(prepared.has(pluginId)).toBe(true);
         order.push(`persist:start:${pluginId}`);
         signalPersistStarted();
         await persistenceGate;
         persisted.add(pluginId);
         order.push(`persist:finish:${pluginId}`);
+      },
+      async (pluginId) => {
+        order.push(`prepare:${pluginId}`);
+        if (pluginId === "connection:unavailable") return false;
+        prepared.add(pluginId);
+        return true;
       },
     );
 
@@ -39,9 +47,12 @@ describe("Bind host durability boundaries", () => {
     expect(activationHints.every((pluginId) => persisted.has(pluginId))).toBe(true);
     expect(order).toEqual([
       "reauthorize:connection:preload",
+      "prepare:connection:preload",
       "persist:start:connection:preload",
       "persist:finish:connection:preload",
       "reauthorize:connection:revoked",
+      "reauthorize:connection:unavailable",
+      "prepare:connection:unavailable",
     ]);
   });
 

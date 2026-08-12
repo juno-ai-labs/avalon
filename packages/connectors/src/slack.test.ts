@@ -270,7 +270,7 @@ describe("Slack connector", () => {
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.search, "personal")).toBe(true);
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.search, "workspace")).toBe(true);
     expect(adapter.dynamicAgentTools).toMatchObject({
-      capabilities: expect.arrayContaining([SlackCapabilities.personalMcp, SlackCapabilities.search]),
+      capabilities: [SlackCapabilities.personalMcp],
       connectionScopes: ["personal"],
     });
     expect(SlackWorkspaceBotScopes).toContain("users:read.email");
@@ -289,6 +289,45 @@ describe("Slack connector", () => {
     expect(SlackWorkspaceBotScopes).toContain("search:read.files");
     expect(SlackWorkspaceBotScopes).toContain("search:read.users");
     expect(SlackWorkspaceBotScopes).not.toContain("search:read.private");
+  });
+
+  it("keeps legacy personal grants on their reviewed static surface", async () => {
+    const fetcher: FetchLike = vi.fn(async (input) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      expect(url.pathname).toBe("/api/users.info");
+      return json({
+        ok: true,
+        user: { id: "UALEX", team_id: "TACME", name: "alex", profile: { display_name: "Alex" } },
+      });
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+    const connection = authorizedConnection({
+      id: "connection-slack-personal-legacy",
+      workspaceId: "workspace-avalon",
+      scope: "personal",
+      ownerUserId: "user-avalon",
+      grantedScopes: [SlackCapabilities.usersRead],
+      credentials: { userAccessToken: "xoxp-legacy" },
+      cursor: {},
+      config: {},
+    });
+
+    await expect(adapter.dynamicAgentTools!.discover(connection, AbortSignal.timeout(1_000)))
+      .rejects.toMatchObject({ code: "unsupported_capability" });
+    expect(fetcher).not.toHaveBeenCalled();
+
+    await expect(adapter.executeTool("read_user_profile", { user_id: "UALEX" }, {
+      connection,
+      principal: { type: "user", userId: "user-avalon" },
+      signal: AbortSignal.timeout(1_000),
+    })).resolves.toMatchObject({ output: { user: { id: "UALEX" } } });
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it("exposes every requested read and write tool to workspace Slack connections", () => {

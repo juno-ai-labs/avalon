@@ -34,6 +34,7 @@ describe("hosted MCP abstraction", () => {
       }),
       expect.objectContaining({
         name: "future_tool",
+        providerOperationName: "Future.Tool",
         capability: "provider.personal.mcp",
         mode: "write",
         idempotency: "record_before_execute",
@@ -44,6 +45,9 @@ describe("hosted MCP abstraction", () => {
       { name: "same-name", inputSchema: { type: "object" } },
       { name: "same_name", inputSchema: { type: "object" } },
     ], "provider.personal.mcp")).toThrow(/collide/iu);
+    expect(() => hostedMcpToolDefinitions([
+      { name: "bad-schema", inputSchema: { type: "string" } as never },
+    ], "provider.personal.mcp")).toThrow(/object/iu);
   });
 
   it("discovers paginated tools and forwards the exact live name and arguments", async () => {
@@ -110,13 +114,71 @@ describe("hosted MCP abstraction", () => {
 
     const definitions = await passthrough.dynamicAgentTools.discover(connection, AbortSignal.timeout(1_000));
     expect(definitions.map((definition) => definition.name)).toEqual(["live-search", "future_tool"]);
+    expect(definitions[1]?.providerOperationName).toBe("Future.Tool");
     await expect(passthrough.execute(
       connection,
-      "future_tool",
+      definitions[1]!.providerOperationName!,
       { value: 42 },
       AbortSignal.timeout(1_000),
     )).resolves.toMatchObject({ output: { accepted: 42 } });
     expect(requests.filter((request) => request.method === "tools/list")).toHaveLength(4);
+  });
+
+  it("fails closed when a fresh catalog collides with an activated alias", async () => {
+    let session = 0;
+    let called = false;
+    const fetcher: FetchLike = async (_input, init) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+      const id = request.id as number;
+      if (request.method === "initialize") {
+        session += 1;
+        return rpc(id, { protocolVersion: "2025-06-18", capabilities: {} }, {
+          "mcp-session-id": `session-${session}`,
+        });
+      }
+      if (request.method === "tools/list") {
+        return rpc(id, {
+          tools: session === 1
+            ? [{ name: "Future.Tool", inputSchema: { type: "object" } }]
+            : [
+                { name: "future_tool", inputSchema: { type: "object" } },
+                { name: "Future.Tool", inputSchema: { type: "object" } },
+              ],
+        });
+      }
+      called = true;
+      return rpc(id, { structuredContent: {}, content: [], isError: false });
+    };
+    const connection = authorizedConnection({
+      id: "11111111-1111-4111-8111-111111111111",
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+      scope: "personal",
+      ownerUserId: "33333333-3333-4333-8333-333333333333",
+      grantedScopes: ["provider.personal.mcp"],
+      credentials: { accessToken: "access-token" },
+      config: {},
+      cursor: {},
+    });
+    const passthrough = createHostedMcpPassthrough({
+      providerName: "Provider",
+      serverUrl: "https://mcp.example.test/mcp",
+      capabilities: ["provider.personal.mcp"],
+      connectionScopes: ["personal"],
+      capabilityForConnection: () => "provider.personal.mcp",
+      withAccessToken: (_connection, _signal, operation) => operation("access-token"),
+      fetch: fetcher,
+    });
+
+    const definitions = await passthrough.dynamicAgentTools.discover(connection, AbortSignal.timeout(1_000));
+    await expect(passthrough.execute(
+      connection,
+      definitions[0]!.providerOperationName!,
+      {},
+      AbortSignal.timeout(1_000),
+    )).rejects.toThrow(/collide/iu);
+    expect(called).toBe(false);
   });
 
   it("discovers OAuth metadata, dynamically registers, and exchanges rotating credentials", async () => {
