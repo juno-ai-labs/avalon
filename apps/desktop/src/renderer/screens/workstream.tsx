@@ -519,7 +519,7 @@ export function WorkstreamHeader({
             {workstream.origin === 'automation' && <Badge>{workstream.automationName ?? 'Automation'}</Badge>}
             {/* Only its participant can open this one, so say so where they are
                 reading it rather than only in the sidebar they came from. */}
-            {workstream.scope === 'personal' && <Badge className="badge-private"><Lock aria-hidden="true" size={9} /> Private</Badge>}
+            {workstream.visibility === 'private' && <Badge className="badge-private"><Lock aria-hidden="true" size={9} /> Private</Badge>}
           </div>
           <div className="workstream-subtitle">
             {renameError ? (

@@ -371,7 +371,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
-    scope: workstream.scope,
+    visibility: workstream.visibility,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
     nextPendingWakeup: workstream.nextPendingWakeup
       ? { ...workstream.nextPendingWakeup }
@@ -993,7 +993,7 @@ export class AvalonApi {
       titleStatus: 'settled',
       origin: 'automation',
       harnessStatus: 'running',
-      scope: 'workspace',
+      visibility: 'public',
       lastActivityAt: new Date().toISOString(),
       latestAttentionSequenceNumber: 0,
       readThroughSequenceNumber: 0,
@@ -1168,13 +1168,13 @@ export class AvalonApi {
   /**
    * Narrow a work stream to the people in it, or open it to the workspace.
    *
-   * `personal` keeps the work stream readable to its participants — who may
+   * `private` keeps the work stream readable to its participants — who may
    * still add anyone else in the workspace to it — and to nobody else.
    */
-  async setWorkstreamScope(id: string, scope: 'personal' | 'workspace'): Promise<WorkstreamSummary> {
+  async setWorkstreamVisibility(id: string, visibility: 'public' | 'private'): Promise<WorkstreamSummary> {
     const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
       method: 'PATCH',
-      body: { scope },
+      body: { visibility },
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);

@@ -38,7 +38,7 @@ const workstream: WorkstreamDetail = {
   origin: 'automation',
   automationName: 'Weekly invoice monitor',
   harnessStatus: 'completed',
-  scope: 'workspace' as const,
+  visibility: 'public' as const,
   lastActivityAt: '2026-07-31T20:00:12.000Z',
   latestAttentionSequenceNumber: 4,
   readThroughSequenceNumber: 4,

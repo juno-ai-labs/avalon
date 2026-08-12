@@ -296,8 +296,8 @@ async function createDigestWorkstream(
     env.DB.prepare(
       `INSERT INTO workstreams
          (id, workspace_id, title, objective, origin_type, created_by_user_id,
-          harness_status, last_activity_at, created_at, updated_at, system_kind, scope)
-       VALUES (?, ?, ?, ?, 'ad_hoc', ?, 'idle', ?, ?, ?, 'digest', 'personal')`,
+          harness_status, last_activity_at, created_at, updated_at, system_kind, visibility)
+       VALUES (?, ?, ?, ?, 'ad_hoc', ?, 'idle', ?, ?, ?, 'digest', 'private')`,
     ).bind(
       workstreamId,
       schedule.workspace_id,

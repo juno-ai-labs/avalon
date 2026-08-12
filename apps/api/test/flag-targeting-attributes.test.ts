@@ -191,7 +191,7 @@ describe("flag targeting attributes", () => {
       }),
     ).resolves.toMatchObject({
       workstreamOrigin: "ad_hoc",
-      workstreamScope: "workspace",
+      workstreamVisibility: "public",
       workstreamFromOpportunity: false,
       workstreamIsSystem: false,
       workstreamCreatedByUserId: MEMBER_ID,
@@ -218,7 +218,7 @@ describe("flag targeting attributes", () => {
       }),
     ).resolves.toMatchObject({
       workstreamIsSystem: true,
-      workstreamScope: "personal",
+      workstreamVisibility: "private",
       workstreamFromOpportunity: true,
     });
   });

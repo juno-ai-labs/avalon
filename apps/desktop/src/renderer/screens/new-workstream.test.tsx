@@ -71,7 +71,7 @@ function workstream(id: string, title: string, harnessStatus: WorkstreamSummary[
     titleStatus: 'settled',
     origin: 'ad_hoc',
     harnessStatus,
-    scope: 'workspace',
+    visibility: 'public',
     lastActivityAt: '2026-07-31T20:00:00.000Z',
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,

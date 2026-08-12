@@ -652,15 +652,15 @@ export function useWorkstreamSocket(
           current?.map((workstream) => workstream.id === workstreamId
             ? { ...workstream, ...renamed }
             : workstream));
-      } else if (event.type === 'workstream_scope_changed') {
+      } else if (event.type === 'workstream_visibility_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
         // their sidebar row and the header they are reading to agree.
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
-          current ? { ...current, scope: event.scope } : current);
+          current ? { ...current, visibility: event.visibility } : current);
         setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
-            ? { ...workstream, scope: event.scope }
+            ? { ...workstream, visibility: event.visibility }
             : workstream));
       } else if (event.type === 'stream_completed') {
         const cursor = streamCursors.get(event.message.id);

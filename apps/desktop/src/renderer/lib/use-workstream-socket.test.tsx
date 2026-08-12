@@ -104,7 +104,7 @@ function workstreamSummary(overrides: Partial<WorkstreamSummary> = {}): Workstre
     titleStatus: 'settled',
     origin: 'ad_hoc',
     harnessStatus: 'completed',
-    scope: 'workspace',
+    visibility: 'public',
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,
     manualUnreadFromSequenceNumber: null,
@@ -311,7 +311,7 @@ describe('useWorkstreamSocket', () => {
       titleStatus: 'settled' as const,
       origin: 'ad_hoc',
       harnessStatus: 'completed',
-      scope: 'workspace',
+      visibility: 'public',
       latestAttentionSequenceNumber: 3,
       readThroughSequenceNumber: 3,
       manualUnreadFromSequenceNumber: null,
@@ -1107,12 +1107,12 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       title: 'Compensation review',
-      scope: 'workspace',
+      visibility: 'public',
       harnessStatus: 'completed',
     } as WorkstreamDetail);
     setCachedWorkstreams(queryClient, [
-      { id: workstreamId, title: 'Compensation review', scope: 'workspace' },
-      { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', scope: 'workspace' },
+      { id: workstreamId, title: 'Compensation review', visibility: 'public' },
+      { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', visibility: 'public' },
     ] as WorkstreamSummary[]);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
@@ -1127,19 +1127,19 @@ describe('useWorkstreamSocket', () => {
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
     act(() => socket.message({
-      type: 'workstream_scope_changed',
+      type: 'workstream_visibility_changed',
       sequence: 1,
       occurredAt: '2026-08-11T09:00:01.000Z',
-      scope: 'personal',
+      visibility: 'private',
     }));
 
     // Anyone the change excluded has been disconnected by the room, so everyone
     // who receives this may still read it and only needs the lock to appear.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
-      .toMatchObject({ title: 'Compensation review', scope: 'personal' });
+      .toMatchObject({ title: 'Compensation review', visibility: 'private' });
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      { id: workstreamId, title: 'Compensation review', scope: 'personal' },
-      { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', scope: 'workspace' },
+      { id: workstreamId, title: 'Compensation review', visibility: 'private' },
+      { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', visibility: 'public' },
     ]);
   });
 
@@ -1152,7 +1152,7 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       title: 'Compensation review',
-      scope: 'workspace',
+      visibility: 'public',
       harnessStatus: 'completed',
     } as WorkstreamDetail);
     queryClient.setQueryData(['messages', workstreamId], [{ id: 'message-1' }] as Message[]);
@@ -1227,7 +1227,7 @@ describe('useWorkstreamSocket', () => {
     const canonicalWorkstream = {
       id: workstreamId,
       harnessStatus: 'running',
-      scope: 'workspace',
+      visibility: 'public',
       latestHarnessRunId: 'run-new',
       latestHarnessRun: {
         id: 'run-new',
@@ -1241,7 +1241,7 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       harnessStatus: 'completed',
-      scope: 'workspace',
+      visibility: 'public',
       latestHarnessRunId: 'run-old',
     });
     const api = socketApiWith({

@@ -104,7 +104,10 @@ export const WorkstreamRowSchema = z.object({
   email_address: rowText.nullish(),
   latest_attention_sequence_number: rowCount.nullish(),
   unread_tracking_start_sequence_number: rowCount.nullish(),
-  scope: z.enum(["personal", "workspace"]),
+  // Nullable until `0072` tightens it: a row an old Worker wrote during the
+  // deployment window is filled by `0071`'s insert trigger rather than by that
+  // Worker, and the mapper must parse the column as the schema declares it.
+  visibility: z.enum(["public", "private"]).nullish(),
   system_kind: z.literal("digest").nullish(),
   last_activity_at: rowTimestamp,
   created_at: rowTimestamp,
@@ -191,7 +194,7 @@ export function toWorkstream(input: Record<string, unknown>): Workstream {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at ?? null,
-    scope: row.scope,
+    visibility: row.visibility ?? "public",
     systemKind: row.system_kind ?? null,
     nextPendingWakeup: row.next_pending_wakeup_at && row.next_pending_wakeup_prompt_prefix
       ? {

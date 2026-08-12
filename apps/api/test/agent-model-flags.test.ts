@@ -223,7 +223,7 @@ describe("agent model flags", () => {
       userEmailDomain: "dogfood.example",
       userRole: "owner",
       workstreamOrigin: "ad_hoc",
-      workstreamScope: "workspace",
+      workstreamVisibility: "public",
       workstreamFromOpportunity: false,
       workstreamIsSystem: false,
       workstreamCreatedByUserId: "00000000-0000-4000-8000-000000000011",

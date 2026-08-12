@@ -49,7 +49,7 @@ const defaultActions = {
   onArchiveDraftAutomation: async (): Promise<void> => undefined,
   onArchiveNote: async (): Promise<void> => undefined,
   onChangeNoteScope: async (): Promise<void> => undefined,
-  onChangeWorkstreamScope: async (): Promise<void> => undefined,
+  onChangeWorkstreamVisibility: async (): Promise<void> => undefined,
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
@@ -81,7 +81,7 @@ function workstream(
     titleStatus: 'settled',
     origin,
     harnessStatus,
-    scope: 'workspace' as const,
+    visibility: 'public' as const,
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,
     manualUnreadFromSequenceNumber: null,
@@ -1002,7 +1002,7 @@ describe('private work streams', () => {
 
   function renderWith(
     streams: WorkstreamSummary[],
-    onChangeWorkstreamScope?: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>,
+    onChangeWorkstreamVisibility?: (workstream: WorkstreamSummary, visibility: 'public' | 'private') => Promise<void>,
   ): void {
     render(
       <MemoryRouter>
@@ -1010,7 +1010,7 @@ describe('private work streams', () => {
           <Sidebar
             {...defaultActions}
             automations={[]}
-            {...(onChangeWorkstreamScope ? { onChangeWorkstreamScope } : {})}
+            {...(onChangeWorkstreamVisibility ? { onChangeWorkstreamVisibility } : {})}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={streams}
@@ -1023,7 +1023,7 @@ describe('private work streams', () => {
   it('wears the same marker a private note does', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000021', 'Digest · Adam', 'completed'),
-      scope: 'personal',
+      visibility: 'private',
       systemKind: 'digest',
     }]);
 
@@ -1038,38 +1038,38 @@ describe('private work streams', () => {
   });
 
   it('closes a work stream to the people in it from the right-click menu', async () => {
-    const onChangeWorkstreamScope = vi.fn(async (): Promise<void> => undefined);
+    const onChangeWorkstreamVisibility = vi.fn(async (): Promise<void> => undefined);
     renderWith(
       [workstream('00000000-4000-4000-8000-000000000023', 'Launch', 'completed')],
-      onChangeWorkstreamScope,
+      onChangeWorkstreamVisibility,
     );
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Launch/u }), { clientX: 120, clientY: 90 });
     // Named for the state it moves to, the way the note item is.
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make private' }));
 
-    expect(onChangeWorkstreamScope).toHaveBeenCalledWith(
+    expect(onChangeWorkstreamVisibility).toHaveBeenCalledWith(
       expect.objectContaining({ id: '00000000-4000-4000-8000-000000000023' }),
-      'personal',
+      'private',
     );
   });
 
   it('opens a private work stream back up to the workspace', async () => {
-    const onChangeWorkstreamScope = vi.fn(async (): Promise<void> => undefined);
+    const onChangeWorkstreamVisibility = vi.fn(async (): Promise<void> => undefined);
     renderWith(
       [{
         ...workstream('00000000-4000-4000-8000-000000000024', 'Comp review', 'completed'),
-        scope: 'personal',
+        visibility: 'private',
       }],
-      onChangeWorkstreamScope,
+      onChangeWorkstreamVisibility,
     );
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Comp review/u }), { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make public to workspace' }));
 
-    expect(onChangeWorkstreamScope).toHaveBeenCalledWith(
+    expect(onChangeWorkstreamVisibility).toHaveBeenCalledWith(
       expect.objectContaining({ id: '00000000-4000-4000-8000-000000000024' }),
-      'workspace',
+      'public',
     );
   });
 
@@ -1090,7 +1090,7 @@ describe('private work streams', () => {
   it('does not offer the toggle on a work stream that belongs to Avalon itself', async () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000027', 'Digest · Adam', 'completed'),
-      scope: 'personal',
+      visibility: 'private',
       systemKind: 'digest',
     }]);
 

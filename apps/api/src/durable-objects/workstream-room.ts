@@ -218,12 +218,12 @@ function eventCanChangeActiveStreamCheckpoint(event: ServerSocketEvent): boolean
 /**
  * Whether this event can have taken somebody's read access away.
  *
- * A work stream becoming `personal` narrows it to its participants, and losing
+ * A work stream becoming `private` narrows it to its participants, and losing
  * a participant narrows it again — the second only matters while it is already
- * `personal`, but the sweep answers that itself rather than guessing here.
+ * `private`, but the sweep answers that itself rather than guessing here.
  */
 function retractsReadAccess(event: ServerSocketEvent): boolean {
-  if (event.type === "workstream_scope_changed") return event.scope === "personal";
+  if (event.type === "workstream_visibility_changed") return event.visibility === "private";
   return event.type === "participant_removed";
 }
 
@@ -630,7 +630,7 @@ export class WorkstreamRoom {
 
     // The same rule the REST reads enforce, not a copy of it. This authorizer
     // was a copy, and it had drifted: it checked the automation clause and not
-    // `scope`, so a member who was not a participant could open a socket onto a
+    // `visibility`, so a member who was not a participant could open a socket onto a
     // private work stream and be sent its transcript.
     const authorized = await this.env.DB.prepare(
       `SELECT 1

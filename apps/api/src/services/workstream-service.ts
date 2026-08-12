@@ -963,17 +963,17 @@ export class WorkstreamService {
   async update(id: string, input: UpdateWorkstreamInput) {
     const before = await this.requireWorkstreamForUpdate(id);
     if (Object.keys(input).length === 0) throw new ApiError(422, "empty_update", "No work-stream fields were provided");
-    const previousScope = before.scope === "personal" ? "personal" : "workspace";
-    const scopeChanged = input.scope != null && input.scope !== previousScope;
-    if (scopeChanged) this.assertScopeIsThisRowsToDecide(before);
+    const previousVisibility = before.visibility === "private" ? "private" : "public";
+    const visibilityChanged = input.visibility != null && input.visibility !== previousVisibility;
+    if (visibilityChanged) this.assertVisibilityIsThisRowsToDecide(before);
     // Whoever makes a work stream private has to stay in the room they just
-    // closed, and `personal` is enforced as "an active participant, and nobody
+    // closed, and `private` is enforced as "an active participant, and nobody
     // else" — so this is what stops the change from being the one action in
     // Avalon that locks its author out of its own result. It goes in the same
-    // batch as the scope itself: a work stream that went private while the
+    // batch as the visibility itself: a work stream that went private while the
     // upsert failed would be one nobody may read, and a participant added to a
-    // work stream whose scope write then failed would be a permanent stray.
-    const joining = scopeChanged && input.scope === "personal";
+    // work stream whose visibility write then failed would be a permanent stray.
+    const joining = visibilityChanged && input.visibility === "private";
     // Whether the upsert will actually add them, rather than land on the row
     // they already have. Someone who has been in this work stream for weeks is
     // not joining it by closing it, and announcing that they were would refresh
@@ -983,7 +983,7 @@ export class WorkstreamService {
     const write = this.env.DB.prepare(
       `UPDATE workstreams SET
        title = COALESCE(?, title), objective = COALESCE(?, objective),
-       scope = COALESCE(?, scope),
+       visibility = COALESCE(?, visibility),
        description_source = CASE WHEN ? IS NULL OR ? = objective THEN description_source ELSE 'authored' END,
        -- A person naming a work stream settles it: a naming pass still in
        -- flight must not overwrite what they chose.
@@ -996,7 +996,7 @@ export class WorkstreamService {
       .bind(
         input.title ?? null,
         input.objective ?? null,
-        input.scope ?? null,
+        input.visibility ?? null,
         input.objective ?? null,
         input.objective ?? null,
         input.title ?? null,
@@ -1019,7 +1019,7 @@ export class WorkstreamService {
     const previousDescription = String(before.objective ?? "");
     const authored = input.objective != null && input.objective !== previousDescription;
     // The participant upsert comes first so that, batch or not, no reader can
-    // observe the narrowed scope ahead of the person it has to keep.
+    // observe the narrowed visibility ahead of the person it has to keep.
     const statements = [
       ...(joining
         ? [buildParticipantUpsertStatement(this.env.DB, {
@@ -1076,10 +1076,10 @@ export class WorkstreamService {
     // right now. It applies the new state to the people who may stay and closes
     // the sockets of those this change just excluded — a member who had it open
     // when it went private would otherwise keep receiving its transcript.
-    if (scopeChanged) {
+    if (visibilityChanged) {
       const delivered = await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
-        type: "workstream_scope_changed",
-        scope: updated.scope,
+        type: "workstream_visibility_changed",
+        visibility: updated.visibility,
       });
       // For every other event this publisher's silence is fine. Here it is the
       // difference between an eviction that happened and one that did not, and
@@ -1087,8 +1087,8 @@ export class WorkstreamService {
       // re-checks its own connected set within the interval either way, so this
       // is a delay to alert on rather than a failure to undo — but it must not
       // be invisible.
-      if (!delivered && updated.scope === "personal") {
-        logStructuredEvent(this.env, "error", "workstream_scope_retraction_undelivered", {
+      if (!delivered && updated.visibility === "private") {
+        logStructuredEvent(this.env, "error", "workstream_visibility_retraction_undelivered", {
           workspace_id: this.auth.workspaceId,
           workstream_id: id,
         });
@@ -1098,11 +1098,11 @@ export class WorkstreamService {
   }
 
   /**
-   * Whether `scope` is the rule that actually decides who reads this row.
+   * Whether `visibility` is the rule that actually decides who reads this row.
    *
    * For an ordinary work stream it is, and both directions mean what the menu
    * says. Two kinds of row are governed by something else, and moving their
-   * scope would either do nothing or do harm:
+   * visibility would either do nothing or do harm:
    *
    * - **A subsystem's own work stream** (`system_kind`) is machinery. A digest
    *   is assembled from one person's private activity, so publishing it to the
@@ -1112,19 +1112,24 @@ export class WorkstreamService {
    *   column. Opening it would broaden nothing, and closing it would hide the
    *   row from the automation's owner, who is reached by that separate rule
    *   rather than by being a participant.
+   *
+   * A work stream started from a connector conversation is deliberately *not* on
+   * this list. Its visibility was derived from where it started rather than
+   * chosen, but it is ordinary shared work from then on, and a member who can
+   * read it may still open or close it like any other.
    */
-  private assertScopeIsThisRowsToDecide(row: Record<string, unknown>): void {
+  private assertVisibilityIsThisRowsToDecide(row: Record<string, unknown>): void {
     if (row.system_kind != null) {
       throw new ApiError(
         422,
-        "scope_change_unsupported",
+        "visibility_change_unsupported",
         "This work stream belongs to Avalon itself, so its visibility cannot be changed",
       );
     }
     if (row.automation_subscription_id != null) {
       throw new ApiError(
         422,
-        "scope_change_unsupported",
+        "visibility_change_unsupported",
         "This work stream is visible to whoever the automation that created it is visible to",
       );
     }

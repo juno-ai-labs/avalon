@@ -40,7 +40,7 @@ function workstreamRow(overrides: Record<string, unknown> = {}) {
     email_address: null,
     latest_attention_sequence_number: 50,
     unread_tracking_start_sequence_number: 0,
-    scope: "workspace",
+    visibility: "public",
     system_kind: null,
     last_activity_at: "2026-08-11T00:05:21.146Z",
     created_at: "2026-08-10T16:10:55.531Z",
@@ -101,13 +101,15 @@ describe("work-stream row contracts", () => {
   });
 
   it("refuses a row missing a column the table declares NOT NULL", () => {
-    // Hand-coercion turned an absent `scope` into "workspace" and an absent
+    // Hand-coercion turned an absent status into a plausible one and an absent
     // sequence number into 0, so a query that stopped returning a column
-    // produced plausible output instead of an error.
-    const withoutScope: Record<string, unknown> = workstreamRow();
-    delete withoutScope.scope;
-    const parsed = WorkstreamRowSchema.safeParse(withoutScope);
-    expect(!parsed.success && parsed.error.issues[0]?.path).toEqual(["scope"]);
+    // produced plausible output instead of an error. `visibility` used to be
+    // this example and cannot be until `0072` makes it `NOT NULL`; the rule it
+    // demonstrates is the schema's, not that column's.
+    const withoutTitleStatus: Record<string, unknown> = workstreamRow();
+    delete withoutTitleStatus.title_status;
+    const parsed = WorkstreamRowSchema.safeParse(withoutTitleStatus);
+    expect(!parsed.success && parsed.error.issues[0]?.path).toEqual(["title_status"]);
   });
 
   it("produces a row the work-stream contract accepts", () => {
@@ -119,7 +121,7 @@ describe("work-stream row contracts", () => {
     }));
 
     expect(WorkstreamSchema.shape.harnessStatus.parse(row.harness_status)).toBe("completed");
-    expect(WorkstreamSchema.shape.scope.parse(row.scope)).toBe("workspace");
+    expect(WorkstreamSchema.shape.visibility.parse(row.visibility)).toBe("public");
     expect(row.viewer_manual_unread_generation).toBe(3);
     expect(row.next_pending_wakeup_at).toBeNull();
   });

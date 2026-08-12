@@ -65,7 +65,7 @@ function detail(): WorkstreamDetail {
     titleStatus: 'settled' as const,
     origin: 'ad_hoc',
     harnessStatus: 'completed',
-    scope: 'workspace',
+    visibility: 'public',
     latestAttentionSequenceNumber: 3,
     readThroughSequenceNumber: 3,
     manualUnreadFromSequenceNumber: null,

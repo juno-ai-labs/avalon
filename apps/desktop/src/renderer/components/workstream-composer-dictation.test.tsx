@@ -54,7 +54,7 @@ const workstream: WorkstreamDetail = {
   titleStatus: 'settled' as const,
   origin: 'ad_hoc',
   harnessStatus: 'completed',
-  scope: 'workspace' as const,
+  visibility: 'public' as const,
   lastActivityAt: '2026-08-06T12:00:00.000Z',
   latestAttentionSequenceNumber: 0,
   readThroughSequenceNumber: 0,

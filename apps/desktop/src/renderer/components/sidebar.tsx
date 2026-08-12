@@ -54,7 +54,7 @@ interface SidebarProps {
   onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
   onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
-  onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
+  onChangeWorkstreamVisibility: (workstream: WorkstreamSummary, visibility: 'public' | 'private') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   /**
@@ -339,8 +339,8 @@ function WorkstreamRow({
   drag,
   workstream,
   pinPending,
-  scopePending,
-  onChangeScope,
+  visibilityPending,
+  onChangeVisibility,
   onMarkUnread,
   onRename,
   onTogglePin,
@@ -351,13 +351,13 @@ function WorkstreamRow({
   drag?: PinnedRowDrag;
   workstream: WorkstreamSummary;
   pinPending: boolean;
-  scopePending: boolean;
-  onChangeScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => void;
+  visibilityPending: boolean;
+  onChangeVisibility: (workstream: WorkstreamSummary, visibility: 'public' | 'private') => void;
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
 }): React.JSX.Element {
-  const isPrivate = workstream.scope === 'personal';
+  const isPrivate = workstream.visibility === 'private';
   const isPinned = workstream.pinPosition !== null;
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
@@ -367,7 +367,7 @@ function WorkstreamRow({
   // not happen: a subsystem's own work stream is machinery, and one an
   // automation generated is visible to whoever that automation is visible to.
   // The API refuses both; the menu simply does not raise the question.
-  const scopeIsThisRowsToDecide = !workstream.systemKind && !workstream.automationSubscriptionId;
+  const visibilityIsThisRowsToDecide = !workstream.systemKind && !workstream.automationSubscriptionId;
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -486,7 +486,7 @@ function WorkstreamRow({
                 </Tooltip.Portal>
               </Tooltip.Root>
             )}
-            {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
+            {workstream.visibility === 'private' && <PrivacyMarker label="Private work stream" />}
             <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
           </NavLink>
         </div>
@@ -514,11 +514,11 @@ function WorkstreamRow({
           {/* Named for the state it moves to, the way the note item is. Private
               is not ownership: everyone left in the work stream can still read
               it, write to it, and bring somebody else in. */}
-          {scopeIsThisRowsToDecide && (
+          {visibilityIsThisRowsToDecide && (
             <ContextMenu.Item
               className="menu-item"
-              disabled={scopePending}
-              onSelect={() => onChangeScope(workstream, isPrivate ? 'workspace' : 'personal')}
+              disabled={visibilityPending}
+              onSelect={() => onChangeVisibility(workstream, isPrivate ? 'public' : 'private')}
             >
               {isPrivate
                 ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
@@ -537,10 +537,12 @@ function WorkstreamRow({
 }
 
 /**
- * The one "only you can see this" marker in the sidebar. Notes wear it when
- * their scope is personal; a system work stream wears it because nobody but its
- * participant can open it. Same badge either way — a reader should not have to
- * learn two ways of being told the same thing.
+ * The one "not everyone can see this" marker in the sidebar. Notes wear it when
+ * their scope is personal; a work stream wears it when its visibility is
+ * private — because somebody closed it, or because it was started from a
+ * private connector conversation and has been private since birth. Same badge
+ * either way — a reader should not have to learn two ways of being told the
+ * same thing.
  */
 function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
   return (
@@ -671,7 +673,7 @@ export function Sidebar({
   onArchiveDraftAutomation,
   onArchiveNote,
   onChangeNoteScope,
-  onChangeWorkstreamScope,
+  onChangeWorkstreamVisibility,
   onDeleteAutomation,
   onMarkWorkstreamUnread,
   onPinWorkstream,
@@ -708,7 +710,7 @@ export function Sidebar({
   // simply stays as it was.
   const [menuError, setMenuError] = useState<{ copy: string; message: string; title: string } | null>(null);
   const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
-  const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
+  const [visibilityPendingWorkstreamId, setVisibilityPendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
   const [commandShortcutsVisible, setCommandShortcutsVisible] = useState(false);
   // The work stream a pin or unpin has just moved, and which side of the
@@ -920,23 +922,23 @@ export function Sidebar({
     }
   };
 
-  const changeWorkstreamScope = async (
+  const changeWorkstreamVisibility = async (
     workstream: WorkstreamSummary,
-    scope: 'personal' | 'workspace',
+    visibility: 'public' | 'private',
   ): Promise<void> => {
-    setScopePendingWorkstreamId(workstream.id);
+    setVisibilityPendingWorkstreamId(workstream.id);
     try {
-      await onChangeWorkstreamScope(workstream, scope);
+      await onChangeWorkstreamVisibility(workstream, visibility);
     } catch (error) {
       setMenuError({
         title: 'Work stream visibility could not be changed',
-        copy: scope === 'workspace'
+        copy: visibility === 'public'
           ? 'The work stream is still private. Try again in a moment.'
           : 'The work stream is still visible to the workspace. Try again in a moment.',
         message: error instanceof Error ? error.message : 'The work stream could not be updated.',
       });
     } finally {
-      setScopePendingWorkstreamId((current) => current === workstream.id ? null : current);
+      setVisibilityPendingWorkstreamId((current) => current === workstream.id ? null : current);
     }
   };
 
@@ -1246,12 +1248,12 @@ export function Sidebar({
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
-                    onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
+                    onChangeVisibility={(target, visibility) => void changeWorkstreamVisibility(target, visibility)}
                     onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
                     onRename={openRename}
                     onTogglePin={(target, pin) => void togglePin(target, pin)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
-                    scopePending={scopePendingWorkstreamId === pinned.id}
+                    visibilityPending={visibilityPendingWorkstreamId === pinned.id}
                     workstream={pinned}
                   />
                 ))}
@@ -1290,12 +1292,12 @@ export function Sidebar({
                         commandShortcutsVisible={commandShortcutsVisible}
                         debugEnabled={debugEnabled}
                         key={item.id}
-                        onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
+                        onChangeVisibility={(target, visibility) => void changeWorkstreamVisibility(target, visibility)}
                         onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
                         onRename={openRename}
                         onTogglePin={(target, pin) => void togglePin(target, pin)}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
-                        scopePending={scopePendingWorkstreamId === item.workstream.id}
+                        visibilityPending={visibilityPendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
                       />
                     ))}

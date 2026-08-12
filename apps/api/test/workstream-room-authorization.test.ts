@@ -42,9 +42,9 @@ function seededDatabase(): DatabaseSync {
     INSERT INTO workstreams
       (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
        created_by_user_id, harness_status, next_sequence_number, last_activity_at,
-       created_at, updated_at, scope)
+       created_at, updated_at, visibility)
     VALUES ('${WORKSTREAM}', '${WORKSPACE}', 'Compensation review', '', 'x@automation.example',
-            'active', 'ad_hoc', '${PARTICIPANT}', 'idle', 1, '${at}', '${at}', '${at}', 'personal');
+            'active', 'ad_hoc', '${PARTICIPANT}', 'idle', 1, '${at}', '${at}', '${at}', 'private');
     INSERT INTO workstream_participants
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
     VALUES ('${WORKSTREAM}', '${PARTICIPANT}', '${PARTICIPANT}', 'creator', '${at}');
@@ -146,7 +146,7 @@ function connectAs(room: WorkstreamRoom, userId: string): Promise<Response> {
 
 describe("who the work-stream room lets connect", () => {
   // The room authorizes each socket itself rather than trusting the ticket, and
-  // that check used to be a copy of the read rule that had lost `scope` — so a
+  // that check used to be a copy of the read rule that had lost `visibility` — so a
   // member who was not a participant could open a socket onto a private work
   // stream and be sent its transcript live.
   it("refuses a member who is not in a private work stream", async () => {
@@ -164,7 +164,7 @@ describe("who the work-stream room lets connect", () => {
 
   it("lets that same member in once the work stream is open to the workspace", async () => {
     const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
+    database.exec(`UPDATE workstreams SET visibility = 'public' WHERE id = '${WORKSTREAM}'`);
 
     const response = await connectAs(roomFor(database), MEMBER);
 
@@ -182,7 +182,7 @@ describe("who the work-stream room disconnects", () => {
     const kept = fakeSocket(PARTICIPANT);
     const room = roomFor(seededDatabase(), [evicted, kept]);
 
-    const response = await publish(room, { type: "workstream_scope_changed", scope: "personal" });
+    const response = await publish(room, { type: "workstream_visibility_changed", visibility: "private" });
 
     expect(response.status).toBe(202);
     expect(evicted.closes).toEqual([
@@ -192,11 +192,11 @@ describe("who the work-stream room disconnects", () => {
     // Swept before the broadcast, so the event that excluded them is not the
     // last thing they are sent.
     expect(evicted.sent).toEqual([]);
-    // The scope change, and a refreshed roster: the people who stay must stop
+    // The visibility change, and a refreshed roster: the people who stay must stop
     // seeing the evicted reader listed as present in a work stream they were
     // just shut out of.
     expect(kept.sent.map((payload) => (JSON.parse(payload) as { type: string }).type))
-      .toEqual(["workstream_scope_changed", "presence_changed"]);
+      .toEqual(["workstream_visibility_changed", "presence_changed"]);
   });
 
   it("closes a participant who was taken out of a private work stream", async () => {
@@ -204,7 +204,7 @@ describe("who the work-stream room disconnects", () => {
     const removed = fakeSocket(PARTICIPANT);
     const room = roomFor(database, [removed]);
     // Losing a participant retracts read access in a private work stream
-    // exactly as narrowing the scope does, and nothing else disconnects them.
+    // exactly as narrowing the visibility does, and nothing else disconnects them.
     database.exec(`DELETE FROM workstream_participants WHERE user_id = '${PARTICIPANT}'`);
 
     const response = await publish(room, { type: "participant_removed", userId: PARTICIPANT });
@@ -215,7 +215,7 @@ describe("who the work-stream room disconnects", () => {
 
   it("leaves everyone in place when the work stream is open to the workspace", async () => {
     const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
+    database.exec(`UPDATE workstreams SET visibility = 'public' WHERE id = '${WORKSTREAM}'`);
     const reader = fakeSocket(MEMBER);
     const room = roomFor(database, [reader]);
 
@@ -227,7 +227,7 @@ describe("who the work-stream room disconnects", () => {
 
   it("re-checks on its own when the retraction never reached it", async () => {
     const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
+    database.exec(`UPDATE workstreams SET visibility = 'public' WHERE id = '${WORKSTREAM}'`);
     const reader = fakeSocket(MEMBER);
     const room = roomFor(database, [reader]);
     // An ordinary event: the room checks the connected set and finds nothing
@@ -237,7 +237,7 @@ describe("who the work-stream room disconnects", () => {
 
     // The work stream goes private and the publisher that would have said so
     // fails — `publishWorkstreamEvent` swallows that, so the room is never told.
-    database.exec(`UPDATE workstreams SET scope = 'personal' WHERE id = '${WORKSTREAM}'`);
+    database.exec(`UPDATE workstreams SET visibility = 'private' WHERE id = '${WORKSTREAM}'`);
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
 
     // The next thing the room would have sent them is what catches it.
@@ -249,11 +249,11 @@ describe("who the work-stream room disconnects", () => {
 
   it("does not re-check on every frame of a stream", async () => {
     const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
+    database.exec(`UPDATE workstreams SET visibility = 'public' WHERE id = '${WORKSTREAM}'`);
     const reader = fakeSocket(MEMBER);
     const room = roomFor(database, [reader]);
     await publish(room, { type: "harness_status_changed", status: "running" });
-    database.exec(`UPDATE workstreams SET scope = 'personal' WHERE id = '${WORKSTREAM}'`);
+    database.exec(`UPDATE workstreams SET visibility = 'private' WHERE id = '${WORKSTREAM}'`);
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
 
     // Deltas are the one high-frequency event, and a turn that emits them has
@@ -277,7 +277,7 @@ describe("who the work-stream room disconnects", () => {
     const room = roomFor(database, [reader]);
     database.exec("DROP TABLE workstream_participants");
 
-    await publish(room, { type: "workstream_scope_changed", scope: "personal" });
+    await publish(room, { type: "workstream_visibility_changed", visibility: "private" });
 
     // 1011, not the access-revoked code: a failed query is not evidence that
     // this reader lost access, and a reconnect is authorized against D1 again.

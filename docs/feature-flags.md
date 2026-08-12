@@ -234,7 +234,7 @@ did. Each id the caller passes brings its facts with it:
 | `userRole` | string | `owner`, `admin`, or `member` **in the workspace being evaluated** | `userId` + `workspaceId` |
 | `userPlatformId` | string | The person, stable across regions. **Bucket a per-person rollout by this, not by `userId`** | `userId` |
 | `workstreamOrigin` | string | `ad_hoc` or `automation` | `workstreamId` |
-| `workstreamScope` | string | `personal` or `workspace` — who may read it | `workstreamId` |
+| `workstreamVisibility` | string | `public` or `private` — who may read it | `workstreamId` |
 | `workstreamCreatedByUserId` | string | Who created it; absent when an automation did | `workstreamId` |
 | `workstreamCreatorEmailDomain` | string | That person's email domain | `workstreamId` |
 | `workstreamFromOpportunity` | boolean | Whether it was started from a suggested work item | `workstreamId` |

@@ -56,6 +56,13 @@ export const IdSchema = z.string().uuid();
 export const TimestampSchema = z.string().datetime({ offset: true });
 export const RegionSchema = z.enum(["global", "eu"]);
 export const ScopeSchema = z.enum(["personal", "workspace"]);
+/**
+ * Who may read a work stream. Its own vocabulary rather than {@link ScopeSchema}
+ * because a work stream's audience is a room, not an owner: a private one is
+ * shared work with a smaller room — every participant of it — where `personal`
+ * would name one person's property.
+ */
+export const WorkstreamVisibilitySchema = z.enum(["public", "private"]);
 export const HarnessStatusSchema = z.enum([
   "scheduled",
   "running",
@@ -279,18 +286,22 @@ export const WorkstreamSchema = z.object({
   updatedAt: TimestampSchema,
   archivedAt: TimestampSchema.nullable(),
   /**
-   * Who may read it, in the same vocabulary `notes` uses: `personal` is only the
-   * people in it, `workspace` is anyone in the workspace. Declared on the row
-   * and enforced from it, so "private" is a property rather than a rule a caller
-   * has to remember.
+   * Who may read it: `private` is only the people in it, `public` is anyone in
+   * the workspace. Declared on the row and enforced from it, so "private" is a
+   * property rather than a rule a caller has to remember.
+   *
+   * Deliberately *not* `notes`' `personal`/`workspace` vocabulary. A work stream
+   * started from a private Slack channel is private and belongs to everyone in
+   * that channel, which "personal" says the opposite of; the two words the
+   * product has always shown are the two the column now holds.
    */
-  scope: ScopeSchema.default("workspace"),
+  visibility: WorkstreamVisibilitySchema.default("public"),
   /**
    * Non-null on a work stream that exists so a subsystem can use the agent loop
-   * rather than because somebody started it. A separate question from `scope`:
-   * this decides whether it is *listed*, that decides who may read it. Listing
-   * surfaces leave these out unless the reader has asked to see them, and render
-   * them as secondary when they do.
+   * rather than because somebody started it. A separate question from
+   * `visibility`: this decides whether it is *listed*, that decides who may read
+   * it. Listing surfaces leave these out unless the reader has asked to see
+   * them, and render them as secondary when they do.
    */
   systemKind: z.enum(["digest"]).nullable().default(null),
   /** The first one-shot wake-up still waiting to fire, if there is one. */
@@ -1220,12 +1231,12 @@ export const UpdateWorkstreamRequestSchema = z.object({
   objective: z.string().max(4000).optional(),
   archived: z.boolean().optional(),
   /**
-   * Who may read it from now on. `personal` narrows the work stream to the
-   * people already in it, `workspace` opens it to every member. Anyone who can
+   * Who may read it from now on. `private` narrows the work stream to the
+   * people already in it, `public` opens it to every member. Anyone who can
    * read a work stream may move it either way, because a private work stream is
    * shared work with a smaller room rather than one person's property.
    */
-  scope: ScopeSchema.optional()
+  visibility: WorkstreamVisibilitySchema.optional()
 });
 
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
@@ -1413,8 +1424,8 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
    * the room rather than told.
    */
   ServerEventBaseSchema.extend({
-    type: z.literal("workstream_scope_changed"),
-    scope: ScopeSchema
+    type: z.literal("workstream_visibility_changed"),
+    visibility: WorkstreamVisibilitySchema
   }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_started"),
@@ -2044,6 +2055,7 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
 
 export type Region = z.infer<typeof RegionSchema>;
 export type Scope = z.infer<typeof ScopeSchema>;
+export type WorkstreamVisibility = z.infer<typeof WorkstreamVisibilitySchema>;
 export type HarnessStatus = z.infer<typeof HarnessStatusSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Workspace = z.infer<typeof WorkspaceSchema>;

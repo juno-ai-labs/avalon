@@ -191,8 +191,8 @@ describe("firing a digest occurrence", () => {
 
     // Two declarations, two questions: private is who may read it, machinery is
     // whether it is listed.
-    expect(database.prepare("SELECT system_kind, scope FROM workstreams").get())
-      .toEqual({ system_kind: "digest", scope: "personal" });
+    expect(database.prepare("SELECT system_kind, visibility FROM workstreams").get())
+      .toEqual({ system_kind: "digest", visibility: "private" });
     expect(database.prepare(
       "SELECT user_id FROM workstream_participants WHERE removed_at IS NULL",
     ).all()).toEqual([{ user_id: OWNER }]);

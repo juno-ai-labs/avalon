@@ -9,6 +9,7 @@ import type {
   TerminalWorkspaceSettings as ContractTerminalWorkspaceSettings,
   TerminalNetworkPolicyPreview as ContractTerminalNetworkPolicyPreview,
   TerminalWorkstreamState as ContractTerminalWorkstreamState,
+  WorkstreamVisibility as ContractWorkstreamVisibility,
 } from '@avalon/contracts';
 
 /** The OpenRouter model ids a composer may pin work to. Re-exported so the
@@ -23,11 +24,18 @@ export type Region = 'global' | 'eu';
 /** How a connection or automation is owned, in the words the UI uses for it. */
 export type Scope = 'you' | 'workspace';
 /**
- * Who may read an object — `personal` is the people in it, `workspace` is
- * everyone. Notes and work streams share this one vocabulary, which is the
- * server's, so "private" means the same thing on both.
+ * Who may read a note — `personal` is the people in it, `workspace` is
+ * everyone. Work streams answer the same question in their own words; see
+ * {@link WorkstreamVisibility}.
  */
 export type VisibilityScope = ContractScope;
+/**
+ * Who may read a work stream, in the two words the UI has always shown for it.
+ * Separate from {@link VisibilityScope} because a work stream started from a
+ * private Slack channel is private and belongs to everyone in that channel,
+ * which "personal" says the opposite of.
+ */
+export type WorkstreamVisibility = ContractWorkstreamVisibility;
 export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed';
 export type AutomationStatus = 'active' | 'paused' | 'draft' | 'error';
 export type NoteSummary = ContractNoteSummary;
@@ -101,8 +109,8 @@ export interface WorkstreamSummary {
   automationName?: string;
   /**
    * Set when an automation generated this work stream, which is what makes its
-   * audience that automation's rather than its own: `scope` is not the rule
-   * that decides who reads it, so it is not offered as one.
+   * audience that automation's rather than its own: `visibility` is not the
+   * rule that decides who reads it, so it is not offered as one.
    */
   automationSubscriptionId?: string;
   harnessStatus: HarnessStatus;
@@ -116,14 +124,15 @@ export interface WorkstreamSummary {
   plannedFor?: string;
   preview?: string;
   /**
-   * Who may read it, the same way a note says it. `personal` means only the
-   * people in it, and is what the private marker renders from.
+   * Who may read it. `private` means only the people in it, and is what the
+   * private marker renders from.
    */
-  scope: VisibilityScope;
+  visibility: WorkstreamVisibility;
   /**
    * Set on a work stream that exists so a subsystem can use the agent loop —
-   * a digest run's transcript, for instance. A different question from `scope`:
-   * this decides whether it is listed, that decides who may read it.
+   * a digest run's transcript, for instance. A different question from
+   * `visibility`: this decides whether it is listed, that decides who may read
+   * it.
    */
   systemKind?: 'digest';
   /** The first one-shot wake-up still waiting to fire for this work stream. */

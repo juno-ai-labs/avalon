@@ -220,7 +220,7 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     archivedAt: row.archived_at == null ? null : String(row.archived_at),
-    scope: row.scope === "personal" ? "personal" : "workspace",
+    visibility: row.visibility === "private" ? "private" : "public",
     systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
     nextPendingWakeup: row.next_pending_wakeup_at != null
       && row.next_pending_wakeup_prompt_prefix != null

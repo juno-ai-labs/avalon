@@ -54,7 +54,7 @@ interface UserFacts {
 
 interface WorkstreamFacts {
   origin: string;
-  scope: string;
+  visibility: string;
   createdByUserId: string | undefined;
   creatorEmailDomain: string | undefined;
   fromOpportunity: boolean;
@@ -272,7 +272,7 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
   return cached(workstreamCache, "workstream", workstreamId, async () => {
     const outcome = await loadRow<{
       origin_type: string;
-      scope: string;
+      visibility: string | null;
       system_kind: string | null;
       created_by_user_id: string | null;
       created_from_opportunity_id: string | null;
@@ -281,7 +281,7 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
       env,
       subject,
       "workstream",
-      `SELECT s.origin_type, s.scope, s.system_kind, s.created_by_user_id,
+      `SELECT s.origin_type, s.visibility, s.system_kind, s.created_by_user_id,
               s.created_from_opportunity_id, creator.email AS creator_email
          FROM workstreams s
          LEFT JOIN users creator ON creator.id = s.created_by_user_id
@@ -290,7 +290,7 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
     );
     return mapped(outcome, (row) => ({
       origin: row.origin_type,
-      scope: row.scope,
+      visibility: row.visibility ?? "public",
       createdByUserId: text(row.created_by_user_id),
       creatorEmailDomain: emailDomain(row.creator_email),
       fromOpportunity: Boolean(row.created_from_opportunity_id),
@@ -367,7 +367,7 @@ async function collectAttributes(
   }
   if (workstream) {
     attributes.workstreamOrigin = workstream.origin;
-    attributes.workstreamScope = workstream.scope;
+    attributes.workstreamVisibility = workstream.visibility;
     attributes.workstreamFromOpportunity = workstream.fromOpportunity;
     attributes.workstreamIsSystem = workstream.system;
     if (workstream.createdByUserId) attributes.workstreamCreatedByUserId = workstream.createdByUserId;

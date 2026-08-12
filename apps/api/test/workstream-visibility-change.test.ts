@@ -84,14 +84,14 @@ function seededDatabase(): DatabaseSync {
     INSERT INTO workstreams
       (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
        created_by_user_id, automation_subscription_id, harness_status, next_sequence_number,
-       last_activity_at, created_at, updated_at, system_kind, scope)
+       last_activity_at, created_at, updated_at, system_kind, visibility)
     VALUES
       ('${SHARED}', '${WORKSPACE}', 'Compensation review', '', 'shared@automation.example', 'active',
-       'ad_hoc', '${OWNER}', NULL, 'idle', 1, '2026-01-04T00:00:00.000Z', '${at}', '${at}', NULL, 'workspace'),
+       'ad_hoc', '${OWNER}', NULL, 'idle', 1, '2026-01-04T00:00:00.000Z', '${at}', '${at}', NULL, 'public'),
       ('${GENERATED}', '${WORKSPACE}', 'Daily brief', '', 'brief@automation.example', 'active',
-       'automation', NULL, '${SUBSCRIPTION}', 'idle', 1, '2026-01-03T00:00:00.000Z', '${at}', '${at}', NULL, 'workspace'),
+       'automation', NULL, '${SUBSCRIPTION}', 'idle', 1, '2026-01-03T00:00:00.000Z', '${at}', '${at}', NULL, 'public'),
       ('${MACHINERY}', '${WORKSPACE}', 'Digest · Owner', '', 'digest@automation.example', 'active',
-       'ad_hoc', '${OWNER}', NULL, 'idle', 1, '2026-01-02T00:00:00.000Z', '${at}', '${at}', 'digest', 'personal');
+       'ad_hoc', '${OWNER}', NULL, 'idle', 1, '2026-01-02T00:00:00.000Z', '${at}', '${at}', 'digest', 'private');
     INSERT INTO workstream_participants
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
     VALUES ('${SHARED}', '${OWNER}', '${OWNER}', 'creator', '${at}'),
@@ -114,9 +114,9 @@ describe("changing who may read a work stream", () => {
     const database = seededDatabase();
     expect((await serviceFor(database, BYSTANDER).get(SHARED)).id).toBe(SHARED);
 
-    const updated = await serviceFor(database, OWNER).update(SHARED, { scope: "personal" });
+    const updated = await serviceFor(database, OWNER).update(SHARED, { visibility: "private" });
 
-    expect(updated.scope).toBe("personal");
+    expect(updated.visibility).toBe("private");
     await expect(serviceFor(database, BYSTANDER).get(SHARED)).rejects.toMatchObject({ status: 404 });
     // Nothing is left for them: the other row belongs to a personal automation
     // that is not theirs, which is the separate rule this one does not touch.
@@ -125,7 +125,7 @@ describe("changing who may read a work stream", () => {
 
   it("lets anyone still in it bring somebody else in", async () => {
     const database = seededDatabase();
-    await serviceFor(database, OWNER).update(SHARED, { scope: "personal" });
+    await serviceFor(database, OWNER).update(SHARED, { visibility: "private" });
 
     // Being in a private work stream is the authority — not owning it, and not
     // an administrator's role.
@@ -141,9 +141,9 @@ describe("changing who may read a work stream", () => {
     // A member who was only reading it — nothing has made them a participant.
     expect(await participantIds(database, SHARED)).toEqual([OWNER]);
 
-    const updated = await serviceFor(database, COLLEAGUE).update(SHARED, { scope: "personal" });
+    const updated = await serviceFor(database, COLLEAGUE).update(SHARED, { visibility: "private" });
 
-    expect(updated.scope).toBe("personal");
+    expect(updated.visibility).toBe("private");
     // Otherwise the one action that closes a work stream would be the one that
     // locks its author out of it.
     expect(await participantIds(database, SHARED)).toEqual([OWNER, COLLEAGUE].sort());
@@ -151,7 +151,7 @@ describe("changing who may read a work stream", () => {
     // And they are announced, or they would be a participant in D1 and absent
     // from every open right rail — their own included — until a reload.
     expect(published.map((entry) => entry.event.type))
-      .toEqual(["participant_added", "workstream_scope_changed"]);
+      .toEqual(["participant_added", "workstream_visibility_changed"]);
   });
 
   it("does not announce a join by somebody who was already in it", async () => {
@@ -160,32 +160,32 @@ describe("changing who may read a work stream", () => {
     // The owner has been a participant since it was created. Closing the work
     // stream does not make them a new arrival, and saying so would refresh
     // every reader's participant list and HyperSight for nothing.
-    await serviceFor(database, OWNER).update(SHARED, { scope: "personal" });
+    await serviceFor(database, OWNER).update(SHARED, { visibility: "private" });
 
-    expect(published.map((entry) => entry.event.type)).toEqual(["workstream_scope_changed"]);
+    expect(published.map((entry) => entry.event.type)).toEqual(["workstream_visibility_changed"]);
   });
 
-  it("keeps the participant and the scope together when the write fails", async () => {
+  it("keeps the participant and the visibility together when the write fails", async () => {
     const database = seededDatabase();
     const service = serviceFor(database, COLLEAGUE);
     // A batch, so the pair is all-or-nothing: the alternative leaves a stray
     // `explicit` participant on a work stream that stayed public, which nothing
     // ever cleans up and a retry cannot undo.
     database.exec("DROP TABLE workstream_description_refreshes");
-    await expect(service.update(SHARED, { scope: "personal", objective: "Closed-door review" }))
+    await expect(service.update(SHARED, { visibility: "private", objective: "Closed-door review" }))
       .rejects.toThrow();
 
     expect(await participantIds(database, SHARED)).toEqual([OWNER]);
-    expect((await serviceFor(database, OWNER).get(SHARED)).scope).toBe("workspace");
+    expect((await serviceFor(database, OWNER).get(SHARED)).visibility).toBe("public");
   });
 
   it("opens it back up to the workspace", async () => {
     const database = seededDatabase();
-    await serviceFor(database, OWNER).update(SHARED, { scope: "personal" });
+    await serviceFor(database, OWNER).update(SHARED, { visibility: "private" });
 
-    const updated = await serviceFor(database, OWNER).update(SHARED, { scope: "workspace" });
+    const updated = await serviceFor(database, OWNER).update(SHARED, { visibility: "public" });
 
-    expect(updated.scope).toBe("workspace");
+    expect(updated.visibility).toBe("public");
     expect((await serviceFor(database, BYSTANDER).get(SHARED)).id).toBe(SHARED);
     // Nobody is removed by opening it: the people in it are still in it.
     expect(await participantIds(database, SHARED)).toEqual([OWNER]);
@@ -194,19 +194,19 @@ describe("changing who may read a work stream", () => {
   it("tells the room, so the people reading it learn the new state", async () => {
     const database = seededDatabase();
 
-    await serviceFor(database, OWNER).update(SHARED, { scope: "personal" });
+    await serviceFor(database, OWNER).update(SHARED, { visibility: "private" });
 
     expect(published).toEqual([
-      { workstreamId: SHARED, event: { type: "workstream_scope_changed", scope: "personal" } },
+      { workstreamId: SHARED, event: { type: "workstream_visibility_changed", visibility: "private" } },
     ]);
   });
 
-  it("says nothing when a request restates the scope it already has", async () => {
+  it("says nothing when a request restates the visibility it already has", async () => {
     const database = seededDatabase();
 
-    const updated = await serviceFor(database, OWNER).update(SHARED, { scope: "workspace" });
+    const updated = await serviceFor(database, OWNER).update(SHARED, { visibility: "public" });
 
-    expect(updated.scope).toBe("workspace");
+    expect(updated.visibility).toBe("public");
     expect(published).toEqual([]);
     expect(await participantIds(database, SHARED)).toEqual([OWNER]);
   });
@@ -217,23 +217,23 @@ describe("changing who may read a work stream", () => {
     // Closing it would hide it from the automation's owner, who reads it by
     // owning the automation rather than by being a participant; opening it
     // would broaden nothing, because that same rule still applies.
-    await expect(serviceFor(database, OWNER).update(GENERATED, { scope: "personal" }))
-      .rejects.toMatchObject({ status: 422, code: "scope_change_unsupported" });
+    await expect(serviceFor(database, OWNER).update(GENERATED, { visibility: "private" }))
+      .rejects.toMatchObject({ status: 422, code: "visibility_change_unsupported" });
   });
 
   it("refuses a work stream that belongs to Avalon itself", async () => {
     const database = seededDatabase();
 
     // A digest is assembled from one person's private activity.
-    await expect(serviceFor(database, OWNER).update(MACHINERY, { scope: "workspace" }))
-      .rejects.toMatchObject({ status: 422, code: "scope_change_unsupported" });
-    expect((await serviceFor(database, OWNER).get(MACHINERY)).scope).toBe("personal");
+    await expect(serviceFor(database, OWNER).update(MACHINERY, { visibility: "public" }))
+      .rejects.toMatchObject({ status: 422, code: "visibility_change_unsupported" });
+    expect((await serviceFor(database, OWNER).get(MACHINERY)).visibility).toBe("private");
   });
 
   it("leaves the title and description alone", async () => {
     const database = seededDatabase();
 
-    const updated = await serviceFor(database, OWNER).update(SHARED, { scope: "personal" });
+    const updated = await serviceFor(database, OWNER).update(SHARED, { visibility: "private" });
 
     expect(updated).toMatchObject({ title: "Compensation review", objective: "" });
   });

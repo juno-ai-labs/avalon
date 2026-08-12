@@ -13,7 +13,7 @@ function stream(
     titleStatus: 'settled' as const,
     origin: 'ad_hoc',
     harnessStatus,
-    scope: 'workspace',
+    visibility: 'public',
     lastActivityAt,
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,

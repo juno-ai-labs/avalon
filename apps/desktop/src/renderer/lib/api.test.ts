@@ -57,7 +57,7 @@ const detail = {
   createdAt: timestamp,
   updatedAt: timestamp,
   archivedAt: null,
-  scope: 'workspace' as const,
+  visibility: 'public' as const,
   systemKind: null,
   nextPendingWakeup: null,
   pinPosition: null,
@@ -813,18 +813,18 @@ describe('Avalon API wire adapter', () => {
   });
 
   it('changes who may read a work stream through the same update endpoint', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, scope: 'personal' }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, visibility: 'private' }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    await expect(api.setWorkstreamScope(workstreamId, 'personal')).resolves.toMatchObject({
+    await expect(api.setWorkstreamVisibility(workstreamId, 'private')).resolves.toMatchObject({
       id: workstreamId,
-      scope: 'personal',
+      visibility: 'private',
     });
 
-    // Only the scope travels: a PATCH that also resubmitted the description
+    // Only the visibility travels: a PATCH that also resubmitted the description
     // would be read as somebody having authored it.
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ scope: 'personal' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ visibility: 'private' });
   });
 
   it('creates an attachment-only work stream with its draft resource IDs', async () => {

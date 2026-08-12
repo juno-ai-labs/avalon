@@ -55,12 +55,12 @@ function seededDatabase(): DatabaseSync {
     INSERT INTO workstreams
       (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
        created_by_user_id, harness_status, next_sequence_number, last_activity_at,
-       created_at, updated_at, system_kind, scope)
+       created_at, updated_at, system_kind, visibility)
     VALUES
       ('${ORDINARY}', '${WORKSPACE}', 'Launch', '', 'launch@automation.example', 'active', 'ad_hoc',
-       '${OWNER}', 'idle', 1, '2026-01-02T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'workspace'),
+       '${OWNER}', 'idle', 1, '2026-01-02T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'public'),
       ('${HIDDEN}', '${WORKSPACE}', 'Digest · Owner', '', 'digest@automation.example', 'active', 'ad_hoc',
-       '${OWNER}', 'idle', 1, '2026-01-03T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'digest', 'personal');
+       '${OWNER}', 'idle', 1, '2026-01-03T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'digest', 'private');
     INSERT INTO workstream_participants
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
     VALUES ('${HIDDEN}', '${OWNER}', '${OWNER}', 'creator', '2026-01-01T00:00:00.000Z');
@@ -86,11 +86,11 @@ describe("system work streams", () => {
       systemKind: "digest",
       // Declared private, the same way a personal note is, rather than left for
       // a caller to infer from `systemKind`.
-      scope: "personal",
+      visibility: "private",
     });
     expect(page.items.find((item) => item.id === ORDINARY)).toMatchObject({
       systemKind: null,
-      scope: "workspace",
+      visibility: "public",
     });
   });
 
@@ -103,10 +103,10 @@ describe("system work streams", () => {
     database.exec(`
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
-         next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
+         next_sequence_number, last_activity_at, created_at, updated_at, system_kind, visibility)
       VALUES ('${occurrence}', '${WORKSPACE}', 'Digest · 12 Aug · 9:00 AM', '', 'ad_hoc',
               '${OWNER}', 'idle', 1, '2026-01-04T00:00:00.000Z', '2026-01-04T00:00:00.000Z',
-              '2026-01-04T00:00:00.000Z', 'digest', 'personal');
+              '2026-01-04T00:00:00.000Z', 'digest', 'private');
       INSERT INTO workstream_participants
         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
       VALUES ('${occurrence}', '${OWNER}', '${OWNER}', 'creator', '2026-01-04T00:00:00.000Z');
@@ -134,7 +134,7 @@ describe("system work streams", () => {
   it("opens by id for its own participant", async () => {
     const detail = await serviceFor(seededDatabase(), OWNER).get(HIDDEN);
 
-    expect(detail).toMatchObject({ id: HIDDEN, systemKind: "digest", scope: "personal" });
+    expect(detail).toMatchObject({ id: HIDDEN, systemKind: "digest", visibility: "private" });
   });
 
   it("is private because it says so, not because it is machinery", async () => {
