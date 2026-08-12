@@ -357,6 +357,9 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
+    nextPendingWakeup: workstream.nextPendingWakeup
+      ? { ...workstream.nextPendingWakeup }
+      : null,
     pinPosition: workstream.pinPosition,
     preview: workstream.objective,
   };
@@ -971,6 +974,7 @@ export class AvalonApi {
       manualUnreadGeneration: 0,
       hasUnread: false,
       firstUnreadSequenceNumber: null,
+      nextPendingWakeup: null,
       pinPosition: null,
     };
   }

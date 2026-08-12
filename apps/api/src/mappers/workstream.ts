@@ -1,4 +1,8 @@
-import { WORKSTREAM_NAMING_GRACE_MS, type Workstream } from "@avalon/contracts";
+import {
+  WORKSTREAM_NAMING_GRACE_MS,
+  WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
+  type Workstream,
+} from "@avalon/contracts";
 import { truncateUtf16Safe } from "@avalon/contracts/text";
 import { z } from "zod";
 
@@ -13,7 +17,13 @@ export const WORKSTREAM_VIEWER_COLUMNS_SQL = `t.name AS origin_label,
   rs.read_through_sequence_number AS viewer_read_through_sequence_number,
   rs.manual_unread_from_sequence_number AS viewer_manual_unread_from_sequence_number,
   rs.manual_unread_generation AS viewer_manual_unread_generation,
-  pin.position AS viewer_pin_position`;
+  pin.position AS viewer_pin_position,
+  next_wakeup.due_at AS next_pending_wakeup_at,
+  substr(
+    next_wakeup.prompt,
+    1,
+    ${WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1}
+  ) AS next_pending_wakeup_prompt_prefix`;
 
 /**
  * The joins `WORKSTREAM_VIEWER_COLUMNS_SQL` reads from.
@@ -27,7 +37,15 @@ export const WORKSTREAM_VIEWER_COLUMNS_SQL = `t.name AS origin_label,
 export const WORKSTREAM_VIEWER_JOINS_SQL = `LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
   LEFT JOIN automation_templates t ON t.id = s.template_id
   LEFT JOIN workstream_read_states rs ON rs.workstream_id = w.id AND rs.user_id = ?
-  LEFT JOIN workstream_pins pin ON pin.workstream_id = w.id AND pin.user_id = ?`;
+  LEFT JOIN workstream_pins pin ON pin.workstream_id = w.id AND pin.user_id = ?
+  LEFT JOIN workstream_wakeups next_wakeup ON next_wakeup.id = (
+    SELECT wakeup.id FROM workstream_wakeups wakeup
+    WHERE wakeup.workspace_id = w.workspace_id
+      AND wakeup.workstream_id = w.id
+      AND wakeup.status = 'pending'
+    ORDER BY wakeup.due_at, wakeup.id
+    LIMIT 1
+  )`;
 
 /** The bindings {@link WORKSTREAM_VIEWER_JOINS_SQL} consumes, in order. */
 export function workstreamViewerBindings(userId: string): [string, string] {
@@ -42,6 +60,13 @@ const rowText = z.string();
  */
 const displayText = (max: number): z.ZodType<string, string> =>
   z.string().transform((value) => truncateUtf16Safe(value, max));
+
+/** Turns the bounded database prefix into the exact compact wire preview. */
+function wakeupPromptPreview(prefix: string): string {
+  const truncated = truncateUtf16Safe(prefix, WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH);
+  const trimmed = truncated.trimEnd();
+  return truncated.length < prefix.length ? `${trimmed}…` : truncated;
+}
 const rowId = z.string().min(1);
 const rowTimestamp = z.string().min(1);
 const rowCount = z.number().int().nonnegative();
@@ -94,7 +119,16 @@ export const WorkstreamRowSchema = z.object({
   // Joined from `workstream_pins`, so absent rather than null when this viewer
   // has not pinned the work stream.
   viewer_pin_position: rowCount.nullish(),
-});
+  next_pending_wakeup_at: rowTimestamp.nullable(),
+  next_pending_wakeup_prompt_prefix: rowText.nullable(),
+}).refine(
+  (row) => (row.next_pending_wakeup_at === null)
+    === (row.next_pending_wakeup_prompt_prefix === null),
+  {
+    message: "The next pending wake-up needs both its due time and prompt preview",
+    path: ["next_pending_wakeup_at"],
+  },
+);
 
 /**
  * The status a viewer is told, which is not always the one in the column.
@@ -159,6 +193,12 @@ export function toWorkstream(input: Record<string, unknown>): Workstream {
     archivedAt: row.archived_at ?? null,
     scope: row.scope,
     systemKind: row.system_kind ?? null,
+    nextPendingWakeup: row.next_pending_wakeup_at && row.next_pending_wakeup_prompt_prefix
+      ? {
+        dueAt: row.next_pending_wakeup_at,
+        promptPreview: wakeupPromptPreview(row.next_pending_wakeup_prompt_prefix),
+      }
+      : null,
     pinPosition: row.viewer_pin_position ?? null,
   };
 }

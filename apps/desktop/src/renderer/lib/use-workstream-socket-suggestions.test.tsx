@@ -99,6 +99,7 @@ function detail(): WorkstreamDetail {
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     pinPosition: null,
     lastActivityAt: '2026-08-10T22:19:29.657Z',
     createdAt: '2026-08-10T22:18:23.197Z',

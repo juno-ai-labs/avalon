@@ -3,10 +3,13 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import {
+  WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
+  type WorkstreamWorkflowInput,
+} from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { fireWorkstreamWakeup } from "../src/services/workstream-service";
+import { fireWorkstreamWakeup, WorkstreamService } from "../src/services/workstream-service";
 import {
   MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM,
   MINIMUM_WAKEUP_DELAY_SECONDS,
@@ -107,9 +110,10 @@ function fixture(): Fixture {
     VALUES ('${WORKSPACE_ID}', '${USER_ID}', 'owner', 'active', '2026-01-01');
     INSERT INTO workstreams
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
-       harness_status, last_activity_at, created_at, updated_at)
+       harness_status, email_address, email_route_status, last_activity_at, created_at, updated_at)
     VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Wake Up', 'Wake Up', 'ad_hoc', '${USER_ID}',
-            'running', '2026-01-01', '2026-01-01', '2026-01-01');
+            'running', 'wake-up@automation.with-avalon.com', 'active',
+            '2026-01-01', '2026-01-01', '2026-01-01');
     INSERT INTO harness_runs
       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
     VALUES ('${HARNESS_RUN_ID}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'test',
@@ -421,6 +425,49 @@ describe("wake-up instant resolution", () => {
 });
 
 describe("wake-up tools", () => {
+  it("summarizes the earliest pending wake-up for a work-stream marker", async () => {
+    const { env } = fixture();
+    const service = new WorkstreamService(env, {
+      sessionId: "test",
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "owner",
+    });
+    const { schedule, cancel } = wakeupTools(env);
+
+    expect((await service.list(10)).items[0]?.nextPendingWakeup).toBeNull();
+
+    const later = await schedule.execute(
+      { prompt: "Send the final deployment recap", delay: "3 hours" },
+      context("later-sidebar-marker"),
+    );
+    const earlierPrompt = "Check whether the production deployment finished successfully";
+    const earlier = await schedule.execute(
+      { prompt: earlierPrompt, delay: "2 hours" },
+      context("earlier-sidebar-marker"),
+    );
+    expect((await service.list(10)).items[0]?.nextPendingWakeup).toEqual({
+      dueAt: (earlier.output as { dueAt: string }).dueAt,
+      promptPreview: `${earlierPrompt.slice(0, WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH).trimEnd()}…`,
+    });
+
+    await cancel.execute(
+      { wakeupId: (earlier.output as { wakeupId: string }).wakeupId },
+      context("cancel-earlier-sidebar-marker"),
+    );
+    expect((await service.list(10)).items[0]?.nextPendingWakeup).toEqual({
+      dueAt: (later.output as { dueAt: string }).dueAt,
+      promptPreview: "Send the final deployment recap",
+    });
+
+    await cancel.execute(
+      { wakeupId: (later.output as { wakeupId: string }).wakeupId },
+      context("cancel-later-sidebar-marker"),
+    );
+    expect((await service.list(10)).items[0]?.nextPendingWakeup).toBeNull();
+  });
+
   it("schedules a wake-up and refreshes the workspace alarm", async () => {
     const { database, env, schedulerRefreshes } = fixture();
     const { schedule } = wakeupTools(env);
