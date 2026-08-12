@@ -72,7 +72,7 @@ cannot choose a region from user-controlled object IDs.
 
 ### The shared ingresses
 
-Four providers cannot address a region, so a Global host answers for both and
+Five providers cannot address a region, so a Global host answers for both and
 routes:
 
 - **GitHub** — the smart ingress is host-gated at `github.with-avalon.com`. It
@@ -94,6 +94,14 @@ routes:
   service, which persists and queues the ingress job before acknowledgement.
   Tokens, ingress jobs, user links, Agent sessions, work streams, and outputs stay
   regional.
+- **Linear** — one public app registers both regional OAuth callbacks, so consent
+  is never shared, but it has a single webhook. `linear.with-avalon.com` verifies
+  the exact signed body and timestamp, reads only the organization routing key, and
+  forwards the untouched bytes over `EU_LINEAR_BRIDGE` when the organization is
+  connected in EU, where the signature is verified again before persistence. A
+  delivery for an organization with no route is refused retryably rather than
+  retained in Global. [`linear-integration.md`](linear-integration.md) owns the
+  contract.
 - **Inbound email** — Resend Receiving terminates at the Global ingress because a
   receiving domain has one catch-all webhook. Global retains only the
   friendly-address route and the delivery receipt. EU message bodies are retrieved
