@@ -1,0 +1,215 @@
+# Agent attachments
+
+The agent-attachment subsystem turns a file related to a work stream or an
+automation draft into model-visible data without making a filename, resource ID,
+cursor, or extracted byte an authorization grant. It owns the vocabulary and
+limits used at the model boundary; the original resource relationships remain
+the source of truth for display, scope, retention, and deletion.
+
+The subsystem is being introduced additively. The shared kind, argument, output,
+failure, cursor, and transcript-activity contracts exist now. Runtime projection
+still uses the legacy eager attachment path until the derivative and authorized
+hydration phases are deployed; this document will change in the same commits as
+those boundaries move.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/contracts/src/attachment-contracts.ts` | Single registry for attachment kinds, MIME/extension classification, strict tool argument schemas, exact success-output schemas, and the complete list-tool description. |
+| `packages/contracts/src/index.ts` | Sanitizes bounded structured recovery data before Bind puts it in a model-visible failed tool result. |
+| `apps/api/src/lib/attachment-cursor.ts` | Signs, verifies, scopes, expires, and bounds opaque attachment continuations. |
+| `apps/api/src/services/attachment-model-content.ts` | Current upload-to-model extraction and image normalization path; it remains eager until the derivative cutover. |
+| `apps/api/src/services/integrations.ts` | Current message projection and work-stream resource-tool registration. |
+| `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
+| `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects and current model image derivatives. |
+| `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
+
+## How it works
+
+### Kind and schema selection
+
+Avalon classifies an attachment into exactly one of `image`, `markdown`, `pdf`,
+`document`, `spreadsheet`, `presentation`, `text`, or `other`. A verified MIME
+type wins. A sanitized final filename extension participates only when MIME is
+missing or a generic binary type. The model selects a natural-language kind in
+a list request; it never supplies or guesses a MIME filter.
+
+The same registry renders the complete model-facing explanation and the Zod
+enum. Strict schemas cover list, read, search, view, and summarize arguments and
+their exact success results for both work-stream and future draft-scoped tools.
+JSON Schema guides the provider, while the executor must parse the same strict
+Zod schema because the harness does not enforce provider-facing JSON Schema.
+
+### Continuations and recovery
+
+An attachment cursor contains a version, purpose, expiry, principal identity,
+owning scope, and operation-specific state. Avalon signs it using a key derived
+for the attachment-cursor purpose from the regional Worker's configured session
+signing secret. A cursor presented to another operation, principal, or scope is
+the same bounded `invalid_cursor` failure as a malformed or tampered value;
+expiry is separately recoverable as `cursor_expired`.
+
+The common failed-tool sanitizer passes only fixed, bounded recovery fields. It
+understands attachment kind and one strict suggested read or view call, while
+discarding arbitrary provider, converter, credential, and file-authored objects.
+The presence of a suggestion never executes it automatically.
+
+### Current runtime boundary
+
+Message projection still calls `buildAttachmentModelParts`. It eagerly extracts
+bounded text/Office content, sends small PDFs as provider file parts, and admits
+normalized current-turn images. Historical projection is not yet a durable
+manifest, and the work-stream plugin still has its legacy index/read pair. The
+new contracts are intentionally inert until the regional derivative lifecycle
+and authorized tools can replace that behavior without making attachments
+invisible.
+
+## Invariants
+
+- A verified MIME type outranks a filename extension, so renamed hostile bytes
+  cannot choose their converter or model tool.
+- All eight kinds and their descriptions come from one registry, so a smaller
+  routed model never receives an enum whose meaning exists only in unrelated
+  prose.
+- Provider-facing schemas and executor parsing remain strict, so an invented
+  MIME filter, old field, or mixed cursor/first-call shape fails instead of being
+  silently ignored.
+- A cursor is authenticated and bound to purpose, principal, and scope, but every
+  dereference still reauthorizes current state; stealing or guessing a cursor
+  cannot preserve revoked access.
+- Structured failure data is allowlisted and bounded before it enters the model
+  transcript, so a converter or provider cannot smuggle a response body,
+  credential, or attachment instruction through an error.
+- Runtime eager projection is removed only after replacement tools exist on both
+  work-stream and automation-draft surfaces, so an intermediate deployment
+  cannot strand a file behind a manifest the model cannot hydrate.
+
+## Boundary
+
+This module owns model-facing attachment identity, classification, derivative
+selection, hydration contracts, continuation, recovery, and eventually
+compaction rediscovery. It depends on `resources`, `workstream_resources`,
+`message_attachments`, note visibility, regional D1/R2 bindings, and the harness
+tool loop.
+
+It does not own composer upload UX or transcript download/display; those remain
+with the resource and composer modules. It does not turn an ID into authority,
+search arbitrary workspace content, edit documents, or transcribe audio/video.
+Connector-origin relationships are owned by
+[`workstream-origin-attachments.md`](workstream-origin-attachments.md), and the
+generic tool execution/receipt loop is owned by
+[`agent-harness.md`](agent-harness.md).
+
+## Failure modes and limits
+
+- Opaque cursors are at most 2,048 characters. Invalid scope, purpose, signature,
+  encoding, or shape returns `invalid_cursor`; an elapsed expiry returns
+  `cursor_expired`.
+- List calls accept 1–50 items, defaulting later to 25. View calls accept 1–8
+  unique resource IDs and a long edge from 64–2,048 pixels.
+- Search accepts a 1–1,000-character query, at most five matches, and passages
+  from 500–4,000 characters. A complete result is later capped at 20,000 passage
+  characters.
+- Summarize accepts a 1–2,000-character prompt addition and a 2,000–20,000
+  output-character budget.
+- Structured recovery details are at most 8,000 serialized characters; reason
+  text is at most 1,000, MIME/enum-like values at most 160, and `available` at
+  most twenty bounded strings.
+- The current runtime still has the legacy eager extraction limits documented in
+  [`agent-harness.md`](agent-harness.md). Those limits are not evidence that the
+  entire attachment was inspected.
+
+## Testing
+
+- `packages/contracts/src/attachment-contracts.test.ts` locks kind order,
+  description coverage, MIME precedence, strict arguments, and exact outputs.
+- `packages/contracts/src/index.test.ts` locks structured-failure allowlisting
+  and rejects malformed remediation.
+- `apps/api/test/attachment-cursor.test.ts` covers round trips, tampering,
+  cross-purpose/principal/scope replay, expiry, and the length cap.
+- `packages/agent-harness/src/tool-activity.test.ts` covers human prose for every
+  attachment tool wire name.
+- Existing eager projection behavior remains covered by
+  `apps/api/test/attachment-model-content.test.ts` until its replacement phase.
+
+Run focused suites from their package directories through `pnpm --filter`, then
+run the repository-wide lint, typecheck, and test gates before committing. Cursor
+tests use an explicit clock value; do not replace it with sleeps or retries.
+
+## Data model
+
+The current data model is unchanged by the contract phase. `resources` owns the
+original `content_ref` and optional current `model_content_ref`,
+`model_mime_type`, `model_content_sha256`, and `model_metadata_json` fields.
+`message_attachments` and `workstream_resources` provide message and sidebar
+relationships. Derivative lifecycle state is added in the next implementation
+phase; [`data-model.md`](data-model.md) and migrations remain authoritative.
+
+## Regional impact
+
+Contracts execute identically in both regions and contain no file data. Cursor
+signing happens inside the Worker that handles the owning regional run. Existing
+originals and image derivatives remain in that region's R2 bucket and
+relationship rows in its D1 database. No new Global-plane storage or bridge
+payload is introduced by this phase.
+
+## Security and trust model
+
+Filenames, declared MIME, extracted text, file metadata, and provider/converter
+failures are untrusted. Classification consumes a server-verified MIME value;
+the extension fallback is deliberately narrow and cannot override a specific
+MIME type. Cursor signatures prevent state tampering but do not replace database
+authorization. Unknown structured error keys are discarded before Bind builds a
+tool result.
+
+The shared session secret is not used directly as a cursor MAC key: a fixed
+purpose-separation derivation produces the attachment-cursor signing key. Cursor
+payloads contain identifiers and offsets, never credentials, file contents, or
+resource bytes.
+
+## Operations
+
+An unexpected raw tool name in a transcript points first to
+`packages/agent-harness/src/tool-activity.ts`. Repeated `invalid_cursor` failures
+should be split into schema/length, signature, expiry, and authorization metrics
+without logging the cursor itself. This phase adds no background extraction,
+queue, or deletion operation.
+
+## Performance and cost
+
+Kind classification is constant-time over bounded metadata. Cursor verification
+performs two HMAC operations and parses at most 2,048 characters. The contracts
+do not add a provider call or read file bytes. Later phases must preserve those
+cheap discovery and continuation paths even when extraction itself is expensive.
+
+## Changelog
+
+### 2026-08-12 — Attachment contracts are centralized before runtime cutover
+
+**What changed:** Avalon now has one natural-language attachment-kind registry,
+strict argument and success schemas for the complete attachment tool family,
+bounded self-healing failure data, authenticated scoped cursors, and explicit
+transcript prose for the future wire names. Runtime projection remains on the
+legacy path until replacement tools are safe to activate.
+
+**Why:** A large Markdown trigger was presented as a plausible 60,000-character
+prefix and answered without its second half, while images lost their reloadable
+identity at compaction. The replacement surface has to work for medium and small
+models: free-form MIME guessing, ambiguous paging knobs, and vague wrong-tool
+errors would move the same correctness failure into the tool loop.
+
+**Considered and rejected:** Separate model tools per MIME type, a free-form MIME
+filter, unauthenticated base64 continuations, and removing eager projection in
+the contract commit. Each either makes the model memorize provider formats,
+allows cursor state to be altered, or creates a deployment window in which a
+manifest points to no usable hydration path.
+
+**Consequences:** Every later attachment surface must reuse the registry and
+strict schemas, retain cursor reauthorization, and update this document in the
+same commit. The repository temporarily carries inert replacement contracts
+beside legacy runtime behavior; that duplication is the deliberate price of an
+additive rollout and must disappear at the manifest-only cutover.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
