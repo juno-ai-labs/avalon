@@ -8,7 +8,7 @@ or browser-automation command. If a step here has drifted from reality, fix the
 step in the same change rather than working around it.
 
 The container definition that this guide assumes is documented separately in
-[the sandbox environment](SANDBOX.md).
+[the sandbox environment](sandbox.md).
 
 ## Prerequisites
 
@@ -95,7 +95,7 @@ unlike the others the binding object is still present, and it is each *call*
 that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
 uses the model ids in its `OPENROUTER_*` Worker variables, which is the designed
 fallback rather than a degradation — see
-[the feature-flag document](FEATURE_FLAGS.md#local-development).
+[the feature-flag document](feature-flags.md#local-development).
 
 Verify both regions:
 

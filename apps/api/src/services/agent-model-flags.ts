@@ -38,7 +38,7 @@ export const AGENT_MODEL_ROLES = [
 
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
-/** Flagship flag key per agent. Provisioned per app; see `docs/FEATURE_FLAGS.md`. */
+/** Flagship flag key per agent. Provisioned per app; see `docs/feature-flags.md`. */
 export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
@@ -299,7 +299,7 @@ function unknownStoredOverride(value: unknown): string | null {
  * acceptable where something else will say so. The work-stream read path logs
  * it; these paths write the column and would otherwise retire a model out from
  * under every automation pinned to it with nothing in the logs — which is
- * exactly the diagnostic `docs/FEATURE_FLAGS.md` promises exists.
+ * exactly the diagnostic `docs/feature-flags.md` promises exists.
  */
 export function automationModelOverride(
   env: Env,

@@ -2,7 +2,25 @@
 
 Connectors are typed adapters behind a registry. A manifest declares OAuth needs, supported personal/workspace scopes, activity and resource types, tools, polling, webhooks, and watches. The adapter owns provider protocol details; Avalon owns tenancy, execution principals, persistence, retries, schedules, and audit.
 
-## Authorization model
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/connectors/src/index.ts` | The registry, and the cross-validation that runs at its construction. |
+| `packages/connectors/src/types.ts` | The manifest and descriptor types, and the unexported symbol that brands `AuthorizedConnectorConnection`. |
+| `packages/connectors/src/provider-utils.ts` | `withProviderReauthorization` — the shared mid-call recovery every adapter routes through. |
+| `packages/connectors/src/<provider>.ts` | One adapter per provider. |
+| `apps/api/src/services/connector-connection-access.ts` | `withAuthorizedConnection` — the one door that mints the brand. |
+| `apps/api/src/services/connector-credential-refresh.ts` | The refresh coordinator and its D1 lease. |
+| `apps/api/src/services/connector-actor-identity.ts` | `resolveConnectorActorIdentity` over `external_user_identities`. |
+| `apps/api/src/services/user-delivery.ts` | Whether a connection is a personal delivery destination for a given user. |
+| `apps/api/src/lib/connector-registry.ts` | Which connectors this region registers. |
+| `apps/api/src/queues/activity-consumer.ts` | Routing, and `activityIsDigestible`. |
+| `apps/api/src/workflows/connector-poll.ts` | `pollCheckpointedActivityStreams` and the shared checkpoint runner. |
+
+## How it works
+
+### Authorization model
 
 - A personal connection can be used only by its owner principal.
 - A workspace connection is an organization capability: every ad-hoc work stream in that workspace receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
@@ -11,7 +29,7 @@ Connectors are typed adapters behind a registry. A manifest declares OAuth needs
 - Tools require both a manifest capability and a capability recorded on the connection.
 - Credentials are decrypted only for the duration of a backend operation.
 
-## Credential freshness
+### Credential freshness
 
 Every adapter entry point that authenticates to a provider — `executeTool`, `healthCheck`, `hydrateResource`, `poll`, `pollingActivity.pollStream`, and `revoke` — takes an `AuthorizedConnectorConnection` rather than a `ConnectorConnectionContext`. The difference is a brand that cannot be produced by writing an object literal, because the symbol keying it is declared in `packages/connectors/src/types.ts` and never exported. Refreshing an expiring credential before calling a provider is therefore not a step a caller can forget: it is a value a caller cannot otherwise obtain.
 
@@ -27,9 +45,10 @@ Two things about that recovery are easy to get wrong, so neither is left to the 
 
 Two adapter obligations sit alongside that. **A health check answers a question and must not write.** Reauthorization calls it on every plugin activation, so a read-shaped call that quietly repairs provider state does so on that cadence; an adapter with state worth restoring — Granola's webhook endpoint, which stops delivering when disabled — declares `repair`, which only an explicit connection test invokes. A repair never fails the test, and its outcome is reported in the test result either way, because a connection whose delivery is still broken must not read the same as one that was fixed. The health check reports the same condition without failing on it: the authorization is sound and every read tool works, so failing would take a usable connection out of every run to describe a problem only the test can fix. **And a token-endpoint failure is classified by the provider's error code, not its status.** `isRevokedGrantError` treats `invalid_grant`, `expired_token`, and `invalid_token` as a dead grant and everything else the provider names as Avalon's problem, because OAuth reports a revoked grant and our own malformed request with the same HTTP 400 — and marking a member's working connection `needs_reconnect` over our bug is the worse of those two mistakes. `providerJsonResponse` carries the code through as `details.providerError`, read from `error` or `code` and from either nested, since Notion keys its token-endpoint envelope differently from the OAuth spec. When a provider names nothing at all the original status test stands: an unclassifiable failure that leaves a dead connection reporting healthy, prompting nobody while every call fails, is worse than one that asks for a reconnect that was not needed.
 
-`apps/api/test/connector-credential-freshness.test.ts` holds both halves to account. Its conformance half enumerates the registry rather than a hand-written list, so a connector added later is enrolled by existing: for every adapter that can refresh a credential, a provider that rejects the token must be answered with a refresh and a retry. An adapter whose health check does not present the connection's expiring credential — Notion introspects a token in the request body under the integration's own client credentials — declares that in the fixture table, so the exemption is a reviewable fact rather than a silent pass.
+Both halves are held to account by `connector-credential-freshness.test.ts` — see
+[Testing](#testing).
 
-## Stored status is a belief, not a gate
+### Stored status is a belief, not a gate
 
 `connector_connections.status` records what Avalon observed the last time it looked. It is not a fact about the grant, and nothing re-checks it: a row marked `needs_reconnect` at 08:00 says exactly as much at midnight, whether or not the credential was repaired in between. **A belief must never be the reason Avalon declines to attempt something a provider is asking it to do.** If an incoming request can be answered, answer it. The provider's response is the only thing that is current, and it is what decides the outcome.
 
@@ -47,39 +66,7 @@ Three consequences follow, and each is load-bearing:
 
 Recovery is part of the contract too. A durable job that failed on authorization may be classified non-retryable — that is correct while a grant is dead — but something has to lift the ceiling once the connection is reauthorized, or the outage becomes permanent for every request that arrived during it. `redriveReauthorizedIngress` is the Slack example: a job whose connection has been written since the job last failed is re-queued, which is self-limiting because a job that fails again stamps itself newer than the connection.
 
-## Adapter invariants
-
-Every rule below was learned from a defect in production or in review, and each names the failure that produced it. A new adapter is expected to satisfy all of them; several are enforced by the compiler or by `apps/api/test/connector-credential-freshness.test.ts`, which enumerates the registry so a connector is enrolled by existing rather than by someone remembering it.
-
-**Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
-
-**Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
-
-**A health check must not write.** Provider state that needs restoring goes in `repair`, which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
-
-**A health check answers reachability and authorization, never capacity.** Do not read balances, quotas, or credit counts to predict whether a later call will succeed; the provider decides that per call and will say so. *X read `recharge_credits` alone and reported an account holding ~10,000 spendable bonus credits as having none, failing every `plugin_x` load in the workspace.*
-
-**A health check takes the caller's signal.** Reauthorization runs inside a Workflow step, and an `AbortSignal.timeout` created inside an adapter is not disposable — it holds the invocation open after the check returns.
-
-**Say whether the provider refused you, or whether you could not tell.** `reconnectRequired` carries that distinction, and the host maps it to `denied` versus `indeterminate`. A verdict must never be derived from a swallowed exception: failing to verify an authorization is not a denial, and reporting it as one sends a run off to explain a permission problem that may not exist. *A bare `catch { return false }` turned every provider hiccup into a revoked grant.*
-
-**A refresh that fails states a verdict.** When the grant itself is gone the failure carries `reconnectRequired: true`; when the failure was Avalon's own — an `invalid_client`, a malformed request — it carries `reconnectRequired: false`. The adapter is the only thing that can answer this, because the vocabulary is the provider's own: *Slack answers a refused refresh with HTTP 200 and `{ok: false, error: "token_revoked"}`, and GitHub with HTTP 200 and `{error}`, neither of which any status test can see.* Stating nothing is not neutral — the host then classifies the failure itself, from `details.providerError` and the status, and an unclassifiable refusal marks. *Requiring the flag and defaulting to silence is what stranded Slack and Granola connections: a revoked grant left the row `healthy` forever, every run dropped the plugin, no member was ever prompted, and only somebody happening to press Test recovered it.* A connection reporting healthy while every call fails is the worse of the two ways to be wrong, so the default is the loud one; an adapter that knows better overrides it by saying so.
-
-**Classify a token-endpoint failure by the provider's error code, not its HTTP status.** OAuth reports a dead grant and a malformed request of ours with the same 400. *Linear and Notion marked members' healthy connections `needs_reconnect` for any 400 or 403, demanding a reconnect that would fix nothing.* The classification has three answers, not two: a code naming a dead grant marks, a code naming Avalon's own fault does not whatever the status, and anything else — an unfamiliar code or none at all — defers to the status. An unfamiliar word is not evidence, and treating it as a denial would invert the safe default: the two mistakes are not symmetric, and only leaving a dead connection reporting healthy is silent.
-
-**Say when a healthy connection is degraded.** A health result carries `warning` for provider-side state that has drifted without making the connection unusable, and the host logs it. *Moving Granola's webhook repair out of the health check removed a repeated write and replaced it with nothing: delivery stopped silently and stayed stopped until somebody happened to press Test, because the one place that knew dropped the message.* Removing an automatic repair means leaving an automatic signal in its place.
-
-**Recover once from a mid-call refusal, then believe it.** Route authenticated calls through `withProviderReauthorization` rather than carrying a private retry. A first rejection may be a stale token; a second is the real answer.
-
-**Every rotation goes through the host, proactive and reactive alike.** A rotating refresh token is single-use, so two calls that refresh at the same moment leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. Use `withProviderReauthorization` on the rejection route and `refreshExpiringCredentials` on the near-expiry route; neither redeems a token beside the coordinator.
-
-**Do not spend a provider round trip on something Avalon already knows.** Revalidation between model turns is answered from D1; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
-
-Each installed credential has two deliberately separate plugin identities. The opaque canonical ID, `connection:<uuid>`, is the only identity used for authorization, durable activation, receipts, and credential access. A database-backed workspace-local ID is the model-facing name: the first active credential of a provider receives `plugin_<provider>`, and simultaneous additional credentials receive the lowest numeric suffix (`plugin_google_2`, `plugin_google_3`, and so on). Disabled connections do not reserve names, so removing and later re-adding a provider reclaims the clean base instead of accumulating random characters. A partial unique database index enforces uniqueness across the active connection list.
-
-The model sees only these stable IDs in plugin catalogs, active-plugin instructions, and `load_plugin` arguments. Avalon resolves them back to canonical IDs before scope checks or persistence. Model-facing IDs are presentation and routing aliases, never security principals. Connector tool definitions use prefix-free names local to their plugin; the runtime adds the connection's stable short name when rendering model-facing tools. For example, canonical `drive.search` becomes `google_drive_search`, or `google_2_drive_search` for a second Google credential.
-
-## Actor identity and work-stream attribution
+### Actor identity and work-stream attribution
 
 Every connector that can start work from a provider identity resolves that identity to an
 Avalon member through one shared mapping, `resolveConnectorActorIdentity` over
@@ -133,17 +120,17 @@ untouched — the opening message keeps its external actor, so the transcript st
 provider identity wrote it. A connector that cannot map its actor leaves the work stream
 ownerless instead of guessing a member.
 
-## Delivering automation results to a person
+### Delivering automation results to a person
 
-A connector that can hand a finished result to a specific person declares `userDelivery` in its manifest: the frozen `targetType` stored on the automation, the label and one-line description the create screen shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the "Deliver results" list, and a connector that declares nothing is never offered. The same declaration serves every personal destination Avalon has: personal automation results and the scheduled digest ([`DIGESTS.md`](DIGESTS.md)) read the same list, so a connector that starts declaring a surface becomes a destination for both without either surface changing.
+A connector that can hand a finished result to a specific person declares `userDelivery` in its manifest: the frozen `targetType` stored on the automation, the label and one-line description the create screen shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the "Deliver results" list, and a connector that declares nothing is never offered. The same declaration serves every personal destination Avalon has: personal automation results and the scheduled digest ([`digests.md`](digests.md)) read the same list, so a connector that starts declaring a surface becomes a destination for both without either surface changing.
 
 `requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection becomes a destination only for a user who has linked their own provider identity to it. `apps/api/src/services/user-delivery.ts` answers that question: it maps each delivery target type to the table recording "this Avalon user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. A target type absent from that map needs no link, because its connection already belongs to one person. The connections endpoint resolves `userDelivery` per requesting user, so a disabled connection, an unlinked installation, or a connector Avalon does not register in this region is simply not a destination. A connection merely marked `needs_reconnect` stays a destination: the send is what discovers whether the credential still works.
 
 Saving a destination runs the same resolution. `resolveFrozenDeliveryIdentity` asks `resolveUserDelivery` whether this connection is a destination for this user — the identical declaration, health, and identity-link test the create screen was offered on — and only then calls the target type's entry in `FROZEN_IDENTITY_RESOLVERS` for the provider tenant and user to store. Eligibility is therefore stated once: the API cannot reject a destination the screen offered, and no rule about connection scope is written into the save path. Nothing about which providers can deliver lives in the API or the client.
 
-Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in four places, all of them registries: `AutomationDeliveryTargetTypeSchema`, the `automation_delivery_targets` shape check, `PERSONAL_IDENTITY_LINKS` if the surface needs a link, and `FROZEN_IDENTITY_RESOLVERS`. Digest delivery needs one more entry — `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration. The saved destinations and how each is delivered are described in [work-stream and automation email addresses](WORKSTREAM_EMAIL_ADDRESSES.md#outbound-automation-results).
+Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in four places, all of them registries: `AutomationDeliveryTargetTypeSchema`, the `automation_delivery_targets` shape check, `PERSONAL_IDENTITY_LINKS` if the surface needs a link, and `FROZEN_IDENTITY_RESOLVERS`. Digest delivery needs one more entry — `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration. The saved destinations and how each is delivered are described in [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results).
 
-## Being found, and being refused
+### Being found, and being refused
 
 Two things every connector owes a run, both settled on the descriptor rather than per-connector in the host.
 
@@ -151,13 +138,13 @@ Two things every connector owes a run, both settled on the descriptor rather tha
 
 **A refusal names what the connection *can* do.** `connectorCapabilityRefused` is the single shape for "this credential does not carry that tool" — every connector including Google — and it returns as `available` the capabilities of this plugin's **tools** intersected with the grant, alongside a `capability_not_granted` reason. Tool capabilities, not raw grants: a connection carries control-plane capabilities that back no tool at all (`slack.agent`, `slack.notifications.write`), and answering "what can I do instead?" with something the model cannot call is worse than the bare refusal. The bare form named only the missing capability, which is the one fact the model already had; it could not tell whether to retry, rephrase, or stop. This discloses nothing a run could not already see in its own tool list, and it is the pattern to copy for any other deterministic refusal — per [`agent-tools.md`](agent-tools.md#5-errors-are-opaque-only-across-a-trust-boundary-actionable-everywhere-else), the remedy has to be in `output`, because `summary` never reaches the model.
 
-## Agent activation acknowledgement
+### Agent activation acknowledgement
 
 Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, but before context gathering, model calls, or tools. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
 
 The hook is deliberately optional. Slack uses an `eyes` reaction on the exact triggering message and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
 
-## Google
+### Google
 
 Google identity and connector authorization are separate. Connector authorization uses the web-server code flow, PKCE, offline access, and incremental scopes. Settings presents two product-facing presets, but both create ordinary `google` connections backed by the same adapter, credential lifecycle, OAuth callback, and tool registry. They are authorization bundles, not separate backend connector types, and a user may connect either or both.
 
@@ -192,13 +179,13 @@ A revoked refresh grant marks the connection `needs_reconnect`. Production smoke
 
 The two records are isolated by Avalon capability checks, not by separate Google OAuth principals. Because both presets use one OAuth client with incremental authorization, Google may return a token containing scopes previously granted to that account; Avalon still exposes only the capabilities recorded on the particular connection. Disconnect is local when another Google connection for that account remains. Operators must not describe the presets as provider-level credential isolation.
 
-## GitHub App
+### GitHub App
 
 GitHub uses one public App with a signature-verifying smart ingress. One installation may be connected to Global workspaces, EU workspaces, or both; an indexed installation directory fans exact signed deliveries only to the applicable regional Workers. OAuth callbacks, credentials, raw payload storage, normalization, and activity processing remain regional. Workspace connections execute with short-lived installation tokens. Personal connections require an expiring user token and prove that the user can access the selected installation and repository.
 
 The agent can list repositories and commits, read files, inspect and create/update issues and comments, inspect and create/review pull requests, and read Actions and check runs. GitHub delivery signatures are verified against the exact raw body before installation-aware normalization and queueing. Webhooks also discover durable repository, commit, file, issue, pull-request, release, workflow-run, and check-run resources so people and agents can attach provider objects directly to work streams without copying their content into Avalon. Issue-dependency and sub-issue deliveries add both sides of the relationship, including cross-repository issues, while retaining one normalized activity per delivery.
 
-## Linear
+### Linear
 
 Linear is a composable connector with both `resource` and `native_agent` surfaces. One public OAuth app supports two identities through PKCE: personal connections use `actor=user` and remain private to their Avalon owner; workspace connections use `actor=app` and roll their tools down to every member. The native surface is bound explicitly to the workspace-only, non-tool `linear.agent` capability. It grants `app:assignable` and `app:mentionable` for activation plus `write` for the deterministic source-comment acknowledgement; resource tools independently grant `read`, `issues:create`, `comments:create`, and `write`. The resource agent can search/read issues and projects, list teams and workflow states, create/update issues, and create comments.
 
@@ -210,7 +197,7 @@ The native-agent surface is a control-plane protocol, not a model-callable tool.
 
 Native sessions are additionally matched by organization, granted `linear.agent` capability, and the signed event's `appUserId`; a resource-only connection never receives a delegation. Desktop authorization requests `linear.agent` only when `VITE_LINEAR_NATIVE_AGENT_ENABLED=true`, and the API independently requires both `LINEAR_NATIVE_AGENT_ENABLED=true` and an `operational` connector runtime. Keep the flags off and the runtime `protocol_only` until the fast durable inbox, unique native-session ownership, session/run mapping, cancellation coordinator, durable activity outbox, and timing acceptance suite are complete.
 
-## Notion
+### Notion
 
 Notion uses public connections with an `Any workspace` installation scope and the provider's page picker. The agent can search and retrieve pages/data sources, query data sources, create pages, update or append Markdown, and read/create comments. Only pages explicitly shared during installation are visible.
 
@@ -218,7 +205,7 @@ Notion's search matches **titles only** — a provider limitation, not a gap Ava
 
 Notion's one-time webhook verification token is accepted through a guarded setup URL, encrypted in D1, and then used to verify every later webhook signature before normalization and queueing. Unlike every other connector here, Notion's OAuth callback and webhook are not regional: one public connection issues one redirect URI and one webhook URL for both regions, so both arrive at a Global ingress that routes them to the owning region — see [`notion-ingress.md`](notion-ingress.md).
 
-## Granola
+### Granola
 
 Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes Granola's six read tools for querying meetings, listing folders and meetings, reading meeting details and transcripts, and inspecting the connected account. A personal connection remains available only to its Avalon owner.
 
@@ -226,17 +213,17 @@ A workspace connection uses one administrator-created Granola Workspace API key.
 
 The workspace key and the webhook signing secret are encrypted in the workspace's regional D1 database with AES-GCM and connection-ID additional authenticated data. The plaintext key is accepted only by the admin-only setup request, is never stored in connection configuration, provider identifiers, or audit data, and is never returned to the desktop. One active Granola workspace connection is allowed per Avalon workspace; one active personal Granola connection is allowed per member and workspace.
 
-## X
+### X
 
 X is a workspace-only, read-only public-data connector backed by Avalon's regional TwitterAPI.io account; it is not an X OAuth connection and does not represent an authorized X user. It provides public user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
 
 Its health check verifies reachability and authentication and deliberately reads no balance. TwitterAPI.io bills against more than one — its dashboard shows recharge and bonus credits separately, both spendable — while its published schema for `/oapi/my/info` documents only `recharge_credits`. Reading that single field reported an account holding roughly ten thousand usable bonus credits as having none, which failed every `plugin_x` load in the workspace. Whether a call can be funded is the provider's judgement, made per call, and it makes it: an unfundable tool call fails with the provider's own error, which is accurate and current in a way a balance sampled at activation could never be.
 
-## Web discovery
+### Web discovery
 
 The loadable `avalon:web` plugin exposes `web_search` and `web_fetch` through Firecrawl. Search returns bounded ranked links; fetch accepts only safe public HTTP(S) URLs and returns bounded clean Markdown. The plugin is omitted entirely when the regional `FIRECRAWL_API_KEY` secret is absent.
 
-## Generic webhook
+### Generic webhook
 
 Each connection receives a unique secret and URL. Send compact JSON with a Unix timestamp and signature header:
 
@@ -263,14 +250,14 @@ The request body must be a JSON object no larger than the regional provider-webh
 
 Avalon verifies the HMAC over the exact received bytes before UTF-8 decoding or JSON parsing. Invalid signatures return `401`, malformed or schema-invalid bodies return `400`, disallowed events or non-member targets return `422`, identity/dedupe collisions return `409`, oversized bodies return `413`, and new deliveries return `202` (`200` when the same delivery is already known). Senders should retry network failures and `5xx` responses with exponential backoff using the same identity and exact body; they must not reuse an identity or dedupe key with changed content.
 
-## Activity ingestion
+### Activity ingestion
 
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
 
 - `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. GitHub, Granola, Linear, Notion, and generic webhook use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
 
-### Declaring what a digest may read
+#### Declaring what a digest may read
 
 **Every activity type a connector declares must say whether a person should be told about it in a digest, and there is no default.** `ConnectorActivityTriggerDescriptor` carries a required `digestible`, and `defineConnectorActivityTriggers` takes the event types as two lists rather than one:
 
@@ -287,7 +274,7 @@ The shape is the point. There is no list meaning "I did not think about this", s
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
-The manifest is read when the activity log is written, in `activityIsDigestible`, keyed on the event type — the one thing an activity carries all the way from the provider to the log. **Everything unknown is withheld**: a connector this region does not register, an event type a manifest has dropped, an activity older than the declaration. None of those are somebody confirming that a person wants this in their inbox, and being wrong costs one way only. What happens to the answer afterwards — the `activity_events.digestible` column, the cursor that steps over what was withheld — belongs to [`DIGESTS.md`](DIGESTS.md#digestible-what-a-person-should-be-told).
+The manifest is read when the activity log is written, in `activityIsDigestible`, keyed on the event type — the one thing an activity carries all the way from the provider to the log. **Everything unknown is withheld**: a connector this region does not register, an event type a manifest has dropped, an activity older than the declaration. None of those are somebody confirming that a person wants this in their inbox, and being wrong costs one way only. What happens to the answer afterwards — the `activity_events.digestible` column, the cursor that steps over what was withheld — belongs to [`digests.md`](digests.md#digestible-what-a-person-should-be-told).
 
 Manifests and facets are cross-validated at registry construction: a connector that declares provider activity cannot claim webhook or polling support without the corresponding implementation. Slack keeps its dedicated signature-verified Agent ingress, but that ingress may normalize a bounded event into the shared activity pipeline when an exact active automation source is listening; it does not create a general Slack feed. X remains an on-demand read connector because a connection does not yet select a monitored user, list, or stream rule from which a safe feed could be constructed.
 
@@ -312,7 +299,7 @@ Routing feedback is idempotent in the direction it was given. A suggestion card 
 
 Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2, while D1 stores an idempotent delivery receipt and normalized metadata.
 
-### Suggested work admission
+#### Suggested work admission
 
 Eligible connector activity is grouped into bounded personal or workspace batch windows before the suggested-work admission agent decides whether to ignore it, route it into existing work, or create/update a work opportunity. The model-facing JSON Schema deliberately uses only the portable structural subset: object and array shapes, primitive types, required fields, enums, and `additionalProperties: false`. Do not add string formats, string-length bounds, numeric bounds, or array-length bounds to that provider schema. Nested limits such as `linkedUsers.maxItems` can make the schema's constrained-decoding state space too large for otherwise supported Gemini structured-output endpoints, causing every admission request to fail before inference.
 
@@ -322,7 +309,155 @@ Admission failures are retried through new batch windows only while an event's a
 
 A connector's normalized `title`/`summary` is not independently bounded to the API contract's suggestion and resource limits (`ActivitySuggestionSchema`/`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`WorkstreamRoom` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
 
-Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/SLACK_INTEGRATION.md` for the product and data flow and `docs/SLACK_PERMISSIONS.md` for the complete OAuth scope inventory.
+Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
+
+
+## Invariants
+
+Every rule below was learned from a defect in production or in review, and each names the failure that produced it. A new adapter is expected to satisfy all of them; several are enforced by the compiler or by `apps/api/test/connector-credential-freshness.test.ts`, which enumerates the registry so a connector is enrolled by existing rather than by someone remembering it.
+
+**Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
+
+**Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
+
+**A health check must not write.** Provider state that needs restoring goes in `repair`, which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
+
+**A health check answers reachability and authorization, never capacity.** Do not read balances, quotas, or credit counts to predict whether a later call will succeed; the provider decides that per call and will say so. *X read `recharge_credits` alone and reported an account holding ~10,000 spendable bonus credits as having none, failing every `plugin_x` load in the workspace.*
+
+**A health check takes the caller's signal.** Reauthorization runs inside a Workflow step, and an `AbortSignal.timeout` created inside an adapter is not disposable — it holds the invocation open after the check returns.
+
+**Say whether the provider refused you, or whether you could not tell.** `reconnectRequired` carries that distinction, and the host maps it to `denied` versus `indeterminate`. A verdict must never be derived from a swallowed exception: failing to verify an authorization is not a denial, and reporting it as one sends a run off to explain a permission problem that may not exist. *A bare `catch { return false }` turned every provider hiccup into a revoked grant.*
+
+**A refresh that fails states a verdict.** When the grant itself is gone the failure carries `reconnectRequired: true`; when the failure was Avalon's own — an `invalid_client`, a malformed request — it carries `reconnectRequired: false`. The adapter is the only thing that can answer this, because the vocabulary is the provider's own: *Slack answers a refused refresh with HTTP 200 and `{ok: false, error: "token_revoked"}`, and GitHub with HTTP 200 and `{error}`, neither of which any status test can see.* Stating nothing is not neutral — the host then classifies the failure itself, from `details.providerError` and the status, and an unclassifiable refusal marks. *Requiring the flag and defaulting to silence is what stranded Slack and Granola connections: a revoked grant left the row `healthy` forever, every run dropped the plugin, no member was ever prompted, and only somebody happening to press Test recovered it.* A connection reporting healthy while every call fails is the worse of the two ways to be wrong, so the default is the loud one; an adapter that knows better overrides it by saying so.
+
+**Classify a token-endpoint failure by the provider's error code, not its HTTP status.** OAuth reports a dead grant and a malformed request of ours with the same 400. *Linear and Notion marked members' healthy connections `needs_reconnect` for any 400 or 403, demanding a reconnect that would fix nothing.* The classification has three answers, not two: a code naming a dead grant marks, a code naming Avalon's own fault does not whatever the status, and anything else — an unfamiliar code or none at all — defers to the status. An unfamiliar word is not evidence, and treating it as a denial would invert the safe default: the two mistakes are not symmetric, and only leaving a dead connection reporting healthy is silent.
+
+**Say when a healthy connection is degraded.** A health result carries `warning` for provider-side state that has drifted without making the connection unusable, and the host logs it. *Moving Granola's webhook repair out of the health check removed a repeated write and replaced it with nothing: delivery stopped silently and stayed stopped until somebody happened to press Test, because the one place that knew dropped the message.* Removing an automatic repair means leaving an automatic signal in its place.
+
+**Recover once from a mid-call refusal, then believe it.** Route authenticated calls through `withProviderReauthorization` rather than carrying a private retry. A first rejection may be a stale token; a second is the real answer.
+
+**Every rotation goes through the host, proactive and reactive alike.** A rotating refresh token is single-use, so two calls that refresh at the same moment leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. Use `withProviderReauthorization` on the rejection route and `refreshExpiringCredentials` on the near-expiry route; neither redeems a token beside the coordinator.
+
+**Do not spend a provider round trip on something Avalon already knows.** Revalidation between model turns is answered from D1; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
+
+Each installed credential has two deliberately separate plugin identities. The opaque canonical ID, `connection:<uuid>`, is the only identity used for authorization, durable activation, receipts, and credential access. A database-backed workspace-local ID is the model-facing name: the first active credential of a provider receives `plugin_<provider>`, and simultaneous additional credentials receive the lowest numeric suffix (`plugin_google_2`, `plugin_google_3`, and so on). Disabled connections do not reserve names, so removing and later re-adding a provider reclaims the clean base instead of accumulating random characters. A partial unique database index enforces uniqueness across the active connection list.
+
+The model sees only these stable IDs in plugin catalogs, active-plugin instructions, and `load_plugin` arguments. Avalon resolves them back to canonical IDs before scope checks or persistence. Model-facing IDs are presentation and routing aliases, never security principals. Connector tool definitions use prefix-free names local to their plugin; the runtime adds the connection's stable short name when rendering model-facing tools. For example, canonical `drive.search` becomes `google_drive_search`, or `google_2_drive_search` for a second Google credential.
+
+## Boundary
+
+This document owns the connector registry and the contract every adapter meets:
+authorization, credential freshness, health semantics, actor identity, discovery,
+refusals, activation acknowledgement, and the deterministic half of activity
+ingestion (steps 1 through 6). The adapter owns provider protocol details; Avalon
+owns tenancy, execution principals, persistence, retries, schedules, and audit.
+
+It does not own:
+
+| For | Read |
+| --- | --- |
+| Which unclaimed activity becomes a Suggested context card, and what an accept or a dismiss is worth | [`contextual-routing.md`](contextual-routing.md) |
+| Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
+| One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
+| What happens to `digestible` after the log is written | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
+| The registrations, secrets, and the zero-copy definition | [`provider-apps.md`](provider-apps.md) |
+| Slack's product surface and its scope inventory | [`slack-integration.md`](slack-integration.md), [`slack-permissions.md`](slack-permissions.md) |
+| Linear's protocol and native-agent gate | [`linear-integration.md`](linear-integration.md) |
+| The single Notion ingress | [`notion-ingress.md`](notion-ingress.md) |
+| How a tool is *designed* so a small model uses it right | [`agent-tools.md`](agent-tools.md) |
+| How a run holds and narrows connector authority | [`agent-harness.md`](agent-harness.md) |
+| Where automation results are delivered | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
+
+Adding a personal delivery surface touches four registries and nothing else:
+`AutomationDeliveryTargetTypeSchema`, the `automation_delivery_targets` shape
+check, `PERSONAL_IDENTITY_LINKS` if the surface needs a link, and
+`FROZEN_IDENTITY_RESOLVERS` — plus `CONNECTOR_DELIVERIES` for digests. Nothing
+about which providers can deliver is written into the API or the client.
+
+## Failure modes and limits
+
+- **A first provider rejection buys one refresh and one repeat; a second is the
+  real answer.** What counts as a refusal is each adapter's own vocabulary through
+  `isProviderCredentialRejection`, never the `unauthorized` code alone — adapters
+  raise that for policy and configuration failures that never reached the provider,
+  and spending a single-use refresh token on one buys a retry that fails
+  identically.
+- **A token-endpoint failure has three answers, not two.** A code naming a dead
+  grant marks; a code naming Avalon's own fault does not, whatever the status; an
+  unfamiliar code or none at all defers to the status. An unfamiliar word is not
+  evidence, and the two mistakes are not symmetric — only leaving a dead connection
+  reporting healthy is silent.
+- **A mark records the first, most specific diagnosis.** The writes that set
+  `needs_reconnect` still filter on `status = 'healthy'`, so a row already marked
+  keeps the verdict that explains why; re-marking on every later attempt is what
+  replaced a precise scope failure with a bare `unauthorized`.
+- **A job classified non-retryable on authorization needs something to lift the
+  ceiling.** `redriveReauthorizedIngress` re-queues a job whose connection has been
+  written since it last failed, which is self-limiting because a job that fails
+  again stamps itself newer than the connection. Without it an outage becomes
+  permanent for every request that arrived during it.
+- **A repair never fails a connection test**, and its outcome is reported either
+  way — a connection whose delivery is still broken must not read the same as one
+  that was fixed.
+- **A health check reports a degraded connection with `warning` rather than
+  failing.** Failing would take a usable connection out of every run to describe a
+  problem only the test can fix.
+- **Admission failures are retried through new batch windows only while an event's
+  attempt count is below three.** Once that limit is reached the event remains
+  failed; deploying a schema or model fix does not replay it. Operators verify the
+  corrected path first, then use an explicit, bounded replay rather than resetting
+  every activity indiscriminately.
+- **Everything unknown is withheld from a digest** — a connector this region does
+  not register, an event type a manifest has dropped, an activity older than the
+  declaration. None of those are somebody confirming a person wants this in their
+  inbox, and being wrong costs one way only.
+- **A stream can only ever withhold.** An activity is digestible when its event type
+  says so *and* its stream agrees; a stream saying yes grants nothing on its own.
+- **The model-facing provider JSON Schema stays in the portable structural
+  subset** — object and array shapes, primitive types, required fields, enums,
+  `additionalProperties: false`. No string formats, string-length bounds, numeric
+  bounds, or array-length bounds: a nested limit such as `linkedUsers.maxItems` can
+  make the constrained-decoding state space too large for otherwise supported Gemini
+  structured-output endpoints, failing every admission request before inference.
+  `AdmissionResultSchema` remains authoritative afterwards and is Avalon's trust
+  boundary.
+- **A connector truncates its own `title`/`summary` before writing `activities`.**
+  Connector caps are wider than the API contract's (GitHub's webhook titles cap at
+  500 against the contract's 300), and while `WorkstreamService` and
+  `WorkstreamRoom` truncate defensively at every read and write site, a new
+  connector should keep its own truncation at or under 300/2,000 characters so a
+  work stream never depends solely on a downstream guard to stay openable.
+- **Generic-webhook responses are specified**: `401` invalid signature, `400`
+  malformed or schema-invalid, `422` disallowed event or non-member target, `409`
+  identity or dedupe collision, `413` oversized, `202` new delivery, `200` a
+  delivery already known. Senders retry network failures and `5xx` with exponential
+  backoff using the same identity and exact body, and must not reuse an identity or
+  dedupe key with changed content.
+- **X remains an on-demand read connector.** A connection does not yet select a
+  monitored user, list, or stream rule from which a safe feed could be constructed.
+
+## Testing
+
+| Suite | Covers |
+| --- | --- |
+| `apps/api/test/connector-credential-freshness.test.ts` | Both halves of the freshness contract. Its conformance half **enumerates the registry rather than a hand-written list**, so a connector added later is enrolled by existing: for every adapter that can refresh a credential, a provider that rejects the token must be answered with a refresh and a retry. An adapter whose health check does not present the connection's expiring credential — Notion introspects a token in the request body under the integration's own client credentials — declares that in the fixture table, so the exemption is a reviewable fact rather than a silent pass. |
+| `apps/api/test/connector-credential-refresh.test.ts` | The lease, the serialized rotation, the adopt-don't-redeem path, and that a successful refresh heals the row. |
+| `apps/api/test/connector-oauth-error.test.ts` | `isRevokedGrantError` and the three-answer classification. |
+| `apps/api/test/connector-actor-identity.test.ts` | The three tiers, the monotonic write, and that only `verified_email` is recorded. |
+| `apps/api/test/connector-catalog-discovery.test.ts` | `searchAliases`, the catalog wording, and the load sentence. |
+| `apps/api/test/connector-tool-selection.test.ts` | Capability intersection and the `connectorCapabilityRefused` shape. |
+| `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
+| `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
+| `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
+
+Run one with
+`pnpm --filter @avalon/api exec vitest run test/connector-credential-freshness.test.ts`
+— the path is package-relative.
+
+The trap worth stating: several of these suites enumerate the registry on purpose,
+so a new connector is enrolled without anyone remembering to add it. Do not narrow
+one to a fixture list to make a new adapter pass — declare the exemption in the
+fixture table instead, where it is reviewable.
 
 ## Changelog
 

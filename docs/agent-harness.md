@@ -4,11 +4,26 @@ Avalon's production loop is an adapter over `@juno-ai/bind` 11.0.0. Bind owns tu
 
 Each run is one bounded, server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
-## Addressing
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/agent-harness/src/bind-runtime.ts` | The Bind 11 adapter itself — registry construction, the tool loop's hooks, streaming. |
+| `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
+| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
+| `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
+| `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
+| `apps/api/src/workflows/workstream-loop.ts` | The generic Workflow every run is one instance of. |
+| `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
+| `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
+
+## How it works
+
+### Addressing
 
 Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Avalon/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
 
-## Naming
+### Naming
 
 A work stream is created under a provisional title — the first non-empty line of its objective — and named by a separate one-shot structured call a moment afterwards. The naming agent gets the objective and the opening message as bounded user-role data: the request is what is being named, never an instruction it follows, and a request asking for a particular name has no more authority than any other outside content. Reasoning is switched off rather than left to the model's default, because the model is relabelling text it has already been handed in full — asking for the lowest *effort* would switch thinking on for a model that does none.
 
@@ -18,7 +33,7 @@ The transcript is what a name is usually missing. A work stream is looked at onc
 
 Every write is conditional on the status the pass started from, which is what keeps a person's title safe: renaming a work stream settles it, so a generated name that arrives afterwards is dropped rather than applied, and a title supplied by the caller is settled from the start and never generated over. Every failure — an unreachable model, an unusable answer, an absent `OPENROUTER_API_KEY` — leaves the title standing and still advances the status, because a skeleton that never resolves is worse than a title taken from the request.
 
-## Admission and immutable run scope
+### Admission and immutable run scope
 
 The generic Workflow creates one replay-stable attempt identity, reaps expired attempts, and claims a time-bounded D1 lease. At most one unexpired harness lease may run in a work stream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed.
 
@@ -30,7 +45,7 @@ The trigger's two jobs come apart on a retry, and `transcriptFenceMessageId` is 
 
 After admission Avalon validates the execution principal and persists an immutable, canonically hashed run scope: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A replay must reproduce that scope. Connections installed or expanded later cannot enter it; subsequent membership, ownership, grant, disablement, and policy checks may only remove authority.
 
-## Context and stable prompts
+### Context and stable prompts
 
 Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, and subscription overrides. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
@@ -40,7 +55,7 @@ All base prompts are rendered by typed, dependency-free functions in `@avalon/ag
 
 Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. Both the work-stream agent and automation architect receive a compact, stable-ID-sorted catalog derived only from their already-authorized plugin registry and partitioned into `Currently active` and `Available to load`. Loading a plugin adds its static code-authored guidance under `Active Plugin Instructions` and exposes its exact typed tools on the next model turn. The catalog is stated as capability rather than as a suggestion, because the tools visible on any given turn are only the ones already loaded: an available plugin can answer a question, so consulting the catalog is part of searching, and asking a person for something a listed plugin could look up is a claim that it is unavailable rather than a request for missing input. The automation architect may use those real connector tools to inspect live provider context while drafting; it prefers reads and never performs a provider write merely to test a proposed automation. Remote account labels, resources, and provider content never become trusted plugin prose. User-authored automation draft state remains user-role context.
 
-## Behavior policy
+### Behavior policy
 
 The agent acts on clear scoped requests, infers safe defaults, batches independent reads, prefers authorized connectors over public substitutes, and verifies material writes when a read-back path exists. It requests structured input only when a required identifier, permission, connection, timezone, or irreversible choice has no safe default. It never treats a proposed, failed, or ambiguous call as success and never retries an ambiguous write.
 
@@ -48,7 +63,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
-## Automation compilation
+### Automation compilation
 
 Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants.
 
@@ -56,11 +71,11 @@ The compiler narrates while it researches, and the composer streams that narrati
 
 The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone resolves from the personal user or workspace according to scope; an explicit trigger timezone wins. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
 
-## Connection plugins and authority narrowing
+### Connection plugins and authority narrowing
 
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and tool order must match its manifest. At run start Avalon creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
-- Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](CONNECTORS.md#stored-status-is-a-belief-not-a-gate).
+- Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
@@ -74,7 +89,7 @@ Revalidation also says why it is asking, because the two occasions need differen
 
 Revalidation answers with one of three verdicts, and the third one is the point of having them. `authorized` activates; `denied` is a decision about authority — a revoked credential, a withdrawn grant, an owner who no longer holds the connection — and reaches the model as `plugin_not_authorized`; `indeterminate` means the host could not reach a decision at all, because the provider timed out, the transport failed, or the health check answered something that says nothing about this run's authority. Both non-authorized verdicts leave the plugin inactive, so the distinction costs the run nothing, and it is what stops a provider hiccup from being reported as a permission problem: an `indeterminate` load returns `plugin_authorization_unavailable`, and the host logs `connector_plugin_reauthorization_failed` with the connection and the underlying cause rather than discarding it. An adapter distinguishes the two the same way, through `reconnectRequired` on its health result. A verdict must never be derived from a swallowed exception — a failure to verify is not a denial, and reporting it as one sends a run off to explain a permission problem that may not exist.
 
-## Skills
+### Skills
 
 A plugin gives the model a capability; a **skill** gives it a procedure. Skills are markdown instruction modules — how this workspace triages a queue, what a handover note must carry, the house voice — disclosed in the same three tiers the plugin catalog uses, because a workspace's accumulated know-how does not fit in a context window while a catalog line costs about fifty tokens.
 
@@ -94,7 +109,7 @@ Bind's skill warnings — a name collision that lost a skill, a restored hint re
 
 The prompt sections are a pure render of run state. Bodies are rebuilt from the active set on every turn in Bind's total order (origin, then name) rather than spliced into the previous prompt, so a resumed attempt produces the same bytes as a fresh one and the provider's cached prefix survives. Loaded refs are durably recorded through `persistSkillActivation` and restored on the next attempt through `skillActivationHints` — a hint, like a plugin activation hint, so a ref the narrowed scope no longer resolves is dropped rather than restored.
 
-## Loop
+### Loop
 
 1. Claim the lease, validate the principal, freeze the run scope, and load authorized context.
 2. Register the applicable stable core plugins plus the frozen connection catalog; restore only reauthorized hints.
@@ -107,37 +122,19 @@ The prompt sections are a pure render of run state. Bodies are rebuilt from the 
 
 Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY` and from inbound-email runs.
 
-## Limits
-
-Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
-
-Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`RUNBOOK.md`](RUNBOOK.md).
-
-When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is available in memory for the immediate control decision and is never logged: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose.
-
-Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, and WebP are normalized through Cloudflare Images; TIFF and HEIF/HEIC also have bounded local conversion fallbacks. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript.
-
-Wall-time, iteration, tool-call, and cost ceilings use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded`. Limits never silently reinterpret a write as successful.
-
-A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
-
-The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
-
-Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`RUNBOOK.md`](RUNBOOK.md#inspecting-a-runs-raw-inference).
-
-## Elicitation
+### Elicitation
 
 The canonical `request_elicitation` tool belongs to `avalon:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. In a work stream, the work stream becomes `needs_input`; a valid answer persists a visible response, clears attention when no blockers remain, and starts a new generic Workflow linked to the previous run. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
 
-## Durable receipts and terminal state
+### Durable receipts and terminal state
 
 Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before execution, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to D1 before Bind can observe it.
 
 Completed receipts replay without another provider call. Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior write, or timed-out `record_before_execute` write becomes `ambiguous_external_write` and is never blindly repeated. Lifecycle events are append-only, and terminalization is idempotent and lease-fenced.
 
-## Model routing and inference ledger
+### Model routing and inference ledger
 
-Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, work stream, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) owns the flag keys, the value shape, and how a model change is rolled out.
+Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, work stream, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`feature-flags.md`](feature-flags.md) owns the flag keys, the value shape, and how a model change is rolled out.
 
 Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
 
@@ -145,13 +142,13 @@ OpenRouter routing is deterministic and versioned. Empty completions and truncat
 
 Every classified provider attempt appends an immutable inference-ledger row with its turn/route cursor, provider and model, routing decision, outcome, latency, available token/cache/cost counters, and hashed credential/workspace identities. Harness-run usage also stores turn/tool timings and counts. Provider error bodies and credentials are not retained in the ledger.
 
-## Streaming stability
+### Streaming stability
 
 OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`. A route restart increments `epoch`; `streamSeq` orders frames within the turn epoch; `reset: true` replaces text from the abandoned attempt. These fields are independent of the WorkstreamRoom event `sequence` used for socket replay.
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The desktop retains per-message stream cursors across reconnects, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset while preserving completed text from earlier tool turns. D1 stores the complete final assistant message; REST resynchronization remains canonical.
 
-## Transcript row attribution
+### Transcript row attribution
 
 Every chat surface renders one row component, so a tool row must mean the same
 thing wherever it appears. Two rules keep the work stream and the automation
@@ -190,7 +187,7 @@ walks every tool in the connector registry and fails on any that reaches the
 generic row or that describes a `write` in passive words, so a connector added
 later either names its tools with a recognized verb or declares its own prose.
 
-## HyperSight blocks
+### HyperSight blocks
 
 A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript of its own and nobody watching it. Three things follow.
 
@@ -200,7 +197,7 @@ Its output is a tool call. The block is exactly the `markdown` argument passed t
 
 A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `hypersight_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
 
-## Durable inline subagents
+### Durable inline subagents
 
 The root harness exposes `workstream_run_subagent` through the default-loaded `avalon:workstream` plugin for several independent, substantial read-only investigations. Avalon follows Monad's useful delegation shape while preserving Avalon-specific durable authority:
 
@@ -213,7 +210,7 @@ The root harness exposes `workstream_run_subagent` through the default-loaded `a
 
 This deliberately adopts Monad's focused parallel-investigation strategy without copying in-memory interrupt queues, fire-and-forget persistence, autonomous agents, personas, or nested delegation. Inline children receive no direct memory access; their parent supplies any recalled context needed for the delegated objective.
 
-## Scoped durable memory
+### Scoped durable memory
 
 Root work-stream runs receive the stable `avalon_memory` plugin. `memory_search` accepts only a query; the host searches every authorized scope and returns scope provenance without allowing the model to select scope IDs. Ad-hoc user runs search workspace, user, and work-stream memory. Personal automations search workspace, owner-user, and automation memory. Workspace automations search workspace and automation memory. All work streams created by one automation subscription therefore share one automation scope.
 
@@ -223,19 +220,181 @@ Root runs also receive the separate stable `avalon_tables` plugin for large stru
 
 Automation drafts may declare automation-scoped tables. Acceptance materializes an independent table set under the new subscription, so every work stream from that subscription shares its rows while subscribers to a shared template do not share state. Every automation run receives the materialized table IDs, column IDs, natural keys, purpose, and usage/update instructions in its authorized task context. Table rows are never added to admission recall; the agent must query only the rows and columns needed for the current run.
 
-## Scheduled wake-ups
+### Scheduled wake-ups
 
 `avalon:workstream` carries `schedule_wakeup`, `list_wakeups`, and `cancel_wakeup`, so a run can defer work to a stated instant instead of promising it in text. `schedule_wakeup` takes the prompt plus exactly one of `delay` — a duration in common units, `"5 minutes"`, `"90 sec"`, `"1h30m"`, or an ISO-8601 `"PT2H30M"` — or `at`, an exact ISO-8601 timestamp. An `at` without an offset is read in the run's local zone, or in an explicit `timezone`; an `at` that carries an offset is absolute and rejects `timezone` rather than silently choosing between the two. The resolved instant must be at least one minute and at most one year out, whichever form produced it. Pending wake-ups are capped per work stream, and every rejection returns a stable code with its remediation and the accepted vocabulary inside `output`.
 
 The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. The workspace scheduler fires it: it claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
-That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A scheduled digest carries its frozen window the same way ([`DIGESTS.md`](DIGESTS.md#the-run)). A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
+That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A scheduled digest carries its frozen window the same way ([`digests.md`](digests.md#the-run)). A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
 
-## Cancellation and deferred systems
+### Cancellation and deferred systems
 
 Stopping a run persists `cancellation_requested_at`; it does not terminate the Workflow out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. The same leased Workflow then commits one fenced `stopped` lifecycle event and returns the work stream to `idle`, preventing a stop/complete race.
 
 The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, inline child results, and scoped memory remain distinct durable records. Nested child delegation, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.
+
+
+## Invariants
+
+- **At most one unexpired harness lease runs in a work stream**, and scope,
+  activation, receipt-plan and completion, checkpoint, and terminal commits all
+  require the same attempt ID, lease owner, and expiry. An obsolete executor cannot
+  publish a terminal result.
+- **`completed` cannot commit until the final agent message is durable.**
+- **A launch is never split across the response that asked for it.** The
+  `harness_runs` row, the `running` status, and the Workflows start all complete
+  before `launchWorkstreamHarness` returns, because `attempt_id` and
+  `lease_expires_at` stay NULL until the Workflow admits the run and nothing reaps
+  that shape — a row claiming `running` with no Workflow behind it is a work stream
+  `stop` cannot terminalize and `retry` refuses.
+- **The run scope is frozen, canonically hashed, and immutable.** A replay must
+  reproduce it. Connections installed or expanded later cannot enter it; every
+  later check may only *remove* authority.
+- **Loading never widens the frozen scope.** Bound connections, attached
+  resources, and previously used plugins are activation *hints*, filtered through
+  the frozen scope and reauthorized before restoration.
+- **Activation is durably recorded before a plugin's tools or trusted guidance
+  become visible.**
+- **A verdict is never derived from a swallowed exception.** `denied` is a
+  decision about authority; `indeterminate` means the host could not reach one.
+  Reporting the second as the first sends a run off to explain a permission problem
+  that may not exist.
+- **A stored `needs_reconnect` does not drop a plugin.** It is a belief about a
+  past moment; the call reaches the provider and fails on the provider's answer —
+  see [Stored status is a belief, not a
+  gate](connectors.md#stored-status-is-a-belief-not-a-gate).
+- **Skills are frozen with the scope, and loading one grants no authority.**
+  Nothing in the loop reaches a store, so `load_skill` can only surface a body the
+  run was already authorized to read, and a skill naming an owner plugin makes the
+  model load it separately rather than activating it — an auto-activation would let
+  a document issue a capability grant.
+- **A triggering activity or inbound email is untrusted user-role evidence**, never
+  promoted into the system prompt. The same holds for a naming request and a skill
+  body, which is wrapped in `<skill_content name=…>` so the model can tell it from
+  platform policy.
+- **The trigger's two jobs stay separate on a retry.** As *identity* it admits a
+  brief or an inbound email to the model at all; as *bound*
+  (`transcriptFenceMessageId`) it is the newest message the run may see. The fence
+  is resolved once at launch and travels in the durable workflow input, never
+  re-read at projection time — an attempt that replays must read the same window it
+  read the first time.
+- **`retry` inherits the stored `trigger_message_id` rather than reconstructing
+  it.** Reconstructing the trigger as "the latest human message" is right only while
+  nothing has happened since, and fences finished work out of the replay whenever it
+  has.
+- **Every write to a title is conditional on the status the pass started from.**
+  Renaming settles a work stream, so a generated name arriving afterwards is dropped
+  rather than applied.
+- **A tool call is a proposal.** Tools are validated and authority rechecked before
+  execution, at run start, before credential decryption, before every tool call, and
+  between model turns.
+- **Reasoning fields are ignored**; private chain-of-thought is neither persisted
+  nor broadcast.
+- **Successful tool output is durable before Bind can observe it**, and completed
+  receipts replay without another provider call.
+- **An ambiguous external write is never blindly repeated**, and limits never
+  silently reinterpret a write as successful.
+- **A run's output is what a schema captured, not its trailing text.** A HyperSight
+  block is exactly the `markdown` argument to `submit_block`; assistant text is
+  discarded.
+- **A child can never widen the parent's frozen scope**, is read-only by a tool-loop
+  hook rather than by what it was given, and cannot recurse.
+- **The model never selects a memory scope.** `memory_search` accepts only a query;
+  the host derives the authorized scope union from the frozen principal and run
+  origin, and hybrid hits are always reloaded from D1 before exposure.
+- **Whatever starts a run hands the host something to render.** A run whose
+  instructions exist only as a transcript `system` row reaches the model with
+  nothing but its work stream's objective, because the protocol projector drops
+  those rows as UI state.
+- **A cancellation is a durable request, observed by the lease owner**, which alone
+  commits the fenced `stopped` transition. Stopping never terminates the Workflow
+  out of band.
+- **A row carries exactly one plugin icon, the one that owns the tool.** Both
+  `ToolInvocation.plugin` and the compiler's `tool` stream event hold a single
+  nullable plugin, so a row with several icons cannot be represented.
+- **Prompt sections are a pure render of run state.** Bodies are rebuilt from the
+  active set on every turn in Bind's total order rather than spliced into the
+  previous prompt, so a resumed attempt produces the same bytes as a fresh one and
+  the provider's cached prefix survives.
+- **The harness package imports no database, connector, API, or Node-only
+  implementation and never reads `process`.** Host capabilities arrive through
+  explicit ports, and ESLint enforces it.
+
+## Boundary
+
+This document owns the run: how one is admitted, what authority it is frozen with,
+how the loop executes and records tool calls, and how it terminalizes. **Bind** owns
+transcript healing, plugin and skill activation, turn and tool iteration,
+completion-defect recovery, epoch-aware streaming, and classified route traversal.
+**Avalon** owns authorization, regional persistence, admission, accounting, and
+terminal state.
+
+It does not own:
+
+| For | Read |
+| --- | --- |
+| What a run remembers once its window fills | [`context-compaction.md`](context-compaction.md) |
+| How to *design* a tool so a small model uses it right | [`agent-tools.md`](agent-tools.md) |
+| How to *author* a skill | [`writing-skills.md`](writing-skills.md) |
+| How to *write* a prompt in `prompts/` | [`writing-prompts.md`](writing-prompts.md) |
+| Which model each agent runs on, and the pin that overrides it | [`feature-flags.md`](feature-flags.md) |
+| Connector adapters, grants, and health semantics | [`connectors.md`](connectors.md) |
+| The create path a run is launched from | [`workstream-creation.md`](workstream-creation.md) |
+| The digest that rides this loop | [`digests.md`](digests.md) |
+| The description pass that runs after a terminal run | [`workstream-descriptions.md`](workstream-descriptions.md) |
+| Reading a captured inference payload back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
+
+A run is one bounded, server-side, tool-using loop inherent to a work stream. It is
+not a participant, a separate persona, a terminal, or a general code-execution
+environment, and nested child delegation, personas, roles, autonomous heartbeats,
+and general child participants remain deferred product work.
+
+## Failure modes and limits
+
+Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+
+Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`runbook.md`](runbook.md).
+
+When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is available in memory for the immediate control decision and is never logged: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose.
+
+Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, and WebP are normalized through Cloudflare Images; TIFF and HEIF/HEIC also have bounded local conversion fallbacks. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript.
+
+Wall-time, iteration, tool-call, and cost ceilings use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded`. Limits never silently reinterpret a write as successful.
+
+A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
+
+The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
+
+Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
+
+## Testing
+
+| Suite | Covers |
+| --- | --- |
+| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, and terminal commits. |
+| `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
+| `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
+| `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
+| `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
+| `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
+| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, the D1 reload before exposure, and revision compare-and-swap. |
+| `apps/api/test/hypersight-block-submission.test.ts` | The single nudge, the `hypersight_block_not_submitted` failure, and the discarded trailing text. |
+| `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, and claim-before-launch. |
+| `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
+| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, and `toolActivityName`. |
+
+Run one with
+`pnpm --filter @avalon/api exec vitest run test/harness-run-runtime.test.ts` — the
+path is package-relative.
+
+Three traps. The prompts are byte-stable and golden-hashed, so an edit fails the
+hash assertion by design — update it deliberately rather than regenerating it.
+Anything that leases or heartbeats compares against `Date.now()`, so stub the clock
+and assert on the stored attempt and expiry rather than on elapsed time. And the
+harness package's portability boundary is enforced by ESLint, not by the type
+checker: a test that imports a database or Node-only module to build a fixture will
+pass locally and fail `pnpm lint`.
 
 ## Changelog
 
@@ -287,7 +446,7 @@ rollout, and indefinitely if the deploy failed after the migration step. So
 `0069_retire_artifact_messages.sql` retires only the message type, a later
 release owes the `DROP TABLE`, and the R2 objects under
 `<region>/<workspace>/artifacts/` have to be swept before that drop takes their
-only pointers with it. [The runbook](RUNBOOK.md#finishing-the-artifact-retirement)
+only pointers with it. [The runbook](runbook.md#finishing-the-artifact-retirement)
 carries the sequence.
 
 ### 2026-08-12 — Compaction moved to its own document

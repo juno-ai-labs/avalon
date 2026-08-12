@@ -9,7 +9,7 @@ another machine finds their list exactly as they left it.
 A pin is **one person's opinion about a shared row**. Pinning a work stream tells
 nobody else anything, changes nothing about who may read it, and does not appear
 on anyone else's screen. Read that alongside
-[`DATA_MODEL.md`](DATA_MODEL.md#work-streams), where `workstreams.scope` answers
+[`data-model.md`](data-model.md#work-streams), where `workstreams.scope` answers
 the different question of who a work stream is *for*.
 
 ## Where the code lives
@@ -177,7 +177,7 @@ It deliberately does not:
   person's other windows converge on the sidebar's 15-second poll.
 - **Decide visibility.** `apps/api/src/lib/workstream-visibility.ts` remains the
   single answer to "may this person read this work stream", and every pin read
-  applies it — see [`DATA_MODEL.md`](DATA_MODEL.md#work-streams).
+  applies it — see [`data-model.md`](data-model.md#work-streams).
 - **Pin anything but a work stream.** Automations and notes have their own
   sections and no pin.
 

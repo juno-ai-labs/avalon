@@ -57,7 +57,7 @@ A designer who focuses mostly on UX (both locally and platform-wide) and makes s
 
 ### Prompt Engineer
 
-Read [`docs/writing-good-skills.md`](../../../docs/writing-good-skills.md) before reviewing — it is the authoring bar for skills and prompt content, and several checks below (altitude, behavior-nudges-not-tool-names, "don't" paired with "do", self-containment) derive from it. Hold the diff to that bar.
+Read [`docs/writing-skills.md`](../../../docs/writing-skills.md) before reviewing — it is the authoring bar for skills and prompt content, and several checks below (altitude, behavior-nudges-not-tool-names, "don't" paired with "do", self-containment) derive from it. Hold the diff to that bar.
 
 All prompts must be in a jinja template file and not inline in the source code.
 

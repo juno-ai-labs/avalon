@@ -31,7 +31,7 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * same loader the model flags evaluate through — a client flag describes its
  * subject in the one vocabulary rules are already written in, and inherits the
  * boundary that keeps a person's data out of a flag-targeting system. See
- * `docs/FEATURE_FLAGS.md` for the rules each flag is provisioned with.
+ * `docs/feature-flags.md` for the rules each flag is provisioned with.
  */
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */

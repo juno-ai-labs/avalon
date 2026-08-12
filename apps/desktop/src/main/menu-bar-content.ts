@@ -204,7 +204,7 @@ export class MenuBarContentStore {
    *
    * This is what keeps them moving. The ranking treats an impression as
    * evidence a suggestion was put in front of someone and passed over, and it
-   * asks for a re-rank on the strength of it — see `SUGGESTED_WORK.md`. A
+   * asks for a re-rank on the strength of it — see `suggested-work.md`. A
    * surface that displays suggestions without reporting them is a free rider:
    * whoever uses only that surface sees the same four indefinitely.
    *
