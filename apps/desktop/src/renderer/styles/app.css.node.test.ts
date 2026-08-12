@@ -108,18 +108,48 @@ describe('system message clamp', () => {
  * the app.
  */
 describe('markdown list markers', () => {
+  // Every container that renders markdown, because they do not share one: the
+  // transcript and its siblings go through `MarkdownBody`, while a note and a
+  // meeting briefing render `ReactMarkdown` under a class of their own. A fix
+  // applied to the shared component alone leaves those two markerless, which is
+  // exactly the shape of the bug being fixed.
+  const containers = '.markdown-body, .note-detail-article, .meeting-generated-notes';
+
+  // `rule()` returns the *first* block whose selector line matches, so a
+  // selector that appears twice in the stylesheet resolves to whichever copy is
+  // higher up. These marker rules each appear once, and the geometry group below
+  // them is matched by its own two-line selector — keep it that way, because
+  // merging the two would silently point these assertions at the margins.
+
   it.each([
-    ['.markdown-body ul', 'disc'],
-    ['.markdown-body ul ul', 'circle'],
-    ['.markdown-body ul ul ul', 'square'],
-    ['.markdown-body ol', 'decimal'],
+    [`:is(${containers}) ul`, 'disc'],
+    [`:is(${containers}) :is(ul, ol) ul`, 'circle'],
+    [`:is(${containers}) :is(ul, ol) :is(ul, ol) ul`, 'square'],
+    [`:is(${containers}) ol`, 'decimal'],
   ])('draws %s with %s', (selector, style) => {
     expect(rule(selector)).toContain(`list-style: ${style};`);
   });
 
+  // Depth is counted in list ancestors of either kind. Selectors that counted
+  // only `ul` left an `ol` holding a `ul` on the first level's `disc`, and put
+  // `ul > ol > ul` on the second level's `circle` instead of `square`.
+  it.each([
+    [':is(ul, ol) ul'],
+    [':is(ul, ol) :is(ul, ol) ul'],
+  ])('counts %s as a nesting level whichever list kind encloses it', (descendant) => {
+    expect(rule(`:is(${containers}) ${descendant}`)).not.toBeNull();
+  });
+
   // The one list that should keep the reset: its items carry checkboxes, and a
   // bullet beside each one is the reason this exception was written.
-  it('leaves a task list without markers', () => {
-    expect(rule('.markdown-body .contains-task-list')).toContain('list-style: none;');
+  it('leaves a task list without markers, on every one of those containers', () => {
+    expect(rule(`:is(${containers}) .contains-task-list`)).toContain('list-style: none;');
+  });
+
+  // A marker is drawn inside the indent, so a container that restored the one
+  // without the other puts its numbers against the edge.
+  it('indents an ordered list wherever it draws one', () => {
+    expect(rule('.note-detail-article ul,\n.note-detail-article ol')).toContain('padding-left');
+    expect(rule('.meeting-notes-body ul,\n.meeting-notes-body ol')).toContain('padding-left');
   });
 });
