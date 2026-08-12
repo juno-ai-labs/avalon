@@ -63,6 +63,7 @@ import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunities } from "./work-opportunity-batching";
 import { recordActivityEvent } from "./activity-event-service";
+import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
 import {
   claimDueWorkstreamWakeup,
   releaseClaimedWorkstreamWakeup,
@@ -2398,31 +2399,56 @@ export class WorkstreamService {
    * the same rule `attachResource` enforces for a manual attach.
    */
   private async attachOpportunityOriginResources(workstreamId: string, opportunityId: string): Promise<void> {
-    const roots = await this.env.DB.prepare(
-      `SELECT a.connection_id, a.provider, a.resource_type, a.provider_resource_id,
-              a.title, a.metadata_json, a.payload_ref, c.connector_type
-         FROM work_opportunity_provenance_roots root
-         JOIN opportunity_provenance_nodes node ON node.id = root.node_id
-         JOIN activities a ON a.id = node.source_id AND a.workspace_id = node.workspace_id
-         JOIN connector_connections c ON c.id = a.connection_id
-        WHERE root.opportunity_id = ? AND node.workspace_id = ? AND node.node_kind = 'activity'
-          AND (c.scope = 'workspace' OR c.owner_user_id = ?)
-        ORDER BY root.position ASC
-        LIMIT ?`,
-    ).bind(
-      opportunityId,
-      this.auth.workspaceId,
-      this.auth.userId,
-      MAX_OPPORTUNITY_ORIGIN_RESOURCES,
-    ).all<Record<string, unknown>>();
-    for (const row of roots.results ?? []) {
-      const descriptor = await this.describeActivityOrigin(row);
-      if (!descriptor) continue;
-      await attachWorkstreamOriginResource(this.env, {
-        workspaceId: this.auth.workspaceId,
-        workstreamId,
-        attachedByUserId: this.auth.userId,
-        descriptor,
+    try {
+      const roots = await this.env.DB.prepare(
+        `SELECT a.connection_id, a.provider, a.resource_type, a.provider_resource_id,
+                a.title, a.metadata_json, a.payload_ref, a.connection_scope,
+                a.connection_owner_user_id, a.target_user_ids_json, a.visibility_json,
+                c.connector_type
+           FROM work_opportunity_provenance_roots root
+           JOIN opportunity_provenance_nodes node ON node.id = root.node_id
+           JOIN activities a ON a.id = node.source_id AND a.workspace_id = node.workspace_id
+           JOIN connector_connections c ON c.id = a.connection_id
+          WHERE root.opportunity_id = ? AND node.workspace_id = ? AND node.node_kind = 'activity'
+            AND (c.scope = 'workspace' OR c.owner_user_id = ?)
+          ORDER BY root.position ASC
+          LIMIT ?`,
+      ).bind(
+        opportunityId,
+        this.auth.workspaceId,
+        this.auth.userId,
+        MAX_OPPORTUNITY_ORIGIN_RESOURCES,
+      ).all<Record<string, unknown>>();
+      for (const row of roots.results ?? []) {
+        // Both filters, not one instead of the other. The clause above reads the
+        // connection's scope, which is authoritative for the credential; this
+        // reads the activity's own restriction, which the connection cannot
+        // express. The connection's scope is not the whole question, and reading
+        // only it was the gap: a message in a private Slack channel arrives on the
+        // *workspace* Slack connection and carries its restriction in
+        // `visibility` — `workspaceAutomationAllowed: false` with an explicit
+        // `allowedUserIds`. Attaching that produced a workspace-visible row, and
+        // broadcast it, for an object the rest of the pipeline had correctly
+        // withheld.
+        if (!activityIsWorkspaceVisible(row)) continue;
+        const descriptor = await this.describeActivityOrigin(row);
+        if (!descriptor) continue;
+        await attachWorkstreamOriginResource(this.env, {
+          workspaceId: this.auth.workspaceId,
+          workstreamId,
+          attachedByUserId: this.auth.userId,
+          descriptor,
+        });
+      }
+    } catch (error) {
+      // Sits between the work stream's commit and `launchHarness`. Whatever went
+      // wrong reading provenance, it must not leave a work stream at
+      // `harness_status = 'running'` with no run behind it.
+      logWarn(this.env, "workstream_opportunity_origin_attach_failed", {
+        workspace_id: this.auth.workspaceId,
+        workstream_id: workstreamId,
+        opportunity_id: opportunityId,
+        reason: error instanceof Error ? error.message : "unknown",
       });
     }
   }

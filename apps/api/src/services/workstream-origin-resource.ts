@@ -133,7 +133,14 @@ async function describeOrigin(env: Env, input: {
     });
     if (input.locator.kind !== "activity") return null;
     const derived = connectorOriginFromActivity(input.locator.activity);
-    return derived ? ConnectorOriginResourceSchema.parse(derived) : null;
+    if (!derived) return null;
+    // `safeParse`, because this is the one parse with no `describeConnectorOrigin`
+    // around it and a throw here would escape the whole function. Every caller
+    // awaits this between committing a work stream and launching its run, so an
+    // exception would leave a row at `harness_status = 'running'` with nothing
+    // behind it — the origin is not worth that.
+    const parsed = ConnectorOriginResourceSchema.safeParse(derived);
+    return parsed.success ? parsed.data : null;
   }
   try {
     return await describeConnectorOrigin(adapter, input.locator, {

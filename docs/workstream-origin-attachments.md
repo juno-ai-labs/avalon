@@ -31,6 +31,7 @@ rather than a fact about how the work stream began.
 | `packages/contracts/src/index.ts` | `ConnectorOriginResourceSchema` — what a connector says about a place, and the one bound on its fields. |
 | `packages/connectors/src/types.ts` | The connector base: `ConnectorOriginLocator`, `ConnectorOriginSource`, `connectorOriginFromActivity` (the derivation every connector gets free), and `describeConnectorOrigin` (the single entry point, which also enforces the manifest check). `ConnectorAdapter.origin` is where an adapter opts in. |
 | `packages/connectors/src/slack.ts` | `slackOriginSource` — the only connector that implements one today: the thread an Agent invocation arrived in, plus `chat.getPermalink` for its URL. |
+| `apps/api/src/lib/activity-visibility.ts` | `restrictedActivityUserIds` and `activityIsWorkspaceVisible` — the one implementation of who a connector activity may reach, shared with the activity queue. |
 | `apps/api/src/services/workstream-origin-resource.ts` | The host half: `describeWorkstreamOrigin` binds a connector's answer to the connection it was reached through, `resolveOriginResource` is the one place a connector resource row is looked up or created, and `attachWorkstreamOriginResource` writes and broadcasts the attachment. |
 | `apps/api/src/services/slack-agent-service.ts` | `slackSessionOrigin` hands the Slack locator to the adapter through the credential door; `createSlackWorkstreamSession` passes the result to whichever create path runs. |
 | `apps/api/src/services/workstream-service.ts` | `create` attaches `input.originResource`; `createFromOpportunity` attaches a suggestion's activity provenance roots; `describeActivityOrigin` is the shared stored-row path both it and `attachActivityResource` use. |
@@ -146,16 +147,33 @@ it.
   started in the same Slack thread, or a card later accepted against the same
   Linear issue, attaches the row that already exists; a second lookup key
   elsewhere would silently fork the object and split its watches.
-- **Attaching an origin never fails a create.** Every caller is on a path a
-  person is waiting on. A failure is logged and the work stream carries on
-  without the attachment, because losing a run over a provenance record is a
-  worse outcome than losing the record.
-- **An origin from a personal connection reaches only its owner.** A resource row
-  is listed to everyone the work stream is listed to, so the suggestion path
-  filters roots to workspace-scoped connections and the selecting member's own —
-  the same rule `WorkstreamService.attachResource` enforces for a manual attach.
-  Dropping it republishes another member's private connector object into a
-  workspace-visible rail.
+- **Attaching an origin never fails a create, and that is structural.** Every
+  caller awaits this between committing a work stream and launching its run, so
+  an exception would leave a row at `harness_status = 'running'` with nothing
+  behind it — strictly worse than the missing attachment. `describeWorkstreamOrigin`
+  is therefore *total*: both failure paths inside it are caught, and its one
+  remaining parse is a `safeParse`. `attachWorkstreamOriginResource` catches its
+  own writes, and `attachOpportunityOriginResources` wraps the whole step
+  including the provenance query. A new call site is expected to keep that
+  property rather than rely on a caller's `try`.
+
+- **A derived origin can only carry values the contract accepts.**
+  `connectorOriginFromActivity` bounds every field the schema bounds and picks a
+  canonical URL with the schema's own validator. The two used to disagree —
+  `/^https?:\/\//` accepts the string `https://`, `HttpUrlSchema` does not — and
+  an activity carrying that lost its *whole* origin over an optional field.
+- **Only an activity the whole workspace may see becomes an origin.** A resource
+  row is listed to everyone the work stream is listed to and is broadcast over
+  `resource_attached`; `WORKSTREAM_RESOURCES_SQL` applies no connection-scope
+  filter, so an attachment is a workspace-visible act whatever the credential
+  behind it. The suggestion path therefore applies **two** filters: the
+  connection's scope in SQL, which is authoritative for the credential, and
+  `activityIsWorkspaceVisible` on the activity's own row, which the connection
+  cannot express. The second is the one that matters — a message in a private
+  Slack channel arrives on the *workspace* Slack connection and carries its
+  restriction in `visibility` (`workspaceAutomationAllowed: false` with an
+  explicit `allowedUserIds`), so scope alone reads it as public and republishes
+  it.
 - **A connector describes the object; the host binds the connection.** A
   `ConnectorOriginResource` names no connection and no provider, and
   `describeWorkstreamOrigin` is the only place the two are joined. Letting an
@@ -220,13 +238,20 @@ It deliberately does **not** cover:
 
 ## Failure modes and limits
 
-- **A `resolveCanonicalUrl` call fails or times out (5s for Slack).** Swallowed
+- **A `resolveCanonicalUrl` call fails or times out (1s for Slack).** Swallowed
   in `describeConnectorOrigin`; the attachment keeps a null `canonical_url` and
   still records *which* object, which is the part nothing else holds. Swallowing
   it inside the base is also what keeps a refused permalink from reaching
   `withAuthorizedConnection` as an `unauthorized` error and marking a working
   connection `needs_reconnect` — a link is not evidence about a grant, and the
   ingress calls the provider again moments later for anything that is.
+
+  Slack's budget is deliberately **one** second rather than the usual five: the
+  call runs inside the thread claim and ahead of the `slack_agent_sessions`
+  write, and a concurrent event in the same thread waits only about two seconds
+  in `waitForSession` before it is refused with `slack_thread_busy`. An optional
+  field on an optional attachment does not get to spend the window that decides
+  whether somebody else's message is accepted.
 - **The connector registry cannot be built.** One misconfigured credential takes
   every adapter down with it, so an activity locator falls back to
   `connectorOriginFromActivity` — which needs no adapter — and the origin

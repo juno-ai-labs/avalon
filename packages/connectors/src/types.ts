@@ -304,10 +304,20 @@ export interface ConnectorOriginSource {
   ): Promise<string | null>;
 }
 
-/** Providers disagree on the key; take the first that is actually a link. */
+/**
+ * Providers disagree on the key; take the first that is actually a link.
+ *
+ * "Actually" is carried by `ConnectorOriginResourceSchema` itself rather than by
+ * a prefix test. The two used to disagree — `/^https?:\/\//` accepts the string
+ * `"https://"`, which `HttpUrlSchema` rejects — so a provider that put that in
+ * its metadata produced a derived origin the contract refused, and the whole
+ * origin was lost over an optional field. A producer that can only emit values
+ * its own contract accepts cannot reopen that gap.
+ */
 export function connectorOriginUrl(metadata: Record<string, unknown> | undefined): string | null {
   for (const candidate of [metadata?.canonicalUrl, metadata?.url, metadata?.htmlUrl, metadata?.permalink]) {
-    if (typeof candidate === "string" && /^https?:\/\//u.test(candidate)) return candidate;
+    if (typeof candidate !== "string") continue;
+    if (ConnectorOriginResourceSchema.shape.canonicalUrl.safeParse(candidate).success) return candidate;
   }
   return null;
 }
@@ -331,8 +341,12 @@ export function connectorOriginFromActivity(
     ? activity.title
     : providerResourceId;
   return {
+    // Every field the contract bounds is bounded here. A stored
+    // `activities.resource_type` is not capped at the schema's 80, and an
+    // over-long one used to fail the parse — losing the origin entirely rather
+    // than the surplus characters.
     resourceType: activity.resourceType && activity.resourceType.length > 0
-      ? activity.resourceType
+      ? activity.resourceType.slice(0, 80)
       : "activity",
     providerResourceId: providerResourceId.slice(0, 500),
     title: title.slice(0, 300),
