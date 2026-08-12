@@ -14,6 +14,7 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import { createActivitySuggestion } from "./activity-suggestion-service";
 import { hydrateConnectorActivitySource } from "./integrations";
@@ -919,6 +920,7 @@ async function routeExistingDecision(
   sources: ModelSource[],
   existingWork: Array<{ id: string; title: string; objective: string }>,
 ): Promise<boolean> {
+  if (!SUGGESTED_CONTEXT_ENABLED) return false;
   if (window.audience_scope !== "workspace") return false;
   const targetId = decision.existingTargetId;
   if (!targetId || !existingWork.some((workstream) => workstream.id === targetId)) return false;
