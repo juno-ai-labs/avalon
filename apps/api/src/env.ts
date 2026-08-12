@@ -277,13 +277,19 @@ const EnvContractSchema = z.object({
  * catch a misconfiguration; it manufactures one, silently.
  *
  * `OPENROUTER_API_KEY` is required in both regions, and belongs here for a second
- * reason: the app already models its absence as a supported state rather than a
- * fault — `/health` reports `openRouter: not configured` — and
- * `scripts/seed-sandbox-env.mjs` leaves it empty whenever no real key is
- * available, which is every sandbox session. Enforcing it at the entrypoint
- * turned that into a 503 on every route of both regions, `/health` included, so
- * the one endpoint whose job is to report which key is missing was the one
- * endpoint that could not answer.
+ * reason: `scripts/seed-sandbox-env.mjs` leaves it empty whenever no real key is
+ * available, which is every sandbox session, and outside production the app
+ * models its absence as a supported state rather than a fault — `/health`
+ * reports `openRouter: not configured` and still answers. Requiring it
+ * unconditionally at the entrypoint turned that into a 503 on every route of
+ * both regions, `/health` included, so the one endpoint whose job is to report
+ * which key is missing was the one endpoint that could not answer.
+ *
+ * In production and staging it is a fault, and since `/health` began asserting
+ * this contract the probe answers 503 there rather than `openRouter: not
+ * configured`. That is the intended difference between a sandbox missing a key
+ * and a deployment missing one; the probe still *answers*, which is the
+ * distinction that matters.
  */
 const productionOnlySecrets = [
   { key: "GOOGLE_OAUTH_CLIENT_ID", regions: ["global"] },
