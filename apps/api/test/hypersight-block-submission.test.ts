@@ -11,6 +11,10 @@ import type { HarnessPlugin } from "@avalon/agent-harness";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import {
+  workstreamRunLimits,
+  workstreamWorkflowStepTimeout,
+} from "../src/services/workstream-run-policy";
 
 /**
  * A HyperSight block used to be whatever assistant text the run trailed off
@@ -25,7 +29,6 @@ const {
   resolveHarnessToolReceiptPolicy,
   createAvalonTools,
   createWorkstreamCorePlugins,
-  workstreamRunLimits,
 } = __integrationTesting;
 
 const integrationsSource = readFileSync(
@@ -68,6 +71,8 @@ describe("root-run limits", () => {
       maxWallClockMs: 240_000,
       maxCostCents: 500,
     });
+    expect(workstreamWorkflowStepTimeout(false)).toBe("1 year");
+    expect(workstreamWorkflowStepTimeout(true)).toBe("5 minutes");
   });
 });
 
