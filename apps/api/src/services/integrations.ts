@@ -766,6 +766,11 @@ async function projectModelProtocolTranscript(
     }
     flushTools();
 
+    // Matched on its structured content, ahead of the author dispatch below and
+    // deliberately independent of it. The brief is stored as the selecting
+    // member's own turn, so the ordinary human branch would otherwise replay it
+    // as plain instruction — dropping the label that marks the connector
+    // evidence quoted inside it as evidence rather than orders.
     if (message.structuredContent?.kind === "suggested_work_expansion") {
       if (message.id === input.triggerMessageId) {
         projected.push({

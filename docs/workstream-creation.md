@@ -82,13 +82,16 @@ the header does not change hands at the swap; it is already waiting for the same
 name.
 
 Suggested work opens onto the same surface **without** an opening turn, and with
-an empty composer, and seeds its destination the same way. That work stream's opening message is the agent's, written
-from the expanded prompt, and there is nothing on the client that could stand in
-for it without inventing what it says; and anything sitting in the composer is a
-draft for a work stream nobody has started, so showing it beside one that has
-just been started would attach it to the wrong thing. The draft is held back
-rather than discarded — `LaunchingWorkstream.origin` is what distinguishes the
-two launchers — and it returns the moment the launch ends, either way.
+an empty composer, and seeds its destination the same way. That work stream's
+opening turn belongs to the person who selected the suggestion, but its text is
+the expanded brief, which only the server holds — the home screen has never seen
+anything but the one-line `displayPrompt`, and standing that line in for the
+brief would show a turn that a longer, different one replaces the moment the
+refetch lands. Anything sitting in the composer, meanwhile, is a draft for a work
+stream nobody has started, so showing it beside one that has just been started
+would attach it to the wrong thing. The draft is held back rather than
+discarded — `LaunchingWorkstream.origin` is what distinguishes the two
+launchers — and it returns the moment the launch ends, either way.
 
 ### The room snapshot has to describe the run
 
@@ -115,9 +118,10 @@ never shows it. It paints immediately, with the same turn in the same place, at
 the same geometry.
 
 The two launchers differ only in the transcript. A typed create authored its
-opening turn and seeds it. Suggested work's is the agent's, expanded server-side
-from the prompt, so it seeds an empty transcript and lets the refetch bring the
-real turn a moment later — and the work-stream screen withholds its
+opening turn and seeds it. Suggested work's turn is the selecting member's too,
+but its text was expanded server-side from the prompt, so it seeds an empty
+transcript and lets the refetch bring the real turn a moment later — and the
+work-stream screen withholds its
 `Ready to begin` empty state while a run is active, because inviting someone to
 start a work stream an agent is already working on contradicts the timer beside
 it.
@@ -163,6 +167,12 @@ than whichever rejection landed first.
   arrives. In practice the difference is smaller than the second the label
   rounds to and is not visible; a change that makes creates much slower, or the
   label finer-grained, would make it so.
+- **A turn attributed to someone who did not write its words carries the label
+  that says so.** The suggested-work brief is stored as the selecting member's
+  own turn, and own turns render without a header. `MessageBlock` makes the
+  header conditional on `contextLabel` rather than on authorship alone for
+  exactly this case; removing that exception leaves a member reading a brief
+  under their own name with nothing on screen to account for it.
 - **`message_created` is published before the harness launch.** Both land in the
   same Durable Object log, and a client resyncing from a sequence must not see the
   run start before the message that triggered it.
@@ -264,6 +274,48 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`REGIONALIZATION.md`](REGIONALIZATION.md).
 
 ## Changelog
+
+### 2026-08-12 — A started suggestion opens with the member's own turn, not Avalon's
+
+**What changed:** `createFromOpportunity` writes its opening message as the
+selecting member's turn (`openingAuthor: { type: "human", … }`) instead of the
+agent's. The text is unchanged — it is still the server-expanded
+`executionPrompt` — and it still carries the `suggested_work_expansion`
+structured content whose label reads "Expanded by Avalon from suggested work".
+`MessageBlock` now renders the identity header for an own turn when that turn has
+a context label, showing the label and the time but still not the reader's own
+name.
+
+**Why:** Selecting a suggestion *is* the request; the brief is that request
+written out. Attributing it to the agent made every one of these work streams
+open with Avalon instructing itself, and left the transcript with no human turn
+in it at all — which is not only a presentational claim. `retry` picks its
+trigger as the latest human message, so for a work stream started from a
+suggestion it found none and started the replay with a null trigger; the model
+projection admits the brief *only* as the trigger, so a retried run replayed
+against an empty transcript. Human authorship makes the brief the trigger a
+retry finds.
+
+**Considered and rejected:** *Leaving the author as the agent and special-casing
+`retry`* to fall back to the opening message — it fixes the retry and leaves the
+transcript still reading as Avalon talking to itself, and every future consumer
+that asks "what did the person ask for" needs the same special case. *Attributing
+it to the member and dropping the label* — the words are Avalon's, and a long
+brief appearing under your own name with nothing to explain it is worse than the
+agent attribution it replaces. *Sending the expanded brief to the client so the
+launcher could render the turn optimistically* — the payload behind four
+suggestions would carry four briefs of up to 20k characters to render one, and
+the empty seed is already invisible.
+
+**Consequences:** The model projection keys the brief on its structured content,
+ahead of the author dispatch and deliberately independent of it: an ordinary
+human turn is replayed as plain instruction, which would strip the caveat
+marking the connector evidence quoted inside the brief as evidence rather than
+orders. Anything that routes on authorship alone will now treat these briefs as
+member-written text — `recentAddressingMessages` and the naming context both do,
+which is the intent. Unchanged, and worth knowing: the brief is still admitted to
+the model only when it is the run's trigger, so a follow-up message starts a run
+that cannot see it.
 
 ### 2026-08-11 — The create path waits for its own work again; only the launch surface stays
 
