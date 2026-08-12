@@ -47,11 +47,6 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Read an attached resource",
     failed: "Could not read an attached resource",
   },
-  workstream_create_artifact: {
-    started: "Creating an artifact",
-    settled: "Created an artifact",
-    failed: "Could not create an artifact",
-  },
   memory_search: {
     started: "Searching memory",
     settled: "Searched memory",

@@ -86,7 +86,6 @@ function launchedWorkstreamDetail(
     viewers: [],
     resources: [],
     connections: [],
-    artifacts: [],
     backgroundTasks: [],
     automationRuns: [],
     openElicitations: [],

@@ -34,7 +34,6 @@ const participantParam = z.object({ id: IdSchema, userId: IdSchema });
 const resourceParam = z.object({ id: IdSchema, resourceId: IdSchema });
 const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const suggestionParam = z.object({ id: IdSchema, suggestionId: IdSchema });
-const artifactParam = z.object({ id: IdSchema, artifactId: IdSchema });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   before: z.string().datetime({ offset: true }).optional(),
@@ -228,15 +227,3 @@ workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) =>
 workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) =>
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id))),
 );
-workstreamRoutes.get("/:id/artifacts/:artifactId/content", zValidator("param", artifactParam), async (c) => {
-  const param = c.req.valid("param");
-  const artifact = await new WorkstreamService(c.env, getAuth(c)).artifactContent(param.id, param.artifactId);
-  return new Response(artifact.body, {
-    headers: {
-      "Cache-Control": "private, no-store",
-      "Content-Disposition": `attachment; filename="${artifact.fileName}"; filename*=UTF-8''${encodeURIComponent(artifact.fileName)}`,
-      "Content-Type": artifact.contentType,
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
-});

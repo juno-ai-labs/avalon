@@ -1344,7 +1344,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       message.realtimeOrder === undefined && message.sequenceNumber >= firstUnreadSequenceNumber);
   const displayedDetail: WorkstreamDetail = {
     ...detail,
-    artifacts: deferredContext.data?.artifacts ?? detail.artifacts,
     automationRuns: deferredContext.data?.automationRuns ?? detail.automationRuns,
     ...(deferredContext.data?.automationSubscription
       ? { automationSubscription: deferredContext.data.automationSubscription }
