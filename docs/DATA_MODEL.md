@@ -26,6 +26,7 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 - `message_mentions` stores validated person and connector spans.
 - `resources` holds metadata while `content_ref` points at the immutable, user-visible original in regional R2. Image attachments may also carry a `model_content_ref`, `model_mime_type`, SHA-256, and bounded model metadata for a signature-validated derivative used only for model input. Animated GIF metadata records dimensions, frame count, duration, approximate frame rate, loop behavior, and storyboard timestamps. `workstream_resources` owns attachment/watch behavior.
 - `elicitations` and `activity_suggestions` are first-class transcript blocks.
+- `artifacts` is retired and no code reads or writes it. The table is still present only because the Worker live during a migration is the previous one, which did read it; a later release drops it, and [the runbook](RUNBOOK.md#finishing-the-artifact-retirement) owns the remaining steps. Do not add a reader.
 
 ## Automations and execution
 
