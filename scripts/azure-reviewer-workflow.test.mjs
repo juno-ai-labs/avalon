@@ -48,6 +48,8 @@ test('Azure review workflow contains only the selected Cline reviewers', async (
 	assert.doesNotMatch(workflow, /actions\/checkout|pr-head/iu);
 	assert.doesNotMatch(workflow, /--auto-approve true|CLINE_COMMAND_PERMISSIONS/u);
 	assert.doesNotMatch(workflow, /^ {6}contents: write$/gmu);
+	assert.match(workflow, /^ {2}pull_request_target:$/mu);
+	assert.doesNotMatch(workflow, /^ {2}pull_request:$/mu);
 	assert.match(workflow, /^ {4}types: \[opened, reopened, ready_for_review\]$/mu);
 	assert.doesNotMatch(workflow, /synchronize/u);
 
@@ -68,6 +70,7 @@ test('reviewers prefetch bounded context and deny Cline all tools', async () => 
 	const review = jobs.get('review');
 	assert.ok(review, 'workflow must define the review matrix');
 
+	assert.match(review, /github\.event_name == 'pull_request_target'/u);
 	assert.match(review, /github\.event\.pull_request\.draft == false/u);
 	assert.match(review, /github\.event\.issue\.pull_request != null/u);
 	assert.match(review, /github\.event\.comment\.author_association/u);
@@ -92,8 +95,11 @@ test('reviewers prefetch bounded context and deny Cline all tools', async () => 
 	);
 	assert.match(review, /\$\{\{ vars\.AZURE_AI_API_ENDPOINT \}\}/u);
 	assert.match(review, /\*\.services\.ai\.azure\.com\|\*\.openai\.azure\.com/u);
+	assert.match(review, /project="\$\{path#\/api\/projects\/\}"/u);
+	assert.match(review, /""\|\*\/\*\|\*\\\?\*\|\*\\#\*\|\*\[\[:space:\]\]\*/u);
 	assert.match(review, /--modelid "\$\{\{ matrix\.model \}\}"/u);
 	assert.match(review, /^ {6}CLINE_NO_AUTO_UPDATE: "1"$/mu);
+	assert.match(review, /^ {8}run: npm install -g cline@3\.0\.47$/mu);
 
 	const stepNames = [...review.matchAll(/^ {6}- name: (.+)$/gmu)].map(
 		(match) => match[1],
