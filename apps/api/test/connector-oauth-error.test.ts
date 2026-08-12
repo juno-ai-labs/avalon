@@ -27,6 +27,47 @@ describe("connector OAuth callback failures", () => {
     });
   });
 
+  it("reports the provider's own error code, and refuses anything not shaped like one", () => {
+    // A Slack personal connection failed three times recording only
+    // `connector_code: "provider_error"` — the layer, not the fault. Slack had
+    // said `invalid_code`; the classifier dropped it.
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "Slack OAuth failed", { error: "invalid_code" }),
+    ).diagnostics).toMatchObject({ provider_error: "invalid_code" });
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "failed", { providerError: "bad_redirect_uri" }),
+    ).diagnostics).toMatchObject({ provider_error: "bad_redirect_uri" });
+
+    // Never a credential, an address, or a name: the shape is the whole guard.
+    for (const unsafe of [
+      "xoxp-10164519659008-11799907517957-secret",
+      "adam@juno-labs.com",
+      "Something went wrong",
+      "a".repeat(80),
+      "invalid.code",
+    ]) {
+      expect(classifyConnectorOAuthCallbackFailure(
+        new ConnectorError("provider_error", "failed", { error: unsafe }),
+      ).diagnostics).not.toHaveProperty("provider_error");
+    }
+  });
+
+  it("separates a malformed provider response from a provider refusal", () => {
+    // Both arrive as `provider_error` and call for opposite responses: one is
+    // Avalon's bug, the other a spent code or a misconfiguration.
+    const flattened = z.object({ team: z.object({ id: z.string() }) })
+      .safeParse({ ok: true });
+    expect(flattened.success).toBe(false);
+    if (flattened.success) return;
+
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "Slack OAuth failed", flattened.error.flatten()),
+    ).diagnostics).toMatchObject({ response_invalid: true });
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "Slack OAuth failed", { error: "invalid_code" }),
+    ).diagnostics).not.toHaveProperty("response_invalid");
+  });
+
   it("classifies schema, API, and unknown failures without their messages", () => {
     const schemaError = z.object({ token: z.string() }).safeParse({ token: 1 });
     expect(schemaError.success).toBe(false);

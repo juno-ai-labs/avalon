@@ -206,6 +206,49 @@ describe("Slack account linking", () => {
     ).get()).toMatchObject({ kind: "interaction", status: "queued" });
   });
 
+  it("links the identity from a personal Slack connection, without a challenge", async () => {
+    // The other half of "one button that does both". Slack completed the OAuth
+    // and named the user, which is a stronger proof of who this is than the
+    // challenge ever was, so connecting personal Slack links the identity by
+    // itself — whichever half a member reaches first, both end up done.
+    const database = await seededDatabase();
+    stubSlack();
+    const service = new SlackAgentService(environment(database));
+
+    await expect(service.establishIdentityLinkFromPersonalConnection({
+      workspaceId,
+      userId,
+      teamId: "T123",
+      slackUserId: "U456",
+    })).resolves.toBe(true);
+
+    expect(database.prepare(
+      "SELECT user_id, slack_user_id, status FROM slack_user_links WHERE slack_user_id = 'U456'",
+    ).get()).toMatchObject({ user_id: userId, slack_user_id: "U456", status: "active" });
+  });
+
+  it("leaves a personal connection standing when the Slack identity is someone else's", async () => {
+    // Not this operation's business to resolve. The personal connection is
+    // valid and committed; only the link cannot be made, and failing the OAuth
+    // over it would discard a credential the member just authorized.
+    const database = await seededDatabase();
+    stubSlack();
+    const service = new SlackAgentService(environment(database));
+    await service.establishIdentityLinkFromPersonalConnection({
+      workspaceId,
+      userId,
+      teamId: "T123",
+      slackUserId: "U456",
+    });
+
+    await expect(service.establishIdentityLinkFromPersonalConnection({
+      workspaceId,
+      userId: "00000000-0000-7000-8000-00000000000f",
+      teamId: "T123",
+      slackUserId: "U456",
+    })).resolves.toBe(false);
+  });
+
   it("mints a link even when the row believes the installation is broken", async () => {
     // Reaching this click means Slack signed the payload and the bot token is
     // opening a view, so the installation demonstrably works. Refusing on a

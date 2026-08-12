@@ -910,6 +910,34 @@ export class ConnectionService {
         });
       }
     }
+    if (provider === "slack" && stateData.scope === "personal") {
+      // Connecting personal Slack *is* linking the identity — Slack completed
+      // the OAuth and named the user, which is a stronger proof than the link
+      // challenge. Doing it here is what lets one button accomplish both,
+      // instead of asking a member to run two near-identical ceremonies whose
+      // buttons say the same word.
+      const slackUserId = stringField(credentials, "slackUserId") ?? providerAccountId.split(":")[1] ?? null;
+      const teamId = stringField(credentials, "teamId") ?? providerAccountId.split(":")[0] ?? null;
+      if (slackUserId && teamId) {
+        try {
+          await new SlackAgentService(this.env).establishIdentityLinkFromPersonalConnection({
+            workspaceId: String(row.workspace_id),
+            userId: String(row.user_id),
+            teamId,
+            slackUserId,
+          });
+        } catch (error) {
+          // The personal connection is committed and usable. A link that could
+          // not be recorded is a smaller thing than an OAuth reporting failure
+          // after the credential was stored, so it is logged and the member is
+          // left connected.
+          logWarn(this.env, "slack_identity_link_from_personal_connection_failed", {
+            connection_id: connectionId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+      }
+    }
     await this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
