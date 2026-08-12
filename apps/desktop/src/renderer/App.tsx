@@ -8,6 +8,7 @@ import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
+import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { AutomationOverviewScreen } from './screens/automation-overview';
 import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NoteDetailScreen } from './screens/note-detail';
@@ -171,18 +172,20 @@ function WorkspaceApp(): React.JSX.Element {
 
   return (
     <HashRouter>
-      <AppShell workspace={workspace.data}>
-        <Routes>
-          <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
-          <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
-          <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
-          <Route element={<NoteDetailScreen />} path="/notes/:id" />
-          <Route element={<NewAutomationScreen workspace={workspace.data} />} path="/automations/new" />
-          <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
-          <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
-          <Route element={<NotFoundScreen />} path="*" />
-        </Routes>
-      </AppShell>
+      <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
+        <AppShell workspace={workspace.data}>
+          <Routes>
+            <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
+            <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
+            <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+            <Route element={<NoteDetailScreen />} path="/notes/:id" />
+            <Route element={<NewAutomationScreen workspace={workspace.data} />} path="/automations/new" />
+            <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
+            <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
+            <Route element={<NotFoundScreen />} path="*" />
+          </Routes>
+        </AppShell>
+      </WorkstreamSocketResumeProvider>
     </HashRouter>
   );
 }
