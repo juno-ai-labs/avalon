@@ -31,6 +31,7 @@ export async function ensureFreshConnectorCredentials(
   minimumValidityMs = 60_000,
 ): Promise<void> {
   if (!adapter.refreshCredentials || !needsRefresh(connection.credentials, minimumValidityMs)) return;
+  let waited = 0;
   while (true) {
     signal.throwIfAborted();
     const leaseId = crypto.randomUUID();
@@ -55,7 +56,17 @@ export async function ensureFreshConnectorCredentials(
         connection.credentials = current;
         return;
       }
-      await abortableDelay(100, signal);
+      // Bounded and backed off, matching `rotateConnectorCredentials`. A flat
+      // 100ms poll re-reads D1 ~300 times under the default tool deadline, and
+      // a lease a crashed sibling left behind holds it there for the full
+      // two-minute expiry. That was survivable while only healthy rows reached
+      // here; admitting every non-disabled row puts a much larger population on
+      // this path.
+      waited += 1;
+      if (waited > ROTATION_WAIT_ATTEMPTS) {
+        throw new ConnectorError("provider_error", "Connector credentials are still being refreshed by another request");
+      }
+      await abortableDelay(Math.min(100 * 2 ** (waited - 1), 2_000), signal);
       continue;
     }
 
@@ -76,15 +87,27 @@ export async function ensureFreshConnectorCredentials(
         connection.id,
       );
       const persisted = await env.DB.prepare(
-        // A provider that just honoured the refresh token has said the grant
-        // is alive, which outranks whatever this row believed. Healing here is
-        // what stops a stale `needs_reconnect` outliving the fault that set it
-        // and asking a member to reconnect something that works. `disabled` is
-        // excluded above because it is a person's decision, not a belief.
+        // Writes the credential and nothing else. An earlier draft also healed
+        // the row to `healthy` here, on the reasoning that a provider honouring
+        // the refresh token has said the grant is alive. It does say that — and
+        // grant *liveness* is not grant *sufficiency*. A token exchange
+        // succeeds no matter which scopes the installation holds, so healing
+        // here would have cleared the incident's own `missing_scopes:
+        // reactions:read` verdict within one token lifetime, dropped the
+        // reconnect badge, and left a connection reporting healthy while every
+        // scoped call kept failing — a stricter version of the erasure this
+        // work exists to end. Worse, the next failure re-marks it and the next
+        // rotation heals it again, so the row and the badge oscillate.
+        //
+        // Healing belongs to the paths that get an answer covering the whole
+        // question: reauthorization, which re-grants the scopes, and an
+        // explicit connection test, which calls the provider. Both already do
+        // it. Nothing is lost by not healing here — the connection *works*
+        // while marked now, which was the damage.
         `UPDATE connector_connections SET
            encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
            credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL,
-           status = 'healthy', error_json = NULL, updated_at = ?
+           updated_at = ?
          WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
            AND credential_refresh_lease_id = ?
          RETURNING id`,
@@ -214,15 +237,27 @@ export async function rotateConnectorCredentials(
         connection.id,
       );
       const persisted = await env.DB.prepare(
-        // A provider that just honoured the refresh token has said the grant
-        // is alive, which outranks whatever this row believed. Healing here is
-        // what stops a stale `needs_reconnect` outliving the fault that set it
-        // and asking a member to reconnect something that works. `disabled` is
-        // excluded above because it is a person's decision, not a belief.
+        // Writes the credential and nothing else. An earlier draft also healed
+        // the row to `healthy` here, on the reasoning that a provider honouring
+        // the refresh token has said the grant is alive. It does say that — and
+        // grant *liveness* is not grant *sufficiency*. A token exchange
+        // succeeds no matter which scopes the installation holds, so healing
+        // here would have cleared the incident's own `missing_scopes:
+        // reactions:read` verdict within one token lifetime, dropped the
+        // reconnect badge, and left a connection reporting healthy while every
+        // scoped call kept failing — a stricter version of the erasure this
+        // work exists to end. Worse, the next failure re-marks it and the next
+        // rotation heals it again, so the row and the badge oscillate.
+        //
+        // Healing belongs to the paths that get an answer covering the whole
+        // question: reauthorization, which re-grants the scopes, and an
+        // explicit connection test, which calls the provider. Both already do
+        // it. Nothing is lost by not healing here — the connection *works*
+        // while marked now, which was the damage.
         `UPDATE connector_connections SET
            encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
            credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL,
-           status = 'healthy', error_json = NULL, updated_at = ?
+           updated_at = ?
          WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
            AND credential_refresh_lease_id = ?
          RETURNING id`,

@@ -26,8 +26,10 @@ Avalon has two independent Slack authorization paths:
   and the fixed workspace model-tool bundle. Avalon checks that the installation
   still has the complete set.
 - **Personal Slack connection:** an individual connects Slack to Avalon for
-  user-attributed tools. These scopes are optional and requested incrementally
-  for the capabilities the user enables. A personal token does not necessarily
+  user-attributed tools. These scopes are optional. The **Connect for me** button
+  and the Slack account link both request the full personal set, so a member who
+  connects from either place grants the same capabilities; only a connection made
+  before that convergence carries a narrower grant. A personal token does not necessarily
   contain every supported scope below.
 
 Workspace tools never inherit a member's personal Slack authority. Personal
@@ -127,8 +129,10 @@ slack.notifications.write
 
 Existing workspace installations must reconnect after this expanded permission
 set is deployed. Until Slack returns all expected bot scopes, Avalon reports the
-installation as reconnect-required instead of offering partially authorized
-tools.
+installation as reconnect-required. It still offers the tools: the report is a
+diagnosis, not a gate, and a call that needs a missing scope fails on Slack's
+answer rather than on Avalon's record of it — see [Stored status is a belief, not
+a gate](CONNECTORS.md#stored-status-is-a-belief-not-a-gate).
 
 ## Personal user scopes
 

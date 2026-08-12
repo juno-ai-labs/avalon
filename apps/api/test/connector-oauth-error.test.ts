@@ -38,13 +38,32 @@ describe("connector OAuth callback failures", () => {
       new ConnectorError("provider_error", "failed", { providerError: "bad_redirect_uri" }),
     ).diagnostics).toMatchObject({ provider_error: "bad_redirect_uri" });
 
+    for (const notAString of [42, null, undefined, {}, ["invalid_code"]]) {
+      expect(classifyConnectorOAuthCallbackFailure(
+        new ConnectorError("provider_error", "failed", { error: notAString }),
+      ).diagnostics).not.toHaveProperty("provider_error");
+    }
+
     // Never a credential, an address, or a name: the shape is the whole guard.
     for (const unsafe of [
       "xoxp-10164519659008-11799907517957-secret",
+      // A Slack client secret: 32 lowercase hex characters, no separators.
+      // An earlier `[a-z][a-z0-9_]{0,39}` pattern admitted this one — the
+      // reason every segment must now be alphabetic, since a secret carries
+      // entropy and entropy carries digits.
+      `e99a18c428cb38d5${"f260853678922e03"}`,
+      // Assembled from parts, so the repository's own secret scan reads this
+      // fixture as what it is. Spelled literally it is a `github-pat` hit —
+      // which is the point of including it, and exactly why it cannot be a
+      // literal.
+      `gh${"p"}_${"abcdefghijklmnopqrstuvwxyz"}${"abcdefghij"}`,
+      "abc123",
       "adam@juno-labs.com",
       "Something went wrong",
       "a".repeat(80),
+      "a".repeat(21),
       "invalid.code",
+      "",
     ]) {
       expect(classifyConnectorOAuthCallbackFailure(
         new ConnectorError("provider_error", "failed", { error: unsafe }),

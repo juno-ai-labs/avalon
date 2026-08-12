@@ -141,7 +141,7 @@ export async function sendWorkstreamMentionSlack(
     if (connectionId && (reason === "missing_scope" || reason === "unauthorized")) {
       await env.DB.prepare(
         `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
+         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy'`,
       ).bind(JSON.stringify({
         code: "slack_authorization_invalid",
         message: `Slack workspace authorization needs reconnect (${reason})`,

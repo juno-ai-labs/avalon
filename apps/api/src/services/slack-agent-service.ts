@@ -311,12 +311,28 @@ export class SlackAgentService {
    * reports exactly once is not redelivered, so the message keeps its bare URL
    * permanently.
    *
-   * `c.updated_at > j.updated_at` is the whole condition — the connection has
-   * been written since this job last failed, which a reauthorization always
-   * does. It is also what bounds the loop: a re-driven job that fails again
-   * stamps itself newer than the connection and is not selected again until the
-   * next reauthorization. No flag, no second state to keep in step.
+   * Two conditions, and both are load-bearing. `c.status = 'healthy'` is the
+   * reauthorization signal: only the OAuth commit and an explicit connection
+   * test return a marked row to healthy, and every marking write requires
+   * `status = 'healthy'`, so a row that is still broken cannot be written back
+   * into the selection set by its own failures. `c.updated_at > j.updated_at`
+   * then narrows it to jobs that failed *before* that recovery.
+   *
+   * Together they terminate by construction. A re-driven job that fails again
+   * either marks the row — which removes it from `healthy` and empties the set
+   * — or leaves the row alone, in which case the job's own newer `updated_at`
+   * excludes it. An earlier draft selected on `updated_at` alone against any
+   * non-disabled row, which does not terminate: every failure bumped the
+   * connection's `updated_at` through the marking write, so N stranded jobs
+   * re-drove each other forever, on a signal that meant "something failed
+   * again" rather than "someone reconnected".
+   *
+   * Bounded by age as well. Replaying a `link_shared` from three weeks ago
+   * unfurls a message nobody is looking at, and Slack may refuse it outright;
+   * a day is past the length of the outage this was written for.
    */
+  private static readonly REDRIVE_MAX_AGE_MS = 24 * 60 * 60_000;
+
   private async redriveReauthorizedIngress(limit: number): Promise<void> {
     const redriven = await this.env.DB.prepare(
       `UPDATE slack_ingress_jobs SET status = 'queued', attempt_count = 0,
@@ -326,11 +342,17 @@ export class SlackAgentService {
          JOIN connector_connections c ON c.id = j.connection_id
          WHERE j.payload_json IS NOT NULL AND j.status = 'failed'
            AND j.attempt_count >= 20 AND j.error_code IN (${SLACK_AUTHORIZATION_ERROR_CODES.map(() => "?").join(", ")})
-           AND c.status <> 'disabled' AND c.updated_at > j.updated_at
+           AND j.received_at > ?
+           AND c.status = 'healthy' AND c.updated_at > j.updated_at
          ORDER BY j.received_at ASC LIMIT ?
        )
        RETURNING id, workspace_id`,
-    ).bind(nowIso(), ...SLACK_AUTHORIZATION_ERROR_CODES, limit).all<{ id: string; workspace_id: string }>();
+    ).bind(
+      nowIso(),
+      ...SLACK_AUTHORIZATION_ERROR_CODES,
+      new Date(Date.now() - SlackAgentService.REDRIVE_MAX_AGE_MS).toISOString(),
+      limit,
+    ).all<{ id: string; workspace_id: string }>();
     for (const job of redriven.results ?? []) {
       try {
         await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
@@ -769,76 +791,30 @@ export class SlackAgentService {
   }
 
   /**
-   * Record that a Slack identity belongs to an Avalon member, from a proof that
-   * is not a link challenge.
+   * Deliberately absent: a personal Slack connection does **not** establish the
+   * identity link.
    *
-   * A personal Slack connection is a stronger proof than the challenge ever
-   * was: Slack itself completed the OAuth and named the user, where the
-   * challenge only shows the same person held a token minted seconds earlier.
-   * So a member who connects their personal Slack is linked by that act, rather
-   * than being asked to perform a second, near-identical ceremony whose button
-   * says the same word.
+   * It was written that way — Slack ran the OAuth and named the user, which
+   * reads like a stronger proof than a challenge Avalon minted — and it is
+   * unsafe, because the connector OAuth callback is mounted before the auth
+   * middleware (`app.ts`) and completes from its `state` alone. Nothing proves
+   * the browser redeeming it belongs to the Avalon user in the `oauth_states`
+   * row. A member can therefore start a personal flow, send the resulting
+   * `slack.com` consent URL to a colleague, and have that colleague's genuine
+   * click write `slack_user_links(workspace, connection, *sender*, *colleague's
+   * Slack id*) `— after which the colleague's Slack messages resolve to the
+   * sender's Avalon identity, and `assignWorkspaceSessions`'s `explicit_link`
+   * mode rewrites work-stream ownership to match.
    *
-   * Idempotent, and safe to call when the link already exists — the two routes
-   * to it are expected to overlap, and neither is required to run first.
-   * Returns `false` when the identity belongs to a different Avalon member,
-   * which is not this operation's business to resolve: the personal connection
-   * itself is still valid and the caller must not fail over it.
+   * The link challenge is the only artifact that carries a Slack-signed
+   * statement of *who clicked*, so it stays the only thing that can mint a
+   * link. One click still accomplishes both halves — the desktop continues from
+   * the redeemed challenge into the personal authorization — but only in that
+   * direction, because only that direction is authenticated at both ends.
+   * Reinstating the reverse needs the connector OAuth start bound to its
+   * initiating client the way `AuthService.beginIdentity` binds a desktop
+   * attempt, which is a change to a pre-existing gap rather than to this one.
    */
-  async establishIdentityLinkFromPersonalConnection(input: {
-    workspaceId: string;
-    userId: string;
-    teamId: string;
-    slackUserId: string;
-  }): Promise<boolean> {
-    const workspaceConnection = await this.env.DB.prepare(
-      `SELECT id FROM connector_connections
-       WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'workspace'
-         AND provider_account_id = ? AND status <> 'disabled'
-       ORDER BY created_at LIMIT 1`,
-    ).bind(input.workspaceId, input.teamId).first<{ id: string }>();
-    // No installation for this team means there is nothing to link against:
-    // the link is scoped to the workspace connection, and a personal Slack
-    // connection is legitimate without one.
-    if (!workspaceConnection) return false;
-    const at = nowIso();
-    try {
-      await this.env.DB.prepare(
-        `INSERT INTO slack_user_links
-         (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
-         ON CONFLICT(workspace_id, connection_id, user_id) DO UPDATE SET
-           slack_team_id = excluded.slack_team_id,
-           slack_user_id = excluded.slack_user_id,
-           status = 'active',
-           updated_at = excluded.updated_at`,
-      ).bind(
-        newId(),
-        input.workspaceId,
-        workspaceConnection.id,
-        input.userId,
-        input.teamId,
-        input.slackUserId,
-        at,
-        at,
-      ).run();
-    } catch (error) {
-      // The other unique key is `(connection_id, slack_user_id)`: this Slack
-      // person is already some other Avalon member. Their personal connection
-      // stands; only the link does not.
-      if (error instanceof Error && /(?:UNIQUE|constraint)/iu.test(error.message)) return false;
-      throw error;
-    }
-    await this.assignWorkspaceSessions(
-      workspaceConnection.id,
-      input.teamId,
-      input.slackUserId,
-      input.userId,
-      "explicit_link",
-    );
-    await this.publishHome(input.teamId, input.slackUserId);
-    return true;
-  }
 
   async linkUser(auth: AuthContext, token: string): Promise<{ linked: true; teamId: string; slackUserId: string }> {
     const tokenHash = await sha256(token);
@@ -859,7 +835,7 @@ export class SlackAgentService {
          JOIN connector_connections cc ON cc.id = c.connection_id
          WHERE c.token_hash = ? AND c.consumed_at = ? AND c.consumed_by_user_id = ?
            AND cc.workspace_id = ? AND cc.connector_type = 'slack'
-           AND cc.scope = 'workspace'
+           AND cc.scope = 'workspace' AND cc.status <> 'disabled'
          ON CONFLICT(workspace_id, connection_id, user_id) DO UPDATE SET
            slack_team_id = excluded.slack_team_id,
            slack_user_id = excluded.slack_user_id,
@@ -868,7 +844,11 @@ export class SlackAgentService {
       ).bind(newId(), auth.userId, at, at, tokenHash, at, auth.userId, auth.workspaceId),
       ]);
     } catch (error) {
-      if (error instanceof Error && /(?:UNIQUE|constraint)/iu.test(error.message)) {
+      // Narrowly the unique violation. The looser `/constraint/` test this
+      // replaced also matched FOREIGN KEY and NOT NULL failures, reporting a
+      // genuine bug to the member as "already connected to another Avalon
+      // user" — advice that can never resolve.
+      if (isSlackUniqueConstraintError(error)) {
         throw new ApiError(409, "slack_identity_already_linked", "This Slack identity is already connected to another Avalon user");
       }
       throw error;
@@ -1092,13 +1072,20 @@ export class SlackAgentService {
     // statuses this API emits, and the honest 410 is not worth widening it for
     // when the distinction clients act on is the code.
     if (String(challenge.expires_at) <= nowIso()) throw new ApiError(404, "slack_link_expired", "This Slack connection link has expired; click Connect Avalon in Slack to get a new one");
-    // Deliberately no status check. Linking an identity is a row in
-    // `slack_user_links`; it neither spends the installation's credential nor
-    // needs it to be sound, and refusing on a stored belief stranded a member
+    // A stale belief does not refuse this — linking an identity is a row in
+    // `slack_user_links`, it neither spends the installation's credential nor
+    // needs it to be sound, and refusing on `needs_reconnect` stranded a member
     // who had a valid challenge in hand behind an admin they had to go find.
-    // `disabled` is not special-cased either: the challenge itself is the
-    // authority, it lives fifteen minutes, and it was minted by a click Slack
-    // signed.
+    //
+    // `disabled` is different, and an earlier draft of this wrongly waived it
+    // too. It is a person's decision rather than an observation, and honouring
+    // it here is not merely consistency: disabling clears the credentials and
+    // drops the row from `connectionForTeam`, so redeeming would commit the
+    // identity link and then fail publishing App Home — leaving the member
+    // looking at an error for a mutation that had already landed.
+    if (challenge.connection_status === "disabled") {
+      throw new ApiError(409, "slack_installation_disabled", "This Slack workspace's Avalon installation has been disabled; an Avalon workspace owner or admin can reconnect it under Settings → Connections");
+    }
     return challenge;
   }
 
@@ -1421,8 +1408,12 @@ export class SlackAgentService {
     if (type === "app_uninstalled") {
       const connection = await this.connectionForTeam(teamId);
       await this.env.DB.prepare(
+        // No `error_json`, so nothing is overwritten and any non-disabled row
+        // may be marked — Slack saying the app is gone is a fact, not a
+        // diagnosis. The `disabled` guard stops an uninstall resurrecting a
+        // connection somebody had turned off.
         `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = ?
-         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
+         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
       ).bind(nowIso(), connection.id).run();
       await this.deactivateTeamRoute(connection);
       return;
@@ -1435,14 +1426,15 @@ export class SlackAgentService {
         const connection = await this.connectionForTeam(teamId);
         await this.env.DB.prepare(
           `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = ?
-           WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
+           WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
         ).bind(nowIso(), connection.id).run();
         await this.deactivateTeamRoute(connection);
       }
       for (const userId of oauthUsers) {
         await this.env.DB.prepare(
           `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = ?
-           WHERE connector_type = 'slack' AND scope = 'personal' AND provider_account_id = ?`,
+           WHERE connector_type = 'slack' AND scope = 'personal' AND provider_account_id = ?
+             AND status <> 'disabled'`,
         ).bind(nowIso(), `${teamId}:${userId}`).run();
       }
       return;
@@ -2278,7 +2270,7 @@ export class SlackAgentService {
     await this.env.DB.prepare(
       `UPDATE connector_connections
        SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-       WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
+       WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy'`,
     ).bind(JSON.stringify({
       code: "slack_bot_scope_missing",
       message: `Slack workspace authorization needs reconnect (${reason})`,
@@ -3187,6 +3179,11 @@ function publicChannelSyncFields(summary: SlackPublicChannelSyncResult): Record<
   };
 }
 
+/** The unique violation alone — never a FOREIGN KEY, NOT NULL, or CHECK failure. */
+function isSlackUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Error && /unique constraint failed|constraint_unique/iu.test(error.message);
+}
+
 function slackErrorReason(error: unknown): string {
   if (error instanceof ConnectorError) {
     const details = error.details;
@@ -3587,6 +3584,7 @@ function recordableUnfurlLinks(
 
 export const __slackAgentTesting = {
   PERSONAL_AUTOMATIONS_FOR_HOME_SQL,
+  SLACK_AUTHORIZATION_ERROR_CODES,
   claimWorkspaceSession,
   isDirectSlackMessageEvent,
   isSlackRetryPrompt,
