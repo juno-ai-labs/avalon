@@ -45,6 +45,42 @@ describe("work-stream room snapshot", () => {
     });
   });
 
+  it("omits pending Suggested context from the room snapshot while the surface is paused", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, created_at, updated_at)
+      VALUES
+        ('00000000-0000-7000-8000-0000000000d1', '${workspaceId}', 'github', 'workspace', NULL,
+         'GitHub', '[]', 'plugin_github', 'healthy', '${at}', '${at}');
+      INSERT INTO activities
+        (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
+         event_type, occurred_at, received_at, title, summary, dedupe_key)
+      VALUES
+        ('00000000-0000-7000-8000-0000000000d2', '${workspaceId}',
+         '00000000-0000-7000-8000-0000000000d1', 'workspace', 'github', 'push-1',
+         'github.push', '${at}', '${at}', 'A push landed', 'Review the launch change', 'github:push-1');
+      INSERT INTO activity_suggestions
+        (id, workspace_id, activity_id, workstream_id, confidence, reason, status, created_at)
+      VALUES
+        ('00000000-0000-7000-8000-0000000000d3', '${workspaceId}',
+         '00000000-0000-7000-8000-0000000000d2', '${workstreamId}', 0.9,
+         'The work stream tracks this repository.', 'pending', '${at}');
+    `);
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
+
+    const snapshot = await loadWorkstreamRoomSnapshot(env, {
+      workspaceId,
+      workstreamId,
+      viewerUserId: readerId,
+      viewers: [],
+    });
+
+    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_suggestions").get()).toEqual({ count: 1 });
+    expect(snapshot.suggestions).toEqual([]);
+  });
+
   // A snapshot replaces the client's whole detail rather than merging into it,
   // so a field the snapshot omits is a field the client loses until its next
   // REST read. Naming only the run's id cost a work stream its work timer for
