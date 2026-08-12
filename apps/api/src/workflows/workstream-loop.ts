@@ -210,7 +210,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         "run-authorized-bind-loop",
         {
           retries: { limit: 1, delay: "1 second", backoff: "constant" },
-          timeout: workstreamWorkflowStepTimeout(hyperSightRun),
+          timeout: workstreamWorkflowStepTimeout(),
         },
         async () => HarnessWorkflowOutcomeSchema.parse(await runWorkstreamHarness(
           this.env,
