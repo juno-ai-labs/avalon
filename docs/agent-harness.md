@@ -415,9 +415,10 @@ reason for any of it.
 24-tool, four-minute, and 500-cent ceilings or a five-minute Workflow timeout.
 It uses the same 1,000-iteration root policy and one-year Workflow deadline as
 an ordinary work stream. After the harness has made its terminal product and
-usage metadata durable, the API emits one `harness_run_finished` structured log
-and one versioned Analytics Engine datapoint containing only operational
-dimensions and numeric run totals.
+usage metadata durable, the Workflow rechecks cancellation and commits the
+effective terminal status before the API emits one `harness_run_finished`
+structured log and one versioned Analytics Engine datapoint containing only
+operational dimensions and numeric run totals.
 
 **Why:** The earlier HyperSight bounds were not backed by the service's actual
 latency, tool-call, token, and cost distributions. They could cut off useful
@@ -438,7 +439,9 @@ point per completed tool execution rather than mixing event shapes here.
 1,000 routed model attempts is its final loop guard. Per-tool and provider
 watchdogs, read-only enforcement, cancellation, lease fencing, and
 ambiguous-write handling still apply. Analytics writes are non-blocking,
-best-effort, and never change the durable outcome. The positional schema and
+best-effort, and never change the durable outcome. Failed/stopped Bind paths
+mark detailed turn/model/tool timing unavailable instead of reporting their
+fallback zeros as measurements. The positional schema and
 sampling-aware queries are documented in
 [`runbook.md`](runbook.md#root-run-analytics).
 

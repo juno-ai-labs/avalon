@@ -1,4 +1,5 @@
 import type { HarnessOutcome } from "@avalon/agent-harness";
+import { z } from "zod";
 
 import type { Env } from "../env";
 import { logStructuredEvent } from "./logger";
@@ -27,8 +28,26 @@ import { logStructuredEvent } from "./logger";
  * double8 cost_cents
  * double9 iterations (includes routed retries)
  * double10 output_tokens_per_second
+ * double11 detailed_timing_available (1 when turns/model/tool timing is exact)
  */
 const RUN_ANALYTICS_SCHEMA_VERSION = "harness_run_v1";
+
+export const HarnessRunMetricsSchema = z.object({
+  model: z.string().nullable(),
+  durationMs: z.number(),
+  turns: z.number(),
+  iterations: z.number(),
+  toolCalls: z.number(),
+  modelTimeMs: z.number(),
+  toolTimeMs: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  costCents: z.number(),
+  outputTokensPerSecond: z.number(),
+  detailedTimingAvailable: z.boolean(),
+});
+
+export type HarnessRunMetrics = z.infer<typeof HarnessRunMetricsSchema>;
 
 interface HarnessRunObservation {
   workspaceId: string;
@@ -37,32 +56,63 @@ interface HarnessRunObservation {
   source: "workstream" | "hypersight";
   status: "completed" | "needs_input" | "failed" | "stopped";
   failureCode?: string;
-  durationMs: number;
-  outcome: HarnessOutcome;
+  metrics: HarnessRunMetrics;
+}
+
+export function summarizeHarnessRun(outcome: HarnessOutcome, durationMs: number): HarnessRunMetrics {
+  // Bind returns exact runToolLoop timing on its normal result paths. A thrown
+  // failed/stopped path retains counters in ToolLoopState but currently has no
+  // result.stats object, so outcome() fills the detailed timing fields with
+  // zero. Mark those values unavailable instead of presenting them as measured
+  // zeros. End-to-end duration, routed attempts, calls, tokens, and cost still
+  // come from independently accumulated state and remain valid.
+  const detailedTimingAvailable = outcome.status === "completed" || outcome.status === "needs_input";
+  return {
+    model: outcome.model,
+    durationMs: finiteNonNegative(durationMs),
+    turns: detailedTimingAvailable ? finiteNonNegative(outcome.stats.turns) : 0,
+    iterations: finiteNonNegative(outcome.iterations),
+    toolCalls: finiteNonNegative(outcome.stats.toolCalls),
+    modelTimeMs: detailedTimingAvailable ? finiteNonNegative(outcome.stats.modelTimeMs) : 0,
+    toolTimeMs: detailedTimingAvailable ? finiteNonNegative(outcome.stats.toolTimeMs) : 0,
+    inputTokens: finiteNonNegative(outcome.stats.inputTokens),
+    outputTokens: finiteNonNegative(outcome.stats.outputTokens),
+    costCents: finiteNonNegative(outcome.usage.cost_cents ?? 0),
+    outputTokensPerSecond: detailedTimingAvailable
+      ? finiteNonNegative(outcome.stats.outputTokensPerSecond ?? 0)
+      : 0,
+    detailedTimingAvailable,
+  };
 }
 
 export function recordHarnessRunObservation(
   env: Pick<Env, "RUN_ANALYTICS" | "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA">,
   observation: HarnessRunObservation,
 ): void {
+  const { metrics } = observation;
   const fields = {
     request_id: observation.harnessRunId,
     workspace_id: observation.workspaceId,
     workstream_id: observation.workstreamId,
     source: observation.source,
     status: observation.status,
-    model: observation.outcome.model,
+    model: metrics.model,
     ...(observation.failureCode ? { code: observation.failureCode } : {}),
-    duration_ms: finiteNonNegative(observation.durationMs),
-    turns: finiteNonNegative(observation.outcome.stats.turns),
-    iterations: finiteNonNegative(observation.outcome.iterations),
-    tool_calls: finiteNonNegative(observation.outcome.stats.toolCalls),
-    model_time_ms: finiteNonNegative(observation.outcome.stats.modelTimeMs),
-    tool_time_ms: finiteNonNegative(observation.outcome.stats.toolTimeMs),
-    input_tokens: finiteNonNegative(observation.outcome.stats.inputTokens),
-    output_tokens: finiteNonNegative(observation.outcome.stats.outputTokens),
-    cost_cents: finiteNonNegative(observation.outcome.usage.cost_cents ?? 0),
-    output_tokens_per_second: finiteNonNegative(observation.outcome.stats.outputTokensPerSecond ?? 0),
+    duration_ms: metrics.durationMs,
+    iterations: metrics.iterations,
+    tool_calls: metrics.toolCalls,
+    input_tokens: metrics.inputTokens,
+    output_tokens: metrics.outputTokens,
+    cost_cents: metrics.costCents,
+    detailed_timing_available: metrics.detailedTimingAvailable,
+    ...(metrics.detailedTimingAvailable
+      ? {
+          turns: metrics.turns,
+          model_time_ms: metrics.modelTimeMs,
+          tool_time_ms: metrics.toolTimeMs,
+          output_tokens_per_second: metrics.outputTokensPerSecond,
+        }
+      : {}),
   };
 
   // Workers Logs is the correlated diagnostic row; it reaches the existing
@@ -83,7 +133,7 @@ export function recordHarnessRunObservation(
         RUN_ANALYTICS_SCHEMA_VERSION,
         observation.source,
         observation.status,
-        observation.outcome.model ?? "unknown",
+        metrics.model ?? "unknown",
         observation.failureCode ?? "none",
         env.AVALON_REGION,
         env.APP_VERSION ?? "unknown",
@@ -91,15 +141,16 @@ export function recordHarnessRunObservation(
       ],
       doubles: [
         fields.duration_ms,
-        fields.turns,
+        metrics.turns,
         fields.tool_calls,
-        fields.model_time_ms,
-        fields.tool_time_ms,
+        metrics.modelTimeMs,
+        metrics.toolTimeMs,
         fields.input_tokens,
         fields.output_tokens,
         fields.cost_cents,
         fields.iterations,
-        fields.output_tokens_per_second,
+        metrics.outputTokensPerSecond,
+        metrics.detailedTimingAvailable ? 1 : 0,
       ],
     });
   } catch (error) {
