@@ -12,8 +12,6 @@ import {
   WandSparkles,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { CONTROL_TOWER_REFRESH_SECONDS, type UpdateNoteRequest } from '@avalon/contracts';
 import type {
   DesktopMediaPermissionStatus,
@@ -21,6 +19,7 @@ import type {
   MeetingAudioPermissionKind,
 } from '../../common/desktop';
 import { Button, IconButton, InlineError, Modal } from '../components/primitives';
+import { MarkdownBody } from '../components/workstream-blocks';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
@@ -786,9 +785,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
               {generatedAt && <p className="meeting-updated-at">Updated {new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(generatedAt))}</p>}
               {notesError && <InlineError>{notesError}</InlineError>}
               {notes ? (
-                <div className="meeting-generated-notes">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{notes}</ReactMarkdown>
-                </div>
+                <MarkdownBody>{notes}</MarkdownBody>
               ) : (
                 <div className="meeting-empty-state">
                   <WandSparkles aria-hidden="true" size={24} />
