@@ -139,26 +139,28 @@ slack.notifications.write
 ### Personal user scopes
 
 Personal scopes preserve the connected user's own Slack visibility and attribution.
-Slack's hosted MCP server or the Slack Web API remains the enforcement point for
-what that user can see or do.
+Avalon requests them as the provider scope set behind one
+`slack.personal.mcp` capability. Slack's hosted MCP server remains authoritative
+for which live tools exist and which of these scopes each operation needs;
+Avalon does not maintain a tool-to-scope snapshot for that server.
 
 | Permission | What Avalon uses it for |
 | --- | --- |
-| `canvases:read` | Read a Slack canvas with personal `read_canvas`. |
-| `canvases:write` | Create or update a canvas with `create_canvas` or `update_canvas`; canvas writes also require `canvases:read`. |
+| `canvases:read` | Permit the hosted user-tool plane to read visible canvases. |
+| `canvases:write` | Permit the hosted user-tool plane to create or update canvases. |
 | `channels:history` | Read messages and threads in visible public channels. |
 | `channels:read` | Resolve public-channel metadata and list channel members. |
-| `channels:write` | Create a public channel as the connected user. |
+| `channels:write` | Permit public-channel actions as the connected user. |
 | `files:read` | Read visible Slack file metadata and content. |
 | `groups:history` | Read messages and threads in visible private channels. |
 | `groups:read` | Resolve visible private-channel metadata and membership. |
-| `groups:write` | Create a private channel as the connected user. |
+| `groups:write` | Permit private-channel actions as the connected user. |
 | `im:history` | Read visible direct-message history. |
 | `im:read` | Discover visible direct-message conversations. |
-| `im:write` | Open a direct message as the connected user. |
+| `im:write` | Permit direct-message actions as the connected user. |
 | `mpim:history` | Read visible group-DM history. |
 | `mpim:read` | Resolve visible group-DM metadata and membership. |
-| `mpim:write` | Open a group DM as the connected user. |
+| `mpim:write` | Permit group-DM actions as the connected user. |
 | `reactions:write` | Add an emoji reaction as the connected user. |
 | `search:read.files` | Include visible files in search results; file content still requires `files:read`. |
 | `search:read.im` | Search visible direct messages. |
@@ -168,7 +170,7 @@ what that user can see or do.
 | `search:read.users` | Search for visible Slack users. |
 | `users:read` | Read user profiles and support channel-member lookup. |
 | `users:read.email` | Include email in user-profile data when Slack exposes it. |
-| `chat:write` | Send a message or thread reply as the connected user. |
+| `chat:write` | Permit message actions as the connected user. |
 
 Unlike workspace search, personal search does not use the Slack event
 `action_token`; Slack evaluates it against the connected user's granted scopes and
@@ -308,9 +310,29 @@ sits inside.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
+This document predates the changelog rule in
 [`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
 the scope selection — beyond the per-scope justifications above, which are the point
-of the document — was not recorded as dated entries and was not reconstructed. The
-next scope added, removed, or repurposed starts the record, and that entry is that
-change, written in full.
+of the document — was not recorded as dated entries and was not reconstructed.
+
+### 2026-08-12 — Personal scopes authorize a live MCP plane, not guessed tools
+
+**What changed:** The full personal Slack scope set now maps to one
+`slack.personal.mcp` Avalon capability. The inventory describes the provider
+features each scope permits without claiming a fixed MCP tool name.
+
+**Why:** Slack owns and can change its hosted MCP tools independently. Mapping
+scopes to a snapshot of observed tool names made this document and the runtime
+look authoritative when neither was.
+
+**Considered and rejected:** Removing the scope inventory together with the
+tool mapping. OAuth and Marketplace review still need an exact justification
+for every requested permission even though the remote tool catalog is dynamic.
+
+**Consequences:** A scope addition still requires review here, in code, and at
+Slack. A tool addition on Slack's server does not require an Avalon change unless
+it needs a provider OAuth scope Avalon has not requested. Remote annotations do
+not relax confirmation or receipt policy; every live MCP operation is treated as
+a write until Avalon has an independent trusted classifier.
+
+Shipped in the pull request for this change.

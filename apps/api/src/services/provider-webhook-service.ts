@@ -867,7 +867,7 @@ export class ProviderWebhookService {
     const statusClause = "status <> 'disabled'";
     const query = provider === "notion"
       ? `SELECT * FROM connector_connections
-         WHERE connector_type = 'notion' AND scope = 'personal'
+         WHERE connector_type = 'notion' AND scope = 'workspace'
            AND provider_account_id IN (${routingAccountIds!.map(() => "?").join(", ")})
            AND ${statusClause}`
       : provider === "github" && accountId === null

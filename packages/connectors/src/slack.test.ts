@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  callSlackMcp,
   createSlackConnector,
   joinAllSlackPublicChannels,
   joinSlackPublicChannel,
@@ -266,8 +265,14 @@ describe("Slack connector", () => {
     });
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.agent, "workspace")).toBe(true);
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.agent, "personal")).toBe(false);
+    expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.personalMcp, "personal")).toBe(true);
+    expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.personalMcp, "workspace")).toBe(false);
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.search, "personal")).toBe(true);
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.search, "workspace")).toBe(true);
+    expect(adapter.dynamicAgentTools).toMatchObject({
+      capabilities: expect.arrayContaining([SlackCapabilities.personalMcp, SlackCapabilities.search]),
+      connectionScopes: ["personal"],
+    });
     expect(SlackWorkspaceBotScopes).toContain("users:read.email");
     expect(SlackWorkspaceBotScopes).toContain("users:read");
     expect(SlackWorkspaceBotScopes).toContain("channels:read");
@@ -663,39 +668,6 @@ describe("Slack connector", () => {
     )).rejects.toMatchObject({ code: "provider_error", message: "internal_error" });
   });
 
-  it("discovers the hosted MCP tool name before invoking it", async () => {
-    const requests: Record<string, unknown>[] = [];
-    const headers: Headers[] = [];
-    const fetcher: FetchLike = vi.fn(async (_input, init) => {
-      headers.push(new Headers(init?.headers));
-      if (init?.method === "DELETE") return new Response(null, { status: 204 });
-      const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      requests.push(request);
-      if (request.method === "initialize") return json({
-        jsonrpc: "2.0",
-        id: request.id,
-        result: {
-          protocolVersion: "2025-06-18",
-          capabilities: { tools: {} },
-          serverInfo: { name: "Slack MCP", version: "1" },
-        },
-      }, { "mcp-session-id": "session-1" });
-      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
-      if (request.method === "tools/list") return json({
-        jsonrpc: "2.0",
-        id: request.id,
-        result: { tools: [{ name: "slack_search", inputSchema: { type: "object" } }] },
-      });
-      return json({ jsonrpc: "2.0", id: request.id, result: { content: [{ type: "text", text: "one result" }] } });
-    });
-    await expect(callSlackMcp("xoxp-user", "search", { query: "project gizmo" }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({ content: [{ text: "one result" }] });
-    expect(requests.map((request) => request.method)).toEqual(["initialize", "notifications/initialized", "tools/list", "tools/call"]);
-    expect(requests[3]).toMatchObject({ method: "tools/call", params: { name: "slack_search", arguments: { query: "project gizmo" } } });
-    expect(headers[0]?.get("accept")).toBe("application/json, text/event-stream");
-    expect(headers[1]?.get("mcp-session-id")).toBe("session-1");
-    expect(headers[1]?.get("mcp-protocol-version")).toBe("2025-06-18");
-  });
-
   it("uses hidden event authorization for workspace message search", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const fetcher: FetchLike = vi.fn(async (input, init) => {
@@ -891,22 +863,6 @@ describe("Slack connector", () => {
     }, context)).resolves.toMatchObject({ providerOperationId: "CNEW" });
     expect(requests.find((request) => request.method === "chat.postMessage")?.body.client_msg_id)
       .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/u);
-  });
-
-  it("preserves Slack MCP rate-limit timing for durable callers", async () => {
-    const fetcher: FetchLike = vi.fn(async () => json(
-      { error: "ratelimited" },
-      { "retry-after": "9" },
-      429,
-    ));
-
-    await expect(callSlackMcp(
-      "xoxp-user",
-      "search",
-      { query: "project gizmo" },
-      AbortSignal.timeout(1_000),
-      fetcher,
-    )).rejects.toMatchObject({ details: { status: 429, retryAfterMs: 9_000 } });
   });
 
   it("rejects free workspace plans and refreshes user-only MCP tokens", async () => {

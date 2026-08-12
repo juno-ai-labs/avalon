@@ -1,6 +1,7 @@
 import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@avalon/contracts";
 import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
+import { createHostedMcpPassthrough } from "./hosted-mcp";
 import {
   isProviderCredentialRejection,
   isRecord,
@@ -47,6 +48,7 @@ export interface SlackConnectorConfig {
 }
 
 export const SlackCapabilities = {
+  personalMcp: "slack.personal.mcp",
   search: "slack.search",
   messagesRead: "slack.messages.read",
   filesRead: "slack.files.read",
@@ -105,6 +107,14 @@ export const SlackWorkspaceCapabilities = [
 ] as const;
 
 export const SlackCapabilityScopes: Record<string, readonly string[]> = {
+  [SlackCapabilities.personalMcp]: [
+    "search:read.public", "search:read.private", "search:read.mpim", "search:read.im",
+    "search:read.files", "search:read.users",
+    "channels:history", "groups:history", "mpim:history", "im:history",
+    "files:read", "chat:write", "channels:write", "groups:write", "im:write", "mpim:write",
+    "reactions:write", "canvases:read", "canvases:write",
+    "users:read", "users:read.email", "channels:read", "groups:read", "im:read", "mpim:read",
+  ],
   [SlackCapabilities.search]: [
     "search:read.public", "search:read.private", "search:read.mpim", "search:read.im",
     "search:read.files", "search:read.users",
@@ -189,9 +199,6 @@ export const slackTools: ToolDefinition[] = [
   tool("send_message", "Send a Slack message as the connected user or installed workspace bot.", SlackCapabilities.messagesWrite, "write", { channel_id: id, text: { type: "string", minLength: 1, maxLength: 40_000 }, thread_ts: { type: ["string", "null"] } }, ["channel_id", "text"]),
   tool("create_conversation", "Create a Slack channel, group DM, or direct message as the connected user or installed workspace bot.", SlackCapabilities.conversationsWrite, "write", { name: { type: ["string", "null"], maxLength: 80, pattern: "^[a-z0-9_-]+$" }, user_ids: { type: "array", minItems: 1, maxItems: 8, items: id }, is_private: { type: "boolean" } }),
   tool("add_reaction", "Add an emoji reaction to a Slack message as the connected user or installed workspace bot.", SlackCapabilities.reactionsWrite, "write", { channel_id: id, timestamp: id, name: { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-zA-Z0-9_+-]+$" } }, ["channel_id", "timestamp", "name"]),
-  tool("create_canvas", "Create a Slack canvas.", SlackCapabilities.canvasesWrite, "write", { title: { type: "string", minLength: 1 }, markdown: { type: "string" } }, ["title"]),
-  tool("update_canvas", "Update an existing Slack canvas.", SlackCapabilities.canvasesWrite, "write", { canvas_id: id, markdown: { type: "string" } }, ["canvas_id", "markdown"]),
-  tool("read_canvas", "Read a Slack canvas as markdown.", SlackCapabilities.canvasesRead, "read", { canvas_id: id }, ["canvas_id"]),
   tool("read_user_profile", "Read a Slack user profile.", SlackCapabilities.usersRead, "read", { user_id: id }, ["user_id"]),
   tool("list_channel_members", "List members of a Slack conversation.", SlackCapabilities.usersRead, "read", { channel_id: id, limit: { type: "integer", minimum: 1, maximum: 200 }, cursor: { type: ["string", "null"] } }, ["channel_id"]),
 ];
@@ -951,23 +958,6 @@ const SlackRefreshSuccessSchema = z.object({
   }).passthrough().optional(),
 }).passthrough();
 
-const SlackMcpInputSchemas = {
-  search: z.object({ query: z.string().min(1), limit: z.number().int().min(1).optional() }).strict(),
-  read_channel: z.object({ channel_id: SlackIdSchema, limit: z.number().int().min(1).optional() }).strict(),
-  read_thread: z.object({ channel_id: SlackIdSchema, thread_ts: SlackTimestampSchema, limit: z.number().int().min(1).optional() }).strict(),
-  read_file: z.object({ file_id: SlackIdSchema }).strict(),
-  send_message: z.object({ channel_id: SlackIdSchema, text: z.string().min(1).max(40_000), thread_ts: SlackTimestampSchema.nullable().optional() }).strict(),
-  create_conversation: z.object({ name: z.string().nullable().optional(), user_ids: z.array(SlackIdSchema).optional(), is_private: z.boolean().optional() }).strict(),
-  add_reaction: z.object({ channel_id: SlackIdSchema, timestamp: SlackTimestampSchema, name: z.string().min(1) }).strict(),
-  create_canvas: z.object({ title: z.string().min(1), markdown: z.string().optional() }).strict(),
-  update_canvas: z.object({ canvas_id: SlackIdSchema, markdown: z.string() }).strict(),
-  read_canvas: z.object({ canvas_id: SlackIdSchema }).strict(),
-  read_user_profile: z.object({ user_id: SlackIdSchema }).strict(),
-  list_channel_members: z.object({ channel_id: SlackIdSchema, limit: z.number().int().min(1).optional() }).strict(),
-} as const;
-
-export type SlackMcpTool = keyof typeof SlackMcpInputSchemas;
-
 const SlackDirectInputSchemas = {
   search: z.object({
     query: z.string().min(1).max(4_000),
@@ -1047,40 +1037,6 @@ const SlackDirectInputSchemas = {
 } as const;
 
 type SlackDirectTool = keyof typeof SlackDirectInputSchemas;
-
-const McpJsonRpcErrorSchema = z.object({ code: z.number().int(), message: z.string(), data: z.unknown().optional() });
-const McpToolSchema = z.object({
-  name: z.string().min(1),
-  title: z.string().optional(),
-  description: z.string().optional(),
-  inputSchema: z.object({ type: z.literal("object"), properties: z.record(z.string(), z.unknown()).optional(), required: z.array(z.string()).optional(), additionalProperties: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional() }).passthrough(),
-}).passthrough();
-const McpInitializeResultSchema = z.object({
-  protocolVersion: z.string().min(1),
-  capabilities: z.record(z.string(), z.unknown()),
-  serverInfo: z.object({ name: z.string().min(1), version: z.string().optional() }).passthrough(),
-}).passthrough();
-const McpToolsListResultSchema = z.object({ tools: z.array(McpToolSchema), nextCursor: z.string().min(1).optional() }).passthrough();
-const McpToolContentSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text"), text: z.string() }).passthrough(),
-  z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() }).passthrough(),
-  z.object({ type: z.literal("audio"), data: z.string(), mimeType: z.string() }).passthrough(),
-  z.object({ type: z.literal("resource"), resource: z.record(z.string(), z.unknown()) }).passthrough(),
-  z.object({ type: z.literal("resource_link"), uri: z.string(), name: z.string() }).passthrough(),
-]);
-const McpCallToolResultSchema = z.object({
-  content: z.array(McpToolContentSchema),
-  structuredContent: z.record(z.string(), z.unknown()).optional(),
-  isError: z.boolean().optional(),
-}).passthrough();
-const McpJsonRpcResponseSchema = z.object({
-  jsonrpc: z.literal("2.0"),
-  id: z.union([z.string(), z.number().int()]),
-  result: z.unknown().optional(),
-  error: McpJsonRpcErrorSchema.optional(),
-}).refine((value) => (value.result === undefined) !== (value.error === undefined), {
-  message: "JSON-RPC response must contain exactly one of result or error",
-});
 
 export function parseSlackAgentInvocation(input: unknown): SlackAgentInvocation {
   if (!isRecord(input)) throw new ConnectorError("provider_error", "Slack invocation is malformed");
@@ -1342,174 +1298,6 @@ export async function joinAllSlackPublicChannels(
   return { ...summary, complete: true };
 }
 
-export async function callSlackMcp(
-  token: string,
-  requestedTool: SlackMcpTool,
-  args: Record<string, unknown>,
-  signal: AbortSignal,
-  fetcher: FetchLike = fetch,
-): Promise<Record<string, unknown>> {
-  const parsedArgs = SlackMcpInputSchemas[requestedTool].parse(args) as Record<string, unknown>;
-  let sessionId: string | null = null;
-  try {
-    const initializeId = crypto.randomUUID();
-    const initialized = await mcpRequest(fetcher, token, {
-      jsonrpc: "2.0",
-      id: initializeId,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "Avalon", version: "0.32.0" },
-      },
-    }, signal, null, false);
-    sessionId = initialized.sessionId;
-    const initializeResult = McpInitializeResultSchema.parse(initialized.result);
-    if (initializeResult.protocolVersion !== "2025-06-18") {
-      throw new ConnectorError("unsupported_capability", `Slack MCP negotiated unsupported protocol ${initializeResult.protocolVersion}`);
-    }
-
-    await mcpNotification(fetcher, token, {
-      jsonrpc: "2.0",
-      method: "notifications/initialized",
-    }, signal, sessionId);
-
-    const tools: z.infer<typeof McpToolSchema>[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-    do {
-      const listed = await mcpRequest(fetcher, token, {
-        jsonrpc: "2.0",
-        id: crypto.randomUUID(),
-        method: "tools/list",
-        params: cursor ? { cursor } : {},
-      }, signal, sessionId, true);
-      const result = McpToolsListResultSchema.parse(listed.result);
-      tools.push(...result.tools);
-      cursor = result.nextCursor;
-      if (cursor && seenCursors.has(cursor)) throw new ConnectorError("provider_error", "Slack MCP returned a repeated pagination cursor");
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-
-    const aliases = [requestedTool, `slack_${requestedTool}`, requestedTool.replaceAll("_", "-")];
-    const discovered = tools.find((entry) => aliases.includes(entry.name));
-    if (!discovered) throw new ConnectorError("unsupported_capability", `Slack MCP does not expose ${requestedTool}`);
-    assertMcpArgumentsCompatible(discovered, parsedArgs);
-
-    const called = await mcpRequest(fetcher, token, {
-      jsonrpc: "2.0",
-      id: crypto.randomUUID(),
-      method: "tools/call",
-      params: { name: discovered.name, arguments: parsedArgs },
-    }, signal, sessionId, true);
-    const result = McpCallToolResultSchema.parse(called.result);
-    if (result.isError) throw new ConnectorError("provider_error", `Slack MCP tool ${requestedTool} failed`, result);
-    return result;
-  } finally {
-    if (sessionId) await closeMcpSession(fetcher, token, sessionId);
-  }
-}
-
-async function mcpRequest(
-  fetcher: FetchLike,
-  token: string,
-  request: Record<string, unknown> & { id: string | number },
-  signal: AbortSignal,
-  sessionId: string | null,
-  initialized: boolean,
-): Promise<{ result: unknown; sessionId: string | null }> {
-  const response = await fetchMcp(fetcher, token, "POST", request, signal, sessionId, initialized);
-  const payload = McpJsonRpcResponseSchema.parse(await responseJson(response));
-  if (payload.id !== request.id) throw new ConnectorError("provider_error", "Slack MCP returned a mismatched JSON-RPC response id");
-  if (payload.error) throw new ConnectorError("provider_error", payload.error.message, payload.error);
-  return { result: payload.result, sessionId: response.headers.get("mcp-session-id") ?? sessionId };
-}
-
-async function mcpNotification(
-  fetcher: FetchLike,
-  token: string,
-  request: Record<string, unknown>,
-  signal: AbortSignal,
-  sessionId: string | null,
-): Promise<void> {
-  const response = await fetchMcp(fetcher, token, "POST", request, signal, sessionId, true);
-  if (response.status !== 202) throw new ConnectorError("provider_error", `Slack MCP notification returned unexpected HTTP ${response.status}`);
-}
-
-async function fetchMcp(
-  fetcher: FetchLike,
-  token: string,
-  method: "POST" | "DELETE",
-  request: Record<string, unknown> | null,
-  signal: AbortSignal,
-  sessionId: string | null,
-  initialized: boolean,
-): Promise<Response> {
-  const headers = jsonHeaders(token);
-  headers.set("accept", "application/json, text/event-stream");
-  if (initialized) headers.set("mcp-protocol-version", "2025-06-18");
-  if (sessionId) headers.set("mcp-session-id", sessionId);
-  let response: Response;
-  try {
-    response = await fetcher(SLACK_MCP, {
-      method,
-      headers,
-      ...(request ? { body: JSON.stringify(request) } : {}),
-      signal,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw error;
-    throw new ConnectorError("provider_error", "Slack MCP request could not be completed", error);
-  }
-  if (!response.ok) {
-    const payload = response.headers.get("content-type")?.includes("application/json")
-      ? await responseJson(response).catch(() => ({}))
-      : {};
-    const retryAfter = response.headers.get("retry-after");
-    const retryAfterMs = retryAfter && /^\d+(?:\.\d+)?$/u.test(retryAfter.trim())
-      ? Math.max(0, Math.ceil(Number(retryAfter) * 1_000))
-      : null;
-    throw new ConnectorError(
-      response.status === 401 || response.status === 403 ? "unauthorized" : "provider_error",
-      `Slack MCP returned HTTP ${response.status}`,
-      { status: response.status, payload, ...(retryAfterMs != null ? { retryAfterMs } : {}) },
-    );
-  }
-  if (response.headers.get("content-type")?.includes("text/event-stream")) {
-    throw new ConnectorError("provider_error", "Slack MCP returned an unsupported event stream response");
-  }
-  return response;
-}
-
-async function responseJson(response: Response): Promise<unknown> {
-  const bytes = await readResponseBytes(response, SLACK_MAX_RESPONSE_BYTES);
-  if (!bytes.byteLength) throw new ConnectorError("provider_error", "Slack MCP returned an empty JSON-RPC response");
-  try {
-    return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-  } catch (error) {
-    throw new ConnectorError("provider_error", "Slack MCP returned malformed JSON", error);
-  }
-}
-
-function assertMcpArgumentsCompatible(tool: z.infer<typeof McpToolSchema>, args: Record<string, unknown>): void {
-  for (const required of tool.inputSchema.required ?? []) {
-    if (!(required in args)) throw new ConnectorError("unsupported_capability", `Slack MCP requires unsupported argument ${required} for ${tool.name}`);
-  }
-  if (tool.inputSchema.additionalProperties === false && tool.inputSchema.properties) {
-    for (const key of Object.keys(args)) {
-      if (!(key in tool.inputSchema.properties)) throw new ConnectorError("unsupported_capability", `Slack MCP does not accept argument ${key} for ${tool.name}`);
-    }
-  }
-}
-
-async function closeMcpSession(fetcher: FetchLike, token: string, sessionId: string): Promise<void> {
-  try {
-    await fetchMcp(fetcher, token, "DELETE", null, AbortSignal.timeout(2_000), sessionId, true);
-  } catch {
-    // Closing is best effort after the tool result has already been received.
-  }
-}
-
 function parseSlackSuccess<T extends z.ZodType>(
   payload: Record<string, unknown>,
   schema: T,
@@ -1527,10 +1315,6 @@ function parseSlackSuccess<T extends z.ZodType>(
   const result = schema.safeParse(payload);
   if (!result.success) throw new ConnectorError("provider_error", fallbackMessage, result.error.flatten());
   return result.data;
-}
-
-function isSlackMcpTool(name: string): name is SlackMcpTool {
-  return Object.prototype.hasOwnProperty.call(SlackMcpInputSchemas, name);
 }
 
 function isSlackDirectTool(name: string): name is SlackDirectTool {
@@ -1957,6 +1741,36 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
     call,
   );
+  const personalMcpCapabilities = [
+    SlackCapabilities.personalMcp,
+    SlackCapabilities.search,
+    SlackCapabilities.messagesRead,
+    SlackCapabilities.filesRead,
+    SlackCapabilities.usersRead,
+    SlackCapabilities.messagesWrite,
+    SlackCapabilities.conversationsWrite,
+    SlackCapabilities.reactionsWrite,
+    SlackCapabilities.canvasesRead,
+    SlackCapabilities.canvasesWrite,
+  ] as const;
+  const personalMcp = createHostedMcpPassthrough({
+    providerName: "Slack",
+    serverUrl: SLACK_MCP,
+    capabilities: personalMcpCapabilities,
+    connectionScopes: ["personal"],
+    capabilityForConnection(connection) {
+      const granted = personalMcpCapabilities.find((capability) => connection.grantedScopes.includes(capability));
+      if (!granted) throw new ConnectorError("unsupported_capability", "Slack personal MCP access is not granted");
+      return granted;
+    },
+    withAccessToken: (connection, signal, operation) => reauthorizing(
+      connection,
+      signal,
+      () => operation(userToken(connection)),
+    ),
+    fetch: fetcher,
+    maxResponseBytes: SLACK_MAX_RESPONSE_BYTES,
+  });
   const adapter: ConnectorAdapter = {
     manifest: {
       type: "slack",
@@ -2102,7 +1916,9 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
     origin: slackOriginSource(fetcher),
     agentPlugin: SlackAgentPluginDescriptor,
+    dynamicAgentTools: personalMcp.dynamicAgentTools,
     capabilityConnectionScopes: {
+      [SlackCapabilities.personalMcp]: ["personal"],
       [SlackCapabilities.search]: ["personal", "workspace"],
       [SlackCapabilities.messagesRead]: ["personal", "workspace"],
       [SlackCapabilities.filesRead]: ["personal", "workspace"],
@@ -2300,6 +2116,9 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
     async executeTool(name, rawArgs, context) {
       assertPrincipalAccess(context.connection, context.principal);
+      if (context.connection.scope === "personal") {
+        return personalMcp.execute(context.connection, name, rawArgs, context.signal);
+      }
       const definition = slackTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
         throw connectorCapabilityRefused("Slack", definition?.capability ?? name, slackTools, context.connection.grantedScopes);
@@ -2311,17 +2130,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
           () => executeSlackDirectTool(name, rawArgs, context, fetcher),
         );
       }
-      if (context.connection.scope !== "personal") {
-        throw new ConnectorError("unsupported_capability", `Slack workspace tool ${name} is unsupported`);
-      }
-      if (!isSlackMcpTool(name)) throw new ConnectorError("unsupported_capability", `Slack MCP tool ${name} is unsupported`);
-      const args = SlackMcpInputSchemas[name].parse(rawArgs) as Record<string, unknown>;
-      const output = await reauthorizing(
-        context.connection,
-        context.signal,
-        () => callSlackMcp(userToken(context.connection), name, args, context.signal, fetcher),
-      );
-      return { output, summary: `${definition.mode === "read" ? "Read from" : "Updated"} Slack with ${name}` };
+      throw new ConnectorError("unsupported_capability", `Slack workspace tool ${name} is unsupported`);
     },
     async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: Boolean(config.clientId && config.clientSecret && config.signingSecret), message: "Slack connector configuration is available" };
