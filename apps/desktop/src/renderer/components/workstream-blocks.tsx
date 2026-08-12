@@ -401,6 +401,25 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
 }
 
 /**
+ * Which system rows are open, held by a caller that virtualizes its transcript.
+ *
+ * `useState` inside the row is not enough there. The work-stream transcript
+ * unmounts a row that scrolls out of the window, and the row's open/closed flag
+ * would go with it — which is worse than a forgotten preference, because the
+ * virtualizer keeps the height it measured while the row was open. A row that
+ * comes back collapsed re-measures thousands of pixels shorter, and
+ * `resizeItem` deliberately declines to compensate a re-measurement while the
+ * reader is scrolling backward, so the transcript jumps under them by the whole
+ * delta. Holding the flag above the virtual window keeps the returning row the
+ * size the cache already expects. A caller that mounts its rows once needs none
+ * of this and can leave it undefined.
+ */
+export interface SystemRowDisclosure {
+  expanded: ReadonlySet<string>;
+  onToggle: (messageId: string) => void;
+}
+
+/**
  * A system row: the note Avalon leaves in the transcript when something happened
  * to the work stream rather than in it.
  *
@@ -414,10 +433,13 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
  * clamp is actually hiding something. Nothing distinguishes a prompt from a
  * one-liner on the wire, and the height is the only honest discriminator.
  */
-function SystemMessageBlock({ message }: { message: Message }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false);
+function SystemMessageBlock({ disclosure, message }: { disclosure?: SystemRowDisclosure; message: Message }): React.JSX.Element {
+  // The fallback for a caller that does not virtualize. Where one does, the
+  // state has to outlive the row — see `SystemRowDisclosure`.
+  const [locallyExpanded, setLocallyExpanded] = useState(false);
   const [textNode, setTextNode] = useState<HTMLElement | null>(null);
   const text = message.text ?? '';
+  const expanded = disclosure ? disclosure.expanded.has(message.id) : locallyExpanded;
   const clamped = useTextClamped(textNode, text, !expanded);
 
   return (
@@ -425,11 +447,25 @@ function SystemMessageBlock({ message }: { message: Message }): React.JSX.Elemen
       <span aria-hidden="true" className="system-message-dot" />
       <div className="system-message-body">
         <p className="system-message-text" data-expanded={expanded ? 'true' : undefined} ref={setTextNode}>{text}</p>
-        {clamped && (
+        {/*
+          An open row always keeps its control, measured or not. A row that
+          mounts already open — the caller held the state while it was outside a
+          virtual window — has never had the clamp applied, so it has no
+          measurement to offer and `clamped` is false. Keying the control on the
+          measurement alone would hand the reader back an opened row with no way
+          to close it. The pause inside the hook is still what stops the control
+          disappearing at the moment of the click; these are two different
+          guards against the same stranding.
+        */}
+        {(expanded || clamped) && (
           <button
             aria-expanded={expanded}
+            aria-label={expanded ? 'Show less of this note' : 'Show this note in full'}
             className="system-message-toggle"
-            onClick={() => setExpanded((current) => !current)}
+            onClick={() => {
+              if (disclosure) disclosure.onToggle(message.id);
+              else setLocallyExpanded((current) => !current);
+            }}
             type="button"
           >
             {expanded ? 'less' : 'more'}
@@ -788,6 +824,7 @@ interface MessageBlockProps {
   onOpenAttachment?: (preview: AttachmentPreview) => void;
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   onResolveSuggestion: (suggestionId: string, action: 'accept' | 'dismiss') => Promise<void>;
+  systemRowDisclosure?: SystemRowDisclosure;
 }
 
 export function MessageBlock({
@@ -797,6 +834,7 @@ export function MessageBlock({
   onAnswerElicitation,
   onOpenAttachment,
   onResolveSuggestion,
+  systemRowDisclosure,
 }: MessageBlockProps): React.JSX.Element {
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
@@ -829,7 +867,7 @@ export function MessageBlock({
     return <div className="transcript-event" id={`message-${message.id}`}><SuggestionBlock onResolve={(action) => onResolveSuggestion(message.activitySuggestion!.id, action)} suggestion={message.activitySuggestion} /></div>;
   }
   if (message.authorType === 'system' || message.messageType === 'system') {
-    return <SystemMessageBlock message={message} />;
+    return <SystemMessageBlock disclosure={systemRowDisclosure} message={message} />;
   }
 
   const human = message.authorType === 'human' || message.authorType === 'external';
