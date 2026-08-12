@@ -108,12 +108,12 @@ describe('system message clamp', () => {
  * the app.
  */
 describe('markdown list markers', () => {
-  // Every container that renders markdown, because they do not share one: the
-  // transcript and its siblings go through `MarkdownBody`, while a note and a
-  // meeting briefing render `ReactMarkdown` under a class of their own. A fix
-  // applied to the shared component alone leaves those two markerless, which is
-  // exactly the shape of the bug being fixed.
-  const containers = '.markdown-body, .note-detail-article, .meeting-generated-notes';
+  // One container, because there is one renderer. These assertions briefly named
+  // three: a note and a meeting briefing rendered `ReactMarkdown` under a class
+  // of their own, so every marker rule had to list all three or leave those two
+  // surfaces on the preflight's `none`. Both host `MarkdownBody` now, which is
+  // what makes naming `.markdown-body` alone a convergence rather than the
+  // oversight it would have been a change ago.
 
   // `rule()` returns the *first* block whose selector line matches, so a
   // selector that appears twice in the stylesheet resolves to whichever copy is
@@ -122,10 +122,10 @@ describe('markdown list markers', () => {
   // merging the two would silently point these assertions at the margins.
 
   it.each([
-    [`:is(${containers}) ul`, 'disc'],
-    [`:is(${containers}) :is(ul, ol) ul`, 'circle'],
-    [`:is(${containers}) :is(ul, ol) :is(ul, ol) ul`, 'square'],
-    [`:is(${containers}) ol`, 'decimal'],
+    ['.markdown-body ul', 'disc'],
+    ['.markdown-body :is(ul, ol) ul', 'circle'],
+    ['.markdown-body :is(ul, ol) :is(ul, ol) ul', 'square'],
+    ['.markdown-body ol', 'decimal'],
   ])('draws %s with %s', (selector, style) => {
     expect(rule(selector)).toContain(`list-style: ${style};`);
   });
@@ -137,19 +137,34 @@ describe('markdown list markers', () => {
     [':is(ul, ol) ul'],
     [':is(ul, ol) :is(ul, ol) ul'],
   ])('counts %s as a nesting level whichever list kind encloses it', (descendant) => {
-    expect(rule(`:is(${containers}) ${descendant}`)).not.toBeNull();
+    expect(rule(`.markdown-body ${descendant}`)).not.toBeNull();
   });
 
   // The one list that should keep the reset: its items carry checkboxes, and a
   // bullet beside each one is the reason this exception was written.
-  it('leaves a task list without markers, on every one of those containers', () => {
-    expect(rule(`:is(${containers}) .contains-task-list`)).toContain('list-style: none;');
+  it('leaves a task list without markers', () => {
+    expect(rule('.markdown-body .contains-task-list')).toContain('list-style: none;');
   });
 
-  // A marker is drawn inside the indent, so a container that restored the one
-  // without the other puts its numbers against the edge.
-  it('indents an ordered list wherever it draws one', () => {
-    expect(rule('.note-detail-article ul,\n.note-detail-article ol')).toContain('padding-left');
-    expect(rule('.meeting-notes-body ul,\n.meeting-notes-body ol')).toContain('padding-left');
+  // A marker is drawn inside the indent, so restoring the one without the other
+  // puts an ordered list's numbers against the edge.
+  it('indents the lists it draws markers on', () => {
+    expect(rule('.markdown-body ul,\n.markdown-body ol')).toContain('padding-left');
   });
+
+  // And the guard that keeps the single container honest. Both of these host
+  // `.markdown-body` now, so a list rule written against either would be a
+  // second definition of geometry the shared container already owns, decided
+  // against it only by source order — which is not what anyone restyling a note
+  // or a briefing will have in mind. Each keeps its heading scale, deliberately,
+  // and nothing else; a surface that grows list rules again has started to
+  // diverge, whether or not it has also stopped using the component.
+  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
+    'leaves markdown element styling to the shared container in %s',
+    (host) => {
+      for (const element of ['ul', 'ol', 'li', 'blockquote', 'table', 'pre', 'hr']) {
+        expect(stylesheet).not.toContain(`${host} ${element}`);
+      }
+    },
+  );
 });
