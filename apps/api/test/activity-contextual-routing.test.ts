@@ -431,6 +431,27 @@ describe("contextual routing: an event type's record in this workspace", () => {
     expect(suggestionCount(database)).toBe(1);
   });
 
+  it("lets a workspace's acceptances lower a bar its connector raised", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    // A check run is machinery in the GitHub manifest, so it starts at 0.9.
+    // This workspace has accepted four of them, which is the only evidence that
+    // exists about whether they are useful *here* — and it beats the
+    // declaration rather than being capped by it. Without this case a
+    // regression clamping the computed floor to the declared one passes
+    // everything else in this file.
+    for (const [index, day] of [1, 2, 3, 4].entries()) {
+      recordResolution(database, {
+        suffix: `9${index}`, workstreamId: STREAM_HISTORY, eventType: MACHINERY, status: "accepted", resolvedAt: daysAgo(day),
+      });
+    }
+    modelAnswers({ confidence: 0.85 });
+
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000ff", eventType: MACHINERY }), new Set()))
+      .resolves.toBe(true);
+    expect(suggestionCount(database)).toBe(1);
+  });
+
   it("keeps the base floor while the sample is too small to mean anything", async () => {
     const database = seededDatabase();
     const env = envFor(database);
