@@ -26,7 +26,11 @@ import {
   isSharedLinearIngress,
   LinearRoutingService,
 } from "../services/linear-routing-service";
-import { isSharedNotionIngress } from "../lib/notion-ingress";
+import {
+  isSharedNotionIngress,
+  notionIngressIsElsewhere,
+  notionIngressUrl,
+} from "../lib/notion-ingress";
 import { NotionRoutingService } from "../services/notion-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
 
@@ -376,6 +380,19 @@ webhookIngestionRoutes.post("/linear", async (c) => {
 webhookIngestionRoutes.post("/notion", async (c) => {
   const rawBody = new Uint8Array(await c.req.arrayBuffer());
   const setupToken = c.req.query("setup") ?? null;
+  // Only the shared ingress replicates the captured token to the other region,
+  // and `setup=` is sent on nothing but the one-time challenge. Accepting that
+  // challenge on a regional host would store a token here, answer 200, and
+  // leave the other region unable to verify anything — surfacing much later as
+  // a total delivery failure for every workspace it owns. Refuse instead, and
+  // name the host the subscription is supposed to use.
+  if (setupToken !== null && notionIngressIsElsewhere(c.env, c.req.url)) {
+    throw new ApiError(
+      400,
+      "notion_setup_wrong_host",
+      `Send the Notion webhook verification to ${notionIngressUrl(c.env)}, the host the subscription is registered against`,
+    );
+  }
   const result = isSharedNotionIngress(c.env, c.req.url)
     ? await new NotionRoutingService(c.env).ingestNotion(rawBody, c.req.raw.headers, setupToken)
     : await new ProviderWebhookService(c.env).ingestNotion(rawBody, c.req.raw.headers, setupToken);

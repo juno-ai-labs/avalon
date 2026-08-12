@@ -249,8 +249,15 @@ export class NotionRoutingService {
     }
 
     const verified = await this.verifyIngress(rawText, headers);
-    const regions = await this.activeRegions(verified.workspaceId);
+    const routes = await this.routeStatuses(verified.workspaceId);
+    const regions = routes.filter((route) => route.status === "active").map((route) => route.region);
     if (regions.length === 0) {
+      // A retired connection is not a race. Disabling an Avalon connection does
+      // not uninstall the integration at Notion, so that workspace keeps
+      // delivering forever; answering it with the retry-me 503 would spend the
+      // full retry budget on every one, against the single subscription every
+      // customer shares. Only an unrouted workspace is asked to come back.
+      if (routes.length > 0) return { accepted: true, duplicate: false, activityCount: 0 };
       // Do not retain possibly EU-resident payloads in Global. A non-200 asks
       // Notion to retry after the regional OAuth callback records its route.
       throw new ApiError(503, "notion_route_pending", "The Notion workspace route is not ready yet");
@@ -269,20 +276,26 @@ export class NotionRoutingService {
     return regionFromRoutedState(state, "Notion authorization");
   }
 
-  private async activeRegions(notionWorkspaceId: string): Promise<Region[]> {
+  /**
+   * Every route for a Notion workspace with its status, rather than only the
+   * active ones: "retired" and "not registered yet" need different answers.
+   */
+  private async routeStatuses(
+    notionWorkspaceId: string,
+  ): Promise<Array<{ region: Region; status: "active" | "disabled" }>> {
     const result = await this.env.DB.prepare(
-      `SELECT DISTINCT region FROM notion_workspace_routes
-       WHERE notion_workspace_id = ? AND status = 'active'
+      `SELECT DISTINCT region, status FROM notion_workspace_routes
+       WHERE notion_workspace_id = ?
        ORDER BY region`,
-    ).bind(notionWorkspaceId).all<{ region: Region }>();
-    return (result.results ?? []).map((row) => row.region);
+    ).bind(notionWorkspaceId).all<{ region: Region; status: "active" | "disabled" }>();
+    return result.results ?? [];
   }
 
   private async defaultCompleteInRegion(region: Region, code: string, state: string): Promise<string> {
     if (region === this.env.AVALON_REGION) {
       return new ConnectionService(this.env).completeProvider("notion", code, state);
     }
-    if (region === "eu" && this.env.EU_NOTION_BRIDGE) {
+    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
       return unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.completeNotion({ code, state }));
     }
     throw this.regionUnavailable(region);
@@ -292,7 +305,7 @@ export class NotionRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ConnectionService(this.env).completeProviderDenial("notion", state);
     }
-    if (region === "eu" && this.env.EU_NOTION_BRIDGE) {
+    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
       return unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.denyNotion({ state }));
     }
     throw this.regionUnavailable(region);
@@ -302,7 +315,7 @@ export class NotionRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ConnectionService(this.env).failProviderAttempt("notion", state, errorCode);
     }
-    if (region === "eu" && this.env.EU_NOTION_BRIDGE) {
+    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
       return unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.failNotionAttempt({ state, errorCode }));
     }
     throw this.regionUnavailable(region);
@@ -316,7 +329,7 @@ export class NotionRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ProviderWebhookService(this.env).ingestNotion(rawBody, headers);
     }
-    if (region === "eu" && this.env.EU_NOTION_BRIDGE) {
+    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
       return unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.ingestNotion({
         rawBody: exactArrayBuffer(rawBody),
         headers,
@@ -330,7 +343,7 @@ export class NotionRoutingService {
       await new ProviderWebhookService(this.env).storeNotionChallengeToken(verificationToken);
       return;
     }
-    if (region === "eu" && this.env.EU_NOTION_BRIDGE) {
+    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
       unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.storeNotionChallenge({ verificationToken }));
       return;
     }
