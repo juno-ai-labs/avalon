@@ -53,8 +53,9 @@ import {
 } from "./workstream-naming-service";
 import { ResourceService } from "./resource-service";
 import {
-  activityOriginResourceDescriptor,
+  activityOriginLocator,
   attachWorkstreamOriginResource,
+  describeWorkstreamOrigin,
   resolveOriginResource,
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
@@ -2363,10 +2364,14 @@ export class WorkstreamService {
    * stream began.
    */
   private async attachActivityResource(workstreamId: string, activityId: string): Promise<string | null> {
-    const activity = await this.env.DB.prepare("SELECT * FROM activities WHERE id = ? AND workspace_id = ?")
-      .bind(activityId, this.auth.workspaceId).first<Record<string, unknown>>();
+    const activity = await this.env.DB.prepare(
+      `SELECT a.*, c.connector_type
+         FROM activities a
+         JOIN connector_connections c ON c.id = a.connection_id
+        WHERE a.id = ? AND a.workspace_id = ?`,
+    ).bind(activityId, this.auth.workspaceId).first<Record<string, unknown>>();
     if (!activity) return null;
-    const descriptor = activityOriginResourceDescriptor(activity);
+    const descriptor = await this.describeActivityOrigin(activity);
     if (!descriptor) return null;
     const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, descriptor);
     if (!resourceId) throw new ApiError(500, "resource_write_failed", "The suggested resource could not be stored");
@@ -2387,7 +2392,7 @@ export class WorkstreamService {
   private async attachOpportunityOriginResources(workstreamId: string, opportunityId: string): Promise<void> {
     const roots = await this.env.DB.prepare(
       `SELECT a.connection_id, a.provider, a.resource_type, a.provider_resource_id,
-              a.title, a.metadata_json, a.payload_ref
+              a.title, a.metadata_json, a.payload_ref, c.connector_type
          FROM work_opportunity_provenance_roots root
          JOIN opportunity_provenance_nodes node ON node.id = root.node_id
          JOIN activities a ON a.id = node.source_id AND a.workspace_id = node.workspace_id
@@ -2403,7 +2408,7 @@ export class WorkstreamService {
       MAX_OPPORTUNITY_ORIGIN_RESOURCES,
     ).all<Record<string, unknown>>();
     for (const row of roots.results ?? []) {
-      const descriptor = activityOriginResourceDescriptor(row);
+      const descriptor = await this.describeActivityOrigin(row);
       if (!descriptor) continue;
       await attachWorkstreamOriginResource(this.env, {
         workspaceId: this.auth.workspaceId,
@@ -2412,6 +2417,28 @@ export class WorkstreamService {
         descriptor,
       });
     }
+  }
+
+  /**
+   * Hand a stored activity row to its own connector to be described. No
+   * authorized connection is passed: both callers run inside a request a person
+   * is waiting on, and an activity's canonical URL is already in the metadata
+   * normalization recorded — a provider round trip would buy a link the row
+   * usually holds anyway.
+   */
+  private async describeActivityOrigin(
+    row: Record<string, unknown>,
+  ): Promise<OriginResourceDescriptor | null> {
+    if (typeof row.connection_id !== "string") return null;
+    if (typeof row.provider !== "string") return null;
+    if (typeof row.connector_type !== "string") return null;
+    return describeWorkstreamOrigin(this.env, {
+      connectorType: row.connector_type,
+      connectionId: row.connection_id,
+      provider: row.provider,
+      locator: activityOriginLocator(row),
+      contentRef: typeof row.payload_ref === "string" ? row.payload_ref : null,
+    });
   }
 }
 

@@ -11,6 +11,7 @@ import {
   slackActivityEventType,
   type ConnectorConnectionContext,
   type SlackAgentInvocation,
+  type SlackAgentSessionOrigin,
   type SlackIngressEnvelope,
 } from "@avalon/connectors";
 import {
@@ -58,7 +59,11 @@ import { decryptVersionedConnectorCredentials } from "./connector-credential-env
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import { SlackWorkspaceWorkstreamService } from "./slack-workspace-workstream-service";
 import { WorkstreamService } from "./workstream-service";
-import { slackOriginResourceDescriptor } from "./workstream-origin-resource";
+import {
+  describeWorkstreamOrigin,
+  type OriginResourceDescriptor,
+} from "./workstream-origin-resource";
+import { withAuthorizedConnection } from "./connector-connection-access";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -1661,7 +1666,6 @@ export class SlackAgentService {
               clientMessageId,
               source,
               slackOrigin,
-              token,
               ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
             });
             sessionCreatedThisCall = true;
@@ -1807,17 +1811,17 @@ export class SlackAgentService {
     source: SlackPromptSource;
     slackOrigin: SlackOriginContext;
     slackSearchAuthorization?: SlackSearchAuthorization;
-    token: string;
   }): Promise<SlackSessionRow> {
-    // `channel` and `thread` rather than the origin context's own pair: a DM
-    // invocation arrives with neither, and these two are the conversation the
-    // agent actually replies into after opening it.
-    const originResource = slackOriginResourceDescriptor({
-      connectionId: input.connection.id,
+    const originResource = await this.slackSessionOrigin(input.connection, {
+      teamId: input.teamId,
+      // `channel` and `thread` rather than the origin context's own pair: a DM
+      // invocation arrives with neither, and these two are the conversation the
+      // agent actually replies into after opening it.
       channelId: input.channel,
       threadTs: input.thread,
-      origin: input.slackOrigin,
-      permalink: await this.slackThreadPermalink(input.token, input.channel, input.thread),
+      channelName: input.slackOrigin.channelName,
+      channelType: input.slackOrigin.channelType,
+      invocationType: input.slackOrigin.invocationType,
     });
     // Neither branch passes a title. Both derive the same provisional one from
     // the objective, and leaving it to them is what lets the naming agent
@@ -1829,7 +1833,7 @@ export class SlackAgentService {
           openingMessage: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
           attachmentIds: [],
-          originResource,
+          ...(originResource ? { originResource } : {}),
         }, input.slackOrigin, input.slackSearchAuthorization)
       : await new SlackWorkspaceWorkstreamService(this.env, input.connection.workspace_id).create({
           actor: ExternalActorSchema.parse(input.actor),
@@ -1841,7 +1845,7 @@ export class SlackAgentService {
           // is theirs rather than ownerless.
           creatorUserId: input.matchedWorkspaceUserId,
           slackOrigin: input.slackOrigin,
-          originResource,
+          ...(originResource ? { originResource } : {}),
           ...(input.slackSearchAuthorization
             ? { slackSearchAuthorization: input.slackSearchAuthorization }
             : {}),
@@ -1902,34 +1906,60 @@ export class SlackAgentService {
   }
 
   /**
-   * Slack's own link to the thread root, so the attached origin opens the
-   * conversation in the reader's workspace.
+   * The Slack thread this work stream is starting from, described by the Slack
+   * connector rather than here.
    *
-   * Asked of Slack rather than assembled here: a permalink is qualified by the
-   * team's own domain, which the installation never told us, and a URL we
-   * guessed at would be a link that silently goes to the wrong place. When the
-   * call fails the attachment keeps a null URL — it still records *which*
-   * thread, which is the part nothing else holds.
+   * The ingress supplies only the locator — which conversation, in provider
+   * terms — and the adapter decides what that place is and asks Slack for its
+   * permalink. Running it through the host's credential door is what lets the
+   * adapter make that call at all, and it is the same door every other
+   * provider-calling adapter entry point goes through.
+   *
+   * A failure here is never the person's problem: the work stream is created
+   * without an origin, which is what it had before this existed.
    */
-  private async slackThreadPermalink(
-    token: string,
-    channel: string,
-    threadTs: string,
-  ): Promise<string | null> {
+  private async slackSessionOrigin(
+    connection: SlackConnectionRow,
+    session: SlackAgentSessionOrigin,
+  ): Promise<OriginResourceDescriptor | null> {
     try {
-      const result = await slackApi(token, "chat.getPermalink", {
-        channel,
-        message_ts: threadTs,
-      }, AbortSignal.timeout(5_000));
-      return result.permalink;
+      const adapter = connectorRegistryForEnv(this.env).get("slack");
+      const context = await this.connectionContext(connection);
+      const signal = AbortSignal.timeout(5_000);
+      return await withAuthorizedConnection(
+        this.env,
+        { connection: context, adapter, signal },
+        (authorized) => describeWorkstreamOrigin(this.env, {
+          connectorType: "slack",
+          connectionId: connection.id,
+          provider: "slack",
+          locator: { kind: "agent_session", session },
+          connection: authorized,
+          signal,
+        }),
+      );
     } catch (error) {
-      logWarn(this.env, "slack_thread_permalink_lookup_failed", {
-        channel_id: channel,
-        thread_ts: threadTs,
+      logWarn(this.env, "slack_session_origin_failed", {
+        connection_id: connection.id,
+        channel_id: session.channelId,
         reason: slackErrorReason(error),
       });
       return null;
     }
+  }
+
+  /** The adapter-facing shape of a Slack connection row. */
+  private async connectionContext(connection: SlackConnectionRow): Promise<ConnectorConnectionContext> {
+    return {
+      id: connection.id,
+      workspaceId: connection.workspace_id,
+      scope: "workspace",
+      ownerUserId: null,
+      grantedScopes: [],
+      credentials: await this.credentialsFromEncrypted(connection),
+      cursor: {},
+      config: {},
+    };
   }
 
   private async loadSession(

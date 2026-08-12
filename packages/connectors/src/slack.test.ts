@@ -9,6 +9,7 @@ import {
   slackApi,
   slackActivityEventType,
   slackAgentActivationAcknowledgement,
+  slackOriginSource,
   SlackActivityEventTypes,
   SlackCapabilities,
   SlackWorkspaceCapabilities,
@@ -1168,6 +1169,110 @@ describe("Slack connector", () => {
       channel: "C1",
       text: "x".repeat(40_001),
     }, AbortSignal.timeout(1_000), fetcher)).rejects.toThrow();
+  });
+});
+
+/**
+ * Slack's answer to "where did this work stream come from". The thread, never
+ * the channel, and never any of what was said in it.
+ */
+describe("Slack agent-session origins", () => {
+  it("keys the origin on the thread and names the channel it is in", () => {
+    expect(slackOriginSource().describe({
+      kind: "agent_session",
+      session: {
+        teamId: "T0A4UF9KD08",
+        channelId: "C0A4UF9RWAU",
+        threadTs: "1786491700.928349",
+        channelName: "operations",
+        channelType: "public",
+        invocationType: "app_mention",
+      },
+    })).toEqual({
+      resourceType: "slack_thread",
+      providerResourceId: "C0A4UF9RWAU:1786491700.928349",
+      title: "Thread in #operations",
+      canonicalUrl: null,
+      metadata: {
+        teamId: "T0A4UF9KD08",
+        channelId: "C0A4UF9RWAU",
+        channelName: "operations",
+        threadTs: "1786491700.928349",
+        channelType: "public",
+        invocationType: "app_mention",
+      },
+    });
+  });
+
+  it("names a direct message as one rather than as a channel nobody can open", () => {
+    expect(slackOriginSource().describe({
+      kind: "agent_session",
+      session: { teamId: "T1", channelId: "D1", threadTs: "1.1", channelType: "im" },
+    })?.title).toBe("Slack direct message");
+  });
+
+  it("falls back to an unqualified thread when Slack did not name the channel", () => {
+    expect(slackOriginSource().describe({
+      kind: "agent_session",
+      session: { teamId: "T1", channelId: "C1", threadTs: "1.1", channelType: "public" },
+    })?.title).toBe("Slack thread");
+  });
+
+  it("hands an activity back to the shared derivation", () => {
+    expect(slackOriginSource().describe({
+      kind: "activity",
+      activity: { resourceType: "slack_message", providerResourceId: "C1:1.1", title: "Message" },
+    })).toBeNull();
+  });
+
+  it("asks Slack for the permalink rather than assembling one from the ids", async () => {
+    // A permalink is qualified by the team's own domain, which the installation
+    // never tells us, so a URL built here would silently open the wrong
+    // workspace for anyone in more than one.
+    const fetcher: FetchLike = vi.fn(async (input) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/api/chat.getPermalink");
+      expect(url.searchParams.get("channel")).toBe("C0A4UF9RWAU");
+      expect(url.searchParams.get("message_ts")).toBe("1786491700.928349");
+      return json({ ok: true, permalink: "https://avalon.slack.com/archives/C0A4UF9RWAU/p1786491700928349" });
+    });
+
+    expect(await slackOriginSource(fetcher).resolveCanonicalUrl?.(
+      slackWorkspaceConnection(),
+      {
+        resourceType: "slack_thread",
+        providerResourceId: "C0A4UF9RWAU:1786491700.928349",
+        title: "Thread in #operations",
+        canonicalUrl: null,
+        metadata: {},
+      },
+      AbortSignal.timeout(1_000),
+    )).toBe("https://avalon.slack.com/archives/C0A4UF9RWAU/p1786491700928349");
+  });
+
+  it("stores no Slack message content, only where the message was", () => {
+    const described = slackOriginSource().describe({
+      kind: "agent_session",
+      session: {
+        teamId: "T1",
+        channelId: "C1",
+        threadTs: "1.1",
+        channelName: "finance",
+        channelType: "private",
+        invocationType: "app_mention",
+      },
+    });
+
+    // Slack Agent policy forbids durably storing provider content gathered for
+    // surrounding context, and an origin is durable.
+    expect(Object.keys(described?.metadata ?? {})).toEqual([
+      "teamId",
+      "channelId",
+      "channelName",
+      "threadTs",
+      "channelType",
+      "invocationType",
+    ]);
   });
 });
 

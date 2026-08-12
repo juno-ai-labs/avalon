@@ -1,25 +1,30 @@
-import type { SlackOriginContext } from "@avalon/contracts";
+import {
+  connectorOriginFromActivity,
+  describeConnectorOrigin,
+  type AuthorizedConnectorConnection,
+  type ConnectorOriginActivity,
+  type ConnectorOriginLocator,
+} from "@avalon/connectors";
+import type { ConnectorOriginResource } from "@avalon/contracts";
+import { ConnectorOriginResourceSchema } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
+import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { logWarn } from "../observability/logger";
 import { publishWorkstreamEvent } from "./integrations";
 
 /**
- * The place a work stream started from, in the shape the `resources` table
- * stores it. A descriptor is provider-agnostic on purpose: every ingress that
- * can begin a work stream describes its own origin once, and the resolution,
- * attachment, and broadcast below are the same for all of them.
+ * A connector origin bound to the installed credential it was reached through.
+ *
+ * The connector answers *which object*; the host answers *whose connection*.
+ * Keeping the two apart is what stops an adapter from being able to describe an
+ * origin against a connection it was never given.
  */
-export interface OriginResourceDescriptor {
+export interface OriginResourceDescriptor extends ConnectorOriginResource {
   connectionId: string;
   provider: string;
-  resourceType: string;
-  providerResourceId: string;
-  title: string;
-  canonicalUrl: string | null;
-  metadata: Record<string, unknown>;
   contentRef: string | null;
 }
 
@@ -44,101 +49,89 @@ const ATTACH_ORIGIN_RESOURCE_SQL = `INSERT INTO workstream_resources
 const ATTACHED_ORIGIN_RESOURCE_SQL = `SELECT * FROM resources WHERE id = ? AND workspace_id = ?`;
 
 /**
- * The Slack conversation an invocation arrived in.
+ * Ask a connector where a work stream is being started from.
  *
- * Keyed on the thread rather than the channel because the thread is the place a
- * person would go back to: an `@Avalon` mention that opens a new top-level
- * message still gets a thread of its own, so there is always one, and it names
- * the channel through the title and metadata anyway. A DM has a thread too —
- * the root the agent posts when there is nothing to reply under.
+ * Every ingress goes through here, and none of them knows a provider: the
+ * locator carries whatever that connector understands — a normalized activity,
+ * or the provider's own session payload — and the adapter turns it into an
+ * origin. A connector that implements nothing still answers for its activities,
+ * because `connectorOriginFromActivity` in the connector base derives one from
+ * the object normalization already recorded.
  *
- * Slack Agent policy forbids storing provider content pulled in for context, so
- * nothing here carries message text: the identifiers, the channel name, and the
- * kind of conversation are origin metadata, and the content behind them stays
- * in Slack where an authorized tool can fetch it for a run.
+ * `connection` is optional and buys one thing: an adapter that can only get its
+ * canonical URL by asking the provider is allowed to, under the host's
+ * credential door. Callers that have no authorized connection to hand still get
+ * the origin, without the link.
  */
-export function slackOriginResourceDescriptor(input: {
+export async function describeWorkstreamOrigin(env: Env, input: {
+  connectorType: string;
   connectionId: string;
-  channelId: string;
-  threadTs: string;
-  origin: SlackOriginContext;
-  permalink?: string | null;
-}): OriginResourceDescriptor {
+  provider: string;
+  locator: ConnectorOriginLocator;
+  contentRef?: string | null;
+  connection?: AuthorizedConnectorConnection;
+  signal?: AbortSignal;
+}): Promise<OriginResourceDescriptor | null> {
+  const origin = await describeOrigin(env, input);
+  if (!origin) return null;
   return {
+    ...origin,
     connectionId: input.connectionId,
-    provider: "slack",
-    resourceType: "slack_thread",
-    providerResourceId: `${input.channelId}:${input.threadTs}`,
-    title: slackOriginTitle(input.origin),
-    canonicalUrl: input.permalink ?? null,
-    metadata: {
-      teamId: input.origin.teamId,
-      channelId: input.channelId,
-      ...(input.origin.channelName ? { channelName: input.origin.channelName } : {}),
-      threadTs: input.threadTs,
-      channelType: input.origin.channelType,
-      invocationType: input.origin.invocationType,
-    },
-    contentRef: null,
+    provider: input.provider,
+    contentRef: input.contentRef ?? null,
   };
 }
 
-function slackOriginTitle(origin: SlackOriginContext): string {
-  if (origin.channelType === "im") return "Slack direct message";
-  if (origin.channelName) return truncateUtf16Safe(`Thread in #${origin.channelName}`, 300);
-  return "Slack thread";
+async function describeOrigin(env: Env, input: {
+  connectorType: string;
+  locator: ConnectorOriginLocator;
+  connection?: AuthorizedConnectorConnection;
+  signal?: AbortSignal;
+}): Promise<ConnectorOriginResource | null> {
+  try {
+    return await describeConnectorOrigin(
+      connectorRegistryForEnv(env).get(input.connectorType),
+      input.locator,
+      {
+        ...(input.connection ? { connection: input.connection } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+    );
+  } catch (error) {
+    // A registry that cannot be built is one misconfigured credential taking
+    // every connector down with it, and an activity needs no adapter to be
+    // described — falling back to the base derivation keeps the provenance of
+    // every other connector's work streams rather than losing it to Slack's
+    // signing secret being absent.
+    logWarn(env, "workstream_origin_description_failed", {
+      connector_type: input.connectorType,
+      locator_kind: input.locator.kind,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+    if (input.locator.kind !== "activity") return null;
+    const derived = connectorOriginFromActivity(input.locator.activity);
+    return derived ? ConnectorOriginResourceSchema.parse(derived) : null;
+  }
 }
 
 /**
- * The columns of an `activities` row this module reads. Every one is optional
- * and untyped so that a caller holding a narrower row projection, or a raw
- * `Record<string, unknown>` off D1, passes it without a cast — the checks below
- * are the ones that decide whether a row can describe an origin at all.
+ * The `activities` columns the origin locator reads, under the names D1 returns
+ * them. Every caller here holds a stored row rather than a `NormalizedActivity`,
+ * so this is the one place the two spellings meet.
  */
-export interface ActivityOriginRow {
-  connection_id?: unknown;
-  provider?: unknown;
+export function activityOriginLocator(row: {
   resource_type?: unknown;
   provider_resource_id?: unknown;
   title?: unknown;
   metadata_json?: unknown;
-  payload_ref?: unknown;
-}
-
-/**
- * The connector object an activity is about — the Linear issue, the GitHub pull
- * request, the Notion page. An activity that names no provider resource
- * describes something with no place to point at, and returns null rather than a
- * resource nobody can open.
- */
-export function activityOriginResourceDescriptor(
-  activity: ActivityOriginRow,
-): OriginResourceDescriptor | null {
-  if (typeof activity.connection_id !== "string" || activity.connection_id.length === 0) return null;
-  if (typeof activity.provider_resource_id !== "string" || activity.provider_resource_id.length === 0) return null;
-  if (typeof activity.provider !== "string" || activity.provider.length === 0) return null;
-  const metadataJson = typeof activity.metadata_json === "string" ? activity.metadata_json : "{}";
-  return {
-    connectionId: activity.connection_id,
-    provider: activity.provider,
-    resourceType: typeof activity.resource_type === "string" && activity.resource_type.length > 0
-      ? activity.resource_type
-      : "activity",
-    providerResourceId: activity.provider_resource_id,
-    title: truncateUtf16Safe(String(activity.title ?? activity.provider), 300),
-    canonicalUrl: connectorActivityUrl(metadataJson),
-    metadata: parseMetadata(metadataJson),
-    contentRef: typeof activity.payload_ref === "string" ? activity.payload_ref : null,
+}): ConnectorOriginLocator {
+  const activity: ConnectorOriginActivity = {
+    resourceType: typeof row.resource_type === "string" ? row.resource_type : null,
+    providerResourceId: typeof row.provider_resource_id === "string" ? row.provider_resource_id : null,
+    title: typeof row.title === "string" ? row.title : null,
+    metadata: parseMetadata(typeof row.metadata_json === "string" ? row.metadata_json : "{}"),
   };
-}
-
-/** Providers disagree on the key; take the first that is actually a link. */
-export function connectorActivityUrl(metadataJson: string): string | null {
-  const metadata = parseMetadata(metadataJson);
-  for (const candidate of [metadata.canonicalUrl, metadata.url, metadata.htmlUrl, metadata.permalink]) {
-    if (typeof candidate === "string" && /^https?:\/\//u.test(candidate)) return candidate;
-  }
-  return null;
+  return { kind: "activity", activity };
 }
 
 function parseMetadata(value: string): Record<string, unknown> {
@@ -276,5 +269,4 @@ export const __originResourceTesting = {
   attachOriginResourceSql: ATTACH_ORIGIN_RESOURCE_SQL,
   originResourceLookupSql: ORIGIN_RESOURCE_LOOKUP_SQL,
   originRelationshipType: ORIGIN_RELATIONSHIP_TYPE,
-  slackOriginTitle,
 };
