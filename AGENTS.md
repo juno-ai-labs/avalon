@@ -10,7 +10,7 @@ session, so detail belongs in `docs/` behind a pointer.
 session, before running a setup, server, or browser-automation command.** It
 covers dependency installation, the local D1 database, starting both regional
 Workers, and running the Electron client headlessly. The container it assumes is
-defined in [`docs/SANDBOX.md`](docs/SANDBOX.md).
+defined in [`docs/sandbox.md`](docs/sandbox.md).
 
 - **Node.js 22 and pnpm 11.13.0.** The pnpm version is pinned by
   `packageManager`; run `corepack enable` rather than using whatever pnpm the
@@ -131,5 +131,5 @@ you were asked to.
 Never commit secrets. `.env.local` and `apps/api/.dev.vars.*` are ignored and
 must stay that way, server secrets must never sit behind a `VITE_` name, and
 Cloudflare administration credentials belong only to the local deployment
-environment — never as Worker variables. [`docs/SECURITY.md`](docs/SECURITY.md)
+environment — never as Worker variables. [`docs/security.md`](docs/security.md)
 owns the desktop client's isolation model.

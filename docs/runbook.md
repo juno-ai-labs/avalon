@@ -16,7 +16,7 @@ pnpm dev
 
 The default Global API is `http://127.0.0.1:8787`; the optional EU development API uses port `8788`. `GET /health` checks D1, R2, Durable Objects, Queue and Workflow bindings, the one-Global-registry route, and regional inbound-email configuration, and reports other provider configuration separately.
 
-After the API is running, use `pnpm smoke:local` for the repeatable authentication, work-stream, sidebar-data, idempotency, URL-safety, and realtime acceptance check. The complete desktop acceptance flow is documented in `docs/E2E.md`.
+After the API is running, use `pnpm smoke:local` for the repeatable authentication, work-stream, sidebar-data, idempotency, URL-safety, and realtime acceptance check. The complete desktop acceptance flow is documented in `docs/e2e.md`.
 
 Local authentication is available only when all of these are true:
 
@@ -35,11 +35,11 @@ Create independent resource sets for `global` and `eu`:
 - An activity Queue and dead-letter Queue
 - The Worker, Durable Object namespaces, and Workflows declared in the regional Wrangler file
 
-One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data. Both regions do send it an evaluation context carrying workspace, work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email domains — bounded by the rules in [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md#what-may-become-an-attribute).
+One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data. Both regions do send it an evaluation context carrying workspace, work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email domains — bounded by the rules in [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
 
-`avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](FEATURE_FLAGS.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
+`avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](feature-flags.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
 
 Set these shared Worker secrets separately in each regional deployment:
 
@@ -245,9 +245,9 @@ ordering and cache-purge safeguards.
 
 ### Desktop icon release gate
 
-If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](DESKTOP_ICONS.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
+If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](desktop-icons.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
 
-Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0065_automation_draft_conversation.sql` are live in both D1 databases — confirmed against both remote databases with `pnpm db:migrate:remote:list` and its EU counterpart — and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/PROVIDER_APPS.md`: one public connection, whose callback and webhook both terminate at the `notion.with-avalon.com` custom domain on the Global Worker, which must be created before registration. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
+Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0065_automation_draft_conversation.sql` are live in both D1 databases — confirmed against both remote databases with `pnpm db:migrate:remote:list` and its EU counterpart — and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/provider-apps.md`: one public connection, whose callback and webhook both terminate at the `notion.with-avalon.com` custom domain on the Global Worker, which must be created before registration. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
 
 Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
 
@@ -372,7 +372,7 @@ Settings exposes two authorization presets over one `google` connector family:
 - **Google Mail + Calendar** requests `gmail.read`, `gmail.draft`, `gmail.send`, `calendar.read`, and `calendar.write`.
 - **Google Drive + Docs + Sheets** requests `drive.read`, `docs.read`, `docs.write`, `sheets.read`, and `sheets.write`.
 
-The exact Google scope URLs are listed in `docs/PROVIDER_APPS.md`. Google may require sensitive/restricted-scope verification and, for some requested scopes, a security assessment before external production use. A consent screen in Testing or a successful test-user callback is not production approval. Complete the consent-screen configuration, verified-domain and policy requirements, provider verification, and both acceptance flows in `docs/E2E.md` before release.
+The exact Google scope URLs are listed in `docs/provider-apps.md`. Google may require sensitive/restricted-scope verification and, for some requested scopes, a security assessment before external production use. A consent screen in Testing or a successful test-user callback is not production approval. Complete the consent-screen configuration, verified-domain and policy requirements, provider verification, and both acceptance flows in `docs/e2e.md` before release.
 
 The production-approved connector scopes use `gmail.modify` for the Gmail capabilities, `calendar.readonly` plus `calendar.events` for Calendar, `drive.readonly` for Drive and native Docs/Sheets reads, and `drive.file` for Docs/Sheets creation and per-file writes. Existing Docs and Sheets discovered through Drive are read-only unless the user separately opens or shares them with Avalon; Avalon does not currently provide a Google Picker flow for that grant.
 
@@ -509,12 +509,12 @@ did not happen, and it cannot be turned on retroactively.
 1. **Pull the ID out of the URL.** In the canonical
    `https://with-avalon.com/app/workstreams/<uuid>` and in the
    `avalon://workstreams/<uuid>` deep link it wraps, that `<uuid>` is
-   `workstreams.id` — see [`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md).
+   `workstreams.id` — see [`workstream-links.md`](workstream-links.md).
 2. **Find the region.** Query Global first
    (`avalon-global`, `3802fdab-e21c-4313-beb2-c1defb37f253`), then EU
    (`avalon-eu`, `099eb3bf-4291-4a0f-a051-645e5c338881`). A workspace's region is
    immutable, so exactly one holds the row — see
-   [`REGIONALIZATION.md`](REGIONALIZATION.md). The same query returns the
+   [`regionalization.md`](regionalization.md). The same query returns the
    `workspace_id` the next steps need:
 
    ```sql
@@ -555,7 +555,7 @@ A retrieved payload contains the prompt, the connector data pulled into it, and
 whatever the person wrote. Treat it as production user content: read it from a
 scratch directory, keep it out of logs, tickets, and commits, and delete it when
 the investigation is done. What the feature stores and why is
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md#limits); this section is only how to read it
+[`agent-harness.md`](agent-harness.md#limits); this section is only how to read it
 back.
 
 ## Incident response
@@ -574,7 +574,7 @@ Pause connector polling if ingestion exceeds safe capacity. Inspect receipts and
 
 ### Google token revoked
 
-Mark the connection `needs_reconnect` and preserve affected automation state. The mark is a diagnosis, not a gate — dependent tool execution continues and fails on the provider's answer, per [Stored status is a belief, not a gate](CONNECTORS.md#stored-status-is-a-belief-not-a-gate). It also does not clear itself: only reauthorization or an explicit connection test returns the row to `healthy`. Reauthorization must request only its previously selected capabilities; do not silently broaden scopes.
+Mark the connection `needs_reconnect` and preserve affected automation state. The mark is a diagnosis, not a gate — dependent tool execution continues and fails on the provider's answer, per [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate). It also does not clear itself: only reauthorization or an explicit connection test returns the row to `healthy`. Reauthorization must request only its previously selected capabilities; do not silently broaden scopes.
 
 ### Region mismatch
 

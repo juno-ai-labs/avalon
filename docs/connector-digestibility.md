@@ -2,11 +2,11 @@
 
 One row per declared activity type, for every connector Avalon registers. The
 rule these answer to, and the contract that makes stating them mandatory, is in
-[`CONNECTORS.md`](CONNECTORS.md#declaring-what-a-digest-may-read); what happens
+[`connectors.md`](connectors.md#declaring-what-a-digest-may-read); what happens
 to the answer afterwards is in
-[`DIGESTS.md`](DIGESTS.md#digestible-what-a-person-should-be-told).
+[`digests.md`](digests.md#digestible-what-a-person-should-be-told).
 
-This is a reference appendix to [`CONNECTORS.md`](CONNECTORS.md), not a second
+This is a reference appendix to [`connectors.md`](connectors.md), not a second
 document about connectors: that document owns the contract, the rule, and the
 changelog entry for any change to either, and this file holds only the table
 that would swamp it. A change to what a connector declares is recorded there.

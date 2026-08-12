@@ -133,7 +133,7 @@ withheld rows forever.
 
 For connector activity the answer comes from the connector's own manifest —
 `digestible` on each activity type, plus a polling stream's veto over its own
-output — which [`CONNECTORS.md`](CONNECTORS.md#declaring-what-a-digest-may-read)
+output — which [`connectors.md`](connectors.md#declaring-what-a-digest-may-read)
 owns. Nothing about which events matter is written here or in the digest.
 
 #### Adding a producer
@@ -363,7 +363,7 @@ keeps the general one.
 
 Email is the built-in default and needs no connector. Every other destination is
 a connection whose connector declares a `userDelivery` surface in its manifest —
-the same declaration [`CONNECTORS.md`](CONNECTORS.md) describes and the same one
+the same declaration [`connectors.md`](connectors.md) describes and the same one
 personal automations use. The settings screen renders whatever the API offers, so
 a connector that starts declaring a surface becomes a digest destination with no
 UI change.
@@ -513,13 +513,13 @@ first consumer. It does not own:
 
 | For | Read |
 | --- | --- |
-| Which connector activity types are worth telling someone about | [`CONNECTORS.md`](CONNECTORS.md#declaring-what-a-digest-may-read), [`connector-digestibility.md`](connector-digestibility.md) |
-| The `activities` ingest table and the pipeline that fills it | [`CONNECTORS.md`](CONNECTORS.md) |
-| The agent loop a digest run rides on | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) |
+| Which connector activity types are worth telling someone about | [`connectors.md`](connectors.md#declaring-what-a-digest-may-read), [`connector-digestibility.md`](connector-digestibility.md) |
+| The `activities` ingest table and the pipeline that fills it | [`connectors.md`](connectors.md) |
+| The agent loop a digest run rides on | [`agent-harness.md`](agent-harness.md) |
 | `GET /workstreams` paging, which digest work streams take their place in | [`workstream-pinning.md`](workstream-pinning.md) |
-| The scheduler and its alarm | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| The columns and their constraints | [`DATA_MODEL.md`](DATA_MODEL.md) |
-| The other consumer of a connector's `userDelivery` surface | [`WORKSTREAM_EMAIL_ADDRESSES.md`](WORKSTREAM_EMAIL_ADDRESSES.md) |
+| The scheduler and its alarm | [`architecture.md`](architecture.md) |
+| The columns and their constraints | [`data-model.md`](data-model.md) |
+| The other consumer of a connector's `userDelivery` surface | [`workstream-email-addresses.md`](workstream-email-addresses.md) |
 
 A surface that wants "what happened, for this person, since this instant" reads
 `activity_events` through `listActivityEventsForUser`. Nothing else is a supported
@@ -631,7 +631,7 @@ about it, or closing sentence may take its place — and `settleDigestRun` refus
 to settle on a final message too short to be one. The `create_artifact` tool a
 digest run could reach — every digest executes the ordinary work-stream loop, so
 it loaded `avalon_workstream` like any other run — no longer exists. See
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md#changelog).
+[`agent-harness.md`](agent-harness.md#changelog).
 
 **Why:** A run wrote its digest into an artifact and ended with "Outcome: Digest
 artifact created (id …)". `deliverResultsDurably` passes `message.textContent` to
@@ -772,8 +772,8 @@ version of this.
 
 **What changed:** Nothing in the code or the schema. `activity_events.digestible`
 keeps `DEFAULT 1`. What changed is that the reason is now recorded here, in
-[`DATA_MODEL.md`](DATA_MODEL.md), and — as an operational rule rather than a fact
-about this column — in [the runbook](RUNBOOK.md#the-window-between-a-migration-and-the-worker-that-needs-it).
+[`data-model.md`](data-model.md), and — as an operational rule rather than a fact
+about this column — in [the runbook](runbook.md#the-window-between-a-migration-and-the-worker-that-needs-it).
 
 **Why:** Deploying the entry below produced six wrong rows. The deploy job
 applies migrations before it deploys the Workers, so between `0063` landing at

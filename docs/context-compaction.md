@@ -9,7 +9,7 @@ from.
 
 This document owns the policy: when a compaction fires, what it asks the model
 for, what shape it leaves behind, and how a checkpoint is stored and replayed.
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md) owns everything else about the run — the
+[`agent-harness.md`](agent-harness.md) owns everything else about the run — the
 loop, routing, receipts, skills — and points here. Read this one before changing
 the threshold, the summary prompt, the checkpoint shape, or the stored row,
 because each of those decides what a run remembers about work a person asked for
@@ -128,7 +128,7 @@ individually, or trim attachments — it is all-or-nothing on the whole context
 (see [Open questions](#open-questions)). It produces nothing a person sees: the
 work stream transcript in the product is a separate durable record, unaffected by
 a compaction. Scheduling, receipts, and everything else about the run stay in
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md).
+[`agent-harness.md`](agent-harness.md).
 
 ## Failure modes and limits
 
@@ -291,7 +291,7 @@ prompt, but it must not reintroduce a slot whose content outlives the compaction
 that produced it.
 
 **Note for whoever changes this next:** compaction moved out of
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md) into this document in the same change,
+[`agent-harness.md`](agent-harness.md) into this document in the same change,
 because it had grown a persisted table, a replay path, and a prompt of its own.
 The harness document keeps a summary and a pointer here; entries about compaction
 belong in this changelog from now on.

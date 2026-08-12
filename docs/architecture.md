@@ -187,7 +187,7 @@ does not duplicate the canonical transcript.
 
 The room authorizes every connection against D1 itself rather than trusting the
 one-minute ticket, using the same rule the REST reads apply — see
-[`DATA_MODEL.md`](DATA_MODEL.md). That check happens once per socket, so anything
+[`data-model.md`](data-model.md). That check happens once per socket, so anything
 that retracts it has to reach the connections already inside. Before broadcasting
 an event that narrows who may read — a work stream becoming `personal`, or a
 participant being removed — the room sweeps its connected set against that same
@@ -307,7 +307,7 @@ replay, revision compare-and-swap, append-only mutation records, and a
 transactional indexing outbox; lexical search remains available while embeddings
 catch up.
 
-[`AGENT_HARNESS.md`](AGENT_HARNESS.md) owns all of this in detail, and
+[`agent-harness.md`](agent-harness.md) owns all of this in detail, and
 [`context-compaction.md`](context-compaction.md) owns what a run remembers once
 its window fills.
 
@@ -337,7 +337,7 @@ list of times. When one fires, the scheduler freezes a window over the first-par
 `activity_events` log, claims the occurrence, and starts an ordinary run in a
 hidden `system_kind` work stream; what the run writes is then delivered by email or
 by any connector declaring a personal delivery surface. See
-[`DIGESTS.md`](DIGESTS.md).
+[`digests.md`](digests.md).
 
 A work stream can schedule its own wake-up through `workstream_schedule_wakeup`,
 giving a relative duration or an exact ISO-8601 instant plus the prompt to act on.
@@ -453,16 +453,16 @@ document, and it does not absorb one when it grows:
 
 | For | Read |
 | --- | --- |
-| Identity, tenancy, and the D1 schema | [`DATA_MODEL.md`](DATA_MODEL.md) |
-| The Global/EU boundary in detail | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
-| Trust boundaries and the renderer's isolation | [`SECURITY.md`](SECURITY.md) |
-| The Bind 11 adapter, runs, tools, skills, limits | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) |
+| Identity, tenancy, and the D1 schema | [`data-model.md`](data-model.md) |
+| The Global/EU boundary in detail | [`regionalization.md`](regionalization.md) |
+| Trust boundaries and the renderer's isolation | [`security.md`](security.md) |
+| The Bind 11 adapter, runs, tools, skills, limits | [`agent-harness.md`](agent-harness.md) |
 | Socket admission and the ticket | [`realtime-sockets.md`](realtime-sockets.md) |
-| The connector registry and manifest model | [`CONNECTORS.md`](CONNECTORS.md) |
-| Model routing flags | [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) |
-| The activity log and scheduled digests | [`DIGESTS.md`](DIGESTS.md) |
+| The connector registry and manifest model | [`connectors.md`](connectors.md) |
+| Model routing flags | [`feature-flags.md`](feature-flags.md) |
+| The activity log and scheduled digests | [`digests.md`](digests.md) |
 | The macOS status item | [`menu-bar.md`](menu-bar.md) |
-| Hosted resources, secrets, deployment, incidents | [`RUNBOOK.md`](RUNBOOK.md) |
+| Hosted resources, secrets, deployment, incidents | [`runbook.md`](runbook.md) |
 
 A new module is added to this map in a sentence and documented in its own file per
 [`module-documents.md`](module-documents.md); the map does not grow a section for
@@ -493,7 +493,7 @@ it.
   events. Raw microphone audio and transcripts are not persisted by that bridge.
 - **A run stops rather than repeating an ambiguous external write.** Context,
   token, cost, iteration, tool-call, wall-clock, and streaming-watchdog limits all
-  terminate the run; the numbers are in [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
+  terminate the run; the numbers are in [`agent-harness.md`](agent-harness.md).
 - **A missing or malformed Worker variable fails the isolate at its entrypoint**
   rather than inside the first request that happened to read it.
 - **Cross-region workspace-content access is not implemented.** A caller that
@@ -513,7 +513,7 @@ table.
   (`pnpm --filter @avalon/desktop test:release`), and a Gitleaks scan over the
   full history.
 - `pnpm smoke:local` and the manual desktop acceptance flows are in
-  [`E2E.md`](E2E.md); running both Workers and the Electron client locally is in
+  [`e2e.md`](e2e.md); running both Workers and the Electron client locally is in
   [`dev-environment.md`](dev-environment.md).
 
 The traps are environmental rather than architectural: in a sandbox the API starts
@@ -531,7 +531,7 @@ This is a logical and storage boundary for the prototype, not a claim that all
 subprocessors provide complete EU-only processing. The Global identity control
 plane transiently handles onboarding summaries for EU workspaces and stores an
 opaque EU workspace locator; EU workspace content remains in the EU deployment.
-[`REGIONALIZATION.md`](REGIONALIZATION.md) owns the boundary in full.
+[`regionalization.md`](regionalization.md) owns the boundary in full.
 
 ## Security and trust model
 
@@ -543,7 +543,7 @@ contents, model context, and unnecessary personal information. External actions
 and authorization decisions create audit records with structured correlation IDs.
 Immutable run scopes and live connection reauthorization ensure progressive plugin
 activation can narrow, but never widen, a run's original authority.
-[`SECURITY.md`](SECURITY.md) owns these boundaries.
+[`security.md`](security.md) owns these boundaries.
 
 ## Changelog
 

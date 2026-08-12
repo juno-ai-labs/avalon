@@ -75,7 +75,7 @@ The compiler may retain an incomplete draft while asking one focused question. A
 
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and tool order must match its manifest. At run start Avalon creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
-- Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](CONNECTORS.md#stored-status-is-a-belief-not-a-gate).
+- Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
@@ -134,7 +134,7 @@ Completed receipts replay without another provider call. Incomplete safe reads m
 
 ### Model routing and inference ledger
 
-Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, work stream, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) owns the flag keys, the value shape, and how a model change is rolled out.
+Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, work stream, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`feature-flags.md`](feature-flags.md) owns the flag keys, the value shape, and how a model change is rolled out.
 
 Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
 
@@ -226,7 +226,7 @@ Automation drafts may declare automation-scoped tables. Acceptance materializes 
 
 The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. The workspace scheduler fires it: it claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
-That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A scheduled digest carries its frozen window the same way ([`DIGESTS.md`](DIGESTS.md#the-run)). A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
+That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A scheduled digest carries its frozen window the same way ([`digests.md`](digests.md#the-run)). A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
 
 ### Cancellation and deferred systems
 
@@ -263,7 +263,7 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 - **A stored `needs_reconnect` does not drop a plugin.** It is a belief about a
   past moment; the call reaches the provider and fails on the provider's answer —
   see [Stored status is a belief, not a
-  gate](CONNECTORS.md#stored-status-is-a-belief-not-a-gate).
+  gate](connectors.md#stored-status-is-a-belief-not-a-gate).
 - **Skills are frozen with the scope, and loading one grants no authority.**
   Nothing in the loop reaches a store, so `load_skill` can only surface a body the
   run was already authorized to read, and a skill naming an owner plugin makes the
@@ -338,12 +338,12 @@ It does not own:
 | How to *design* a tool so a small model uses it right | [`agent-tools.md`](agent-tools.md) |
 | How to *author* a skill | [`writing-skills.md`](writing-skills.md) |
 | How to *write* a prompt in `prompts/` | [`writing-prompts.md`](writing-prompts.md) |
-| Which model each agent runs on, and the pin that overrides it | [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) |
-| Connector adapters, grants, and health semantics | [`CONNECTORS.md`](CONNECTORS.md) |
+| Which model each agent runs on, and the pin that overrides it | [`feature-flags.md`](feature-flags.md) |
+| Connector adapters, grants, and health semantics | [`connectors.md`](connectors.md) |
 | The create path a run is launched from | [`workstream-creation.md`](workstream-creation.md) |
-| The digest that rides this loop | [`DIGESTS.md`](DIGESTS.md) |
+| The digest that rides this loop | [`digests.md`](digests.md) |
 | The description pass that runs after a terminal run | [`workstream-descriptions.md`](workstream-descriptions.md) |
-| Reading a captured inference payload back | [`RUNBOOK.md`](RUNBOOK.md#inspecting-a-runs-raw-inference) |
+| Reading a captured inference payload back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
 
 A run is one bounded, server-side, tool-using loop inherent to a work stream. It is
 not a participant, a separate persona, a terminal, or a general code-execution
@@ -354,7 +354,7 @@ and general child participants remain deferred product work.
 
 Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
-Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`RUNBOOK.md`](RUNBOOK.md).
+Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`runbook.md`](runbook.md).
 
 When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is available in memory for the immediate control decision and is never logged: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose.
 
@@ -366,7 +366,7 @@ A tool that throws reaches the model as a failed tool result. Where the thrown e
 
 The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
-Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`RUNBOOK.md`](RUNBOOK.md#inspecting-a-runs-raw-inference).
+Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
 ## Testing
 
@@ -446,7 +446,7 @@ rollout, and indefinitely if the deploy failed after the migration step. So
 `0069_retire_artifact_messages.sql` retires only the message type, a later
 release owes the `DROP TABLE`, and the R2 objects under
 `<region>/<workspace>/artifacts/` have to be swept before that drop takes their
-only pointers with it. [The runbook](RUNBOOK.md#finishing-the-artifact-retirement)
+only pointers with it. [The runbook](runbook.md#finishing-the-artifact-retirement)
 carries the sequence.
 
 ### 2026-08-12 — Compaction moved to its own document

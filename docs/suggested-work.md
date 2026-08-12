@@ -22,8 +22,8 @@ ranks**, and **ranking follows attention**.
 | `packages/agent-harness/src/prompts/work-opportunity.ts` | The admission and ranking prompts. |
 | `packages/db/migrations/0049_work_opportunities.sql` | The tables. |
 
-Model contracts are in [`AGENT_HARNESS.md`](AGENT_HARNESS.md) and the flags that
-route them are in [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md).
+Model contracts are in [`agent-harness.md`](agent-harness.md) and the flags that
+route them are in [`feature-flags.md`](feature-flags.md).
 
 ## How it works
 
@@ -188,9 +188,9 @@ the stored set the home screen reads. It does not own:
 | --- | --- |
 | The Suggested context card and its confidence learning | [`contextual-routing.md`](contextual-routing.md) |
 | What happens after a suggestion is started | [`workstream-creation.md`](workstream-creation.md) |
-| The model contracts and structured-output rules | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) |
-| Which model each of these prompts runs on | [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) |
-| The activity ingestion that feeds it | [`CONNECTORS.md`](CONNECTORS.md) |
+| The model contracts and structured-output rules | [`agent-harness.md`](agent-harness.md) |
+| Which model each of these prompts runs on | [`feature-flags.md`](feature-flags.md) |
+| The activity ingestion that feeds it | [`connectors.md`](connectors.md) |
 
 Whether contextual routing suppressing an event type should also silence this
 module is undecided; if it is ever decided yes, the gate belongs here.

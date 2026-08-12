@@ -39,5 +39,5 @@ If you have a new migration, before merging check if a new migration has been me
 
 A merge landing and a deploy succeeding are different facts, and this repo
 auto-deploys to production on every merge to `main` that touches `apps/api` or
-`packages` (`docs/RUNBOOK.md`: "a merge to `main` is a production release").
+`packages` (`docs/runbook.md`: "a merge to `main` is a production release").
 Confirm the deploy, not just the merge:

@@ -1464,7 +1464,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           const response = await api(connection, url.toString(), { signal }, [404]);
           if (response.ok) message = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
           // A deleted message degrades exactly like a refused one, and says so:
-          // the paragraph in CONNECTORS.md promises this marker for any hit
+          // the paragraph in connectors.md promises this marker for any hit
           // whose headers could not be fetched, not only for a transient one.
           else return { ...summarizeGmailSearchHit(messageId, threadId, {}, addressLimit), headersUnavailable: true };
         } catch (error) {

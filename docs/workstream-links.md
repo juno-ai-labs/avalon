@@ -53,7 +53,7 @@ The canonical link puts the work-stream id in its **path**, not in a `#fragment`
 This is the difference between the canonical link and the older
 `/open#target=avalon://workstreams/<uuid>` handoff it replaces: a fragment is never
 sent to a server, which is exactly right for the OAuth ticket handoffs in
-[`SECURITY.md`](SECURITY.md), and exactly wrong for a link that a server has to
+[`security.md`](security.md), and exactly wrong for a link that a server has to
 recognize. Slack's unfurl handler has to read the id off the shared URL, so the id
 has to be somewhere a reader can see it.
 
@@ -209,10 +209,10 @@ with no version constant for a future change to remember to bump.
 
 This module owns the two link forms, the page that serves them, and the Slack
 unfurl card and its refresh. It does not own the Slack connector's ingress, its
-scopes, or its other surfaces — [`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md) and
-[`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) do — and it does not own the OAuth
-handoff the fragment form is reserved for, which is [`SECURITY.md`](SECURITY.md).
-The row it stores is described in [`DATA_MODEL.md`](DATA_MODEL.md).
+scopes, or its other surfaces — [`slack-integration.md`](slack-integration.md) and
+[`slack-permissions.md`](slack-permissions.md) do — and it does not own the OAuth
+handoff the fragment form is reserved for, which is [`security.md`](security.md).
+The row it stores is described in [`data-model.md`](data-model.md).
 
 ### Adding a surface that links to a work stream
 
@@ -274,7 +274,7 @@ a test that leans on real time either passes by accident or fails on a slow mach
 `slack_unfurled_links` records which Slack message carries which work-stream link,
 plus `rendered_status`, `rendered_anonymous`, `rendered_hash`, and `refreshed_at` —
 the four fields the selection query and the rewrite gate read.
-[`DATA_MODEL.md`](DATA_MODEL.md) is authoritative for the columns.
+[`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Changelog
 

@@ -12,7 +12,7 @@ import { logWarn, type LogEnv } from "../observability/logger";
  * origin, plus a status badge while it is running, needs input, or failed —
  * enough to know whether the link is worth opening and whether the agent is
  * blocked — and no work-stream contents. See
- * `docs/WORKSTREAM_LINKS.md` for the audience rule that decides between this
+ * `docs/workstream-links.md` for the audience rule that decides between this
  * and the anonymous card.
  */
 export interface WorkstreamUnfurlSummary {

@@ -312,6 +312,6 @@ test('the planner no longer second-guesses the trigger it sits behind', () => {
   // The `paths:` filter decides release-worthiness now. Re-applying a path list
   // here would mean two lists to keep in sync, and the stricter of the two
   // would silently win — so any change at all since the watermark releases.
-  const plan = planRelease(branchPush({ changedPaths: ['docs/RUNBOOK.md'] }));
+  const plan = planRelease(branchPush({ changedPaths: ['docs/runbook.md'] }));
   assert.equal(plan.shouldRelease, true);
 });

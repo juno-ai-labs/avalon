@@ -129,7 +129,7 @@ Pass evidence: one initial manual run, one scheduled recurrence, authoritative s
 
 ## PRD flow 3 — Google activity
 
-Run this only in provider test accounts after enabling the five Google APIs and registering the OAuth callback URLs in `docs/PROVIDER_APPS.md`. If the OAuth client already has grants for the test account, revoke the old test grant or inspect the authorization request directly; Google's incremental-consent screen may summarize scopes granted during an earlier connection.
+Run this only in provider test accounts after enabling the five Google APIs and registering the OAuth callback URLs in `docs/provider-apps.md`. If the OAuth client already has grants for the test account, revoke the old test grant or inspect the authorization request directly; Google's incremental-consent screen may summarize scopes granted during an earlier connection.
 
 ### Mail + Calendar preset
 
@@ -209,4 +209,4 @@ Pass evidence: the planned work-stream ID is reused, the uniqueness key on subsc
 
 ## Provider and deployment note
 
-Flows 2 and 3 require external services and are release gates for a hosted test workspace, not for an offline local build. Follow the regional deployment checklist in `docs/RUNBOOK.md`; production smoke should create a Gmail draft unless an explicit send has been approved.
+Flows 2 and 3 require external services and are release gates for a hosted test workspace, not for an offline local build. Follow the regional deployment checklist in `docs/runbook.md`; production smoke should create a Gmail draft unless an explicit send has been approved.
