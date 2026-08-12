@@ -77,6 +77,19 @@ the two agree. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row moves
 it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
 
+Holding Command overlays `⌘1` through `⌘9` on the first nine pinned rows, and
+pressing one of those physical number-row keys while Command remains down opens
+the pin at that visible position. Reading the physical key keeps the mapping
+true on symbol-first layouts such as AZERTY. Automations, primary actions,
+recent work streams, and a tenth or later pin are not numbered. An auto-repeated
+keydown is ignored so one press creates one history entry, and shortcuts pause
+while a modal dialog is open rather than changing the route underneath it. The
+hint is absolutely positioned over the row, with a short gradient into the
+row's current normal, hover, or selected background; long copy disappears
+underneath it instead of shrinking the row or touching the pill. Each numbered
+link also declares its `Meta+<number>` shortcut to assistive technology when the
+visual hint is hidden.
+
 A drag is committed only when something accepted the drop. `dragend` fires
 whatever ended the drag, so the handler reads `dataTransfer.dropEffect`: `none`
 means Escape, or a release outside the pinned list, and the arrangement built
@@ -204,13 +217,16 @@ It deliberately does not:
   quick succession overlap; the local order is cleared only if it is still the
   one that call set, so the first response cannot snap the list back to an order
   the reader has already moved past.
+- **Only the first nine pins have Command shortcuts.** Numbering begins at one
+  and never wraps to zero; a tenth or later pin remains reachable by the list,
+  search, and ordinary navigation but has no numbered shortcut.
 
 ## Testing
 
 | Suite | What it covers |
 | --- | --- |
 | `apps/api/test/workstream-pinning.test.ts` | Append-on-pin, per-person isolation, dense rewrite on unpin, tolerant reorder, the first-page backfill, and that an unreadable work stream cannot be pinned but a stale pin can be removed. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, held-Command hints and number navigation for only the first nine pins, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
 
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
@@ -233,6 +249,33 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-12 — Command reveals the first nine pins as direct destinations
+
+**What changed:** Holding Command overlays `⌘1` through `⌘9` on the first nine
+rows of the Pinned section. Pressing the corresponding number while Command is
+held opens that work stream; the links expose the same mapping through
+`aria-keyshortcuts` even while the visual hints are absent.
+
+**Why:** Pinning already turns the sidebar into the reader's deliberately
+ordered short list, but reaching an item still required moving to and clicking
+the sidebar. The requested held-modifier treatment makes that existing order
+temporarily legible as a set of keyboard destinations without adding permanent
+visual weight to every row.
+
+**Considered and rejected:** Numbering the primary commands and Automations
+before Pinned, and using `0` for a tenth destination. Both would make the pin
+numbers depend on unrelated sections and contradict the requested one-through-
+nine mapping. Permanently reserving space for the pills was also rejected: the
+hints are transient, and shortening every title when they are absent would make
+the ordinary sidebar pay for a state it is not showing.
+
+**Consequences:** Reordering pins reassigns shortcuts immediately because the
+mapping follows rendered order. Pins after the ninth stay unnumbered. The pills
+overlay row content behind a gradient matched to the row's normal, hover, or
+selected background, so future row backgrounds must keep that gradient in step.
+The handler follows physical `Digit1`–`Digit9` codes, ignores repeated keydowns,
+and yields whenever a modal dialog owns interaction.
 
 ### 2026-08-12 — The sidebar follows the cursor it was throwing away
 
