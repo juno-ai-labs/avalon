@@ -385,7 +385,13 @@ export async function describeConnectorOrigin(
       origin,
       options.signal,
     );
-    return canonicalUrl ? { ...origin, canonicalUrl } : origin;
+    if (!canonicalUrl) return origin;
+    // Re-parsed rather than spread in: what a provider just handed back is the
+    // least trusted value in this function, and it ends up behind a link a
+    // person clicks. Parsing inside the `catch` is deliberate — a URL that
+    // fails the contract leaves the origin without one, exactly as an
+    // unreachable provider would.
+    return ConnectorOriginResourceSchema.parse({ ...origin, canonicalUrl });
   } catch {
     return origin;
   }

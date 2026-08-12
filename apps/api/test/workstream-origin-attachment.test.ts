@@ -102,7 +102,7 @@ describe("attaching a work stream's origin", () => {
       watch_enabled: 0,
       resource_type: "slack_thread",
       provider: "slack",
-      provider_resource_id: "C1:1786491700.928349",
+      provider_resource_id: "C1:thread:1786491700.928349",
       title: "Thread in #operations",
       canonical_url: "https://avalon.slack.com/archives/C1/p1786491700928349",
     }]);
@@ -235,6 +235,28 @@ describe("a work stream a connector activity created", () => {
     }]);
   });
 
+  it("attaches the origin on a redelivery that finds the run already created", async () => {
+    // A queue invocation killed after the D1 batch commits leaves the run
+    // durable and the origin missing. The redelivery takes the existing-run
+    // branch, and if the attachment only lived on the create path the Workflow
+    // would launch permanently without it.
+    const database = seededDatabase();
+    seedActivityAutomation(database);
+    const env = automationEnvironment(database);
+    await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
+    const workstream = database.prepare(
+      "SELECT id FROM workstreams WHERE automation_subscription_id = ?",
+    ).get(subscriptionId) as { id: string };
+    database.prepare("DELETE FROM workstream_resources WHERE workstream_id = ?").run(workstream.id);
+
+    await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
+
+    expect(attachments(database, workstream.id)).toEqual([expect.objectContaining({
+      relationship_type: "origin",
+      provider_resource_id: "ISS-42",
+    })]);
+  });
+
   it("still records the object when that connector is not configured in this region", async () => {
     // A registry that cannot be built is one absent credential taking every
     // connector down with it. An activity needs no adapter to be described, so
@@ -258,6 +280,83 @@ describe("a work stream a connector activity created", () => {
       provider_resource_id: "ISS-42",
       canonical_url: "https://linear.app/avalon/issue/ISS-42",
     })]);
+  });
+});
+
+describe("reconciling the shared resource row", () => {
+  it("fills a missing link on a row an earlier activity created without one", async () => {
+    // A Slack activity carries no permalink in its metadata, so the row it
+    // creates has none. A thread origin described later does have one, and the
+    // rail row is only clickable if it lands.
+    const database = seededDatabase();
+    const environmentValue = environment(database);
+    const descriptor = await slackOrigin(environmentValue);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
+          title, canonical_url, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, 'slack_thread', 'slack', ?, 'Message in #operations', NULL, '{}', ?, ?)`,
+    ).run("00000000-0000-7000-8000-0000000000d1", workspaceId, connectionId, descriptor.providerResourceId, at, at);
+
+    await attachWorkstreamOriginResource(environmentValue, {
+      workspaceId,
+      workstreamId: (await new WorkstreamService(environmentValue, auth(), () => undefined)
+        .create(request())).workstream.id,
+      attachedByUserId: memberId,
+      descriptor: { ...descriptor, canonicalUrl: "https://avalon.slack.com/archives/C1/p11" },
+    });
+
+    expect(database.prepare("SELECT canonical_url, title FROM resources WHERE id = ?")
+      .get("00000000-0000-7000-8000-0000000000d1")).toEqual({
+      canonical_url: "https://avalon.slack.com/archives/C1/p11",
+      // The title belongs to whoever created the row; rewriting it would make the
+      // rail's wording flip with whichever ingress ran most recently.
+      title: "Message in #operations",
+    });
+  });
+
+  it("never overwrites a link the row already has", async () => {
+    const database = seededDatabase();
+    const environmentValue = environment(database);
+    const descriptor = await slackOrigin(environmentValue);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
+          title, canonical_url, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, 'slack_thread', 'slack', ?, 'Thread', 'https://avalon.slack.com/first', '{}', ?, ?)`,
+    ).run("00000000-0000-7000-8000-0000000000d2", workspaceId, connectionId, descriptor.providerResourceId, at, at);
+
+    await attachWorkstreamOriginResource(environmentValue, {
+      workspaceId,
+      workstreamId: (await new WorkstreamService(environmentValue, auth(), () => undefined)
+        .create(request())).workstream.id,
+      attachedByUserId: memberId,
+      descriptor: { ...descriptor, canonicalUrl: "https://avalon.slack.com/second" },
+    });
+
+    expect(database.prepare("SELECT canonical_url FROM resources WHERE id = ?")
+      .get("00000000-0000-7000-8000-0000000000d2"))
+      .toEqual({ canonical_url: "https://avalon.slack.com/first" });
+  });
+
+  it("stores no content reference for an origin", async () => {
+    // `payload_ref` addresses the raw verified webhook body in R2, and
+    // `workstream_read_resource` serves whatever `content_ref` points at to the
+    // model with no connector authorization of its own. An origin records where
+    // something is, never what it said.
+    const database = seededDatabase();
+    seedActivityAutomation(database);
+    database.prepare("UPDATE activities SET payload_ref = ? WHERE id = ?")
+      .run("global/provider-webhooks/linear/abc.json", activityId);
+
+    await activityConsumerTesting.runMatchingAutomations(
+      automationEnvironment(database),
+      { ...linearActivityRow(), payload_ref: "global/provider-webhooks/linear/abc.json" } as never,
+    );
+
+    expect(database.prepare(
+      "SELECT content_ref FROM resources WHERE provider = 'linear'",
+    ).get()).toEqual({ content_ref: null });
   });
 });
 

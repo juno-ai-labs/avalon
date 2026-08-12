@@ -38,8 +38,25 @@ export interface OriginResourceDescriptor extends ConnectorOriginResource {
  */
 const ORIGIN_RELATIONSHIP_TYPE = "origin";
 
-const ORIGIN_RESOURCE_LOOKUP_SQL = `SELECT id FROM resources
+const ORIGIN_RESOURCE_LOOKUP_SQL = `SELECT id, canonical_url, content_ref FROM resources
   WHERE workspace_id = ? AND connection_id = ? AND provider = ? AND provider_resource_id = ?`;
+
+/**
+ * Fills a gap in a row somebody else created; never rewrites an answer.
+ *
+ * The `IS NULL` in the predicate is a compare-and-set, not decoration: two
+ * callers describing the same object at once must not have one overwrite the
+ * other's value, and a row that already has a link is not improved by a second
+ * opinion about it. Title and resource type are deliberately absent — those
+ * belong to whichever path created the row, and rewriting them would make the
+ * rail's wording flip depending on which ingress ran most recently.
+ */
+const BACKFILL_ORIGIN_RESOURCE_SQL = `UPDATE resources
+  SET canonical_url = COALESCE(canonical_url, ?),
+      content_ref = COALESCE(content_ref, ?),
+      updated_at = ?
+  WHERE id = ? AND workspace_id = ?
+    AND ((canonical_url IS NULL AND ? IS NOT NULL) OR (content_ref IS NULL AND ? IS NOT NULL))`;
 
 const ATTACH_ORIGIN_RESOURCE_SQL = `INSERT INTO workstream_resources
   (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
@@ -68,7 +85,6 @@ export async function describeWorkstreamOrigin(env: Env, input: {
   connectionId: string;
   provider: string;
   locator: ConnectorOriginLocator;
-  contentRef?: string | null;
   connection?: AuthorizedConnectorConnection;
   signal?: AbortSignal;
 }): Promise<OriginResourceDescriptor | null> {
@@ -78,7 +94,14 @@ export async function describeWorkstreamOrigin(env: Env, input: {
     ...origin,
     connectionId: input.connectionId,
     provider: input.provider,
-    contentRef: input.contentRef ?? null,
+    // An origin never carries content. `payload_ref` on an activity addresses
+    // the raw verified webhook body in R2, and `workstream_read_resource` serves
+    // whatever `content_ref` points at to the model with no connector
+    // authorization of its own — so copying it here would turn "record where
+    // this came from" into "publish the provider payload to the run", against
+    // the boundary this module states. Content stays where an authorized tool
+    // has to go and fetch it.
+    contentRef: null,
   };
 }
 
@@ -88,22 +111,22 @@ async function describeOrigin(env: Env, input: {
   connection?: AuthorizedConnectorConnection;
   signal?: AbortSignal;
 }): Promise<ConnectorOriginResource | null> {
+  let adapter;
   try {
-    return await describeConnectorOrigin(
-      connectorRegistryForEnv(env).get(input.connectorType),
-      input.locator,
-      {
-        ...(input.connection ? { connection: input.connection } : {}),
-        ...(input.signal ? { signal: input.signal } : {}),
-      },
-    );
+    adapter = connectorRegistryForEnv(env).get(input.connectorType);
   } catch (error) {
-    // A registry that cannot be built is one misconfigured credential taking
-    // every connector down with it, and an activity needs no adapter to be
-    // described — falling back to the base derivation keeps the provenance of
+    // Only a registry that cannot be built lands here — one misconfigured
+    // credential taking every connector down with it. An activity needs no
+    // adapter to be described, so the base derivation keeps the provenance of
     // every other connector's work streams rather than losing it to Slack's
     // signing secret being absent.
-    logWarn(env, "workstream_origin_description_failed", {
+    //
+    // Deliberately narrower than it was: catching the description as well
+    // swallowed `describeConnectorOrigin`'s manifest check and answered with the
+    // derived origin instead, which is the one outcome that check exists to
+    // prevent — a connector's undeclared resource type would have been reported
+    // as a warning and then quietly worked around.
+    logWarn(env, "connector_registry_unavailable_for_origin", {
       connector_type: input.connectorType,
       locator_kind: input.locator.kind,
       reason: error instanceof Error ? error.message : "unknown",
@@ -111,6 +134,23 @@ async function describeOrigin(env: Env, input: {
     if (input.locator.kind !== "activity") return null;
     const derived = connectorOriginFromActivity(input.locator.activity);
     return derived ? ConnectorOriginResourceSchema.parse(derived) : null;
+  }
+  try {
+    return await describeConnectorOrigin(adapter, input.locator, {
+      ...(input.connection ? { connection: input.connection } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  } catch (error) {
+    // A connector bug — an undeclared resource type, a description that fails
+    // the contract. It produces no origin rather than a substitute one: the
+    // adapter said where the work stream came from and was wrong about it, and
+    // guessing on its behalf is how a typo becomes a forked resource identity.
+    logWarn(env, "workstream_origin_description_failed", {
+      connector_type: input.connectorType,
+      locator_kind: input.locator.kind,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+    return null;
   }
 }
 
@@ -212,8 +252,31 @@ export async function resolveOriginResource(
     descriptor.provider,
     descriptor.providerResourceId,
   ] as const;
-  const existing = await env.DB.prepare(ORIGIN_RESOURCE_LOOKUP_SQL).bind(...bindings).first<{ id: string }>();
-  if (existing) return existing.id;
+  const existing = await env.DB.prepare(ORIGIN_RESOURCE_LOOKUP_SQL).bind(...bindings).first<{
+    id: string;
+    canonical_url: string | null;
+    content_ref: string | null;
+  }>();
+  if (existing) {
+    // The row is shared with every other path that resolves this object, and
+    // whichever ran first may have known less than this caller does — an
+    // activity carries no permalink, so a Slack thread described later with one
+    // would otherwise attach a row that cannot be opened.
+    const fillsUrl = existing.canonical_url == null && descriptor.canonicalUrl != null;
+    const fillsContent = existing.content_ref == null && descriptor.contentRef != null;
+    if (fillsUrl || fillsContent) {
+      await env.DB.prepare(BACKFILL_ORIGIN_RESOURCE_SQL).bind(
+        descriptor.canonicalUrl,
+        descriptor.contentRef,
+        nowIso(),
+        existing.id,
+        workspaceId,
+        descriptor.canonicalUrl,
+        descriptor.contentRef,
+      ).run();
+    }
+    return existing.id;
+  }
   const at = nowIso();
   await env.DB.prepare(
     `INSERT INTO resources
