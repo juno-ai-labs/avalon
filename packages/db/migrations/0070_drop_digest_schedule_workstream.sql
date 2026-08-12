@@ -1,0 +1,34 @@
+-- The second half of the two-phase drop `0068` deliberately left open.
+--
+-- `0068` moved a digest's work stream from the schedule to the occurrence and
+-- stopped reading or writing `digest_schedules.system_workstream_id`, but could
+-- not drop the column in the same change: the deploy job applies both regions'
+-- migrations *before* it deploys either Worker, so for the length of a
+-- deployment the previous Worker meets the new schema. That Worker still
+-- selected the column in `fireDigestSchedule`, wrote it in
+-- `reconcileDigestDefaults`, and read it for the settings screen, so dropping it
+-- there would have been three `no such column` failures per region — for twenty
+-- seconds if the deploy went well, and for hours if it did not, because a failed
+-- deploy leaves the migrations applied. See RUNBOOK.md, "The window between a
+-- migration and the Worker that needs it".
+--
+-- That window is now closed. `0068` shipped in #119 and both regional Workers
+-- went live behind it — Global at 05:51:53 UTC on 2026-08-12, EU nine seconds
+-- earlier — and every version deployed from that point on ignores this column.
+-- So the Worker running while *this* migration lands is one that never touches
+-- it, which is exactly the condition the phasing was waiting on.
+--
+-- Dropping it now rather than leaving it: a column the code no longer maintains
+-- still reads as "the current work stream" to whoever finds it next, and it
+-- points at work streams that were real when they were written and are now
+-- simply the ones a person's earliest digests happened to run in. The delivery's
+-- own `workstream_id` is the answer to that question and the only one.
+--
+-- SQLite's DROP COLUMN is refused for a column that is indexed, or named in a
+-- table CHECK, a UNIQUE constraint, or a partial-index predicate. This one is
+-- none of those — it carries only its own `REFERENCES workstreams(id) ON DELETE
+-- SET NULL`, which goes with it — so this is the whole change and needs no table
+-- rebuild. The work streams it named are untouched, as they were in `0068`:
+-- their owners can still open them, and a dropped pointer is not a reason to
+-- delete somebody's history.
+ALTER TABLE digest_schedules DROP COLUMN system_workstream_id;
