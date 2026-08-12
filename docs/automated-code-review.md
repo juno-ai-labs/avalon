@@ -1,42 +1,43 @@
 # Automated code review
 
 Avalon's automated code review workflow runs three independent Cline reviewers
-against pull requests using models served by Azure AI Foundry. It is deliberately
-Azure-only: the OpenCode and Cline jobs backed by OpenRouter in Monad are not
-part of Avalon.
+against pull requests using models served by Azure AI Foundry. It is an
+Azure-only extraction of Monad's proven reviewer workflow: OpenCode and
+OpenRouter-backed jobs are intentionally absent.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `.github/workflows/azure-ai-reviewers.yml` | Triggers reviews, validates Azure configuration, gathers bounded pull-request context, runs Cline without tools, and posts each review. |
-| `scripts/azure-reviewer-workflow.test.mjs` | Guards the selected models, triggers, credentials, permissions, context boundary, tool denial, and fixed review-output path. |
+| `.github/workflows/azure-ai-reviewers.yml` | Triggers reviews, configures the three Azure models, isolates a PR checkout below Cline's workspace root, runs the Monad Cline harness, and posts each fixed-path review. |
+| `scripts/azure-reviewer-workflow.test.mjs` | Guards the selected Azure jobs and the copied Monad trigger, checkout, invocation, permission, and posting contracts. |
 
 ## How it works
 
-The trusted base-branch workflow starts through `pull_request_target` when a
-pull request is opened, reopened, or marked ready for review. Draft pull
-requests are excluded from this automatic path. A repository owner, member, or
-collaborator can request a fresh review of the current head by commenting
-`/cline review`; an acknowledgment job reacts to that comment with eyes while
-the reviewers run.
+The workflow starts through `pull_request` when a pull request is opened,
+reopened, or marked ready for review. Each reviewer excludes drafts from that
+automatic path. A repository owner, member, or collaborator can request a fresh
+review by commenting `/cline review`; a small acknowledgment job reacts with
+eyes while the reviewers run.
 
-One matrix job runs three independent executions and posts separate comments:
+The workflow contains three separate Azure Cline jobs copied from
+`juno-ai-labs/monad` at commit
+`8eac60499845f00afaa2db6dd41b1578c169436b`:
 
-| Matrix reviewer | Azure deployment/model identifier |
+| Job | Azure deployment/model identifier |
 | --- | --- |
-| `deepseek` | `DeepSeek-V4-Pro` |
-| `grok-43-azure` | `grok-4.3` |
-| `kimi` | `Kimi-K2.6` |
+| `review-deepseek-cline` | `DeepSeek-V4-Pro` |
+| `review-grok-43-azure-cline` | `grok-4.3` |
+| `review-kimi-cline` | `Kimi-K2.6` |
 
-Each reviewer validates and normalizes the configured Azure endpoint. A trusted
-shell step uses `gh` to write explicit PR metadata fields and the diff into a
-bounded context file before Cline starts. Cline receives that file through
-an actual stdin pipe, runs in an empty temporary directory with
-`--auto-approve false`, and receives no GitHub token. Because stdin and stdout
-are non-TTY streams, Cline denies every tool request. Its completed
-`run_result.text` is extracted from NDJSON into a fixed temporary path. A later
-shell step scans that file for credentials and posts it.
+Each job validates the Azure endpoint, installs and authenticates Cline 3.0.47,
+then checks out the PR head under `$GITHUB_WORKSPACE/pr-head`. Installation
+happens before checkout. Cline runs from the parent workspace with
+`--auto-approve true` and receives its complete review request as one
+positional prompt argument, exactly as in Monad. It uses `gh` to read PR
+metadata and the diff and can inspect the checkout for surrounding code. The
+model writes `$GITHUB_WORKSPACE/cline-review.md`; a fixed later step checks the
+path and scans it for credentials before posting it.
 
 The workflow intentionally does not run on `synchronize`. New commits do not
 spend three more model calls automatically; use the comment command when the
@@ -44,35 +45,23 @@ updated head is ready.
 
 ## Invariants
 
-- Every model call uses `AZURE_AI_API_KEY` and `AZURE_AI_API_ENDPOINT`.
-  OpenRouter credentials, providers, and reviewer jobs do not belong in this
-  workflow; adding one would silently broaden both cost and configuration.
-- The automatic trigger rejects drafts. The comment trigger accepts only pull
-  request comments from owners, members, or collaborators, because it runs in
-  the base repository's privileged context.
-- The automatic trigger is `pull_request_target`, so GitHub loads the workflow
-  definition from the trusted base branch. Do not change it to `pull_request`:
-  a same-repository PR could then modify the job that receives Azure credentials.
-- The workflow never checks out the PR. A trusted step reads metadata and the
-  diff with `gh`, asks only for explicit JSON fields, and fails if that input is
-  larger than 600,000 bytes.
-- Cline runs with a real stdin pipe and redirected stdout,
-  `CLINE_TOOL_APPROVAL_MODE` set to `terminal`, and `--auto-approve false`.
-  Cline's JSON mode distinguishes a pipe from regular-file stdin redirection;
-  the pipe must be preserved. These settings move every tool call through the
-  non-TTY approval path, which denies it. Do not replace them with an allowlist
-  or automatic approval.
-- The Cline step receives neither `GH_TOKEN` nor an untrusted checkout. It runs
-  in an empty `$RUNNER_TEMP` directory and can review only the context supplied
-  on stdin. The provider key remains available to Cline's own authenticated
-  model client, but not to model-controlled commands because no command or file
-  tool can execute.
-- Raw PR content is copied between files and into a quoted-heredoc prompt; it is
-  never interpolated into a shell command. Cline's NDJSON goes to a file rather
-  than the workflow log, and only the completed `run_result.text` is published.
-- The post step tests for a symlink before any file read and refuses a review
-  containing either the Azure key or workflow token or exceeding the safe
-  comment-size budget.
+- The only reviewers are Monad's DeepSeek V4 Pro, Grok 4.3, and Kimi K2.6 Azure
+  Cline jobs. OpenRouter credentials, providers, and jobs do not belong here.
+- The automatic trigger is `pull_request`, and every reviewer explicitly
+  rejects drafts. The comment trigger accepts only pull request comments from
+  owners, members, or collaborators.
+- Cline receives the prompt as the positional `"$PROMPT"` argument. JSON mode,
+  prompt-file stdin redirection, and prompt piping are not part of this harness.
+- `npm install -g cline@3.0.47` and authentication happen before the PR is
+  checked out. No installer, build, or test command follows the checkout.
+- The PR checkout stays at `pr-head/`, one level below the
+  `$GITHUB_WORKSPACE` directory passed to `cline --cwd`. The clear step
+  removes Cline rule, hook, plugin, and deliverable paths from that parent root.
+- `CLINE_COMMAND_PERMISSIONS` records the intended read-only `gh` commands,
+  but `--auto-approve true` means it is not an enforcement boundary. Keep this
+  behavior aligned with Monad rather than independently redesigning it here.
+- The fixed post step rejects a symlink at `cline-review.md`, refuses a review
+  containing the Azure key or workflow token, and posts only that fixed path.
 
 ## Boundary
 
@@ -82,8 +71,8 @@ Azure itself. Avalon's ordinary correctness gates remain in
 `.github/workflows/ci.yml`.
 
 The workflow depends on GitHub-hosted Ubuntu runners, GitHub CLI, npm, Cline,
-GitHub's pull-request refs, and an Azure AI Foundry OpenAI-compatible endpoint.
-It is repository-scoped rather than regional product infrastructure; Avalon's
+GitHub pull-request refs, and an Azure AI Foundry OpenAI-compatible endpoint. It
+is repository-scoped rather than regional product infrastructure; Avalon's
 Global and EU runtime boundary does not apply.
 
 ## Failure modes and limits
@@ -91,30 +80,25 @@ Global and EU runtime boundary does not apply.
 - Each reviewer times out after 25 minutes. The acknowledgment job times out
   after two minutes.
 - A newer run of the same reviewer for the same pull request cancels its older
-  run. Because command detection uses substring matching, quoting `/cline
-  review` in an ordinary comment also starts reviewers and can cancel work in
-  progress.
+  run. Because command detection uses substring matching, quoting
+  `/cline review` in an ordinary comment also starts reviewers.
 - Missing credentials or an endpoint outside
   `*.services.ai.azure.com` and `*.openai.azure.com` fails before Cline is
   installed. Resource roots and Foundry project endpoints are accepted, with an
-  optional `/openai/v1/chat/completions` suffix stripped during normalization.
-  A project path must contain exactly one non-empty segment.
-- PR metadata and diff larger than 600,000 bytes fail before the model call.
-  This avoids accidental truncation and forces oversized changes to be split.
-- A missing or empty review file is reported as a warning and nothing is posted.
-  A symlink, an oversized review, or a review body containing a credential fails
-  closed.
-- Diff-only review cannot inspect unchanged callers, declarations, or tests.
-  Findings that depend on missing surrounding source must be reported as
-  uncertain; a human reviewer or a narrower PR supplies the missing context.
+  optional `/openai/v1/chat/completions` suffix stripped.
+- A missing or empty review file produces a warning and no comment. A symlink or
+  a review body containing either available credential fails closed.
+- The three jobs intentionally duplicate their setup and prompt. A change copied
+  from a newer Monad workflow must be applied to every applicable Azure job.
 
 ## Testing
 
 `pnpm test:scripts` runs
-`scripts/azure-reviewer-workflow.test.mjs`. The test treats the three selected
-matrix entries and their security-sensitive context, approval, and token
-boundaries as a contract. Run the repository quality gates after any workflow
-change:
+`scripts/azure-reviewer-workflow.test.mjs`. It checks that only the three Azure
+jobs exist and that each retains Monad's positional prompt, checkout placement,
+automatic approval, permissions, and fixed post path.
+
+Run the repository quality gates after any workflow change:
 
 ```bash
 pnpm lint
@@ -123,26 +107,25 @@ pnpm test
 pnpm test:scripts
 ```
 
-The model calls and review posting require a real pull request. Both trigger
-paths read the workflow definition from the base branch, so a newly added or
-changed workflow cannot execute itself from its own PR. Its first live review
-run occurs only after the change is merged and a later PR is opened, reopened,
-marked ready, or receives the trusted comment command.
+The model calls and review posting require a real pull request. The
+`pull_request` path reads the workflow from the PR ref; the `issue_comment`
+path reads the current default-branch workflow.
 
 ## Security and trust model
 
-Pull-request metadata and diffs are untrusted review material. Only a fixed shell
-step holding `GH_TOKEN` retrieves them, and it writes them as inert file content.
-Cline then runs without that token, without a repository checkout, and with all
-tools subject to a non-interactive approval path that denies them. Prompt
-injection can influence the prose review, but it cannot invoke a shell, read the
-persisted provider settings, inspect runner files, or call GitHub.
+Pull-request metadata, diffs, and checked-out files are untrusted model input.
+The PR lands below Cline's workspace root so branch-provided `AGENTS.md`,
+rules, hooks, and plugins are not auto-discovered from the root. The checkout
+also uses `persist-credentials: false`, and no repository installer, build, or
+test runs after untrusted files appear.
 
-The post step is outside the model loop and treats the generated Markdown only
-as data. The fixed path, symlink check, size limit, and credential scan are
-defense in depth. Any future need for surrounding source must preserve the same
-property: untrusted PR content cannot gain a tool-capable process that also has
-access to credentials.
+This is Monad's operational boundary, not a tool-denial sandbox. Cline runs with
+automatic approval and the review step receives `GH_TOKEN` for read commands;
+provider settings also exist on disk after authentication. The prompt instructs
+the model not to change the checkout or issue GitHub writes. Publication is
+separated into a fixed post step that reads only
+`$GITHUB_WORKSPACE/cline-review.md` and rejects symlinks and credential
+contents.
 
 ## Operations
 
@@ -151,16 +134,41 @@ Configure the repository or organization with:
 - an Actions secret named `AZURE_AI_API_KEY`;
 - an Actions variable named `AZURE_AI_API_ENDPOINT`.
 
-The endpoint can be an Azure resource root or
-`/api/projects/<project>` endpoint. The workflow appends `/openai/v1` and
-passes the API key as a Bearer token through Cline's generic OpenAI-compatible
-provider. Do not switch to Cline's Azure provider: it appends an `api-version`
-query parameter that this Foundry route does not accept.
+The endpoint can be an Azure resource root or `/api/projects/<project>`
+endpoint. The workflow appends `/openai/v1` and passes the API key as a Bearer
+token through Cline's generic OpenAI-compatible provider. Do not switch to
+Cline's Azure provider: it appends an `api-version` query parameter that this
+Foundry route does not accept.
 
-Use the Actions run for context-size, installation, endpoint-validation, and
-provider errors.
+Use the Actions run for checkout, installation, endpoint-validation, provider,
+and model errors.
 
 ## Changelog
+
+### 2026-08-12 — Monad's proven Azure Cline harness restored
+
+**What changed:** The matrix-based JSON reviewer was replaced with the three
+Azure Cline jobs from Monad commit
+`8eac60499845f00afaa2db6dd41b1578c169436b`. Each job now uses Monad's
+positional prompt, isolated `pr-head/` checkout, automatic approval, read-intent
+command configuration, and fixed review-file posting step. Non-Azure Monad jobs
+were omitted.
+
+**Why:** A live post-merge `/cline review` showed that Cline 3.0.47 rejected
+both regular-file redirection and `cat | cline` in JSON mode on GitHub-hosted
+runners. Monad's positional-prompt workflow is already proven in production,
+and the requested resolution was to use that implementation directly.
+
+**Considered and rejected:** Further adapting or hardening the copied harness in
+Avalon. Independent changes had already diverged from the working source and
+failed live; keeping the Azure subset aligned with Monad removes that
+experimentation.
+
+**Consequences:** Avalon again checks out PR source and runs Cline with automatic
+approval, matching Monad's documented boundary. The workflow uses
+`pull_request` rather than `pull_request_target`, and the three jobs remain
+duplicated. Future fixes should be copied from the corresponding Monad Azure
+jobs, while OpenRouter and OpenCode reviewers remain excluded.
 
 ### 2026-08-12 — Reviewer prompts moved to a true stdin pipe
 
