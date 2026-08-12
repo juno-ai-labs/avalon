@@ -74,10 +74,16 @@ Named for the subsystem the way the team says it aloud — `composer-drafts.md`,
 Every document in the folder now follows it; the `SCREAMING_SNAKE_CASE` names
 that predated the convention were renamed in one pass, with every inbound
 reference in `docs/`, the repository root, the workflows, and the source updated
-in the same change. `README.md` keeps its conventional name. The three migration
-files that mention a document in a comment were deliberately left alone, because
-[a deployed migration is immutable](data-model.md#invariants) and a stale comment
-is the cheaper of the two costs.
+in the same change. `README.md` keeps its conventional name.
+
+Three migration files mention a document in a comment and were deliberately left
+naming the old path. The rule being applied is that **a deployed migration file is
+not edited at all** — not the narrower invariant in
+[`data-model.md`](data-model.md#invariants), which is about schema divergence and
+which a comment could not cause. The bright line is worth more than the exception
+would save: "no edits" is checkable at a glance, while "no edits that change
+behavior" invites a judgement call about what counts, on the one class of file
+where being wrong is expensive. A stale comment is the accepted cost.
 
 **Register it in [the documentation index](README.md)** in the same change, in
 the table that matches its area, with a scope line saying what to read and update
