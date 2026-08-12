@@ -12,7 +12,7 @@ whole-meeting summary.
 Read this before changing the recording cadence, either prompt, the transcript
 segment protocol, or the note resource that the rest of Avalon reads. The
 realtime dictation transport that feeds it belongs to
-[`SECURITY.md`](SECURITY.md) and [`RUNBOOK.md`](RUNBOOK.md); this document starts
+[`security.md`](security.md) and [`runbook.md`](runbook.md); this document starts
 at the transcript text the client already holds.
 
 ## Where the code lives
@@ -50,7 +50,7 @@ costs an inference per tick and has to drain before finalization can even start.
 ### Where the cadence comes from
 
 The cadence is the `control-tower-refresh-seconds` flag, served from Flagship and
-resolved by `control-tower-flags.ts` ([`FEATURE_FLAGS.md`](FEATURE_FLAGS.md)).
+resolved by `control-tower-flags.ts` ([`feature-flags.md`](feature-flags.md)).
 **One meeting keeps one cadence**, and the client is what keeps it:
 
 1. The meeting screen asks `GET /feature-flags` once when it opens, and the
@@ -97,7 +97,7 @@ the durable summary.
 Both passes run through the agent harness with no tools, no plugins, and no web
 search, capped at a single iteration. The live pass runs at low reasoning effort
 and the final pass at medium; the model is chosen by the
-`agent-model-meeting-notes` flag ([`FEATURE_FLAGS.md`](FEATURE_FLAGS.md)).
+`agent-model-meeting-notes` flag ([`feature-flags.md`](feature-flags.md)).
 
 ### Why the live prompt reads the way it does
 
@@ -343,12 +343,12 @@ sound once the first two exist.
 
 **What this costs and what has to be true first.** The dictation bridge
 deliberately persists neither audio nor transcripts today
-([`ARCHITECTURE.md`](ARCHITECTURE.md), [`RUNBOOK.md`](RUNBOOK.md)), so part 1 is
+([`architecture.md`](architecture.md), [`runbook.md`](runbook.md)), so part 1 is
 a change to what that boundary stores and where it comes to rest — it needs
-[`SECURITY.md`](SECURITY.md) and [`REGIONALIZATION.md`](REGIONALIZATION.md) read
+[`security.md`](security.md) and [`regionalization.md`](regionalization.md) read
 first, and it is the reason to do this deliberately rather than opportunistically.
 Part 2 adds a Durable Object class to the runtime, which is a migration and an
-[`ARCHITECTURE.md`](ARCHITECTURE.md) entry. Both parts have to land before part 3
+[`architecture.md`](architecture.md) entry. Both parts have to land before part 3
 is anything but a second scheduler racing the client's.
 
 Until then, the client-*kept* cadence is a known and accepted gap, and the

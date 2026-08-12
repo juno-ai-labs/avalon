@@ -192,8 +192,8 @@ own:
 | --- | --- |
 | The draft automation a New automation conversation is saved on | [`automation-drafts.md`](automation-drafts.md) |
 | The create path a submitted draft becomes | [`workstream-creation.md`](workstream-creation.md) |
-| Draft resources, their upload endpoint, and the 24-hour reaper | [`DATA_MODEL.md`](DATA_MODEL.md), [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| What may be written under `userData` at all | [`SECURITY.md`](SECURITY.md) |
+| Draft resources, their upload endpoint, and the 24-hour reaper | [`data-model.md`](data-model.md), [`architecture.md`](architecture.md) |
+| What may be written under `userData` at all | [`security.md`](security.md) |
 
 Nothing outside the renderer reads this cache, and nothing in it is authoritative:
 a draft is a convenience over state the server has never been told about.
@@ -247,7 +247,7 @@ Run one with
 Drafts are workspace content stored **unencrypted** in the renderer's IndexedDB
 under Electron's `userData` directory. That is deliberate and bounded: nothing else
 is written there, no credential ever is, every draft expires after 12 hours, and
-signing out deletes all of them. [`SECURITY.md`](SECURITY.md) owns the boundary this
+signing out deletes all of them. [`security.md`](security.md) owns the boundary this
 sits inside.
 
 ## Changelog

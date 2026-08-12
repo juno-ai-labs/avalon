@@ -13,7 +13,7 @@ another reason. So the bar an activity has to clear is set by what this
 workspace has actually done with cards like it, and a declaration made for
 another purpose can raise that bar but never close the door on its own. Read this
 before changing what becomes a card, and
-[`CONNECTORS.md`](CONNECTORS.md#activity-ingestion) for the ingestion pipeline
+[`connectors.md`](connectors.md#activity-ingestion) for the ingestion pipeline
 that feeds it.
 
 ## Where the code lives
@@ -34,7 +34,7 @@ that feeds it.
 `consumeOne` tries the deterministic routes first — resource watches, then
 automation triggers — and calls `routeContextually` only with what neither
 claimed. If contextual routing also declines and no watch fired, the activity
-falls through to [suggested work](SUGGESTED_WORK.md) instead.
+falls through to [suggested work](suggested-work.md) instead.
 
 **The confidence floor is the mechanism.** There is one hard stop, and it is
 learned rather than declared; everything else moves a number.
@@ -85,7 +85,7 @@ along with who clicked, which is what steps 2–4 read on the next activity.
   says anything about relevance to a work stream — a Google Doc being edited is
   prime context and a poor digest line. Treating the flag as a veto silently
   removes Drive, Docs, Sheets, Granola edits, and every generic webhook from
-  contextual routing, which is how [PRD flow 4](E2E.md#prd-flow-4--contextual-routing)
+  contextual routing, which is how [PRD flow 4](e2e.md#prd-flow-4--contextual-routing)
   — the acceptance flow for this feature, run over a generic-webhook connection
   — would pass its own tests while testing nothing.
 - **An empty `digestible` list is the absence of a judgement, not a negative
@@ -135,16 +135,16 @@ Contextual routing owns the decision to *offer* an activity to a work stream, an
 nothing else. It never attaches, never posts a message, never starts a run.
 
 It does not own: resource watches or automation triggers (`consumeActivityQueue`,
-[`CONNECTORS.md`](CONNECTORS.md#activity-ingestion)), which are deterministic and
+[`connectors.md`](connectors.md#activity-ingestion)), which are deterministic and
 deliberately exempt from everything here because they were asked for by name; the
-home-screen suggestions ([`SUGGESTED_WORK.md`](SUGGESTED_WORK.md)), which are a
+home-screen suggestions ([`suggested-work.md`](suggested-work.md)), which are a
 separate admission agent over a batched window — but note that its
 `routeExistingDecision` branch is a **second producer of the same card**, writing
 `activity_suggestions` rows through the same `createActivitySuggestion` and
 resolved by the same endpoint, so its opportunity-level state is not the only
-state it keeps; the digest ([`DIGESTS.md`](DIGESTS.md)), which owns the
+state it keeps; the digest ([`digests.md`](digests.md)), which owns the
 `digestible` declaration this module reads; or the accept/dismiss endpoints and
-their idempotency ([`CONNECTORS.md`](CONNECTORS.md#activity-ingestion)).
+their idempotency ([`connectors.md`](connectors.md#activity-ingestion)).
 
 Callers: `consumeOne` only. The feedback module is reachable from anywhere but has
 no other caller by design — a second consumer of these thresholds means two
@@ -181,7 +181,7 @@ policies that will drift.
   guarantee that *this* module stops producing them. The two are told apart by
   `activity_suggestions.source`; extending one agent's suppression over the other
   is a product decision nobody has made, and would belong in
-  [`SUGGESTED_WORK.md`](SUGGESTED_WORK.md) rather than here.
+  [`suggested-work.md`](suggested-work.md) rather than here.
 - **A window rolling past a cluster of dismissals resets the record, not just
   one card.** Suppression is not lifted gradually: four dismissals resolved in
   the same afternoon all age out on the same day, `resolved` drops to zero, and
@@ -225,7 +225,7 @@ the digestibility declaration being turned back into a veto.
 ## Data model
 
 No tables of its own. `activity_suggestions` (see
-[`DATA_MODEL.md`](DATA_MODEL.md)) is both the output and the training data: one
+[`data-model.md`](data-model.md)) is both the output and the training data: one
 row per card, `UNIQUE (activity_id, workstream_id)`, `status` carrying the label,
 `resolved_by_user_id` carrying who applied it, and `source` carrying which
 producer wrote it.
@@ -327,7 +327,7 @@ inference that it deserves at least as strong a declaration feels airtight. It i
 wrong because `digestible` encodes three different noes and only one of them is
 about relevance. `generic_webhook` declares `digestible: []` because Avalon
 cannot parse an arbitrary payload well enough to render it into somebody's
-morning email — and it is the connector [PRD flow 4](E2E.md#prd-flow-4--contextual-routing)
+morning email — and it is the connector [PRD flow 4](e2e.md#prd-flow-4--contextual-routing)
 uses to test contextual routing, so the gate broke the feature's own acceptance
 flow while every unit test passed. Google's Drive, Docs, and Sheets events are
 operational because a change feed reports every save, which is a statement about
@@ -368,7 +368,7 @@ everybody, with the same no-way-back problem one level down.
 the card type: the suggested-work path can still publish a card for a suppressed
 event type, and deliberately keeps its own record. Whether one agent's
 suppression should silence the other is a real product question this change does
-not answer, and answering it belongs in [`SUGGESTED_WORK.md`](SUGGESTED_WORK.md).
+not answer, and answering it belongs in [`suggested-work.md`](suggested-work.md).
 Anything added to `activity_suggestions` from here has to declare its `source`,
 and any new read of that table as evidence has to filter on it.
 

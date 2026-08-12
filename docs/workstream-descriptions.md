@@ -251,10 +251,10 @@ does not own the run it rides behind.
 
 | For | Read |
 | --- | --- |
-| `workstreams` and `workstream_description_refreshes` | [`DATA_MODEL.md`](DATA_MODEL.md) |
-| The run this loop is the last step of | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) |
+| `workstreams` and `workstream_description_refreshes` | [`data-model.md`](data-model.md) |
+| The run this loop is the last step of | [`agent-harness.md`](agent-harness.md) |
 | How the classifier prompt is written and tested | [`writing-prompts.md`](writing-prompts.md) |
-| The model this loop runs on — a flag, not a deploy | [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) |
+| The model this loop runs on — a flag, not a deploy | [`feature-flags.md`](feature-flags.md) |
 | Where a derived description comes from at creation | [`workstream-creation.md`](workstream-creation.md) |
 
 Out of scope, deliberately:

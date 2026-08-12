@@ -14,7 +14,7 @@ const workstreamId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 function documentedVocabulary(section: string): string[] {
   const documentation = readFileSync(
-    new URL("../../../docs/WORKSTREAM_EMAIL_ADDRESSES.md", import.meta.url),
+    new URL("../../../docs/workstream-email-addresses.md", import.meta.url),
     "utf8"
   );
   const headingStart = documentation.indexOf(`## Frozen v1 ${section} (`);

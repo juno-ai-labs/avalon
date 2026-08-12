@@ -100,13 +100,13 @@ includes it. Knowing an object ID is never sufficient authorization.
   unless the caller passes `includeSystem`, which the desktop does when Debug
   enabled is on — never who may read it. A digest's work stream carries both:
   `scope = 'personal'` and `system_kind = 'digest'`. See
-  [`DIGESTS.md`](DIGESTS.md).
+  [`digests.md`](digests.md).
 - `workstreams.model_override` pins this one work stream's runs to an OpenRouter
   model, ahead of the `agent-model-workstream` flag. `NULL` — the overwhelming
   majority — means the flag decides. It exists because model *selection* is a
   fleet-wide rollout and this is the opposite question, asked about one piece of
   work at the moment it is created; see
-  [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md#a-work-streams-own-model). The column
+  [`feature-flags.md`](feature-flags.md#a-work-streams-own-model). The column
   carries no `CHECK` enumerating the ids: the selectable set is a product decision
   that moves, so it lives in `AGENT_MODEL_OVERRIDES` and is re-validated on read,
   which lets a model be retired without a migration.
@@ -225,7 +225,7 @@ includes it. Knowing an object ID is never sufficient authorization.
   changed or that this region does not register. It carries no index: the reads
   that use it are already anchored on `activity_events_cursor_idx`, and a two-value
   column ahead of that range would only widen the index for every other reader.
-  [`DIGESTS.md`](DIGESTS.md#digestible-what-a-person-should-be-told) owns the rule,
+  [`digests.md`](digests.md#digestible-what-a-person-should-be-told) owns the rule,
   and its `DEFAULT 1` is a deliberate fail-open — see
   [Failure modes and limits](#failure-modes-and-limits).
 - `activity_events.log_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT` and is the
@@ -279,7 +279,7 @@ includes it. Knowing an object ID is never sufficient authorization.
   link, plus a hash of the attachment posted on it, so a posted unfurl card is
   rewritten exactly when it would render differently. Slack reports a shared link
   only once, so a row that is not written as the card is posted can never be
-  recovered — see [`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md).
+  recovered — see [`workstream-links.md`](workstream-links.md).
 - `activities` stores normalized metadata and an optional R2 payload reference.
   `target_user_ids_json` preserves explicit owner/mention routing separately from
   visibility, while `external_people_json` retains bounded provider identities and
@@ -331,14 +331,14 @@ has a document, and the column notes above point at it rather than restating it:
 | For | Read |
 | --- | --- |
 | The DDL itself | `packages/db/migrations/` — authoritative, always |
-| The surfaces, flows, and contract boundaries around this schema | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| Which region a row lives in and what crosses | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
+| The surfaces, flows, and contract boundaries around this schema | [`architecture.md`](architecture.md) |
+| Which region a row lives in and what crosses | [`regionalization.md`](regionalization.md) |
 | The description refresh loop | [`workstream-descriptions.md`](workstream-descriptions.md) |
 | Pinning and the pinned sidebar section | [`workstream-pinning.md`](workstream-pinning.md) |
 | The draft automation lifecycle | [`automation-drafts.md`](automation-drafts.md) |
-| The activity log's semantics and the digest that reads it | [`DIGESTS.md`](DIGESTS.md) |
-| Model pinning and the flags it overrides | [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) |
-| Running and reverting migrations against hosted databases | [`RUNBOOK.md`](RUNBOOK.md) |
+| The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
+| Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
+| Running and reverting migrations against hosted databases | [`runbook.md`](runbook.md) |
 
 ## Failure modes and limits
 
@@ -348,13 +348,13 @@ has a document, and the column notes above point at it rather than restating it:
   and would silently change what it writes if the default ever flipped — and
   changing it now costs a full rebuild of the log with `activity_event_targets`
   staged around it. [The
-  runbook](RUNBOOK.md#the-window-between-a-migration-and-the-worker-that-needs-it)
+  runbook](runbook.md#the-window-between-a-migration-and-the-worker-that-needs-it)
   records what that default cost during the deployment that added it, and why the
   next such column should pick the fail-closed value up front.
 - **`artifacts` is retired and no code reads or writes it.** The table is still
   present only because the Worker live during a migration is the previous one,
   which did read it; a later release drops it, and [the
-  runbook](RUNBOOK.md#finishing-the-artifact-retirement) owns the remaining steps.
+  runbook](runbook.md#finishing-the-artifact-retirement) owns the remaining steps.
   Do not add a reader.
 - **A work-stream wake-up is at-most-once, not at-least-once.** `status` moves
   `pending → fired` under a version guard before the run launches, so a wake-up

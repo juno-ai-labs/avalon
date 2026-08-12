@@ -272,7 +272,7 @@ What belongs elsewhere:
 | Decision | Where it goes |
 | --- | --- |
 | A product or scope consequence — the PRD's goals, behavior, or contract move | The decision log. |
-| A low-level ambiguity resolved without changing the product contract | [`ASSUMPTIONS.md`](ASSUMPTIONS.md), which exists for exactly this. |
+| A low-level ambiguity resolved without changing the product contract | [`assumptions.md`](assumptions.md), which exists for exactly this. |
 | How the shipped system now behaves, durably | The subsystem document that owns the area. The log says *why it changed*; that document says *what it is*. |
 | A purely internal implementation choice with no product consequence | The pull request description, under **Key design decisions**. |
 
@@ -291,30 +291,30 @@ provenance rather than guidance.
   gets overturned.
 - **Data model** — The tables, columns, and relationships the change implies,
   and whether existing rows need backfilling. Sketch level is fine; the
-  authoritative record is the migration and [`DATA_MODEL.md`](DATA_MODEL.md).
+  authoritative record is the migration and [`data-model.md`](data-model.md).
 - **Regional impact** — What differs between Global and the European Union, what
   crosses the boundary, and where the data comes to rest. **Required in spirit**
   for anything touching identity, the Global registry, cross-region bridges,
   provider ingress routing, or data residency; read
-  [`REGIONALIZATION.md`](REGIONALIZATION.md) first.
+  [`regionalization.md`](regionalization.md) first.
 - **Security and trust model** — The trust surface the change opens or closes:
   renderer isolation, connector credential scope, session and ticket handling,
   webhook signature verification, untrusted model or provider payloads, secrets
   placement. **Required in spirit** whenever the change touches any of those;
-  [`SECURITY.md`](SECURITY.md) defines the boundaries.
+  [`security.md`](security.md) defines the boundaries.
 - **Agent behavior** — What the agent may now do, which typed tools it gains,
   what it is still forbidden, and what a user sees while it works. Required
   whenever the change touches the harness or adds a tool; see
-  [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
+  [`agent-harness.md`](agent-harness.md).
 - **Provider configuration** — Any Slack, GitHub, Linear, Notion, Google,
   Resend, or Cloudflare setting that must change outside the repository, in
   which region, and what breaks if it is not applied before the change ships.
 - **Rollout** — Flags, phases, migration or backfill order, and how the change
   is turned off if it goes wrong. Name the flag, per
-  [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md).
+  [`feature-flags.md`](feature-flags.md).
 - **Acceptance** — How anyone can tell the PRD is done: the flows to walk and
   what each must show. Where these become durable checks, they land in
-  [`E2E.md`](E2E.md).
+  [`e2e.md`](e2e.md).
 - **Open questions** — What is genuinely undecided, and what each answer would
   change. An open question that blocks the build says so. Delete each one as it
   is resolved — resolved questions belong in **Key design decisions**.
@@ -369,8 +369,8 @@ provenance rather than guidance.
   included; the folder listing is the tree's own index.
 - **A PRD does not replace the subsystem document.** When a PRD ships, the
   behavior it introduced is described in the document that owns the area —
-  [`ARCHITECTURE.md`](ARCHITECTURE.md), [`DATA_MODEL.md`](DATA_MODEL.md),
-  [`CONNECTORS.md`](CONNECTORS.md), and so on — updated in the same change as
+  [`architecture.md`](architecture.md), [`data-model.md`](data-model.md),
+  [`connectors.md`](connectors.md), and so on — updated in the same change as
   the code, per [the agent rule sheet](../AGENTS.md). If a PRD introduced a
   subsystem that no existing document covers, add `docs/<lower-kebab-name>.md`
   to the shape in [`module-documents.md`](module-documents.md) and register it in
@@ -380,7 +380,7 @@ provenance rather than guidance.
 - **A subsystem document may cite a PRD** for the reasoning behind a decision.
   Link to the folder's `prd.md` by its full path; the path is stable for the life
   of the PRD, so such a link does not need revisiting when the PRD advances.
-- **[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)** remains the phased
+- **[`implementation-plan.md`](implementation-plan.md)** remains the phased
   checklist for the product build as a whole. A PRD's own `plan.md` covers only
   that PRD.
 - **A pull request implementing a PRD** links to it from the **Motivation**

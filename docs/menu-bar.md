@@ -119,7 +119,7 @@ Opening the drop-down reports its suggestions through
 `POST /work-opportunities/impressions`. That is what keeps them moving: the
 ranking treats an impression as evidence a suggestion was put in front of
 someone and passed over, and asks for a re-rank on it — see
-[`SUGGESTED_WORK.md`](SUGGESTED_WORK.md). Reporting happens on the **open**, not
+[`suggested-work.md`](suggested-work.md). Reporting happens on the **open**, not
 on the fetch, because the fetch is triggered by the pointer reaching the status
 item and would otherwise count suggestions that were never on screen. A set is
 reported once, matching the home screen, whose effect is keyed on the ids and
@@ -237,9 +237,9 @@ login-item registration. It exposes two IPC channels —
 
 It does **not** own: the application menu bar at the top of the screen
 (`application-menu.ts`), the Dock and Finder icon
-([`DESKTOP_ICONS.md`](DESKTOP_ICONS.md)), how a suggestion is generated or ranked
-([`SUGGESTED_WORK.md`](SUGGESTED_WORK.md)), what a work-stream link means
-([`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md)), or session storage and refresh —
+([`desktop-icons.md`](desktop-icons.md)), how a suggestion is generated or ranked
+([`suggested-work.md`](suggested-work.md)), what a work-stream link means
+([`workstream-links.md`](workstream-links.md)), or session storage and refresh —
 it borrows `loadStoredAuth` and the coalescing refresh and adds nothing to them.
 
 It depends on the `avalon://` deep-link vocabulary already handled in
@@ -335,7 +335,7 @@ main-process memory only — never written to disk — and are dropped on sign-o
 `application-settings.json` with Lockdown mode, so they go through the same
 shared write queue: a lost update there would leave an off Lockdown preference
 beside a Lockdown envelope, which the next launch reads as an out-of-app edit and
-answers by deleting the stored credentials. See [`SECURITY.md`](SECURITY.md).
+answers by deleting the stored credentials. See [`security.md`](security.md).
 
 ## Changelog
 

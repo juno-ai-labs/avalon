@@ -7,7 +7,7 @@
 > this one stays current: it is the document every other document defers to on
 > what Avalon *is*, and it is edited when the contract itself changes. The
 > phased build against it is
-> [`../../IMPLEMENTATION_PLAN.md`](../../IMPLEMENTATION_PLAN.md).
+> [`../../implementation-plan.md`](../../implementation-plan.md).
 >
 > Conventions for this folder: [`../../prds.md`](../../prds.md).
 

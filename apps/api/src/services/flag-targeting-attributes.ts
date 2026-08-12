@@ -307,7 +307,7 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
  * deliberate exception: it is user-authored text, and it crosses anyway because
  * a uuid is unreadable in a rule six weeks later. No name, no address, no
  * title, and nothing else a person wrote ever becomes an attribute;
- * `docs/FEATURE_FLAGS.md` owns that boundary and the slug's carve-out.
+ * `docs/feature-flags.md` owns that boundary and the slug's carve-out.
  *
  * Never throws and never blocks on more than one round trip: the three reads
  * are independent, each is cached in the isolate, and each failure degrades to
