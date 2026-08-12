@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { HonoAppEnv } from "../env";
+import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
@@ -28,6 +28,28 @@ export const healthRoutes = new Hono<HonoAppEnv>();
 
 healthRoutes.get("/", async (c) => {
   const checks: Record<string, { ok: boolean; message: string }> = {};
+  // The counterpart to the entrypoint's exemption for this route.
+  //
+  // `index.ts` refuses every *other* route when the environment contract fails,
+  // and answers a body that deliberately names nothing, because the offending
+  // keys are secrets. This route is exempt so that it can still answer — and
+  // until now that was all it did: it answered, cheerfully, while the Worker
+  // could not serve a single request. A probe that cannot fail on the one fault
+  // that stops everything is not a probe. So run the assertion here, catch it
+  // rather than throw, and report it as a required check: the response says
+  // which keys, and `ok` goes false so `pnpm health:regions` and every uptime
+  // monitor above it see the outage.
+  try {
+    assertEnvContract(c.env);
+    checks.envContract = { ok: true, message: "satisfied" };
+  } catch (error) {
+    checks.envContract = {
+      ok: false,
+      message: error instanceof EnvContractError
+        ? `the Worker cannot serve requests: ${error.keys.join(", ")}`
+        : "the Worker cannot serve requests",
+    };
+  }
   try {
     const row = await c.env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
     checks.d1 = { ok: row?.ok === 1, message: row?.ok === 1 ? "available" : "query failed" };
@@ -154,6 +176,7 @@ healthRoutes.get("/", async (c) => {
     message: inboundConfigured ? "configured" : "not configured",
   };
   const required = [
+    checks.envContract,
     checks.d1,
     checks.r2,
     checks.durableObjects,
