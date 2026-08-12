@@ -21,7 +21,7 @@ const AVALON_WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const AVALON_CONNECTION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 describe("Notion connector", () => {
-  it("uses personal-owner public OAuth and returns an install-specific bot identity", async () => {
+  it("uses user-authorized public OAuth for a workspace connection and returns an install-specific bot identity", async () => {
     const fetcher: FetchLike = async (input, init) => {
       const url = requestUrl(input);
       expect(url.pathname).toBe("/v1/oauth/token");
@@ -45,9 +45,11 @@ describe("Notion connector", () => {
       });
     };
     const adapter = notionAdapter(fetcher);
+    expect(adapter.manifest.supportedScopes).toEqual(["personal", "workspace"]);
     const authorization = await adapter.beginAuthorization!({
       state: "s".repeat(32),
       codeChallenge: "c".repeat(43),
+      connectionScope: "workspace",
       scopes: [NotionCapabilities.read, NotionCapabilities.commentRead],
     });
     const url = new URL(authorization.url);
@@ -59,6 +61,7 @@ describe("Notion connector", () => {
     await expect(adapter.handleAuthorizationCallback!({
       code: "notion-code",
       codeVerifier: "v".repeat(43),
+      connectionScope: "workspace",
     })).resolves.toMatchObject({
       accessToken: "notion-access",
       refreshToken: "notion-refresh",
@@ -71,6 +74,94 @@ describe("Notion connector", () => {
       providerAccountId: BOT_ID,
       providerAccountName: "Acme Notes",
     });
+  });
+
+  it("uses hosted MCP discovery, DCR, and PKCE for a personal Notion connection", async () => {
+    const fetcher: FetchLike = async (input, init) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+        return jsonResponse({ error: "not_found" }, 404);
+      }
+      if (url.pathname === "/.well-known/oauth-protected-resource") {
+        return jsonResponse({
+          resource: "https://mcp.notion.com/mcp",
+          authorization_servers: ["https://mcp.notion.com"],
+          scopes_supported: ["default"],
+        });
+      }
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return jsonResponse({
+          authorization_endpoint: "https://mcp.notion.com/authorize",
+          token_endpoint: "https://mcp.notion.com/token",
+          registration_endpoint: "https://mcp.notion.com/register",
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      if (url.pathname === "/register") {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          client_name: "Avalon",
+          redirect_uris: ["https://api.avalon.test/connections/notion/callback"],
+          token_endpoint_auth_method: "none",
+        });
+        return jsonResponse({ client_id: "notion-mcp-client", token_endpoint_auth_method: "none" });
+      }
+      expect(url.pathname).toBe("/token");
+      const form = new URLSearchParams(String(init?.body));
+      expect(form.get("grant_type")).toBe("authorization_code");
+      expect(form.get("code_verifier")).toBe("v".repeat(43));
+      return jsonResponse({
+        access_token: "notion-mcp-access",
+        refresh_token: "notion-mcp-refresh",
+        token_type: "Bearer",
+        expires_in: 28_800,
+        scope: "default",
+        user_id: "notion-user-1",
+        workspace_id: NOTION_WORKSPACE_ID,
+        email_domain: "example.com",
+      });
+    };
+    const adapter = createNotionConnector({
+      redirectUri: "https://api.avalon.test/connections/notion/callback",
+      fetch: fetcher,
+    });
+    const authorization = await adapter.beginAuthorization!({
+      state: "s".repeat(32),
+      codeChallenge: "c".repeat(43),
+      connectionScope: "personal",
+      scopes: [NotionCapabilities.personalMcp],
+    });
+    const url = new URL(authorization.url);
+    expect(url.origin).toBe("https://mcp.notion.com");
+    expect(url.searchParams.get("resource")).toBe("https://mcp.notion.com/mcp");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+
+    await expect(adapter.handleAuthorizationCallback!({
+      code: "notion-code",
+      codeVerifier: "v".repeat(43),
+      connectionScope: "personal",
+      authorizationState: authorization.state,
+    })).resolves.toMatchObject({
+      connectionMode: "hosted_mcp",
+      providerAccountId: `${NOTION_WORKSPACE_ID}:notion-user-1`,
+      providerAccountName: "example.com",
+      accessToken: "notion-mcp-access",
+      refreshToken: "notion-mcp-refresh",
+      tokenScope: "default",
+      resource: "https://mcp.notion.com/mcp",
+      clientId: "notion-mcp-client",
+      tokenEndpointAuthMethod: "none",
+    });
+    expect(adapter.dynamicAgentTools).toMatchObject({
+      capabilities: [NotionCapabilities.personalMcp],
+      connectionScopes: ["personal"],
+    });
+    await expect(adapter.beginAuthorization!({
+      state: "s".repeat(32),
+      codeChallenge: "c".repeat(43),
+      connectionScope: "workspace",
+      scopes: [NotionCapabilities.read],
+    })).rejects.toThrow(/public integration client ID and secret/iu);
   });
 
   it("rotates a refresh token, retries once, and retrieves bounded Markdown", async () => {
@@ -96,7 +187,7 @@ describe("Notion connector", () => {
     const connection = notionConnection([NotionCapabilities.read]);
     const result = await adapter.executeTool("retrieve_page", { pageId: "page-1" }, {
       connection,
-      principal: { type: "user", userId: AVALON_USER_ID },
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
       signal: AbortSignal.timeout(1_000),
     });
     expect(result.output).toMatchObject({
@@ -128,7 +219,7 @@ describe("Notion connector", () => {
       markdown: "## Checklist\n\n- [ ] Ship",
     }, {
       connection: notionConnection([NotionCapabilities.insert]),
-      principal: { type: "user", userId: AVALON_USER_ID },
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
       signal: AbortSignal.timeout(1_000),
     });
     expect(sentBody).toEqual({
@@ -136,6 +227,18 @@ describe("Notion connector", () => {
       markdown: "# Launch plan\n\n## Checklist\n\n- [ ] Ship",
     });
     expect(result.providerOperationId).toBe("created-page");
+  });
+
+  it("rejects a user principal even when the Notion workspace connection grants the tool", async () => {
+    const adapter = notionAdapter(async () => {
+      throw new Error("A refused principal must not reach Notion");
+    });
+
+    await expect(adapter.executeTool("retrieve_page", { pageId: "page-1" }, {
+      connection: notionConnection([NotionCapabilities.read]),
+      principal: { type: "user", userId: AVALON_USER_ID },
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toThrow(/workspace connection is not available/iu);
   });
 
   it("hydrates provider resources into bounded agent context", async () => {
@@ -155,7 +258,7 @@ describe("Notion connector", () => {
     expect(richText[0]?.plain_text).toHaveLength(80_000);
   });
 
-  it("handles the verification challenge and authenticates/routs personal webhook events", async () => {
+  it("handles the verification challenge and routes bot-accessible webhook events to the workspace", async () => {
     expect(readNotionWebhookVerificationToken(JSON.stringify({ verification_token: "notion-signing-secret" }))).toBe("notion-signing-secret");
     const event = {
       id: "44444444-4444-4444-8444-444444444444",
@@ -188,7 +291,10 @@ describe("Notion connector", () => {
       eventType: "notion.page.content_updated",
       resourceType: "notion_page",
       providerResourceId: event.entity.id,
-      targetUserIds: [AVALON_USER_ID],
+      connectionScope: "workspace",
+      connectionOwnerUserId: null,
+      visibility: { scope: "workspace" },
+      targetUserIds: [],
       payloadRef: "r2://payload/notion",
     });
     expect(() => NormalizedActivitySchema.parse({ id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", ...activity })).not.toThrow();
@@ -218,8 +324,8 @@ function notionConnection(grantedScopes: string[]): AuthorizedConnectorConnectio
   return authorizedConnection({
     id: AVALON_CONNECTION_ID,
     workspaceId: AVALON_WORKSPACE_ID,
-    scope: "personal",
-    ownerUserId: AVALON_USER_ID,
+    scope: "workspace",
+    ownerUserId: null,
     grantedScopes,
     credentials: {
       accessToken: "old-access",

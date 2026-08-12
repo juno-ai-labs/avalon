@@ -73,13 +73,24 @@ The compiler may retain an incomplete draft while asking one focused question. A
 
 ### Connection plugins and authority narrowing
 
-Every connector adapter supplies a static agent-plugin descriptor whose provider type and tool order must match its manifest. At run start Avalon creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
+Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Avalon creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
 - Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `avalon_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
+
+A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
+code-authored tool array. It still appears through the same static trusted
+catalog entry. After `load_plugin` reauthorizes the connection, the harness
+single-flights that callback, replaces the empty deferred Bind plugin with the
+returned live surface, and only then persists and exposes the activation. The
+result is cached for that run in both Bind's registry and the host plugin object
+used to narrow inline-child authority; a later run discovers again. A discovery failure
+returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
+validation, and provider declaration are owned by
+[`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
 Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
@@ -417,6 +428,52 @@ pass locally and fail `pnpm lint`.
 This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
+
+### 2026-08-12 — Deferred surfaces remain visible to host-side narrowing
+
+**What changed:** After a deferred plugin loads, the API now replaces the
+host-owned placeholder tool array as well as returning the tools to Bind.
+
+**Why:** Bind correctly exposed the activated surface to the parent model, but
+inline-child construction reads the API's frozen plugin objects rather than
+Bind's private registry. Leaving that object empty made an already-active
+dynamic plugin inherit no read tools.
+
+**Considered and rejected:** Re-discovering from the provider during child
+construction. That could produce a different surface from the one the parent
+activated and would spend another provider call while freezing child authority.
+
+**Consequences:** Any dynamic adapter that returns Avalon-classified read tools
+can pass that exact activated subset to a child. Hosted MCP currently classifies
+all provider-authored tools as writes, so its tools remain excluded by the
+child's independent read-only policy.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Deferred plugins may load a live tool surface at activation
+
+**What changed:** `HarnessPlugin.loadTools` lets an authorized deferred plugin
+replace its empty tool array during `load_plugin`. The Bind registry receives
+the loaded tools only after reauthorization, loads them once per run, and uses
+the same persistence, policy, execution, and receipt path as static tools.
+
+**Why:** Hosted MCP servers own tool catalogs that can change independently of
+Avalon and can vary by account. Resolving every eligible connection at run start
+would waste provider calls on plugins the model never uses; resolving after
+activation would expose an activation that had no callable surface.
+
+**Considered and rejected:** Treating dynamic MCP tools as a second registry
+outside Bind. That would duplicate name resolution, tool policy, serialization,
+and receipts exactly where consistency matters. Eager loading was rejected for
+the provider-call and refresh cost above.
+
+**Consequences:** A dynamic plugin catalog entry can be available even though it
+has no tools yet. Any caller that inherits capabilities before activation must
+fall back to the frozen dynamic grant, while static plugins continue deriving
+their exact capabilities from visible tools. Dynamic metadata remains remote
+input and never replaces the plugin's trusted display or system guidance.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-12 — The provider SDK boundary is converted, not asserted
 

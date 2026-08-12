@@ -16,7 +16,7 @@ import {
   createRegionRoutedState,
   regionFromRoutedState,
 } from "../src/lib/region-routed-state";
-import { notionConnectorConfig } from "../src/lib/connector-registry";
+import { connectorRegistryForEnv, notionConnectorConfig } from "../src/lib/connector-registry";
 import { createApp } from "../src/app";
 import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -165,6 +165,18 @@ describe("shared Notion connection routing", () => {
       expect(notionCallbackUrl(env)).toBe(shared);
       expect(notionConnectorConfig(env)?.redirectUri).toBe(shared);
     }
+  });
+
+  it("registers personal Notion MCP without public-integration credentials", () => {
+    const env = createTestEnv({
+      AVALON_REGION: "global",
+      PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+      NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
+    });
+    expect(notionConnectorConfig(env)).toEqual({
+      redirectUri: "https://notion.with-avalon.com/connections/notion/callback",
+    });
+    expect(connectorRegistryForEnv(env).list().map((manifest) => manifest.type)).toContain("notion");
   });
 
   it("routes a callback to the region its state names", async () => {

@@ -9,13 +9,5 @@
  * narrower grant depending on which button they happened to press.
  */
 export const SLACK_PERSONAL_CAPABILITIES = [
-  'slack.search',
-  'slack.messages.read',
-  'slack.files.read',
-  'slack.users.read',
-  'slack.messages.write',
-  'slack.conversations.write',
-  'slack.reactions.write',
-  'slack.canvases.read',
-  'slack.canvases.write',
+  'slack.personal.mcp',
 ] as const;

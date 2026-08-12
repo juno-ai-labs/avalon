@@ -80,7 +80,7 @@ function seed(database: DatabaseSync): void {
       ('00000000-0000-7000-8000-000000000011', '${workspaceId}', 'github', 'workspace', NULL, 'tenant-gh', 'GitHub', '[]', 'plugin_github', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'),
       ('00000000-0000-7000-8000-000000000012', '${workspaceId}', 'linear', 'workspace', NULL, 'tenant-linear', 'Linear', '[]', 'plugin_linear', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'),
       ('00000000-0000-7000-8000-000000000013', '${workspaceId}', 'google', 'personal', '${userOne}', 'one@example.com', 'Google One', '[]', 'plugin_google_one', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'),
-      ('00000000-0000-7000-8000-000000000014', '${workspaceId}', 'notion', 'personal', '${userTwo}', 'notion-two', 'Notion Two', '[]', 'plugin_notion_two', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+      ('00000000-0000-7000-8000-000000000014', '${workspaceId}', 'granola', 'personal', '${userTwo}', 'granola-two', 'Granola Two', '[]', 'plugin_granola_two', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
   `);
 }
 

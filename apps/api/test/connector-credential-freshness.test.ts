@@ -866,7 +866,7 @@ const CREDENTIAL_FIXTURES: Record<string, {
   },
   notion: {
     presentsExpiringCredential: false,
-    scope: "personal",
+    scope: "workspace",
     credentials: { accessToken: STALE_TOKEN, refreshToken: "refresh-token" },
   },
   slack: {
