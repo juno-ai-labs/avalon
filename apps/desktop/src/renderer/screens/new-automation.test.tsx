@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../lib/api';
 import type { AutomationAssistantStreamEvent } from '../lib/api';
 import type { Workspace } from '../lib/types';
-import { clearAllDrafts } from '../lib/draft-cache';
+import { clearAllDrafts, readDraftText } from '../lib/draft-cache';
+import { newAutomationDraftKey } from '../lib/draft-keys';
 import { NewAutomationScreen, retainableNarration } from './new-automation';
 
 const api = vi.hoisted(() => ({
@@ -490,7 +491,21 @@ describe('New automation composer', () => {
 
     // And it stays with that draft rather than the blank launcher.
     fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+    // The cache is what this asserts on, and the composer only afterwards.
+    // Re-keying empties the composer synchronously and refills it when the read
+    // lands, so a value assertion alone is satisfied by that gap — which is how
+    // this test stayed green while the launcher's row still held the sentence,
+    // failing only on the runs where the read won the race. An empty row is what
+    // makes the empty composer permanent rather than momentary.
+    await waitFor(async () => {
+      expect(await readDraftText(newAutomationDraftKey('workspace-1'))).toBeNull();
+    });
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue(''));
+    // Moved, not dropped: the sentence is under the draft it was typed for.
+    await waitFor(async () => {
+      expect((await readDraftText(newAutomationDraftKey('workspace-1', 'draft-1')))?.text)
+        .toBe('Only weekdays');
+    });
   });
 
   it('names the draft it just wrote in the address bar, so its sidebar row is the open one', async () => {

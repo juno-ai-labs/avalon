@@ -1,0 +1,29 @@
+-- What a run was triggered by, so a retry does not have to guess.
+--
+-- The trigger message fences the transcript a run is allowed to see: the
+-- projection loads everything up to and including it and nothing after. Until
+-- now the id was passed to the Workflow and never stored, so `retry` — which
+-- creates a *new* run for a failed one — reconstructed it as "the latest human
+-- message in this work stream". That guess is right only when nothing has
+-- happened since. Retrying a run that never had a message trigger at all (a
+-- scheduled wakeup, an activity, an automation run with no opening message)
+-- resolved to whatever human message happened to be closest, fencing days of
+-- completed work out of the replay and re-executing an old request from
+-- scratch.
+--
+-- NULL keeps its existing meaning — a run with no message trigger replays the
+-- whole available transcript — which is also what every row written before this
+-- migration reads as. That is the safe direction for a backfill nobody can
+-- perform: a retry of a legacy run sees more context than it strictly needs
+-- rather than silently less.
+--
+-- The id stored here is the run's trigger, which is a narrower claim than "the
+-- transcript it saw". A retry keeps this identity — it is what admits a
+-- suggested-work brief or an inbound email to the model — and widens the window
+-- separately through `transcriptFenceMessageId`, so a message posted after the
+-- failed run is still visible to the replay. Reading this column as the whole
+-- window is the mistake to avoid.
+--
+-- ON DELETE SET NULL rather than CASCADE: a deleted message must not take the
+-- record of a run with it.
+ALTER TABLE harness_runs ADD COLUMN trigger_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL;

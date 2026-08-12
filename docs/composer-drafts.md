@@ -177,6 +177,12 @@ the ones that render a composer. Do not clear it globally — a live IndexedDB
 connection perturbs React's `act` scheduling enough to break unrelated screens'
 assertions.
 
+**Assert the cached row, not only the composer.** A composer empties the moment
+its key changes and refills when the read lands, so a value assertion can be
+satisfied by the gap between the two — which is how a draft left under the wrong
+key stayed green for as long as it did. Where the question is "what is stored",
+`readDraftText` is the answer to assert on.
+
 ## Changelog
 
 ### 2026-08-12 — A draft that moves to another key stops being left behind in the old one
@@ -222,6 +228,35 @@ duplicates the draft. The two regression tests are deliberately split, one per
 writer, because a single test covering both passes when either half is removed.
 
 Shipped in #109.
+### 2026-08-12 — The commit for an unhydrated edit now covers a key change too
+
+**What changed:** The two cleanups the entry below describes are one. The
+surviving cleanup writes under the key from its own effect closure, so it commits
+an edit the cache read never answered for on a key change as well as on an
+unmount.
+
+**Why:** The entry below kept that commit off `draftKey` deliberately, because
+`latest` describes the key being switched *to* by the time a key-change cleanup
+runs — sound, and the reason this takes its key from the closure instead. What
+that left uncovered is the composer that re-keys itself: the sentence carried
+onto the new key is written by `setText` *after* the key changed, so the read for
+that key is still in flight, the save effect is standing down, and nothing is
+armed. Re-keyed again before it lands — or navigated away from — the sentence had
+been hydrated under neither key and armed under neither, and no writer existed at
+all. With the copy under the old key now correctly removed by `releaseDraft`, it
+would simply be gone.
+
+**Considered and rejected:** *Having the screen write the carried text to the new
+key itself.* It knows the text and the key, but not whether the hook's read has
+landed, so it would either double-write what hydration is about to save or race
+it.
+
+**Consequences:** One cleanup runs on every key change and unmount, and its guard
+is what keeps it cheap: a composer with nothing uncommitted falls straight
+through to the flush. Anything added to this hook that writes on the way out has
+to take its key from the same place, because `latest` is already describing
+somewhere else.
+
 
 ### 2026-08-11 — An edit made before the cache read lands is no longer lost
 
