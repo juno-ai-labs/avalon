@@ -36,6 +36,7 @@ export interface NotionCallbackFailureInput {
 
 export interface NotionChallengeInput {
   verificationToken: string;
+  setupGeneration: number;
 }
 
 export interface NotionRouteInput {
@@ -93,11 +94,16 @@ interface NotionRoutingServiceOptions {
     rawBody: Uint8Array,
     headers: Record<string, string>,
   ) => Promise<ProviderWebhookIngestionResult>;
-  storeChallengeInRegion?: (region: Region, verificationToken: string) => Promise<void>;
+  storeChallengeInRegion?: (
+    region: Region,
+    verificationToken: string,
+    setupGeneration: number,
+  ) => Promise<void>;
   verificationToken?: () => Promise<string>;
+  setupGenerationForToken?: (verificationToken: string) => Promise<number>;
   captureChallenge?: (
     verificationToken: string,
-    setupToken: string | null,
+    setupNonce: string | null,
     rawBody: Uint8Array,
     headers: Record<string, string>,
   ) => Promise<ProviderWebhookIngestionResult>;
@@ -120,6 +126,9 @@ export class NotionRoutingService {
   private readonly ingestInRegion: NonNullable<NotionRoutingServiceOptions["ingestInRegion"]>;
   private readonly storeChallengeInRegion: NonNullable<NotionRoutingServiceOptions["storeChallengeInRegion"]>;
   private readonly verificationToken: NonNullable<NotionRoutingServiceOptions["verificationToken"]>;
+  private readonly setupGenerationForToken: NonNullable<
+    NotionRoutingServiceOptions["setupGenerationForToken"]
+  >;
   private readonly captureChallenge: NonNullable<NotionRoutingServiceOptions["captureChallenge"]>;
 
   constructor(
@@ -136,12 +145,16 @@ export class NotionRoutingService {
     this.ingestInRegion = options.ingestInRegion
       ?? ((region, rawBody, headers) => this.defaultIngestInRegion(region, rawBody, headers));
     this.storeChallengeInRegion = options.storeChallengeInRegion
-      ?? ((region, verificationToken) => this.defaultStoreChallengeInRegion(region, verificationToken));
+      ?? ((region, verificationToken, setupGeneration) =>
+        this.defaultStoreChallengeInRegion(region, verificationToken, setupGeneration));
     this.verificationToken = options.verificationToken
       ?? (() => new ProviderWebhookService(this.env).notionVerificationToken());
+    this.setupGenerationForToken = options.setupGenerationForToken
+      ?? ((verificationToken) =>
+        new ProviderWebhookService(this.env).notionSetupGenerationForToken(verificationToken));
     this.captureChallenge = options.captureChallenge
-      ?? ((_token, setupToken, rawBody, headers) =>
-        new ProviderWebhookService(this.env).ingestNotion(rawBody, headers, setupToken));
+      ?? ((_token, setupNonce, rawBody, headers) =>
+        new ProviderWebhookService(this.env).ingestNotion(rawBody, headers, setupNonce));
   }
 
   /** Completes an authorization that began in whichever region the state names. */
@@ -231,7 +244,7 @@ export class NotionRoutingService {
   async ingestNotion(
     rawBody: Uint8Array | ArrayBuffer,
     inputHeaders: Headers | HeadersInit,
-    setupToken: string | null = null,
+    setupNonce: string | null = null,
   ): Promise<ProviderWebhookIngestionResult> {
     this.assertGlobalControlPlane();
     const bytes = copyBytes(rawBody);
@@ -243,8 +256,9 @@ export class NotionRoutingService {
     // left to an operator step that would fail silently much later.
     const verificationToken = readNotionWebhookVerificationToken(rawText, this.maxBytes());
     if (verificationToken !== null) {
-      const captured = await this.captureChallenge(verificationToken, setupToken, bytes, headers);
-      await this.storeChallengeInRegion("eu", verificationToken);
+      const captured = await this.captureChallenge(verificationToken, setupNonce, bytes, headers);
+      const setupGeneration = await this.setupGenerationForToken(verificationToken);
+      await this.storeChallengeInRegion("eu", verificationToken, setupGeneration);
       return captured;
     }
 
@@ -338,13 +352,24 @@ export class NotionRoutingService {
     throw this.regionUnavailable(region);
   }
 
-  private async defaultStoreChallengeInRegion(region: Region, verificationToken: string): Promise<void> {
+  private async defaultStoreChallengeInRegion(
+    region: Region,
+    verificationToken: string,
+    setupGeneration: number,
+  ): Promise<void> {
     if (region === this.env.AVALON_REGION) {
-      await new ProviderWebhookService(this.env).storeNotionChallengeToken(verificationToken);
+      await new ProviderWebhookService(this.env).storeNotionChallengeToken(
+        verificationToken,
+        null,
+        setupGeneration,
+      );
       return;
     }
     if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
-      unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.storeNotionChallenge({ verificationToken }));
+      unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.storeNotionChallenge({
+        verificationToken,
+        setupGeneration,
+      }));
       return;
     }
     throw this.regionUnavailable(region);

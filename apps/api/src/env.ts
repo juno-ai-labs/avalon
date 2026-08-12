@@ -100,7 +100,6 @@ export interface Env {
   NOTION_OAUTH_CLIENT_ID?: string;
   NOTION_OAUTH_CLIENT_SECRET?: string;
   NOTION_INTEGRATION_ID?: string;
-  NOTION_WEBHOOK_SETUP_TOKEN?: string;
   SLACK_APP_ID?: string;
   SLACK_CLIENT_ID?: string;
   SLACK_CLIENT_SECRET?: string;

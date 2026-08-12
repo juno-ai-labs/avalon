@@ -218,6 +218,22 @@ Granola webhooks are verified using the Standard Webhooks `webhook-id`,
 body. Verification and size checks happen before JSON parsing, R2 persistence,
 receipt creation, or queueing.
 
+Notion's initial subscription challenge is unsigned and its dashboard requires
+an operator to paste the delivered `verification_token` back into the setup
+form. Avalon authorizes that one request with a 30-minute nonce stored only as a
+SHA-256 hash and atomically bound to the first token it receives. Cloudflare
+captures the full webhook URL independently of application redaction, so the
+nonce is single-use and a later setup supersedes it; a reusable query secret
+would remain a credential in the 90-day observability stores. The verification
+token is AES-GCM encrypted in regional D1 and is never logged or returned by an
+API. `pnpm notion:webhook:copy-token` decrypts it on the operator's machine and
+pipes it directly to the clipboard, which is the only plaintext operator
+handoff. Future connectors whose unsigned setup challenge becomes their later
+webhook signing secret must follow the same boundary; connectors with a
+developer-configured or authenticated secret exchange do not. The classification
+and implementation checklist live in
+[`connectors.md`](connectors.md#unsigned-webhook-subscription-handshakes).
+
 ### Model boundary
 
 OpenRouter credentials and model context are server-only. The harness receives
@@ -413,7 +429,29 @@ incident response that may prompt it.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
+### 2026-08-12 — The unsigned-challenge boundary applies by protocol shape
+
+**What changed:** The Notion webhook setup boundary now points to the connector
+architecture rule for future providers with the same unsigned, operator-mediated
+secret handoff. It also states that configured or authenticated signing-secret
+exchanges do not need the one-time setup flow.
+
+**Why:** Naming only Notion made a reusable trust boundary look product-specific.
+The risk comes from the protocol shape: the value delivered by an unsigned request
+becomes authority over every later webhook, while edge observability can record the
+request before application redaction.
+
+**Considered and rejected:** Applying the workflow to every webhook connector.
+That adds no protection when the signing secret is already configured or exchanged
+over an authenticated control plane, and would obscure the exact condition that
+makes the nonce necessary.
+
+**Consequences:** Security review for a new webhook connector must classify its
+subscription handshake before choosing storage or operator tooling. A matching
+provider cannot use query-string reuse, logging, or a public reveal endpoint as its
+plaintext handoff.
+
+Earlier entries do not exist. This document predates the changelog rule in
 [`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
 the boundaries above — beyond the reasons already written inline — was not recorded
 here and was not reconstructed. `git log` and the PRDs under `docs/PRDs/` are what
