@@ -1184,6 +1184,68 @@ describe('pinned work streams', () => {
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
   });
 
+  it('reveals Command shortcuts for the first nine pins only while Command is held', () => {
+    renderWith([
+      ...Array.from({ length: 10 }, (_value, index) =>
+        pinned(workstream(`ws-${index + 1}`, `Pinned ${index + 1}`, 'completed'), index)),
+      workstream('ws-recent', 'Recent work', 'completed'),
+    ]);
+
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    const links = within(section).getAllByRole('link');
+    expect(section.querySelectorAll('.pinned-shortcut-pill')).toHaveLength(0);
+    expect(links.slice(0, 9).map((link) => link.getAttribute('aria-keyshortcuts')))
+      .toEqual(Array.from({ length: 9 }, (_value, index) => `Meta+${index + 1}`));
+    expect(links[9]).not.toHaveAttribute('aria-keyshortcuts');
+    expect(screen.getByRole('link', { name: /Recent work/u })).not.toHaveAttribute('aria-keyshortcuts');
+
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+    expect([...section.querySelectorAll('.pinned-shortcut-pill')].map((pill) => pill.textContent))
+      .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+
+    fireEvent.keyUp(window, { key: 'Meta' });
+    expect(section.querySelectorAll('.pinned-shortcut-pill')).toHaveLength(0);
+  });
+
+  it('opens the correspondingly ordered pin from the physical number row', () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
+    ]);
+
+    const bravo = screen.getByRole('link', { name: /Bravo/u });
+    expect(bravo).not.toHaveClass('is-active');
+
+    // Symbol-first layouts such as French AZERTY do not report `key: '2'` for
+    // this physical key, but it is still the second key in the advertised row.
+    fireEvent.keyDown(window, { code: 'Digit2', key: 'é', metaKey: true });
+
+    expect(bravo).toHaveClass('is-active');
+
+    // Holding the key produces repeated keydowns. A repeat for any digit is
+    // ignored rather than pushing another route onto history.
+    fireEvent.keyDown(window, { code: 'Digit3', key: '"', metaKey: true, repeat: true });
+    expect(bravo).toHaveClass('is-active');
+    expect(screen.getByRole('link', { name: /Charlie/u })).not.toHaveClass('is-active');
+  });
+
+  it('does not navigate behind an open modal dialog', async () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+    ]);
+
+    const bravo = screen.getByRole('link', { name: /Bravo/u });
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Alpha/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    expect(screen.getByRole('dialog', { name: 'Rename work stream' })).toBeVisible();
+
+    fireEvent.keyDown(window, { code: 'Digit2', key: '2', metaKey: true });
+
+    expect(bravo).not.toHaveClass('is-active');
+  });
+
   it('offers Pin on a recent row and Unpin on a pinned one', async () => {
     const onPinWorkstream = vi.fn(async (): Promise<boolean> => true);
     renderWith(

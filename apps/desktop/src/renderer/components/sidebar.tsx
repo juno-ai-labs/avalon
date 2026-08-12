@@ -9,6 +9,7 @@ import {
   Check,
   CirclePause,
   Cog,
+  Command,
   Copy,
   EyeOff,
   FileStack,
@@ -27,7 +28,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import { formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
@@ -88,6 +89,9 @@ const LOAD_MORE_DISTANCE = 400;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
+
+/** The number row gives us nine visible shortcuts without borrowing `0`. */
+const PINNED_SHORTCUT_LIMIT = 9;
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -309,6 +313,8 @@ interface PinnedRowDrag {
 }
 
 function WorkstreamRow({
+  commandShortcut,
+  commandShortcutsVisible,
   debugEnabled,
   drag,
   workstream,
@@ -319,6 +325,8 @@ function WorkstreamRow({
   onRename,
   onTogglePin,
 }: {
+  commandShortcut?: number;
+  commandShortcutsVisible?: boolean;
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
   workstream: WorkstreamSummary;
@@ -390,6 +398,7 @@ function WorkstreamRow({
             : undefined}
         >
           <NavLink
+            aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
             className={({ isActive }) => clsx(
               'sidebar-row workstream-row',
               isActive && 'is-active',
@@ -430,6 +439,14 @@ function WorkstreamRow({
                 change it is said once, on the section. */}
             {drag && <span className="sr-only">{drag.position}</span>}
             {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
+            {commandShortcutsVisible && commandShortcut !== undefined && (
+              <span aria-hidden="true" className="pinned-shortcut-scrim">
+                <span className="pinned-shortcut-pill">
+                  <Command size={12} strokeWidth={1.8} />
+                  <span>{commandShortcut}</span>
+                </span>
+              </span>
+            )}
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -622,6 +639,7 @@ export function Sidebar({
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
   const openDraftId = useOpenDraftId();
+  const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
@@ -645,6 +663,7 @@ export function Sidebar({
   const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
   const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
+  const [commandShortcutsVisible, setCommandShortcutsVisible] = useState(false);
   // The work stream a pin or unpin has just moved, and which side of the
   // sidebar it was moved to, held until the list re-renders carrying that
   // change. Cleared the moment it is honoured, so a later render for any other
@@ -709,6 +728,49 @@ export function Sidebar({
       note,
     })),
   ]);
+
+  // Command is both the reveal and the modifier: its keydown paints the first
+  // nine hints, and a number pressed before it is released opens the pin at
+  // that visible position. Window blur clears the reveal because Command+Tab
+  // takes focus away before this window can observe Command being released.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Meta') {
+        setCommandShortcutsVisible(true);
+        return;
+      }
+      const digit = /^Digit([1-9])$/u.exec(event.code)?.[1];
+      // `code` follows the physical number row even on layouts where `key`
+      // is a symbol, which is the row the visible 1–9 mapping describes.
+      // A held digit repeats keydown, and reopening the same route on every
+      // repeat would strand Back behind duplicate history entries. A modal is
+      // likewise a boundary: its focused controls must not navigate the page
+      // underneath it.
+      if (
+        !event.metaKey
+        || event.repeat
+        || digit === undefined
+        || document.querySelector('[role="dialog"]')
+      ) return;
+      const target = pinnedWorkstreams[Number(digit) - 1];
+      if (!target) return;
+      event.preventDefault();
+      navigate(`/workstreams/${target.id}`);
+      setSidebarOpen(false);
+    };
+    const onKeyUp = (event: KeyboardEvent): void => {
+      if (event.key === 'Meta') setCommandShortcutsVisible(false);
+    };
+    const hide = (): void => setCommandShortcutsVisible(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', hide);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', hide);
+    };
+  }, [navigate, pinnedWorkstreams, setSidebarOpen]);
 
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
@@ -1100,6 +1162,8 @@ export function Sidebar({
               <div className="sidebar-list">
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
+                    commandShortcut={index < PINNED_SHORTCUT_LIMIT ? index + 1 : undefined}
+                    commandShortcutsVisible={commandShortcutsVisible}
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
