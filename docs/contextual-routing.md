@@ -114,9 +114,14 @@ along with who clicked, which is what steps 2–4 read on the next activity.
   dismissal run and to the already-routed set alike.
 - **`resolveSuggestion` is the only writer of the feedback signal.** Anything
   else that resolves a suggestion — a bulk cleanup, a cascade, a backfill —
-  writes training data for these gates. A migration that mass-dismisses pending
-  rows under one service account would meet the corroboration bar with one
-  identity and suppress every event type in the workspace.
+  writes training data for these gates, and what it writes into
+  `resolved_by_user_id` decides how much damage it does. Stamped with one
+  service identity, a mass dismissal cannot suppress anything, because the
+  corroboration count stays at one — but it still pins every event type it
+  touches to the 0.95 ceiling, which is nearly as quiet and much harder to
+  notice. Stamped with the original resolvers, or with several identities, it
+  clears the corroboration bar and suppresses those types outright. Neither is a
+  decision anybody made about routing.
 
 ## Boundary
 
@@ -223,7 +228,8 @@ line — suppression is evaluated once per ingested activity, and logging it at
 high-volume type, so `contextual_routing_event_type_suppressed` is at `debug`:
 
 ```sql
-SELECT a.event_type,
+SELECT a.provider,
+       a.event_type,
        SUM(s.status = 'accepted')  AS accepted,
        SUM(s.status = 'dismissed') AS dismissed,
        COUNT(DISTINCT CASE WHEN s.status = 'dismissed' THEN s.resolved_by_user_id END) AS dismissers
@@ -231,10 +237,19 @@ SELECT a.event_type,
   JOIN activities a ON a.id = s.activity_id
  WHERE s.workspace_id = ?1
    AND s.status IN ('accepted', 'dismissed')
-   AND s.resolved_at >= datetime('now', '-90 days')
- GROUP BY a.event_type
+   -- ISO with the `T`, not `datetime()`. `resolved_at` is written by `nowIso()`
+   -- and compared as text, and `datetime()` emits a space where that format has
+   -- a `T` — which sorts lower, so a space-separated cutoff quietly admits
+   -- rows from the cutoff day that production counts as out of window.
+   AND s.resolved_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-90 days')
+ GROUP BY a.provider, a.event_type
  ORDER BY dismissed DESC;
 ```
+
+Grouped by provider as well as event type, because that is the key
+`suggestionAdmission` scores on: an event type name is not unique across
+providers, and a diagnostic that merges two providers' rows can report a
+suppression production is not applying.
 
 Four or more resolutions with zero accepted and two or more dismissers is a
 suppressed type. The prior is `connector-digestibility.md` plus whether that
