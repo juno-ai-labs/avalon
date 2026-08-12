@@ -197,6 +197,11 @@ Its output is a tool call. The block is exactly the `markdown` argument passed t
 
 A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `hypersight_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
 
+Because these refreshes are scheduled background work with nobody present to
+cancel a looping run, they retain separate ceilings of 8 model turns, 24 tool
+calls, four minutes, and 500 cents. The expanded ordinary work-stream policy
+does not apply to HyperSight.
+
 ### Durable inline subagents
 
 The root harness exposes `workstream_run_subagent` through the default-loaded `avalon:workstream` plugin for several independent, substantial read-only investigations. Avalon follows Monad's useful delegation shape while preserving Avalon-specific durable authority:
@@ -409,8 +414,10 @@ iterations and no longer configures a maximum number of tool calls, elapsed wall
 time, or model cost. The four `HARNESS_MAX_*` deployment variables were removed;
 the iteration value is an explicit product invariant frozen into each run's
 scope alongside the remaining catalog bound. The harness accepts all four
-ceilings as optional because inline children, automation compilation, and
-meeting-note passes are separate bounded callers.
+ceilings as optional because HyperSight refreshes, inline children, automation
+compilation, and meeting-note passes are separate bounded callers. HyperSight
+keeps its prior 8-turn, 24-tool, four-minute, and 500-cent ceilings because it
+runs unattended.
 
 **Why:** A production repository-research run used its eighth turn to fetch the
 last source it needed, then failed before the ninth turn could read that result
@@ -430,9 +437,10 @@ unresponsive dependency.
 
 **Consequences:** A work-stream run can now continue spending model and provider
 capacity without a tool, time, or cost cutoff, but a pathological model loop
-still fails on turn 1,000. Cancellation, lease heartbeats, authority checks,
-context compaction, provider watchdogs, and ambiguous-write handling remain
-mandatory. Any future resource policy must be explicit about why useful
+still fails on turn 1,000. Scheduled HyperSight refreshes remain bounded and can
+fail on any of their four ceilings. Cancellation, lease heartbeats, authority
+checks, context compaction, provider watchdogs, and ambiguous-write handling
+remain mandatory. Any future resource policy must be explicit about why useful
 progress should terminate and which execution product it applies to.
 
 ### 2026-08-12 — Artifacts are gone; a run's output is its final message
