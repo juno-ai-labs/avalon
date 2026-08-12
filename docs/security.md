@@ -242,6 +242,16 @@ Avalon validates the name, schema, principal, capability, limits, and idempotenc
 state before execution. Reasoning fields are ignored; private chain-of-thought is
 neither persisted nor broadcast.
 
+Attachment filenames, MIME declarations, extracted text, converter output, and
+errors are untrusted model data. Server-verified MIME determines attachment kind;
+a sanitized filename extension is consulted only for an absent or generic MIME
+and cannot override a specific type. Attachment continuations are signed with a
+purpose-separated key and bind operation, execution principal, and owning scope,
+but they grant no access: every call repeats the current resource relationship
+and visibility checks. Failed tools forward only bounded, schema-validated
+recovery fields; arbitrary provider, converter, credential, and file-authored
+objects are discarded before entering the transcript.
+
 ### Logging and audit
 
 Structured logs include correlation IDs and domain IDs needed for operations.
@@ -428,6 +438,32 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-12 — Attachment continuations name state without granting authority
+
+**What changed:** Attachment cursors are authenticated, purpose-separated, and
+bound to their execution principal and owning scope. The model-facing failure
+sanitizer accepts only bounded attachment kinds, MIME metadata, and exact read or
+view remediation shapes alongside the existing fixed recovery fields.
+
+**Why:** Lazy attachment reads need resumable state, but a mutable or replayable
+cursor can become a cross-workspace read primitive if a later handler mistakes it
+for authorization. Wrong-tool self-healing creates a second injection surface:
+converter or file-authored error JSON cannot be allowed to manufacture an
+arbitrary follow-up call.
+
+**Considered and rejected:** Plain base64 cursor payloads and forwarding a
+converter's whole structured error. Both are convenient representations of
+untrusted state, not validation; signing the first and strictly parsing the
+second preserves recoverability without widening authority.
+
+**Consequences:** Every attachment handler still reauthorizes database state
+after cursor verification. New recovery calls must be added to the strict
+discriminated union before they can reach a model, and cursor contents themselves
+remain excluded from logs.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — The unsigned-challenge boundary applies by protocol shape
 

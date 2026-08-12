@@ -67,6 +67,9 @@ describe("attachment model content", () => {
     const bucket = trackedBucket({ original });
     const updates: unknown[][] = [];
     const database = createTestD1Database({
+      async batch(statements: D1PreparedStatement[]) {
+        return Promise.all(statements.map((statement) => statement.run()));
+      },
       prepare() {
         return {
           bind(...values: unknown[]) {
@@ -109,6 +112,9 @@ describe("attachment model content", () => {
     const bucket = trackedBucket({ original: animatedGif() });
     const updates: unknown[][] = [];
     const database = createTestD1Database({
+      async batch(statements: D1PreparedStatement[]) {
+        return Promise.all(statements.map((statement) => statement.run()));
+      },
       prepare() {
         return {
           bind(...values: unknown[]) {

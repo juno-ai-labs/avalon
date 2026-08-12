@@ -10,6 +10,7 @@ import type {
 } from "@avalon/contracts";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
+import { sha256Hex } from "../lib/crypto";
 import { logWarn } from "../observability/logger";
 import { MeetingNotesService } from "./meeting-notes-service";
 import { processPendingNotePrivacyNotifications } from "./note-privacy-notification-service";
@@ -110,27 +111,33 @@ export class NoteService {
     const refs = this.resourceRefs(resourceId);
     const plain = plainNoteMarkdown(input.title, "", "", []);
     const model = modelNoteMarkdown(input.title, "", "", []);
+    const [contentSha256, modelSha256] = await Promise.all([sha256Hex(plain), sha256Hex(model)]);
     try {
       await this.putResourceObjects(refs, plain, model);
       await this.env.DB.batch([
         this.env.DB.prepare(
           `INSERT INTO resources
            (id, workspace_id, resource_type, provider, provider_resource_id, title,
-            mime_type, content_ref, metadata_json, last_hydrated_at,
+            mime_type, content_ref, content_sha256, metadata_json, last_hydrated_at,
             uploaded_by_user_id, attachment_status, model_content_ref, model_mime_type,
-            created_at, updated_at)
-           VALUES (?, ?, 'note', 'avalon_note', ?, ?, 'text/markdown; charset=utf-8', ?, ?, ?, ?,
-             'attached', ?, 'text/markdown; charset=utf-8', ?, ?)`,
+            model_content_sha256, model_content_status, model_content_extractor_version,
+            model_content_character_count, model_content_extracted_at, created_at, updated_at)
+           VALUES (?, ?, 'note', 'avalon_note', ?, ?, 'text/markdown; charset=utf-8', ?, ?, ?, ?, ?,
+             'attached', ?, 'text/markdown; charset=utf-8', ?, 'ready', 'avalon-note-v1', ?, ?, ?, ?)`,
         ).bind(
           resourceId,
           this.auth.workspaceId,
           input.id,
           input.title,
           refs.content,
+          contentSha256,
           JSON.stringify({ noteId: input.id, ownerUserId: this.auth.userId, scope: input.scope, size: byteLength(plain) }),
           at,
           this.auth.userId,
           refs.model,
+          modelSha256,
+          model.length,
+          at,
           at,
           at,
         ),
@@ -411,16 +418,25 @@ export class NoteService {
     const model = modelNoteMarkdown(note.title, note.manual_notes_markdown, note.live_notes_markdown, segments);
     await this.putResourceObjects(refs, plain, model);
     const at = nowIso();
+    const [contentSha256, modelSha256] = await Promise.all([sha256Hex(plain), sha256Hex(model)]);
     await this.env.DB.prepare(
       `UPDATE resources
-       SET title = ?, content_ref = ?, model_content_ref = ?, model_mime_type = ?,
+       SET title = ?, content_ref = ?, content_sha256 = ?, model_content_ref = ?, model_mime_type = ?,
+           model_content_sha256 = ?, model_content_status = 'ready',
+           model_content_extractor_version = 'avalon-note-v1',
+           model_content_character_count = ?, model_content_extracted_at = ?,
+           model_content_error_code = NULL, model_index_ref = NULL,
            metadata_json = ?, last_hydrated_at = ?, updated_at = ?
        WHERE id = ? AND workspace_id = ?`,
     ).bind(
       note.title,
       refs.content,
+      contentSha256,
       refs.model,
       "text/markdown; charset=utf-8",
+      modelSha256,
+      model.length,
+      at,
       JSON.stringify({
         noteId: note.id,
         ownerUserId: note.owner_user_id,
