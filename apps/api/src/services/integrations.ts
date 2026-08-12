@@ -86,7 +86,10 @@ import {
   FirecrawlClient,
   FirecrawlError,
 } from "../lib/firecrawl";
-import { recordHarnessRunObservation } from "../observability/harness-run-observability";
+import {
+  summarizeHarnessRun,
+  type HarnessRunMetrics,
+} from "../observability/harness-run-observability";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
@@ -250,6 +253,7 @@ type WorkstreamHarnessResult = {
   status: "completed" | "needs_input" | "failed" | "stopped";
   messageId?: string;
   error?: { code: string; message: string };
+  metrics?: HarnessRunMetrics;
 };
 
 type WorkstreamContextCompaction = {
@@ -2302,17 +2306,10 @@ export async function runWorkstreamHarness(
     liveness.lease.attemptId,
     liveness.lease.owner,
   ).run();
-  recordHarnessRunObservation(env, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    harnessRunId: input.harnessRunId,
-    source: hyperSightRun ? "hypersight" : "workstream",
-    status: finalTerminalResult.status,
-    ...(finalTerminalResult.error ? { failureCode: finalTerminalResult.error.code } : {}),
-    durationMs: Date.now() - runStartedAtMs,
-    outcome,
-  });
-  return finalTerminalResult;
+  return {
+    ...finalTerminalResult,
+    metrics: summarizeHarnessRun(outcome, Date.now() - runStartedAtMs),
+  };
 }
 
 /**

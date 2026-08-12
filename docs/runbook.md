@@ -465,12 +465,14 @@ Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `conne
 Both API Workers bind `RUN_ANALYTICS` to the account-level Workers Analytics
 Engine dataset `avalon_agent_runs`. A root ordinary work-stream or HyperSight
 execution writes exactly one datapoint after the harness has produced its final
-result and persisted its usage metadata. It also emits the correlated
+result, the Workflow has rechecked durable cancellation, and D1 has committed
+the effective terminal status. It also emits the correlated
 `harness_run_finished` Workers Log carrying workspace, work-stream, and run IDs.
 
 The Analytics Engine point is deliberately a **terminal summary**, not one row
-per model turn or loop event. Bind has already computed duration, turns, routed
-attempts, tool calls, model/tool time, tokens, and cost. Reconstructing those
+per model turn or loop event. Bind has already computed duration, routed
+attempts, tool calls, tokens, and cost; normal result paths also carry exact
+turn and model/tool timing totals. Reconstructing those
 totals from churn would be both more expensive and incorrect for this store:
 Analytics Engine samples at write and query time, does not guarantee retrieval
 of an individual point, cannot reconstruct exact event sequences, and supports
@@ -495,21 +497,22 @@ the schema grows:
 | `blob7` | app version |
 | `blob8` | build SHA |
 | `double1` | end-to-end harness duration in milliseconds |
-| `double2` | successfully completed model turns |
+| `double2` | successfully completed model turns, or zero when `double11 = 0` |
 | `double3` | tool calls requested by completed turns, including cached calls |
-| `double4` | cumulative model routing/retry/generation time in milliseconds |
-| `double5` | sum of individual tool durations in milliseconds; this may exceed wall time when tools overlap |
+| `double4` | cumulative model routing/retry/generation time in milliseconds, or zero when `double11 = 0` |
+| `double5` | sum of individual tool durations in milliseconds, or zero when `double11 = 0`; this may exceed wall time when tools overlap |
 | `double6` | input tokens |
 | `double7` | output tokens |
 | `double8` | cost in cents |
 | `double9` | routed model attempts (the count governed by the 1,000-iteration policy) |
 | `double10` | output tokens per second, or zero when unavailable |
+| `double11` | detailed timing availability: 1 means `double2`, `double4`, `double5`, and `double10` are measured; 0 means their zeros are placeholders |
 
 No Analytics Engine point contains workspace, work-stream, run, user, prompt,
 transcript, tool-argument, tool-result, connector-content, or credential data.
 The sampling index follows the primary operator query—caller source by
 region—and stays far below the 96-byte index limit. One point uses eight of the
-20 blob slots and ten of the 20 double slots, stays below the 16 KiB aggregate
+20 blob slots and eleven of the 20 double slots, stays below the 16 KiB aggregate
 blob limit, and is one of at most 250 writes allowed per Worker invocation.
 Writes are non-blocking and must never be awaited or allowed to change a run's
 durable outcome.
@@ -543,7 +546,11 @@ and `quantileExactWeighted(..., _sample_interval)` is the supported percentile
 form. Filter on `index1 = 'hypersight:eu'` or
 `index1 = 'hypersight:global'` for the highest-resolution regional HyperSight
 view. Do not use this dataset for exact billing, deduplication, run lookup, or
-crash recovery.
+crash recovery. End-to-end `double1`, calls, tokens, cost, and routed attempts
+remain usable on failed rows. Bind currently cannot return its detailed
+runToolLoop timing object after a thrown failed/stopped path, so filter
+`double11 = 1` before aggregating turns, model/tool time, or output rate; never
+interpret the placeholder zeros as measured time.
 
 Query the SQL API with a token restricted to **Account Analytics: Read**, or
 connect Grafana through the documented ClickHouse datasource. Analytics Engine
