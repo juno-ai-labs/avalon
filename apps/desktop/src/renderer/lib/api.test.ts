@@ -1021,9 +1021,32 @@ describe('Avalon API wire adapter', () => {
       sequenceNumber: 3,
       textContent: 'Earlier context.',
     };
+    const dismissedSuggestion = {
+      ...message,
+      id: noteId,
+      author: { type: 'system' as const },
+      messageType: 'suggestion' as const,
+      textContent: '',
+      structuredContent: {
+        suggestion: {
+          id: taskId,
+          activityId: resourceId,
+          workstreamId,
+          title: 'Review the launch plan',
+          summary: 'The launch plan changed.',
+          confidence: 0.93,
+          reason: 'It matches the work stream objective.',
+          status: 'dismissed' as const,
+          createdAt: timestamp,
+          resolvedAt: timestamp,
+        },
+      },
+    };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/messages?') && url.includes('before=4')) return json({ items: [older], nextCursor: null });
+      if (url.includes('/messages?') && url.includes('before=4')) {
+        return json({ items: [older, dismissedSuggestion], nextCursor: null });
+      }
       if (url.includes('/messages?') && url.includes('around=4')) {
         return json({ items: [older, message], nextCursor: '3', newerCursor: '4' });
       }
