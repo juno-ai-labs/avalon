@@ -320,25 +320,26 @@ the ordinary cron tick alongside `reapExpiredActivityEvents` is the shape it
 should take, and the cascade already takes the messages, tool invocations and
 artifacts.
 
-**Because they accumulate, they are listed as their own bounded set rather than
-paged against real work.** `WorkstreamService.list` excludes `system_kind` rows
-from the paged query unconditionally and appends the newest
-`SYSTEM_WORKSTREAM_LIST_LIMIT` of them when the caller asked to see them — the
-same shape pins already use. On recency alone a daily digest would fill the first
-page and push the work somebody is doing onto later ones; the sidebar pages as it
-scrolls, so nothing becomes unreachable, but a reader would be scrolling through
-months of machinery to reach last week's work stream. Older occurrences stay
-reachable by URL. Anything else that marks itself `system_kind` inherits this,
-which is the intent — machinery should never win a place from real work.
+**They are listed the same way everything else is**, paged by recency, with no
+cap and no separate section. `WorkstreamService.list` filters them out unless the
+caller passes `includeSystem`, and when it does they simply take their place in
+the order. With Debug enabled a daily digest therefore does take the newest
+pages — but the sidebar follows `nextCursor` as it scrolls, so that costs a
+scroll rather than the rows themselves. Lifting them out into a bounded set was
+tried and reverted: it put a second population inside one method, with its own
+cap and its own ordering, to solve a reachability problem that paging had already
+solved. See [`workstream-pinning.md`](workstream-pinning.md), which owns
+`GET /workstreams` paging.
 
-The two lists are also two index partitions,
-`workstreams_sidebar_recency_ordinary_idx` and
-`workstreams_sidebar_recency_system_idx`. Both queries seek `(workspace_id,
-last_activity_at DESC)` and then walk, so on the shared index the ordinary list
-would have to step past every digest row newer than its last result — a scan
-that grows with digest history for a result set that does not. Hiding the
-accumulation from the sidebar while leaving it in that query's path would only
-move the cost somewhere nobody looks.
+What the accumulation does change is the index. The ordinary list — every listing
+outside Debug enabled, so very nearly all of them — carries
+`system_kind IS NULL`, and on the shared `workstreams_sidebar_recency_idx` it
+would step over each digest row newer than the last row it returns, a scan that
+grows with digest history for a result set that does not.
+`workstreams_sidebar_recency_ordinary_idx` is that clause as a partial index.
+There is deliberately no counterpart for machinery: a listing that asks for it
+asks for everything, so it has no predicate a partial index could serve, and it
+keeps the general one.
 
 ### Delivery
 
@@ -524,16 +525,23 @@ and decides that on the returned run id rather than the row's status, because
 deleting a work stream out from under a live run is worse than leaking an empty
 one.
 
-Two things this change had to buy that the split itself did not imply. Listing
-had to stop paging machinery against real work, or a Debug-enabled sidebar would
-have emptied of ordinary work streams within months — the accumulation is
-accepted, being crowded out by it is not. And the cleanup of a released claim had
-to get stricter rather than looser: `launchWorkstreamHarness` creates the
-Cloudflare Workflow instance before it writes the instance id back, so a failure
-in that last write throws with a live run already executing, and the work stream
-is deleted only when no `harness_runs` row references it. An empty work stream
-nobody reaps is a much cheaper mistake than cascading a running run's transcript
-away beneath it.
+Two things this change had to buy that the split itself did not imply. The
+sidebar had to page — it asked for one screenful and dropped the cursor, which
+was survivable only while nothing but people made work streams; that is
+[`workstream-pinning.md`](workstream-pinning.md)'s entry of the same date. An
+attempt to solve the same crowding inside `list`, by lifting machinery out of the
+recency order and capping it, was written and then reverted: it added a second
+population to one method, with its own bound and its own ordering, to answer a
+reachability question paging had already answered.
+
+And the cleanup of a released claim had to get *stricter*, then more precise.
+`launchWorkstreamHarness` creates the Cloudflare Workflow instance before it
+records the instance id, and marks its own run row `failed` on the way out of
+either failure — so neither the run row's existence nor its status distinguishes
+"nothing started" from "started, and only the record of it failed". The launch
+marks the error instead, and both the claim release and the work-stream delete
+read that mark. Guarding on the row, which was the first attempt, orphaned a work
+stream on every ordinary launch outage.
 
 The titles were shortened after looking at them: the first version reused the
 email's `occurrenceLabel` behind the recipient's name, and in a real sidebar the
