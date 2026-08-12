@@ -19,6 +19,34 @@ function rule(selector: string): string | null {
 }
 
 /**
+ * Every rule's selector prelude, with comments removed.
+ *
+ * Splitting on `}` and taking the text before the *last* `{` in each piece
+ * keeps the inner selector of a nested rule rather than the `@media` that
+ * encloses it. Comments go first so that prose naming a selector — this
+ * stylesheet's comments name several — is not mistaken for the rule itself.
+ */
+function preludes(): string[] {
+  return stylesheet
+    .replace(/\/\*[\s\S]*?\*\//gu, ' ')
+    .split('}')
+    .map((block) => (block.includes('{') ? (block.split('{').at(-2) ?? '') : ''))
+    .map((prelude) => prelude.trim())
+    .filter(Boolean);
+}
+
+/**
+ * The bare element names a selector targets — `ul` in `:is(.a, .b) > ul`, and
+ * nothing from `.contains-task-list`, `:first-child`, or `[data-expanded]`.
+ * An element name is an identifier introduced by a combinator, a comma, an
+ * opening parenthesis, or whitespace; every other position belongs to a class,
+ * id, pseudo, attribute, or the tail of a hyphenated name.
+ */
+function elementsIn(prelude: string): string[] {
+  return [...prelude.matchAll(/(?:^|[\s>+~,(])([a-z][a-z0-9]*)\b/gu)].flatMap((match) => match[1] ?? []);
+}
+
+/**
  * The launch surface is styled by inheriting the work-stream screen's own rules
  * rather than repeating them, so that a change to the destination reaches the
  * surface that is about to become it. Nothing in a component test can see that:
@@ -159,12 +187,28 @@ describe('markdown list markers', () => {
   // or a briefing will have in mind. Each keeps its heading scale, deliberately,
   // and nothing else; a surface that grows list rules again has started to
   // diverge, whether or not it has also stopped using the component.
+  //
+  // This reads selector preludes rather than searching the file for
+  // `<host> <element>`. That substring is only one of the ways to write the rule
+  // it is meant to catch: `:is(.note-detail-article, .meeting-notes-body) ul`
+  // and `.note-detail-article > li` both style a markdown element on a host and
+  // contain no such substring, so the search would pass while the divergence it
+  // exists to prevent was already in the file.
+  const MARKDOWN_ELEMENTS = [
+    'p', 'a', 'em', 'strong', 'del', 'img', 'code', 'pre', 'hr', 'blockquote',
+    'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  ];
+
   it.each([['.note-detail-article'], ['.meeting-notes-body']])(
     'leaves markdown element styling to the shared container in %s',
     (host) => {
-      for (const element of ['ul', 'ol', 'li', 'blockquote', 'table', 'pre', 'hr']) {
-        expect(stylesheet).not.toContain(`${host} ${element}`);
-      }
+      // Headings are absent from the list on purpose: a scale is a property of
+      // the surface, not of markdown, and each host overrides exactly one.
+      const offenders = preludes()
+        .filter((prelude) => prelude.includes(host))
+        .filter((prelude) => elementsIn(prelude).some((element) => MARKDOWN_ELEMENTS.includes(element)));
+
+      expect(offenders).toEqual([]);
     },
   );
 });

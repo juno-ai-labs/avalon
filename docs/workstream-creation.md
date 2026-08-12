@@ -275,62 +275,6 @@ with the backfill first. See [`REGIONALIZATION.md`](REGIONALIZATION.md).
 
 ## Changelog
 
-### 2026-08-12 — One markdown renderer, so there is one place to fix markdown
-
-**What changed:** The note detail screen and the meeting Control Tower briefing
-render `MarkdownBody` instead of mounting `ReactMarkdown` themselves. The
-per-container marker, list-geometry, and first/last-child rules those two
-surfaces carried are gone; `.markdown-body` owns all of it. Each keeps exactly
-one override — a note's descending heading scale, a briefing's flat one — and the
-stylesheet test asserts that neither host states any other markdown element
-styling.
-
-**Why:** The entry below restored the list markers by naming all three containers
-in every rule. That worked and was the right shape for a fix under review, but it
-left the underlying condition in place: three renderers, three copies of the
-element styling, and no mechanism that makes a fix to one reach the others. The
-copies had already drifted — list indents of 20px, 22px, and 26px, line heights
-of 1.6, 1.65, and 1.68, none of it decided — and the reason the markers went
-missing on two surfaces for as long as they did is that a reasonable person
-fixing `.markdown-body` had no way to discover the other two. Converging is what
-removes the next instance of that, not another exhaustive selector list.
-
-**Consequences:** A note's body text is now `.markdown-body`'s `#dfded9` at
-line-height 1.6 rather than `--ink-soft` at 1.68, and a briefing's is 1.6 rather
-than 1.65. Those differences were drift, and collapsing them is the point; if any
-surface ever wants its own again it should say so in one declaration and say why.
-What must be respected: element styling for markdown goes in the `.markdown-body`
-group and nowhere else. A rule like `.note-detail-article ul` competes with the
-shared one on equal specificity, decided by source order, and the stylesheet test
-fails on it deliberately. Overriding typography — a heading scale, a measure — is
-still legitimate on a host, because that is a property of the surface rather than
-of markdown; the two headings rules that remain are the model for it. Both
-screens were checked in a real window against a fixture covering `h1`–`h6`,
-three-level mixed `ol`/`ul` nesting, task lists, nested blockquotes, code in a
-list item, tables, and `hr`.
-
-### 2026-08-12 — Markdown lists get their markers back, on every surface that renders one
-
-**What changed:** `list-style` is declared for `ul` and `ol` under each of the
-three containers that render markdown — `.markdown-body`, `.note-detail-article`,
-and `.meeting-generated-notes` — with the nested levels and the task-list
-exception restated alongside. A stylesheet test pins all of it.
-
-**Why:** Tailwind's preflight sets `list-style: none` on every `ol` and `ul`, and
-nothing took it back. The surrounding rules read as though something had — they
-set the indent a marker needs and a colour for `li::marker` — so a bulleted list
-rendered as indented paragraphs and a numbered one lost its numbers, everywhere
-markdown appears. The entry below reported this against the `tw-fade` preflight,
-which was wrong; that sentence is corrected in place, and this entry is where the
-repair itself is recorded.
-
-**Consequences:** Depth is counted in list ancestors of either kind, matching the
-UA rules being restored: an `ol` holding a `ul` is a second level, not a first.
-The three containers are named explicitly because they do not share a component —
-two of them render `ReactMarkdown` under a class of their own, and a fix applied
-only to `.markdown-body` looks complete while leaving them untouched. That is the
-mistake this change was reviewed for, and the reason the test names all three.
-
 ### 2026-08-12 — A started suggestion opens with the member's own turn, not Avalon's
 
 **What changed:** `createFromOpportunity` writes its opening message as the
@@ -388,7 +332,8 @@ that width, and code blocks scroll inside themselves rather than widening the
 bubble. List markers did not render at the time — reported here as the `tw-fade`
 preflight, which was wrong: the `list-style: none` came from Tailwind's own
 preflight, pulled in by `@tailwind base`. It applied to every markdown surface,
-not only this one, and is fixed in the entry above.
+not only this one, and the repair is recorded in
+[`markdown-rendering.md`](markdown-rendering.md), which owns the renderer.
 
 ### 2026-08-11 — The create path waits for its own work again; only the launch surface stays
 
