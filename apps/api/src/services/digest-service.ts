@@ -30,7 +30,6 @@ interface DigestScheduleRow {
   user_id: string;
   day_mask: number;
   enabled: number;
-  system_workstream_id: string | null;
   version: number;
   created_at: string;
 }
@@ -225,9 +224,9 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
     return [
       env.DB.prepare(
         `INSERT INTO digest_schedules
-           (id, workspace_id, user_id, day_mask, enabled, system_workstream_id,
+           (id, workspace_id, user_id, day_mask, enabled,
             execution_principal_json, version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, NULL, ?, 1, ?, ?)
+         VALUES (?, ?, ?, ?, 1, ?, 1, ?, ?)
          ON CONFLICT DO NOTHING`,
       ).bind(
         scheduleId, member.workspace_id, member.user_id, dayMaskFromDays(DEFAULT_DAYS),
@@ -374,8 +373,8 @@ export class DigestService {
         : this.env.DB.prepare(
             `INSERT INTO digest_schedules
                (id, workspace_id, user_id, day_mask, enabled,
-                system_workstream_id, execution_principal_json, version, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, 1, ?, ?)`,
+                execution_principal_json, version, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
           ).bind(
             scheduleId, this.auth.workspaceId, this.auth.userId, dayMaskFromDays(days),
             input.enabled ? 1 : 0, JSON.stringify(principal), at, at,
@@ -448,8 +447,7 @@ export class DigestService {
 
   private async loadRow(): Promise<DigestScheduleRow | null> {
     return await this.env.DB.prepare(
-      `SELECT id, workspace_id, user_id, day_mask, enabled,
-              system_workstream_id, version, created_at
+      `SELECT id, workspace_id, user_id, day_mask, enabled, version, created_at
          FROM digest_schedules WHERE workspace_id = ? AND user_id = ?`,
     ).bind(this.auth.workspaceId, this.auth.userId).first<DigestScheduleRow>();
   }
