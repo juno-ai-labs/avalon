@@ -35,9 +35,11 @@ const databases: DatabaseSync[] = [];
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
-  vi.restoreAllMocks();
+  // `clearAllMocks` and not `restoreAllMocks`: nothing here is a `vi.spyOn`, so
+  // restoring had nothing of its own to undo, and since Vitest 3 it does not
+  // touch a `vi.fn()` implementation either — it was a no-op in both directions.
   vi.clearAllMocks();
-  // `clearAllMocks` clears calls but not a queued `mockImplementationOnce`. A
+  // Clearing drops recorded calls but not a queued `mockImplementationOnce`. A
   // leftover would be consumed by whichever test ran next, which is the kind of
   // order dependency that only fails in a full suite run.
   vi.mocked(startWorkstreamWorkflow).mockReset();

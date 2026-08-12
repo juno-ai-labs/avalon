@@ -275,6 +275,28 @@ with the backfill first. See [`REGIONALIZATION.md`](REGIONALIZATION.md).
 
 ## Changelog
 
+### 2026-08-12 — Markdown lists get their markers back, on every surface that renders one
+
+**What changed:** `list-style` is declared for `ul` and `ol` under each of the
+three containers that render markdown — `.markdown-body`, `.note-detail-article`,
+and `.meeting-generated-notes` — with the nested levels and the task-list
+exception restated alongside. A stylesheet test pins all of it.
+
+**Why:** Tailwind's preflight sets `list-style: none` on every `ol` and `ul`, and
+nothing took it back. The surrounding rules read as though something had — they
+set the indent a marker needs and a colour for `li::marker` — so a bulleted list
+rendered as indented paragraphs and a numbered one lost its numbers, everywhere
+markdown appears. The entry below reported this against the `tw-fade` preflight,
+which was wrong; that sentence is corrected in place, and this entry is where the
+repair itself is recorded.
+
+**Consequences:** Depth is counted in list ancestors of either kind, matching the
+UA rules being restored: an `ol` holding a `ul` is a second level, not a first.
+The three containers are named explicitly because they do not share a component —
+two of them render `ReactMarkdown` under a class of their own, and a fix applied
+only to `.markdown-body` looks complete while leaving them untouched. That is the
+mistake this change was reviewed for, and the reason the test names all three.
+
 ### 2026-08-12 — A started suggestion opens with the member's own turn, not Avalon's
 
 **What changed:** `createFromOpportunity` writes its opening message as the
@@ -329,9 +351,10 @@ right-aligned bubble, capped at `min(72%, 620px)`. That was checked in a real
 window against a brief with headings, bullet and numbered lists, and multiple
 sections rather than reasoned about: headings, spacing, and wrapping all hold at
 that width, and code blocks scroll inside themselves rather than widening the
-bubble. List markers do not render — `list-style: none` from the `tw-fade`
-preflight defeats `.markdown-body li::marker`, identically for agent messages,
-which predates this change and is not fixed here.
+bubble. List markers did not render at the time — reported here as the `tw-fade`
+preflight, which was wrong: the `list-style: none` came from Tailwind's own
+preflight, pulled in by `@tailwind base`. It applied to every markdown surface,
+not only this one, and is fixed in the entry above.
 
 ### 2026-08-11 — The create path waits for its own work again; only the launch surface stays
 

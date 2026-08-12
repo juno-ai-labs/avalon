@@ -1835,12 +1835,37 @@ pre {
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Markers are restated because Tailwind's preflight sets `list-style: none` on
+   every `ol` and `ul`, and nothing took it back — the rules around this set the
+   indent a marker needs and a colour for a marker that was not being drawn, so
+   a bulleted list rendered as indented paragraphs and a numbered one lost its
+   numbers. Nested levels are restated for the same reason: the browser's own
+   `disc → circle → square` cascade is part of what preflight removed.
+
+   The group is every container that renders markdown, not just `.markdown-body`:
+   a note and a meeting briefing render `ReactMarkdown` under a class of their
+   own, and styling only the shared component leaves those two markerless in a
+   way that reads as fixed. Depth counts list ancestors of either kind, so an
+   `ol` holding a `ul` gets the second level's `circle` rather than falling back
+   to the first level's `disc` — the same pairs the HTML spec's suggested
+   rendering names. */
+:is(.markdown-body, .note-detail-article, .meeting-generated-notes) ul { list-style: disc; }
+:is(.markdown-body, .note-detail-article, .meeting-generated-notes) :is(ul, ol) ul { list-style: circle; }
+:is(.markdown-body, .note-detail-article, .meeting-generated-notes) :is(ul, ol) :is(ul, ol) ul { list-style: square; }
+:is(.markdown-body, .note-detail-article, .meeting-generated-notes) ol { list-style: decimal; }
 .markdown-body ul,
 .markdown-body ol { margin: 9px 0 15px; padding-left: 26px; }
 .markdown-body li { margin: 5px 0; padding-left: 1px; }
 .markdown-body li > p { margin-bottom: 7px; }
 .markdown-body li::marker { color: #d7d6d1; }
-.markdown-body .contains-task-list { list-style: none; padding-left: 4px; }
+/* Keeps its own `none`: a task list draws checkboxes, and a bullet beside each
+   one is what this exception exists to prevent. It carries two classes to the
+   marker rules' one, so it survives them — and it covers the same three
+   containers, because `remark-gfm` renders task lists on all of them. */
+:is(.markdown-body, .note-detail-article, .meeting-generated-notes) .contains-task-list {
+  list-style: none;
+  padding-left: 4px;
+}
 .markdown-body .task-list-item { align-items: baseline; display: flex; gap: 9px; }
 .markdown-body .task-list-item > input { accent-color: var(--blue); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
 .markdown-inline-code { background: #343432; border-radius: 5px; color: #dfded9; font-size: 0.88em; padding: 2px 4px; }
@@ -2736,7 +2761,10 @@ pre {
   font-size: 15px;
   margin: 22px 0 8px;
 }
-.meeting-notes-body ul { padding-left: 20px; }
+/* `ol` as well as `ul`: with markers restored, a numbered list in a briefing
+   draws its numbers in the indent, and without one they sit against the edge. */
+.meeting-notes-body ul,
+.meeting-notes-body ol { padding-left: 20px; }
 .meeting-notes-body li + li { margin-top: 5px; }
 .meeting-summary-progress {
   align-items: center;
