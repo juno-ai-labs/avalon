@@ -59,10 +59,14 @@ const TokenResponseSchema = z.object({
   email_domain: z.string().optional(),
 }).passthrough();
 
+const McpToolInputSchema = z.object({
+  type: z.literal("object"),
+}).passthrough();
+
 const McpToolSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().optional(),
-  inputSchema: z.record(z.string(), z.unknown()),
+  inputSchema: McpToolInputSchema,
   annotations: z.object({
     readOnlyHint: z.boolean().optional(),
     destructiveHint: z.boolean().optional(),
@@ -283,11 +287,12 @@ export function hostedMcpToolDefinitions(
   tools: readonly HostedMcpTool[],
   capability: string,
 ): ToolDefinition[] {
+  const parsedTools = z.array(McpToolSchema).parse(tools);
   const definitions: ToolDefinition[] = [];
   const remoteNames = new Set<string>();
   const canonicalNames = new Set<string>();
   const wireNames = new Set<string>();
-  for (const tool of tools) {
+  for (const tool of parsedTools) {
     if (remoteNames.has(tool.name)) {
       throw new ConnectorError("provider_error", `Hosted MCP returned duplicate tool ${tool.name}`);
     }
@@ -308,6 +313,7 @@ export function hostedMcpToolDefinitions(
     wireNames.add(wireName);
     definitions.push({
       name: canonicalName,
+      providerOperationName: tool.name,
       description: cleanDescription(tool.description, tool.name),
       inputSchema: structuredClone(tool.inputSchema),
       capability,
@@ -497,9 +503,12 @@ export async function callHostedMcpTool(
 ): Promise<{ output: unknown; tool: HostedMcpTool }> {
   return withHostedMcpSession(input, async (session) => {
     const tools = await listSessionTools(input, session);
-    const tool = tools.find((candidate) => (
-      candidate.name === input.name || avalonHostedMcpToolName(candidate.name) === input.name
-    ));
+    // Re-run the activation-time collision checks against the fresh catalog.
+    // The caller supplies the exact provider operation captured at activation;
+    // a different remote tool that happens to equal its Avalon alias must never
+    // inherit the already-confirmed call.
+    hostedMcpToolDefinitions(tools, "hosted_mcp.execution");
+    const tool = tools.find((candidate) => candidate.name === input.name);
     if (!tool) {
       throw new ConnectorError("unsupported_capability", `${input.providerName} MCP no longer exposes ${input.name}`);
     }

@@ -87,7 +87,9 @@ catalog entry. After `load_plugin` reauthorizes the connection, the harness
 single-flights that callback, replaces the empty deferred Bind plugin with the
 returned live surface, and only then persists and exposes the activation. The
 result is cached for that run in both Bind's registry and the host plugin object
-used to narrow inline-child authority; a later run discovers again. A discovery failure
+used to narrow inline-child authority; a later run discovers again. Restored or
+preloaded dynamic hints materialize and hash this surface before their initial
+activation receipt is written. A discovery failure
 returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
@@ -433,11 +435,15 @@ reason for any of it.
 
 **What changed:** After a deferred plugin loads, the API now replaces the
 host-owned placeholder tool array as well as returning the tools to Bind.
+Restored and explicitly preloaded dynamic plugins load before their activation
+receipt is persisted, so that receipt always carries the discovered surface hash.
 
 **Why:** Bind correctly exposed the activated surface to the parent model, but
 inline-child construction reads the API's frozen plugin objects rather than
 Bind's private registry. Leaving that object empty made an already-active
-dynamic plugin inherit no read tools.
+dynamic plugin inherit no read tools. The same empty placeholder had no surface
+hash when a prior activation hint was persisted before Bind could call
+`loadTools`, causing the next run to fail during setup.
 
 **Considered and rejected:** Re-discovering from the provider during child
 construction. That could produce a different surface from the one the parent
@@ -446,7 +452,9 @@ activated and would spend another provider call while freezing child authority.
 **Consequences:** Any dynamic adapter that returns Avalon-classified read tools
 can pass that exact activated subset to a child. Hosted MCP currently classifies
 all provider-authored tools as writes, so its tools remain excluded by the
-child's independent read-only policy.
+child's independent read-only policy. A dynamic provider failure while restoring
+a hint drops that hint and leaves the plugin available for an explicit later
+load; it does not abort unrelated work.
 
 Shipped in the pull request for this change.
 

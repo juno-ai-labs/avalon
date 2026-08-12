@@ -71,15 +71,19 @@ The model first sees only Avalon's trusted connector catalog entry. The API
 creates the deferred credential plugin with no model tools and a `loadTools`
 callback. When the model calls `load_plugin`, the harness reauthorizes the
 connection, calls the callback, and only then persists activation and exposes
-the returned tools on the next model turn.
+the returned tools on the next model turn. A prior or explicitly attached
+activation takes the same path before inference: its live surface is loaded and
+hashed before the activation is persisted and handed back to Bind. A failed
+restoration stays inactive instead of aborting the run with a missing hash.
 
 The callback enters the credential door, refreshes when necessary, initializes
 one MCP session, sends `notifications/initialized`, follows every `tools/list`
 cursor, and closes the session when the server assigned an ID. Avalon preserves
-the server's input schema. Remote annotations are parsed as bounded metadata but
+the server's object-shaped input schema. Remote annotations are parsed as bounded metadata but
 never lower Avalon's safety policy. A remote name already valid under Avalon's lowercase
 canonical-name contract stays unchanged; any other name gets a deterministic
-internal alias, and execution maps that alias back to the exact remote name.
+internal alias. The dynamic definition separately retains the exact remote
+operation name, and execution requires that exact name to remain present.
 Model-facing names then receive Avalon's normal connector prefix and identifier
 normalization.
 
@@ -95,7 +99,7 @@ and use therefore fails closed instead of forwarding an unadvertised name.
 | Provider | Personal connection | Workspace connection |
 | --- | --- | --- |
 | Granola | Live hosted-MCP tools under `granola.personal.read`. | Fixed Workspace API reads and signed note webhooks. |
-| Slack | Live hosted-MCP tools under `slack.personal.mcp`; legacy personal grants are accepted only to avoid breaking existing rows. | Fixed reviewed Web API tools, Agent, events, and deterministic delivery. |
+| Slack | Live hosted-MCP tools under `slack.personal.mcp`; legacy granular personal grants remain on their fixed reviewed Web API tools until reconnect. | Fixed reviewed Web API tools, Agent, events, and deterministic delivery. |
 | Notion | Official hosted-MCP OAuth and live tools under `notion.personal.mcp`. | Public integration bot, selected-page REST tools, and signed webhooks. |
 
 ## Invariants
@@ -118,8 +122,9 @@ and use therefore fails closed instead of forwarding an unadvertised name.
   provider hint can turn a newly introduced mutation into an unconfirmed action.
 - **The remote name is forwarded exactly.** Avalon may need a safe internal
   alias for a name outside its canonical-name grammar, but `tools/call` receives
-  the original value. Forwarding the alias would call a different or nonexistent
-  provider operation.
+  the original value retained at activation. A later operation whose raw name
+  equals that alias cannot inherit the confirmed call, and a fresh catalog with
+  new canonical-name collisions fails closed.
 - **Personal and workspace identities remain separate.** Hosted MCP acts with
   the authorizing member's provider identity. A public app or bot connection
   stays workspace-scoped even when a human approved its OAuth screen.
@@ -143,6 +148,7 @@ described in [`connectors.md`](connectors.md) and
 | --- | --- |
 | Discovery, refresh, or MCP initialization fails during `load_plugin` | The load returns `plugin_tools_unavailable`; no activation or partial tool surface is exposed. |
 | Server returns no compatible tools | The plugin load fails. Avalon does not activate an empty dynamic plugin. |
+| A tool input schema is not object-shaped | Discovery fails before model exposure. |
 | More than 128 tools or 20 cursor pages | Discovery fails with `payload_too_large`. |
 | One input schema exceeds 100 KB | Discovery fails before model exposure. |
 | Two names collide after model-wire normalization | The whole surface fails closed; Avalon does not choose one. |
@@ -160,7 +166,8 @@ legacy SSE endpoint.
 ## Testing
 
 `packages/connectors/src/hosted-mcp.test.ts` covers live schema preservation,
-annotation-independent write policy, normalized-name collisions, pagination,
+object-shaped schema admission, annotation-independent write policy,
+activation-time and fresh-catalog name collisions, pagination,
 session lifecycle, exact forwarding, path-aware OAuth discovery, DCR, PKCE,
 exchange, and refresh:
 
@@ -215,14 +222,18 @@ patch a historical snapshot into Avalon.
 
 **What changed:** Every hosted-MCP tool now receives write confirmation and a
 record-before-execute receipt regardless of `readOnlyHint`. OAuth discovery uses
-RFC path insertion before the root fallback, and a loaded deferred surface is
-retained on the host plugin so later child narrowing sees the activated tools.
+RFC path insertion before the root fallback, a loaded deferred surface is
+retained on the host plugin so later child narrowing sees the activated tools,
+and exact remote operation identities survive model-safe aliasing. Restored
+dynamic activations load and hash their live surface before persistence.
 
 **Why:** Tool annotations are provider hints rather than enforceable contracts;
 using one to skip confirmation made a newly added or mislabeled mutation a
 silent write. Root-only discovery also failed compliant path-scoped servers,
 and keeping loaded tools only inside Bind made the API's child-scope builder see
-the original empty placeholder.
+the original empty placeholder. Persisting a restored deferred activation before
+loading it left no surface hash, while resolving a call from its alias could
+silently select a different provider operation after catalog drift.
 
 **Considered and rejected:** A static read-tool allowlist. It would recreate the
 catalog snapshot this abstraction exists to remove. Trusting annotations only
@@ -232,7 +243,9 @@ not make a hint an authorization guarantee.
 **Consequences:** Hosted-MCP reads currently ask for confirmation and are not
 available to read-only inline children. A future lower-friction read path needs
 an independent Avalon-authored policy source. Metadata discovery may issue one
-extra 404 request when a server publishes only the root fallback.
+extra 404 request when a server publishes only the root fallback. Hosted MCP
+schemas must declare a top-level object, and a pre-call catalog collision blocks
+the call rather than choosing by provider list order.
 
 Shipped in the pull request for this change.
 

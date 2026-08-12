@@ -342,10 +342,12 @@ async function persistInitialPluginActivations(
   requestedPluginIds: readonly string[],
   reauthorize: (pluginId: string) => PluginAuthorization | Promise<PluginAuthorization>,
   persist: (pluginId: string) => void | Promise<void>,
+  prepare?: (pluginId: string) => boolean | Promise<boolean>,
 ): Promise<string[]> {
   const activationHints: string[] = [];
   for (const pluginId of [...new Set(requestedPluginIds)].sort()) {
     if (await reauthorize(pluginId) !== "authorized") continue;
+    if (prepare && !(await prepare(pluginId))) continue;
     await persist(pluginId);
     activationHints.push(pluginId);
   }
@@ -1236,7 +1238,7 @@ async function loadAutomationCreatorPluginCatalog(
             env,
             { workspaceId, userId },
             frozen,
-            definition.name,
+            definition.providerOperationName ?? definition.name,
             definition.capability,
             toolInput,
             context.signal,
@@ -1705,6 +1707,7 @@ export async function runWorkstreamHarness(
     ...priorHints,
     ...harnessTools.plugins.filter((plugin) => plugin.preload).map((plugin) => plugin.canonicalId),
   ];
+  const pluginById = new Map(harnessTools.plugins.map((plugin) => [plugin.canonicalId, plugin]));
   const activationHints = await persistInitialPluginActivations(
     requestedActivations,
     async (pluginId) => {
@@ -1722,6 +1725,18 @@ export async function runWorkstreamHarness(
         harnessTools,
       );
       if (harnessTools.frozenConnections.has(pluginId)) activeCredentialPluginIds.add(pluginId);
+    },
+    async (pluginId) => {
+      const plugin = pluginById.get(pluginId);
+      if (!plugin?.loadTools) return true;
+      return plugin.loadTools().then(() => true, (error: unknown) => {
+        logStructuredEvent(env, "warn", "dynamic_connector_tools_unavailable", {
+          plugin_id: pluginId,
+          surface: "initial_activation",
+          error_name: error instanceof Error ? error.name : "unknown",
+        });
+        return false;
+      });
     },
   );
 
@@ -2616,7 +2631,7 @@ async function createInlineChildHarnessSurface(options: {
             options.env,
             options.childInput,
             frozen,
-            tool.definition.name,
+            tool.definition.providerOperationName ?? tool.definition.name,
             tool.definition.capability,
             toolInput,
             toolContext.signal,
@@ -3863,7 +3878,7 @@ async function loadHarnessTools(
           env,
           input,
           frozen,
-          definition.name,
+          definition.providerOperationName ?? definition.name,
           definition.capability,
           toolInput,
           context.signal,
@@ -4341,6 +4356,7 @@ async function connectorToolSurfaceHash(
     pluginId,
     tools: tools.map(({ definition }) => ({
       name: canonicalToolName(definition.name),
+      providerOperationName: definition.providerOperationName ?? null,
       capability: definition.capability,
       mode: definition.mode,
       idempotency: definition.idempotency,
