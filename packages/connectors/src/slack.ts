@@ -91,6 +91,56 @@ export const SlackWorkspaceBotScopes = [
   "users:read.email",
 ] as const;
 
+/**
+ * Future-facing grants offered during workspace installation. Slack presents
+ * these separately and may omit any the installer declines, so current Agent
+ * health and capability admission must never depend on them.
+ */
+export const SlackWorkspaceOptionalBotScopes = [
+  "bookmarks:read",
+  "bookmarks:write",
+  "channels:write.invites",
+  "channels:write.topic",
+  "dnd:read",
+  "emoji:read",
+  "files:write",
+  "groups:write.invites",
+  "groups:write.topic",
+  "lists:read",
+  "lists:write",
+  "metadata.message:read",
+  "pins:read",
+  "pins:write",
+  "team:read",
+  "usergroups:read",
+  "users.profile:read",
+] as const;
+
+export const SlackWorkspaceRequestedBotScopes = [
+  ...SlackWorkspaceBotScopes,
+  ...SlackWorkspaceOptionalBotScopes,
+] as const;
+
+/** Future personal grants not requested by the current capability set. */
+export const SlackPersonalOptionalUserScopes = [
+  "bookmarks:read",
+  "bookmarks:write",
+  "channels:write.invites",
+  "channels:write.topic",
+  "dnd:read",
+  "emoji:read",
+  "files:write",
+  "groups:write.invites",
+  "groups:write.topic",
+  "lists:read",
+  "lists:write",
+  "pins:read",
+  "pins:write",
+  "team:read",
+  "usergroups:read",
+  "users.profile:read",
+] as const;
+
 /** Capability grants carried by every workspace Slack installation. */
 export const SlackWorkspaceCapabilities = [
   SlackCapabilities.search,
@@ -2152,10 +2202,11 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       url.searchParams.set("state", String(input.state ?? ""));
       const requested = Array.isArray(input.scopes) ? input.scopes.filter((scope): scope is string => typeof scope === "string") : [];
       if (connectionScope === "workspace") {
-        // Workspace installs use one reviewed bot-scope bundle. Capability
-        // scope maps also contain user-token-only scopes and must not leak into
-        // the bot authorization request.
-        url.searchParams.set("scope", SlackWorkspaceBotScopes.join(","));
+        // Workspace installs request the reviewed required bundle plus the
+        // future-facing grants Slack marks optional in the app configuration.
+        // Capability scope maps also contain user-token-only scopes and must
+        // not leak into the bot authorization request.
+        url.searchParams.set("scope", SlackWorkspaceRequestedBotScopes.join(","));
       }
       else {
         // The dedicated user-token endpoint follows OAuth's standard `scope`

@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConnectorError, SlackWorkspaceBotScopes } from "@avalon/connectors";
+import {
+  ConnectorError,
+  SlackPersonalOptionalUserScopes,
+  SlackWorkspaceBotScopes,
+  SlackWorkspaceOptionalBotScopes,
+  SlackWorkspaceRequestedBotScopes,
+} from "@avalon/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
@@ -131,11 +137,15 @@ describe("Slack Agent durable ingress", () => {
       new URL("../../../config/provider-apps/slack.json", import.meta.url),
       "utf8",
     )) as {
-      oauth_config: { scopes: { bot: string[] } };
+      oauth_config: { scopes: { bot: string[]; bot_optional: string[]; user: string[]; user_optional: string[] } };
       settings: { event_subscriptions: { bot_events: string[] } };
     };
 
-    expect([...manifest.oauth_config.scopes.bot].sort()).toEqual([...SlackWorkspaceBotScopes].sort());
+    expect([...manifest.oauth_config.scopes.bot].sort()).toEqual([...SlackWorkspaceRequestedBotScopes].sort());
+    expect([...manifest.oauth_config.scopes.bot_optional].sort()).toEqual([...SlackWorkspaceOptionalBotScopes].sort());
+    expect(manifest.oauth_config.scopes.bot).toEqual(expect.arrayContaining([...SlackWorkspaceBotScopes]));
+    expect([...manifest.oauth_config.scopes.user_optional].sort()).toEqual([...SlackPersonalOptionalUserScopes].sort());
+    expect(manifest.oauth_config.scopes.user).toEqual(expect.arrayContaining([...SlackPersonalOptionalUserScopes]));
     expect(manifest.settings.event_subscriptions.bot_events).toEqual(expect.arrayContaining([
       "file_shared",
       "member_joined_channel",

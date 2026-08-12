@@ -1,7 +1,8 @@
 # Slack permissions
 
-Every Slack OAuth scope Avalon configures, and the product behavior and model tool
-that uses it. Avalon has two independent authorization paths — an
+Every Slack OAuth scope Avalon configures, and the current product behavior,
+model tool, or planned optional boundary associated with it. Avalon has two
+independent authorization paths — an
 administrator-approved workspace bot installation and an optional per-person
 connection — and **neither ever stands in for the other**. This document is the
 inventory that keeps those two grants honest against the checked-in manifest.
@@ -26,7 +27,7 @@ contracts; activation acknowledgement follows
 | Path | Responsibility |
 | --- | --- |
 | [`config/provider-apps/slack.json`](../config/provider-apps/slack.json) | The checked-in manifest — the scopes and event subscriptions that are actually registered. |
-| [`packages/connectors/src/slack.ts`](../packages/connectors/src/slack.ts) | Runtime bot-scope health checks, the capability mapping, and every tool's required scopes. |
+| [`packages/connectors/src/slack.ts`](../packages/connectors/src/slack.ts) | Required and optional scope declarations, runtime bot-scope health checks, the capability mapping, and every tool's required scopes. |
 | `apps/api/src/services/slack-agent-service.ts` | The Agent surface, tool execution, and the event-scoped search token. |
 | `apps/api/src/routes/slack.ts` | The ingress the subscribed events arrive at. |
 
@@ -35,15 +36,18 @@ contracts; activation acknowledgement follows
 ### The permission model
 
 - **Workspace bot installation** — a Slack administrator installs the Avalon app.
-  All workspace bot scopes below are required for the in-Slack Agent experience and
-  the fixed workspace model-tool bundle, and Avalon checks that the installation
-  still has the complete set.
+  The required workspace bot scopes below power the in-Slack Agent experience and
+  fixed workspace model-tool bundle, and Avalon checks that the installation still
+  has the complete required set. The manifest separately offers future-facing
+  optional scopes; declining them does not make an installation unhealthy or
+  expose an unimplemented capability.
 - **Personal Slack connection** — an individual connects Slack to Avalon for
-  user-attributed tools. These scopes are optional. The **Connect for me** button
-  and the Slack account link both request the full personal set, so a member who
-  connects from either place grants the same capabilities; only a connection made
-  before that convergence carries a narrower grant. A personal token does not
-  necessarily contain every supported scope below.
+  user-attributed tools. The connection itself is optional. The **Connect for me**
+  button and the Slack account link both request the full current personal set, so
+  a member who connects from either place grants the same current capabilities;
+  only a connection made before that convergence carries a narrower grant. The app
+  registration separately lists future-facing optional scopes that the current
+  personal capability set does not request.
 
 An OAuth scope is only the outer boundary. Avalon also applies workspace
 membership, identity-linking, surface-policy, conversation-membership, session,
@@ -89,7 +93,8 @@ installation belonging to the same Slack team and Avalon workspace.
 
 ### Workspace bot scopes
 
-The production manifest requests these scopes as one administrator-approved bundle.
+The production manifest requires these scopes as one administrator-approved
+bundle. Avalon checks every workspace token for the complete set.
 
 | Permission | What Avalon uses it for |
 | --- | --- |
@@ -122,6 +127,36 @@ The production manifest requests these scopes as one administrator-approved bund
 | `users:read` | Resolve Slack users, reject bots or deactivated accounts, read display names and avatars, and resolve notification recipients. |
 | `users:read.email` | Search or match user email data. Notification lookup never silently links or authenticates an account. |
 
+### Optional future bot scopes
+
+The production manifest also requests the scopes below and marks every one in
+`bot_optional`. Slack presents them separately during installation, and Avalon
+continues when an installer declines any or all of them. They reserve likely
+Slack-native extensions for a new customer who grants them up front; they do
+not expose a model tool, subscribe to another event, or broaden current data
+collection by themselves. A future implementation must check the token's
+reported OAuth scopes before exposing the behavior.
+
+| Permission | Planned boundary |
+| --- | --- |
+| `bookmarks:read` | Treat bookmarks in an authorized channel as high-signal task context. |
+| `bookmarks:write` | Add an authorized Avalon work stream, brief, or generated resource to a channel's bookmarks. |
+| `channels:write.invites` | Invite explicitly selected members to an authorized public channel. |
+| `channels:write.topic` | Set an authorized public channel's generated purpose or project summary. |
+| `dnd:read` | Make proactive notification timing aware of a recipient's Do Not Disturb state. |
+| `emoji:read` | Resolve and validate workspace custom emoji for reaction-aware tools and automations. |
+| `files:write` | Deliver an explicitly requested generated artifact into Slack. |
+| `groups:write.invites` | Invite explicitly selected members to an authorized private channel. |
+| `groups:write.topic` | Set an authorized private channel's generated purpose or project summary. |
+| `lists:read` | Read a task-specific Slack List as structured context. |
+| `lists:write` | Create or update an explicitly authorized Slack List for plans and action items. |
+| `metadata.message:read` | Read structured message metadata needed to route an authorized automation or interoperate with another Slack app. |
+| `pins:read` | Treat pinned messages and files in an authorized conversation as high-signal context. |
+| `pins:write` | Pin an explicitly selected plan, decision, or generated deliverable. |
+| `team:read` | Display and disambiguate connected workspaces with Slack's name, domain, and icon. |
+| `usergroups:read` | Resolve a Slack user group into an authorized notification or collaboration audience. |
+| `users.profile:read` | Read task-relevant profile details such as role, department, and timezone. |
+
 The corresponding workspace capability grant stored by Avalon is:
 
 ```text
@@ -135,6 +170,12 @@ slack.reactions.write
 slack.agent
 slack.notifications.write
 ```
+
+Until Slack returns every required bot scope, Avalon reports the installation as
+reconnect-required instead of offering partially authorized tools. Missing
+optional scopes never cause that state. Existing installations therefore remain
+healthy after the optional set is deployed, but they do not gain scopes Slack
+did not previously grant unless an administrator authorizes them later.
 
 ### Personal user scopes
 
@@ -169,6 +210,35 @@ what that user can see or do.
 | `users:read` | Read user profiles and support channel-member lookup. |
 | `users:read.email` | Include email in user-profile data when Slack exposes it. |
 | `chat:write` | Send a message or thread reply as the connected user. |
+
+### Optional future user scopes
+
+The app registration marks the scopes below as `user_optional`. They are the
+user-attributed equivalents of the planned workspace behaviors above, except
+that `metadata.message:read` is bot-only. Avalon's current personal capability
+set does not request them, so merely registering them does not expand an
+existing personal token. A future personal tool must add its scope to the
+corresponding capability and initiate OAuth expansion when the token did not
+already receive it.
+
+| Permission | Planned boundary |
+| --- | --- |
+| `bookmarks:read` | Read bookmarks visible to the connected user. |
+| `bookmarks:write` | Manage bookmarks as the connected user. |
+| `channels:write.invites` | Invite members to public channels as the connected user. |
+| `channels:write.topic` | Set public-channel descriptions as the connected user. |
+| `dnd:read` | Read Do Not Disturb state visible to the connected user. |
+| `emoji:read` | Read custom emoji visible to the connected user. |
+| `files:write` | Deliver requested artifacts as the connected user. |
+| `groups:write.invites` | Invite members to private channels as the connected user. |
+| `groups:write.topic` | Set private-channel descriptions as the connected user. |
+| `lists:read` | Read Slack Lists visible to the connected user. |
+| `lists:write` | Create or update Slack Lists as the connected user. |
+| `pins:read` | Read pins visible to the connected user. |
+| `pins:write` | Manage pins as the connected user. |
+| `team:read` | Read identifying metadata for the connected workspace. |
+| `usergroups:read` | Read workspace user groups visible to the connected user. |
+| `users.profile:read` | Read detailed profiles visible to the connected user. |
 
 Unlike workspace search, personal search does not use the Slack event
 `action_token`; Slack evaluates it against the connected user's granted scopes and
@@ -224,8 +294,12 @@ A Slack-originated task receives this source provenance in its system prompt:
   identity-linking, surface policy, conversation membership, session, confirmation,
   and audit checks all still apply.
 - **The manifest and the runtime scope and capability declarations change
-  together.** A scope requested but not declared is a permission nobody can explain;
-  a scope declared but not requested is a tool that fails at Slack.
+  together.** Required and optional scopes remain distinct: a required scope
+  requested but not declared is a permission nobody can explain, while an optional
+  scope must not silently become a current capability or health requirement.
+- **Optional authority is dormant.** Avalon does not call another API, subscribe to
+  another event, or expose a model capability merely because Slack returned an
+  optional future scope. Its eventual consumer must check the token's actual grant.
 - **Avalon does not durably copy surrounding Slack messages.** Reads are bounded and
   transient; there is no mirror.
 - **Active-view and attachment metadata are labeled as untrusted evidence, not
@@ -259,11 +333,12 @@ the Slack product surface, the ingress, or the registration:
 
 ## Failure modes and limits
 
-- **Existing workspace installations must reconnect after an expanded permission
-  set is deployed.** Until Slack returns all expected bot scopes, Avalon reports the
-  installation as reconnect-required. **It still offers the tools**: the report is a
-  diagnosis, not a gate, and a call that needs a missing scope fails on Slack's
-  answer rather than on Avalon's record of it.
+- **Existing workspace installations must reconnect after the required permission
+  set expands.** Adding only optional future scopes leaves them healthy. Until Slack
+  returns all required bot scopes, Avalon reports an installation as
+  reconnect-required. **It still offers the tools**: the report is a diagnosis, not
+  a gate, and a call that needs a missing scope fails on Slack's answer rather than
+  on Avalon's record of it.
 - **A personal token may be missing scopes this document lists.** Connections made
   before **Connect for me** and the account link converged on the full set carry a
   narrower grant, and the tool fails at Slack rather than being hidden.
@@ -308,9 +383,26 @@ sits inside.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the scope selection — beyond the per-scope justifications above, which are the point
-of the document — was not recorded as dated entries and was not reconstructed. The
-next scope added, removed, or repurposed starts the record, and that entry is that
-change, written in full.
+This document predates the [module document](module-documents.md) convention and
+had no changelog until the entry below; earlier reasoning was not reconstructed.
+
+### 2026-08-12 — Future Slack-native scopes became optional grants
+
+**What changed:** The manifest and runtime now distinguish the unchanged required
+workspace bot bundle from seventeen optional bot scopes and sixteen corresponding
+optional user scopes. `metadata.message:read` is bot-only. Workspace OAuth offers
+the required-plus-optional union, while callback, refresh, and health checks still
+require only `SlackWorkspaceBotScopes`. No existing permission was removed.
+
+**Why:** A future required scope would force every installed customer through
+administrator authorization again. The likely next Slack-native behaviors are
+close enough to Avalon's current product boundary to offer at first install, but
+they are not current capabilities and therefore must remain optional.
+
+**Considered and rejected:** Making the future scopes required would make current
+Agent health depend on speculative access. Waiting for each tool to ship would
+preserve the narrowest first-install screen but guarantee another consent round.
+
+**Consequences:** The manifest bot set must equal the required-plus-optional union.
+Optional denials never affect installation health, and every future consumer must
+check the token's actual grant before exposing its behavior.
