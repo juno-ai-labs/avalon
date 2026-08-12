@@ -27,6 +27,7 @@ import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
+import { workstreamWorkflowStepTimeout } from "../services/workstream-run-policy";
 
 const HarnessWorkflowOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
@@ -209,7 +210,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         "run-authorized-bind-loop",
         {
           retries: { limit: 1, delay: "1 second", backoff: "constant" },
-          timeout: "5 minutes",
+          timeout: workstreamWorkflowStepTimeout(hyperSightRun),
         },
         async () => HarnessWorkflowOutcomeSchema.parse(await runWorkstreamHarness(
           this.env,

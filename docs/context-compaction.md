@@ -52,8 +52,8 @@ everything above it leaves the context once it answers.
 
 An empty completion is a defect and is retried by the route plan. The
 compaction's own tokens are accounted as auxiliary spend rather than an agent
-turn, and the run's cost ceiling is checked against them before the result is
-used.
+turn. When the caller supplied a run cost ceiling, it is checked against that
+spend before the result is used; ordinary work-stream runs no longer supply one.
 
 ### The compacted transcript
 
@@ -139,6 +139,7 @@ a compaction. Scheduling, receipts, and everything else about the run stay in
 | Empty summary completion | Treated as a completion defect and retried by the route plan; a persistent one fails the run rather than storing an empty checkpoint. |
 | Checkpoint persistence fails | Fatal for the run — a compacted context that was not stored would be lost work the next run cannot recover. |
 | Summary truncated by the provider's output cap | Retried once with a terser instruction appended. If that is truncated too, the run fails with `context_limit_exceeded` rather than checkpointing a partial record. Both attempts' tokens and cost are accounted. |
+| Summary would exceed an explicitly bounded caller's run cost ceiling | `run_cost_limit_exceeded` before the checkpoint is adopted. Ordinary work-stream runs do not configure this ceiling. |
 | Repeated compactions in one long work stream | Each checkpoint summarizes the previous one. The prompt asks for earlier checkpoint content to be carried forward as written, which slows but does not eliminate decay. |
 
 Numbers: threshold 0.8 of the window; catalog TTL one hour, fetch timeout five
@@ -189,11 +190,12 @@ by reading it.
 
 ## Changelog
 
-### 2026-08-12 — Compaction no longer enforces a run cost ceiling
+### 2026-08-12 — Ordinary work-stream compaction has no run cost ceiling
 
 **What changed:** A work-stream compaction still records the tokens and cost of
-every summary attempt, but it no longer compares that spend with a run-wide
-cost ceiling before adopting the checkpoint.
+every summary attempt. Ordinary work-stream runs no longer provide a run-wide
+cost ceiling to compare that spend with before adopting the checkpoint; the
+conditional check remains for harness callers that explicitly configure one.
 
 **Why:** Ordinary work-stream runs now carry a 1,000-turn ceiling and no
 tool-call, wall-time, or cost ceiling after a successful source-gathering run

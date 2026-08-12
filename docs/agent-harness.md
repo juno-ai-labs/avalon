@@ -417,7 +417,10 @@ scope alongside the remaining catalog bound. The harness accepts all four
 ceilings as optional because HyperSight refreshes, inline children, automation
 compilation, and meeting-note passes are separate bounded callers. HyperSight
 keeps its prior 8-turn, 24-tool, four-minute, and 500-cent ceilings because it
-runs unattended.
+runs unattended. The enclosing Cloudflare Workflow step now gives ordinary
+runs one year instead of five minutes; Cloudflare supplies a ten-minute default
+when no step timeout is declared and exposes no disabled value, so one year is
+the platform-compatible practical removal rather than a task-scale limit.
 
 **Why:** A production repository-research run used its eighth turn to fetch the
 last source it needed, then failed before the ninth turn could read that result
@@ -436,8 +439,9 @@ run may perform, and they are what let cancellation and failover recover from an
 unresponsive dependency.
 
 **Consequences:** A work-stream run can now continue spending model and provider
-capacity without a tool, time, or cost cutoff, but a pathological model loop
-still fails on turn 1,000. Scheduled HyperSight refreshes remain bounded and can
+capacity without a tool, task-scale time, or cost cutoff, but a pathological
+model loop still fails on turn 1,000 and the Workflow platform retains a
+one-year step deadline. Scheduled HyperSight refreshes remain bounded and can
 fail on any of their four ceilings. Cancellation, lease heartbeats, authority
 checks, context compaction, provider watchdogs, and ambiguous-write handling
 remain mandatory. Any future resource policy must be explicit about why useful
