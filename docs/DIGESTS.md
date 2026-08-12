@@ -228,7 +228,7 @@ the attempt, so a launch that succeeded and failed only to record itself still
 leaves the row `planned`, and releasing that would strand a live run.
 
 **The brief reaches the model through the run's trigger context, not through the
-transcript.** Step 4 puts it in `messages` as a `system` row, and system rows are
+transcript.** Step 5 puts it in `messages` as a `system` row, and system rows are
 UI state that the protocol projector deliberately drops — they answer "why did
 this start on its own?" for a person opening the work stream, and admitting them
 to the model would replay unlabelled connector text as history on every later
@@ -319,6 +319,17 @@ transcript survives or not. If the volume ever stops being worth it, a reaper on
 the ordinary cron tick alongside `reapExpiredActivityEvents` is the shape it
 should take, and the cascade already takes the messages, tool invocations and
 artifacts.
+
+**Because they accumulate, they are listed as their own bounded set rather than
+paged against real work.** `WorkstreamService.list` excludes `system_kind` rows
+from the paged query unconditionally and appends the newest
+`SYSTEM_WORKSTREAM_LIST_LIMIT` of them when the caller asked to see them — the
+same shape pins already use, and for a sharper reason: the sidebar requests one
+page of 250 and discards the cursor, so on recency alone a daily digest would
+push every ordinary work stream off the only list a Debug-enabled account ever
+requests, within months. Older occurrences stay reachable by URL. Anything else
+that marks itself `system_kind` inherits this, which is the intent — machinery
+should never win a place from the work somebody is doing.
 
 ### Delivery
 
@@ -438,8 +449,15 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 **What changed:** A digest run now executes in a work stream created for that
 occurrence and recorded on the new `digest_deliveries.workstream_id`, rather than
 in one shared by every digest a person ever receives.
-`digest_schedules.system_workstream_id` is dropped. The work streams the column
-named are left in place — they hold real transcripts their owners can still open.
+`digest_schedules.system_workstream_id` stops being read or written, but is
+deliberately **not** dropped in the same change: migrations for both regions land
+before either Worker deploys, so the previous Worker is still selecting and
+writing that column while the new schema is live, and dropping it would turn
+digest firing, the cron reconciler and the settings read into `no such column`
+for the length of a deployment — hours rather than seconds if that deployment
+fails, since a failed deploy leaves the migrations applied. A later migration
+drops it once nothing reads it. The work streams the column named are left in
+place permanently — they hold real transcripts their owners can still open.
 
 **Why:** The shared work stream was chosen so a later digest could see what
 earlier ones had already said. What it actually built was a channel between
@@ -496,6 +514,17 @@ never arrived. A failed launch now releases its work stream along with its claim
 and decides that on the returned run id rather than the row's status, because
 deleting a work stream out from under a live run is worse than leaking an empty
 one.
+
+Two things this change had to buy that the split itself did not imply. Listing
+had to stop paging machinery against real work, or a Debug-enabled sidebar would
+have emptied of ordinary work streams within months — the accumulation is
+accepted, being crowded out by it is not. And the cleanup of a released claim had
+to get stricter rather than looser: `launchWorkstreamHarness` creates the
+Cloudflare Workflow instance before it writes the instance id back, so a failure
+in that last write throws with a live run already executing, and the work stream
+is deleted only when no `harness_runs` row references it. An empty work stream
+nobody reaps is a much cheaper mistake than cascading a running run's transcript
+away beneath it.
 
 The titles were shortened after looking at them: the first version reused the
 email's `occurrenceLabel` behind the recipient's name, and in a real sidebar the

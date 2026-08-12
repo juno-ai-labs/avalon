@@ -81,6 +81,16 @@ interface AcknowledgeReadInput {
   observedManualUnreadGeneration: number;
 }
 
+/**
+ * How many system work streams a listing that asked for them returns.
+ *
+ * They accumulate on their own — one per digest occurrence, and nothing reaps
+ * them — so an unbounded set would swamp the surface that asked. This is a
+ * debugging affordance, and debugging wants the recent ones; anything older is
+ * still reachable by its URL.
+ */
+const SYSTEM_WORKSTREAM_LIST_LIMIT = 25;
+
 const ACTIVITY_RESOURCE_LOOKUP_SQL = `SELECT id FROM resources
   WHERE workspace_id = ?
     AND ((connection_id = ?) OR (connection_id IS NULL AND ? IS NULL))
@@ -593,7 +603,15 @@ export class WorkstreamService {
     // Two different questions. `system_kind` says this is machinery, which
     // decides whether it is listed at all; `scope` says who may read it, and is
     // enforced below whatever the caller asked to see.
-    const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
+    //
+    // Machinery is excluded from the paged query unconditionally and appended
+    // separately below, the same way a pin is. Digest work streams are created
+    // one per occurrence and nothing reaps them, so on recency alone they would
+    // take the whole page: the sidebar asks for one page of 250 and discards
+    // the cursor, so within months of a daily digest every ordinary work stream
+    // would fall off the only list a Debug-enabled account ever requests.
+    // Paging machinery against real work is the wrong contest to hold.
+    const systemClause = "AND w.system_kind IS NULL";
     // A pinned work stream leaves the recency order altogether rather than
     // being paged with everything else, which is the same thing the sidebar
     // does when it lifts one out of the recent list into the Pinned section.
@@ -628,6 +646,7 @@ export class WorkstreamService {
     // many a person has — which is why `nextCursor` comes from the paged rows
     // rather than from the last item returned.
     if (!before) rows.push(...await this.loadPinnedWorkstreamRows(includeSystem));
+    if (!before && includeSystem) rows.push(...await this.loadSystemWorkstreamRows());
     const unreconciledAddressRows = rows.filter((row) =>
       row.email_address == null || row.email_route_status !== "active");
     if (unreconciledAddressRows.length > 0) {
@@ -1297,6 +1316,38 @@ export class WorkstreamService {
       ...workstreamViewerBindings(this.auth.userId),
       this.auth.workspaceId,
       ...workstreamVisibilityBindings(this.auth.userId),
+    ).all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  /**
+   * The machinery a caller asked to see, as its own bounded set.
+   *
+   * System work streams are excluded from the paged query and appended here for
+   * the same reason pins are: they belong to a different section of the list
+   * than the recency order serves. The difference is that pins are a person's
+   * own choice and are therefore unbounded, while these arrive on their own —
+   * one per digest occurrence, forever — so this takes only the newest
+   * {@link SYSTEM_WORKSTREAM_LIST_LIMIT}. Debugging wants the run that just
+   * happened, and everything older is still reachable by its URL.
+   *
+   * A pinned one is excluded, because `loadPinnedWorkstreamRows` has already
+   * returned it and a work stream must appear exactly once across the list.
+   */
+  private async loadSystemWorkstreamRows(): Promise<Record<string, unknown>[]> {
+    const result = await this.env.DB.prepare(
+      `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
+       FROM workstreams w
+       ${WORKSTREAM_VIEWER_JOINS_SQL}
+       WHERE w.workspace_id = ? AND w.archived_at IS NULL AND pin.user_id IS NULL
+         AND w.system_kind IS NOT NULL
+         AND ${WORKSTREAM_VISIBILITY_SQL}
+       ORDER BY w.last_activity_at DESC LIMIT ?`,
+    ).bind(
+      ...workstreamViewerBindings(this.auth.userId),
+      this.auth.workspaceId,
+      ...workstreamVisibilityBindings(this.auth.userId),
+      SYSTEM_WORKSTREAM_LIST_LIMIT,
     ).all<Record<string, unknown>>();
     return result.results ?? [];
   }

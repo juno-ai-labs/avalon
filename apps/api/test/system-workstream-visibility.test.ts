@@ -73,7 +73,9 @@ describe("system work streams", () => {
     // shown, never who may see it.
     const page = await serviceFor(seededDatabase(), OWNER).list(20, undefined, true);
 
-    expect(page.items.map((item) => item.id)).toEqual([HIDDEN, ORDINARY]);
+    // Appended after the paged rows rather than sorted among them, the same way
+    // a pin is: `HIDDEN` is the more recent of the two and still comes second.
+    expect(page.items.map((item) => item.id)).toEqual([ORDINARY, HIDDEN]);
     expect(page.items.find((item) => item.id === HIDDEN)).toMatchObject({
       systemKind: "digest",
       // Declared private, the same way a personal note is, rather than left for
@@ -84,6 +86,41 @@ describe("system work streams", () => {
       systemKind: null,
       scope: "workspace",
     });
+  });
+
+  it("never costs ordinary work streams their place on the page", async () => {
+    const database = seededDatabase();
+    // A digest work stream per occurrence, all of them newer than the ordinary
+    // one. On recency alone they would take the whole page, and the sidebar
+    // asks for one page and discards the cursor — so the work somebody is
+    // actually doing would fall off the only list a debugging account requests.
+    const occurrences = Array.from({ length: 40 }, (unused, index) =>
+      `('00000000-0000-7000-8000-0000000100${String(index).padStart(2, "0")}', '${WORKSPACE}',
+        'Digest · 12 Aug · ${String(index).padStart(2, "0")}:00 AM', '',
+        'digest-${index}@automation.example', 'active', 'ad_hoc',
+        '${OWNER}', 'idle', 1, '2026-02-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z',
+        '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z', 'digest', 'personal')`);
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
+         created_by_user_id, harness_status, next_sequence_number, last_activity_at,
+         created_at, updated_at, system_kind, scope)
+      VALUES ${occurrences.join(",\n")};
+      INSERT INTO workstream_participants
+        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+      SELECT id, '${OWNER}', '${OWNER}', 'creator', '2026-02-01T00:00:00.000Z'
+        FROM workstreams WHERE system_kind = 'digest' AND id <> '${HIDDEN}';
+    `);
+
+    const page = await serviceFor(database, OWNER).list(20, undefined, true);
+
+    const items = page.items.map((item) => item.systemKind);
+    expect(page.items.filter((item) => item.id === ORDINARY)).toHaveLength(1);
+    // Bounded to the newest few rather than every occurrence ever run.
+    expect(items.filter((kind) => kind === "digest")).toHaveLength(25);
+    // And the cursor still describes the ordinary rows, so paging past them is
+    // unaffected by however much machinery was appended.
+    expect(page.nextCursor).toBeNull();
   });
 
   it("stays invisible to another member even when they ask for system rows", async () => {

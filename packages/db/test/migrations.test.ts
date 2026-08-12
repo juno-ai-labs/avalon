@@ -1756,7 +1756,7 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("records where each past digest ran and stops the schedule owning a work stream", () => {
+  it("records where each past digest ran without breaking the Worker still reading the old column", () => {
     const database = migrateDatabaseThrough("0065_automation_draft_conversation.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -1803,9 +1803,22 @@ describe("database migrations", () => {
       { id: "delivery-ran", workstream_id: "workstream-digest-shared" },
       { id: "delivery-empty", workstream_id: null },
     ]);
+    // The old column survives this migration on purpose. Migrations land before
+    // either Worker deploys, so the previous Worker is still selecting and
+    // writing it while this schema is live; dropping it here would make digest
+    // firing, the reconciler and the settings read fail with `no such column`
+    // for the length of a deployment — hours if that deployment fails. A later
+    // migration drops it once nothing reads it.
     const scheduleColumns = database.prepare("PRAGMA table_info(digest_schedules)")
       .all() as Array<{ name: string }>;
-    expect(scheduleColumns.map((column) => column.name)).not.toContain("system_workstream_id");
+    expect(scheduleColumns.map((column) => column.name)).toContain("system_workstream_id");
+    // The two writes the previous Worker still performs against it.
+    expect(() => database.exec(
+      "UPDATE digest_schedules SET system_workstream_id = 'workstream-digest-shared' WHERE id = 'schedule-digest'",
+    )).not.toThrow();
+    expect(database.prepare(
+      "SELECT system_workstream_id FROM digest_schedules WHERE id = 'schedule-digest'",
+    ).get()).toEqual({ system_workstream_id: "workstream-digest-shared" });
     // The transcripts themselves stay: their owners can still open them, and
     // dropping a pointer is not a reason to delete somebody's history.
     expect(database.prepare(
