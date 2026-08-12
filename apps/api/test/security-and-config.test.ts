@@ -612,10 +612,10 @@ describe("environment guardrails", () => {
   });
 
   it("uses a safe fallback for invalid positive numeric limits", () => {
-    const env = { HARNESS_MAX_TOOL_CALLS: "not-a-number" } as Env;
-    expect(numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24)).toBe(24);
-    env.HARNESS_MAX_TOOL_CALLS = "12";
-    expect(numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24)).toBe(12);
+    const env = { HARNESS_CHILD_MAX_TOOL_CALLS: "not-a-number" } as Env;
+    expect(numericEnv(env, "HARNESS_CHILD_MAX_TOOL_CALLS", 8)).toBe(8);
+    env.HARNESS_CHILD_MAX_TOOL_CALLS = "12";
+    expect(numericEnv(env, "HARNESS_CHILD_MAX_TOOL_CALLS", 8)).toBe(12);
   });
 
   it("does not expose development session creation outside the explicit dev guard", async () => {

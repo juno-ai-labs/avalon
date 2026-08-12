@@ -1415,6 +1415,55 @@ describe("agent harness", () => {
       .toBe("This run could not fit safely in the selected model context");
   });
 
+  it("does not invent iteration, tool-call, or cost ceilings when a caller omits them", async () => {
+    let turn = 0;
+    const executions: string[] = [];
+    const fetcher = vi.fn(async () => {
+      turn += 1;
+      if (turn === 10) {
+        return streamResponse([{
+          choices: [{ delta: { content: "complete" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, cost: 1 },
+        }]);
+      }
+      return streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: [
+              toolDelta(0, `provider-read-${turn}-1`, "read_one"),
+              toolDelta(1, `provider-read-${turn}-2`, "read_two"),
+              toolDelta(2, `provider-read-${turn}-3`, "read_three"),
+            ],
+          },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, cost: 1 },
+      }]);
+    }) as typeof fetch;
+    const base = runInput(fetcher);
+
+    await expect(runHarness({
+      ...base,
+      config: {
+        apiKey: "test-key",
+        primaryModel: "test/model",
+        fetch: fetcher,
+        toolTimeoutMs: 100,
+        maxWebResults: 4,
+      },
+      corePlugins: [testCorePlugin([
+        harnessTool("read_one", "read", executions),
+        harnessTool("read_two", "read", executions),
+        harnessTool("read_three", "read", executions),
+      ])],
+    })).resolves.toMatchObject({
+      status: "completed",
+      content: "complete",
+      stats: { turns: 10, toolCalls: 27 },
+    });
+    expect(executions.filter((event) => event.endsWith(":end"))).toHaveLength(27);
+  });
+
   it("compacts after 80% into a single synthetic message carrying only the summary", async () => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: unknown }>;

@@ -11,6 +11,10 @@ import type { HarnessPlugin } from "@avalon/agent-harness";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import {
+  workstreamRunLimits,
+  workstreamWorkflowStepTimeout,
+} from "../src/services/workstream-run-policy";
 
 /**
  * A HyperSight block used to be whatever assistant text the run trailed off
@@ -57,6 +61,13 @@ function coreSurface(extra: HarnessPlugin[] = []) {
 
 const submission = (state: { markdown: string | null }) =>
   hyperSightSubmissionPlugin(state, async () => {});
+
+describe("root-run limits", () => {
+  it("uses the expanded root policy for ordinary and HyperSight runs", () => {
+    expect(workstreamRunLimits()).toEqual({ maxIterations: 1_000 });
+    expect(workstreamWorkflowStepTimeout()).toBe("1 year");
+  });
+});
 
 describe("what the frozen surface will authorize", () => {
   /**
