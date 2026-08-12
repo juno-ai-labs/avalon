@@ -338,6 +338,8 @@ Every rule below was learned from a defect in production or in review, and each 
 
 **Every rotation goes through the host, proactive and reactive alike.** A rotating refresh token is single-use, so two calls that refresh at the same moment leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. Use `withProviderReauthorization` on the rejection route and `refreshExpiringCredentials` on the near-expiry route; neither redeems a token beside the coordinator.
 
+**Say where the things you produce live.** A work stream that exists because of a place in a connected tool attaches that place, and the connector is the only thing that knows what the place is. Every adapter gets this for its activities without writing code — `connectorOriginFromActivity` reads the object normalization already recorded — so implement `ConnectorAdapter.origin` only for a place no activity describes, such as a provider-hosted agent session, or when the activity's own object is not the place a person would want to be sent back to. A described `resourceType` must be one the manifest declares in `resourceTypes`, and `describeConnectorOrigin` refuses one that is not: a typo there forks the resource identity for every work stream started from that place afterwards, and nothing downstream would notice. See [work-stream origin attachments](workstream-origin-attachments.md).
+
 **Do not spend a provider round trip on something Avalon already knows.** Revalidation between model turns is answered from D1; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
 
 Each installed credential has two deliberately separate plugin identities. The opaque canonical ID, `connection:<uuid>`, is the only identity used for authorization, durable activation, receipts, and credential access. A database-backed workspace-local ID is the model-facing name: the first active credential of a provider receives `plugin_<provider>`, and simultaneous additional credentials receive the lowest numeric suffix (`plugin_google_2`, `plugin_google_3`, and so on). Disabled connections do not reserve names, so removing and later re-adding a provider reclaims the clean base instead of accumulating random characters. A partial unique database index enforces uniqueness across the active connection list.
@@ -460,6 +462,40 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-12 — A connector says where the things it produces live
+
+**What changed:** `ConnectorAdapter.origin` is a new optional capability: given a
+`ConnectorOriginLocator` — a normalized activity, or a provider-native agent
+session the host does not parse — an adapter returns a `ConnectorOriginResource`
+naming the place. `describeConnectorOrigin` in the connector base is the single
+entry point, `connectorOriginFromActivity` is the derivation every connector gets
+without code, and a described `resourceType` is checked against the manifest's
+`resourceTypes`. Slack is the first implementation. What the host does with the
+answer is [`workstream-origin-attachments.md`](workstream-origin-attachments.md).
+
+**Why:** The behaviour shipped first as Slack-specific code in an API service —
+the host knew Slack's channel-versus-thread rule, Slack's title wording, and
+Slack's permalink endpoint. That shape has one predictable outcome: the second
+connector to need it copies the first, and the third copies whichever it found.
+The knowledge belongs to the adapter, and putting it there is also what let the
+manifest check exist at all — a host cannot tell a connector's real resource type
+from a typo.
+
+**Considered and rejected:** A parallel manifest declaration
+(`originResourceTypes`, or a `supportsOrigin` flag). `resourceTypes` already
+enumerates what a connector produces, and a second list is a second thing to keep
+in step with the first. Requiring `describe` to handle every locator kind — that
+would make each adapter reimplement the activity derivation to say "the default
+is fine"; returning null and falling through says it once.
+
+**Consequences:** A connector added later records origins for its activities by
+existing, with nothing to remember. Implementing `origin` takes on one
+obligation: the `resourceType` you name must be in your manifest, or
+`describeConnectorOrigin` throws `invalid_configuration` and the work stream is
+created without an origin. `resolveCanonicalUrl` joins the list of entry points
+that take `AuthorizedConnectorConnection`, so it is reached through the credential
+door like any other provider call.
 
 ### 2026-08-12 — A stored status stopped being able to refuse work
 

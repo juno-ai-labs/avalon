@@ -29,6 +29,7 @@ import {
 } from "../src/services/realtime-transcription-service";
 import { __resourceServiceTesting } from "../src/services/resource-service";
 import { __workstreamServiceTesting } from "../src/services/workstream-service";
+import { __originResourceTesting } from "../src/services/workstream-origin-resource";
 
 describe("API security utilities", () => {
   it("round-trips authenticated encrypted values without exposing plaintext", async () => {
@@ -104,10 +105,9 @@ describe("API security utilities", () => {
     expect(__workstreamServiceTesting.memberSafeHarnessError(null)).toBeNull();
   });
 
-  it("binds suggested provider resources to their originating connection", () => {
-    const sql = __workstreamServiceTesting.activityResourceLookupSql.replace(/\s+/gu, " ");
-    expect(sql).toContain("connection_id = ?");
-    expect(sql).toContain("connection_id IS NULL AND ? IS NULL");
+  it("binds suggested and origin provider resources to their originating connection", () => {
+    const sql = __originResourceTesting.originResourceLookupSql.replace(/\s+/gu, " ");
+    expect(sql).toContain("workspace_id = ? AND connection_id = ?");
     expect(sql).toContain("provider = ? AND provider_resource_id = ?");
   });
 

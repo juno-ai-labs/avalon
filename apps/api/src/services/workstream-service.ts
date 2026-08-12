@@ -52,10 +52,18 @@ import {
   refreshWorkstreamName,
 } from "./workstream-naming-service";
 import { ResourceService } from "./resource-service";
+import {
+  activityOriginLocator,
+  attachWorkstreamOriginResource,
+  describeWorkstreamOrigin,
+  resolveOriginResource,
+  type OriginResourceDescriptor,
+} from "./workstream-origin-resource";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunities } from "./work-opportunity-batching";
 import { recordActivityEvent } from "./activity-event-service";
+import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
 import {
   claimDueWorkstreamWakeup,
   releaseClaimedWorkstreamWakeup,
@@ -73,6 +81,14 @@ import {
  */
 type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema> & {
   descriptionSource?: "authored" | "derived";
+  /**
+   * The connector place this work stream is being started from, when there is
+   * one. Not part of `CreateWorkstreamRequestSchema` and deliberately so: a
+   * caller on the wire cannot assert an origin, because an origin is something
+   * an ingress *knows* — the Slack thread it read the mention out of — rather
+   * than something a request may claim about itself.
+   */
+  originResource?: OriginResourceDescriptor;
 };
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
 type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema>;
@@ -82,10 +98,14 @@ interface AcknowledgeReadInput {
   observedManualUnreadGeneration: number;
 }
 
-const ACTIVITY_RESOURCE_LOOKUP_SQL = `SELECT id FROM resources
-  WHERE workspace_id = ?
-    AND ((connection_id = ?) OR (connection_id IS NULL AND ? IS NULL))
-    AND provider = ? AND provider_resource_id = ?`;
+/**
+ * How many of a suggestion's connector sources become attachments. A batched
+ * opportunity can be built from a run of related events, and the rail is a
+ * reading surface before it is an index; the cap is generous against what
+ * admission actually produces and is stated in
+ * `docs/workstream-origin-attachments.md` rather than left to be discovered.
+ */
+const MAX_OPPORTUNITY_ORIGIN_RESOURCES = 8;
 
 const ATTACH_RESOURCE_SQL = `INSERT INTO workstream_resources
   (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
@@ -715,6 +735,16 @@ export class WorkstreamService {
     // same Durable Object log, and a client resyncing from a sequence must not
     // see the run start before the message that triggered it.
     if (message) await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
+    // Ahead of the launch so the run's first context read already contains the
+    // place it was started from, rather than acquiring it a turn later.
+    if (input.originResource) {
+      await attachWorkstreamOriginResource(this.env, {
+        workspaceId: this.auth.workspaceId,
+        workstreamId: created.workstream.id,
+        attachedByUserId: this.auth.userId,
+        descriptor: input.originResource,
+      });
+    }
     const harnessRunId = await this.launchHarness(
       created.workstream.id,
       created.messageId,
@@ -798,6 +828,7 @@ export class WorkstreamService {
         message,
       });
     }
+    await this.attachOpportunityOriginResources(created.workstream.id, input.opportunityId);
     const harnessRunId = await this.launchHarness(created.workstream.id, created.messageId, "suggested_work");
     await this.nameInBackground({
       workstreamId: created.workstream.id,
@@ -2322,40 +2353,125 @@ export class WorkstreamService {
     if (values.length < minimum || (maximum != null && values.length > maximum)) throw new ApiError(422, "invalid_selection_count", "The answer has an invalid number of selections");
   }
 
+  /**
+   * The resource behind an accepted contextual-routing suggestion.
+   *
+   * The row it resolves is the same one an origin attachment would resolve —
+   * `workstream-origin-resource.ts` owns that shape for every path — so a
+   * suggestion accepted against an object a work stream already started from
+   * lands on the existing row instead of a second copy of it. The attach itself
+   * stays here because this one is a person's decision and goes through the
+   * authorized path, unlike an origin, which is a fact about how the work
+   * stream began.
+   */
   private async attachActivityResource(workstreamId: string, activityId: string): Promise<string | null> {
-    const activity = await this.env.DB.prepare("SELECT * FROM activities WHERE id = ? AND workspace_id = ?")
-      .bind(activityId, this.auth.workspaceId).first<Record<string, unknown>>();
-    if (!activity || activity.provider_resource_id == null) return null;
-    let resource = await this.env.DB.prepare(
-      ACTIVITY_RESOURCE_LOOKUP_SQL,
-    ).bind(
-      this.auth.workspaceId,
-      activity.connection_id,
-      activity.connection_id,
-      activity.provider,
-      activity.provider_resource_id,
-    ).first<{ id: string }>();
-    if (!resource) {
-      const id = newId();
-      const at = nowIso();
-      await this.env.DB.prepare(
-        `INSERT INTO resources
-         (id, workspace_id, connection_id, resource_type, provider, provider_resource_id, title,
-          content_ref, metadata_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT DO NOTHING`,
-      ).bind(id, this.auth.workspaceId, activity.connection_id, activity.resource_type ?? "activity", activity.provider, activity.provider_resource_id, truncateUtf16Safe(String(activity.title), 300), activity.payload_ref, activity.metadata_json ?? "{}", at, at).run();
-      resource = await this.env.DB.prepare(ACTIVITY_RESOURCE_LOOKUP_SQL).bind(
+    const activity = await this.env.DB.prepare(
+      `SELECT a.*, c.connector_type
+         FROM activities a
+         JOIN connector_connections c ON c.id = a.connection_id
+        WHERE a.id = ? AND a.workspace_id = ?`,
+    ).bind(activityId, this.auth.workspaceId).first<Record<string, unknown>>();
+    if (!activity) return null;
+    const descriptor = await this.describeActivityOrigin(activity);
+    if (!descriptor) return null;
+    // The one path that keeps the activity's payload reference. This attachment
+    // is a person accepting a card about *this* activity, and reading its
+    // content is the point; an origin carries none, which is why
+    // `describeWorkstreamOrigin` clears it and this restores it here rather than
+    // the other way round.
+    const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, {
+      ...descriptor,
+      contentRef: typeof activity.payload_ref === "string" ? activity.payload_ref : null,
+    });
+    if (!resourceId) throw new ApiError(500, "resource_write_failed", "The suggested resource could not be stored");
+    await this.attachResource(workstreamId, resourceId);
+    return resourceId;
+  }
+
+  /**
+   * The connector activity a suggestion was built out of.
+   *
+   * A suggestion's provenance roots are what the ranking model was shown, so
+   * they are exactly the places the work stream came from; the non-activity
+   * kinds (an Avalon message, an identity) have no connector object to point
+   * at and are left out. Personal connections are filtered to the selecting
+   * member, because a resource row is listed to everyone the work stream is —
+   * the same rule `attachResource` enforces for a manual attach.
+   */
+  private async attachOpportunityOriginResources(workstreamId: string, opportunityId: string): Promise<void> {
+    try {
+      const roots = await this.env.DB.prepare(
+        `SELECT a.connection_id, a.provider, a.resource_type, a.provider_resource_id,
+                a.title, a.metadata_json, a.payload_ref, a.connection_scope,
+                a.connection_owner_user_id, a.target_user_ids_json, a.visibility_json,
+                c.connector_type
+           FROM work_opportunity_provenance_roots root
+           JOIN opportunity_provenance_nodes node ON node.id = root.node_id
+           JOIN activities a ON a.id = node.source_id AND a.workspace_id = node.workspace_id
+           JOIN connector_connections c ON c.id = a.connection_id
+          WHERE root.opportunity_id = ? AND node.workspace_id = ? AND node.node_kind = 'activity'
+            AND (c.scope = 'workspace' OR c.owner_user_id = ?)
+          ORDER BY root.position ASC
+          LIMIT ?`,
+      ).bind(
+        opportunityId,
         this.auth.workspaceId,
-        activity.connection_id,
-        activity.connection_id,
-        activity.provider,
-        activity.provider_resource_id,
-      ).first<{ id: string }>();
-      if (!resource) throw new ApiError(500, "resource_write_failed", "The suggested resource could not be stored");
+        this.auth.userId,
+        MAX_OPPORTUNITY_ORIGIN_RESOURCES,
+      ).all<Record<string, unknown>>();
+      for (const row of roots.results ?? []) {
+        // Both filters, not one instead of the other. The clause above reads the
+        // connection's scope, which is authoritative for the credential; this
+        // reads the activity's own restriction, which the connection cannot
+        // express. The connection's scope is not the whole question, and reading
+        // only it was the gap: a message in a private Slack channel arrives on the
+        // *workspace* Slack connection and carries its restriction in
+        // `visibility` — `workspaceAutomationAllowed: false` with an explicit
+        // `allowedUserIds`. Attaching that produced a workspace-visible row, and
+        // broadcast it, for an object the rest of the pipeline had correctly
+        // withheld.
+        if (!activityIsWorkspaceVisible(row)) continue;
+        const descriptor = await this.describeActivityOrigin(row);
+        if (!descriptor) continue;
+        await attachWorkstreamOriginResource(this.env, {
+          workspaceId: this.auth.workspaceId,
+          workstreamId,
+          attachedByUserId: this.auth.userId,
+          descriptor,
+        });
+      }
+    } catch (error) {
+      // Sits between the work stream's commit and `launchHarness`. Whatever went
+      // wrong reading provenance, it must not leave a work stream at
+      // `harness_status = 'running'` with no run behind it.
+      logWarn(this.env, "workstream_opportunity_origin_attach_failed", {
+        workspace_id: this.auth.workspaceId,
+        workstream_id: workstreamId,
+        opportunity_id: opportunityId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
     }
-    await this.attachResource(workstreamId, resource.id);
-    return resource.id;
+  }
+
+  /**
+   * Hand a stored activity row to its own connector to be described. No
+   * authorized connection is passed: both callers run inside a request a person
+   * is waiting on, and an activity's canonical URL is already in the metadata
+   * normalization recorded — a provider round trip would buy a link the row
+   * usually holds anyway.
+   */
+  private async describeActivityOrigin(
+    row: Record<string, unknown>,
+  ): Promise<OriginResourceDescriptor | null> {
+    if (typeof row.connection_id !== "string") return null;
+    if (typeof row.provider !== "string") return null;
+    if (typeof row.connector_type !== "string") return null;
+    return describeWorkstreamOrigin(this.env, {
+      connectorType: row.connector_type,
+      connectionId: row.connection_id,
+      provider: row.provider,
+      locator: activityOriginLocator(row),
+    });
   }
 }
 
@@ -2368,7 +2484,6 @@ export const workstreamRowSchemas = {
 } as const;
 
 export const __workstreamServiceTesting = {
-  activityResourceLookupSql: ACTIVITY_RESOURCE_LOOKUP_SQL,
   attachResourceSql: ATTACH_RESOURCE_SQL,
   workstreamResourcesSql: WORKSTREAM_RESOURCES_SQL,
   workstreamHarnessTasksSql: WORKSTREAM_HARNESS_TASKS_SQL,
