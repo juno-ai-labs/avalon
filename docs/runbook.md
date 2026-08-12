@@ -397,7 +397,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 ## Realtime operations and cost controls
 
 - Use one deterministic WorkstreamRoom per work stream, scoped by region and workspace. Do not allocate a room per socket or user.
-- Keep REST/D1 canonical. The room's bounded replay buffer is an optimization and must not be persisted per token; `resync_required` deliberately falls back to REST after hibernation or a replay gap.
+- Keep REST/D1 canonical. The room's bounded replay buffer is an in-memory optimization and must not be persisted. The separate active-stream checkpoint is one accumulated value updated per batched delta, removed at terminal state, and carried by `history_unavailable` while the client refreshes every canonical REST surface.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The client heartbeat is jittered across 45–55 seconds, waits 15 seconds for `pong`, and reconnects with equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not perform application work.
 - Batch model `stream_delta` broadcasts. Avoid Durable Object timers, per-connection alarms, and periodic room health polling; each can wake an otherwise idle room and add duration or request cost.
@@ -406,7 +406,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 - Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Avalon ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
 - The renderer captures mono PCM16 in a 24 kHz `AudioWorklet`, sends bounded chunks, and explicitly commits when the user stops. Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.
 
-Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required`.
+Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
 
 ## Timezones
 

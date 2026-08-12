@@ -5,12 +5,35 @@ import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
+import { useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import type { NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
 
 interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
+}
+
+function BackgroundWorkstreamSocket({
+  api,
+  workstreamId,
+}: {
+  api: NonNullable<ReturnType<typeof useAppSession>['api']>;
+  workstreamId: string;
+}): null {
+  useWorkstreamSocket(api, workstreamId, true);
+  return null;
+}
+
+export function backgroundRealtimeWorkstreamIds(
+  activeWorkstreamId: string | null,
+  workstreams: WorkstreamSummary[] | undefined,
+): string[] {
+  return (workstreams ?? []).flatMap((workstream) =>
+    workstream.id !== activeWorkstreamId
+      && workstream.harnessStatus === 'running'
+      ? [workstream.id]
+      : []);
 }
 
 /**
@@ -174,6 +197,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   });
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
+  const backgroundRealtimeIds = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data);
   useEffect(() => {
     const staleId = staleHarnessStatusWorkstreamId(
       activeWorkstreamId,
@@ -198,7 +222,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   } as CSSProperties;
 
   return (
-    <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
+    <>
+      {api && backgroundRealtimeIds.map((workstreamId) => (
+        <BackgroundWorkstreamSocket api={api} key={workstreamId} workstreamId={workstreamId} />
+      ))}
+      <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
       <Sidebar
         automations={automations.data ?? []}
         loading={automations.isLoading || workstreams.isLoading || notes.isLoading}
@@ -323,7 +351,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workspace={workspace}
         workstreams={workstreams.data ?? []}
       />
-      <main className="main-pane">
+        <main className="main-pane">
         {deepLinkError && (
           <div className="connection-banner" role="alert">
             <span>{deepLinkError}</span>
@@ -340,8 +368,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             <button onClick={() => void Promise.all([automations.refetch(), workstreams.refetch(), notes.refetch()])} type="button">Retry</button>
           </div>
         )}
-        {children}
-      </main>
-    </div>
+          {children}
+        </main>
+      </div>
+    </>
   );
 }
