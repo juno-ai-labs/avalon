@@ -6,6 +6,7 @@ import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { AutomationService } from "../src/services/automation-service";
 import { __testing } from "../src/queues/activity-consumer";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
@@ -41,8 +42,8 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-function serviceFor(database: DatabaseSync, logLevel = "error"): AutomationService {
-  const env = {
+function serviceFor(database: DatabaseSync, logLevel: Env["LOG_LEVEL"] = "error"): AutomationService {
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -60,30 +61,30 @@ function serviceFor(database: DatabaseSync, logLevel = "error"): AutomationServi
         get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
       }),
     },
-  } as unknown as Env;
+  });
   return new AutomationService(env, auth);
 }
 
 function schedulerFor(database: DatabaseSync): WorkspaceScheduler {
   const values = new Map<string, unknown>();
-  const storage = {
+  const storage = createCloudflareTestBinding<DurableObjectStorage>({
     get: async <T>(key: string) => values.get(key) as T | undefined,
     put: async (key: string, value: unknown) => { values.set(key, value); },
     delete: async (key: string) => values.delete(key),
     getAlarm: async () => null,
     setAlarm: async () => undefined,
     deleteAlarm: async () => undefined,
-  } as unknown as DurableObjectStorage;
+  });
   return new WorkspaceScheduler(
-    { storage } as unknown as DurableObjectState,
-    {
+    createCloudflareTestBinding<DurableObjectState>({ storage }),
+    createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       APP_ENV: "test",
       LOG_LEVEL: "error",
       OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
       WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
-    } as unknown as Env,
+    }),
   );
 }
 
@@ -202,14 +203,14 @@ describe("automation model override", () => {
          'github.pull_request.merged', 'github_pull_request', 'juno-ai-labs/avalon#42',
          '2026-01-02', '2026-01-02', 'Merged #42', 'dedupe-42');
     `);
-    const env = {
+    const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       APP_ENV: "test",
       LOG_LEVEL: "error",
       OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
       WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
-    } as unknown as Env;
+    });
 
     await __testing.runMatchingAutomations(env, {
       id: ACTIVITY_ID,

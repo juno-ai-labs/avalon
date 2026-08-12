@@ -1,8 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AvalonDesktopBridge, DesktopSession } from '../../common/desktop';
-import { AppSessionProvider, useAppSession } from './app-session';
+import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
+import {
+  AppSessionProvider,
+  useAppSession,
+  type AppSessionDesktopBridge,
+} from './app-session';
 import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
 import { useDraftText } from './use-draft-text';
 import type { AvalonApi } from './api';
@@ -14,9 +18,7 @@ let observedApi: AvalonApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
-  createDesktopAuthAttempt: vi.fn(),
   consumePendingDeepLinks: vi.fn(),
-  copyText: vi.fn(),
   acceptInvitation: vi.fn(),
   activateWorkspace: vi.fn(),
   createDevelopmentSession: vi.fn(),
@@ -33,9 +35,9 @@ const bridge = vi.hoisted(() => ({
   openExternal: vi.fn(),
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
-}));
+}) satisfies AppSessionDesktopBridge);
 
-vi.mock('./platform', () => ({ desktopBridge: () => bridge as unknown as AvalonDesktopBridge }));
+vi.mock('./platform', () => ({ desktopBridge: () => bridge }));
 
 const futureExpiry = new Date(Date.now() + 60 * 60_000).toISOString();
 
@@ -176,7 +178,7 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
-    let resolveRuntime!: (value: Awaited<ReturnType<AvalonDesktopBridge['getRuntimeConfig']>>) => void;
+    let resolveRuntime!: (value: RuntimeConfig) => void;
     bridge.getRuntimeConfig.mockReturnValueOnce(new Promise((resolve) => {
       resolveRuntime = resolve;
     }));

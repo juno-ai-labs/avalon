@@ -31,12 +31,18 @@ import {
   upsertTranscriptMessage,
 } from './transcript';
 import type { HarnessStatus, HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
-import { WORKSTREAMS_QUERY_KEY } from './use-workstreams-query';
+import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 
 export type { StreamCursor } from './workstream-socket-resume';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+
+/** The exact API capability the realtime cache reconciler is allowed to use. */
+export type WorkstreamSocketApi = Pick<
+  AvalonApi,
+  'getMessages' | 'getSocketTicket' | 'getWorkstream' | 'getWorkstreams'
+>;
 
 const HEARTBEAT_BASE_MS = 45_000;
 const HEARTBEAT_JITTER_MS = 10_000;
@@ -450,7 +456,7 @@ export function applyHarnessStatus(
 ): void {
   queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
     current && current.harnessStatus !== harnessStatus ? { ...current, harnessStatus } : current);
-  queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+  setCachedWorkstreams(queryClient, (current) =>
     current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
       ? { ...workstream, harnessStatus }
       : workstream));
@@ -483,7 +489,7 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
 }
 
 export function useWorkstreamSocket(
-  api: AvalonApi | null,
+  api: WorkstreamSocketApi | null,
   workstreamId: string,
   enabled: boolean,
 ): SocketState {
@@ -535,9 +541,10 @@ export function useWorkstreamSocket(
       const generation = ++canonicalReconcileGeneration;
       const sequenceAtStart = resumeState.lastSequence;
       try {
-        const [canonicalWorkstream, canonicalMessagePage] = await Promise.all([
+        const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreamPage] = await Promise.all([
           api.getWorkstream(workstreamId),
           api.getMessages(workstreamId),
+          api.getWorkstreams(),
         ]);
         const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
         if (closedByEffect || generation !== canonicalReconcileGeneration) return;
@@ -556,6 +563,7 @@ export function useWorkstreamSocket(
           mayStillEmitRealtime
             ? mergeCanonicalTranscript(current, canonicalMessages)
             : replaceWithCanonicalTranscript(current, canonicalMessages));
+        setCachedWorkstreams(queryClient, canonicalWorkstreamPage.items);
         void Promise.all([
           queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
@@ -624,7 +632,7 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, message));
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? advanceWorkstreamAttention(current, message) : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? advanceWorkstreamAttention(workstream, message)
             : workstream));
@@ -641,7 +649,7 @@ export function useWorkstreamSocket(
         const renamed = { title: event.title, titleStatus: event.titleStatus };
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, ...renamed } : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? { ...workstream, ...renamed }
             : workstream));
@@ -651,7 +659,7 @@ export function useWorkstreamSocket(
         // their sidebar row and the header they are reading to agree.
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, scope: event.scope } : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? { ...workstream, scope: event.scope }
             : workstream));
@@ -669,7 +677,7 @@ export function useWorkstreamSocket(
           insertMessage(current, message));
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? advanceWorkstreamAttention(current, message) : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? advanceWorkstreamAttention(workstream, message)
             : workstream));
@@ -856,7 +864,7 @@ export function useWorkstreamSocket(
       clearReconnectTimer();
       setState('unavailable');
       queryClient.removeQueries({ queryKey: ['messages', workstreamId], exact: true });
-      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+      setCachedWorkstreams(queryClient, (current) =>
         current?.filter((workstream) => workstream.id !== workstreamId));
       queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
     };
@@ -893,9 +901,10 @@ export function useWorkstreamSocket(
         canonicalResyncInFlight = true;
         try {
           const targetSequence = canonicalResyncTarget;
-          const [canonicalWorkstream, canonicalMessagePage] = await Promise.all([
+          const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreamPage] = await Promise.all([
             api.getWorkstream(workstreamId),
             api.getMessages(workstreamId),
+            api.getWorkstreams(),
           ]);
           const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
           if (closedByEffect) return;
@@ -915,6 +924,7 @@ export function useWorkstreamSocket(
               streamCursors,
             );
           });
+          setCachedWorkstreams(queryClient, canonicalWorkstreamPage.items);
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),

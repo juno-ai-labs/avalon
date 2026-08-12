@@ -2,6 +2,7 @@ import { zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import * as UTIF from "utif2";
 import { buildAttachmentModelParts } from "../src/services/attachment-model-content";
+import { createCloudflareTestBinding, createTestD1Database } from "./helpers/cloudflare-test";
 
 const encoder = new TextEncoder();
 
@@ -65,7 +66,7 @@ describe("attachment model content", () => {
     original.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const bucket = trackedBucket({ original });
     const updates: unknown[][] = [];
-    const database = {
+    const database = createTestD1Database({
       prepare() {
         return {
           bind(...values: unknown[]) {
@@ -74,7 +75,7 @@ describe("attachment model content", () => {
           },
         };
       },
-    } as unknown as D1Database;
+    });
     const images = fakeImagesBinding(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
 
     const parts = await buildAttachmentModelParts(bucket.binding, [{
@@ -107,7 +108,7 @@ describe("attachment model content", () => {
   it("turns an animated GIF into one timestamped storyboard and persists its metadata", async () => {
     const bucket = trackedBucket({ original: animatedGif() });
     const updates: unknown[][] = [];
-    const database = {
+    const database = createTestD1Database({
       prepare() {
         return {
           bind(...values: unknown[]) {
@@ -116,7 +117,7 @@ describe("attachment model content", () => {
           },
         };
       },
-    } as unknown as D1Database;
+    });
 
     const parts = await buildAttachmentModelParts(bucket.binding, [{
       id: "gif-resource",
@@ -206,7 +207,7 @@ describe("attachment model content", () => {
 });
 
 function fakeBucket(objects: Record<string, Uint8Array>): R2Bucket {
-  return {
+  return createCloudflareTestBinding<R2Bucket>({
     async get(key: string) {
       const bytes = objects[key];
       if (!bytes) return null;
@@ -216,7 +217,7 @@ function fakeBucket(objects: Record<string, Uint8Array>): R2Bucket {
         },
       };
     },
-  } as unknown as R2Bucket;
+  });
 }
 
 function trackedBucket(initial: Record<string, Uint8Array>): {
@@ -226,7 +227,7 @@ function trackedBucket(initial: Record<string, Uint8Array>): {
 } {
   const objects = { ...initial };
   const puts: Array<{ key: string; bytes: Uint8Array }> = [];
-  const binding = {
+  const binding = createCloudflareTestBinding<R2Bucket>({
     async get(key: string) {
       const bytes = objects[key];
       if (!bytes) return null;
@@ -240,12 +241,12 @@ function trackedBucket(initial: Record<string, Uint8Array>): {
     async delete(key: string) {
       delete objects[key];
     },
-  } as unknown as R2Bucket;
+  });
   return { binding, objects, puts };
 }
 
 function fakeImagesBinding(output: Uint8Array): ImagesBinding {
-  return {
+  return createCloudflareTestBinding<ImagesBinding>({
     input() {
       const transformer = {
         transform() { return transformer; },
@@ -259,7 +260,7 @@ function fakeImagesBinding(output: Uint8Array): ImagesBinding {
       };
       return transformer;
     },
-  } as unknown as ImagesBinding;
+  });
 }
 
 function exactTestArrayBuffer(bytes: Uint8Array): ArrayBuffer {

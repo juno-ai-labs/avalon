@@ -23,10 +23,13 @@ type CredentialEnv = Pick<Env,
   "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION" | "CONNECTOR_CREDENTIALS_KEYS_JSON"
 >;
 
+/** The only adapter capability credential coordination is allowed to use. */
+export type CredentialRefreshAdapter = Pick<ResolvedConnectorAdapter, "refreshCredentials">;
+
 export async function ensureFreshConnectorCredentials(
   env: CredentialEnv,
   connection: ConnectorConnectionContext,
-  adapter: ResolvedConnectorAdapter,
+  adapter: CredentialRefreshAdapter,
   signal: AbortSignal,
   minimumValidityMs = 60_000,
 ): Promise<void> {
@@ -182,7 +185,7 @@ function isReconnectRequired(error: unknown): boolean {
 export async function rotateConnectorCredentials(
   env: CredentialEnv,
   connection: ConnectorConnectionContext,
-  adapter: ResolvedConnectorAdapter,
+  adapter: CredentialRefreshAdapter,
   signal: AbortSignal,
   refused: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {

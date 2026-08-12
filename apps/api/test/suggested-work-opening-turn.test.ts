@@ -23,6 +23,7 @@ vi.mock("../src/services/workstream-naming-service", async (importOriginal) => (
 
 import { WorkstreamService } from "../src/services/workstream-service";
 import { publishWorkstreamEvent, startWorkstreamWorkflow } from "../src/services/integrations";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const selectorId = "00000000-0000-7000-8000-000000000002";
@@ -219,7 +220,7 @@ function auth(): AuthContext {
 }
 
 function environment(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
@@ -227,7 +228,7 @@ function environment(database: DatabaseSync): Env {
     OPENROUTER_PRIMARY_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
-  } as unknown as Env;
+  });
 }
 
 function messageRow(database: DatabaseSync, id: string): Record<string, unknown> {

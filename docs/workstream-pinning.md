@@ -22,7 +22,8 @@ the different question of who a work stream is *for*.
 | `apps/api/src/services/workstream-service.ts` | `pin`, `unpin`, `reorderPins`, and the position rewrite behind them. `list` excludes pins from the recency order and attaches them to the first page. |
 | `apps/api/src/routes/workstreams.ts` | `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The **Pinned** section, the right-click **Pin** / **Unpin** item, and the drag-and-keyboard reorder. `orderPinnedWorkstreams` decides what the section renders. |
-| `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` writes a pin response into the cached work-stream list. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
+| `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
 
 ## How it works
 
@@ -276,6 +277,40 @@ overlay row content behind a gradient matched to the row's normal, hover, or
 selected background, so future row backgrounds must keep that gradient in step.
 The handler follows physical `Digit1`–`Digit9` codes, ignores repeated keydowns,
 and yields whenever a modal dialog owns interaction.
+
+### 2026-08-12 — A page cannot become the list by sharing its cache key
+
+**What changed:** Every write to the renderer's `workstreams` query now goes
+through `setCachedWorkstreams`, which binds the key to `WorkstreamSummary[]` and
+asserts the array category again at runtime. Socket reconciliation writes the
+`items` from `getWorkstreams`, not the page that contains them. ESLint forbids a
+direct `setQueryData` or `setQueriesData` write to that key outside the helper,
+and also forbids desktop tests from casting a partial double to `AvalonApi`.
+Those consumers now declare the smaller API capability they actually use, and
+their mocks prove it with `satisfies`.
+
+**Why:** The pagination change below widened `getWorkstreams` from an array to
+`{ items, nextCursor }` and updated the list query, but missed two direct calls
+in socket reconciliation. React Query inferred the page object as a perfectly
+valid generic cache value because its query key carries no value type; the
+sidebar independently read the same key as an array and crashed on `.filter`.
+The socket tests returned the obsolete array shape behind `as unknown as
+AvalonApi`, so the API signature change could not break them.
+
+**Considered and rejected:** Parsing every internal cache update with a full
+Zod schema. The server response had already passed its page schema; the defect
+was choosing the page instead of its valid `items`. Re-validating every mapped
+field would duplicate the external boundary without restoring the missing
+key/value relationship. The helper therefore uses TypeScript for the full
+shape and a cheap runtime array assertion for the category error that caused
+the crash.
+
+**Consequences:** A new producer cannot write this cache directly without
+failing lint, and a renamed API return shape now fails every contract-checked
+socket mock. The runtime assertion is a backstop for type escapes, not a second
+wire parser: external HTTP, socket, IPC, and storage boundaries continue to use
+Zod. Any future change from a flat list to a page must change the helper and all
+of its readers deliberately rather than arriving through one caller.
 
 ### 2026-08-12 — The sidebar follows the cursor it was throwing away
 

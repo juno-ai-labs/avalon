@@ -31,6 +31,21 @@ interface IntervalHandle {
   unref(): unknown;
 }
 
+/** The updater surface this module consumes; tests must implement this port. */
+export type AutoUpdaterPort = Omit<Pick<
+  AppUpdater,
+  | 'autoDownload'
+  | 'autoInstallOnAppQuit'
+  | 'disableDifferentialDownload'
+  | 'logger'
+  | 'checkForUpdates'
+  | 'downloadUpdate'
+  | 'quitAndInstall'
+  | 'on'
+>, 'on'> & {
+  on(event: string, listener: (...args: any[]) => void): AutoUpdaterPort;
+};
+
 export interface AutoUpdateDependencies {
   readonly isPackaged: boolean;
   readonly platform: NodeJS.Platform;
@@ -46,7 +61,7 @@ export interface AutoUpdateDependencies {
   readonly onStatusChange?: (status: UpdateStatus) => void;
   readonly log?: UpdateLogger;
   /** Test seam; production uses electron-updater's singleton. */
-  readonly updater?: AppUpdater;
+  readonly updater?: AutoUpdaterPort;
   /** Test seam; production uses the Node interval. */
   readonly scheduleInterval?: (callback: () => void, delayMs: number) => IntervalHandle;
   /** Test seam; production uses the Node timeout. */
@@ -169,9 +184,10 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   };
 
   const scheduleTimeout = deps.scheduleTimeout
-    ?? ((callback: () => void, delayMs: number) => (
-      setTimeout(callback, delayMs) as unknown as IntervalHandle
-    ));
+    ?? ((callback: () => void, delayMs: number) => {
+      const handle = setTimeout(callback, delayMs);
+      return { unref: () => handle.unref() };
+    });
   const handleDownloadFailure = (error: unknown): void => {
     log.error('[avalon] update download failed', error);
     if (!downloadInFlight || downloadRetryScheduled) return;
@@ -287,9 +303,10 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   );
   runCheck(false);
   const scheduleInterval = deps.scheduleInterval
-    ?? ((callback: () => void, delayMs: number) => (
-      setInterval(callback, delayMs) as unknown as IntervalHandle
-    ));
+    ?? ((callback: () => void, delayMs: number) => {
+      const handle = setInterval(callback, delayMs);
+      return { unref: () => handle.unref() };
+    });
   const interval = scheduleInterval(() => runCheck(false), UPDATE_INTERVAL_MS);
   interval.unref();
 

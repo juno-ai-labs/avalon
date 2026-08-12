@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { sendWorkstreamMentionSlack } from "../src/services/slack-mention-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const authorId = "00000000-0000-7000-8000-000000000002";
@@ -308,7 +309,7 @@ function response(value: unknown, status = 200, headers: HeadersInit = {}): Resp
 }
 
 function environment(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
@@ -320,7 +321,7 @@ function environment(database: DatabaseSync): Env {
     SLACK_CLIENT_ID: "client-id",
     SLACK_CLIENT_SECRET: "client-secret",
     SLACK_SIGNING_SECRET: "signing-secret",
-  } as unknown as Env;
+  });
 }
 
 async function seed(database: DatabaseSync, env: Env, linked: boolean): Promise<void> {
@@ -395,7 +396,7 @@ function migratedDatabase(): DatabaseSync {
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
-  return {
+  return createTestD1Database({
     prepare(sql: string) {
       let values: unknown[] = [];
       const statement = {
@@ -407,13 +408,13 @@ function sqliteD1(database: DatabaseSync): D1Database {
           return (database.prepare(sql).get(...values as never[]) ?? null) as T | null;
         },
         async all<T>() {
-          return { results: database.prepare(sql).all(...values as never[]) as T[], success: true, meta: {} } as unknown as D1Result<T>;
+          return createTestD1Result<T>({ results: database.prepare(sql).all(...values as never[]) as T[], success: true, meta: {} });
         },
         async run<T>() {
-          return { success: true, meta: database.prepare(sql).run(...values as never[]) } as unknown as D1Result<T>;
+          return createTestD1Result<T>({ success: true, meta: database.prepare(sql).run(...values as never[]) });
         },
       };
-      return statement as unknown as D1PreparedStatement;
+      return createTestD1PreparedStatement(statement);
     },
-  } as unknown as D1Database;
+  });
 }

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 interface ExecutedStatement {
   sql: string;
@@ -35,14 +36,14 @@ class AdoptionDatabase {
     expected_outputs_json: JSON.stringify(["A concise brief"]),
   };
 
-  readonly binding = {
-    prepare: (sql: string) => new AdoptionStatement(this, sql) as unknown as D1PreparedStatement,
+  readonly binding = createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new AdoptionStatement(this, sql)),
     batch: async <T = unknown>(statements: D1PreparedStatement[]) => {
       const results: D1Result<T>[] = [];
       for (const statement of statements) results.push(await statement.run<T>());
       return results;
     },
-  } as unknown as D1Database;
+  });
 }
 
 class AdoptionStatement {
@@ -73,11 +74,11 @@ class AdoptionStatement {
 
   async run<T>(): Promise<D1Result<T>> {
     this.database.executed.push({ sql: this.normalizedSql(), values: this.values });
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: [],
       meta: { changes: 1 },
-    } as unknown as D1Result<T>;
+    });
   }
 
   private normalizedSql(): string {
@@ -95,11 +96,11 @@ describe("automation template version adoption", () => {
     const schedulerFetch = vi.fn(async () => new Response(null, { status: 204 }));
     const schedulerGet = vi.fn(() => ({ fetch: schedulerFetch }));
     const schedulerId = vi.fn(() => ({ toString: () => "scheduler-id" }));
-    const env = {
+    const env = createTestEnv({
       DB: database.binding,
       AVALON_REGION: "global",
       WORKSPACE_SCHEDULERS: { idFromName: schedulerId, get: schedulerGet },
-    } as unknown as Env;
+    });
     const auth: AuthContext = {
       sessionId: "session-1",
       userId: "user-1",

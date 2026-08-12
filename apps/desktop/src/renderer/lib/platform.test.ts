@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DesktopSession } from '../../common/desktop';
+import type { AvalonDesktopBridge, DesktopSession } from '../../common/desktop';
 import { desktopBridge } from './platform';
 
 const globalApiBaseUrl = 'http://127.0.0.1:8787';
@@ -31,7 +31,12 @@ describe('browser fallback single-platform identity boundary', () => {
 
   it('prefers the hardened preload bridge for clipboard writes', async () => {
     const copyText = vi.fn(async () => undefined);
-    window.avalon = { copyText } as unknown as typeof window.avalon;
+    const preloadBridge = { copyText } satisfies Pick<AvalonDesktopBridge, 'copyText'>;
+    Object.defineProperty(window, 'avalon', {
+      configurable: true,
+      value: preloadBridge,
+      writable: true,
+    });
 
     await desktopBridge().copyText('copied through preload');
 

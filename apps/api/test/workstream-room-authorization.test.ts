@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Env } from "../src/env";
 import { WorkstreamRoom } from "../src/durable-objects/workstream-room";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE = "00000000-0000-7000-8000-0000000000c0";
 const PARTICIPANT = "00000000-0000-7000-8000-0000000000c1";
@@ -90,7 +90,7 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): Workstream
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
   ]);
-  const state = {
+  const state = createCloudflareTestBinding<DurableObjectState>({
     setWebSocketAutoResponse: () => undefined,
     getWebSockets: () => sockets,
     storage: {
@@ -104,10 +104,10 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): Workstream
         delete: async (key: string) => storage.delete(key),
       }),
     },
-  } as unknown as DurableObjectState;
+  });
   return new WorkstreamRoom(
     state,
-    { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env,
+    createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
   );
 }
 

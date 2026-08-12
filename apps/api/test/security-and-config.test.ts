@@ -6,7 +6,6 @@ import {
   type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { createApp } from "../src/app";
-import type { Env } from "../src/env";
 import { numericEnv } from "../src/env";
 import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualText } from "../src/lib/crypto";
 import { redact } from "../src/observability/logger";
@@ -30,6 +29,7 @@ import {
 import { __resourceServiceTesting } from "../src/services/resource-service";
 import { __workstreamServiceTesting } from "../src/services/workstream-service";
 import { __originResourceTesting } from "../src/services/workstream-origin-resource";
+import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 describe("API security utilities", () => {
   it("round-trips authenticated encrypted values without exposing plaintext", async () => {
@@ -361,7 +361,7 @@ describe("API security utilities", () => {
     const encryptionKey = randomToken(32);
     // A mid-call rejection rotates under the credential-refresh lease, so this
     // stub answers the lease claim and the write-back the coordinator performs.
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         const update = { sql, values: [] as unknown[] };
         return {
@@ -398,7 +398,7 @@ describe("API security utilities", () => {
           },
         };
       },
-    } as unknown as D1Database;
+    });
     const connection = connectorContext({
       accessToken: "expired-access-token",
       refreshToken: "offline-refresh-token",
@@ -471,7 +471,7 @@ describe("API security utilities", () => {
 
   it("marks revoked connector grants for reconnect and stores only a sanitized reason", async () => {
     const updates: Array<{ sql: string; values: unknown[] }> = [];
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         const update = { sql, values: [] as unknown[] };
         updates.push(update);
@@ -485,7 +485,7 @@ describe("API security utilities", () => {
           },
         };
       },
-    } as unknown as D1Database;
+    });
     const connection = connectorContext({
       accessToken: "expired-access-token",
       refreshToken: "must-never-be-persisted-in-an-error",
@@ -550,11 +550,11 @@ describe("environment guardrails", () => {
         },
         body,
       },
-      {
+      createTestEnv({
         ALLOWED_ORIGINS: "app://avalon",
         AVALON_REGION: "global",
         LOG_LEVEL: "error",
-      } as Env,
+      }),
     );
 
     expect(response.status).toBe(413);
@@ -574,11 +574,11 @@ describe("environment guardrails", () => {
           "access-control-request-headers": "authorization,content-type,idempotency-key,x-avalon-draft-id",
         },
       },
-      {
+      createTestEnv({
         ALLOWED_ORIGINS: "app://avalon",
         AVALON_REGION: "global",
         LOG_LEVEL: "error",
-      } as Env,
+      }),
     );
 
     expect(response.status).toBe(204);
@@ -599,11 +599,11 @@ describe("environment guardrails", () => {
           "access-control-request-headers": "authorization,content-type",
         },
       },
-      {
+      createTestEnv({
         ALLOWED_ORIGINS: "app://avalon",
         AVALON_REGION: "global",
         LOG_LEVEL: "error",
-      } as Env,
+      }),
     );
 
     expect(response.status).toBe(204);
@@ -612,14 +612,14 @@ describe("environment guardrails", () => {
   });
 
   it("uses a safe fallback for invalid positive numeric limits", () => {
-    const env = { HARNESS_CHILD_MAX_TOOL_CALLS: "not-a-number" } as Env;
+    const env = createTestEnv({ HARNESS_CHILD_MAX_TOOL_CALLS: "not-a-number" });
     expect(numericEnv(env, "HARNESS_CHILD_MAX_TOOL_CALLS", 8)).toBe(8);
     env.HARNESS_CHILD_MAX_TOOL_CALLS = "12";
     expect(numericEnv(env, "HARNESS_CHILD_MAX_TOOL_CALLS", 8)).toBe(12);
   });
 
   it("does not expose development session creation outside the explicit dev guard", async () => {
-    const env = { APP_ENV: "production", AVALON_DEV_AUTH: "false" } as Env;
+    const env = createTestEnv({ APP_ENV: "production", AVALON_DEV_AUTH: "false" });
     await expect(new AuthService(env).createDevelopmentSession()).rejects.toMatchObject({
       status: 404,
       code: "not_found",
@@ -635,7 +635,7 @@ describe("environment guardrails", () => {
   });
 
   it("scopes short-lived socket tickets to one region, workspace, user, and work stream", async () => {
-    const env = { SESSION_SIGNING_KEY: "test-signing-key", AVALON_REGION: "global" } as Env;
+    const env = createTestEnv({ SESSION_SIGNING_KEY: "test-signing-key", AVALON_REGION: "global" });
     const ticket = await issueSocketTicket(
       env,
       {
@@ -659,7 +659,7 @@ describe("environment guardrails", () => {
   });
 
   it("requires an exact configured Origin for WebSocket upgrades", () => {
-    const env = { ALLOWED_ORIGINS: "app://avalon, http://localhost:5173/" } as Env;
+    const env = createTestEnv({ ALLOWED_ORIGINS: "app://avalon, http://localhost:5173/" });
     expect(isAllowedSocketOrigin(env, "app://avalon")).toBe(true);
     expect(isAllowedSocketOrigin(env, "http://localhost:5173")).toBe(true);
     expect(isAllowedSocketOrigin(env, "https://with-avalon.com.evil.example")).toBe(false);
@@ -667,12 +667,12 @@ describe("environment guardrails", () => {
   });
 
   it("keeps Azure dictation credentials server-side and scopes its socket ticket", async () => {
-    const env = {
+    const env = createTestEnv({
       SESSION_SIGNING_KEY: "test-signing-key",
       AVALON_REGION: "eu",
       AZURE_OPENAI_ENDPOINT: "https://avalon-eu.openai.azure.com/ignored/path",
       AZURE_OPENAI_REALTIME_DEPLOYMENT: "avalon-live-transcription",
-    } as Env;
+    });
     const auth = {
       sessionId: "session",
       userId: "00000000-0000-7000-8000-000000000001",

@@ -1,10 +1,10 @@
+import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AvalonApi } from './api';
 import type { WorkstreamDetail } from './types';
-import { useWorkstreamSocket } from './use-workstream-socket';
+import { type WorkstreamSocketApi, useWorkstreamSocket } from './use-workstream-socket';
 
 const workstreamId = '00000000-0000-7000-8000-000000000210';
 const suggestionId = '00000000-0000-7000-8000-000000000211';
@@ -94,8 +94,12 @@ describe('activity suggestions over the work-stream socket', () => {
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-    } as unknown as AvalonApi;
+      getMessages: vi.fn(async () => []),
+      getWorkstream: vi.fn(async () => detail()),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
+    } satisfies WorkstreamSocketApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
       wrapper: function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
         return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;

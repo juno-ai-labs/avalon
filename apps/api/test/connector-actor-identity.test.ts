@@ -1,12 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Env } from "../src/env";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   recordConnectorActorIdentity,
   resolveConnectorActorIdentity,
 } from "../src/services/connector-actor-identity";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const databases: DatabaseSync[] = [];
 
@@ -43,7 +43,7 @@ describe("connector actor identity", () => {
          '{"providerTenantId":"T123","providerUserId":"U456"}',
          '2026-01-01', '2026-01-01', 'plugin_slack');
     `);
-    const env = { DB: sqliteD1(database) } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database) });
 
     await expect(resolveConnectorActorIdentity(env, "workspace-1", linearActor)).resolves.toEqual({
       userId: "user-taylor",
@@ -70,7 +70,7 @@ describe("connector actor identity", () => {
               '{"providerTenantId":"org-other","providerUserId":"linear-user-taylor"}',
               '2026-01-01', '2026-01-01', 'plugin_linear');
     `);
-    const env = { DB: sqliteD1(database) } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database) });
 
     await expect(resolveConnectorActorIdentity(env, "workspace-1", linearActor)).resolves.toBeNull();
   });
@@ -78,7 +78,7 @@ describe("connector actor identity", () => {
   it("prefers a recorded account link over every weaker mapping", async () => {
     const database = seededDatabase();
     storeIdentity(database, "workspace-1", "user-jordan", "slack_user_link");
-    const env = { DB: sqliteD1(database) } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database) });
 
     await expect(resolveConnectorActorIdentity(
       env,
@@ -90,7 +90,7 @@ describe("connector actor identity", () => {
 
   it("falls back to a verified email that exactly one active member holds", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database) } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database) });
 
     await expect(resolveConnectorActorIdentity(
       env,
@@ -102,7 +102,7 @@ describe("connector actor identity", () => {
 
   it("resolves nobody for an unknown actor, a suspended member, or another workspace", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database) } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database) });
 
     await expect(resolveConnectorActorIdentity(env, "workspace-1", linearActor)).resolves.toBeNull();
     await expect(resolveConnectorActorIdentity(
@@ -118,7 +118,7 @@ describe("connector actor identity", () => {
 
   it("stores only the email lookup, which nothing else can reproduce", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database) } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database) });
 
     // The stronger tiers are already derivable from a stored row or the
     // connection itself, so recording them would add a write to every inbound
@@ -156,7 +156,7 @@ describe("connector actor identity", () => {
 
   it("never lets a verified email retarget an identity that is already linked", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database) } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database) });
 
     storeIdentity(database, "workspace-1", "user-taylor", "slack_user_link");
     // A provider profile can carry an address belonging to a different member.
@@ -180,7 +180,7 @@ describe("connector actor identity", () => {
 
   it("reads a stored mapping back at the strength it was recorded with", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database) } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database) });
 
     await recordConnectorActorIdentity(
       env,

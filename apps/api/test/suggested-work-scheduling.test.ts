@@ -7,6 +7,7 @@ import {
   processDueSuggestedWork,
   WorkOpportunityService,
 } from "../src/services/work-opportunity-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const activeUser = "00000000-0000-7000-8000-000000000002";
@@ -71,12 +72,12 @@ function environment(
   afterRun?: (sql: string) => void,
   afterAll?: (sql: string) => void,
 ): Env {
-  return {
+  return createTestEnv({
     DB: new D1Adapter(database, { ...(afterRun ? { afterRun } : {}), ...(afterAll ? { afterAll } : {}) }),
     APP_ENV: "development",
     AVALON_REGION: "global",
     ...overrides,
-  } as unknown as Env;
+  });
 }
 
 /**

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
@@ -39,10 +40,10 @@ class ProjectionStatement {
     expect(this.sql).toContain("JOIN tool_invocations ti ON ti.id = m.id");
     expect(this.values.slice(0, 2)).toEqual([WORKSPACE_ID, WORKSTREAM_ID]);
     const requested = new Set(this.values.slice(2).map(String));
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.rows.filter((row) => requested.has(row.message_id)) as T[],
-    } as D1Result<T>;
+    });
   }
 }
 
@@ -51,11 +52,11 @@ function projectionEnv(
   outputs: Record<string, unknown>,
   stalledReplayStage?: "get" | "body",
 ): Env {
-  return {
-    DB: {
-      prepare: (sql: string) => new ProjectionStatement(sql, rows) as unknown as D1PreparedStatement,
-    } as D1Database,
-    PAYLOADS: {
+  return createTestEnv({
+    DB: createTestD1Database({
+      prepare: (sql: string) => createTestD1PreparedStatement(new ProjectionStatement(sql, rows)),
+    }),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>({
       get: vi.fn(async (key: string) => {
         if (stalledReplayStage === "get") return new Promise<R2ObjectBody | null>(() => {});
         if (!(key in outputs)) return null;
@@ -67,8 +68,8 @@ function projectionEnv(
             : async () => body,
         } as R2ObjectBody;
       }),
-    } as unknown as R2Bucket,
-  } as Env;
+    }),
+  });
 }
 
 function message(
@@ -283,7 +284,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => allMessages.filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: { prepare } as unknown as D1Database },
+      { DB: createTestD1Database({ prepare }) },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -330,7 +331,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => allMessages.filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: { prepare } as unknown as D1Database },
+      { DB: createTestD1Database({ prepare }) },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -372,7 +373,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => [earlier, trigger].filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: { prepare } as unknown as D1Database },
+      { DB: createTestD1Database({ prepare }) },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -391,7 +392,7 @@ describe("durable UI-to-model transcript projection", () => {
     const listMessages = vi.fn(async () => [] as Message[]);
 
     await expect(__integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: { prepare: vi.fn(() => ({ bind })) } as unknown as D1Database },
+      { DB: createTestD1Database({ prepare: vi.fn(() => ({ bind })) }) },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -418,7 +419,7 @@ describe("durable UI-to-model transcript projection", () => {
       .slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: {} as D1Database },
+      { DB: createTestD1Database({}) },
       { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
       listMessages,
     );

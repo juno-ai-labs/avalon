@@ -1,7 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import type { AuthContext, Env } from '../src/env';
+import type { AuthContext } from '../src/env';
 import { ResourceService } from '../src/services/resource-service';
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = '00000000-0000-7000-8000-000000000001';
 const userId = '00000000-0000-7000-8000-000000000002';
@@ -19,7 +20,7 @@ describe('uploaded attachment drafts', () => {
   it('uses the client draft ID, hides drafts from resource lists, and deletes storage on removal', async () => {
     const database = attachmentDatabase();
     const stored = new Set<string>();
-    const environment = {
+    const environment = createTestEnv({
       AVALON_REGION: 'global',
       MAX_ATTACHMENT_BYTES: '25000000',
       DB: sqliteD1(database),
@@ -27,7 +28,7 @@ describe('uploaded attachment drafts', () => {
         async put(key: string) { stored.add(key); },
         async delete(key: string) { stored.delete(key); },
       },
-    } as unknown as Env;
+    });
     const service = new ResourceService(environment, auth);
 
     const uploaded = await service.upload(
@@ -55,7 +56,7 @@ describe('uploaded attachment drafts', () => {
   it("does not allow another member to delete a user's draft", async () => {
     const database = attachmentDatabase();
     const stored = new Set<string>();
-    const environment = {
+    const environment = createTestEnv({
       AVALON_REGION: 'global',
       MAX_ATTACHMENT_BYTES: '25000000',
       DB: sqliteD1(database),
@@ -63,7 +64,7 @@ describe('uploaded attachment drafts', () => {
         async put(key: string) { stored.add(key); },
         async delete(key: string) { stored.delete(key); },
       },
-    } as unknown as Env;
+    });
     await new ResourceService(environment, auth).upload(new File(['private'], 'private.txt'), undefined, draftId);
 
     const other = new ResourceService(environment, { ...auth, userId: '00000000-0000-7000-8000-000000000004' });
@@ -110,14 +111,14 @@ function sqliteD1(database: DatabaseSync): D1Database {
       bind(...next: unknown[]) { values = next; return statement; },
       async first<T>() { return (database.prepare(sql).get(...values as never[]) ?? null) as T | null; },
       async all<T>() {
-        return { results: database.prepare(sql).all(...values as never[]) as T[], success: true, meta: {} } as unknown as D1Result<T>;
+        return createTestD1Result<T>({ results: database.prepare(sql).all(...values as never[]) as T[], success: true, meta: {} });
       },
       async run<T>() {
         const result = database.prepare(sql).run(...values as never[]);
-        return { results: [], success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<T>;
+        return createTestD1Result<T>({ results: [], success: true, meta: { changes: Number(result.changes) } });
       },
     };
-    return statement as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(statement);
   };
-  return { prepare } as unknown as D1Database;
+  return createTestD1Database({ prepare });
 }

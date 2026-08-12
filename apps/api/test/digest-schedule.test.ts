@@ -16,6 +16,7 @@ import {
   recordActivityEventOrThrow,
 } from "../src/services/activity-event-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
 const OWNER = "00000000-0000-7000-8000-000000000002";
@@ -36,7 +37,7 @@ afterEach(() => {
 });
 
 function envFor(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -45,7 +46,7 @@ function envFor(database: DatabaseSync): Env {
       idFromName: () => "scheduler",
       get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
     },
-  } as unknown as Env;
+  });
 }
 
 function seededDatabase(): DatabaseSync {
@@ -234,7 +235,7 @@ describe("digest schedule", () => {
   it("recomputes the workspace alarm only after the rows are written", async () => {
     const database = seededDatabase();
     const scheduleCountAtRefresh = vi.fn();
-    const env = {
+    const env = createTestEnv({
       ...envFor(database),
       WORKSPACE_SCHEDULERS: {
         idFromName: () => "scheduler",
@@ -245,7 +246,7 @@ describe("digest schedule", () => {
           },
         }),
       },
-    } as unknown as Env;
+    });
 
     await new DigestService(env, auth).replace({
       enabled: true,

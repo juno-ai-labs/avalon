@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import type { Env } from "../src/env";
+import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 function testEnv(region: "global" | "eu"): Env {
-  return {
+  return createTestEnv({
     ALLOWED_ORIGINS: "app://avalon",
     AVALON_REGION: region,
     LOG_LEVEL: "error",
-  } as Env;
+  });
 }
 
 function authenticatedTestEnv(): Env {
@@ -15,14 +16,14 @@ function authenticatedTestEnv(): Env {
     bind: () => statement,
     first: async () => ({ role: "owner" }),
   };
-  return {
+  return createTestEnv({
     ...testEnv("global"),
     APP_ENV: "development",
     AVALON_DEV_AUTH: "true",
-    DB: {
+    DB: createTestD1Database({
       prepare: () => statement,
-    } as unknown as D1Database,
-  } as Env;
+    }),
+  });
 }
 
 async function expectSafeInvalidRequest(response: Response, requestId: string): Promise<void> {

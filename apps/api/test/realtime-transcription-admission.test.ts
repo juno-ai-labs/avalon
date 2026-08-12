@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Env } from "../src/env";
 import { __realtimeTranscriptionTesting } from "../src/services/realtime-transcription-service";
 import type { TranscriptionSocketClaims } from "../src/services/socket-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 class SqliteD1Statement {
   constructor(
@@ -13,16 +13,16 @@ class SqliteD1Statement {
   ) {}
 
   bind(...values: SQLInputValue[]): D1PreparedStatement {
-    return new SqliteD1Statement(this.database, this.sql, values) as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(new SqliteD1Statement(this.database, this.sql, values));
   }
 
   async run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
     const result = this.database.prepare(this.sql).run(...this.values);
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: [],
       meta: { changes: Number(result.changes) },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
@@ -37,7 +37,7 @@ class SqliteD1Database {
   }
 
   prepare(sql: string): D1PreparedStatement {
-    return new SqliteD1Statement(this.database, sql) as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(new SqliteD1Statement(this.database, sql));
   }
 
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
@@ -73,7 +73,7 @@ describe("realtime transcription admission", () => {
 
   it("consumes each signed ticket exactly once", async () => {
     adapter = new SqliteD1Database();
-    const env = { DB: adapter as unknown as D1Database } as Env;
+    const env = createTestEnv({ DB: createTestD1Database(adapter) });
     const ticketClaims = claims("ticket-1");
     const sessionId = await __realtimeTranscriptionTesting.reserveTranscriptionSession(env, ticketClaims);
 
@@ -86,7 +86,7 @@ describe("realtime transcription admission", () => {
 
   it("bounds concurrent sessions and keeps a rejected ticket consumed", async () => {
     adapter = new SqliteD1Database();
-    const env = { DB: adapter as unknown as D1Database } as Env;
+    const env = createTestEnv({ DB: createTestD1Database(adapter) });
     const first = await __realtimeTranscriptionTesting.reserveTranscriptionSession(env, claims("ticket-1"));
     const second = await __realtimeTranscriptionTesting.reserveTranscriptionSession(env, claims("ticket-2"));
     const rejectedClaims = claims("ticket-3");
@@ -106,7 +106,7 @@ describe("realtime transcription admission", () => {
 
   it("bounds aggregate workspace concurrency across distinct users", async () => {
     adapter = new SqliteD1Database();
-    const env = { DB: adapter as unknown as D1Database } as Env;
+    const env = createTestEnv({ DB: createTestD1Database(adapter) });
     const sessions: string[] = [];
     for (let index = 0; index < __realtimeTranscriptionTesting.limits.maxConcurrentWorkspaceSessions; index += 1) {
       sessions.push(await __realtimeTranscriptionTesting.reserveTranscriptionSession(
@@ -128,7 +128,7 @@ describe("realtime transcription admission", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-07T18:00:00.000Z"));
     adapter = new SqliteD1Database();
-    const env = { DB: adapter as unknown as D1Database } as Env;
+    const env = createTestEnv({ DB: createTestD1Database(adapter) });
     const sessionId = await __realtimeTranscriptionTesting.reserveTranscriptionSession(env, claims("ticket-renew"));
     const originalExpiry = adapter.sessionExpiry(sessionId);
 

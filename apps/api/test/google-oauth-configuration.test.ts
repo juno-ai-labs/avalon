@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { connectorRegistryForEnv, googleConnectorConfig } from "../src/lib/connector-registry";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 function env(overrides: Partial<Env> = {}): Env {
-  return {
+  return createTestEnv({
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_OAUTH_CLIENT_ID: "login-client",
     GOOGLE_OAUTH_CLIENT_SECRET: "login-secret",
     ...overrides,
-  } as Env;
+  });
 }
 
 describe("separate Google OAuth clients", () => {

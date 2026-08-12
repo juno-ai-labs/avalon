@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { AutomationService } from "../src/services/automation-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 
 const ensureAutomationAddress = vi.hoisted(() => vi.fn(async () => ({ emailAddress: null })));
 
@@ -33,7 +34,7 @@ afterEach(() => {
 });
 
 function serviceFor(database: DatabaseSync): AutomationService {
-  const env = {
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -42,14 +43,14 @@ function serviceFor(database: DatabaseSync): AutomationService {
       get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
       jurisdiction: () => ({ idFromName: () => "scheduler", get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) }),
     },
-  } as unknown as Env;
+  });
   return new AutomationService(env, auth);
 }
 
 /** The scheduler Durable Object, wired to the same database, with storage and
  * alarms captured so a test can see whether the workspace timer is still armed. */
 function serviceWithBrokenScheduler(database: DatabaseSync): AutomationService {
-  const env = {
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -57,7 +58,7 @@ function serviceWithBrokenScheduler(database: DatabaseSync): AutomationService {
       idFromName: () => "scheduler",
       get: () => ({ fetch: async () => { throw new Error("scheduler unreachable"); } }),
     },
-  } as unknown as Env;
+  });
   return new AutomationService(env, auth);
 }
 
@@ -65,17 +66,17 @@ function schedulerFor(database: DatabaseSync) {
   const values = new Map<string, unknown>();
   const setAlarm = vi.fn(async (at: number) => { void at; });
   const deleteAlarm = vi.fn(async () => undefined);
-  const storage = {
+  const storage = createCloudflareTestBinding<DurableObjectStorage>({
     get: async <T>(key: string) => values.get(key) as T | undefined,
     put: async (key: string, value: unknown) => { values.set(key, value); },
     delete: async (key: string) => values.delete(key),
     getAlarm: async () => null,
     setAlarm,
     deleteAlarm,
-  } as unknown as DurableObjectStorage;
+  });
   const scheduler = new WorkspaceScheduler(
-    { storage } as unknown as DurableObjectState,
-    { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env,
+    createCloudflareTestBinding<DurableObjectState>({ storage }),
+    createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" }),
   );
   return { scheduler, setAlarm, deleteAlarm };
 }

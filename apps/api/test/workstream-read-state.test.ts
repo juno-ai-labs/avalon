@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { loadVisibleWorkstreamRoomResources } from "../src/durable-objects/workstream-room";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -25,7 +26,7 @@ class SqliteStatement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -33,11 +34,11 @@ class SqliteStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: { changes: 0 },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
@@ -89,10 +90,10 @@ function fixture(): { database: DatabaseSync; env: Env } {
       ('message-five', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'agent', NULL,
        'text', 'Latest result', 5, '2026-02-01T00:00:00.000Z');
   `);
-  const binding = {
-    prepare: (sql: string) => new SqliteStatement(database.prepare(sql)) as unknown as D1PreparedStatement,
-  } as unknown as D1Database;
-  return { database, env: { DB: binding } as unknown as Env };
+  const binding = createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteStatement(database.prepare(sql))),
+  });
+  return { database, env: createTestEnv({ DB: binding }) };
 }
 
 function service(env: Env, userId: string): WorkstreamService {
