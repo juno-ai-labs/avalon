@@ -560,6 +560,75 @@ describe('MessageBlock markdown', () => {
   });
 });
 
+describe('MessageBlock system rows', () => {
+  const systemMessage = (id: string, text: string): Message => ({
+    ...baseMessage,
+    id,
+    authorType: 'system',
+    author: undefined,
+    messageType: 'system',
+    text,
+  });
+
+  /**
+   * jsdom lays nothing out, so the clamp cannot cut a real block here. These
+   * getters stand in for one, and they answer the way a real clamped block
+   * does: `clientHeight` is the five-line cap until the clamp comes off, and
+   * `scrollHeight` is the whole content throughout. Modelling the lifted clamp
+   * rather than freezing two numbers is the point — it is the state in which a
+   * block that measured itself would report that it fits.
+   */
+  function stubHeights(contentHeight: number): void {
+    const clampHeight = 82;
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.hasAttribute('data-expanded') ? contentHeight : Math.min(contentHeight, clampHeight); },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => contentHeight });
+  }
+
+  afterEach(() => {
+    for (const name of ['clientHeight', 'scrollHeight']) Reflect.deleteProperty(HTMLElement.prototype, name);
+  });
+
+  it('leaves a one-line note alone', () => {
+    stubHeights(20);
+
+    render(<MessageBlock {...actions} message={systemMessage('message-woken', 'Avalon woke this work stream up as scheduled.')} />);
+
+    expect(screen.getByText('Avalon woke this work stream up as scheduled.')).toBeVisible();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('clamps a run prompt, opens it, and closes it again', () => {
+    stubHeights(1_640);
+    const brief = 'You are writing the scheduled digest for Adam Juhasz in the Juno Labs workspace.';
+
+    render(<MessageBlock {...actions} message={systemMessage('message-brief', brief)} />);
+
+    // Clamped, not truncated: the whole brief is in the document from the
+    // start, so opening it needs no fetch and a find on the page reaches it.
+    expect(screen.getByText(brief)).not.toHaveAttribute('data-expanded');
+    const more = screen.getByRole('button', { name: 'more' });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(more);
+
+    // The open block no longer overflows anything, so the control survives on
+    // the last measurement taken while the clamp was on. Were it to re-measure
+    // here it would remove itself on the click that opened the text, leaving no
+    // way back to five lines.
+    expect(screen.getByText(brief)).toHaveAttribute('data-expanded', 'true');
+    const less = screen.getByRole('button', { name: 'less' });
+    expect(less).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(less);
+
+    expect(screen.getByText(brief)).not.toHaveAttribute('data-expanded');
+    expect(screen.getByRole('button', { name: 'more' })).toBeVisible();
+  });
+});
+
 describe('MessageBlock tool rows', () => {
   const toolMessage = (id: string, toolEvent: NonNullable<Message['toolEvent']>): Message => ({
     ...baseMessage,
