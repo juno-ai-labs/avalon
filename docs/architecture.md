@@ -300,7 +300,8 @@ watchdogs still apply, and classified provider attempts append to an immutable
 inference ledger. Cancellation is a durable request observed by the lease
 owner, which alone commits the final `stopped` transition.
 
-Every terminal root harness execution also emits one exact structured Workers
+After durable cancellation is rechecked and the effective terminal status is
+committed, every root harness execution also emits one exact structured Workers
 Log and one aggregate Workers Analytics Engine datapoint. The datapoint carries
 the already-computed run totals—duration, turns, routed model attempts, tool
 calls, model/tool time, tokens, cost, and outcome—and no member content or run
@@ -591,7 +592,9 @@ provider and tool capacity before it is cancelled or reaches 1,000 routed model
 attempts. Per-operation watchdogs, read-only enforcement, durable
 cancellation, lease fencing, and ambiguous-write handling remain mandatory.
 Analytics Engine is advisory telemetry with three-month retention; D1 remains
-the source of truth, and telemetry failure cannot change a run result.
+the source of truth, telemetry failure cannot change a run result, and rows
+whose Bind failure path lacks detailed timing are explicitly marked rather than
+treated as zero-latency work.
 
 Shipped in #130.
 

@@ -2,7 +2,10 @@ import type { HarnessOutcome } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
-import { recordHarnessRunObservation } from "../src/observability/harness-run-observability";
+import {
+  recordHarnessRunObservation,
+  summarizeHarnessRun,
+} from "../src/observability/harness-run-observability";
 
 const outcome: HarnessOutcome = {
   status: "completed",
@@ -52,8 +55,7 @@ describe("harness run observability", () => {
       harnessRunId: "00000000-0000-4000-8000-000000000003",
       source: "hypersight",
       status: "completed",
-      durationMs: 21_000,
-      outcome,
+      metrics: summarizeHarnessRun(outcome, 21_000),
     });
 
     expect(writeDataPoint).toHaveBeenCalledOnce();
@@ -69,7 +71,7 @@ describe("harness run observability", () => {
         "1.2.3",
         "abc123",
       ],
-      doubles: [21_000, 4, 5, 12_000, 8_000, 1_200, 340, 45.5, 7, 28.3],
+      doubles: [21_000, 4, 5, 12_000, 8_000, 1_200, 340, 45.5, 7, 28.3, 1],
     });
     expect(info).toHaveBeenCalledWith(expect.objectContaining({
       event: "harness_run_finished",
@@ -77,9 +79,55 @@ describe("harness run observability", () => {
       source: "hypersight",
       duration_ms: 21_000,
       tool_calls: 5,
+      detailed_timing_available: true,
     }));
     expect(JSON.stringify(writeDataPoint.mock.calls)).not.toContain("not logged");
     expect(JSON.stringify(writeDataPoint.mock.calls)).not.toContain("github_fetch");
+  });
+
+  it("marks detailed timing unavailable on Bind failure paths", () => {
+    const writeDataPoint = vi.fn();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const failedOutcome: HarnessOutcome = { ...outcome, status: "failed" };
+    const metrics = summarizeHarnessRun(failedOutcome, 21_000);
+
+    expect(metrics).toEqual(expect.objectContaining({
+      durationMs: 21_000,
+      iterations: 7,
+      toolCalls: 5,
+      inputTokens: 1_200,
+      outputTokens: 340,
+      costCents: 45.5,
+      turns: 0,
+      modelTimeMs: 0,
+      toolTimeMs: 0,
+      outputTokensPerSecond: 0,
+      detailedTimingAvailable: false,
+    }));
+
+    recordHarnessRunObservation(observationEnv(writeDataPoint), {
+      workspaceId: "00000000-0000-4000-8000-000000000001",
+      workstreamId: "00000000-0000-4000-8000-000000000002",
+      harnessRunId: "00000000-0000-4000-8000-000000000003",
+      source: "workstream",
+      status: "failed",
+      failureCode: "run_iteration_limit_exceeded",
+      metrics,
+    });
+
+    expect(writeDataPoint).toHaveBeenCalledWith(expect.objectContaining({
+      doubles: [21_000, 0, 5, 0, 0, 1_200, 340, 45.5, 7, 0, 0],
+    }));
+    const logEntry = info.mock.calls[0]?.[0];
+    expect(logEntry).toEqual(expect.objectContaining({
+      event: "harness_run_finished",
+      duration_ms: 21_000,
+      tool_calls: 5,
+      detailed_timing_available: false,
+    }));
+    expect(logEntry).not.toHaveProperty("turns");
+    expect(logEntry).not.toHaveProperty("model_time_ms");
+    expect(logEntry).not.toHaveProperty("tool_time_ms");
   });
 
   it("does not let an analytics binding failure change the run outcome", () => {
@@ -96,8 +144,7 @@ describe("harness run observability", () => {
       source: "workstream",
       status: "failed",
       failureCode: "provider_error",
-      durationMs: Number.POSITIVE_INFINITY,
-      outcome: { ...outcome, status: "failed" },
+      metrics: summarizeHarnessRun({ ...outcome, status: "failed" }, Number.POSITIVE_INFINITY),
     })).not.toThrow();
 
     expect(warn).toHaveBeenCalledWith(expect.objectContaining({
