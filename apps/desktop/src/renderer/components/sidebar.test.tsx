@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import { formatDateTime } from '../lib/format';
 import { useUiStore } from '../lib/ui-store';
 import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
@@ -87,6 +88,7 @@ function workstream(
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     pinPosition: null,
     lastActivityAt,
   };
@@ -249,6 +251,40 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
+  });
+
+  it('shows the next active timer and its brief prompt in a tooltip', async () => {
+    const dueAt = '2026-08-13T20:30:00.000Z';
+    const waiting = {
+      ...workstream('waiting', 'Wait for the deploy', 'completed'),
+      nextPendingWakeup: {
+        dueAt,
+        promptPreview: 'Check whether production deploy completed…',
+      },
+    };
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[waiting, workstream('finished', 'Deploy finished', 'completed')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const marker = within(screen.getByRole('link', { name: /Wait for the deploy/u }))
+      .getByRole('img', { name: 'Active timer' });
+    expect(marker).toHaveClass('sidebar-workstream-timer');
+    expect(within(screen.getByRole('link', { name: /Deploy finished/u }))
+      .queryByRole('img', { name: 'Active timer' })).not.toBeInTheDocument();
+
+    fireEvent.pointerMove(marker, { pointerType: 'mouse' });
+    expect(await screen.findByText(`Next: ${formatDateTime(dueAt)}`)).toBeVisible();
+    expect(screen.getByText('Check whether production deploy completed…')).toBeVisible();
   });
 
   it('waits for a name rather than showing the request a work stream was created from', () => {

@@ -317,6 +317,7 @@ describe('useWorkstreamSocket', () => {
       manualUnreadGeneration: 0,
       hasUnread: false,
       firstUnreadSequenceNumber: null,
+      nextPendingWakeup: null,
       pinPosition: null,
       lastActivityAt: '2026-07-31T19:20:00.000Z',
     };

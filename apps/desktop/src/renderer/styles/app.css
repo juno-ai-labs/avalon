@@ -663,6 +663,27 @@ pre {
   width: 16px;
 }
 
+.sidebar-workstream-timer {
+  align-items: center;
+  color: #77766f;
+  display: inline-flex;
+  flex: 0 0 16px;
+  height: 16px;
+  justify-content: center;
+  margin-left: 3px;
+  width: 16px;
+}
+
+.workstream-timer-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 260px;
+}
+
+.workstream-timer-tooltip strong { font-size: 11px; font-weight: 650; white-space: nowrap; }
+.workstream-timer-tooltip span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .sidebar-row-main {
   display: flex;
   flex: 1;

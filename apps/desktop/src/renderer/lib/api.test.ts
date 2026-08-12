@@ -54,6 +54,7 @@ const detail = {
   archivedAt: null,
   scope: 'workspace' as const,
   systemKind: null,
+  nextPendingWakeup: null,
   pinPosition: null,
   participants: [{ user, participationReason: 'creator' as const, joinedAt: timestamp }],
   viewers: [{ user, connectedAt: timestamp }],

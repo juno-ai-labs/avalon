@@ -46,6 +46,7 @@ const workstream: WorkstreamDetail = {
   manualUnreadGeneration: 0,
   hasUnread: false,
   firstUnreadSequenceNumber: null,
+  nextPendingWakeup: null,
   pinPosition: null,
   plannedFor: '2026-08-03T16:00:00.000Z',
   createdAt: '2026-07-31T20:00:00.000Z',
