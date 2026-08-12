@@ -36,14 +36,8 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   // `clearAllMocks` and not `restoreAllMocks`: nothing here is a `vi.spyOn`, so
-  // restoring has nothing of its own to undo — what it does instead is wipe the
-  // implementations the module factory above installed, and only
-  // `startWorkstreamWorkflow` was ever put back. `publishWorkstreamEvent` and
-  // `classifyWorkstreamMessage` then return `undefined` for every test after the
-  // first. That passes today because the code under test only awaits them, and
-  // `await undefined` is fine — but a `.then` or `.catch` on either call site
-  // would make tests 2..N throw inside production code, with nothing in the
-  // failure pointing back at this block.
+  // restoring had nothing of its own to undo, and since Vitest 3 it does not
+  // touch a `vi.fn()` implementation either — it was a no-op in both directions.
   vi.clearAllMocks();
   // Clearing drops recorded calls but not a queued `mockImplementationOnce`. A
   // leftover would be consumed by whichever test ran next, which is the kind of
