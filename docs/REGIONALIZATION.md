@@ -29,6 +29,7 @@ Queues and Workflows carry region plus opaque record IDs, never sensitive payloa
 ## Operational checks
 
 - Deployment configuration must fail when `AVALON_REGION` and the selected Wrangler environment disagree.
+- `/health` asserts the environment contract itself and blocks on it, so a Worker that cannot serve a request cannot report healthy. The route stays exempt from the entrypoint's own assertion — it catches the failure and describes it, naming the offending keys that the `service_misconfigured` body deliberately withholds.
 - Secrets required at the entrypoint are scoped by region, not only by environment. Google identity OAuth is required in Global and must not be required in EU, which by design never carries it; a contract that demanded it there failed the EU Worker's own env check on every request, queue batch, and cron tick, while `/health` — exempt precisely so it can report such a fault — kept answering `ok`. An unrecognized region is held to every rule rather than none.
 - Identity OAuth and desktop-ticket redemption occur only through the Global endpoint and yield an identity-only bootstrap session.
 - The EU regional identity bridge is a named service entrypoint, not a public HTTP route.
