@@ -1,5 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
@@ -8,6 +9,7 @@ import {
   ChevronsLeft,
   Check,
   CirclePause,
+  Clock,
   Cog,
   Command,
   Copy,
@@ -30,7 +32,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
-import { formatRelative, groupActivityItems } from '../lib/format';
+import { formatDateTime, formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
@@ -438,6 +440,27 @@ function WorkstreamRow({
                 the row, because it is the part that differs per row; how to
                 change it is said once, on the section. */}
             {drag && <span className="sr-only">{drag.position}</span>}
+            {workstream.nextPendingWakeup && (
+              <Tooltip.Root delayDuration={300}>
+                <Tooltip.Trigger asChild>
+                  <span aria-label="Active timer" className="sidebar-workstream-timer" role="img">
+                    <Clock aria-hidden="true" size={15} strokeWidth={1.7} />
+                  </span>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Content
+                    align="center"
+                    className="tooltip workstream-timer-tooltip"
+                    side="right"
+                    sideOffset={8}
+                  >
+                    <strong>Next: {formatDateTime(workstream.nextPendingWakeup.dueAt)}</strong>
+                    <span>{workstream.nextPendingWakeup.promptPreview}</span>
+                    <Tooltip.Arrow className="tooltip-arrow" />
+                  </Tooltip.Content>
+                </Tooltip.Portal>
+              </Tooltip.Root>
+            )}
             {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
             {commandShortcutsVisible && commandShortcut !== undefined && (
               <span aria-hidden="true" className="pinned-shortcut-scrim">

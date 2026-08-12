@@ -32,6 +32,8 @@ function workstreamRow(overrides: Record<string, unknown> = {}): Record<string, 
     last_activity_at: AT,
     created_at: AT,
     updated_at: AT,
+    next_pending_wakeup_at: null,
+    next_pending_wakeup_prompt_prefix: null,
     ...overrides,
   };
 }

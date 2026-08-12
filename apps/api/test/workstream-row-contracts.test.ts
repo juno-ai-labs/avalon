@@ -1,7 +1,7 @@
 import { ActivitySuggestionSchema, WorkstreamSchema } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 
-import { WorkstreamRowSchema } from "../src/mappers/workstream";
+import { toWorkstream, WorkstreamRowSchema } from "../src/mappers/workstream";
 import { workstreamRowSchemas } from "../src/services/workstream-service";
 
 const WORKSPACE_ID = "019fc068-22e8-739a-8394-a760fdc7c376";
@@ -46,6 +46,8 @@ function workstreamRow(overrides: Record<string, unknown> = {}) {
     created_at: "2026-08-10T16:10:55.531Z",
     updated_at: "2026-08-11T00:05:21.146Z",
     archived_at: null,
+    next_pending_wakeup_at: null,
+    next_pending_wakeup_prompt_prefix: null,
     ...overrides,
   };
 }
@@ -119,6 +121,25 @@ describe("work-stream row contracts", () => {
     expect(WorkstreamSchema.shape.harnessStatus.parse(row.harness_status)).toBe("completed");
     expect(WorkstreamSchema.shape.scope.parse(row.scope)).toBe("workspace");
     expect(row.viewer_manual_unread_generation).toBe(3);
+    expect(row.next_pending_wakeup_at).toBeNull();
+  });
+
+  it("maps the next pending wake-up from the joined row", () => {
+    const nextPendingWakeup = {
+      dueAt: "2026-08-13T20:30:00.000Z",
+      promptPreview: "Check production deploy status…",
+    };
+    expect(toWorkstream(workstreamRow({
+      next_pending_wakeup_at: nextPendingWakeup.dueAt,
+      next_pending_wakeup_prompt_prefix: nextPendingWakeup.promptPreview,
+    })).nextPendingWakeup).toEqual(nextPendingWakeup);
+  });
+
+  it("does not split a surrogate pair in the wake-up prompt preview", () => {
+    expect(toWorkstream(workstreamRow({
+      next_pending_wakeup_at: "2026-08-13T20:30:00.000Z",
+      next_pending_wakeup_prompt_prefix: "🚀".repeat(21),
+    })).nextPendingWakeup?.promptPreview).toBe(`${"🚀".repeat(20)}…`);
   });
 
   it("keeps a nullable join column optional", () => {
