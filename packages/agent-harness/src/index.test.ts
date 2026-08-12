@@ -1489,6 +1489,13 @@ describe("agent harness", () => {
       content: expect.stringContaining("Compaction checkpoint"),
     });
     expect(JSON.stringify(requestBodies[2]?.messages)).not.toContain("Do the work");
+    // The summary request is the whole transcript followed by the handoff
+    // instruction, so what that instruction asks for is the entire contract for
+    // what survives the checkpoint.
+    const compactionRequest = requestBodies[1]?.messages ?? [];
+    expect(compactionRequest[0]).toMatchObject({ role: "system" });
+    expect(String(compactionRequest[compactionRequest.length - 1]?.content ?? ""))
+      .toContain("Write the handoff summary for a context checkpoint.");
     expect(events.filter((event) => event.type === "stream_delta").map((event) =>
       event.type === "stream_delta" ? event.delta : ""
     ).join("")).toBe("done");
