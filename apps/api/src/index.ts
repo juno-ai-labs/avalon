@@ -102,9 +102,14 @@ export default {
     // `/health` is exempt. It is the endpoint whose job is to report which
     // pieces of configuration are present, and it already models every one of
     // them as configured/not configured. Letting the 503 swallow it would make
-    // the one probe that can name the missing key the one that cannot answer —
-    // and the 503 body deliberately carries no key names, since they are
-    // secrets, so the probe is the only place an operator can see them.
+    // the one probe that can report the fault the one that cannot answer.
+    //
+    // Exempt from refusing, not from reporting: the probe asserts the contract
+    // itself and fails on it, so a Worker that cannot serve a request cannot
+    // answer healthy. Neither response carries the key names in a deployed
+    // environment — they are an inventory of the secrets this Worker is running
+    // without, and neither endpoint authenticates — so both leave them to the
+    // `env_contract_failed` log, which the probe writes on its own path.
     if (new URL(request.url).pathname !== "/health" && assertEnvContractOrLog(env)) {
       return misconfiguredResponse(request, env);
     }
