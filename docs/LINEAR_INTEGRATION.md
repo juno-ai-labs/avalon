@@ -1,21 +1,51 @@
-# Linear integration architecture
+# Linear integration
 
-Current as of August 2, 2026. This design follows Linear's public [OAuth](https://linear.app/developers/oauth-2-0-authentication), [OAuth app manifest](https://linear.app/developers/oauth-app-manifests), [webhook](https://linear.app/developers/webhooks), [agent](https://linear.app/developers/agents), and [agent interaction](https://linear.app/developers/agent-interaction) contracts.
+Avalon installs into Linear as **one publicly installable OAuth app** carrying two
+composable connector surfaces: a `resource` surface that reads and writes Linear
+objects through model-callable tools, and a `native_agent` surface that lets Linear
+delegate work to Avalon through Agent Sessions. The second is not a tool — it is a
+provider control-plane protocol with its own authorization, signed invocation,
+session ownership, deadlines, cancellation, activities, and outbound signals — and
+it ships in a `protocol_only` state that refuses to start work.
 
-## Decision
+The design follows Linear's published
+[OAuth](https://linear.app/developers/oauth-2-0-authentication),
+[OAuth app manifest](https://linear.app/developers/oauth-app-manifests),
+[webhook](https://linear.app/developers/webhooks),
+[agent](https://linear.app/developers/agents), and
+[agent interaction](https://linear.app/developers/agent-interaction) contracts.
+Read it before changing the manifests in `config/provider-apps`, the callback or
+ingress routing, the scope mapping, or anything on the native-agent path — several
+of the rules below are Linear's, and breaking them fails at the provider rather
+than in a test.
 
-Avalon uses one publicly installable Linear OAuth app with two composable connector surfaces:
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/connectors/src/linear.ts` | The resource adapter: authorization, scopes, webhook normalization, resource types, tools, hydration. |
+| `packages/connectors/src/linear-agent.ts` | The native-agent connector metadata — invocation modes, activity kinds, deadlines, runtime state. |
+| `apps/api/src/services/linear-routing-service.ts` | The Global organization-to-region directory. |
+| `apps/api/src/linear-routing-bridge.ts` | The route lookup exposed to the shared ingress. |
+| `apps/api/src/linear-regional-bridge.ts` | The named RPC hop that carries exact signed bytes to the owning region. |
+| `apps/api/src/routes/connections.ts` | Both regional OAuth callbacks. |
+| `config/provider-apps/linear.json` | The production resource manifest — what is registered today. |
+| `config/provider-apps/linear-native-agent.preview.json` | A future update to that same app. Not a second app. |
+
+## How it works
+
+### Two surfaces on one app
 
 | Surface | Capability kind | Production state | Purpose |
 | --- | --- | --- | --- |
 | `resource` | `tool` | Enabled | Read, create, update, attach, watch, and automate Linear resources. |
 | `native_agent` | `native_agent` | `protocol_only` | Let Linear delegate work to or mention Avalon through Agent Sessions. |
 
-`native_agent` is not a model-callable tool. It is a provider control-plane protocol with its own authorization, signed invocation, session ownership, deadlines, cancellation, activities, and outbound signals.
+Public installation and Linear Integration Directory publication are separate
+milestones. The app can be made installable by outside Linear workspaces before
+applying for directory review.
 
-Public installation and Linear Integration Directory publication are separate. The app can be made installable by outside Linear workspaces before applying for directory review.
-
-## One app and two regions
+### One app, two regions
 
 The single app registers both regional OAuth callbacks:
 
@@ -26,19 +56,30 @@ It has one webhook:
 
 - `https://linear.with-avalon.com/ingest/linear`
 
-OAuth state sends each callback directly to the workspace's chosen regional Worker. The shared webhook ingress verifies Linear's exact signed bytes, reads only the organization routing key, and forwards the untouched bytes to the owning regional data plane. Each region verifies the signature again before regional persistence. Global keeps only the opaque route; provider content remains in its selected region.
+OAuth state sends each callback directly to the workspace's chosen regional
+Worker. The shared webhook ingress verifies Linear's exact signed bytes, reads only
+the organization routing key, and forwards the untouched bytes to the owning
+regional data plane. Each region verifies the signature again before regional
+persistence. Global keeps only the opaque route; provider content remains in its
+selected region. [`REGIONALIZATION.md`](REGIONALIZATION.md) owns the boundary this
+sits on.
 
-## OAuth
+### OAuth
 
-- Use Authorization Code with PKCE S256.
-- A personal Avalon connection requests `actor=user`. Its tools act as the authorizing Linear user, are available only to that Avalon member, and may include private teams that user can access.
-- A workspace Avalon connection requests `actor=app`. Its tools act as Avalon, are available to every member of the Avalon workspace, and are limited to the teams selected while installing the app.
-- One public Linear app supports both modes. A person who wants both identities authorizes it twice, once for each actor. The sealed Avalon OAuth state—not the requested provider scopes—selects the actor.
-- Request only capability-derived scopes. Do not request `admin`; Linear app actors do not support it.
-- Treat refresh-token rotation as an atomic credential update and retain the previous token only for Linear's documented replay grace behavior.
-- Verify the returned scopes before marking a connection healthy.
-- Store the organization ID for both modes, the authorized Linear user ID for personal connections, and the app-user ID for workspace connections. Reconnects must preserve both the organization and actor identity.
-- `linear.agent` is workspace-only because delegation and mentions target the Avalon app actor, not a human user actor.
+Authorization Code with PKCE S256, in one of two actor modes:
+
+- A **personal** Avalon connection requests `actor=user`. Its tools act as the
+  authorizing Linear user, are available only to that Avalon member, and may
+  include private teams that user can access.
+- A **workspace** Avalon connection requests `actor=app`. Its tools act as Avalon,
+  are available to every member of the Avalon workspace, and are limited to the
+  teams selected while installing the app.
+
+One public Linear app supports both. A person who wants both identities authorizes
+it twice, once per actor, and **the sealed Avalon OAuth state — not the requested
+provider scopes — selects the actor.**
+
+Scopes are capability-derived, never broader:
 
 | Avalon capability | Linear scopes |
 | --- | --- |
@@ -48,9 +89,22 @@ OAuth state sends each callback directly to the workspace's chosen regional Work
 | `linear.write` | `write` |
 | `linear.agent` | `app:assignable`, `app:mentionable`, `write` |
 
-## Resource surface
+`admin` is never requested — Linear app actors do not support it. `linear.agent` is
+workspace-only, because delegation and mentions target the Avalon app actor rather
+than a human user actor.
 
-The production manifest subscribes only to resource, lifecycle, and permission events Avalon can use. Canonical activity types are snake-cased, delivery-idempotent, and associated with attachable resources where the provider exposes a stable object.
+Refresh-token rotation is an atomic credential update; the previous token is
+retained only for Linear's documented replay grace behavior. The returned scopes
+are verified before a connection is marked healthy. Both modes store the
+organization ID; personal connections additionally store the authorizing Linear
+user ID and workspace connections the app-user ID.
+
+### Resource surface
+
+The production manifest subscribes only to resource, lifecycle, and permission
+events Avalon can use. Canonical activity types are snake-cased,
+delivery-idempotent, and associated with attachable resources wherever the provider
+exposes a stable object.
 
 | Linear family | Avalon resource | Use |
 | --- | --- | --- |
@@ -67,22 +121,36 @@ The production manifest subscribes only to resource, lifecycle, and permission e
 | Reaction | Activity only | Lightweight feedback signal |
 | OAuthAuthorization / PermissionChange | Lifecycle only | Reconnect and access reconciliation |
 
-Large raw deliveries are retained regionally in R2; D1 stores compact normalized metadata and idempotency state. Resource hydration uses bounded GraphQL queries at context time.
+Large raw deliveries are retained regionally in R2; D1 stores compact normalized
+metadata and idempotency state. Resource hydration uses bounded GraphQL queries at
+context time.
 
-## Webhook contract
+### Webhook contract
 
 - Verify the HMAC over the exact raw body before parsing.
 - Validate the provider timestamp inside the documented replay window.
 - Use `Linear-Delivery` as the delivery idempotency key.
-- Return exact HTTP 200 for accepted deliveries; other 2xx codes do not satisfy Linear's contract.
+- Return exact HTTP 200 for accepted deliveries; other 2xx codes do not satisfy
+  Linear's contract.
 - Resource deliveries use the ordinary regional activity pipeline.
-- Workspace app connections receive matching organization resource events directly. A personal connection receives an organization delivery only after one bounded, aliased GraphQL query made with that connection's token proves access to the signed resource or a signed parent. The resulting activity remains owner-only. Missing/revoked authorization marks the connection `needs_reconnect`; provider failures fail the delivery so Linear can retry. Never fan an organization webhook to a personal connection solely because its organization ID matches, and never fan lifecycle or native-agent events to personal connections.
-- A production native-agent runtime must durably accept the invocation and acknowledge inside Linear's five-second deadline without waiting for the full agent run.
-- Once that durable admission succeeds, the host control plane—not the model—immediately creates a `👀` reaction on the triggering `sourceCommentId` before model or tool processing begins. Issue-only delegations without a source comment skip the reaction. This is supplemental to, and does not replace, Linear's first-activity deadline.
+- Workspace app connections receive matching organization resource events directly.
+  A personal connection receives an organization delivery only after one bounded,
+  aliased GraphQL query made with that connection's token proves access to the
+  signed resource or a signed parent. The resulting activity remains owner-only.
+- A production native-agent runtime must durably accept the invocation and
+  acknowledge inside Linear's five-second deadline without waiting for the full
+  agent run. Once that durable admission succeeds, the host control plane — not the
+  model — immediately creates a `👀` reaction on the triggering `sourceCommentId`
+  before model or tool processing begins. Issue-only delegations without a source
+  comment skip the reaction. This is supplemental to, and does not replace,
+  Linear's first-activity deadline.
 
-## Native-agent surface
+### Native-agent surface
 
-Linear's Agent APIs remain Developer Preview. Subscribing to `AgentSessionEvent` immediately exposes Agent Session UI to customers, including when the subscription is added only for debugging. Therefore the production resource manifest does not subscribe to it.
+Linear's Agent APIs remain Developer Preview, and **subscribing to
+`AgentSessionEvent` immediately exposes Agent Session UI to customers** — including
+when the subscription is added only for debugging. The production resource manifest
+therefore does not subscribe to it.
 
 The first-class connector metadata records:
 
@@ -92,41 +160,136 @@ The first-class connector metadata records:
 - thought, action, elicitation, response, and error activities;
 - cancellation, external links, plans, and proactive sessions;
 - single-connection ownership per Linear provider account;
-- the five-second webhook deadline and ten-second first-activity/external-link deadline.
+- the five-second webhook deadline and ten-second first-activity/external-link
+  deadline.
 
-Signed native events must match organization ID, granted `linear.agent`, and the stored Linear `appUserId`. A resource-only connection must never receive a delegation. The operational runtime must also enforce one active Avalon native-agent owner per Linear organization/app identity so one delegation cannot start work in multiple Avalon tenants.
-
-Agent-session activation requires all of the following:
+Agent-session activation requires all of the following to pass first:
 
 1. A fast durable inbox that can meet the five-second webhook acknowledgement SLO.
 2. A unique session-to-Avalon-workspace/workstream/run mapping.
-3. A durable outbound activity outbox with stable provider activity IDs across retries.
-4. A deterministic `👀` source-comment acknowledgement before processing, followed by an immediate thought or external workstream URL inside ten seconds.
+3. A durable outbound activity outbox with stable provider activity IDs across
+   retries.
+4. A deterministic `👀` source-comment acknowledgement before processing, followed
+   by an immediate thought or external work-stream URL inside ten seconds.
 5. Prompt resumption based on immutable Agent Activity history.
-6. Stop-signal propagation that halts tools/model work immediately and emits exactly one final response or error.
+6. Stop-signal propagation that halts tool and model work immediately and emits
+   exactly one final response or error.
 7. Auth and select elicitation/resumption behavior.
 8. Plan replacement and proactive-session acceptance tests.
 9. Metrics and alarms for both provider deadlines.
 
-Until those pass, the API rejects `linear.agent` authorization even if an operator accidentally turns on the feature flag, and stale Agent Session deliveries are signed-verified and acknowledged without starting work.
+### Promoting the preview
 
-## Registration stages
+Activating the native-agent surface later requires all three controls, in this
+order:
 
-- `config/provider-apps/linear.json` is the production resource configuration.
-- `config/provider-apps/linear-native-agent.preview.json` is a future update to that same app after native-agent acceptance. It is not a second app.
+1. Change the connector's native runtime state to `operational` after the
+   acceptance suite passes.
+2. Set `LINEAR_NATIVE_AGENT_ENABLED=true` in both regional Workers and build the
+   desktop app with `VITE_LINEAR_NATIVE_AGENT_ENABLED=true`.
+3. Update the registered public app from the resource manifest to the preview
+   manifest.
 
-Activating the preview later requires all three controls:
+## Invariants
 
-1. Change the connector's native runtime state to `operational` after the acceptance suite passes.
-2. Set `LINEAR_NATIVE_AGENT_ENABLED=true` in both regional Workers and build the desktop app with `VITE_LINEAR_NATIVE_AGENT_ENABLED=true`.
-3. Update the registered public app from the resource manifest to the preview manifest.
+- **The sealed OAuth state selects the actor, not the requested scopes.** A
+  callback that infers the actor from what the provider returned can attach an app
+  actor's authority to a personal connection.
+- **Never fan an organization webhook to a personal connection solely because its
+  organization ID matches**, and never fan lifecycle or native-agent events to
+  personal connections. Access must be proved per delivery by that connection's own
+  token.
+- **Signed native events must match organization ID, granted `linear.agent`, and
+  the stored Linear `appUserId`.** A resource-only connection must never receive a
+  delegation.
+- **One active Avalon native-agent owner per Linear organization and app
+  identity.** Without it, one delegation can start work in multiple Avalon tenants.
+- **Reconnects preserve both the organization and the actor identity.** A reconnect
+  that silently changes either produces a connection whose stored history describes
+  a different principal.
+- **Only capability-derived scopes are requested**, and the returned scopes are
+  verified before the connection is marked healthy — Linear may grant less than was
+  asked for.
+- **Exact HTTP 200 for an accepted delivery.** Linear's contract does not accept
+  other 2xx codes, and a 202 reads as a failure that will be retried.
+- **The production manifest does not subscribe to `AgentSessionEvent`**, at any
+  time, for any reason, until the acceptance gate passes — the subscription itself
+  is what ships the UI.
+- **`config/provider-apps/linear-native-agent.preview.json` is an update to the
+  same app**, never a second registration. Registering it as a second app splits
+  every installation.
 
-## Directory-readiness checklist
+## Boundary
 
-- Public name, icon, description, homepage, support contact, privacy policy, and terms are production-ready.
+This document owns Avalon's design against Linear's contracts: the app shape, the
+scope mapping, the routing, and the native-agent gate. It does not own:
+
+| For | Read |
+| --- | --- |
+| The registry, manifests, and adapter rules every connector obeys | [`CONNECTORS.md`](CONNECTORS.md) |
+| The registration itself and its regional routing | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) |
+| Which Linear activity types a person hears about in a digest | [`connector-digestibility.md`](connector-digestibility.md) |
+| The Global/EU boundary the shared ingress sits on | [`REGIONALIZATION.md`](REGIONALIZATION.md) |
+| The flag that gates the native-agent surface | [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) |
+| Credential encryption and webhook verification rules | [`SECURITY.md`](SECURITY.md) |
+
+## Failure modes and limits
+
+- **Until the acceptance gate passes, the API rejects `linear.agent` authorization
+  even if an operator accidentally turns on the feature flag**, and stale Agent
+  Session deliveries are signature-verified and acknowledged without starting work.
+  The flag alone is not sufficient to start an agent session, deliberately.
+- **A personal connection whose proving query returns missing or revoked
+  authorization marks the connection `needs_reconnect`.** A provider *failure* —
+  as opposed to a denial — fails the delivery instead, so Linear retries rather
+  than Avalon silently dropping an event.
+- **Five seconds to acknowledge a native invocation, ten seconds to the first
+  activity or external link.** Both are Linear's, both need alarms, and neither can
+  wait on a model turn.
+- **Linear's Agent APIs are Developer Preview** and may change under the recorded
+  metadata; the `protocol_only` state exists so that a change breaks a manifest
+  rather than a running session.
+
+## Testing
+
+| Suite | Covers |
+| --- | --- |
+| `packages/connectors/src/linear.test.ts` | Scope derivation, actor selection from sealed state, webhook normalization, resource mapping, and the personal-connection access proof. |
+| `packages/connectors/src/linear-agent.test.ts` | The native-agent metadata: invocation modes, activity kinds, deadlines, and the `protocol_only` refusal. |
+| `apps/api/test/linear-routing.test.ts` | The organization-to-region directory and the forwarding of exact signed bytes. |
+| `packages/connectors/src/digestibility-doc.test.ts` | That every declared Linear activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
+
+Run a single file from the package directory —
+`pnpm --filter @avalon/connectors exec vitest run src/linear.test.ts` — the path is
+package-relative, not repo-relative.
+
+The trap is that signature fixtures are byte-exact. A test that re-serializes a
+webhook body before signing it will pass while the production path, which verifies
+over the untouched raw body, fails on the same delivery.
+
+## Directory readiness
+
+Before applying for Linear Integration Directory review:
+
+- Public name, icon, description, homepage, support contact, privacy policy, and
+  terms are production-ready.
 - Requested scopes exactly match documented features.
-- OAuth cancellation, partial consent, revoked grants, rotating refresh tokens, and reconnect flows are tested.
-- Webhook signature, replay, deduplication, retry, and regional-boundary tests pass.
-- Every subscribed event is either a typed activity/resource or a deliberate lifecycle signal.
-- The app has customer-facing setup, disconnect, deletion, and data-retention documentation.
-- Native-agent directory claims remain absent until the operational acceptance gate passes.
+- OAuth cancellation, partial consent, revoked grants, rotating refresh tokens, and
+  reconnect flows are tested.
+- Webhook signature, replay, deduplication, retry, and regional-boundary tests
+  pass.
+- Every subscribed event is either a typed activity/resource or a deliberate
+  lifecycle signal.
+- The app has customer-facing setup, disconnect, deletion, and data-retention
+  documentation.
+- Native-agent directory claims remain absent until the operational acceptance gate
+  passes.
+
+## Changelog
+
+No entries yet. This document predates the changelog rule in
+[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
+the decisions above — beyond the reasons already written inline, and beyond
+Linear's own published contracts, which are linked rather than reproduced — was not
+recorded here and was not reconstructed. The next substantial change to the Linear
+integration starts the record, and that entry is that change, written in full.
