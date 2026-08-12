@@ -19,7 +19,9 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import {
+  BASE_CONFIDENCE_FLOOR,
   DISMISSAL_RUN_LIMIT,
+  OPERATIONAL_CONFIDENCE_FLOOR,
   dismissalRunCutoff,
   suggestionAdmission,
 } from "../services/activity-routing-feedback";
@@ -30,7 +32,7 @@ import { automationModelOverride, scheduledWorkstreamModel } from "../services/a
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
-import { logInfo, logWarn } from "../observability/logger";
+import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 
 interface ActivityRow {
@@ -383,6 +385,11 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
 
 /**
  * Whether this connector activity may be read back to a person in a digest.
+ *
+ * This answers the digest question only. Contextual routing reads the same
+ * declaration through `declaredConfidenceFloor`, which treats it as a prior
+ * rather than a verdict and reaches a different answer on purpose; do not merge
+ * the two.
  *
  * The connector's manifest is the authority, keyed on the event type — the one
  * thing an activity durably carries all the way from the provider to the log.
@@ -853,6 +860,41 @@ async function startActivityAutomation(
 }
 
 /**
+ * Where an event type's confidence bar starts, before this workspace has said
+ * anything about it.
+ *
+ * The manifest's digestibility partition is the only standing judgement about
+ * an event type that exists, so it is worth reading — but it answers a
+ * different question ("should somebody be told this on a schedule"), and it is
+ * read here as a prior rather than a veto. An empty `digestible` list is the
+ * absence of a judgement rather than a negative one: the generic webhook
+ * classifies nothing as news because Avalon cannot parse what a caller posts,
+ * which says nothing at all about whether that payload belongs in a work
+ * stream. A connector that drew no line gets no prior.
+ *
+ * A registry that cannot answer leaves the bar at the base. Withholding is
+ * right when the question is "may this reach somebody's inbox" and wrong here,
+ * where the cost of a missing answer would be one misconfigured credential
+ * silently disabling contextual routing for a whole region.
+ */
+function declaredConfidenceFloor(env: Env, activity: ActivityRow): number {
+  try {
+    const digestible = connectorRegistryForEnv(env)
+      .get(activity.connector_type)
+      .manifest
+      .digestibleActivityTypes;
+    if (digestible.length === 0) return BASE_CONFIDENCE_FLOOR;
+    return digestible.includes(activity.event_type)
+      ? BASE_CONFIDENCE_FLOOR
+      : OPERATIONAL_CONFIDENCE_FLOOR;
+  } catch {
+    // `activityIsDigestible` logs the same failure for the same activity a few
+    // steps later, on the projection path; a second line would only double it.
+    return BASE_CONFIDENCE_FLOOR;
+  }
+}
+
+/**
  * The speculative half of routing: no watch and no automation asked for this
  * activity, so a model is asked whether one of the work streams a person is
  * already using is about it, and a card offering the attachment is written if
@@ -867,33 +909,29 @@ async function routeContextually(
   excludedWorkstreamIds: Set<string>
 ): Promise<boolean> {
   if (!env.OPENROUTER_API_KEY) return false;
-  // A suggestion card is a stronger interruption than a digest line, not a
-  // weaker one: it lands in a transcript with two buttons and is rebuilt on
-  // every refetch until somebody clicks one, where a digest line is a row in a
-  // batch read on the reader's own schedule. So the question the manifest
-  // already answers — would a person who was away for a day want this read back
-  // to them? — decides this too, and an event type that is not worth telling
-  // someone about on a schedule is not worth asking them about here. Watches
-  // and automations upstream are deliberately not filtered this way: those were
-  // asked for by name.
-  if (!activityIsDigestible(env, activity)) return false;
 
   const admission = await suggestionAdmission(env, {
     workspaceId: activity.workspace_id,
     provider: activity.provider,
     eventType: activity.event_type,
+    declaredFloor: declaredConfidenceFloor(env, activity),
   });
   // Asked before the candidates are selected and before the model is called: an
   // event type this workspace has only ever dismissed cannot produce a card at
   // any confidence, so buying an inference to discover that is pure waste.
   if (admission.suppressed) {
     // Suppression is invisible from the outside — the absence of a card looks
-    // exactly like a model that declined — so it says so once per activity.
-    logInfo(env, "contextual_routing_event_type_suppressed", {
+    // exactly like a model that declined. Logged at debug rather than info
+    // because it fires once per ingested activity: a suppressed high-volume
+    // type would otherwise write thousands of identical lines a day at the
+    // production log level. `docs/contextual-routing.md` has the query that
+    // answers the same question from the rows.
+    logDebug(env, "contextual_routing_event_type_suppressed", {
       workspace_id: activity.workspace_id,
       provider: activity.provider,
       event_type: activity.event_type,
       dismissed: admission.dismissed,
+      dismissers: admission.dismissers,
     });
     return false;
   }
@@ -934,12 +972,26 @@ async function routeContextually(
                   AND accepted.status = 'accepted'
              ), '')
         ) < ?4
+        -- Anything a watch or an automation already routed. Excluded here for
+        -- the same reason the dismissal run is: filtering after the LIMIT let a
+        -- work stream that is already receiving this activity consume one of
+        -- the twelve slots, so a directly-routed activity handed the model
+        -- eleven candidates and silently cost the twelfth its chance.
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(?5) routed WHERE routed.value = w.id
+        )
       ORDER BY w.last_activity_at DESC
       LIMIT 12`
   )
-    .bind(activity.workspace_id, restrictedUserIdsJson, dismissalRunCutoff(), DISMISSAL_RUN_LIMIT)
+    .bind(
+      activity.workspace_id,
+      restrictedUserIdsJson,
+      dismissalRunCutoff(),
+      DISMISSAL_RUN_LIMIT,
+      JSON.stringify([...excludedWorkstreamIds]),
+    )
     .all<WorkstreamCandidate>();
-  const eligible = candidates.results.filter((candidate) => !excludedWorkstreamIds.has(candidate.id));
+  const eligible = candidates.results;
   if (eligible.length === 0) return false;
 
   const { result } = await runStructuredInference(env, {

@@ -263,7 +263,7 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
-`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. One surface reads the declaration without being the digest: [contextual routing](contextual-routing.md) starts an operational type at a higher confidence bar before offering it as Suggested context, as a prior a workspace's own acceptances overrule. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
@@ -313,13 +313,15 @@ card — is now [`contextual-routing.md`](contextual-routing.md). This document
 keeps the deterministic pipeline, the manifest contract, and the digestibility
 declaration. Step 8 says what the feedback is now *for*.
 
-**Why:** The card gained three gates in front of the model, two of them fed by
-the workspace's own past accept and dismiss decisions, with their own thresholds,
-windows, and a decay rule that exists to stop suppression being permanent. That
-is a subsystem with invariants an outsider can break — most of them about
-`digestible`, which this document owns and that one now consumes — and it was
-about to be four paragraphs inside a document already covering seven connectors.
-The reasoning for the gates themselves is in that document's changelog.
+**Why:** What becomes a card is now decided by a confidence floor that this
+document's digestibility declaration only sets the starting point for, with the
+workspace's own accept and dismiss history overruling it, its own thresholds and
+windows, a corroboration rule, and a decay rule that exists to stop suppression
+being permanent. That is a subsystem with invariants an outsider can break — most
+of them about `digestible`, which this document owns and that one now reads for a
+different question — and it was about to be four paragraphs inside a document
+already covering seven connectors. The reasoning is in that document's changelog,
+including why reading `digestible` as a veto was tried and reverted.
 
 **Considered and rejected:** Keeping it here under a new heading, per the
 one-module-one-owner rule. Rejected because the two are genuinely separable: this
