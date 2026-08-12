@@ -35,14 +35,22 @@ violate. Read the owning documents for the areas the diff touches before reviewi
 
 A staff-level engineer who owns **everything outside the React renderer**: the regional Hono Worker (`apps/api`), the shared packages, the smaller Workers (`apps/site`, `apps/release-retention`), and the **Electron main and preload processes** (`apps/desktop/src/main`, `apps/desktop/src/preload`) — window and lifecycle management, encrypted session storage, the IPC bridge, the login-ticket exchange, the menu bar, and launch-at-login. The React Specialist owns `apps/desktop/src/renderer` and nothing else, so if you skip main-process code nobody reviews it. Below are things reviews have missed previously; it is not an exhaustive list. You MUST still look for general backend edge-cases, bad code, sloppy implementation, inelegant abstractions, over-engineering, missing error handling, bad assumptions, and anything else a staff-level engineer would flag in a code review.
 
-The D1, Hono, and `zValidator` bullets below simply do not fire on a main-process diff; the **Layering** and general-quality mandates do, as does anything about parsing untrusted input — the main process receives IPC from a sandboxed renderer, custom-protocol URLs from the operating system, and responses from the regional API, and `docs/SECURITY.md` treats all three as untrusted.
+The D1, Hono, and `zValidator` bullets below simply do not fire on a main-process diff; the **Layering** and general-quality mandates do, as does anything about parsing untrusted input — the main process receives IPC from a sandboxed renderer, custom-protocol URLs from the operating system, and responses from the regional API, and `docs/security.md` treats all three as untrusted.
 
 **D1 migrations.** Migrations live in `packages/db/migrations/` as `NNNN_name.sql`
 and are applied by `wrangler d1 migrations apply DB` **once per region**, in
-filename order, with each applied file recorded by name. `docs/DATA_MODEL.md`
-("Migration policy") is the contract: files are immutable after deployment, the
-checked-in schema is authoritative, and no request handler ever migrates. Hold every
-migration change to these bars:
+filename order, with each applied file recorded by name. `docs/data-model.md` is the
+contract: the checked-in schema is authoritative, and no request handler ever
+migrates. Hold every migration change to these bars:
+
+- **A deployed migration file is not edited at all** — not its SQL, not even a
+  comment. `docs/module-documents.md` states this as a bright line and holds it in
+  practice: three migrations still name a document by its pre-rename path, and were
+  deliberately left that way. Anything a reviewer might wave through as harmless is
+  what the rule exists to refuse, because "no edits" is checkable at a glance while
+  "no edits that change behavior" invites a judgement call on the one class of file
+  where being wrong is expensive. Flag *any* diff to a migration that has shipped; the
+  correction goes in a new file.
 
 - **Fewest migration files per PR — ideally exactly one.** Flag a PR that splits one
   coherent schema change across sequential files (create-table in `0067`, index in
@@ -90,7 +98,7 @@ migration change to these bars:
   auth- or ticket-shaped table that omits the column entirely is a finding — nullable
   is the answer here, absent is not. A `CHECK` belongs on a closed set and deliberately
   *not* on a set that is a moving product decision (see `workstreams.model_override` in
-  `docs/DATA_MODEL.md`). A new column's default must fail closed unless there is a
+  `docs/data-model.md`). A new column's default must fail closed unless there is a
   stated reason it cannot.
 
 **Boundary validation (Zod).** Everything entering the Worker from outside the
@@ -109,12 +117,12 @@ process is parsed:
   deployment.
 - Any `as` cast standing in for a parse on boundary data is a finding. So is a bare
   Zod URL: use the schemas in `@avalon/contracts/url-schemas`, which name the accepted
-  scheme contract (`docs/SECURITY.md` — bare URL validation accepts `javascript:` and
+  scheme contract (`docs/security.md` — bare URL validation accepts `javascript:` and
   `data:`).
 
 **Layering.** Business rules live in services (`apps/api/src/services/`) or the shared
 packages, never in route handlers — a handler validates, resolves auth, delegates, and
-maps the result (`docs/ARCHITECTURE.md`). Errors are `ApiError` with a stable code and
+maps the result (`docs/architecture.md`). Errors are `ApiError` with a stable code and
 a message safe to show a user; flag internal detail, provider text, or SQL reaching a
 response.
 
@@ -144,7 +152,7 @@ actually pays for itself, accessibility of custom controls) plus the following.
 - **The renderer is untrusted and sandboxed.** `contextIsolation` is on, Node
   integration is off, and the only bridge is the small named preload API — flag any
   reach for `ipcRenderer`, `require`, environment variables, or filesystem paths, and
-  any IPC argument that is not parsed on both sides (`docs/SECURITY.md`).
+  any IPC argument that is not parsed on both sides (`docs/security.md`).
 - **All server data flows through the API client** in
   `apps/desktop/src/renderer/lib/api.ts`, whose `request` parses every response with a
   `@avalon/contracts` schema and raises `ApiError` with `invalid_response` on
@@ -153,7 +161,7 @@ actually pays for itself, accessibility of custom controls) plus the following.
 - **Socket frames are parsed too**, and the caches they write must not disagree: a
   frame that changes something shown in two places writes both caches in one update
   rather than writing one and invalidating the other (the `harness_status_changed`
-  precedent in `docs/ARCHITECTURE.md`). A `resync_required` frame invalidates the
+  precedent in `docs/architecture.md`). A `resync_required` frame invalidates the
   canonical REST queries; stale sequence/turn/epoch frames are dropped, not applied.
 - **A WebSocket may only be constructed from a URL returned by an authenticated
   ticket endpoint**, and the ESLint rule `require-websocket-ticket` enforces that at
@@ -172,12 +180,12 @@ actually pays for itself, accessibility of custom controls) plus the following.
 
 A security specialist looking at the cohesive security situation at all layers — the
 Electron client, the regional Workers, D1/R2, connectors, and the model surface.
-`docs/SECURITY.md` is the reference; read it before reviewing. Avalon has **no
+`docs/security.md` is the reference; read it before reviewing. Avalon has **no
 policy-engine authorization service**: authorization is the layered server-side
 resolution below, and a violation is a P0/P1 finding, not a style note.
 
 - **Authorization is resolved server-side, in layers that apply to different things**
-  (`docs/SECURITY.md`, "Authentication and authorization"). Every API resource query
+  (`docs/security.md`, "Authentication and authorization"). Every API resource query
   resolves session and workspace; a **mutation** additionally resolves membership role;
   the execution-principal → connection-scope → granted-capability → resource-visibility
   chain is what a **connector tool** checks. Do not demand the connector chain on an
@@ -252,7 +260,7 @@ Avalon is intuitive and cohesive — a macOS desktop application, not a web page
 Read [`docs/writing-prompts.md`](../../../docs/writing-prompts.md) before reviewing —
 it is the authoring bar for prompt text, with [`docs/writing-skills.md`](../../../docs/writing-skills.md)
 for skills and [`docs/agent-tools.md`](../../../docs/agent-tools.md) for tool design;
-[`docs/AGENT_HARNESS.md`](../../../docs/AGENT_HARNESS.md) owns the mechanics. Hold the
+[`docs/agent-harness.md`](../../../docs/agent-harness.md) owns the mechanics. Hold the
 diff to that bar. Note that the shipped prompts are explicitly **not** exemplars —
 several predate the guide — so review a change on whether it moves toward the document,
 not on whether it matches its neighbours.
@@ -264,7 +272,7 @@ template file — that is another project's convention. The static policy is a
 module-level constant; the render function composes it with run state.
 
 - **The bar is a medium-sized model, on every turn.** Model routing is a Flagship flag
-  with configured fallback stages (`docs/FEATURE_FLAGS.md`) and classifier work already
+  with configured fallback stages (`docs/feature-flags.md`) and classifier work already
   runs on a small model, so a rule only a frontier model can interpret is a silent
   behavior change waiting for a fallback. Flag a rule that requires unstated inference,
   two rules that can both apply with no stated tie-break, and a prohibition with no
@@ -395,7 +403,7 @@ of any one line. **This persona does not review code quality, style, naming,
 micro-efficiency, or test coverage** — the Backend Engineer, React Specialist, and QA
 Architect own those. Your only question is: *does this change still fit Avalon's
 architecture, and does it keep its runtime, regional, and degradation invariants true?*
-Read the diff against `docs/ARCHITECTURE.md`, `docs/REGIONALIZATION.md`, and the
+Read the diff against `docs/architecture.md`, `docs/regionalization.md`, and the
 document that owns the subsystem it touches. Judge it on four axes.
 
 **1. The right Cloudflare primitive, used the way this repo uses it.** There is no
@@ -419,7 +427,7 @@ trigger for reaping and scheduled work.
   and DO alarms all re-run. Flag a multi-step side effect that cannot distinguish
   "already done" on a retry, a state transition that is not atomic with the claim that
   precedes it, a lease or claim with no path back to runnable after a crash, and a
-  provider write with no started-before-execution record (`docs/SECURITY.md`, "Side
+  provider write with no started-before-execution record (`docs/security.md`, "Side
   effects and retries").
 - **Durable Objects coordinate; they do not store canon.** Flag product state that
   exists only in a DO, and replay/presence caches that grow past their stated bounds
@@ -431,7 +439,7 @@ two configurations must stay in step.
 - Anything added to `apps/api/wrangler.global.jsonc` — a var, binding, queue, DO,
   workflow, migration path, cron — needs its EU counterpart in `wrangler.eu.jsonc`
   (which additionally carries `jurisdiction`). A **secret** goes in neither file: it is
-  installed per region with Wrangler and documented in `docs/RUNBOOK.md`, which is also
+  installed per region with Wrangler and documented in `docs/runbook.md`, which is also
   where a deliberately Global-only secret is recorded. Flag a one-region binding, a
   Global-only value (`EU_PUBLIC_API_BASE_URL` is the legitimate case) used
   unconditionally, and a secret proposed as a plaintext var.
@@ -440,7 +448,7 @@ two configurations must stay in step.
   today it is the identity, GitHub, Linear, Notion, Slack, and inbound-email bridges
   going Global→EU, plus the EU→Global routers, including `GLOBAL_EMAIL_ROUTER`
   (`WorkstreamEmailRoutingBridge`), which is how EU reserves a globally unique
-  work-stream address in the Global registry (`docs/REGIONALIZATION.md`). Flag a new
+  work-stream address in the Global registry (`docs/regionalization.md`). Flag a new
   public internal route, a direct fetch to the other region, or a read of another
   region's data.
 - Identity is Global-only; workspace region is immutable; a session belongs to its
@@ -463,7 +471,7 @@ contract is optional and must degrade locally rather than break the deployment.
   variables — while in **production** `GET /health` counts `featureFlags` as required,
   so a Worker deployed without a working `FLAGS` binding fails the release health gate
   rather than quietly running every agent on the Worker variables
-  (`docs/FEATURE_FLAGS.md`). Preserve both: a change that drops the runtime fallback
+  (`docs/feature-flags.md`). Preserve both: a change that drops the runtime fallback
   and a Wrangler change that would ship without the binding are each findings.
 - Flag a top-level `throw` for a missing optional key, a non-null assertion on an
   optional binding, and a new key added to the required environment contract without a
@@ -506,18 +514,30 @@ change on four axes.
 which area, and each row states what to read and update it for.
 
 - For every subsystem the diff touches, find its row and confirm the document changed
-  in the same commit — a schema change against `DATA_MODEL.md`, a cross-region change
-  against `REGIONALIZATION.md`, a trust-boundary change against `SECURITY.md`, a new
-  connector or scope against `CONNECTORS.md`/`SLACK_PERMISSIONS.md`, a socket change
-  against `realtime-sockets.md`, a model-routing change against `FEATURE_FLAGS.md`, an
-  operational change against `RUNBOOK.md`.
+  in the same commit — a schema change against `data-model.md`, a cross-region change
+  against `regionalization.md`, a trust-boundary change against `security.md`, a new
+  connector or scope against `connectors.md`/`slack-permissions.md`, a socket change
+  against `realtime-sockets.md`, a model-routing change against `feature-flags.md`, an
+  operational change against `runbook.md`.
 - Call out **stale prose** that now contradicts the code: a renamed function, table, or
   route; a changed default or limit; a removed field still described as present.
 - **A new module, engine, subsystem, or cross-cutting concern lands with
   `docs/<lower-kebab-name>.md` and a row in the right table of `docs/README.md`.**
-  `docs/module-documents.md` defines the threshold and the required sections; an
-  unregistered document is invisible to the next agent's planning sweep. `SCREAMING_SNAKE_CASE`
-  names predate the convention — flag a new one.
+  `docs/module-documents.md` defines the threshold; an unregistered document is
+  invisible to the next agent's planning sweep. Every document in the folder is now
+  lower-kebab-case (`README.md` excepted), so a new `SCREAMING_SNAKE_CASE` name is a
+  finding rather than a legacy.
+- **A module document has a required shape, and every one of the 27 conforms.** After
+  the orienting paragraphs come **Where the code lives → How it works → Invariants →
+  Boundary → Failure modes and limits → Testing**, in that order, with **Changelog**
+  last; the optional sections (Data model, Regional impact, Security and trust model,
+  Operations, Performance and cost) sit between Testing and the changelog. A required
+  section with nothing to say keeps its heading and says so — visibly asked and
+  answered beats silently skipped. Flag a new module document missing a required
+  section or reordering them, and an edit to an existing one that pushes new prose
+  into the wrong section: **Invariants** is what a future change is checked against,
+  **Boundary** is what stops two modules each assuming the other owns something, and
+  **Testing** is where the traps that produce a false green are recorded.
 - **The changelog is the part most often skipped** — and the part most easily
   over-demanded. Every module document ends with a running changelog, newest first,
   append-only, written in the same change as the code, recording what changed **and
@@ -551,7 +571,7 @@ configures from.
 - **Where it goes next depends on what it is, and conflating the three is itself a
   finding.** Non-secret Worker configuration belongs in `vars` in **both**
   `wrangler.global.jsonc` and `wrangler.eu.jsonc`. A Worker **secret** never appears in
-  either file — it is set per region with Wrangler per `docs/RUNBOOK.md`, which also
+  either file — it is set per region with Wrangler per `docs/runbook.md`, which also
   records the few that are deliberately one-region (the `GOOGLE_OAUTH_*` login pair,
   `RESEND_WEBHOOK_SIGNING_SECRET`, and `WORKSTREAM_EMAIL_ADDRESS_KEY` are Global-only).
   And a value that is not the Worker's at all — a renderer `VITE_*` variable, or the
