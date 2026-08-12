@@ -1124,7 +1124,7 @@ async function loadAutomationCreatorPluginCatalog(
 ): Promise<AutomationCreatorPluginCatalogEntry[]> {
   const result = await env.DB.prepare(
     `SELECT * FROM connector_connections
-     WHERE workspace_id = ? AND status = 'healthy'
+     WHERE workspace_id = ? AND status <> 'disabled'
        AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))
      ORDER BY created_at ASC`,
   ).bind(workspaceId, userId).all<Record<string, unknown>>();
@@ -1278,7 +1278,7 @@ async function assertAutomationCreatorConnectionAuthorized(
       WHERE id = ? AND workspace_id = ?`,
   ).bind(frozen.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (
-    !row || row.status !== "healthy" || row.connector_type !== frozen.connectorType ||
+    !row || row.status === "disabled" || row.connector_type !== frozen.connectorType ||
     row.scope !== frozen.scope || String(row.model_plugin_id ?? "") !== frozen.modelPluginId ||
     (row.owner_user_id == null ? null : String(row.owner_user_id)) !== frozen.ownerUserId
   ) {
@@ -3668,7 +3668,7 @@ async function loadHarnessTools(
        WHERE wr.workstream_id = ? AND r.workspace_id = ? AND r.connection_id IS NOT NULL`,
     ).bind(input.workstreamId, input.workspaceId).all<{ connection_id: string }>(),
     env.DB.prepare(
-      `SELECT * FROM connector_connections WHERE workspace_id = ? AND status = 'healthy'
+      `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
     ).bind(input.workspaceId).all<Record<string, unknown>>(),
   ]);
@@ -4246,10 +4246,10 @@ async function assertFrozenConnectionAuthorized(
       WHERE id = ? AND workspace_id = ?`,
   ).bind(frozen.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (
-    !row || row.status !== "healthy" || row.connector_type !== frozen.connectorType ||
+    !row || row.status === "disabled" || row.connector_type !== frozen.connectorType ||
     row.scope !== frozen.scope || (row.owner_user_id == null ? null : String(row.owner_user_id)) !== frozen.ownerUserId
   ) {
-    throw new ConnectorError("unauthorized", "Connector is no longer healthy or authorized for this run");
+    throw new ConnectorError("unauthorized", "Connector is no longer authorized for this run");
   }
   if (frozen.scope === "personal" && (
     input.executionPrincipal.type !== "user" || input.executionPrincipal.userId !== frozen.ownerUserId
@@ -5661,7 +5661,7 @@ export async function pollConnectorConnection(
   streamErrors?: ConnectorActivityStreamError[];
 }> {
   const row = await env.DB.prepare(
-    `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+    `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
   ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (!row) throw new Error("Connector connection is unavailable");
   let credentials: Record<string, unknown> = {};
@@ -5727,7 +5727,7 @@ export async function hydrateConnectorActivitySource(
 ): Promise<unknown | null> {
   const row = await env.DB.prepare(
     `SELECT * FROM connector_connections
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+     WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
   ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (!row) return null;
   let credentials: Record<string, unknown> = {};
@@ -5858,7 +5858,7 @@ export async function commitConnectorCursor(
             updated_at = ?2
       WHERE id = ?3
         AND workspace_id = ?4
-        AND status = 'healthy'
+        AND status <> 'disabled'
         AND cursor_json = ?5`,
   )
     .bind(result.cursorJson, now, input.connectionId, input.workspaceId, result.baseCursorJson, errorJson)
@@ -5868,7 +5868,7 @@ export async function commitConnectorCursor(
   const current = await database.prepare(
     `SELECT cursor_json
        FROM connector_connections
-      WHERE id = ?1 AND workspace_id = ?2 AND status = 'healthy'
+      WHERE id = ?1 AND workspace_id = ?2 AND status <> 'disabled'
       LIMIT 1`,
   )
     .bind(input.connectionId, input.workspaceId)

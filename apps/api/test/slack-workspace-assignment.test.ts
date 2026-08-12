@@ -1030,7 +1030,12 @@ describe("Slack public channel membership", () => {
     ).get()).toEqual({ status: "completed" });
   });
 
-  it("retains a denied prompt and executes the original request after recovery", async () => {
+  it("runs a mention on a connection the row believes is broken", async () => {
+    // The status is a record of one past moment and nothing re-checks it, so a
+    // stale `needs_reconnect` must not decide whether a member's request is
+    // answered. This used to post a denial, stash the prompt, and wait for
+    // somebody to reconnect and reply `try again` — a denial posted with the
+    // very bot token that proves the installation works.
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     await seedSlackInstallation(database, credentialsKey);
@@ -1096,73 +1101,11 @@ describe("Slack public channel membership", () => {
       vi.fn(async () => undefined),
     )).processQueuedIngress("event:unhealthy");
 
-    expect(postedMessages).toEqual([expect.stringContaining("connection needs attention")]);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
-    expect(database.prepare(
-      `SELECT prompt, denial_reason FROM slack_agent_pending_prompts
-       WHERE connection_id = '11111111-1111-4111-8111-111111111111'
-         AND slack_channel_id = 'C123' AND slack_thread_ts = '1.0' AND slack_user_id = 'U456'`,
-    ).get()).toEqual({ prompt: "investigate this", denial_reason: "connection" });
-
-    insertSlackEventJob(database, "event:retry-unhealthy", {
-      type: "event_callback",
-      team_id: "T123",
-      api_app_id: "A1",
-      event_id: "EvRetryUnhealthy",
-      event: {
-        type: "message",
-        user: "U456",
-        channel: "C123",
-        channel_type: "channel",
-        thread_ts: "1.0",
-        ts: "1.2",
-        text: "try again",
-      },
-    });
-    await new SlackAgentService(slackMembershipEnvironment(
-      database,
-      credentialsKey,
-      vi.fn(async () => undefined),
-    )).processQueuedIngress("event:retry-unhealthy");
-
-    expect(postedMessages).toHaveLength(2);
-    expect(database.prepare(
-      `SELECT prompt, denial_reason FROM slack_agent_pending_prompts
-       WHERE connection_id = '11111111-1111-4111-8111-111111111111'
-         AND slack_channel_id = 'C123' AND slack_thread_ts = '1.0' AND slack_user_id = 'U456'`,
-    ).get()).toEqual({ prompt: "investigate this", denial_reason: "connection" });
-
-    database.prepare(
-      "UPDATE connector_connections SET status = 'healthy' WHERE id = '11111111-1111-4111-8111-111111111111'",
-    ).run();
-    insertSlackEventJob(database, "event:retry-recovered", {
-      type: "event_callback",
-      team_id: "T123",
-      api_app_id: "A1",
-      event_id: "EvRetryRecovered",
-      event: {
-        type: "message",
-        user: "U456",
-        channel: "C123",
-        channel_type: "channel",
-        thread_ts: "1.0",
-        ts: "1.3",
-        text: "try again",
-      },
-    });
-    await new SlackAgentService(slackMembershipEnvironment(
-      database,
-      credentialsKey,
-      vi.fn(async () => undefined),
-    )).processQueuedIngress("event:retry-recovered");
-
+    expect(postedMessages).not.toContainEqual(expect.stringContaining("connection needs attention"));
     expect(database.prepare("SELECT title, objective FROM workstreams").get()).toEqual({
       title: "investigate this",
       objective: "investigate this",
     });
-    expect(database.prepare(
-      "SELECT text_content FROM messages WHERE message_type = 'text'",
-    ).get()).toEqual({ text_content: "investigate this" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM slack_agent_pending_prompts").get())
       .toEqual({ count: 0 });
     expect(threadTitles).toEqual(["investigate this"]);
@@ -1246,6 +1189,69 @@ async function seedSlackInstallation(database: DatabaseSync, credentialsKey: str
             'plugin_slack_workspace');
   `);
 }
+
+describe("Slack ingress re-drive after reauthorization", () => {
+  it("re-drives an authorization failure once the installation is reauthorized", async () => {
+    // Slack reports `link_shared` exactly once and never redelivers it, so an
+    // event that failed while the grant was dead is lost permanently unless
+    // something lifts the retry ceiling after the reconnect. The ceiling is
+    // right while the grant is dead and wrong the moment it is not.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, "event:stranded", appMention("EvStranded"));
+    database.prepare(
+      `UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 20,
+         error_code = 'unauthorized', updated_at = '2026-01-02'
+       WHERE id = 'event:stranded'`,
+    ).run();
+    // The reconnect: the connection is written after the job last failed.
+    database.prepare(
+      `UPDATE connector_connections SET status = 'healthy', updated_at = '2026-01-03'
+       WHERE id = '11111111-1111-4111-8111-111111111111'`,
+    ).run();
+    const sent: unknown[] = [];
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async (body: unknown) => { sent.push(body); }),
+    )).maintainIngress();
+
+    expect(sent).toContainEqual(expect.objectContaining({ jobId: "event:stranded" }));
+    expect(database.prepare(
+      "SELECT status, attempt_count FROM slack_ingress_jobs WHERE id = 'event:stranded'",
+    ).get()).toMatchObject({ status: "queued", attempt_count: 0 });
+  });
+
+  it("leaves a job alone when nothing about its connection has changed", async () => {
+    // The self-limiting half: a re-driven job that fails again stamps itself
+    // newer than the connection, so it is not selected again until the next
+    // reauthorization. Without that the sweep would re-queue it every cycle.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, "event:still-broken", appMention("EvStillBroken"));
+    database.prepare(
+      `UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 20,
+         error_code = 'unauthorized', updated_at = '2026-01-04'
+       WHERE id = 'event:still-broken'`,
+    ).run();
+    database.prepare(
+      `UPDATE connector_connections SET updated_at = '2026-01-03'
+       WHERE id = '11111111-1111-4111-8111-111111111111'`,
+    ).run();
+    const sent: unknown[] = [];
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async (body: unknown) => { sent.push(body); }),
+    )).maintainIngress();
+
+    expect(sent).not.toContainEqual(expect.objectContaining({ jobId: "event:still-broken" }));
+  });
+});
 
 function insertSlackEventJob(database: DatabaseSync, id: string, payload: unknown): void {
   database.prepare(
