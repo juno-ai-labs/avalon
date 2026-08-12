@@ -95,10 +95,14 @@ configurations:
 
 - **Named** `${region}:${workspaceId}` and resolved exclusively through the
   shared helper in `apps/api/src/lib/durable-object-namespace.ts`, which pins
-  EU workspaces with `jurisdiction("eu")`. The name is derived from the
-  session's resolved workspace — never from a request body — preserving the
-  existing invariant that repositories never choose a region (now: a database)
-  from a user-controlled object ID.
+  EU workspaces with `jurisdiction("eu")` — and which, in local development
+  only, returns the unpinned namespace because Miniflare does not implement
+  jurisdictions; that existing documented tradeoff carries over unchanged.
+  The name is derived from the session's resolved workspace — never from a
+  request body — preserving the existing invariant that repositories never
+  choose a region (now: a database) from a user-controlled object ID; the
+  PRD's security section states the equivalent rule for every sessionless
+  entry point (Queue, Workflows, bridges, inbound email, cron).
 - **Provisioned implicitly.** A Durable Object exists when first addressed;
   workspace creation writes the `workspaces` row in the control plane and the
   first request to the object runs the full migration set against an empty
@@ -109,25 +113,123 @@ configurations:
   Services keep their current shape — repositories and statement builders in
   `packages/db`, business rules in `apps/api/src/services` — and receive a
   database handle that happens to be an RPC stub instead of a D1 binding.
-  Same-colocation RPC is an in-process-class call; the hop that exists is the
-  same kind of hop a D1 query pays today, because D1 is the same object model.
+  The hop a query pays — the edge Worker calling into a storage object that
+  lives where it was first created — is the same kind of hop a D1 query pays
+  today, because D1 is the same object model; open question 2 in the PRD
+  tracks measuring the deliberately-remote case.
 - **Serializes writes per workspace.** A Durable Object processes one event at
   a time, which strengthens — for free — the invariants the schema currently
   defends with unique indexes and compare-and-swap: sequence-number
   allocation, scheduled-run convergence, wake-up at-most-once claims, digest
-  occurrence claims.
-- **Owns per-workspace housekeeping.** The cron sweeps that today scan the
-  regional database without a workspace filter — stale harness-run reaping,
-  draft-attachment cleanup, activity-event retention, the memory-index outbox,
-  digest-default reconciliation — become work the workspace performs for
-  itself on an alarm, or on the existing `WorkspaceScheduler`'s alarm. The
-  regional cron's remaining job is control-plane work and enumerating the
-  workspace registry to nudge objects that should wake.
+  occurrence claims. The same property is priced as a cost, not only a
+  benefit: concurrent requests inside one workspace serialize where D1 runs
+  them in parallel today (six simultaneous connections per invocation), under
+  the ~1,000 requests-per-second soft cap that becomes a per-*workspace*
+  budget rather than a per-region one. At prototype scale — a few members and
+  an agent run at a time per workspace — queueing behind sub-millisecond
+  statements is noise, and requirement 6 is met; per-workspace request rate
+  is the number the version telemetry watches as workspaces grow, and
+  approaching that ceiling argues for splitting hot tables into sibling
+  objects, not for abandoning the model.
+- **Owns per-workspace housekeeping.** The regional cron's unfiltered sweeps
+  become work each workspace performs for itself, with the two genuinely
+  fleet-wide sweeps coordinated through a small control-plane index — the
+  full sweep-by-sweep split is in
+  [Sharding the regional cron](#sharding-the-regional-cron).
 
 The auth path orders cleanly: middleware resolves the session and membership
 against the control-plane D1 exactly as it does today, then constructs the
 request's dependency container around the workspace's database stub. An
 unauthenticated request never wakes a workspace object.
+
+### Cross-store reads: the 57 joins that split
+
+Fifty-seven statements today join workspace-owned tables to control-plane
+tables (`users`, `workspace_members`, `workspaces`), and none of them survives
+the split as one statement. This is the largest mechanical cost of the
+cutover, and it resolves by class rather than case by case:
+
+1. **Joins to `workspaces`** — for the region (the activity consumer) or
+   workspace metadata — disappear. The handle knows its region and the
+   dependency container carries the workspace row the auth path already read.
+2. **Joins to `workspace_members`** — authorization and audience resolution
+   (suggested-work targeting, connector actor identity) — move to the
+   control-plane read the request path already performs: membership is
+   resolved once into the container, and the workspace query receives the
+   resolved member IDs as bound parameters instead of a join.
+3. **Joins to `users`** — display identity on messages, participants, and
+   peers — become a two-step read: the workspace query returns user IDs, and
+   a batched, per-request-memoized control-plane lookup resolves display rows
+   that the repository joins in memory. The fallback, taken only if profiling
+   shows a hot path where the second read matters, is a projected people
+   mirror inside the workspace database maintained on membership and profile
+   change — a named cross-store consistency liability, not a default.
+
+The bound-parameter limit (100) bounds class 2 and 3 fan-ins; the existing
+bulk-limit constants already keep memberships within it.
+
+### Cross-store references and deletion
+
+The schema declares 86 `REFERENCES workspaces(id)` and 68 `REFERENCES
+users(id)` constraints — 42 of the latter `ON DELETE CASCADE` — almost all on
+tables that move. Across the split none can be declared, so referential
+integrity is repartitioned explicitly:
+
+- **Inside a workspace database**, foreign keys between moved tables remain
+  declared exactly as today.
+- **References to `users` and `workspaces`** become plain IDs whose integrity
+  the application owns — the same posture every cross-region reference
+  already takes.
+- **User deletion becomes a control-plane operation with a recorded fan-out.**
+  Today `ON DELETE CASCADE` silently disposes of a deleted user's personal
+  connector connections *and the `encrypted_credentials` they carry*
+  (`0009_provider_connectors_and_web_usage.sql`); after the split nothing
+  implicit remains, so deletion writes a control-plane intent first, revokes
+  sessions and control-plane rows, then commands a scrub in every workspace
+  database the registry says the user belonged to — idempotent, retried until
+  each workspace confirms, with the pending record as the evidence trail. The
+  credential-bearing rows are the reason this is a saga and not a best-effort
+  sweep. The ISO 27001 disposal claim in the PRD rests on this mechanism
+  being explicit and evidenced, where today's cascade is implicit.
+- **Workspace deletion** is the object-level operation: destroy the workspace
+  database (see [Operator access](#operator-access)), then delete the
+  control-plane rows.
+
+### Sharding the regional cron
+
+The scheduled handler runs twelve unfiltered sweeps today
+(`apps/api/src/index.ts`). They split three ways:
+
+1. **Workspace-local sweeps shard cleanly** — their rows and their due-ness
+   are workspace-scoped: harness-attempt reaping, draft-attachment cleanup,
+   deleted-note-object reaping, note-privacy notifications, the memory-index
+   outbox, Slack ingress maintenance, Slack unfurl refresh, suggested-work
+   processing, and activity-event retention. Each becomes an alarm-driven
+   pass inside the workspace object (or the `WorkspaceScheduler`, which
+   already owns a per-workspace alarm and its backoff bookkeeping).
+2. **Registry-driven reconciliation stays on the regional cron** —
+   `reconcileDigestDefaults` enumerates workspaces and memberships, which is
+   control-plane data; it keeps its shape and issues per-workspace RPCs only
+   where reconciliation found something to change.
+3. **Two sweeps are genuinely fleet-wide and get a control-plane due-work
+   index.** `processDueOpportunityWindows` is a global priority queue —
+   `ORDER BY process_after LIMIT 12` across all workspaces, a deliberate
+   fleet-wide concurrency throttle — and `recoverPendingActivityQueue`
+   recovers expired leases with the same shape. Sharding their rows makes
+   fleet-wide ordering inexpressible, so the control plane gains a small
+   `workspace_due_work` index (`workspace_id`, `kind`, `next_due_at`): each
+   workspace object upserts its own earliest due instant whenever it changes —
+   the same earliest-item discipline the `WorkspaceScheduler` already applies
+   to its alarm, projected up one level. The cron reads the most-overdue
+   rows, takes the global `LIMIT` as "at most N workspaces serviced per
+   tick", and RPCs exactly those workspaces; per-workspace ordering lives in
+   the object, and a cold workspace with nothing due is never woken. This
+   index is the one piece of tenant-adjacent state the control plane gains,
+   and it holds instants and kinds — never content.
+
+Without class 3's index, the only alternative would be waking every object on
+every tick — the fan-out loop key design decision 6 rejects; the index is
+what makes that rejection honest.
 
 ### What deliberately does not shard
 
@@ -264,7 +366,16 @@ objects; this is the real cost of option D, and it is bounded:
 - **Export** — a `dump` RPC streaming a SQL-text dump to the region's R2
   bucket, giving per-workspace backup artifacts `wrangler d1 export` used to
   give per region.
-- **Restore** — an operator runbook entry driving the PITR bookmark API.
+- **Restore** — point-in-time recovery is an inside-the-object operation
+  (`onNextSessionRestoreBookmark`), so the object exposes an operator-gated
+  `restoreToBookmark` RPC; the runbook entry drives that RPC rather than
+  replacing it.
+- **Destroy** — deletion is likewise inside-the-object (`deleteAll`, then
+  refuse to serve), so the object exposes a `destroy` RPC driven only by the
+  control-plane workspace-deletion path, which records the intent before
+  issuing it and reconciles the registry against objects whose destruction
+  never confirmed. This is the mechanism behind the PRD's workspace-deletion
+  behavior and its disposal claim.
 - **Version telemetry** — each object reports its schema version on wake; the
   health surface aggregates lag so an operator can see fleet skew (expected
   and harmless: cold objects lag by definition).
@@ -281,21 +392,29 @@ correct migration of a disposable dataset is to not perform one.
    `D1DatabaseLike`-over-RPC handle, and the dependency-container seam that
    hands services a workspace database instead of `env.DB`.
 2. **Cut services over** to the workspace handle and the control-plane split.
-   The ~268 `workspace_id` predicates in tenant-scoped queries become dead
-   weight and are removed with their columns rather than left as fossils —
-   clean architecture over migration diff-size, per the brief.
+   The ~460 `workspace_id = ?` predicates (447 in `apps/api/src`, 13 in
+   `packages/db/src`) become dead weight and are removed with their columns
+   rather than left as fossils — clean architecture over migration diff-size,
+   per the brief — and the 57 cross-store joins are reworked per
+   [the rules above](#cross-store-reads-the-57-joins-that-split), which is
+   the step's real bulk.
 3. **Reset hosted state.** Recreate the team's test workspaces through
    ordinary signup after the cutover deploys. If any test workspace is worth
    keeping, a one-shot throwaway script replays its rows from a
    `wrangler d1 export` dump through the new handle — written only if wanted
    at cutover time, deleted after use, never productized.
-4. **Retire the legacy path.** The per-region D1 databases stay untouched (and
-   readable through Wrangler) for 30 days as a safety net, then are deleted.
-   The control-plane D1 databases live on with only the control-plane tables;
-   a control-plane migration drops the moved tables.
+4. **Retire the moved tables.** The regional D1 databases are also the
+   control plane, so the databases themselves live on; it is the moved tables
+   that are frozen — unwritten by the new path, still readable through
+   Wrangler — for 30 days as a safety net, after which an ordinary
+   control-plane migration drops them.
 
-**Rollback during the safety window** is redeploying the previous Worker —
-its databases were never written to by the new path. After the window, the new
+**Rollback during the safety window** is redeploying the previous Worker: the
+moved tables were never written by the new path, so pre-cutover workspaces
+serve exactly as before. The shared control plane keeps running either way,
+which means a workspace created after cutover appears to the old Worker with
+no tenant rows behind it and serves as empty — accepted, since such
+workspaces are the team's own and are recreated. After the window, the new
 architecture is simply the system; there is nothing to roll back to, which is
 the accepted meaning of a hard cutover at this stage.
 
