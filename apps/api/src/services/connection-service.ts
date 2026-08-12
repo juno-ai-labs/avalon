@@ -1079,7 +1079,6 @@ export class ConnectionService {
     const connection = await this.loadAuthorized(id);
     const context = await this.context(connection);
     const adapter = this.registry().get(connection.connector_type);
-    const before = JSON.stringify(context.credentials);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
     let repairOutcome: string | null = null;
     try {
@@ -1089,7 +1088,6 @@ export class ConnectionService {
           connection: context,
           adapter,
           signal: AbortSignal.timeout(10_000),
-          connectionStatus: String(connection.status),
         },
         async (authorized) => {
           // Testing a connection is the one moment somebody has asked Avalon to
@@ -1105,8 +1103,21 @@ export class ConnectionService {
         },
       );
     } catch (error) {
-      if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
-      result = { ok: false, message: error.message, reconnectRequired: true };
+      // Every failure is an answer here, not a 500. Testing a connection is the
+      // affordance a member reaches for *because* it is broken, so the one
+      // thing it must not do is fail to report. This used to be narrower and
+      // could afford to be: a non-healthy row skipped the refresh entirely.
+      // Now the door refreshes for any row, which puts two more failures on
+      // this path — the ten-second abort (a `DOMException`, not a
+      // `ConnectorError`) and the lease compare-and-swap losing under a
+      // concurrent refresh — and either one would have escaped as a 5xx, with
+      // the terminal status write below skipped as well.
+      const reconnectRequired = error instanceof ConnectorError && error.code === "unauthorized";
+      result = {
+        ok: false,
+        message: error instanceof Error ? error.message : "The connection test failed",
+        ...(reconnectRequired ? { reconnectRequired: true } : {}),
+      };
     }
     if (result.ok && connection.connector_type === "linear") {
       const organizationId = connection.provider_account_id == null
@@ -1161,15 +1172,11 @@ export class ConnectionService {
         }
       }
     }
-    // The door persists what it and the health check changed, but only for a
-    // connection D1 still holds as healthy. A probe that revives a
-    // `needs_reconnect` connection is the case that write skips, so the
-    // identity a successful check recovered is stored here instead — and only
-    // for that case, or a healthy connection would be encrypted and written
+    // The compensating write this used to need is gone: the door now persists
+    // for any row a person has not disabled, so a probe that revives a
+    // `needs_reconnect` connection has its recovered credential stored by the
+    // door itself. Writing again here would encrypt and store the same value
     // twice for one test.
-    if (connection.status !== "healthy" && JSON.stringify(context.credentials) !== before) {
-      await this.persistCredentials(connection, context.credentials);
-    }
     if (result.ok && connection.connector_type === "granola" && connection.scope === "personal") {
       const providerAccountId = stringField(context.credentials, "providerAccountId");
       if (!providerAccountId) {
@@ -1224,7 +1231,6 @@ export class ConnectionService {
             connection: await this.context(connection),
             adapter,
             signal,
-            connectionStatus: String(connection.status),
           },
           (authorized) => adapter.revoke!(authorized, signal),
         );
@@ -1415,7 +1421,7 @@ export class ConnectionService {
     const connection = await this.env.DB.prepare(
       `SELECT * FROM connector_connections
        WHERE id = ? AND workspace_id = ? AND connector_type = 'generic_webhook'
-         AND status = 'healthy'`,
+         AND status <> 'disabled'`,
     ).bind(id, auth.workspaceId).first<StoredConnection>();
     if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
     if (connection.scope === "personal" && connection.owner_user_id !== auth.userId) {
@@ -1431,7 +1437,7 @@ export class ConnectionService {
     await this.env.DB.prepare(
       `UPDATE connector_connections
        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+       WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
     ).bind(
       encrypted.ciphertext,
       encrypted.iv,
@@ -1618,7 +1624,7 @@ export class ConnectionService {
     }
     const connection = await this.env.DB.prepare(
       `SELECT * FROM connector_connections
-       WHERE id = ? AND connector_type = 'granola' AND scope = 'workspace' AND status = 'healthy'`,
+       WHERE id = ? AND connector_type = 'granola' AND scope = 'workspace' AND status <> 'disabled'`,
     ).bind(connectionId).first<StoredConnection>();
     if (!connection) throw new ApiError(404, "connection_not_found", "Granola webhook connection not found");
     const context = await this.context(connection);
@@ -1732,7 +1738,7 @@ export class ConnectionService {
       throw new ApiError(400, "invalid_webhook_body", "Webhook body is not valid UTF-8");
     }
     const connection = await this.env.DB.prepare(
-      `SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'generic_webhook' AND status = 'healthy'`,
+      `SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'generic_webhook' AND status <> 'disabled'`,
     ).bind(connectionId).first<StoredConnection>();
     if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
     const context = await this.context(connection);

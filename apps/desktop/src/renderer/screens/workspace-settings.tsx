@@ -42,6 +42,7 @@ import type { DesktopApplicationSettings } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { DigestSettings } from '../components/digest-settings';
+import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
@@ -188,17 +189,7 @@ const connectorProviders = [
     description: 'Messages, files, people, canvases, conversations, and the Avalon workspace Agent.',
     icon: MessageSquare,
     scopes: ['you', 'workspace'] as const,
-    personalCapabilities: [
-      'slack.search',
-      'slack.messages.read',
-      'slack.files.read',
-      'slack.users.read',
-      'slack.messages.write',
-      'slack.conversations.write',
-      'slack.reactions.write',
-      'slack.canvases.read',
-      'slack.canvases.write',
-    ],
+    personalCapabilities: SLACK_PERSONAL_CAPABILITIES,
     capabilities: ['slack.agent', 'slack.notifications.write'],
   },
   {

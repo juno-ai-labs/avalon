@@ -582,7 +582,7 @@ async function syncVerifiedIdentityDirectory(env: Env, workspaceId: string): Pro
       `SELECT connector_type, owner_user_id, provider_account_id, config_json
        FROM connector_connections
        WHERE workspace_id = ? AND scope = 'personal' AND owner_user_id IS NOT NULL
-         AND provider_account_id IS NOT NULL AND status = 'healthy'`,
+         AND provider_account_id IS NOT NULL AND status <> 'disabled'`,
     ).bind(workspaceId).all<Record<string, unknown>>(),
     env.DB.prepare(
       `SELECT user_id, slack_team_id, slack_user_id FROM slack_user_links

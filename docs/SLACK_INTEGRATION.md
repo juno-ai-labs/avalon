@@ -54,7 +54,7 @@ The canonical definition is in `docs/PROVIDER_APPS.md`: zero-copy means Avalon d
 
 Within that boundary, Avalon may subscribe to Slack activity, retain bounded normalized trigger evidence and provenance for configured automations, fetch authorized task-specific context on demand, and preserve Slack-derived content in the Avalon work that uses it. The workspace bot joins every current public channel after installation or reconnection and joins new public channels from `channel_created` events so `@Avalon` is consistently available. To support natural follow-ups, Slack delivers `message.channels` and `message.groups` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts human replies in an existing Avalon thread, a recent denied Avalon thread, or a message event matched by an explicitly configured Slack automation source; unrelated messages are discarded before durable queueing. Normalized automation activity retains bounded trigger evidence and identifiers, not a general-purpose copy of the source conversation or file content.
 
-When a prompt is denied because the workspace connection, channel classification, or Agent policy needs attention, Avalon retains that prompt regionally for at most 24 hours. This lets the same Slack member reply `try again` after the problem is fixed without retyping the request. The prompt is deleted when a session starts and expired rows are removed by scheduled maintenance. A narrowly matched, explicitly mentioned retry of a denial created before this mechanism may read at most the first 15 messages in that single thread to recover the prompting mention; unmentioned messages in other threads are ignored.
+When a prompt is denied because the channel classification or Agent policy needs attention, Avalon retains that prompt regionally for at most 24 hours. This lets the same Slack member reply `try again` after the problem is fixed without retyping the request. The prompt is deleted when a session starts and expired rows are removed by scheduled maintenance. A narrowly matched, explicitly mentioned retry of a denial created before this mechanism may read at most the first 15 messages in that single thread to recover the prompting mention; unmentioned messages in other threads are ignored.
 
 Natural public- and private-channel follow-ups require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Avalon OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Avalon's routing and retention restrictions above remain narrower than the provider grant.
 
@@ -72,7 +72,7 @@ The shared ingress is `https://slack.with-avalon.com`:
 
 Ingress verifies `v0:{timestamp}:{exact raw body}` using HMAC-SHA256, requires a timestamp inside five minutes, compares in constant time, checks `api_app_id`, and deduplicates Events API `event_id` values. URL verification is answered synchronously. Before acknowledging an event, text command, or valid modal submission, the owning regional service writes an ingress job and publishes its opaque job ID to the regional queue. Modal validation errors are returned synchronously to Slack. Shortcuts that need a trigger ID open their modal synchronously. The Global router looks up only the team route and invokes the owning regional service binding.
 
-Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that do not match an existing or retryable Avalon thread are acknowledged without creating a regional ingress job.
+Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. A job that failed on authorization is classified non-retryable and pinned at the attempt ceiling, which is right while a grant is dead and wrong the moment it is not: `redriveReauthorizedIngress` re-queues such a job once its connection has been written again, which a reauthorization always does. It is self-limiting, because a re-driven job that fails again stamps itself newer than the connection. Without it, events that arrived during an outage stayed failed forever with their payload still on the row — and a `link_shared` Slack reports exactly once is never redelivered, so the message keeps its bare URL permanently. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that do not match an existing or retryable Avalon thread are acknowledged without creating a regional ingress job.
 
 After a queued DM or mention passes connection, policy, and actor checks, the worker uses the shared connector activation flow to add the `eyes` reaction to the exact triggering message before it gathers context, creates/resumes a workstream, or starts model/tool processing. Slack's `already_reacted` response is a successful idempotent retry. A Slack-side reaction failure is logged and, when appropriate, marks the installation for reconnect, but does not discard the already-admitted user request. Commands and modal submissions have no unambiguous source message and retain their existing ephemeral/modal acknowledgement instead.
 
@@ -82,7 +82,7 @@ Slack users are never matched to Avalon accounts by mutable profile fields or em
 
 Person-mention notification routing is deliberately narrower than account linking. When an
 active Avalon member is mentioned, Avalon first uses that member's confirmed Slack link for
-an installed team. If no link exists, every healthy workspace installation may resolve the
+an installed team. If no link exists, every workspace installation a person has not disabled may resolve the
 member's verified Avalon login email with `users.lookupByEmail`; Avalon sends a bot-authored
 DM only when exactly one installed team returns a valid active human. This lookup is used only
 as a delivery address: it does not create a `slack_user_links` row, authenticate the recipient,
@@ -91,7 +91,9 @@ matches fall back to the ordinary mention email. Existing installations must com
 Avalon OAuth flow again to grant additive `users:read`, `users:read.email`, and
 `reactions:read` and `reactions:write` bot scopes. Until the identity scopes arrive, lookup-based mentions use
 email. If an already-admitted prompt discovers that `reactions:write` is missing, Avalon
-continues that task but marks the installation for reconnect before accepting later prompts.
+continues that task and marks the installation for reconnect. The mark is a diagnosis, not a
+gate: later prompts still reach Slack and fail on Slack's answer if the scope is really gone —
+see [Stored status is a belief, not a gate](CONNECTORS.md#stored-status-is-a-belief-not-a-gate).
 
 1. An unlinked member clicks **Connect Avalon** — on App Home, or on the private
    prompt Avalon sends when a workspace-owned task needs personal authority.
@@ -100,7 +102,17 @@ continues that task but marks the installation for reconnect before accepting la
    opened against that same click.
 3. The HTTPS handoff keeps the token in a URL fragment, removes it from browser history, and opens the signed-in Avalon desktop app.
 4. The desktop app calls authenticated `POST /connections/slack/link` against its active regional session; the endpoint consumes the challenge and binds that Avalon user to the Slack identity.
-5. Every later invocation verifies active Avalon membership, the active link, the installation, and the owning region.
+5. The desktop then starts the personal Slack authorization against that same account, so one
+   click accomplishes both halves rather than leaving the second as an errand. A link that
+   committed survives a failed authorization; only the half that did not finish is reported.
+6. Every later invocation verifies active Avalon membership, the active link, the installation, and the owning region.
+
+**This is one of two routes to a link.** Completing a *personal* Slack connection establishes it
+too, through `establishIdentityLinkFromPersonalConnection`: Slack ran the OAuth and named the
+user, which is a stronger proof of who this is than a challenge Avalon minted. Both routes are
+idempotent, so whichever a member reaches first, both end up done. The insert is refused only
+when the Slack identity already belongs to a different Avalon member — the personal connection
+still stands in that case, because resolving it is not that operation's business.
 
 **A challenge is minted by the click that redeems it, and never earlier.** No
 Slack surface holds a handoff URL: App Home and the claim DM carry a button
@@ -120,10 +132,12 @@ the member with no live link at all. A challenge that cannot be redeemed
 is refused with the reason rather than a single generic expiry:
 `slack_link_unknown`, `slack_link_consumed` (already used, or superseded),
 `slack_link_expired`, `slack_link_workspace_mismatch`, and
-`slack_installation_unhealthy`. Only the first three are answered by clicking
-**Connect Avalon** again; an unhealthy installation needs an Avalon workspace
-owner or admin to reconnect it, and Slack is told so at the click rather than
-handing the member a link that cannot work.
+`slack_installation_disabled`. Only the first three are answered by clicking
+**Connect Avalon** again. A *disabled* installation needs an Avalon workspace owner or admin
+to re-enable it: disabling clears the credentials and drops the row from `connectionForTeam`,
+so redeeming would commit the identity link and then fail publishing App Home. An installation
+merely marked `needs_reconnect` is **not** refused — that is a belief about a past moment, and
+the challenge is single-use, fifteen minutes old, and minted by a click Slack signed.
 
 Suspended members and revoked links cannot start or continue tasks. A user may link separately in every connected Slack team.
 
@@ -204,8 +218,8 @@ Home is updated on `app_home_opened`, after account linking, and after settings 
 - Message shortcut **Work on this with Avalon**: prefill the task modal with the selected message.
 - `/avalon [request]`: start the request; an empty command opens the modal.
 - **Connect Avalon**: mint a link challenge and open it in a modal whose single
-  button is the desktop handoff, or explain the reconnect an unhealthy
-  installation needs.
+  button is the desktop handoff. Not refused on a stored status; a grant that is
+  really gone fails on Slack's answer.
 - Result buttons: open the canonical task or provide feedback.
 - Avalon person mention: notify the matched member in the Avalon Agent DM, falling back to email.
 - Avalon links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Avalon authorization for its contents.
@@ -360,6 +374,45 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entry below; the reasoning behind everything above it
 was not recorded and is not reconstructed here.
+
+### 2026-08-12 — Linking became one step, and a stored status stopped gating events
+
+**What changed:** A member who redeems a link challenge is carried straight into the personal
+Slack authorization, so one click in Slack both links the identity and connects personal Slack
+tools. The status gates came off the inbound surface — events, interactions, `avalon_connect`,
+mentions, the unfurl refresh sweep, automation delivery, credential pre-warm — leaving only
+`disabled`. `redriveReauthorizedIngress` re-queues ingress jobs that failed on authorization
+once the installation returns to `healthy`. The `slack_installation_unhealthy` refusal and
+`reconnectRequiredModal` are gone; `slack_installation_disabled` replaces them.
+
+**Why:** A workspace installation missing a newly-required bot scope was marked
+`needs_reconnect`, correctly — and from then on the mark, not the grant, failed every request.
+The credential coordinator filtered on `status = 'healthy'`, so Slack events were refused
+without a single call to Slack, and the refusal overwrote the accurate `missing_scopes:
+reactions:read` diagnosis with a generic one. Every work-stream link shared in Slack during
+those sixteen hours lost its unfurl permanently, because Slack reports `link_shared` once and
+never redelivers it. Separately, members could not tell "Connect Avalon" from "Connect for me":
+both said Connect, and redeeming the first republished App Home as "Welcome, `<name>`" while
+personal tools stayed unconnected below it.
+
+**Considered and rejected:** Deriving the identity link from a *personal Slack connection*, which
+reads like the stronger proof — Slack ran the OAuth and named the user. The connector OAuth
+callback is mounted before the auth middleware and completes from its `state` alone, so a member
+could start a personal flow, send the consent URL to a colleague, and have that colleague's
+genuine click bind the colleague's Slack identity to the sender's Avalon account. The link
+challenge is the only artifact carrying a Slack-signed statement of who clicked, so it stays the
+only thing that mints a link. Also rejected: waiving `disabled` for the challenge on the grounds
+that the challenge is its own authority. Disabling clears the credentials and drops the row from
+`connectionForTeam`, so redeeming would commit the link and then fail publishing App Home.
+
+**Consequences:** The reverse direction — connect personal Slack, get linked — is deliberately
+absent and needs the connector OAuth start bound to its initiating client before it can exist.
+A future change must not reinstate it from the callback alone. `redriveReauthorizedIngress`
+selects on `c.status = 'healthy'` rather than on `updated_at` alone; the earlier form did not
+terminate, because every failure bumped the connection's timestamp through the marking write and
+stranded jobs re-drove each other forever.
+
+Shipped in #113.
 
 ### 2026-08-11 — A link challenge is minted by the click that redeems it
 

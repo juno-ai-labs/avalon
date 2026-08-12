@@ -180,12 +180,11 @@ class FakeDatabase {
     if (!sql.includes("FROM connector_connections")) {
       throw new Error(`Unexpected all query: ${sql}`);
     }
-    const recoverable = sql.includes("status IN");
+    // One clause now: an inbound delivery reaches any connection a person has
+    // not disabled, so whether a provider's event is processed no longer
+    // depends on what this row believed about the grant.
     const rows = this.connections.filter((connection) => {
-      const statusMatches = recoverable
-        ? connection.status !== "disabled"
-        : connection.status === "healthy";
-      if (!statusMatches) return false;
+      if (connection.status === "disabled") return false;
       if (sql.includes("connector_type = 'notion'")) {
         return connection.connector_type === "notion"
           && connection.scope === "personal"

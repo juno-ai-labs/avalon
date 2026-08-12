@@ -63,7 +63,7 @@ export async function sendWorkstreamMentionSlack(
        LEFT JOIN slack_user_links l
          ON l.connection_id = cc.id AND l.workspace_id = cc.workspace_id AND l.user_id = ?
        WHERE cc.workspace_id = ? AND cc.connector_type = 'slack'
-         AND cc.scope = 'workspace' AND cc.status = 'healthy'
+         AND cc.scope = 'workspace' AND cc.status <> 'disabled'
        ORDER BY cc.id`,
     ).bind(input.recipientUserId, input.workspaceId).all<Record<string, unknown>>();
     const connections = z.array(SlackMentionConnectionSchema).parse(rawConnections.results ?? []);
@@ -141,7 +141,7 @@ export async function sendWorkstreamMentionSlack(
     if (connectionId && (reason === "missing_scope" || reason === "unauthorized")) {
       await env.DB.prepare(
         `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
+         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy'`,
       ).bind(JSON.stringify({
         code: "slack_authorization_invalid",
         message: `Slack workspace authorization needs reconnect (${reason})`,

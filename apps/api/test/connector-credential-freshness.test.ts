@@ -32,6 +32,59 @@ const FRESH_TOKEN = "rotated-access-token";
 const EXPIRED_AT = "2020-01-01T00:00:00.000Z";
 
 describe("the credential door", () => {
+  it("writes the rotated credential for a row the database believes is broken, and heals nothing", async () => {
+    // The credential lands: that is what the rotation produced. The *status*
+    // does not, and an earlier draft of this healed it to `healthy` — on the
+    // reasoning that a provider honouring the refresh token has said the grant
+    // is alive. It has, and grant liveness is not grant sufficiency: a token
+    // exchange succeeds whatever scopes the installation holds, so healing here
+    // would have cleared the incident's own `missing_scopes: reactions:read`
+    // verdict within one token lifetime and reported a connection as working
+    // while every scoped call kept failing.
+    const statements: string[] = [];
+    const database = recordingLeasedDatabase(
+      await encryptString(
+        JSON.stringify({ accessToken: STALE_TOKEN, refreshToken: "refresh-token", expiresAt: EXPIRED_AT }),
+        "door-credential-key",
+        "00000000-0000-7000-8000-00000000c0de",
+      ),
+      statements,
+    );
+    const connection = connectionContext({
+      accessToken: STALE_TOKEN,
+      refreshToken: "refresh-token",
+      expiresAt: EXPIRED_AT,
+    });
+
+    await withAuthorizedConnection(
+      {
+        DB: database,
+        CONNECTOR_CREDENTIALS_KEY: "door-credential-key",
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      },
+      {
+        connection,
+        adapter: {
+          refreshCredentials: async () => ({ accessToken: FRESH_TOKEN }),
+        } as unknown as ResolvedConnectorAdapter,
+        signal: AbortSignal.timeout(2_000),
+      },
+      async () => undefined,
+    );
+
+    // The refresh reached the provider and its result is in hand — the
+    // behaviour the healthy-only lease used to make impossible.
+    expect(connection.credentials.accessToken).toBe(FRESH_TOKEN);
+    const persisted = statements.find((sql) => sql.includes("RETURNING id"));
+    // Asserted on the statement's own text because this fake dispatches on SQL
+    // rather than executing it. Both halves matter and only one is about the
+    // gate: no status is written at all, and the row must not be resurrected
+    // from `disabled`.
+    expect(persisted).not.toContain("SET status");
+    expect(persisted).not.toContain("error_json");
+    expect(persisted).toContain("status <> 'disabled'");
+  });
+
   it("refreshes an expiring credential before the operation reaches the provider", async () => {
     const refreshCredentials = vi.fn(async () => ({
       accessToken: FRESH_TOKEN,
@@ -90,18 +143,22 @@ describe("the credential door", () => {
     expect(refreshCredentials).not.toHaveBeenCalled();
   });
 
-  it("does not attempt a refresh a connection is no longer eligible for", async () => {
-    // A connection D1 no longer holds as healthy cannot rotate: the refresh
-    // coordinator filters its lease and its reload on `status = 'healthy'`, so
-    // asking would replace the provider's answer with an availability error.
-    // Testing and revoking a broken connection are the paths that exist to get
-    // that answer.
+  it("refreshes a connection the row believes is broken", async () => {
+    // The status is a record of one past moment and nothing re-checks it, so a
+    // stale `needs_reconnect` must not decide whether the provider is asked.
+    // Gated on a healthy row, this refusal was itself the outage: a Slack
+    // installation answered sixteen hours of events with
+    // `Connector authorization is unavailable` without one call to Slack.
     const refreshCredentials = vi.fn(async () => ({ accessToken: FRESH_TOKEN }));
     const reached: unknown[] = [];
 
     await withAuthorizedConnection(
       {
-        DB: unusableDatabase(),
+        DB: leasedCredentialDatabase(await encryptString(
+          JSON.stringify({ accessToken: STALE_TOKEN, refreshToken: "refresh-token", expiresAt: EXPIRED_AT }),
+          "door-credential-key",
+          "00000000-0000-7000-8000-00000000c0de",
+        ), "door-credential-key"),
         CONNECTOR_CREDENTIALS_KEY: "door-credential-key",
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
       },
@@ -113,13 +170,12 @@ describe("the credential door", () => {
         }),
         adapter: { refreshCredentials } as unknown as ResolvedConnectorAdapter,
         signal: AbortSignal.timeout(2_000),
-        connectionStatus: "needs_reconnect",
       },
       async (authorized) => { reached.push(authorized.credentials.accessToken); },
     );
 
-    expect(refreshCredentials).not.toHaveBeenCalled();
-    expect(reached).toEqual([STALE_TOKEN]);
+    expect(refreshCredentials).toHaveBeenCalled();
+    expect(reached).toEqual([FRESH_TOKEN]);
   });
 
   it("redeems a rotating refresh token once when concurrent calls are both refused", async () => {
@@ -1059,3 +1115,17 @@ const GITHUB_TEST_PRIVATE_KEY = [
   "AA==",
   ["-----END", "PRIVATE KEY-----"].join(" "),
 ].join("\n");
+
+/** `leasedCredentialDatabase`, plus a record of the SQL it was asked to run. */
+function recordingLeasedDatabase(
+  encrypted: { ciphertext: string; iv: string },
+  statements: string[],
+): D1Database {
+  const inner = leasedCredentialDatabase(encrypted, "door-credential-key");
+  return {
+    prepare(sql: string) {
+      statements.push(sql);
+      return inner.prepare(sql);
+    },
+  } as unknown as D1Database;
+}

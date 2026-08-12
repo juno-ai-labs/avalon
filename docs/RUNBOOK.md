@@ -574,7 +574,7 @@ Pause connector polling if ingestion exceeds safe capacity. Inspect receipts and
 
 ### Google token revoked
 
-Mark the connection `needs_reconnect`, stop dependent tool execution, and preserve affected automation state. Reauthorization must request only its previously selected capabilities; do not silently broaden scopes.
+Mark the connection `needs_reconnect` and preserve affected automation state. The mark is a diagnosis, not a gate — dependent tool execution continues and fails on the provider's answer, per [Stored status is a belief, not a gate](CONNECTORS.md#stored-status-is-a-belief-not-a-gate). It also does not clear itself: only reauthorization or an explicit connection test returns the row to `healthy`. Reauthorization must request only its previously selected capabilities; do not silently broaden scopes.
 
 ### Region mismatch
 

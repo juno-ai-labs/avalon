@@ -1442,8 +1442,13 @@ export class AutomationService {
         `SELECT id, connector_type, scope, owner_user_id, status FROM connector_connections
          WHERE workspace_id = ? AND model_plugin_id = ?`,
       ).bind(this.auth.workspaceId, pluginId).first<Record<string, unknown>>();
-      if (!row || row.status !== "healthy") {
-        throw new ApiError(422, "plugin_unavailable", `Connector plugin ${pluginId} is unavailable or unhealthy`);
+      // `disabled` only. A `needs_reconnect` belief blocked a member from even
+      // setting up an automation against a connection that, once tried, works —
+      // and the belief outlives its cause, so the refusal could be permanent.
+      // A run that genuinely cannot authorize fails at the run, on the
+      // provider's word, which is where it is both true and actionable.
+      if (!row || row.status === "disabled") {
+        throw new ApiError(422, "plugin_unavailable", `Connector plugin ${pluginId} is unavailable`);
       }
       if (scope === "personal" && row.scope === "personal" && row.owner_user_id !== this.auth.userId) {
         throw new ApiError(403, "personal_connection_access_denied", "A personal automation cannot use another member's personal connection");
