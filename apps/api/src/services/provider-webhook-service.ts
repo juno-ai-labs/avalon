@@ -876,9 +876,13 @@ export class ProviderWebhookService {
     if (provider === "notion" && (!routingAccountIds || routingAccountIds.length === 0)) {
       return [];
     }
-    const statusClause = includeRecoverable
-      ? "status IN ('healthy', 'error', 'needs_reconnect')"
-      : "status = 'healthy'";
+    // One clause. The `includeRecoverable` split existed so that some inbound
+    // deliveries could reach a connection this row believed was broken and
+    // others could not, which made whether a provider's event was processed
+    // depend on a belief rather than on the event. A webhook is a request we
+    // can usually answer, so it is answered; `disabled` is the person's
+    // decision and stays excluded.
+    const statusClause = "status <> 'disabled'";
     const query = provider === "notion"
       ? `SELECT * FROM connector_connections
          WHERE connector_type = 'notion' AND scope = 'personal'
@@ -1058,7 +1062,7 @@ export class ProviderWebhookService {
       `UPDATE connector_connections
        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
            updated_at = ?
-       WHERE id = ? AND status = 'healthy'`,
+       WHERE id = ? AND status <> 'disabled'`,
     ).bind(
       encrypted.ciphertext,
       encrypted.iv,

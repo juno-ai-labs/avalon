@@ -38,7 +38,7 @@ export async function ensureFreshConnectorCredentials(
     const claimed = await env.DB.prepare(
       `UPDATE connector_connections SET
          credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?
-       WHERE id = ? AND workspace_id = ? AND status = 'healthy'
+       WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
          AND (credential_refresh_lease_id IS NULL OR credential_refresh_lease_expires_at < ?)
        RETURNING encrypted_credentials, credential_iv, credential_key_version`,
     ).bind(
@@ -76,11 +76,16 @@ export async function ensureFreshConnectorCredentials(
         connection.id,
       );
       const persisted = await env.DB.prepare(
+        // A provider that just honoured the refresh token has said the grant
+        // is alive, which outranks whatever this row believed. Healing here is
+        // what stops a stale `needs_reconnect` outliving the fault that set it
+        // and asking a member to reconnect something that works. `disabled` is
+        // excluded above because it is a person's decision, not a belief.
         `UPDATE connector_connections SET
            encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
            credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL,
-           updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND status = 'healthy'
+           status = 'healthy', error_json = NULL, updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
            AND credential_refresh_lease_id = ?
          RETURNING id`,
       ).bind(
@@ -168,7 +173,7 @@ export async function rotateConnectorCredentials(
     const claimed = await env.DB.prepare(
       `UPDATE connector_connections SET
          credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?
-       WHERE id = ? AND workspace_id = ? AND status = 'healthy'
+       WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
          AND (credential_refresh_lease_id IS NULL OR credential_refresh_lease_expires_at < ?)
        RETURNING encrypted_credentials, credential_iv, credential_key_version`,
     ).bind(
@@ -209,11 +214,16 @@ export async function rotateConnectorCredentials(
         connection.id,
       );
       const persisted = await env.DB.prepare(
+        // A provider that just honoured the refresh token has said the grant
+        // is alive, which outranks whatever this row believed. Healing here is
+        // what stops a stale `needs_reconnect` outliving the fault that set it
+        // and asking a member to reconnect something that works. `disabled` is
+        // excluded above because it is a person's decision, not a belief.
         `UPDATE connector_connections SET
            encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
            credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL,
-           updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND status = 'healthy'
+           status = 'healthy', error_json = NULL, updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
            AND credential_refresh_lease_id = ?
          RETURNING id`,
       ).bind(
@@ -244,6 +254,12 @@ async function markNeedsReconnect(
   connection: Pick<ConnectorConnectionContext, "id" | "workspaceId">,
 ): Promise<void> {
   await database.prepare(
+    // Still `= 'healthy'`, and deliberately not relaxed with the gates around
+    // it: this one is a *write*, not a refusal to try. A row already marked
+    // carries the first and most specific diagnosis of why it broke, and
+    // re-marking would overwrite it with this generic one on every later
+    // attempt — the exact way a `missing_scopes: reactions:read` verdict was
+    // lost behind a bare `unauthorized` hours after the fact.
     `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
      WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
   ).bind(
@@ -271,7 +287,7 @@ async function loadCredentials(
   const row = await env.DB.prepare(
     `SELECT encrypted_credentials, credential_iv, credential_key_version
      FROM connector_connections
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+     WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
   ).bind(connection.id, connection.workspaceId).first<Record<string, unknown>>();
   if (!row) throw new ConnectorError("unauthorized", "Connector authorization is unavailable");
   return decryptCredentials(env, connection.id, CredentialRowSchema.parse(row));

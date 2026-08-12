@@ -206,7 +206,11 @@ describe("Slack account linking", () => {
     ).get()).toMatchObject({ kind: "interaction", status: "queued" });
   });
 
-  it("offers a reconnect instead of a link the installation cannot honor", async () => {
+  it("mints a link even when the row believes the installation is broken", async () => {
+    // Reaching this click means Slack signed the payload and the bot token is
+    // opening a view, so the installation demonstrably works. Refusing on a
+    // stored belief sent a member to find an admin to repair something that was
+    // not broken — and linking an identity spends no provider credential.
     const database = await seededDatabase();
     database.exec("UPDATE connector_connections SET status = 'needs_reconnect'");
     const slack = stubSlack();
@@ -214,10 +218,8 @@ describe("Slack account linking", () => {
     await new SlackAgentService(environment(database)).processInteraction(connectClick(), "unhealthy-hash");
 
     const view = slack.calls.find((call) => call.method === "views.open")?.body.view as Record<string, unknown>;
-    expect(view.callback_id).toBe("avalon_connect_unavailable");
-    // Minting here would hand the member a link that fails at redemption for a
-    // reason only an admin can fix.
-    expect(challengeCount(database)).toBe(0);
+    expect(view.callback_id).toBe("avalon_connect_link");
+    expect(challengeCount(database)).toBe(1);
   });
 
   it("distinguishes an unknown, used, expired, and unredeemable link", async () => {
@@ -230,13 +232,13 @@ describe("Slack account linking", () => {
     await expect(service.previewLink(auth(), "never-minted")).rejects.toMatchObject({ code: "slack_link_unknown", status: 404 });
     await expect(service.previewLink(auth(), "used-token")).rejects.toMatchObject({ code: "slack_link_consumed", status: 409 });
     await expect(service.previewLink(auth(), "old-token")).rejects.toMatchObject({ code: "slack_link_expired", status: 404 });
-    // A live challenge whose installation went unhealthy after it was minted:
-    // reported as expired before, which sent the member back for another link
-    // that would fail in exactly the same way.
+    // A live challenge whose installation the row believes went unhealthy after
+    // it was minted still redeems. The challenge is the authority — signed by
+    // Slack, single-use, fifteen minutes — and the belief is a record of one
+    // past moment that nothing re-checks.
     database.exec("UPDATE connector_connections SET status = 'needs_reconnect'");
-    await expect(service.previewLink(auth(), "fresh-token")).rejects.toMatchObject({
-      code: "slack_installation_unhealthy",
-      status: 409,
+    await expect(service.previewLink(auth(), "fresh-token")).resolves.toMatchObject({
+      teamId: expect.any(String),
     });
   });
 

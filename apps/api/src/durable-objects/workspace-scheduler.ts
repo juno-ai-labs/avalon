@@ -686,7 +686,7 @@ export class WorkspaceScheduler {
     const connection = await this.env.DB.prepare(
       `SELECT config_json
          FROM connector_connections
-        WHERE id = ?1 AND workspace_id = ?2 AND status = 'healthy'
+        WHERE id = ?1 AND workspace_id = ?2 AND status <> 'disabled'
         LIMIT 1`
     )
       .bind(watch.connection_id, watch.workspace_id)
