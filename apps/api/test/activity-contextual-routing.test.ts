@@ -8,7 +8,7 @@ const { runStructuredInference } = vi.hoisted(() => ({ runStructuredInference: v
 vi.mock("../src/services/structured-inference", () => ({ runStructuredInference }));
 
 import type { Env } from "../src/env";
-import { __testing } from "../src/queues/activity-consumer";
+import { __testing, consumeActivityQueue } from "../src/queues/activity-consumer";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -213,6 +213,45 @@ function suggestionCount(database: DatabaseSync): number {
   return (database.prepare("SELECT COUNT(*) AS count FROM activity_suggestions WHERE status = 'pending'")
     .get() as { count: number }).count;
 }
+
+describe("contextual routing pause boundary", () => {
+  it("skips contextual inference and still batches an unclaimed activity for Suggested work", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    const activityId = "00000000-0000-7000-8000-0000000000f1";
+    insertActivity(database, { id: activityId, eventType: NEWS });
+    database.prepare("UPDATE activities SET processing_status = 'pending' WHERE id = ?").run(activityId);
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const message = {
+      id: "activity-queue-message",
+      timestamp: new Date("2026-08-11T11:30:02.000Z"),
+      body: { region: "global", workspaceId: WORKSPACE, activityId, attempt: 0 },
+      attempts: 1,
+      ack,
+      retry,
+    } satisfies Message<unknown>;
+    const batch = {
+      messages: [message],
+      queue: "activity",
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 1 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    } satisfies MessageBatch<unknown>;
+
+    await consumeActivityQueue(batch, env);
+
+    expect(runStructuredInference).not.toHaveBeenCalled();
+    expect(suggestionCount(database)).toBe(0);
+    expect(database.prepare(
+      "SELECT source_id, status FROM opportunity_batch_events WHERE source_kind = 'activity'",
+    ).get()).toEqual({ source_id: activityId, status: "pending" });
+    expect(database.prepare("SELECT processing_status FROM activities WHERE id = ?").get(activityId))
+      .toEqual({ processing_status: "processed" });
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+});
 
 describe("contextual routing: where the bar starts", () => {
   it("offers a card at the base bar for activity a digest would carry", async () => {
