@@ -66,15 +66,15 @@ function seededDatabase(options: { brief?: string } = {}): DatabaseSync {
             'Write this person''s scheduled digest of what changed since the last one.',
             'ad_hoc', '${OWNER}', 'running', 2, '2026-08-11', '2026-08-11', '2026-08-11', 'digest', 'personal');
     INSERT INTO digest_schedules
-      (id, workspace_id, user_id, day_mask, enabled, system_workstream_id,
+      (id, workspace_id, user_id, day_mask, enabled,
        execution_principal_json, version, created_at, updated_at)
-    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, 1, '${WORKSTREAM}',
+    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, 1,
             '{"type":"user","userId":"${OWNER}"}', 1, '2026-01-01', '2026-01-01');
     INSERT INTO digest_deliveries
       (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_from, cursor_through,
-       event_count, highlight_count, harness_run_id, status, created_at, updated_at)
+       event_count, highlight_count, harness_run_id, workstream_id, status, created_at, updated_at)
     VALUES ('${DELIVERY}', '${WORKSPACE}', '${SCHEDULE}', '${OWNER}', '2026-08-11T16:00:00.000Z',
-            NULL, 201, 42, 1, NULL, 'running', '2026-08-11', '2026-08-11');
+            NULL, 201, 42, 1, NULL, '${WORKSTREAM}', 'running', '2026-08-11', '2026-08-11');
     INSERT INTO messages
       (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
        message_type, text_content, structured_content_json, sequence_number, created_at)
