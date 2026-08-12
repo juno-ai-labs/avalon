@@ -97,10 +97,12 @@ surface that has to move.
    plus a self-built fleet migration orchestrator. [`design.md`](./design.md)
    carries the full comparison; [`research.md`](./research.md) the platform
    facts.
-3. **Migrating existing hosted data.** The prototype's data is the team's test
-   data; the cutover recreates workspaces rather than converting rows. A
-   throwaway import script is permitted if a test workspace proves worth
-   keeping; a productized migrator is rejected outright at this stage.
+3. **A productized data migrator.** The cutover carries the team's existing
+   test workspaces with a one-shot throwaway script that replays rows from a
+   `wrangler d1 export` dump through the new handle — written for the
+   cutover, deleted after use. Anything beyond that — a general migrator,
+   dual-write, staged backfill — is rejected outright at this stage; there
+   are no users to protect.
 4. **Enterprise-dedicated deployments.** Dedicated Workers, buckets, keys, and
    observability per customer remain the extension point regionalization
    already reserves — this PRD moves the *database* axis only. Deferred.
@@ -193,11 +195,12 @@ None yet.
    workspace object (the workspace-actor model) — a defensible end state, but
    it couples this change to a rewrite of every service boundary at once, and
    the RPC handle does not foreclose it later.
-5. **Hard cutover with a data reset, no dual-write, no flag.** The team is the
-   only tenant population; the legacy regional databases stay untouched for a
-   30-day window as rollback, then are deleted. Rejected alternative: staged
-   migration with backfill and dual reads — machinery for protecting users
-   who do not exist yet.
+5. **Hard cutover, no dual-write, no flag.** The team is the only tenant
+   population; its test workspaces are carried across by the one-shot
+   throwaway script of non-goal 3, and the moved tables in the regional
+   databases stay frozen for a 30-day window as rollback, then are dropped.
+   Rejected alternative: staged migration with backfill and dual reads —
+   machinery for protecting users who do not exist yet.
 6. **Cross-tenant cron sweeps become per-workspace work.** Reapers,
    retention, outbox draining, and digest reconciliation run inside each
    workspace (on its own or the `WorkspaceScheduler`'s alarm), with the
@@ -205,6 +208,26 @@ None yet.
    regional fan-out loop querying every workspace object from the cron — it
    recreates the shared-database scan with extra hops and wakes cold
    workspaces for no benefit.
+7. **Dev-loop workspace SQL access ships as a CLI wrapper from day one.** A
+   small pnpm script drives the read-only diagnostic RPC against the local
+   Worker, so the tool that replaces `wrangler d1 execute --local` for
+   workspace data is the same one used against hosted objects. Rejected
+   alternative: leaning on Miniflare's on-disk SQLite files and any `sqlite3`
+   client — free, but a second inspection path that diverges from what
+   operators actually run.
+8. **Object placement is accepted as platform behavior.** A workspace
+   database lives where it was first created; a workspace whose members move
+   continents keeps its database where it started. This matches the regional
+   property D1 already has today, so no phase-1 benchmark is run. Rejected
+   alternative: a deliberate remote-object latency measurement — a number
+   with no decision attached to it.
+9. **Scoped-memory lexical search carries over unchanged.** Cloudflare
+   documents the FTS5 module (including `fts5vocab`), the JSON extension, and
+   math functions as supported in Durable Object SQLite
+   ([`research.md`](./research.md)), so D1 FTS5-based memory search needs no
+   fallback. Verified against the platform documentation while this PRD was
+   written; had it been absent, the lexical leg would have needed a
+   replacement before phase 1.
 
 ## Data model
 
@@ -348,7 +371,8 @@ No flag, by design decision 5 — the phases are pull requests, not toggles:
    `workspace_id` plumbing; rewrite the affected docs (`data-model.md`,
    `architecture.md`, `regionalization.md`, `runbook.md`,
    `dev-environment.md`) in the same changes.
-3. Deploy, recreate the team's workspaces, verify the acceptance flows.
+3. Deploy, carry the team's workspaces across with the one-shot import
+   script (recreating any not worth carrying), verify the acceptance flows.
 4. Day 30: delete the legacy regional databases' moved tables and close the
    rollback window.
 
@@ -357,8 +381,8 @@ tables* in the regional databases were never written by the new path, so
 every pre-cutover workspace serves exactly as it did — but the control plane
 is those same two databases and stays live, so a workspace created after
 cutover appears to the old Worker with no tenant rows behind it and serves as
-empty. Accepted: such workspaces are the team's own and are recreated, the
-same reset the cutover itself performs. After the window, fix forward.
+empty. Accepted: such workspaces are the team's own and are recreated or
+re-imported. After the window, fix forward.
 
 ## Acceptance
 
@@ -377,19 +401,3 @@ same reset the cutover itself performs. After the window, fix forward.
   Wrangler dry-run builds stay green with the migration-step suite replacing
   the SQL-file suite for workspace schema.
 
-## Open questions
-
-1. **FTS5 availability in Durable Object SQLite.** Scoped-memory lexical
-   search uses D1 FTS5 today. Verify the extension is available in DO SQLite
-   before phase 1; if it is not, memory search's lexical leg needs a
-   replacement (LIKE-based fallback or Vectorize-only), which would be its own
-   decision-log entry.
-2. **Workspace-object placement and tail latency.** A Durable Object lives
-   where it was first created; a workspace whose members move continents keeps
-   its database where it started. Measure request latency against a
-   deliberately remote object during phase 1 and decide whether it changes
-   anything (expectation: no — D1 had the same property, regionally).
-3. **Local inspection ergonomics.** `wrangler d1 execute --local` disappears
-   for workspace data; decide during phase 1 whether Miniflare's on-disk
-   SQLite files are a good-enough substitute for the dev loop or whether the
-   diagnostic RPC needs a local CLI wrapper on day one.
