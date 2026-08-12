@@ -10,6 +10,7 @@ import {
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type PropsWithChildren,
+  type RefObject,
   type ReactNode,
 } from 'react';
 import { statusDescription, statusLabel } from '../lib/format';
@@ -259,14 +260,31 @@ interface ModalProps {
   description?: string;
   children?: ReactNode;
   footer?: ReactNode;
+  initialFocusRef?: RefObject<HTMLElement | null>;
 }
 
-export function Modal({ open, onOpenChange, title, description, children, footer }: ModalProps): React.JSX.Element {
+export function Modal({
+  open,
+  onOpenChange,
+  title,
+  description,
+  children,
+  footer,
+  initialFocusRef,
+}: ModalProps): React.JSX.Element {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content">
+        <Dialog.Content
+          className="dialog-content"
+          onOpenAutoFocus={(event) => {
+            const initialFocus = initialFocusRef?.current;
+            if (!initialFocus) return;
+            event.preventDefault();
+            initialFocus.focus();
+          }}
+        >
           <header className="dialog-header">
             <div>
               <Dialog.Title className="dialog-title">{title}</Dialog.Title>

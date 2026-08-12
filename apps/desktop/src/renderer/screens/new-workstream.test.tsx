@@ -215,6 +215,16 @@ describe('New work-stream home', () => {
     }));
   });
 
+  it('focuses the first member when the participant picker opens', async () => {
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants: Adam Juhasz' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
+    await waitFor(() => expect(within(dialog).getByRole('checkbox', { name: /Samantha Lee/u })).toHaveFocus());
+    expect(within(dialog).getByRole('button', { name: 'Close dialog' })).not.toHaveFocus();
+  });
+
   it('hides the model selector unless developer mode is on', async () => {
     renderScreen();
 
