@@ -31,7 +31,7 @@ import {
   upsertTranscriptMessage,
 } from './transcript';
 import type { HarnessStatus, HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 
 export type { StreamCursor } from './workstream-socket-resume';
@@ -563,7 +563,7 @@ export function useWorkstreamSocket(
           mayStillEmitRealtime
             ? mergeCanonicalTranscript(current, canonicalMessages)
             : replaceWithCanonicalTranscript(current, canonicalMessages));
-        setCachedWorkstreams(queryClient, canonicalWorkstreamPage.items);
+        mergeCachedWorkstreamPage(queryClient, canonicalWorkstreamPage.items);
         void Promise.all([
           queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
@@ -924,7 +924,7 @@ export function useWorkstreamSocket(
               streamCursors,
             );
           });
-          setCachedWorkstreams(queryClient, canonicalWorkstreamPage.items);
+          mergeCachedWorkstreamPage(queryClient, canonicalWorkstreamPage.items);
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),

@@ -5,7 +5,7 @@ import type { AuthContext } from "../src/env";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { AutomationService } from "../src/services/automation-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const ensureAutomationAddress = vi.hoisted(() => vi.fn(async () => ({ emailAddress: null })));
 
@@ -39,9 +39,9 @@ function serviceFor(database: DatabaseSync): AutomationService {
     AVALON_REGION: "global",
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
-      idFromName: () => "scheduler",
+      idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
-      jurisdiction: () => ({ idFromName: () => "scheduler", get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) }),
+      jurisdiction: () => ({ idFromName: () => createTestDurableObjectId("scheduler"), get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) }),
     },
   });
   return new AutomationService(env, auth);
@@ -55,7 +55,7 @@ function serviceWithBrokenScheduler(database: DatabaseSync): AutomationService {
     AVALON_REGION: "global",
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
-      idFromName: () => "scheduler",
+      idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ fetch: async () => { throw new Error("scheduler unreachable"); } }),
     },
   });

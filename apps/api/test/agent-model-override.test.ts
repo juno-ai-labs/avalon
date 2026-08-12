@@ -6,7 +6,7 @@ import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { AutomationService } from "../src/services/automation-service";
 import { __testing } from "../src/queues/activity-consumer";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
@@ -54,10 +54,10 @@ function serviceFor(database: DatabaseSync, logLevel: Env["LOG_LEVEL"] = "error"
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
     WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
     WORKSPACE_SCHEDULERS: {
-      idFromName: () => "scheduler",
+      idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
       jurisdiction: () => ({
-        idFromName: () => "scheduler",
+        idFromName: () => createTestDurableObjectId("scheduler"),
         get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
       }),
     },

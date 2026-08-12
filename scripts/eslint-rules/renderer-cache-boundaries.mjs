@@ -11,6 +11,7 @@ export const noDirectWorkstreamsCacheWriteRule = {
   create(context) {
     const sourceCode = context.sourceCode ?? context.getSourceCode();
     const keyBindings = new Set();
+    const variableInitializers = new Map();
 
     function track(node) {
       for (const variable of sourceCode.getDeclaredVariables(node)) keyBindings.add(variable);
@@ -57,8 +58,16 @@ export const noDirectWorkstreamsCacheWriteRule = {
       return null;
     }
 
-    function queryKeyFromFilter(node) {
+    function queryKeyFromFilter(node, seen = new Set()) {
       const value = unwrap(node);
+      if (value?.type === "Identifier") {
+        const variable = resolve(value);
+        if (!variable || seen.has(variable)) return null;
+        const initializer = variableInitializers.get(variable);
+        if (!initializer) return null;
+        seen.add(variable);
+        return queryKeyFromFilter(initializer, seen);
+      }
       if (value?.type !== "ObjectExpression") return null;
       for (const property of value.properties) {
         if (property.type !== "Property" || property.computed) continue;
@@ -79,6 +88,9 @@ export const noDirectWorkstreamsCacheWriteRule = {
         }
       },
       VariableDeclarator(node) {
+        for (const variable of sourceCode.getDeclaredVariables(node)) {
+          variableInitializers.set(variable, node.init);
+        }
         if (isWorkstreamsKey(node.init)) track(node);
       },
       CallExpression(node) {

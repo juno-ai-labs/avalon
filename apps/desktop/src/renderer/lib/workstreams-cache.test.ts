@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import type { WorkstreamSummary } from './types';
 
 function summary(): WorkstreamSummary {
@@ -41,5 +41,21 @@ describe('setCachedWorkstreams', () => {
       // @ts-expect-error A page is not the flat array this cache stores.
       setCachedWorkstreams(queryClient, { items: [summary()], nextCursor: null });
     }).toThrow('expected a WorkstreamSummary array');
+  });
+
+  it('refreshes page-one rows without dropping a loaded tail or debug row', () => {
+    const queryClient = new QueryClient();
+    const first = summary();
+    const laterPage = { ...summary(), id: '00000000-0000-7000-8000-000000000002', title: 'Later page' };
+    const debugRow = { ...summary(), id: '00000000-0000-7000-8000-000000000003', title: 'System row' };
+    setCachedWorkstreams(queryClient, [first, laterPage, debugRow]);
+
+    mergeCachedWorkstreamPage(queryClient, [{ ...first, title: 'Refreshed first page' }]);
+
+    expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toEqual([
+      { ...first, title: 'Refreshed first page' },
+      laterPage,
+      debugRow,
+    ]);
   });
 });

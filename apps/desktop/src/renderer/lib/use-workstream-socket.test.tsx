@@ -1726,7 +1726,20 @@ describe('useWorkstreamSocket', () => {
       latestHarnessRunId: '00000000-0000-7000-8000-000000000503',
     });
     queryClient.setQueryData(['messages', 'workstream-one'], []);
-    setCachedWorkstreams(queryClient, [workstreamSummary({ id: 'workstream-one', title: 'Stale' })]);
+    const laterPage = workstreamSummary({
+      id: '00000000-0000-7000-8000-000000000504',
+      title: 'Later page',
+    });
+    const debugRow = workstreamSummary({
+      id: '00000000-0000-7000-8000-000000000505',
+      title: 'System row',
+      systemKind: 'digest',
+    });
+    setCachedWorkstreams(queryClient, [
+      workstreamSummary({ id: 'workstream-one', title: 'Stale' }),
+      laterPage,
+      debugRow,
+    ]);
     const getSocketTicket = vi.fn(async () => ({
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
@@ -1791,7 +1804,11 @@ describe('useWorkstreamSocket', () => {
       JSON.stringify({ type: 'subscribe', afterSequence: 14 }),
     );
     expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Canonical');
-    expect(queryClient.getQueryData(['workstreams'])).toEqual(canonicalWorkstreamPage.items);
+    expect(queryClient.getQueryData(['workstreams'])).toEqual([
+      ...canonicalWorkstreamPage.items,
+      laterPage,
+      debugRow,
+    ]);
     expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
     act(() => FakeWebSocket.instances[1]?.message({
       type: 'stream_delta',

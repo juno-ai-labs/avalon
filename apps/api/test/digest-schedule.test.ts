@@ -16,7 +16,7 @@ import {
   recordActivityEventOrThrow,
 } from "../src/services/activity-event-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
 const OWNER = "00000000-0000-7000-8000-000000000002";
@@ -43,7 +43,7 @@ function envFor(database: DatabaseSync): Env {
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     WORKSPACE_SCHEDULERS: {
-      idFromName: () => "scheduler",
+      idFromName: () => createTestDurableObjectId("scheduler"),
       get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
     },
   });
@@ -238,7 +238,7 @@ describe("digest schedule", () => {
     const env = createTestEnv({
       ...envFor(database),
       WORKSPACE_SCHEDULERS: {
-        idFromName: () => "scheduler",
+        idFromName: () => createTestDurableObjectId("scheduler"),
         get: () => ({
           fetch: async () => {
             scheduleCountAtRefresh(database.prepare("SELECT COUNT(*) AS count FROM schedules").get());

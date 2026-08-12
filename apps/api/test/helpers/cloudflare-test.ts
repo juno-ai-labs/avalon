@@ -8,9 +8,28 @@
  */
 import type { Env } from "../../src/env";
 
-type TestDoubleMember<Value> = Value extends object
-  ? Value | TestDouble<Value> | ((...args: any[]) => unknown)
-  : Value;
+// Focused fakes may omit the runtime-owned contents of returned workerd
+// objects, but they must retain sync/async and object/primitive categories.
+type TestDoubleResult<Value> = Value extends Promise<unknown>
+  ? Promise<unknown>
+  : Value extends object
+    ? object
+    : Value;
+
+type BivariantMethod<Arguments extends unknown[], Result> = {
+  bivarianceHack(...args: Arguments): Result;
+}["bivarianceHack"];
+
+type TestDoubleMember<Value> = Value extends {
+  (...args: infer FirstArguments): infer FirstResult;
+  (...args: infer SecondArguments): infer SecondResult;
+}
+  ? Value
+    | BivariantMethod<FirstArguments, TestDoubleResult<FirstResult>>
+    | BivariantMethod<SecondArguments, TestDoubleResult<SecondResult>>
+  : Value extends object
+    ? Value | TestDouble<Value>
+    : Value;
 
 type TestDouble<T> = {
   [Key in keyof T]?: TestDoubleMember<T[Key]> | undefined;
@@ -23,6 +42,9 @@ type D1ResultDouble<T> = Omit<Partial<D1Result<T>>, "meta" | "results"> & {
 
 type EnvDouble = TestDouble<Env>;
 
+type ExactKeys<Base, Value extends Base> = Value
+  & Record<Exclude<keyof Value, keyof Base>, never>;
+
 type CloudflareBinding =
   | Ai
   | DurableObjectNamespace
@@ -34,7 +56,7 @@ type CloudflareBinding =
   | R2Bucket
   | VectorizeIndex;
 
-export function createTestEnv<T extends EnvDouble>(value: T): Env {
+export function createTestEnv<T extends EnvDouble>(value: ExactKeys<EnvDouble, T>): Env {
   return value as Env;
 }
 
@@ -43,7 +65,9 @@ export function createInvalidTestEnv(value: { [Key in keyof Env]?: unknown }): E
   return value as unknown as Env;
 }
 
-export function createTestD1Database<T extends TestDouble<D1Database>>(value: T): D1Database {
+export function createTestD1Database<T extends TestDouble<D1Database>>(
+  value: T,
+): D1Database {
   return value as unknown as D1Database;
 }
 
@@ -68,4 +92,8 @@ export function createCloudflareTestBinding<
   Double extends TestDouble<T> = TestDouble<T>,
 >(value: Double): T {
   return value as unknown as T;
+}
+
+export function createTestDurableObjectId(value: string): DurableObjectId {
+  return value as unknown as DurableObjectId;
 }

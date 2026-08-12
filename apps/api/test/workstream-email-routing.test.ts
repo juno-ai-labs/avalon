@@ -10,7 +10,7 @@ import {
   type WorkstreamEmailRouteInput,
   type WorkstreamEmailRouterRpcResult,
 } from "../src/services/workstream-email-routing-service";
-import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const ADDRESS_KEY = "avalon-workstream-routing-test-key-v1";
 const DOMAIN = "automation.with-avalon.com";
@@ -74,12 +74,12 @@ class FakeDatabase {
   readonly automations: LocalAutomationRow[] = [];
   routeInsertAttempts = 0;
 
-  prepare(sql: string): FakeStatement {
-    return new FakeStatement(this, sql);
+  prepare(sql: string): D1PreparedStatement {
+    return createTestD1PreparedStatement(new FakeStatement(this, sql));
   }
 
-  async batch(statements: FakeStatement[]): Promise<D1Result[]> {
-    return Promise.all(statements.map((statement) => statement.run()));
+  async batch<T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    return Promise.all(statements.map((statement) => statement.run<T>()));
   }
 
   first(sql: string, values: unknown[]): RouteRow | LocalWorkstreamRow | LocalAutomationRow | null {

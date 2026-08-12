@@ -1,5 +1,5 @@
 import type { MessageBoxOptions, MessageBoxReturnValue } from 'electron';
-import type { AppUpdater } from 'electron-updater';
+import type { AppUpdater, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater';
 // electron-updater is published as CommonJS. Electron's native ESM loader does
 // not reliably synthesize named exports for it in a packaged app, so import the
 // CommonJS namespace through the default export. Keep the lazy singleton read
@@ -31,6 +31,15 @@ interface IntervalHandle {
   unref(): unknown;
 }
 
+interface ConsumedUpdaterEvents {
+  readonly 'checking-for-update': () => void;
+  readonly 'update-available': (info: UpdateInfo) => void;
+  readonly 'update-not-available': (info: UpdateInfo) => void;
+  readonly 'download-progress': (progress: ProgressInfo) => void;
+  readonly 'update-downloaded': (info: UpdateDownloadedEvent) => void;
+  readonly error: (error: Error, message?: string) => void;
+}
+
 /** The updater surface this module consumes; tests must implement this port. */
 export type AutoUpdaterPort = Omit<Pick<
   AppUpdater,
@@ -43,7 +52,10 @@ export type AutoUpdaterPort = Omit<Pick<
   | 'quitAndInstall'
   | 'on'
 >, 'on'> & {
-  on(event: string, listener: (...args: any[]) => void): AutoUpdaterPort;
+  on<Event extends keyof ConsumedUpdaterEvents>(
+    event: Event,
+    listener: ConsumedUpdaterEvents[Event],
+  ): AutoUpdaterPort;
 };
 
 export interface AutoUpdateDependencies {

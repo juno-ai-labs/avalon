@@ -5,7 +5,7 @@ import type { AuthContext, Env } from "../src/env";
 import { enqueueActivityOpportunity } from "../src/services/work-opportunity-batching";
 import { __workOpportunityTesting, WorkOpportunityService } from "../src/services/work-opportunity-service";
 import { WorkstreamService } from "../src/services/workstream-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const userOne = "00000000-0000-7000-8000-000000000002";
@@ -40,8 +40,12 @@ class D1Adapter {
     private readonly database: DatabaseSync,
     private readonly afterFirst?: (sql: string) => void,
   ) {}
-  prepare(sql: string): Statement { return new Statement(this.database.prepare(sql), sql, this.afterFirst); }
-  async batch(statements: Statement[]) { return Promise.all(statements.map((statement) => statement.run())); }
+  prepare(sql: string): D1PreparedStatement {
+    return createTestD1PreparedStatement(new Statement(this.database.prepare(sql), sql, this.afterFirst));
+  }
+  async batch<T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    return Promise.all(statements.map((statement) => statement.run<T>()));
+  }
 }
 
 afterEach(() => {

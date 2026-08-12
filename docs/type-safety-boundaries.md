@@ -38,6 +38,12 @@ property and method name while the final assertion that unimplemented runtime
 members exist is confined to the helper. ESLint rejects direct assertions to
 those platform types outside the helper files.
 
+The builders also retain workerd method parameter contracts and whether a
+method is synchronous, asynchronous, or object-returning. Returned workerd
+objects may remain partial because focused tests cannot honestly construct
+runtime brands and every unused method. The retention R2 builder is stricter:
+its methods retain their complete return contracts.
+
 ## Invariants
 
 - **Production code never uses `as unknown as`.** Breaking this makes an SDK,
@@ -79,8 +85,10 @@ test.
 The Cloudflare builders deliberately accept partial callable surfaces because
 workerd interfaces contain overloads, brands, and runtime-only members that a
 Node unit fake cannot honestly implement. This is a bounded loss of
-completeness, not runtime validation; integration tests remain responsible for
-the actual binding behavior.
+completeness, not runtime validation. They reject unrelated parameter types,
+primitive returns from object-returning methods, and sync/async category drift,
+but do not require a complete returned workerd object; integration tests remain
+responsible for the actual binding behavior.
 
 ## Testing
 
