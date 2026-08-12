@@ -33,7 +33,9 @@ violate. Read the owning documents for the areas the diff touches before reviewi
 
 ### Backend Engineer
 
-A staff-level backend engineer working on a Cloudflare Worker. Below are things reviews have missed previously; it is not an exhaustive list. You MUST still look for general backend edge-cases, bad code, sloppy implementation, inelegant abstractions, over-engineering, missing error handling, bad assumptions, and anything else a staff-level engineer would flag in a code review.
+A staff-level engineer who owns **everything outside the React renderer**: the regional Hono Worker (`apps/api`), the shared packages, the smaller Workers (`apps/site`, `apps/release-retention`), and the **Electron main and preload processes** (`apps/desktop/src/main`, `apps/desktop/src/preload`) — window and lifecycle management, encrypted session storage, the IPC bridge, the login-ticket exchange, the menu bar, and launch-at-login. The React Specialist owns `apps/desktop/src/renderer` and nothing else, so if you skip main-process code nobody reviews it. Below are things reviews have missed previously; it is not an exhaustive list. You MUST still look for general backend edge-cases, bad code, sloppy implementation, inelegant abstractions, over-engineering, missing error handling, bad assumptions, and anything else a staff-level engineer would flag in a code review.
+
+The D1, Hono, and `zValidator` bullets below simply do not fire on a main-process diff; the **Layering** and general-quality mandates do, as does anything about parsing untrusted input — the main process receives IPC from a sandboxed renderer, custom-protocol URLs from the operating system, and responses from the regional API, and `docs/SECURITY.md` treats all three as untrusted.
 
 **D1 migrations.** Migrations live in `packages/db/migrations/` as `NNNN_name.sql`
 and are applied by `wrangler d1 migrations apply DB` **once per region**, in
@@ -50,11 +52,17 @@ migration change to these bars:
   justify the split, and escalate only if the justification is "they're related but I
   kept them separate."
 - **No numbering collision.** A new migration's prefix must be unique and strictly
-  greater than every prefix on `main` — and this is not hypothetical: `0039`, `0041`,
-  `0046`, `0053`, `0056`, and `0066` are each already claimed by two files, which is
-  exactly what the failure looks like when two branches grab the next free number in
-  parallel. (`docs/pull-requests.md` and the PR template still name only the first
-  three; check the directory rather than the list.) Because the runner
+  greater than every prefix on `main`, and this is not hypothetical — several prefixes
+  are already claimed twice, from two branches each grabbing the next free number in
+  parallel. Never trust a list of them, including any you find in `docs/pull-requests.md`
+  or the PR template, both of which are already out of date. Ask the directory:
+
+  ```bash
+  ls packages/db/migrations | sed 's/_.*//' | sort | uniq -d   # prefixes already doubled
+  ls packages/db/migrations | tail -1                          # the highest one taken
+  ```
+
+  Because the runner
   records applied files by name and applies pending ones in order, a collision or a
   late-merged lower prefix makes execution order diverge between a fresh local
   database and a hosted one that already applied a higher number. Check the highest
@@ -327,9 +335,16 @@ all run the same way:
   depends on the Workers runtime — Durable Objects, socket upgrades, Workflows, queue
   consumers, bindings — belongs in `test-workers/`; a node-environment stub of it
   proves less than it appears to.
-- `apps/desktop` runs jsdom + Testing Library with `restoreMocks`, `unstubGlobals`, and
-  `unstubEnvs` already on; use accessible `screen`/`within` queries and `findBy*` for
-  anything that opens a Radix portal.
+- `apps/desktop` runs **one** suite over `./src/{renderer,main}/**/*.test.{ts,tsx}`,
+  with `restoreMocks`, `unstubGlobals`, and `unstubEnvs` already on. Renderer tests use
+  jsdom + Testing Library — accessible `screen`/`within` queries, and `findBy*` for
+  anything that opens a Radix portal. **Main-process tests are half that suite** and
+  are ordinary unit tests over Electron-facing modules: they run in the same jsdom
+  environment without a real Electron runtime, so they stand or fall on how narrow the
+  seam is. Judge whether the module under test can be exercised without stubbing all of
+  `electron` — a test that mocks the entire surface it calls is testing the mock — and
+  hold session storage, the IPC bridge, and the ticket exchange to the failure-path
+  coverage their blast radius earns.
 - `pnpm test:scripts` covers only the repository's own `scripts/`. The desktop release
   tooling under `apps/desktop/scripts/` is a separate gate,
   `pnpm --filter @avalon/desktop test:release` — flag a release-script change with no
