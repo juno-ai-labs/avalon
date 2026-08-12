@@ -10,7 +10,7 @@ vi.mock("../src/services/structured-inference", () => ({ runStructuredInference 
 import type { Env } from "../src/env";
 import { __testing } from "../src/queues/activity-consumer";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const { routeContextually } = __testing;
 
@@ -44,7 +44,7 @@ function daysAgo(days: number): string {
 /** A namespace that accepts every room event, so the insert path is the test. */
 function roomNamespace(): DurableObjectNamespace {
   const namespace = {
-    idFromName: (name: string) => name,
+    idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({ fetch: async () => new Response(null, { status: 200 }) }),
     jurisdiction: () => namespace,
   };

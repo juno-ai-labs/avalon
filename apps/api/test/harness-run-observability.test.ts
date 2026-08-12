@@ -31,7 +31,7 @@ const outcome: HarnessOutcome = {
   },
 };
 
-function observationEnv(writeDataPoint: ReturnType<typeof vi.fn>): Env {
+function observationEnv(writeDataPoint: AnalyticsEngineDataset["writeDataPoint"]): Env {
   return createTestEnv({
     RUN_ANALYTICS: { writeDataPoint },
     LOG_LEVEL: "info",

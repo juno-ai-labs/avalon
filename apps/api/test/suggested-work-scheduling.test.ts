@@ -7,7 +7,7 @@ import {
   processDueSuggestedWork,
   WorkOpportunityService,
 } from "../src/services/work-opportunity-service";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const activeUser = "00000000-0000-7000-8000-000000000002";
@@ -47,8 +47,12 @@ class D1Adapter {
     private readonly database: DatabaseSync,
     private readonly hooks: Hooks = {},
   ) {}
-  prepare(sql: string): Statement { return new Statement(this.database.prepare(sql), sql, this.hooks); }
-  async batch(statements: Statement[]) { return Promise.all(statements.map((statement) => statement.run())); }
+  prepare(sql: string): D1PreparedStatement {
+    return createTestD1PreparedStatement(new Statement(this.database.prepare(sql), sql, this.hooks));
+  }
+  async batch<T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    return Promise.all(statements.map((statement) => statement.run<T>()));
+  }
 }
 
 afterEach(() => {

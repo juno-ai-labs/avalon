@@ -85,7 +85,7 @@ function fixture(): { database: DatabaseSync; env: Env } {
     `);
   });
   const binding = createTestD1Database({
-    batch: async (statements: SqliteStatement[]) => {
+    batch: async (statements: D1PreparedStatement[]) => {
       for (const statement of statements) await statement.run();
       return [];
     },
