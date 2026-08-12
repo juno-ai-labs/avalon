@@ -19,6 +19,34 @@ function rule(selector: string): string | null {
 }
 
 /**
+ * Every rule's selector prelude, with comments removed.
+ *
+ * Splitting on `}` and taking the text before the *last* `{` in each piece
+ * keeps the inner selector of a nested rule rather than the `@media` that
+ * encloses it. Comments go first so that prose naming a selector — this
+ * stylesheet's comments name several — is not mistaken for the rule itself.
+ */
+function preludes(): string[] {
+  return stylesheet
+    .replace(/\/\*[\s\S]*?\*\//gu, ' ')
+    .split('}')
+    .map((block) => (block.includes('{') ? (block.split('{').at(-2) ?? '') : ''))
+    .map((prelude) => prelude.trim())
+    .filter(Boolean);
+}
+
+/**
+ * The bare element names a selector targets — `ul` in `:is(.a, .b) > ul`, and
+ * nothing from `.contains-task-list`, `:first-child`, or `[data-expanded]`.
+ * An element name is an identifier introduced by a combinator, a comma, an
+ * opening parenthesis, or whitespace; every other position belongs to a class,
+ * id, pseudo, attribute, or the tail of a hyphenated name.
+ */
+function elementsIn(prelude: string): string[] {
+  return [...prelude.matchAll(/(?:^|[\s>+~,(])([a-z][a-z0-9]*)\b/gu)].flatMap((match) => match[1] ?? []);
+}
+
+/**
  * The launch surface is styled by inheriting the work-stream screen's own rules
  * rather than repeating them, so that a change to the destination reaches the
  * surface that is about to become it. Nothing in a component test can see that:
@@ -108,12 +136,12 @@ describe('system message clamp', () => {
  * the app.
  */
 describe('markdown list markers', () => {
-  // Every container that renders markdown, because they do not share one: the
-  // transcript and its siblings go through `MarkdownBody`, while a note and a
-  // meeting briefing render `ReactMarkdown` under a class of their own. A fix
-  // applied to the shared component alone leaves those two markerless, which is
-  // exactly the shape of the bug being fixed.
-  const containers = '.markdown-body, .note-detail-article, .meeting-generated-notes';
+  // One container, because there is one renderer. These assertions briefly named
+  // three: a note and a meeting briefing rendered `ReactMarkdown` under a class
+  // of their own, so every marker rule had to list all three or leave those two
+  // surfaces on the preflight's `none`. Both host `MarkdownBody` now, which is
+  // what makes naming `.markdown-body` alone a convergence rather than the
+  // oversight it would have been a change ago.
 
   // `rule()` returns the *first* block whose selector line matches, so a
   // selector that appears twice in the stylesheet resolves to whichever copy is
@@ -122,10 +150,10 @@ describe('markdown list markers', () => {
   // merging the two would silently point these assertions at the margins.
 
   it.each([
-    [`:is(${containers}) ul`, 'disc'],
-    [`:is(${containers}) :is(ul, ol) ul`, 'circle'],
-    [`:is(${containers}) :is(ul, ol) :is(ul, ol) ul`, 'square'],
-    [`:is(${containers}) ol`, 'decimal'],
+    ['.markdown-body ul', 'disc'],
+    ['.markdown-body :is(ul, ol) ul', 'circle'],
+    ['.markdown-body :is(ul, ol) :is(ul, ol) ul', 'square'],
+    ['.markdown-body ol', 'decimal'],
   ])('draws %s with %s', (selector, style) => {
     expect(rule(selector)).toContain(`list-style: ${style};`);
   });
@@ -137,19 +165,72 @@ describe('markdown list markers', () => {
     [':is(ul, ol) ul'],
     [':is(ul, ol) :is(ul, ol) ul'],
   ])('counts %s as a nesting level whichever list kind encloses it', (descendant) => {
-    expect(rule(`:is(${containers}) ${descendant}`)).not.toBeNull();
+    expect(rule(`.markdown-body ${descendant}`)).not.toBeNull();
   });
 
   // The one list that should keep the reset: its items carry checkboxes, and a
   // bullet beside each one is the reason this exception was written.
-  it('leaves a task list without markers, on every one of those containers', () => {
-    expect(rule(`:is(${containers}) .contains-task-list`)).toContain('list-style: none;');
+  it('leaves a task list without markers', () => {
+    expect(rule('.markdown-body .contains-task-list')).toContain('list-style: none;');
   });
 
-  // A marker is drawn inside the indent, so a container that restored the one
-  // without the other puts its numbers against the edge.
-  it('indents an ordered list wherever it draws one', () => {
-    expect(rule('.note-detail-article ul,\n.note-detail-article ol')).toContain('padding-left');
-    expect(rule('.meeting-notes-body ul,\n.meeting-notes-body ol')).toContain('padding-left');
+  // A marker is drawn inside the indent, so restoring the one without the other
+  // puts an ordered list's numbers against the edge.
+  it('indents the lists it draws markers on', () => {
+    expect(rule('.markdown-body ul,\n.markdown-body ol')).toContain('padding-left');
   });
+
+  // And the guard that keeps the single container honest. Both of these host
+  // `.markdown-body` now, so a list rule written against either would be a
+  // second definition of geometry the shared container already owns, decided
+  // against it only by source order — which is not what anyone restyling a note
+  // or a briefing will have in mind. Each keeps its heading scale, deliberately,
+  // and nothing else; a surface that grows list rules again has started to
+  // diverge, whether or not it has also stopped using the component.
+  //
+  // This reads selector preludes rather than searching the file for
+  // `<host> <element>`. That substring is only one of the ways to write the rule
+  // it is meant to catch: `:is(.note-detail-article, .meeting-notes-body) ul`
+  // and `.note-detail-article > li` both style a markdown element on a host and
+  // contain no such substring, so the search would pass while the divergence it
+  // exists to prevent was already in the file.
+  const MARKDOWN_ELEMENTS = [
+    'p', 'a', 'em', 'strong', 'del', 'img', 'code', 'pre', 'hr', 'blockquote',
+    'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  ];
+
+  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
+    'leaves markdown element styling to the shared container in %s',
+    (host) => {
+      // Headings are absent from the list on purpose: a scale is a property of
+      // the surface, not of markdown, and each host overrides exactly one.
+      const offenders = preludes()
+        .filter((prelude) => prelude.includes(host))
+        .filter((prelude) => elementsIn(prelude).some((element) => MARKDOWN_ELEMENTS.includes(element)));
+
+      expect(offenders).toEqual([]);
+    },
+  );
+
+  // The heading scales are the deliberate exception, and how they win matters as
+  // much as that they win. Written as `.note-detail-article :is(h1, …)` they tie
+  // `.markdown-body h1` at (0,1,1) and are decided by which sits lower in the
+  // file — so splitting this stylesheet, or moving either block, would return
+  // both surfaces to the shared scale with nothing going red. That is the same
+  // silent visual regression as the missing markers, arriving the same way.
+  // Naming `.markdown-body` in the selector settles it on specificity instead,
+  // and this is what stops the class being tidied back out.
+  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
+    'wins its heading scale on specificity rather than source order in %s',
+    (host) => {
+      const headingRules = preludes()
+        .filter((prelude) => prelude.includes(host))
+        .filter((prelude) => elementsIn(prelude).some((element) => /^h[1-6]$/u.test(element)));
+
+      expect(headingRules.length).toBeGreaterThan(0);
+      for (const prelude of headingRules) {
+        expect(prelude).toContain('.markdown-body');
+      }
+    },
+  );
 });
