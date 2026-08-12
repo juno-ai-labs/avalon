@@ -28,7 +28,7 @@ function restoreHeights(): void {
  * never calls back, so without this the observer could be deleted outright and
  * every test here would still pass.
  */
-function stubControllableResizeObserver(): { notify: (target: Element) => void } {
+function stubControllableResizeObserver(): { notify: (target: Element) => void; observing: (target: Element) => boolean } {
   const observers: { callback: () => void; targets: Element[] }[] = [];
   vi.stubGlobal('ResizeObserver', class {
     private readonly registration: { callback: () => void; targets: Element[] };
@@ -48,6 +48,7 @@ function stubControllableResizeObserver(): { notify: (target: Element) => void }
         if (observer.targets.includes(target)) observer.callback();
       }
     },
+    observing: (target) => observers.some((observer) => observer.targets.includes(target)),
   };
 }
 
@@ -92,16 +93,53 @@ describe('useTextClamped', () => {
     expect(screen.getByRole('status')).toHaveTextContent('whole');
   });
 
-  it('keeps its answer while the caller has the clamp lifted', () => {
+  it('stops observing, and keeps its answer, while the caller has the clamp lifted', () => {
     stubHeights({ clientHeight: 82, scrollHeight: 1_640 });
+    const resize = stubControllableResizeObserver();
     const { rerender } = render(<Subject text="A digest brief" />);
     expect(screen.getByRole('status')).toHaveTextContent('clamped');
+    expect(resize.observing(screen.getByTestId('box'))).toBe(true);
 
-    // Expanding removes the clamp, so the box now reports its whole height and
-    // a hook that kept measuring would retract the control the reader just
-    // used, stranding them in text they cannot collapse again.
+    // Expanding is itself a resize of the observed element, and the opened box
+    // reports that it fits. Pausing has to release the observer, not merely
+    // skip the measurement on a re-render: an observer left alive across the
+    // transition fires on the growth and retracts the control the reader just
+    // used, stranding them in text they can no longer collapse.
     stubHeights({ clientHeight: 1_640, scrollHeight: 1_640 });
     rerender(<Subject clampApplied={false} text="A digest brief" />);
+
+    expect(resize.observing(screen.getByTestId('box'))).toBe(false);
+    act(() => resize.notify(screen.getByTestId('box')));
+    expect(screen.getByRole('status')).toHaveTextContent('clamped');
+  });
+
+  it('measures again once the clamp is back', () => {
+    stubHeights({ clientHeight: 82, scrollHeight: 1_640 });
+    const resize = stubControllableResizeObserver();
+    const { rerender } = render(<Subject text="A digest brief" />);
+    rerender(<Subject clampApplied={false} text="A digest brief" />);
+
+    // Collapsing has to re-arm both the measurement and the observer, or the
+    // frozen answer outlives the state it was taken in — a row whose text was
+    // replaced by something short would keep offering a control that opens
+    // nothing.
+    stubHeights({ clientHeight: 82, scrollHeight: 82 });
+    rerender(<Subject text="A digest brief" />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('whole');
+    expect(resize.observing(screen.getByTestId('box'))).toBe(true);
+  });
+
+  it('puts the rounding boundary between integer error and a hidden line', () => {
+    // The constant is 4px against a ~16px line box. Both neighbours are pinned
+    // so that widening it toward a real hidden line, or narrowing it back onto
+    // the rounding it exists to absorb, fails here rather than in a window.
+    stubHeights({ clientHeight: 82, scrollHeight: 86 });
+    const { rerender } = render(<Subject text="A note that fills its clamp exactly" />);
+    expect(screen.getByRole('status')).toHaveTextContent('whole');
+
+    stubHeights({ clientHeight: 82, scrollHeight: 87 });
+    rerender(<Subject text="A note that fills its clamp exactly " />);
 
     expect(screen.getByRole('status')).toHaveTextContent('clamped');
   });
