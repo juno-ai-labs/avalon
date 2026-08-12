@@ -50,7 +50,11 @@ export class NotionRegionalBridge extends WorkerEntrypoint<Env> {
   storeNotionChallenge(input: unknown) {
     return serializeNotionRpcResult(async () => {
       const parsed = parseRpcInput(NotionChallengeInputSchema, input, "storeNotionChallenge");
-      await new ProviderWebhookService(this.env).storeNotionChallengeToken(parsed.verificationToken);
+      await new ProviderWebhookService(this.env).storeNotionChallengeToken(
+        parsed.verificationToken,
+        null,
+        parsed.setupGeneration,
+      );
       return { stored: true as const };
     });
   }
