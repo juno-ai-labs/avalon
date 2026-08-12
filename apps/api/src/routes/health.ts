@@ -74,10 +74,30 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL),
     message: c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL ? "configured" : "not configured",
   };
-  checks.googleLoginOAuth = {
-    ok: Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET),
-    message: c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET ? "configured" : "not configured",
-  };
+  // Identity sign-in is a Global-only surface, so EU reporting "not configured"
+  // forever was a permanent false negative — noise that a real fault would have
+  // had to be spotted inside.
+  const googleLoginConfigured = Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET);
+  // Exempts EU by name rather than "not Global": an unreadable region is the
+  // case where this probe most needs to complain, and the env contract holds
+  // one to every rule. `/health` is reachable when the region is invalid
+  // precisely so it can say so, and it must not answer "not required" then.
+  if (c.env.AVALON_REGION !== "eu") {
+    // Global, and any region too malformed to read — the state this probe most
+    // needs to complain in, since the entrypoint is failing on this very key
+    // while `/health` stays exempt so it can say so.
+    checks.googleLoginOAuth = {
+      ok: googleLoginConfigured,
+      message: googleLoginConfigured ? "configured" : "not configured",
+    };
+  } else if (googleLoginConfigured) {
+    // Not a healthy state to confirm: the runbook installs this pair on Global
+    // alone, so an EU Worker holding it is a platform login secret sitting
+    // outside its blast radius — something to go remove, not to reassure about.
+    checks.googleLoginOAuth = { ok: false, message: "configured outside Global; remove it from this region" };
+  } else {
+    checks.googleLoginOAuth = { ok: true, message: "not required outside Global" };
+  }
   checks.googleConnectorOAuth = {
     ok: Boolean(c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET),
     message: c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET

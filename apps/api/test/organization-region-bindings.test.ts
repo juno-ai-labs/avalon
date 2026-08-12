@@ -111,4 +111,29 @@ describe("organization region bindings", () => {
     })).rejects.toMatchObject({ status: 409, code: "global_identity_required" });
     expect(database.runs).toHaveLength(0);
   });
+
+  it("refuses the identity callback when Google is not configured, before spending anything", async () => {
+    // The callback half of the flow, which read the credentials unguarded until
+    // they became optional on `Env`. Unconfigured, it sent `undefined` to
+    // Google and reported the rejection as a token-exchange failure — a
+    // misconfiguration wearing a provider fault's error code.
+    const database = new RecordingDatabase(invitation);
+    const unconfigured = environment(database, "global");
+    delete (unconfigured as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (unconfigured as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      throw new Error("the identity callback must not reach Google unconfigured");
+    });
+
+    try {
+      await expect(new AuthService(unconfigured).consumeIdentityCallback("code", "s".repeat(32)))
+        .rejects.toMatchObject({ status: 503, code: "google_oauth_not_configured" });
+      // Refused before the single-use OAuth state is claimed, so a retry after
+      // the deployment is fixed still has one to spend.
+      expect(database.runs).toHaveLength(0);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });
