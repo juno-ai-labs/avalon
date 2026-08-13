@@ -54,6 +54,170 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("tracks current attachment derivatives without a duplicate object catalog", () => {
+    const database = migrateFreshDatabase();
+    const resourceColumns = database.prepare("PRAGMA table_info(resources)").all() as Array<{ name: string }>;
+    expect(resourceColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "content_sha256",
+      "model_content_status",
+      "model_content_extractor_version",
+      "model_content_character_count",
+      "model_content_extracted_at",
+      "model_content_error_code",
+      "model_content_claimed_at",
+      "model_content_claim_id",
+    ]));
+    const compactionColumns = database.prepare("PRAGMA table_info(workstream_context_compactions)").all() as Array<{ name: string }>;
+    expect(compactionColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "checkpoint_template_version",
+      "execution_principal_key",
+      "resource_visibility_fingerprint",
+    ]));
+
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('attachment-owner', 'attachment-subject', 'attachment@example.com', 'Attachment Owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('attachment-workspace', 'Attachment Workspace', 'attachment-workspace', 'global', 'attachment-owner', '2026-08-12', '2026-08-12');
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         content_sha256, model_content_ref, model_content_status,
+         model_content_extractor_version, model_content_character_count,
+         model_content_extracted_at, created_at, updated_at)
+      VALUES
+        ('attachment-resource', 'attachment-workspace', 'uploaded_file', 'avalon_upload',
+         'brief.md', 'text/markdown', 'original-ref', '${"a".repeat(64)}',
+         'active-model-ref', 'ready', 'markdown-v1', 120,
+         '2026-08-12', '2026-08-12', '2026-08-12');
+      INSERT INTO resource_object_deletion_outbox
+        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+      VALUES ('next-model-ref', 'attachment-workspace', 'attachment-resource', 'derivative', '2026-08-12', '2026-08-12');
+      UPDATE resources
+         SET model_content_ref = 'next-model-ref'
+       WHERE id = 'attachment-resource';
+    `);
+
+    expect(database.prepare(
+      `SELECT object_ref, object_kind FROM resource_object_deletion_outbox
+        WHERE resource_id = 'attachment-resource' ORDER BY object_ref`,
+    ).all()).toEqual([
+      { object_ref: "active-model-ref", object_kind: "derivative" },
+    ]);
+
+    database.exec(`
+      DELETE FROM resources WHERE id = 'attachment-resource';
+    `);
+
+    expect(database.prepare(
+      `SELECT object_ref, object_kind FROM resource_object_deletion_outbox
+       WHERE resource_id = 'attachment-resource' ORDER BY object_ref`,
+    ).all()).toEqual([
+      { object_ref: "active-model-ref", object_kind: "derivative" },
+      { object_ref: "next-model-ref", object_kind: "derivative" },
+      { object_ref: "original-ref", object_kind: "original" },
+    ]);
+    expect(() => database.exec(
+      "INSERT INTO resources (id, workspace_id, resource_type, provider, title, model_content_status, created_at, updated_at) VALUES ('bad-status', 'attachment-workspace', 'file', 'test', 'bad', 'empty', '2026-08-12', '2026-08-12')",
+    )).toThrow(/CHECK constraint failed/iu);
+    database.close();
+  });
+
+  it("advances the bounded resource-inventory revision for every visibility-changing relationship", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('inventory-owner', 'inventory-subject', 'inventory@example.com', 'Inventory Owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('inventory-workspace', 'Inventory Workspace', 'inventory-workspace', 'global', 'inventory-owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('inventory-workstream', 'inventory-workspace', 'Inventory', 'Test revision fencing', 'ad_hoc', 'inventory-owner', 'idle', '2026-08-12', '2026-08-12', '2026-08-12');
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, created_at, updated_at)
+      VALUES
+        ('inventory-upload', 'inventory-workspace', 'file', 'avalon_upload', 'brief.md', '2026-08-12', '2026-08-12'),
+        ('inventory-note-resource', 'inventory-workspace', 'note', 'avalon_note', 'Private note', '2026-08-12', '2026-08-12');
+      INSERT INTO workstream_resources (workstream_id, resource_id, relationship_type, attached_at)
+      VALUES
+        ('inventory-workstream', 'inventory-upload', 'explicit', '2026-08-12'),
+        ('inventory-workstream', 'inventory-note-resource', 'explicit', '2026-08-12');
+    `);
+    const revision = () => database.prepare(
+      "SELECT revision FROM workstream_resource_inventory_revisions WHERE workspace_id = 'inventory-workspace' AND workstream_id = 'inventory-workstream'",
+    ).get() as { revision: number };
+    expect(revision()).toEqual({ revision: 2 });
+
+    database.exec(`
+      UPDATE resources
+         SET updated_at = '2026-08-12T00:00:30Z', model_content_status = 'processing'
+       WHERE id = 'inventory-upload';
+    `);
+    expect(revision()).toEqual({ revision: 2 });
+
+    database.exec(`
+      UPDATE resources SET title = 'updated.md' WHERE id = 'inventory-upload';
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, author_user_id, message_type, text_content, sequence_number, created_at)
+      VALUES ('inventory-message', 'inventory-workspace', 'inventory-workstream', 'human', 'inventory-owner', 'text', 'Attached', 1, '2026-08-12');
+      INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
+      VALUES ('inventory-message', 'inventory-upload', 0, '2026-08-12');
+      INSERT INTO notes
+        (id, workspace_id, owner_user_id, resource_id, scope, title, last_activity_at, created_at, updated_at)
+      VALUES ('inventory-note', 'inventory-workspace', 'inventory-owner', 'inventory-note-resource', 'personal', 'Private note', '2026-08-12', '2026-08-12', '2026-08-12');
+      UPDATE notes SET scope = 'workspace', updated_at = '2026-08-12T00:01:00Z' WHERE id = 'inventory-note';
+      DELETE FROM message_attachments WHERE message_id = 'inventory-message' AND resource_id = 'inventory-upload';
+      DELETE FROM workstream_resources WHERE workstream_id = 'inventory-workstream' AND resource_id = 'inventory-upload';
+    `);
+    expect(revision()).toEqual({ revision: 8 });
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
+  it("invalidates attachment receipts when their derivative changes or resource is deleted", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('receipt-owner', 'receipt-subject', 'receipt@example.com', 'Receipt Owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('receipt-workspace', 'Receipt Workspace', 'receipt-workspace', 'global', 'receipt-owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('receipt-workstream', 'receipt-workspace', 'Receipts', 'Test receipt lifecycle', 'ad_hoc', 'receipt-owner', 'idle', '2026-08-12', '2026-08-12', '2026-08-12');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('receipt-run', 'receipt-workspace', 'receipt-workstream', 'manual', '{"type":"user","userId":"receipt-owner"}', 'completed', '2026-08-12');
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, model_content_sha256, created_at, updated_at)
+      VALUES ('receipt-resource', 'receipt-workspace', 'file', 'avalon_upload', 'brief.md', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-08-12', '2026-08-12');
+      INSERT INTO tool_invocations
+        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, output_ref, output_summary, status)
+      VALUES ('receipt-invocation-one', 'receipt-workspace', 'receipt-workstream', 'receipt-run', 'call-one', 'read_resource', 'hash-one', '{}', 'receipt/object-one', 'Read', 'completed');
+      INSERT INTO attachment_tool_receipts
+        (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+      VALUES ('receipt-workspace', 'receipt-resource', 'receipt-invocation-one', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-08-12');
+      UPDATE resources SET model_content_sha256 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE id = 'receipt-resource';
+    `);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations WHERE id = 'receipt-invocation-one'").get())
+      .toEqual({ count: 0 });
+    expect(database.prepare("SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = 'receipt/object-one'").get())
+      .toEqual({ object_ref: "receipt/object-one", object_kind: "receipt" });
+
+    database.exec(`
+      INSERT INTO tool_invocations
+        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, output_ref, output_summary, status)
+      VALUES ('receipt-invocation-two', 'receipt-workspace', 'receipt-workstream', 'receipt-run', 'call-two', 'view_resource', 'hash-two', '{}', 'receipt/object-two', 'Viewed', 'completed');
+      INSERT INTO attachment_tool_receipts
+        (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+      VALUES ('receipt-workspace', 'receipt-resource', 'receipt-invocation-two', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '2026-08-12');
+      DELETE FROM resources WHERE id = 'receipt-resource';
+    `);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations WHERE id = 'receipt-invocation-two'").get())
+      .toEqual({ count: 0 });
+    expect(database.prepare("SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = 'receipt/object-two'").get())
+      .toEqual({ object_ref: "receipt/object-two", object_kind: "receipt" });
+    database.close();
+  });
+
   it("persists normalized activity targets independently from provider visibility metadata", () => {
     const database = migrateFreshDatabase();
     const columns = database.prepare("PRAGMA table_info(activities)").all() as Array<{ name: string }>;
@@ -691,7 +855,7 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("stores one durable provider-measured compaction checkpoint per work stream", () => {
+  it("stores independent provider-measured compaction checkpoints per execution principal", () => {
     const database = migrateFreshDatabase();
     const columns = database.prepare("PRAGMA table_info(workstream_context_compactions)").all();
     expect(columns).toEqual(expect.arrayContaining([
@@ -699,7 +863,34 @@ describe("database migrations", () => {
       expect.objectContaining({ name: "messages_json", notnull: 1 }),
       expect.objectContaining({ name: "context_tokens_before_compaction", notnull: 1 }),
       expect.objectContaining({ name: "context_window_tokens", notnull: 1 }),
+      expect.objectContaining({ name: "execution_principal_key", notnull: 1 }),
+      expect.objectContaining({ name: "resource_visibility_fingerprint", notnull: 1 }),
     ]));
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('checkpoint-owner', 'checkpoint-subject', 'checkpoint@example.com', 'Checkpoint Owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('checkpoint-workspace', 'Checkpoint Workspace', 'checkpoint-workspace', 'global', 'checkpoint-owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('checkpoint-workstream', 'checkpoint-workspace', 'Checkpoints', 'Test scoped compaction', 'ad_hoc', 'checkpoint-owner', 'idle', '2026-08-12', '2026-08-12', '2026-08-12');
+      INSERT INTO workstream_context_compactions
+        (workspace_id, workstream_id, execution_principal_key, resource_visibility_fingerprint,
+         checkpoint_template_version, harness_run_id, compacted_through_sequence, messages_json,
+         summary, model, context_tokens_before_compaction, context_window_tokens, input_tokens,
+         output_tokens, cost_microusd, created_at, updated_at)
+      VALUES
+        ('checkpoint-workspace', 'checkpoint-workstream', 'user:checkpoint-owner', 'owner-fingerprint',
+         1, 'run-owner', 3, '[]', 'Owner summary', 'model', 80, 100, 10, 4, 2, '2026-08-12', '2026-08-12'),
+        ('checkpoint-workspace', 'checkpoint-workstream', 'workspace:checkpoint-workspace', 'automation-fingerprint',
+         1, 'run-automation', 4, '[]', 'Automation summary', 'model', 85, 100, 11, 5, 3, '2026-08-12', '2026-08-12');
+    `);
+    expect(database.prepare(
+      "SELECT execution_principal_key, summary FROM workstream_context_compactions ORDER BY execution_principal_key",
+    ).all()).toEqual([
+      { execution_principal_key: "user:checkpoint-owner", summary: "Owner summary" },
+      { execution_principal_key: "workspace:checkpoint-workspace", summary: "Automation summary" },
+    ]);
     database.close();
   });
 

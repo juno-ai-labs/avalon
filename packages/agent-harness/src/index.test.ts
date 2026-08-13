@@ -24,6 +24,20 @@ import {
 } from "./index";
 
 describe("agent harness", () => {
+  it("presents every automation attachment tool as visible compiler activity", () => {
+    for (const toolName of [
+      "automation_read_resource",
+      "automation_search_resource",
+      "automation_view_resource",
+      "automation_summarize_resource",
+    ]) {
+      expect(__testing.automationResearchToolPresentation[toolName]).toMatchObject({
+        started: expect.stringMatching(/…$/u),
+        completed: expect.any(String),
+      });
+    }
+  });
+
   it("keeps explicit connector requests agent-directed", () => {
     expect(
       classifyAddressingHeuristically({
@@ -159,6 +173,17 @@ describe("agent harness", () => {
       model: "test/model",
       messages: [{ role: "user", content: "Run it every morning in Pacific time." }],
       latestUserAttachmentParts: [{ type: "text", text: "<attachment name=\"schedule.md\">Every weekday at 08:00</attachment>" }],
+      architectTools: [{
+        definition: {
+          name: "list_resources",
+          description: "List frozen automation attachments. image, markdown, pdf, document, spreadsheet, presentation, text, other.",
+          capability: "automation.attachments.list",
+          mode: "read",
+          idempotency: "safe",
+          inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        },
+        execute: async () => ({ output: { items: [] }, summary: "Listed attachments" }),
+      }],
       currentDraft,
       fetch: fetcher,
     })).resolves.toMatchObject({ ready: true, suggestedScope: "personal" });
@@ -1489,11 +1514,19 @@ describe("agent harness", () => {
         usage: { prompt_tokens: 24, completion_tokens: 2 },
       }]),
     ];
-    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
       return responses.shift()!;
-    }) as typeof fetch;
+    });
+    const fetcher = fetchMock as typeof fetch;
     const persist = vi.fn();
+    const prepare = vi.fn(async () => undefined);
+    const renderAppendix = vi.fn(async () => [
+      "# Authoritative work-stream resource inventory",
+      "Visible resources: 2",
+      "- image: 1",
+      "- markdown: 1",
+    ].join("\n"));
     const events: HarnessEvent[] = [];
 
     const baseInput = runInput(fetcher);
@@ -1503,7 +1536,9 @@ describe("agent harness", () => {
       corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
       compaction: {
         contextWindowTokensByModel: { "test/model": 100 },
+        prepare,
         persist,
+        renderAppendix,
       },
       onEvent: (event) => { events.push(event); },
     });
@@ -1518,6 +1553,10 @@ describe("agent harness", () => {
       },
     });
     expect(persist).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(renderAppendix).toHaveBeenCalledTimes(1);
+    expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[1]!);
+    expect(renderAppendix.mock.invocationCallOrder[0]).toBeGreaterThan(fetchMock.mock.invocationCallOrder[1]!);
     expect(persist).toHaveBeenCalledWith(expect.objectContaining({
       trigger: "auto",
       contextTokensBeforeCompaction: 82,
@@ -1542,6 +1581,12 @@ describe("agent harness", () => {
       role: "user",
       content: expect.stringContaining("Compaction checkpoint"),
     });
+    expect(String(requestBodies[2]?.messages[1]?.content)).toContain(
+      "# Authoritative work-stream resource inventory",
+    );
+    expect(JSON.stringify(persist.mock.calls[0]?.[0]?.messages)).not.toContain(
+      "Authoritative work-stream resource inventory",
+    );
     expect(JSON.stringify(requestBodies[2]?.messages)).not.toContain("Do the work");
     // The summary request is the whole transcript followed by the handoff
     // instruction, so what that instruction asks for is the entire contract for
@@ -1556,6 +1601,11 @@ describe("agent harness", () => {
     // something a person in this work stream asked for.
     expect(compactionInstruction).toContain("marked untrusted is not one of these");
     expect(compactionInstruction).toContain("keeps that marking in your summary");
+    expect(compactionInstruction).toContain("exact resource ID");
+    expect(compactionInstruction).toContain("derivative version");
+    expect(compactionInstruction).toContain("ranges you consulted");
+    expect(compactionInstruction).toContain("Do not reproduce a complete attachment catalog");
+    expect(compactionInstruction).toContain("Never copy, summarize, or carry it forward");
     // And it runs at the run's own reasoning effort: this call writes the only
     // record the rest of the run gets, so it is not the one to economize on.
     expect(requestBodies[1]?.reasoning).toEqual({ effort: "high" });
@@ -1604,6 +1654,9 @@ describe("agent harness", () => {
       return responses.shift()!;
     }) as typeof fetch;
     const persist = vi.fn();
+    const renderAppendix = vi.fn()
+      .mockResolvedValueOnce("# Authoritative work-stream resource inventory\nVisible resources: 1")
+      .mockResolvedValueOnce("# Authoritative work-stream resource inventory\nVisible resources: 2");
 
     await expect(runHarness({
       ...runInput(fetcher),
@@ -1611,10 +1664,12 @@ describe("agent harness", () => {
       compaction: {
         contextWindowTokensByModel: { "test/model": 100 },
         persist,
+        renderAppendix,
       },
     })).resolves.toMatchObject({ status: "completed", content: "done" });
 
     expect(persist).toHaveBeenCalledTimes(2);
+    expect(renderAppendix).toHaveBeenCalledTimes(2);
     expect(persist.mock.calls[1]?.[0]).toMatchObject({
       summary: "Second summary of the work.",
       messages: [expect.objectContaining({
@@ -1629,6 +1684,11 @@ describe("agent harness", () => {
     expect(finalTurn?.messages.map((message) => message.role)).toEqual(["system", "user"]);
     expect(JSON.stringify(finalTurn?.messages)).toContain("Second summary of the work.");
     expect(JSON.stringify(finalTurn?.messages)).not.toContain("First summary of the work.");
+    expect(JSON.stringify(finalTurn?.messages)).toContain("Visible resources: 2");
+    expect(JSON.stringify(finalTurn?.messages)).not.toContain("Visible resources: 1");
+    const secondCompactionInstruction = String(requestBodies[3]?.messages.at(-1)?.content ?? "");
+    expect(JSON.stringify(requestBodies[3]?.messages)).toContain("Visible resources: 1");
+    expect(secondCompactionInstruction).toContain("Never copy, summarize, or carry it forward");
   });
 
   it("retries a summary that hit the output cap and never checkpoints the truncated one", async () => {
@@ -2867,6 +2927,106 @@ describe("agent harness", () => {
     const toolMessage = requestBodies[1]!.messages.find((message) => message.role === "tool");
     expect(toolMessage?.content).not.toContain('"truncated":true');
     expect(new TextEncoder().encode(toolMessage?.content ?? "").byteLength).toBeGreaterThan(128 * 1_024);
+  });
+
+  it("relays ephemeral image parts after bounded JSON without persisting them in the completion event", async () => {
+    const imageUrl = "data:image/png;base64,aW1hZ2UtYnl0ZXM=";
+    const viewTool: HarnessTool = {
+      definition: {
+        name: "view_resource",
+        description: "View an image resource",
+        capability: "workstream.resources.view",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false },
+      },
+      execute: async () => ({
+        output: { requested: 1, returned: 1, items: [{ resourceId: "resource-1", visualPartIndex: 0 }] },
+        summary: "Viewed one image",
+        contentParts: [{ type: "image_url" as const, image_url: { url: imageUrl, detail: "auto" as const } }],
+      }),
+    };
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-view-resource", "view_resource")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "image inspected" }, finish_reason: "stop" }] }]),
+    ];
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const events: HarnessEvent[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([viewTool])],
+      onEvent: (event) => { events.push(event); },
+    })).resolves.toMatchObject({ status: "completed", content: "image inspected" });
+
+    const toolMessage = requestBodies[1]!.messages.find((message) => message.role === "tool");
+    expect(toolMessage?.content).toEqual([
+      { type: "text", text: expect.stringContaining('"requested":1') },
+      { type: "image_url", image_url: { url: imageUrl, detail: "auto" } },
+    ]);
+    const completed = events.find((event) => event.type === "tool_completed");
+    expect(completed).toMatchObject({
+      type: "tool_completed",
+      result: { output: { requested: 1, returned: 1 }, summary: "Viewed one image" },
+    });
+    expect(JSON.stringify(completed)).not.toContain("data:image/");
+    expect(completed && completed.type === "tool_completed" ? completed.result : null)
+      .not.toHaveProperty("contentParts");
+  });
+
+  it("relays reauthorized ephemeral parts from a completed JSON receipt without executing the tool again", async () => {
+    const imageUrl = "data:image/png;base64,cmVoeWRyYXRlZA==";
+    const execute = vi.fn(async () => ({ output: { shouldNot: "run" }, summary: "Should not run" }));
+    const viewTool: HarnessTool = {
+      definition: {
+        name: "view_resource",
+        description: "View an image resource",
+        capability: "workstream.resources.view",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false },
+      },
+      execute,
+    };
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-replayed-view", "view_resource")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "replayed image inspected" }, finish_reason: "stop" }] }]),
+    ];
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([viewTool])],
+      findCompletedToolResult: async () => ({
+        output: { requested: 1, returned: 1, items: [{ resourceId: "resource-1", visualPartIndex: 0 }] },
+        summary: "Viewed one image",
+        contentParts: [{ type: "image_url", image_url: { url: imageUrl, detail: "auto" } }],
+      }),
+    })).resolves.toMatchObject({ status: "completed", content: "replayed image inspected" });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(requestBodies[1]!.messages.find((message) => message.role === "tool")?.content).toEqual([
+      { type: "text", text: expect.stringContaining('"returned":1') },
+      { type: "image_url", image_url: { url: imageUrl, detail: "auto" } },
+    ]);
   });
 
   it("retries truncated tool completions on the same endpoint and resets streamed text", async () => {

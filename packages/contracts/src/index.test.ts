@@ -860,6 +860,32 @@ describe("boundary contracts", () => {
       reason: "ambiguous_calendar_name",
       available: Array.from({ length: 400 }, (_, index) => `calendar-${index}-with-a-long-name`),
     }))).toEqual({ code: "invalid_payload" });
+    expect(readStructuredFailure(new ProviderError("resource_tool_mismatch", "Wrong tool", {
+      reason: "wrong_attachment_tool",
+      actualMimeType: "image/png",
+      attachmentKind: "image",
+      suggestedCall: {
+        tool: "workstream_view_resource",
+        arguments: { resourceIds: ["019ff769-f7a4-70c8-87a7-16722ff2ce43"] },
+      },
+      converterPayload: { prompt: "do not forward me" },
+    }))).toEqual({
+      code: "resource_tool_mismatch",
+      details: {
+        reason: "wrong_attachment_tool",
+        actualMimeType: "image/png",
+        attachmentKind: "image",
+        suggestedCall: {
+          tool: "workstream_view_resource",
+          arguments: { resourceIds: ["019ff769-f7a4-70c8-87a7-16722ff2ce43"] },
+        },
+      },
+    });
+    expect(readStructuredFailure(new ProviderError("resource_tool_mismatch", "Wrong tool", {
+      actualMimeType: "x".repeat(161),
+      attachmentKind: "image",
+      suggestedCall: { tool: "shell", arguments: { command: "cat /etc/passwd" } },
+    }))).toEqual({ code: "resource_tool_mismatch" });
     // A code with no details is still worth surfacing; anything without a code
     // carries nothing the caller could branch on.
     expect(readStructuredFailure(new ProviderError("unauthorized", "Reconnect"))).toEqual({ code: "unauthorized" });
