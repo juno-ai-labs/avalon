@@ -1,6 +1,7 @@
 import { classifyAttachmentKind } from '@avalon/contracts';
+import * as Dialog from '@radix-ui/react-dialog';
 import { LoaderCircle, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AttachmentPreview } from './attachments';
 import { MarkdownBody } from './workstream-blocks';
 
@@ -15,6 +16,8 @@ interface LoadedPreview {
 
 function previewMode(preview: AttachmentPreview): PreviewMode {
   if (preview.src) return 'image';
+  const mimeType = preview.mimeType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  if (mimeType.startsWith('text/') && mimeType !== 'text/markdown') return 'text';
   const kind = classifyAttachmentKind({ fileName: preview.name, mimeType: preview.mimeType });
   if (kind === 'image') return 'image';
   return kind === 'text' ? 'text' : 'markdown';
@@ -25,7 +28,6 @@ export function AttachmentLightbox({ preview, onClose }: {
   onClose: () => void;
 }): React.JSX.Element | null {
   const [loaded, setLoaded] = useState<LoadedPreview | null>(null);
-  const label = useMemo(() => preview ? `Preview of ${preview.name}` : '', [preview]);
   const mode = preview ? previewMode(preview) : null;
 
   useEffect(() => {
@@ -46,6 +48,7 @@ export function AttachmentLightbox({ preview, onClose }: {
     let objectUrl: string | undefined;
     void preview.loadContent(controller.signal).then(async (blob) => {
       if (mode === 'image') {
+        if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
         setLoaded({ preview, src: objectUrl });
         return;
@@ -71,20 +74,35 @@ export function AttachmentLightbox({ preview, onClose }: {
   const loading = !src && current?.text === undefined && current?.error === undefined;
 
   return (
-    <div aria-busy={loading || undefined} aria-label={label} aria-modal="true" className="attachment-lightbox" role="dialog">
-      <header className="attachment-lightbox-header">
-        <h2>{preview.name}</h2>
-        <button autoFocus aria-label="Close preview" className="attachment-lightbox-close" onClick={onClose} type="button"><X size={20} /></button>
-      </header>
-      <div className={`attachment-lightbox-content is-${mode}`} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-        {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
-        {current?.error && <div className="attachment-lightbox-status is-error" role="alert">{current.error}</div>}
-        {mode === 'image' && src && <img alt={preview.name} src={src} />}
-        {mode === 'markdown' && current?.text !== undefined && (
-          <article className="attachment-lightbox-document"><MarkdownBody>{current.text}</MarkdownBody></article>
-        )}
-        {mode === 'text' && current?.text !== undefined && <pre className="attachment-lightbox-text">{current.text}</pre>}
-      </div>
-    </div>
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="attachment-lightbox-overlay" />
+        <Dialog.Content
+          aria-busy={loading || undefined}
+          className="attachment-lightbox"
+          onCloseAutoFocus={(event) => {
+            if (!preview.returnFocus) return;
+            event.preventDefault();
+            preview.returnFocus.focus();
+          }}
+        >
+          <header className="attachment-lightbox-header">
+            <Dialog.Title asChild><h2 aria-label={`Preview of ${preview.name}`}>{preview.name}</h2></Dialog.Title>
+            <Dialog.Close asChild>
+              <button aria-label="Close preview" className="attachment-lightbox-close" type="button"><X size={20} /></button>
+            </Dialog.Close>
+          </header>
+          <div className={`attachment-lightbox-content is-${mode}`} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+            {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
+            {current?.error && <div className="attachment-lightbox-status is-error" role="alert">{current.error}</div>}
+            {mode === 'image' && src && <img alt={preview.name} src={src} />}
+            {mode === 'markdown' && current?.text !== undefined && (
+              <article className="attachment-lightbox-document"><MarkdownBody>{current.text}</MarkdownBody></article>
+            )}
+            {mode === 'text' && current?.text !== undefined && <pre className="attachment-lightbox-text">{current.text}</pre>}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
