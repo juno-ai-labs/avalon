@@ -56,7 +56,7 @@ function commandRunner() {
 
 function objectApi({
   corruptInventory = false,
-  inventoryCached = false,
+  inventoryCacheStatus = 'DYNAMIC',
   inventoryInvalidJson = false,
   inventoryStatus = 200,
   putErrors = [],
@@ -131,7 +131,9 @@ function objectApi({
     }
     const object = objects.get(target);
     assert.ok(object, `expected uploaded object ${target}`);
-    if (inventoryInvalidJson) return new Response('not-json');
+    if (inventoryInvalidJson) {
+      return new Response('not-json', { headers: { 'cf-cache-status': 'DYNAMIC' } });
+    }
     return Response.json({
       success: true,
       result: [{
@@ -141,7 +143,7 @@ function objectApi({
         size: object.bytes.byteLength,
       }],
     }, {
-      headers: inventoryCached ? { 'cf-cache-status': 'HIT' } : { 'cf-cache-status': 'DYNAMIC' },
+      headers: inventoryCacheStatus === null ? undefined : { 'cf-cache-status': inventoryCacheStatus },
     });
   };
   return {
@@ -374,24 +376,26 @@ test('validates authoritative inventory responses without trusting cached object
     }
   });
 
-  await t.test('cached inventory response', async () => {
-    const { root, desktopDirectory } = await fixture();
-    const api = objectApi({ inventoryCached: true });
-    try {
-      await assert.rejects(
-        publishTelemetryArtifacts({
-          desktopDirectory,
-          environment: runtimeEnvironment,
-          fetchImpl: api.fetchImpl,
-          runCommand: commandRunner().runCommand,
-          temporaryRoot: root,
-        }),
-        /Cloudflare returned a cached inventory/u,
-      );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+  for (const cacheStatus of ['HIT', 'STALE', 'UPDATING', 'REVALIDATED', null]) {
+    await t.test(`non-dynamic inventory response: ${cacheStatus ?? 'missing'}`, async () => {
+      const { root, desktopDirectory } = await fixture();
+      const api = objectApi({ inventoryCacheStatus: cacheStatus });
+      try {
+        await assert.rejects(
+          publishTelemetryArtifacts({
+            desktopDirectory,
+            environment: runtimeEnvironment,
+            fetchImpl: api.fetchImpl,
+            runCommand: commandRunner().runCommand,
+            temporaryRoot: root,
+          }),
+          /Cloudflare returned a non-dynamic inventory/u,
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
 
   await t.test('invalid inventory response', async () => {
     const { root, desktopDirectory } = await fixture();
