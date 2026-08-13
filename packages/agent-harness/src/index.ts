@@ -1550,6 +1550,10 @@ export async function compileAutomation(input: {
   const timeTool = automationCurrentTimeTool(input.defaultTimezones);
   const requestElicitationTool: HarnessTool = {
     definition: AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+    validateInput: (raw) => {
+      const result = RequestElicitationInputSchema.safeParse(raw);
+      return result.success ? null : result.error;
+    },
     execute: async (raw) => {
       const args = RequestElicitationInputSchema.parse(raw);
       if (!draftState.submitted) {
@@ -2286,6 +2290,12 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
 export interface HarnessTool {
   definition: ToolDefinition;
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
+  /**
+   * Re-run code-authored input refinements when a Zod failure escapes the
+   * executor. JSON Schema cannot represent every refinement, so this keeps a
+   * correctable argument error distinct from downstream response validation.
+   */
+  validateInput?: (input: unknown) => z.ZodError | null;
   /** Execute in model-declared order before concurrent tools in the same batch. */
   serial?: boolean;
 }

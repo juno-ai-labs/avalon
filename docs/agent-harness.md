@@ -9,6 +9,8 @@ Each run is one server-side, tool-using loop inherent to a work stream. It is no
 | Path | Responsibility |
 | --- | --- |
 | `packages/agent-harness/src/bind-runtime.ts` | The Bind 11 adapter itself — registry construction, the tool loop's hooks, streaming. |
+| `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization and bounded model-visible argument errors. |
+| `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
 | `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
@@ -130,7 +132,7 @@ The prompt sections are a pure render of run state. Bodies are rebuilt from the 
 2. Register the applicable stable core plugins plus the frozen connection catalog; restore only reauthorized hints.
 3. Reauthorize active plugins, render the stable prompt/tool surface, and ask OpenRouter through Bind's deterministic route plan.
 4. Stream text through the epoch-aware protocol; reasoning fields are ignored.
-5. Validate tools and recheck authority. Bind runs writes sequentially and may overlap independent reads, while returning results in the model's original call order.
+5. Normalize unambiguous schema-declared numeric strings, validate tools, and recheck authority. Bind runs writes sequentially and may overlap independent reads, while returning results in the model's original call order.
 6. Persist each immutable execution plan before execution and make a successful bounded result durable before returning it to Bind.
 7. Persist the complete assistant message, then let the lease-owning Workflow append the terminal lifecycle event.
 8. Stop on completion, elicitation, durable cancellation, ambiguous write, limit, lease loss, or failure.
@@ -144,6 +146,22 @@ The canonical `request_elicitation` tool belongs to `avalon:core` and is rendere
 ### Durable receipts and terminal state
 
 Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before execution, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to D1 before Bind can observe it.
+
+Before the input hash or any host hook sees arguments, the harness walks the
+tool's provider-facing JSON Schema and normalizes a string only where the field
+is exclusively numeric and the complete string is a finite JSON number. Unsafe
+integers and ambiguous string-or-number fields remain strings and fail or parse
+under the executor's normal contract. A redundant `number` plus `integer` type
+uses number semantics, because number already contains integer. One shared
+10,000-schema-visit budget covers normalization and union mismatch scoring, in
+addition to the depth cap, so a provider-controlled recursive branching schema
+cannot turn the walk exponential. This makes a medium model's `"0"` and the
+preferred `0` one canonical receipt identity without turning numeric-looking
+resource ids or free text into numbers. Executors remain the enforcement point.
+When one throws a Zod error, the harness checks the normalized input against the
+same JSON Schema the model saw and any code-authored `validateInput` refinement:
+a mismatch becomes a bounded `kind: "validation"` result from the closest union
+branch, while valid input means the failure came from downstream data.
 
 Completed receipts replay without another provider call only while their owning
 subsystem's authorization and dependency checks still pass. Attachment list
@@ -433,6 +451,17 @@ Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceede
 
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
+When an executor throws a Zod error and its normalized arguments also fail the
+provider-facing schema or its code-authored refinement, the model sees
+`kind: "validation"`, at most five actionable issues from the closest union
+branch, and no raw `invalid_union` tree. The message is capped at 1,200
+characters and never echoes submitted values. If those arguments pass both
+forms, the Zod failure is downstream. A read or provider-idempotent write remains
+`kind: "external"` and tells the model to retry once, then report invalid data.
+A `record_before_execute` write instead becomes `ambiguous_external_write` and
+terminates the run without retry guidance, because the provider may have applied
+the mutation before its response failed validation.
+
 The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
 Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
@@ -467,6 +496,48 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-12 — Numeric tool strings normalize before receipts and validation errors become actionable
+
+**What changed:** Every Bind tool call now normalizes an exact finite JSON-number
+string only when its declared field is exclusively numeric before hashing,
+planning, or execution. The schema traversal has one hard work budget, and a
+redundant `number`/`integer` type uses number semantics. A caught Zod failure is
+compared with both the declared input schema and any code-authored refinement:
+argument failures reach the model as bounded guidance from the closest union
+branch, later read failures remain external data-validation errors, and an
+invalid response after a non-idempotent write becomes ambiguous rather than
+retryable.
+
+**Why:** A production work-stream model sent `"0"` for an integer attachment
+offset. The executor returned the complete two-branch Zod union diagnostic as an
+external failure, the model repeated the identical call, and then substituted a
+partial summary for the requested complete read. The schema contained enough
+information both to accept the unambiguous representation and to avoid burying the
+one correctable field. Review then exposed two adjacent hazards: a branching
+self-reference could consume exponential Worker time despite the depth cap, and
+JSON Schema erases code-only refinements while response validation happens after
+a write may already have committed.
+
+**Considered and rejected:** Coercing every numeric-looking string would corrupt
+ids, phone numbers, ZIP codes, and free text. Adding string alternatives to every
+tool schema would teach models the less precise form and duplicate policy across
+tool families. Catching and rewriting errors in each executor would drift and
+would miss hosted or future tools.
+
+**Consequences:** Numeric normalization is schema-guided and centralized;
+string-or-number unions preserve strings, malformed and unsafe values still fail,
+and `1` and `"1"` share one receipt identity. A provider schema receives at most
+10,000 visits, so exhausting the budget may leave an otherwise tolerated numeric
+string unchanged for the executor to reject but cannot stall the Worker.
+Executors must continue stricter domain parsing, expose refinements through the
+classifier hook, and let downstream Zod errors reach the harness formatter.
+ESLint rejects per-tool `z.coerce.number()` and raw number-or-string compatibility
+types only when reachable from a tool schema, so unrelated request parsing can
+keep its own coercion policy. A non-idempotent write whose response cannot be
+validated stops the run as ambiguous and is never automatically repeated.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-12 — Historical attachment results reauthorize before projection
 
