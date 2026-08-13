@@ -110,6 +110,7 @@ const FilterSchema: z.ZodType<FilterNode> = z.lazy(() => z.union([
 
 const QuerySchema = z.object({
   memoryTableId: z.string().min(1),
+  memoryTableRowIds: z.array(z.string().min(1)).min(1).max(100).optional(),
   search: z.string().trim().min(1).max(2_000).optional(),
   filter: FilterSchema.optional(),
   orderBy: z.array(z.object({
@@ -147,24 +148,41 @@ const InvalidateSchema = z.object({
 }).strict();
 
 class MemoryTableToolError extends Error {
+  override readonly name = "MemoryTableToolError";
+
   constructor(
     readonly code: string,
     message: string,
     readonly details: { reason: string },
   ) {
     super(message);
-    this.name = "MemoryTableToolError";
   }
 }
 
 function memoryTableRevisionConflict(code = "memory_table_revision_conflict"): MemoryTableToolError {
   return new MemoryTableToolError(
     code,
-    "The durable table changed while the mutation was being applied. Query the affected rows again, copy their current revisions, and rebuild the mutation.",
+    "The durable table changed while the mutation was being applied. Query the affected rows again by memoryTableRowIds, copy their current revisions, and rebuild the mutation.",
     {
-      reason: "Call table_query again for the affected rows, copy each current row revision, and rebuild the mutation. Do not retry with an old revision.",
+      reason: "Call table_query with the affected memoryTableRowIds, copy each current row revision, and rebuild the mutation. Do not retry with an old revision.",
     },
   );
+}
+
+function memoryTableInsertContention(): MemoryTableToolError {
+  return new MemoryTableToolError(
+    "memory_table_insert_contention",
+    "The durable table kept changing while rows were inserted. Query by the rows' natural-key values, remove rows already present, and retry the missing rows once.",
+    {
+      reason: "Call table_query with filters for the natural-key values, then call table_insert_rows once with only rows that are still missing.",
+    },
+  );
+}
+
+function isMemoryTableRowRevisionAbort(error: unknown): boolean {
+  // The cell-consistency trigger in migration 0037 reports a concurrent row
+  // change through SQLite RAISE(ABORT), whose generic error code is not ours.
+  return error instanceof Error && error.message.includes("memory_table_row_revision_conflict");
 }
 
 const SearchSchema = z.object({ query: z.string().trim().min(1).max(2_000) }).strict();
@@ -932,6 +950,11 @@ async function queryTable(env: Env, input: WorkstreamWorkflowInput, raw: unknown
   if (selectedIds.size !== selectedColumns.length) throw new Error("memory_table_select_duplicate");
   const bindings: unknown[] = [table.table.memory_table_id];
   const where = ["row.memory_table_id = ?", "row.invalidated_at IS NULL"];
+  const exactRowIds = args.memoryTableRowIds ? [...new Set(args.memoryTableRowIds)] : [];
+  if (exactRowIds.length > 0) {
+    where.push(`row.memory_table_row_id IN (${placeholders(exactRowIds.length)})`);
+    bindings.push(...exactRowIds);
+  }
   if (args.search) {
     const match = ftsQuery(args.search);
     if (!match) return {
@@ -956,7 +979,7 @@ async function queryTable(env: Env, input: WorkstreamWorkflowInput, raw: unknown
         AND ordered.memory_table_column_id = ?) ${entry.direction.toUpperCase()}`;
   });
   order.push("row.updated_at DESC", "row.memory_table_row_id ASC");
-  const pageSize = args.pageSize ?? 50;
+  const pageSize = args.pageSize ?? (exactRowIds.length > 0 ? exactRowIds.length : 50);
   const cursor = decodeCursor(args.cursor);
   if (cursor.dataRevision !== null && cursor.dataRevision !== Number(table.table.data_revision)) {
     throw new Error("memory_table_cursor_stale");
@@ -1213,7 +1236,7 @@ async function insertRows(
       const batch = await env.DB.batch(statements);
       acquired = d1Changes(batch[0]) === 1;
     }
-    if (!acquired) throw memoryTableRevisionConflict();
+    if (!acquired) throw memoryTableInsertContention();
   }
   const inserted = await env.DB.prepare(
     `SELECT memory_table_row_id, revision, data_json
@@ -1352,7 +1375,7 @@ async function updateRows(
   } catch (error) {
     const raced = await loadMutationReceipt(env, input, receiptId, "update_rows", inputHash);
     if (raced) return { output: raced, summary: `Updated ${Number(raced.updatedCount ?? 0)} durable rows`, providerOperationId: String(raced.memoryTableMutationId) };
-    if (error instanceof Error && error.message.includes("memory_table_row_revision_conflict")) {
+    if (isMemoryTableRowRevisionAbort(error)) {
       throw memoryTableRevisionConflict("memory_table_row_revision_conflict");
     }
     throw error;
@@ -1429,7 +1452,7 @@ async function invalidateRows(
   } catch (error) {
     const raced = await loadMutationReceipt(env, input, receiptId, "invalidate_rows", inputHash);
     if (raced) return { output: raced, summary: `Invalidated ${Number(raced.invalidatedCount ?? 0)} durable rows`, providerOperationId: String(raced.memoryTableMutationId) };
-    if (error instanceof Error && error.message.includes("memory_table_row_revision_conflict")) {
+    if (isMemoryTableRowRevisionAbort(error)) {
       throw memoryTableRevisionConflict("memory_table_row_revision_conflict");
     }
     throw error;
@@ -1520,7 +1543,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "query",
-        description: "Query only the matching rows and selected columns from an authorized durable table using typed filters, FTS, ordering, and cursor paging.",
+        description: "Query authorized rows by exact memoryTableRowIds or by typed filters, FTS, ordering, and cursor paging. Use exact IDs to reread rows after a revision conflict.",
         capability: "table.read",
         mode: "read",
         idempotency: "safe",
@@ -1530,6 +1553,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
           $defs: { filterNode: filterNodeJsonSchema },
           properties: {
             memoryTableId: { type: "string" },
+            memoryTableRowIds: { type: "array", minItems: 1, maxItems: 100, items: { type: "string" } },
             search: { type: "string" },
             filter: filterJsonSchema,
             orderBy: { type: "array", items: { type: "object", additionalProperties: false, properties: { column: { type: "string" }, direction: { type: "string", enum: ["asc", "desc"] } }, required: ["column", "direction"] } },
@@ -1584,7 +1608,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "update_rows",
-        description: "Patch authorized rows. For each row, copy memoryTableRowId and expectedRevision from the latest table_query result; after a revision conflict, query that row again before rebuilding the patch. Natural-key columns are immutable.",
+        description: "Patch authorized rows. Copy memoryTableRowId and expectedRevision from table_query; after a revision conflict, call table_query with memoryTableRowIds and rebuild the patch from those exact results. Natural-key columns are immutable.",
         capability: "table.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1592,7 +1616,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
           type: "object", additionalProperties: false,
           properties: {
             memoryTableId: { type: "string" },
-            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from the latest table_query result for this memoryTableRowId." }, values: { type: "object" } }, required: ["memoryTableRowId", "expectedRevision", "values"] } },
+            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from table_query for this memoryTableRowId." }, values: { type: "object" } }, required: ["memoryTableRowId", "expectedRevision", "values"] } },
             rationale: { type: "string" },
           },
           required: ["memoryTableId", "rows", "rationale"],
@@ -1603,7 +1627,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "invalidate_rows",
-        description: "Reversibly invalidate authorized rows. For each row, copy memoryTableRowId and expectedRevision from the latest table_query result; after a revision conflict, query that row again before retrying.",
+        description: "Reversibly invalidate authorized rows. Copy memoryTableRowId and expectedRevision from table_query; after a revision conflict, call table_query with memoryTableRowIds and retry from those exact results.",
         capability: "table.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1611,7 +1635,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
           type: "object", additionalProperties: false,
           properties: {
             memoryTableId: { type: "string" },
-            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from the latest table_query result for this memoryTableRowId." } }, required: ["memoryTableRowId", "expectedRevision"] } },
+            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from table_query for this memoryTableRowId." } }, required: ["memoryTableRowId", "expectedRevision"] } },
             reason: { type: "string" },
           },
           required: ["memoryTableId", "rows", "reason"],

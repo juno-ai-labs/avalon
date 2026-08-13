@@ -175,20 +175,24 @@ Two different jobs:
   code and follow a direct instruction; it cannot infer a recovery path from a
   500, “stale revision”, or a vague noun phrase.
 
-  **`summary` is not model-visible.** Only `output` is serialized into the tool
-  message the model reads; `summary` travels on the host's `tool_completed`
-  event and drives human-facing display. So a remediation that lives only in
+  **`summary` is not model-visible.** A successful tool message serializes
+  `output`; a typed failure serializes its model-visible `error` sentence plus
+  structured `data`. `summary` travels only on the host's `tool_completed` event
+  and drives human-facing display. So a remediation that lives only in
   `summary` reaches the person watching and never the model that has to recover.
-  Put the fix in `output` and let `summary` be the human sentence. For a typed
-  error that Bind projects into a failed tool result, the shared forwarding
-  allowlist is currently `reason`, `field`, `expected`, `available`,
-  `reconnectRequired`, and `retryAfterMs`; use `reason` for bounded next-step
-  prose. An adapter-only `hint`, path, or provider-detail field is silently
-  stripped unless the contracts, runtime, and tests add it to that shared
-  allowlist. The skill loader shows the same principle on successful tool
-  envelopes: `skill_limit_reached` returns its `reason` and the already-loaded
-  list in `output`, while `skill_not_available` returns a bare code and keeps the
-  fix in its summary, which is the shape to avoid.
+  Put successful recovery values in `output`, failure context in `data.details`,
+  and the shortest safe action in the failed result's `error` sentence.
+
+  The shared typed-failure allowlist is `reason`, `field`, `expected`,
+  `available`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`,
+  `attachmentKind`, and `suggestedCall`. Use only the subset the tool needs;
+  `reason` is the general bounded next-step field, while the last three exist for
+  attachment recovery. An adapter-only `hint`, path, or provider-detail field is
+  silently stripped unless contracts, runtime, and tests add it to that shared
+  allowlist. The skill loader shows the same principle on successful envelopes:
+  `skill_limit_reached` returns its `reason` and already-loaded list in `output`,
+  while `skill_not_available` returns a bare code and keeps the fix in its
+  summary, which is the shape to avoid.
 
 Opacity is a deliberate, scoped cost. Pay it only where disclosure is the risk.
 

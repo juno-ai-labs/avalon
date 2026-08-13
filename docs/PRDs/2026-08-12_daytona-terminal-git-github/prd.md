@@ -47,6 +47,16 @@ contract. A lazily started Daytona sandbox provides the required execution
 boundary while Bind keeps lifecycle, authorization, output, and external writes
 under host control.
 
+The evidence is the source-level harness comparison and the earlier Avalon
+session review recorded in [`research.md`](./research.md#example-avalon-plugins).
+That review found four workload shapes—short connector operations, bursty
+multi-minute code/data work, longer repository validation, and long idle gaps—
+but did not preserve a statistically valid request count. This PRD therefore
+does not claim a measured incident frequency. It treats Terminal as a new
+capability and requires launch telemetry for selection rate, sandbox starts,
+active minutes, command outcomes, resources published, PR attempts, and idle
+expiry so the example cost assumptions can be replaced with observed values.
+
 ## Goals
 
 1. A participant can ask Avalon to inspect, edit, validate, and locally commit a
@@ -114,6 +124,19 @@ with access to exactly one selected repository. An attached repository or PR is
 authoritative; otherwise Avalon uses an exact `owner/repo` in the request or asks
 the participant to choose.
 
+Repository choice is a structured transcript card, not a free-text model guess.
+It has explicit loading, repository list, no GitHub connection, no accessible
+repositories, access revoked, cancelled, and selected states. Connection states
+link to Workspace connections; selection stores the repository ID and canonical
+name server-side and resumes the run once. A cancelled chooser leaves scratch
+tools usable and repository calls return `repository_not_configured`.
+
+In an unsupported region, Settings still shows **Terminal workspace** as disabled
+with the region name and the reason (“Daytona residency has not passed the
+regional gate”). The plugin is not admitted to Bind there, and a participant
+request receives that same product-owned explanation rather than a provider
+error or a suggestion to change regions.
+
 The plugin's canonical ID is `avalon:terminal`, model ID is `avalon_terminal`,
 and its Bind short wire name is `terminal`. Canonical `read_file` therefore
 reaches the model as `terminal_read_file`; every tool below follows the same
@@ -132,6 +155,19 @@ participant publication intent plus the normal current external-write checks.
 The executor returns a model-visible precondition or authorization error when
 those conditions are absent; it does not remove the tool or ask Bind to rerun
 with a wider tool set.
+
+Publication intent is concrete and host-authored. A current participant message
+that explicitly asks Avalon to push or open/update a PR creates a durable grant
+at run admission; an answered `core_request_elicitation` asking that same
+question may create it for the resumed run. The model, repository files,
+resources, and tool arguments cannot create or widen a grant. It is bound to the
+workspace, work stream, authenticated principal, run, selected repository,
+server-derived base and head refs, and one publication action; it expires when
+the run terminalizes or after two hours, whichever comes first. The publisher
+records the source participant-message ID and revalidates the grant, current
+membership, App authority, clean committed `HEAD`, and fixed refs immediately
+before minting a write token. A general request to “make edits” is not intent to
+publish.
 
 ### Workspace network access
 
@@ -161,15 +197,30 @@ The baseline is shown as four compact, non-removable groups:
 | JavaScript packages | npm package files and the reviewed `pnpm` distribution endpoints |
 
 A reviewed server manifest expands these groups into exact domains. The primary
-settings screen names the groups; the exact expansion and before/after changes
-are available in the regional audit view and as a download. Reachability does not
-imply package trust, credentials, publishing rights, or account administration.
+settings screen names the groups; an expandable **Effective destinations** panel
+shows Daytona-required targets, the exact baseline expansion, workspace additions,
+and before/after changes, with a download action in the same panel. Reachability
+does not imply package trust, credentials, publishing rights, or account
+administration.
 
 Daytona documents GitHub, npm, PyPI, and signed system repositories as essential
 services. Provider acceptance tests must prove that they remain reachable with a
 custom `domainAllowList` and that unlisted domains, direct-IP attempts, metadata
 endpoints, and organization-denied targets remain blocked. A failed assertion
 blocks Trusted-only launch; this PRD does not add a proxy fallback.
+The effective provider configuration may contain no implicit Daytona destination
+outside the reviewed manifest. If Daytona requires a non-suppressible target, it
+must appear in **Effective destinations** and be approved into the immutable
+manifest; otherwise that provider version is ineligible for Trusted only.
+
+Domain enforcement also applies after resolution. On every connection,
+re-resolution, and redirect, the provider must reject loopback, link-local,
+private, carrier-grade NAT, multicast, documentation, metadata, and other
+special-use addresses even when an allowed hostname resolves to one. Acceptance
+uses a controlled hostname whose answer changes across TTLs to prove DNS
+rebinding cannot cross that boundary. If Daytona's native primitive cannot meet
+this test, custom-domain and Trusted-only launch remain unavailable; Avalon does
+not add a proxy in this release.
 
 Members can view the mode and named groups but cannot mutate them. The model sees
 the effective mode and a bounded domain summary but receives no network-policy
@@ -177,12 +228,24 @@ tool. A denied request returns `network_policy_denied` and says an owner or
 administrator may approve the domain.
 
 Every mode or domain mutation is regional, audited, and creates a workspace
-activity event. Any change cancels active commands and stops affected sandboxes.
-Avalon applies and verifies the new native Daytona setting while each sandbox is
-stopped; the next sandbox-dependent call explicitly starts it under the current
-policy. There is no hot policy migration. An already running sandbox never gains
-a wider policy: the policy change stops it before later work can start under the
-new configuration.
+activity event. Before saving, Settings preflights affected active commands and
+sandboxes. With no active work it applies immediately. Otherwise an owner/admin
+must confirm a dialog naming the affected work streams and explaining that
+commands will be cancelled and sandboxes stopped; switching to Full internet
+also repeats the exfiltration warning. The panel shows the last verified policy
+and a **Pending application** state, disables concurrent edits, and uses a
+revision compare-and-swap. A revision conflict refreshes current policy while
+preserving the typed domain for review. Provider failure lists which sandboxes
+were stopped, leaves the last verified policy authoritative, and offers one
+retry. Members see the same status read-only.
+
+After confirmation, the change cancels active commands and stops affected
+sandboxes. Avalon applies and verifies the new native Daytona setting while each
+sandbox is stopped; the next sandbox-dependent call explicitly starts it under
+the current policy. The transcript records policy cancellation separately from
+command failure. There is no hot policy migration. An already running sandbox
+never gains a wider policy: the policy change stops it before later work can
+start under the new configuration.
 
 ### Starting and restoring the workspace
 
@@ -206,7 +269,7 @@ change the selected repository, weaken network policy, or relax server limits.
 
 The plugin exposes `read_file`, `edit_file`, `write_file`, `apply_patch`, and
 `import_resource`. The model uses familiar shell commands such as `ls -la`,
-`find`, `rg --files`, and `rg` through `run_terminal_cmd` for discovery and
+`find`, `rg --files`, and `rg` through `run_command` for discovery and
 search; there are no model-facing list, glob, grep, stat, cursor, or file-revision
 tools.
 
@@ -221,8 +284,9 @@ internal before/after content hashes for receipts and response-loss
 reconciliation, but those hashes are neither model arguments nor optimistic
 concurrency tokens.
 
-File operations appear as concise activity rows. Avalon persists the final diff
-as a durable regional output before retention can delete unpublished files.
+File operations appear as concise activity rows. Before retention can delete
+unpublished files, Avalon publishes a non-empty final diff as a generated text
+resource owned by the existing resource lifecycle.
 
 ### Model-facing tool contracts
 
@@ -292,6 +356,46 @@ Typed file mutations use durable invocation receipts and internal hashes to
 reconcile a lost response. If the host cannot prove that the intended result is
 present or absent, it returns `ambiguous_external_write` and never blindly
 replays the mutation. This is crash recovery, not model-visible compare-and-swap.
+
+The generated plugin descriptor uses this complete launch catalog; these values
+are contract-tested together with each strict argument and result schema:
+
+| Canonical tool | Wire name | Capability | Mode / idempotency | Tool deadline | Serial |
+| --- | --- | --- | --- | --- | --- |
+| `read_file` | `terminal_read_file` | `terminal.file.read` | `read` / `safe` | 30 seconds | yes |
+| `edit_file` | `terminal_edit_file` | `terminal.file.write` | `write` / `record_before_execute` | 60 seconds | yes |
+| `write_file` | `terminal_write_file` | `terminal.file.write` | `write` / `record_before_execute` | 60 seconds | yes |
+| `apply_patch` | `terminal_apply_patch` | `terminal.file.write` | `write` / `record_before_execute` | 60 seconds | yes |
+| `run_command` | `terminal_run_command` | `terminal.command.run` | `write` / `record_before_execute` | command deadline plus 30 seconds, at most 930 seconds | yes |
+| `import_resource` | `terminal_import_resource` | `terminal.resource.import` | `write` / `record_before_execute` | 120 seconds | yes |
+| `publish_resource` | `terminal_publish_resource` | `terminal.resource.publish` | `write` / `provider_key` | 120 seconds | yes |
+| `publish_branch_and_pr` | `terminal_publish_branch_and_pr` | `terminal.repository.publish` | `write` / `record_before_execute` | 180 seconds | yes |
+
+`serial: true` is deliberate for the whole family: imports, commands, reads, and
+publication observe one ordered filesystem history within a Terminal run. The
+run itself also owns the exclusive work-stream mutation lease described above.
+
+Launch constants are equally normative:
+
+| Limit | Default | Maximum |
+| --- | ---: | ---: |
+| `read_file.limit` | 200 lines | 1,000 lines and 256 KiB returned text |
+| UTF-8 file accepted by `edit_file` or `write_file` | — | 10 MiB after mutation |
+| `oldString` or `newString` | — | 1 MiB each |
+| `apply_patch.patch` | — | 2 MiB and 100 files |
+| `run_command.command` | — | 32 KiB |
+| `run_command.timeoutMs` | 120,000 ms | 900,000 ms |
+| inline `stdout` and `stderr` | — | 128 KiB each, preserving a head and tail |
+| complete command output retained as a generated log | — | 10 MiB |
+| imported or published resource | — | 25,000,000 bytes, the existing `MAX_ATTACHMENT_BYTES` ceiling |
+| imports or published resources per Terminal run | — | 20 each and 100 MiB total source bytes |
+
+An implementation may lower a maximum for provider or workspace policy, but the
+tool description must advertise the effective value and the stable
+`limit_exceeded` result must name it. Raising a public maximum requires updating
+this contract and its schema snapshot. Package installations can create many
+provider-quota-bounded files; the model-facing file-count limit applies to one
+atomic patch, while resource count and bytes are bounded independently.
 
 #### `read_file`
 
@@ -397,7 +501,7 @@ For a rename, `path` is the destination and `previousPath` is the source. Path,
 context, or hunk failure returns `patch_does_not_apply`; partial application is
 forbidden.
 
-#### `run_terminal_cmd`
+#### `run_command`
 
 Use for one bounded, non-interactive Bash command. The command executes as a Bash
 script fragment in `cwd`, which defaults to the applicable root. `timeoutMs` is
@@ -405,14 +509,14 @@ clamped to the server maximum. `description` is a short participant-facing
 activity label and does not affect execution.
 
 ```ts
-type RunTerminalCmdArguments = {
+type RunCommandArguments = {
   command: string;
   cwd?: string;
   timeoutMs?: number;
   description?: string;
 };
 
-type RunTerminalCmdOutput = {
+type RunCommandOutput = {
   state: "completed" | "failed" | "timed_out" | "cancelled";
   terminationReason:
     | "exited"
@@ -584,8 +688,9 @@ type PublishBranchAndPrOutput = {
 
 Stable failures include `repository_not_configured`,
 `publication_not_authorized`, `working_tree_dirty`, `nothing_to_publish`,
-`publication_policy_denied`, `publication_conflict`, `connection_revoked`, and
-`github_unavailable`. Response-loss retries converge on the same branch commit
+`publication_policy_denied`, `publication_conflict`,
+`publication_target_closed`, `connection_revoked`, and `github_unavailable`.
+Response-loss retries converge on the same branch commit
 and head/base PR through the durable receipt.
 The receipt ID is host state and is not exposed merely because the write uses
 one; the model receives the commit and PR identity it needs next.
@@ -599,9 +704,12 @@ states the shortest safe next action in addition to the failure; a code or
 diagnosis alone is insufficient. Each
 `details.reason` contains the bounded next-step guidance. A reason that says
 **stop** means the same invocation must not be retried: the participant,
-authorization, policy, or external state must change first. The six detail keys
-are exactly PR #144's current forwarding allowlist; the plugin does not invent a
-field that Bind would silently discard.
+authorization, policy, or external state must change first. PR #144's forwarding
+allowlist has nine keys. Terminal uses the general recovery subset (`reason`,
+`field`, `expected`, `available`, `reconnectRequired`, and `retryAfterMs`);
+attachment-specific `actualMimeType`, `attachmentKind`, and `suggestedCall`
+remain legal but are not emitted by these tools. The plugin does not invent a field that Bind
+would silently discard.
 
 Common failures apply consistently across the family:
 
@@ -612,7 +720,7 @@ Common failures apply consistently across the family:
 | all sandbox tools | `sandbox_unavailable` | “The terminal workspace is unavailable. Retry once only after a provided delay; without one, stop and report the failure.” | Bounded `reason` and optional `retryAfterMs`. |
 | all sandbox tools | `network_policy_unavailable` | “The workspace network policy could not be verified. Stop and report the failure; do not run or weaken the policy.” | Bounded `reason`; never retry unless a later result supplies `retryAfterMs`. |
 | path/cwd tools | `path_outside_root` | “The path must stay inside the terminal workspace. Use a relative path with `/` separators and no `..`.” | `field`. |
-| file tools | `not_found` | “The requested file was not found. Use `terminal_run_terminal_cmd` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.” | Bounded `reason` names the applicable root. |
+| file tools | `not_found` | “The requested file was not found. Use `terminal_run_command` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.” | Bounded `reason` names the applicable root. |
 | bounded tools | `limit_exceeded` | “The request exceeds this tool’s limit. Reduce the identified range, bytes, output, or file count and try again.” | `field` and `expected`. |
 | all `record_before_execute` writes | `ambiguous_external_write` | “The write may have completed but its result cannot be confirmed. Stop and report the ambiguity; do not repeat the write.” | Bounded `reason`; host reconciliation has already failed to prove success or absence. |
 
@@ -620,7 +728,7 @@ Read failures:
 
 | Tool | `data.code` | Model-visible `error` | Self-healing next step |
 | --- | --- | --- | --- |
-| `read_file` | `not_text_file` | “This is not a regular UTF-8 text file. Use `terminal_run_terminal_cmd` with `file` or `ls -l` for metadata, or use resource tools for binary bytes.” | Bounded `reason` names the applicable resource route. |
+| `read_file` | `not_text_file` | “This is not a regular UTF-8 text file. Use `terminal_run_command` with `file` or `ls -l` for metadata, or use resource tools for binary bytes.” | Bounded `reason` names the applicable resource route. |
 
 File mutation and import failures:
 
@@ -634,7 +742,7 @@ File mutation and import failures:
 | `import_resource`, `publish_resource` | `resource_limit_exceeded` | “The resource exceeds the allowed size or count. Select, split, resize, or compress it before trying a new invocation.” | `field` and `expected`. |
 | `import_resource` | `destination_exists` | “The destination already contains different bytes. Choose another path, or use a new explicit import with `overwrite: true` only when replacement is intended.” | Bounded `reason` identifies whether the collision was at the automatic or explicit destination. |
 
-An accepted command returns `RunTerminalCmdOutput`, even when the program does
+An accepted command returns `RunCommandOutput`, even when the program does
 not finish successfully. The loop branches on this result rather than treating
 normal process outcomes as tool transport errors:
 
@@ -667,6 +775,7 @@ Publication failures:
 | `publish_branch_and_pr` | `nothing_to_publish` | “There is no committed change to publish. Stop, or make and commit the requested change without creating an empty commit.” | Bounded `reason` may state that `HEAD` equals the base. |
 | `publish_branch_and_pr` | `publication_policy_denied` | “The committed diff contains a forbidden change. Inspect the full base diff and stop unless the request can be satisfied without it.” | Bounded `reason` names the paths. |
 | `publish_branch_and_pr` | `publication_conflict` | “The remote branch or base changed. Fetch read-only state, rebase or resolve without force, rerun validation, commit, and publish again.” | Bounded `reason` describes the conflicting ref state without credentials. |
+| `publish_branch_and_pr` | `publication_target_closed` | “The pull request for this work-stream branch is already closed or merged. Stop and ask the participant whether to begin a new change; do not reopen it or invent another branch.” | `available` contains `closed` or `merged`; bounded `reason` may include the canonical Avalon-authorized PR URL. |
 | `publish_branch_and_pr` | `connection_revoked` | “The GitHub connection no longer authorizes this repository. Stop and ask the participant to reconnect or restore App access.” | `reconnectRequired: true`. |
 | `publish_branch_and_pr` | `github_unavailable` | “GitHub is temporarily unavailable and publication was not confirmed. Retry once only after a provided delay.” | Optional `retryAfterMs`; reconciliation runs before the retry to prevent a duplicate PR. |
 
@@ -700,8 +809,8 @@ repository declarations it already understands. Frozen/locked install modes are
 preferred for validation when the chosen manager provides one. A package that
 redirects to an unlisted domain receives `network_policy_denied` in Trusted only.
 
-The plugin injects a concise, high-salience system-prompt block alongside the
-tool descriptions. It must say, in substance:
+The plugin injects the following exact, contract-tested system-prompt block
+alongside the tool descriptions:
 
 > You have a Daytona terminal workspace with Bash, Python, JavaScript (Node.js
 > 22), TypeScript, and SQLite. Use these tools when code is the clearest reliable way
@@ -710,17 +819,19 @@ tool descriptions. It must say, in substance:
 > pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript
 > for Node and web-shaped data, and SQLite for relational transforms. Supported
 > installers are apt/dpkg, pip/uv, and npm/pnpm. Do not install another runtime or
-> manager; report an unsupported requirement. Use `ls`, `find`, `rg --files`, and
-> `rg` through the terminal for discovery and search. For deliberate text
-> changes, read first and use the exact edit or patch tools; use `write_file` only
-> for intentional complete replacement.
+> manager; report an unsupported requirement. Use `terminal_run_command` with
+> `ls`, `find`, `rg --files`, and `rg` for discovery and search. For deliberate
+> text changes, read first with `terminal_read_file` and use
+> `terminal_edit_file` or `terminal_apply_patch`; use `terminal_write_file` only
+> for intentional complete replacement. Tool availability does not require you
+> to start a sandbox unless the task benefits from it.
 
 This guidance makes code execution discoverable without telling the model to start a
 sandbox speculatively. The first chosen tool call still owns lazy start.
 
 ### Running commands and workflow auto-resume
 
-`run_terminal_cmd` runs one bounded, non-interactive command in the repository or
+`run_command` runs one bounded, non-interactive command in the repository or
 scratch root, or a relative directory below it. The caller supplies the command,
 working directory, and a timeout up to the server cap. It cannot request a PTY,
 daemon, arbitrary environment secret, Daytona ID, or host path.
@@ -739,7 +850,13 @@ task. A lost result is reconciled from the task record and sandbox state; Avalon
 never blindly submits the command again.
 
 The transcript shows command, working directory, state, duration, exit code, and
-bounded output. When a participant-facing complete log is retained beyond the
+bounded output. Command and normalized `cwd` are the primary row text; the
+model-supplied description is secondary only. A running row shows elapsed time
+and **Stop**. Desktop transport states read **Offline — command continues on the
+server**, **Reconnecting**, and **Checking command status** independently of the
+process state. After reconciliation, the row becomes the one terminal result and
+offers **Open complete log** when `outputResourceId` exists. When a
+participant-facing complete log is retained beyond the
 inline cap, Avalon registers it as a generated text resource and returns its
 `outputResourceId`; an internal receipt object is never presented as a download.
 Secrets and terminal controls are scrubbed before model or participant display.
@@ -830,7 +947,18 @@ deletion, caller-selected refs, workflow changes, and caller-supplied credential
 A durable publication receipt keyed by tool invocation and canonical request
 makes response-loss retries converge on the same remote commit and PR. The
 repository/head/base uniqueness rule prevents duplicate PRs, while a later
-authorized invocation with a new title or body may deliberately update that PR.
+authorized invocation with a new title or body may deliberately update that PR
+only while it remains open. A closed or merged PR returns
+`publication_target_closed`; Avalon neither reopens it nor silently creates a
+second branch or PR. If a response was lost after successful publication, the
+durable receipt still returns that original success even if the PR was later
+closed; a new invocation observes the current closed/merged state.
+
+Publication has its own durable activity row: **Publishing branch and pull
+request** becomes **PR created**, **PR updated**, or **Already published**, with
+commit SHA and canonical PR link. Failed, ambiguous, and retry-delayed states
+remain visible independently of the assistant's prose, so reconnecting cannot
+turn an unresolved external write into an apparent success.
 
 ### Stop, archive, expiry, cancellation, and offline behavior
 
@@ -840,12 +968,20 @@ Daytona's 15-minute auto-stop is a backstop. A stopped sandbox is archived after
 60 minutes of work-stream inactivity to release active compute and disk.
 
 The Daytona archive is retained for 30 days from repository or scratch activity.
-Before expiry, Avalon preserves only durable product outputs: bounded command
-output, published artifacts, final repository status and diff, publication
-receipts, and user-visible activity. It then deletes the sandbox and its secrets.
+Before expiry, Avalon preserves only durable product outputs: bounded inline
+command output, generated log and final-diff resources, other published
+resources, final repository status, publication receipts, and user-visible
+activity. It then deletes the sandbox and its secrets.
 Avalon does not maintain a second restorable filesystem or Git-bundle archive in
 R2. The UI warns that unpublished and unexported local files expire on the stated
 date.
+
+The work-stream right rail has a **Terminal workspace** section showing Absent,
+Starting, Running, Stopped, Archived, Restoring, Expired, or Failed; last
+activity; the exact expiry timestamp; and whether named outputs are durable
+resources or local-only files. It warns at seven days and again at 24 hours
+before expiry. An expired workspace offers **Open final diff**, when retained,
+and **Start fresh**; it never labels a fresh clone as a restore.
 
 A later sandbox-dependent call after expiry starts a fresh sandbox and reclones
 the authorized repository at current server-recorded state, or creates an empty
@@ -929,6 +1065,9 @@ None yet.
 
 The implementation adds regional records at sketch level; migrations and
 [`../../data-model.md`](../../data-model.md) become authoritative when code lands.
+Every new row below carries `workspace_id`; ownership and uniqueness keys begin
+with it, and every work-stream/task/publication lookup has a corresponding
+`(workspace_id, ...)` index. Provider IDs are never globally authoritative.
 
 - `workstream_sandboxes`: one row per work stream with mode, Daytona ID, snapshot
   version, logical state, last activity, applied network-policy revision,
@@ -936,15 +1075,22 @@ The implementation adds regional records at sketch level; migrations and
   base ref/SHA, fixed branch, and known published tip are nullable. No secret is
   stored.
 - `workspace_sandbox_network_policies`: workspace mode, monotonic revision,
-  manifest version, actor, and timestamps.
+  manifest version, last verified provider policy, pending state, actor, and
+  timestamps.
 - `workspace_sandbox_network_domains`: normalized exact or wildcard custom
   domain, creator, timestamps, and policy revision. Baseline groups remain in
   reviewed server configuration.
 - `workspace_sandbox_network_policy_mutations`: append-only regional audit of
   mode and domain changes.
-- `sandbox_tasks`: stable task ID, tool invocation, Daytona session command ID,
-  working directory, state, deadline, exit code, bounded-output reference, and
-  timestamps. This is reconciliation state, not a second receipt ledger.
+- `sandbox_tasks`: stable task ID, tool invocation, host-derived Daytona
+  session/task name and provider ID, working directory, `planned`/`submitting`/
+  `running`/`terminal` state, deadline, exit code, bounded-output resource,
+  continuation-emitted marker, optimistic version, and timestamps. This is
+  reconciliation state for `TerminalCommandWorkflow`, not a second receipt
+  ledger.
+- `terminal_publication_grants`: source participant-message and run, selected
+  repository and fixed refs, authenticated principal, expiry, consumed action,
+  and timestamps. Only run admission or answered host elicitation can create it.
 - `repository_publications`: tool invocation, canonical request hash, repository,
   base/head refs, expected old SHA, committed SHA, pushed SHA, PR number/URL,
   state, and timestamps. Invocation/request uniqueness converges retries;
@@ -955,9 +1101,9 @@ The implementation adds regional records at sketch level; migrations and
   `resource_object_deletion_outbox`, inventory revision, visibility query, and
   attachment receipt dependencies. The resource provider is
   `avalon_generated`, its type is `generated_file`, and bounded provenance lives
-  in resource metadata. R2 stores the selected source/derivative objects under
-  that lifecycle plus internal receipts and final diffs, not a cold sandbox
-  image.
+  in resource metadata. Complete command logs and retained final diffs are also
+  generated resources, so the same rows and deletion outbox own their R2
+  objects; there is no unowned Terminal object namespace or cold sandbox image.
 
 Local file writes need no separate owner table. An import reconciles its
 authorized resource identity, destination content hash, and source hash. A
@@ -969,13 +1115,16 @@ Replaying a completed resource publication rechecks that the resulting resource
 is still visible in this work stream at its recorded source hash; deletion or
 detachment never resurrects it from an old receipt.
 
-## Regional and security impact
+## Regional impact
 
 Each regional API uses a distinct least-privilege Daytona principal and creates
 sandboxes only in an approved region. D1 stores mappings, task state, audit, and
-publication receipts; R2 stores bounded outputs, artifacts, and final diffs. The
+publication receipts; the existing regional resource lifecycle owns complete
+logs, generated files, and final diffs in R2. The
 Global registry and other region receive none of the repository content,
 commands, outputs, branch data, or GitHub credentials.
+
+## Security and trust model
 
 The Daytona API key and GitHub App private key remain regional Worker secrets.
 For clone/fetch and read-only `gh`, the regional API mints a short-lived,
@@ -1007,7 +1156,7 @@ The plugin surface is:
 
 - structured read, exact-edit, complete-write, and atomic-patch tools;
 - `import_resource` for an authorized work-stream resource;
-- `run_terminal_cmd` for one bounded non-interactive command;
+- `run_command` for one bounded non-interactive command;
 - `publish_resource` for a generated file; and
 - `publish_branch_and_pr` for the typed, host-authorized GitHub write.
 
@@ -1039,6 +1188,17 @@ instead of silently substituting another environment.
    wildcard behavior, blocked-target behavior, WebSocket command completion,
    archive/restore, and regional location against the provider contract.
 
+Each regional Wrangler configuration declares the non-secret static capability
+`TERMINAL_REGION_CAPABILITY` as `supported` or `unsupported`; local development
+defaults to `unsupported`. A regional Worker may declare `supported` only when
+its `DAYTONA_API_KEY`, pinned snapshot/location, native-policy probes, and
+publisher health checks pass. The checked-in Global and EU configurations start
+`unsupported`; Global changes to `supported` in the shipping configuration only
+after its named acceptance flow passes, while EU remains `unsupported` until its
+residency gate passes. A missing or unknown value fails closed during startup.
+
+## Rollout
+
 There is no plugin feature flag, per-user rollout, or read/edit/publish mode. A
 supported region always registers the complete tool family. Global becomes a
 supported region after synthetic repository and provider acceptance tests pass.
@@ -1059,7 +1219,8 @@ work. A call blocked by the breaker returns the normal model-visible
    tools converge on one sandbox; different work streams receive different IDs.
    Activating the regional circuit breaker leaves all tools visible but makes a
    first sandbox call fail with non-retryable `sandbox_unavailable` unless an
-   operator supplies `retryAfterMs`.
+   operator supplies `retryAfterMs`. Startup rejects a missing or unknown
+   `TERMINAL_REGION_CAPABILITY` value.
 2. Bash, Python, JavaScript, TypeScript, and SQLite fixtures run, fail once in a
    controlled way, are revised, and pass. Snapshot verification fails on version
    drift.
@@ -1070,11 +1231,16 @@ work. A call blocked by the breaker returns the normal model-visible
    analysis, repository validation, graph/image generation, and archive tasks as
    candidates for one of the five languages without starting a sandbox for an
    unrelated request.
-5. Traversal, symlink escape, oversized files/output, detached processes, timeout
-   bypass, and forbidden egress return stable failures and do not escape bounds.
+5. Traversal, symlink escape, oversized files/output, detached descendants,
+   inherited listeners, timeout bypass, and forbidden egress return stable
+   failures and do not escape bounds. Success, nonzero exit, timeout,
+   cancellation, output overflow, stream loss, and adapter failure all leave no
+   command descendant; failed cleanup stops the sandbox.
 6. A short command returns directly. A long command suspends Bind, streams on the
    host, auto-resumes once on exit, and gives the model one final result without a
-   polling tool. Stream-loss reconciliation neither loses nor duplicates it.
+   polling tool. Workflow restart, ambiguous provider submission, WebSocket loss,
+   and duplicate exit delivery reconcile the stable provider task and emit
+   exactly one continuation without rerunning the command.
 7. A private fixture repository can clone, edit, validate, diff, and commit with
    real Git while token-exposure attacks reveal at most opaque placeholders.
 8. Every Terminal tool is exposed together whenever the plugin is loaded; there
@@ -1082,9 +1248,11 @@ work. A call blocked by the breaker returns the normal model-visible
    push or mutate a PR. `publish_branch_and_pr` fast-forwards only the fixed
    branch and creates or updates exactly one expected PR after current
    authorization succeeds.
-9. Publication rejects a dirty tree, wrong repository/ref/base, non-fast-forward,
+9. Publication rejects a missing/expired/model-forged grant, dirty tree, wrong repository/ref/base, non-fast-forward,
    default-branch update, force/delete, workflow change, revoked connection, and
-   caller credential. A response-loss retry returns the same PR.
+   caller credential. A response-loss retry returns the same PR. A later call for
+   a closed or merged PR returns `publication_target_closed` and creates no new
+   branch, PR, or reopened PR.
 10. Attached text, image, and dataset resources import at an automatic path. An
     explicit destination is create-only unless the model supplies
     `overwrite: true`; existing, missing, unauthorized, detached, oversized, or
@@ -1097,27 +1265,39 @@ work. A call blocked by the breaker returns the normal model-visible
     Oversized/excessive resources fail explicitly.
 11. New and existing workspaces default to Trusted only. An owner/admin can add
     and remove exact and wildcard domains; members cannot. Settings show four
-    named baseline groups and remaining provider capacity; audit/download shows
-    exact expansions.
+    named baseline groups, every provider-required destination, remaining
+    provider capacity, exact expansion, and download in one panel. With active
+    work, save requires confirmation, exposes pending/verified/failure states,
+    preserves a conflicted typed domain, and reports stopped sandboxes.
 12. Trusted only denies an unlisted domain and Full internet admits it after
     confirmation. Any policy change cancels active commands, stops the sandbox,
     applies the new native policy, and the next tool explicitly starts it.
 13. Provider tests prove essential targets still work with `domainAllowList` and
-    unlisted domains, direct IP, redirects, metadata targets, and alternate-host
-    secret substitution do not bypass the effective policy.
+    that no implicit provider destination exists outside the manifest. Unlisted
+    domains, direct IP, redirects, metadata targets, alternate-host secret
+    substitution, and a TTL-changing allowed hostname that resolves to private
+    or special-use addresses do not bypass the effective policy.
 14. Five-minute stop, 60-minute archive, archive restore within 30 days,
     cancellation, disconnect/reconnect, and explicit fresh start after expiry
     match the transcript and retention UI. Expiry preserves published resources,
-    outputs, final diff, and receipts but not arbitrary local files.
+    outputs, final diff, and receipts but not arbitrary local files. The right
+    rail shows exact state/expiry, seven-day and 24-hour warnings, durable versus
+    local-only outputs, final-diff access, and **Start fresh** after expiry.
 15. Durable receipts exist for resource import, resource publication, branch
     publication, and network policy changes. Internal file-hash and command-task
     tests prove that concurrent mutating runs serialize and local operations
     reconcile without a second general receipt framework or blind replay.
-16. Global/EU integration tests prove no regional data crossing, and EU production
-    targeting remains impossible until the vendor gate is satisfied.
+16. Two named regional flows are finite: Global is `unsupported` until the
+    Global synthetic clone/edit/test/resource/publish/cleanup flow and data-location
+    assertion pass, then its checked-in capability becomes `supported`; EU stays
+    `unsupported`, renders the disabled-region explanation, and rejects provider
+    creation until the EU residency evidence and the same flow pass. Cross-region
+    D1, R2, Queue, Workflow, Daytona, and GitHub-token assertions remain empty.
 17. Generated JSON-schema snapshots exactly match every required, optional, and
     forbidden argument and every success/failure envelope in the model-facing
-    tool contracts. Contract tests cover exact edits, atomic patch failure,
+    tool contracts, plus the catalog's wire name, capability, mode,
+    idempotency, deadline, serial flag, defaults, and maxima. A golden assertion
+    covers the exact Terminal system-prompt block. Contract tests cover exact edits, atomic patch failure,
     explicit import overwrite, nonzero command exits, output truncation,
     same-invocation resource retry, and publication response-loss convergence.
     Every failed-tool snapshot asserts that `error` itself contains the shortest
@@ -1133,7 +1313,17 @@ work. A call blocked by the breaker returns the normal model-visible
     revision, derivative tools, receipt reauthorization, and deletion outbox.
     Detach/revoke/delete makes old IDs and replay results unavailable without
     deleting a shared object early or resurrecting a deleted resource; compaction
-    rediscovery exposes only the currently authorized inventory.
+    rediscovery exposes only the currently authorized inventory. Complete logs
+    and final diffs use generated-resource ownership and its deletion outbox, so
+    lifecycle tests leave no orphan Terminal R2 key.
+20. Product tests and visible-window QA cover repository chooser loading,
+    disconnected, empty, revoked, cancelled, and selected states; unsupported
+    region Settings; command running/offline/reconnecting/full-log states; and
+    publication publishing/created/updated/unchanged/failed states.
+21. In the implementation change, this durable tool material moves into the
+    owning subsystem documents and their running changelogs, and every shipped
+    descriptor is rechecked against [`../../agent-tools.md`](../../agent-tools.md)
+    and the required tool/plugin documentation in [`../../prds.md`](../../prds.md).
 
 ## Open questions
 
