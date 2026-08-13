@@ -93,7 +93,7 @@ update it in the same change.
 | [`runbook.md`](runbook.md) | Operations: hosted resources per region, secrets, migrations, health verification, deployment, and provider acceptance. |
 | [`pull-requests.md`](pull-requests.md) | The required shape of every pull request description, plus the repository's merge style and its no-draft rule. Read before opening a PR; `.github/pull_request_template.md` is its layout and changes with it. |
 | [`type-safety-boundaries.md`](type-safety-boundaries.md) | Where runtime parsing, capability-typed mocks, production assertion rules, and centralized Cloudflare test builders keep TypeScript contracts from being asserted past. Read before adding a type escape or platform test double. |
-| [`automated-code-review.md`](automated-code-review.md) | The three Azure AI Foundry Cline reviewers, their triggers and credentials, and the context, tool-denial, and posting boundaries that treat pull-request content as untrusted. Read before changing `.github/workflows/azure-ai-reviewers.yml`. |
+| [`automated-code-review.md`](automated-code-review.md) | The five Azure AI Foundry Cline reviewers, their triggers and credentials, and the context, tool-denial, and posting boundaries that treat pull-request content as untrusted. Read before changing `.github/workflows/azure-ai-reviewers.yml`. |
 | [`desktop-icons.md`](desktop-icons.md) | The native adaptive icon, the selectable icon set, and the generation pipeline. Read before changing the artwork. |
 
 ## Related material outside this folder

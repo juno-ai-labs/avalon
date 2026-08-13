@@ -1,6 +1,6 @@
 # Automated code review
 
-Avalon's automated code review workflow runs three independent Cline reviewers
+Avalon's automated code review workflow runs five independent Cline reviewers
 against pull requests using models served by Azure AI Foundry. It is an
 Azure-only extraction of Monad's proven reviewer workflow: OpenCode and
 OpenRouter-backed jobs are intentionally absent.
@@ -9,7 +9,7 @@ OpenRouter-backed jobs are intentionally absent.
 
 | Path | Responsibility |
 | --- | --- |
-| `.github/workflows/azure-ai-reviewers.yml` | Triggers reviews, configures the three Azure models, isolates a PR checkout below Cline's workspace root, runs the Monad Cline harness, and posts each fixed-path review. |
+| `.github/workflows/azure-ai-reviewers.yml` | Triggers reviews, configures the five Azure models, isolates a PR checkout below Cline's workspace root, runs the Monad Cline harness, and posts each fixed-path review. |
 | `scripts/azure-reviewer-workflow.test.mjs` | Guards the selected Azure jobs and the copied Monad trigger, checkout, invocation, permission, and posting contracts. |
 
 ## How it works
@@ -20,15 +20,22 @@ automatic path. A repository owner, member, or collaborator can request a fresh
 review by commenting `/cline review`; a small acknowledgment job reacts with
 eyes while the reviewers run.
 
-The workflow contains three separate Azure Cline jobs copied from
-`juno-ai-labs/monad` at commit
-`8eac60499845f00afaa2db6dd41b1578c169436b`:
+The workflow contains five separate Azure Cline jobs. The first three were
+copied from `juno-ai-labs/monad` at commit
+`8eac60499845f00afaa2db6dd41b1578c169436b`; the two GPT-5.6 jobs are Avalon
+copies of that same shape:
 
 | Job | Azure deployment/model identifier |
 | --- | --- |
 | `review-deepseek-cline` | `DeepSeek-V4-Pro` |
 | `review-grok-43-azure-cline` | `grok-4.3` |
 | `review-kimi-cline` | `Kimi-K2.6` |
+| `review-gpt-56-sol-cline` | `gpt-5.6-sol` |
+| `review-gpt-56-terra-cline` | `gpt-5.6-terra` |
+
+The two GPT-5.6 deployments run as separate jobs rather than one, for the same
+reason the other three do: a reviewer's value is an independent read of the
+diff, and one job posts one review.
 
 Each job validates the Azure endpoint, installs and authenticates Cline 3.0.47,
 then checks out the PR head under `$GITHUB_WORKSPACE/pr-head`. Installation
@@ -40,13 +47,14 @@ model writes `$GITHUB_WORKSPACE/cline-review.md`; a fixed later step checks the
 path and scans it for credentials before posting it.
 
 The workflow intentionally does not run on `synchronize`. New commits do not
-spend three more model calls automatically; use the comment command when the
+spend five more model calls automatically; use the comment command when the
 updated head is ready.
 
 ## Invariants
 
 - The only reviewers are Monad's DeepSeek V4 Pro, Grok 4.3, and Kimi K2.6 Azure
-  Cline jobs. OpenRouter credentials, providers, and jobs do not belong here.
+  Cline jobs plus the GPT-5.6 Sol and GPT-5.6 Terra jobs built to the same
+  shape. OpenRouter credentials, providers, and jobs do not belong here.
 - The automatic trigger is `pull_request`, and every reviewer explicitly
   rejects drafts. The comment trigger accepts only pull request comments from
   owners, members, or collaborators.
@@ -88,13 +96,13 @@ Global and EU runtime boundary does not apply.
   optional `/openai/v1/chat/completions` suffix stripped.
 - A missing or empty review file produces a warning and no comment. A symlink or
   a review body containing either available credential fails closed.
-- The three jobs intentionally duplicate their setup and prompt. A change copied
+- The five jobs intentionally duplicate their setup and prompt. A change copied
   from a newer Monad workflow must be applied to every applicable Azure job.
 
 ## Testing
 
 `pnpm test:scripts` runs
-`scripts/azure-reviewer-workflow.test.mjs`. It checks that only the three Azure
+`scripts/azure-reviewer-workflow.test.mjs`. It checks that only the five Azure
 jobs exist and that each retains Monad's positional prompt, checkout placement,
 automatic approval, permissions, and fixed post path.
 
@@ -144,6 +152,35 @@ Use the Actions run for checkout, installation, endpoint-validation, provider,
 and model errors.
 
 ## Changelog
+
+### 2026-08-13 — GPT-5.6 Sol and GPT-5.6 Terra added as reviewers
+
+**What changed:** Two more Azure Cline reviewers, `review-gpt-56-sol-cline`
+(`gpt-5.6-sol`) and `review-gpt-56-terra-cline` (`gpt-5.6-terra`), joined the
+three existing jobs. Both are copies of `review-grok-43-azure-cline` differing
+only in the deployment identifier, the authentication step's name, and the model
+named in the prompt's closing line. The workflow contract test's job-to-model map
+grew to five entries, and its per-model regex now escapes every dot in an
+identifier rather than only the first.
+
+**Why:** More independent reads of a diff catch more; these two deployments were
+already available on the same Foundry resource, so adding them cost no new
+credential or endpoint.
+
+**Considered and rejected:** Collapsing the two GPT-5.6 deployments into one job
+that runs both, and — more broadly — factoring the five near-identical jobs into
+a matrix or a reusable workflow. A job posts one review, so a shared job would
+have to serialize two model calls and merge their output, losing the independence
+that makes a second reviewer worth running. The matrix was tried and reverted
+once already (see the 2026-08-12 entries); this document's invariant is to keep
+the Azure jobs aligned with Monad's duplicated shape rather than re-deriving one
+here, and that outweighs the duplication these two jobs add.
+
+**Consequences:** A pull request now spends five model calls per review round
+instead of three, and five jobs — not three — must be updated in step when a
+fix is copied from Monad. The endpoint-validation, checkout, clear, and post
+steps are duplicated five times; every one of them is load-bearing security, so a
+change to any must reach all five.
 
 ### 2026-08-12 — Monad's proven Azure Cline harness restored
 
