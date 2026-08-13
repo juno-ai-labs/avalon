@@ -305,10 +305,11 @@ describe("scoped agent memory", () => {
     const search = memoryTool(env, input("owner"), "search");
     expect(search.definition.inputSchema).toMatchObject({
       additionalProperties: false,
-      required: ["query"],
-      properties: { query: expect.any(Object) },
+      oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }],
+      properties: { query: expect.any(Object), memoryItemId: expect.any(Object) },
     });
-    expect(Object.keys((search.definition.inputSchema as { properties: object }).properties)).toEqual(["query"]);
+    expect(Object.keys((search.definition.inputSchema as { properties: object }).properties))
+      .toEqual(["query", "memoryItemId"]);
     await expect(search.execute(
       { query: "anything", scopes: ["workspace"] },
       toolContext(input("owner"), "search-with-selector"),
@@ -394,8 +395,27 @@ describe("scoped agent memory", () => {
       toolContext(runInput, "receipt-stale-update"),
     )).rejects.toMatchObject({
       code: "memory_revision_conflict",
-      message: "The durable memory changed after it was read. Search for it again, inspect the current text and revision, and rebuild the mutation.",
+      message: "The durable memory changed after it was read. Read it again by memoryItemId, inspect the current text and revision, and rebuild the mutation.",
       details: { reason: expect.stringContaining("memory_search") },
+    });
+
+    expect(await memoryTool(env, runInput, "search").execute(
+      { memoryItemId },
+      toolContext(runInput, "read-memory-by-id"),
+    )).toMatchObject({
+      output: {
+        memoryItemId,
+        retrievalMode: "exact",
+        results: [{ memoryItemId, revision: 2, text: "Favorite color is azure" }],
+      },
+    });
+
+    await expect(memoryTool(env, runInput, "invalidate").execute(
+      { memoryItemId, expectedRevision: 1, reason: "Stale invalidation" },
+      toolContext(runInput, "receipt-stale-invalidate"),
+    )).rejects.toMatchObject({
+      code: "memory_revision_conflict",
+      details: { reason: expect.stringContaining("memoryItemId") },
     });
 
     const invalidated = await memoryTool(env, runInput, "invalidate").execute(
@@ -530,6 +550,34 @@ describe("scoped agent memory", () => {
       ],
       rationale: "Record fetched feed entries before reporting",
     };
+    let contentionAttempts = 0;
+    const contendedEnv = {
+      ...env,
+      DB: createTestD1Database({
+        prepare: env.DB.prepare.bind(env.DB),
+        batch: async (statements: D1PreparedStatement[]) => {
+          contentionAttempts += 1;
+          return statements.map(() => createTestD1Result({ success: true, meta: { changes: 0 } }));
+        },
+      }),
+    };
+    await expect(tableTool(contendedEnv, firstRun, "insert_rows").execute({
+      memoryTableId,
+      rows: [{
+        itemKey: "https://example.com/contention",
+        site: "Example",
+        title: "Contended",
+        firstSeenAt: "2026-08-01T12:00:00-07:00",
+        reported: false,
+      }],
+      rationale: "Exercise bounded contention recovery",
+    }, toolContext(firstRun, "insert-contention"))).rejects.toMatchObject({
+      code: "memory_table_insert_contention",
+      message: expect.stringContaining("natural-key values"),
+      details: { reason: expect.stringContaining("table_insert_rows") },
+    });
+    expect(contentionAttempts).toBe(3);
+
     const inserted = await tableTool(env, firstRun, "insert_rows").execute(
       insertArgs,
       toolContext(firstRun, "insert-seen-entries"),
@@ -595,8 +643,21 @@ describe("scoped agent memory", () => {
       rationale: "Stale update",
     }, toolContext(secondRun, "stale-update"))).rejects.toMatchObject({
       code: "memory_table_row_revision_conflict",
-      message: "The durable table changed while the mutation was being applied. Query the affected rows again, copy their current revisions, and rebuild the mutation.",
+      message: "The durable table changed while the mutation was being applied. Query the affected rows again by memoryTableRowIds, copy their current revisions, and rebuild the mutation.",
       details: { reason: expect.stringContaining("table_query") },
+    });
+
+    expect(await tableTool(env, firstRun, "query").execute({
+      memoryTableId,
+      memoryTableRowIds: [launchRow.memoryTableRowId],
+    }, toolContext(firstRun, "query-launch-by-id"))).toMatchObject({
+      output: {
+        rows: [{
+          memoryTableRowId: launchRow.memoryTableRowId,
+          revision: 2,
+          values: { title: "Launch notes revised" },
+        }],
+      },
     });
 
     const updated = await tableTool(env, firstRun, "query").execute({
@@ -622,6 +683,14 @@ describe("scoped agent memory", () => {
     const archiveRow = (nextPage.output as {
       rows: Array<{ memoryTableRowId: string; revision: number }>;
     }).rows[0]!;
+    await expect(tableTool(env, firstRun, "invalidate_rows").execute({
+      memoryTableId,
+      rows: [{ memoryTableRowId: archiveRow.memoryTableRowId, expectedRevision: archiveRow.revision + 1 }],
+      reason: "Stale invalidation",
+    }, toolContext(firstRun, "stale-invalidate-archive"))).rejects.toMatchObject({
+      code: "memory_table_row_revision_conflict",
+      details: { reason: expect.stringContaining("memoryTableRowIds") },
+    });
     await tableTool(env, firstRun, "invalidate_rows").execute({
       memoryTableId,
       rows: [{
@@ -641,6 +710,143 @@ describe("scoped agent memory", () => {
       filter: { column: "itemKey", op: "eq", value: "https://example.com/archive" },
       select: ["itemKey"],
     }, toolContext(secondRun, "query-invalidated"))).toMatchObject({ output: { rows: [] } });
+  });
+
+  it("keeps model-facing revision guidance tied to an exact producing read", () => {
+    const { env } = fixture();
+    const runInput = input("owner");
+    const memoryTools = createMemoryTools(env, runInput);
+    const tableTools = createMemoryTableTools(env, runInput);
+    const memorySearchDefinition = memoryTools.find((tool) => tool.definition.name === "search")?.definition;
+    const tableQueryDefinition = tableTools.find((tool) => tool.definition.name === "query")?.definition;
+
+    expect(memorySearchDefinition?.description).toContain("memoryItemId");
+    expect(tableQueryDefinition?.description).toContain("memoryTableRowIds");
+    for (const name of ["update", "invalidate"]) {
+      const definition = memoryTools.find((tool) => tool.definition.name === name)?.definition;
+      expect(definition?.description).toContain("memory_search with memoryItemId");
+      expect(JSON.stringify(definition?.inputSchema)).toContain("memory_search for this memoryItemId");
+    }
+    for (const name of ["update_rows", "invalidate_rows"]) {
+      const definition = tableTools.find((tool) => tool.definition.name === name)?.definition;
+      expect(definition?.description).toContain("table_query with memoryTableRowIds");
+      expect(JSON.stringify(definition?.inputSchema)).toContain("table_query for this memoryTableRowId");
+    }
+  });
+
+  it("normalizes post-read CAS races for memory and table mutations", async () => {
+    const { database, env } = fixture();
+    const runInput = input("owner");
+    const add = memoryTool(env, runInput, "add");
+    const updateItem = await add.execute({
+      scopeKind: "user",
+      text: "Update race source",
+      rationale: "Create race fixture",
+    }, toolContext(runInput, "race-memory-update-source"));
+    const invalidateItem = await add.execute({
+      scopeKind: "user",
+      text: "Invalidate race source",
+      rationale: "Create race fixture",
+    }, toolContext(runInput, "race-memory-invalidate-source"));
+
+    const withBatchRace = (mutate: () => void): Env => {
+      let intercepted = false;
+      return {
+        ...env,
+        DB: createTestD1Database({
+          prepare: env.DB.prepare.bind(env.DB),
+          batch: async (statements: D1PreparedStatement[]) => {
+            if (!intercepted) {
+              intercepted = true;
+              mutate();
+            }
+            return env.DB.batch(statements);
+          },
+        }),
+      };
+    };
+
+    const updateItemId = (updateItem.output as { memoryItemId: string }).memoryItemId;
+    await expect(memoryTool(withBatchRace(() => {
+      database.prepare("UPDATE memory_items SET revision = revision + 1 WHERE memory_item_id = ?")
+        .run(updateItemId);
+    }), runInput, "update").execute({
+      memoryItemId: updateItemId,
+      expectedRevision: 1,
+      text: "Race should lose",
+      rationale: "Exercise post-read CAS loss",
+    }, toolContext(runInput, "race-memory-update"))).rejects.toMatchObject({
+      code: "memory_revision_conflict",
+      details: { reason: expect.stringContaining("memoryItemId") },
+    });
+
+    const invalidateItemId = (invalidateItem.output as { memoryItemId: string }).memoryItemId;
+    await expect(memoryTool(withBatchRace(() => {
+      database.prepare("UPDATE memory_items SET revision = revision + 1 WHERE memory_item_id = ?")
+        .run(invalidateItemId);
+    }), runInput, "invalidate").execute({
+      memoryItemId: invalidateItemId,
+      expectedRevision: 1,
+      reason: "Race should lose",
+    }, toolContext(runInput, "race-memory-invalidate"))).rejects.toMatchObject({
+      code: "memory_revision_conflict",
+      details: { reason: expect.stringContaining("memoryItemId") },
+    });
+
+    const created = await tableTool(env, runInput, "create").execute({
+      scopeKind: "user",
+      name: "Race rows",
+      description: "Rows used to exercise post-read table races.",
+      usageInstructions: "Insert by key and update only after a query.",
+      columns: [
+        { name: "key", description: "Stable key", type: "string", required: true, searchable: true },
+        { name: "value", description: "Mutable value", type: "string", required: true, searchable: true },
+      ],
+      keyColumns: ["key"],
+      rationale: "Create race table",
+    }, toolContext(runInput, "race-table-create"));
+    const memoryTableId = (created.output as { memoryTableId: string }).memoryTableId;
+    const inserted = await tableTool(env, runInput, "insert_rows").execute({
+      memoryTableId,
+      rows: [{ key: "update", value: "before" }, { key: "invalidate", value: "before" }],
+      rationale: "Create race rows",
+    }, toolContext(runInput, "race-table-insert"));
+    const rows = (inserted.output as {
+      insertedRows: Array<{ memoryTableRowId: string; revision: number; values: { key: string } }>;
+    }).insertedRows;
+    const updateRow = rows.find((row) => row.values.key === "update")!;
+    const invalidateRow = rows.find((row) => row.values.key === "invalidate")!;
+
+    await expect(tableTool(withBatchRace(() => {
+      database.prepare("UPDATE memory_table_rows SET revision = revision + 1 WHERE memory_table_row_id = ?")
+        .run(updateRow.memoryTableRowId);
+    }), runInput, "update_rows").execute({
+      memoryTableId,
+      rows: [{
+        memoryTableRowId: updateRow.memoryTableRowId,
+        expectedRevision: updateRow.revision,
+        values: { value: "after" },
+      }],
+      rationale: "Exercise post-read row update race",
+    }, toolContext(runInput, "race-table-update"))).rejects.toMatchObject({
+      code: "memory_table_row_revision_conflict",
+      details: { reason: expect.stringContaining("memoryTableRowIds") },
+    });
+
+    await expect(tableTool(withBatchRace(() => {
+      database.prepare("UPDATE memory_table_rows SET revision = revision + 1 WHERE memory_table_row_id = ?")
+        .run(invalidateRow.memoryTableRowId);
+    }), runInput, "invalidate_rows").execute({
+      memoryTableId,
+      rows: [{
+        memoryTableRowId: invalidateRow.memoryTableRowId,
+        expectedRevision: invalidateRow.revision,
+      }],
+      reason: "Exercise post-read row invalidation race",
+    }, toolContext(runInput, "race-table-invalidate"))).rejects.toMatchObject({
+      code: "memory_table_row_revision_conflict",
+      details: { reason: expect.stringContaining("memoryTableRowIds") },
+    });
   });
 
   it("materializes draft-declared tables with stable runtime IDs and operating instructions", async () => {

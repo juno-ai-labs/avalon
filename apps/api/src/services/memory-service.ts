@@ -80,9 +80,10 @@ interface MutationResult {
   invalidated: boolean;
 }
 
-const SearchInputSchema = z.object({
-  query: z.string().trim().min(1).max(2_000),
-}).strict();
+const SearchInputSchema = z.union([
+  z.object({ query: z.string().trim().min(1).max(2_000) }).strict(),
+  z.object({ memoryItemId: z.string().uuid() }).strict(),
+]);
 
 const AddInputSchema = z.object({
   scopeKind: z.enum(MEMORY_SCOPE_KINDS),
@@ -106,22 +107,23 @@ const InvalidateInputSchema = z.object({
 }).strict();
 
 class MemoryToolError extends Error {
+  override readonly name = "MemoryToolError";
+
   constructor(
     readonly code: string,
     message: string,
     readonly details: { reason: string },
   ) {
     super(message);
-    this.name = "MemoryToolError";
   }
 }
 
 function memoryRevisionConflict(): MemoryToolError {
   return new MemoryToolError(
     "memory_revision_conflict",
-    "The durable memory changed after it was read. Search for it again, inspect the current text and revision, and rebuild the mutation.",
+    "The durable memory changed after it was read. Read it again by memoryItemId, inspect the current text and revision, and rebuild the mutation.",
     {
-      reason: "Call memory_search again for this item, inspect its current text and revision, and rebuild the update or invalidation. Do not retry with the old revision.",
+      reason: "Call memory_search with this memoryItemId, inspect its current text and revision, and rebuild the update or invalidation. Do not retry with the old revision.",
     },
   );
 }
@@ -491,8 +493,37 @@ export async function memorySearch(
   input: WorkstreamWorkflowInput,
   query: string,
 ): Promise<MemorySearchResult> {
-  const result = await hybridMemorySearch(env, input, SearchInputSchema.parse({ query }).query);
+  const parsed = SearchInputSchema.parse({ query });
+  if (!("query" in parsed)) throw new Error("memory_search_query_expected");
+  const result = await hybridMemorySearch(env, input, parsed.query);
   return { query: result.query, retrievalMode: result.retrievalMode, results: result.results };
+}
+
+async function memoryReadById(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  memoryItemId: string,
+) {
+  const scopes = await resolveMemoryAccess(env, input);
+  const scopeIds = scopes.map((scope) => scope.memoryScopeId);
+  const row = (await loadCanonicalItems(env, input.workspaceId, scopeIds, [memoryItemId]))[0];
+  const currentScopes = await resolveMemoryAccess(env, input);
+  const currentlyAuthorized = new Set(currentScopes.map((scope) => scope.memoryScopeId));
+  const visible = row && currentlyAuthorized.has(row.memory_scope_id) ? row : null;
+  if (visible) await recordAccess(env, [visible.memory_item_id]).catch(() => undefined);
+  return {
+    query: null,
+    memoryItemId,
+    retrievalMode: "exact" as const,
+    results: visible ? [{
+      memoryItemId: visible.memory_item_id,
+      memoryScopeId: visible.memory_scope_id,
+      scopeKind: visible.scope_kind,
+      text: visible.text,
+      revision: Number(visible.revision),
+      expiresAt: visible.expires_at,
+    }] : [],
+  };
 }
 
 function parseFrozenContext(row: {
@@ -964,20 +995,25 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     {
       definition: {
         name: "search",
-        description: "Search every durable memory scope authorized by the host for this run using lexical and semantic retrieval. Scope selection is not accepted.",
+        description: "Search every durable memory scope authorized by the host using query, or reread one exact authorized item using memoryItemId. Pass exactly one; scope selection is not accepted.",
         capability: "memory.search",
         mode: "read",
         idempotency: "safe",
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: { query: { type: "string", minLength: 1, maxLength: 2_000 } },
-          required: ["query"],
+          properties: {
+            query: { type: "string", minLength: 1, maxLength: 2_000 },
+            memoryItemId: { type: "string", format: "uuid" },
+          },
+          oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }],
         },
       },
       execute: async (raw) => {
         const args = SearchInputSchema.parse(raw);
-        const result = await memorySearch(env, input, args.query);
+        const result = "query" in args
+          ? await memorySearch(env, input, args.query)
+          : await memoryReadById(env, input, args.memoryItemId);
         return {
           output: result,
           summary: `Found ${result.results.length} durable memor${result.results.length === 1 ? "y" : "ies"} (${result.retrievalMode})`,
@@ -1008,7 +1044,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     {
       definition: {
         name: "update",
-        description: "Replace an authorized durable memory. Copy memoryItemId and expectedRevision from the latest memory_search result for that item; after a revision conflict, search again before rebuilding the update.",
+        description: "Replace an authorized durable memory. Copy memoryItemId and expectedRevision from memory_search; after a revision conflict, call memory_search with memoryItemId and rebuild the update from that exact result.",
         capability: "memory.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1020,7 +1056,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
             expectedRevision: {
               type: "integer",
               minimum: 1,
-              description: "Copy revision exactly from the latest memory_search result for this memoryItemId.",
+              description: "Copy revision exactly from memory_search for this memoryItemId.",
             },
             text: { type: "string", minLength: 1, maxLength: 16_000 },
             expiresAt: { type: "string", format: "date-time" },
@@ -1034,7 +1070,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     {
       definition: {
         name: "invalidate",
-        description: "Reversibly invalidate an authorized durable memory. Copy memoryItemId and expectedRevision from the latest memory_search result for that item; after a revision conflict, search again before retrying.",
+        description: "Reversibly invalidate an authorized durable memory. Copy memoryItemId and expectedRevision from memory_search; after a revision conflict, call memory_search with memoryItemId and retry from that exact result.",
         capability: "memory.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1046,7 +1082,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
             expectedRevision: {
               type: "integer",
               minimum: 1,
-              description: "Copy revision exactly from the latest memory_search result for this memoryItemId.",
+              description: "Copy revision exactly from memory_search for this memoryItemId.",
             },
             reason: { type: "string", minLength: 1, maxLength: 2_000 },
           },

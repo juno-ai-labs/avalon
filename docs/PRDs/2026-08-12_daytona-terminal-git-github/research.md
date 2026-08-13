@@ -279,8 +279,9 @@ The file surface contains several generations of production learning:
   explicit attributions are useful evidence that production harnesses borrow
   familiar shapes rather than forcing a unique tool language.
 
-Avalon's `run_terminal_cmd` name and core fields align closely with Grok Build.
-The deliberate divergence is backgrounding: Grok Build has a continuously
+Avalon's `run_command` core fields align closely with Grok Build, while the
+shorter canonical name avoids `terminal_run_terminal_cmd` after Bind adds its
+plugin prefix. The deliberate divergence is backgrounding: Grok Build has a continuously
 present local harness and task UI, while Avalon has a durable Bind workflow and
 shared transcript. Avalon returns one final result after a host continuation;
 the model does not receive a task ID to poll.
@@ -318,7 +319,7 @@ normal `resources` related to a work stream, not an independent artifact
 catalog. The Daytona PRD consequently uses the existing resource inventory,
 visibility, derivatives, deletion outbox, compaction appendix, and resource
 tools described in
-[work-stream origin attachments](../../workstream-origin-attachments.md).
+[agent attachments and resources](../../agent-attachments.md).
 
 ## What “Code Mode” means
 
@@ -492,7 +493,7 @@ mutation:
 
 | Operation | Mature-harness shape | Failure it contains | Avalon addition |
 | --- | --- | --- | --- |
-| List/glob/grep | shell-native `ls`, `find`, and `rg` | extra schemas duplicate commands models already know | bounded `run_terminal_cmd` output and prompt guidance |
+| List/glob/grep | shell-native `ls`, `find`, and `rg` | extra schemas duplicate commands models already know | bounded `run_command` output and prompt guidance |
 | Read | path, offset, limit | entire-file context blowup | exact raw text with separate line metadata |
 | Edit | path, exact old/new strings, optional replace-all | fuzzy or ambiguous edits | exact unique match and atomic replacement |
 | Write | path and complete content | partial or quoted shell writes | explicit complete replacement with a diff summary |
@@ -521,20 +522,23 @@ The jagged edges to cover are:
 - bound terminal discovery/search output and make truncation visible;
 - make `import_resource` create-only unless replacement is explicit;
 - apply byte, line, output, and file-count limits before model context grows;
-- return a fixed remediation in model-visible output, not only a human summary.
+- return a fixed remediation in the model-visible failed result, not only a human
+  summary.
 
-PR #144 narrows that last point further: Bind currently forwards only
-`reason`, `field`, `expected`, `available`, `reconnectRequired`, and
-`retryAfterMs` from a typed error. A plugin-local `hint`, path, MIME field, or
-suggested-call object looks structured in adapter code but is silently absent
-from the model's failed-tool result. The Daytona contracts therefore put the
-bounded next action and any conflicting root-relative paths in `reason`, use
-`available` only for genuine choices, and test the serialized failure rather
-than the error object before filtering.
+PR #144 narrows that last point further: Bind forwards nine allowlisted keys from
+a typed error—`reason`, `field`, `expected`, `available`,
+`reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and
+`suggestedCall`. Terminal uses the first six general recovery keys; the last three
+remain attachment-specific. A plugin-local `hint`, path, or arbitrary object can
+look structured in adapter code but is silently absent from the model's failed
+tool result. The Daytona contracts therefore put the bounded next action and any
+conflicting root-relative paths in `reason`, use `available` only for genuine
+choices, and test the serialized failure rather than the error object before
+filtering.
 
 These conclusions produced the launch tools `read_file`, `edit_file`,
 `write_file`, and `apply_patch`, with discovery and search handled by
-`run_terminal_cmd`. Their complete schemas are in the
+`run_command`. Their complete schemas are in the
 [PRD](prd.md#model-facing-tool-contracts).
 
 ## Languages, package managers, and package hosts
@@ -1112,7 +1116,7 @@ Neither direction exposes an R2 or Daytona credential to the model.
 - [Grok Build terminal tool](https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230c/crates/codegen/xai-grok-tools/src/implementations/grok_build/bash/mod.rs)
 - [Avalon agent-tool design](../../agent-tools.md)
 - [Avalon Bind harness](../../agent-harness.md)
-- [Avalon work-stream resources](../../workstream-origin-attachments.md)
+- [Avalon agent attachments and resources](../../agent-attachments.md)
 
 ### Daytona
 

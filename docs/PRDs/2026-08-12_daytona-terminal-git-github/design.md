@@ -40,8 +40,8 @@ retry delay; the complete tool family remains visible.
 
 Its canonical plugin ID is `avalon:terminal`, model ID is `avalon_terminal`,
 short wire name is `terminal`, and canonical tools are the unprefixed names in
-this document. Bind exposes `terminal_read_file`,
-`terminal_run_terminal_cmd`, and the other `terminal_*` wire names to the model
+this document. Bind exposes `terminal_read_file`, `terminal_run_command`, and
+the other `terminal_*` wire names to the model
 while receipts and policy retain the local canonical name.
 
 Bind exposes every canonical tool in this document whenever the plugin loads; it
@@ -51,22 +51,10 @@ installation and exactly one authorized repository. The always-visible
 publication tool additionally requires explicit participant intent and current
 external-write authorization when called.
 
-The plugin contributes a short system-prompt block, not merely tool descriptions:
-
-```text
-You have a Daytona terminal workspace with Bash, Python, JavaScript (Node.js
-22), TypeScript, and SQLite. Use it when code is the clearest reliable way to
-calculate, transform or analyze data, validate a repository, or create a graph,
-image, dataset, report, or archive. Prefer Bash for simple CLI/file pipelines,
-Python for analysis and generated artifacts, JavaScript/TypeScript for Node and
-web-shaped data, and SQLite for relational transforms. Supported installers are
-apt/dpkg, pip/uv, and npm/pnpm. Do not install another runtime or manager; report
-an unsupported requirement. Use ls, find, rg --files, and rg through the terminal
-for discovery and search. For deliberate text changes, read first and use the
-exact edit or patch tools; use write_file only for intentional complete
-replacement. Tool availability does not require you to start a sandbox unless
-the task benefits from it.
-```
+The plugin contributes the exact, contract-tested system-prompt block in the
+PRD's [language support section](./prd.md#explicit-language-and-package-support),
+not merely tool descriptions. That section is the single owner so prompt text
+and its golden assertion cannot drift between design documents.
 
 Prompt evaluation covers positive code-use cases and ordinary connector/prose
 requests where the sandbox should remain absent.
@@ -82,7 +70,7 @@ The model receives production-harness-shaped primitives, not Daytona APIs:
 | `write_file` | `filePath`, `content` | Created/replaced state, bytes, and diff summary | `write` / `record_before_execute`; reconcile internal content hashes and resulting content |
 | `apply_patch` | `patch` | Atomic per-file operation and diff summary | `write` / `record_before_execute`; reconcile internal content hashes and resulting content |
 | `import_resource` | automatic: `resourceId`; explicit: `resourceId`, `destinationPath`, `overwrite?` | Authorized original at a sandbox path with source hash | `write` / `record_before_execute`; reconcile resource visibility, destination hash, and source hash |
-| `run_terminal_cmd` | `command`, `cwd?`, `timeoutMs?`, `description?` | One final exit result; Bind may suspend while it runs | `write` / `record_before_execute`; reconcile stable Daytona task |
+| `run_command` | `command`, `cwd?`, `timeoutMs?`, `description?` | One final exit result; Bind may suspend while it runs | `write` / `record_before_execute`; reconcile stable Daytona task |
 | `publish_resource` | `filePath`, `displayName?`, `description?` | Attached Avalon resource identity, classification, hash, and canonical address | `write` / `provider_key`; stable receipt-derived resource ID and current visibility check |
 | `publish_branch_and_pr` | `title`, `body` | Published commit, PR number, canonical URL | `write` / `record_before_execute`; reconcile exact ref and head/base PR |
 
@@ -122,7 +110,7 @@ and is never blindly repeated.
 
 The model receives no filesystem concurrency revisions or hashes, directory
 cursors, or stat tool. It uses `ls`, `find`, `rg --files`, and `rg` through
-`run_terminal_cmd` for discovery and search. Deliberate text changes use
+`run_command` for discovery and search. Deliberate text changes use
 `read_file` followed by an exact `edit_file` or context-bearing `apply_patch`;
 `write_file` is an intentional complete replacement. An explicit
 `import_resource` destination is create-only unless the model sets
@@ -147,7 +135,8 @@ is part of the contract. Each failure has a stable code, a short model-visible
 message that includes the shortest safe next action, PR #144-allowlisted
 structured context, an actionable
 `details.reason`, and an explicit retry or stop rule. Contract tests verify that
-remediation is present in `output`, never only in the human `summary`.
+remediation is present in the failed result's `data.details`, never only in the
+human `summary`.
 Medium-model evaluations cover
 create, replace, repeated edit, multi-file patch, automatic and placed import,
 exact-match recovery, nonzero command exit, and publication repair.
@@ -205,6 +194,15 @@ an optimistic row version around remote calls. Creation uses a stable sandbox
 name and reserve/create/finalize protocol; after an ambiguous create response it
 looks up the stable name before trying again.
 
+Lifecycle deadlines live in D1, not an in-memory timer. The existing regional
+`WorkspaceScheduler` alarm includes the nearest Terminal warm-stop, archive, or
+expiry deadline when it computes its next wake. On alarm it claims each due
+transition by `(workspace_id, workstream_id, version)`, performs the provider
+action, records the result, and refreshes the next alarm. Duplicate alarms and a
+Worker restart therefore repeat only the claim/read-back sequence, not an
+unverified provider mutation. A network-policy transaction writes the same due
+reconciliation state for every affected sandbox before returning to Settings.
+
 Every sandbox-dependent tool obtains a lease through its deadline plus cleanup
 margin. The host owns the five-minute warm timer; Daytona's 15-minute auto-stop
 is a backstop. The model cannot renew a lease.
@@ -215,26 +213,34 @@ work is cancelled, the sandbox is stopped, the provider setting is applied and
 verified, and the next tool explicitly starts the sandbox. If the provider cannot
 confirm the policy, the sandbox remains stopped with `network_policy_unavailable`.
 
-At 30-day expiry Avalon persists bounded command output, published resources,
-final repository status/diff, publication receipts, and visible activity, then
-deletes the sandbox and per-sandbox secrets. It does not create a cold filesystem,
-untracked-file archive, or reconstruction bundle. A later call makes a fresh task
-root or reclones the repository. The retained patch is participant-visible but
-is never auto-applied.
+At 30-day expiry Avalon persists bounded inline command output and publishes any
+complete retained log or non-empty final diff through the existing generated-
+resource path, alongside other published resources, publication receipts, and
+visible activity. It then deletes the sandbox and per-sandbox secrets. It does
+not create a cold filesystem, untracked-file archive, or reconstruction bundle.
+A later call makes a fresh task root or reclones the repository. The retained
+patch is participant-visible but is never auto-applied.
 
 ## Command execution and Bind auto-resume
 
 The command adapter validates the root-relative working directory, environment,
 timeout, and input size, rejects known PTY/daemon/service patterns, creates a
 stable `sandbox_tasks` row, and submits one non-interactive Daytona session
-command.
+command. Pattern rejection is early guidance, not the containment boundary: the
+adapter starts every command in a provider/OS process group with no detached
+session or inherited listener, and teardown kills the whole descendant group on
+exit, nonzero exit, timeout, cancellation, output overflow, stream loss, and
+adapter failure. It verifies that no descendant or listener remains before
+releasing the operation lock; failed verification stops the sandbox and returns
+`sandbox_unavailable` for later work.
 
 For a short command, the request can wait and return the final result. Otherwise:
 
 1. Bind persists the pending tool call and suspends the workflow run on the stable
    task ID.
-2. A regional async command coordinator consumes Daytona's WebSocket log stream,
-   bounds and scrubs stdout/stderr, and observes process exit.
+2. A regional `TerminalCommandWorkflow`, keyed by the stable task row, consumes
+   Daytona's WebSocket log stream, bounds and scrubs stdout/stderr, and observes
+   process exit.
 3. On exit it atomically stores the terminal state and emits one continuation
    event for that task ID.
 4. Bind wakes, resolves the pending tool call with the final structured result,
@@ -243,12 +249,16 @@ For a short command, the request can wait and return the final result. Otherwise
 This is **workflow auto-resume**, not implicit sandbox auto-start. A stopped
 sandbox still starts only because a tool was called.
 
-If the WebSocket closes without a terminal event, the coordinator schedules a
-low-frequency provider reconciliation until exit or the wall-clock deadline. The
-fallback is host control-plane work and never exposes a poll tool or consumes a
-model turn. A unique continuation constraint suppresses duplicate exit events.
-Cancellation and timeout kill the provider task and resolve the same pending tool
-call once.
+Submission advances the D1 state machine `planned → submitting → running →
+terminal`. The host-derived Daytona session/task name is stable, so a retried
+Workflow step first reads provider state by that name and never resubmits merely
+because the original response was lost. The WebSocket is advisory acceleration.
+If it closes without a terminal event or the Workflow step restarts, the next
+durable step reconciles provider state, then waits with bounded backoff until exit
+or the recorded wall-clock deadline. This host control-plane reconciliation never
+exposes a poll tool or consumes a model turn. A unique continuation constraint on
+the task row suppresses duplicate exit events. Cancellation and timeout kill the
+provider task and resolve the same pending tool call once.
 
 The adapter stores a bounded head and tail inline. The complete bounded result
 may live in the internal regional receipt object, which is not a user download.
@@ -704,8 +714,9 @@ boundary unless shell writes are constrained too
 
 #### Avalon decision
 
-Avalon's `run_terminal_cmd` name and primary fields deliberately align with Grok
-Build. Avalon keeps the streamed provider implementation, output accounting,
+Avalon's `run_command` fields deliberately align with Grok Build without
+producing the redundant wire name `terminal_run_terminal_cmd`. Avalon keeps the
+streamed provider implementation, output accounting,
 task cancellation, and completion notification on the host side. It rejects a
 model-visible background flag, task IDs, polling, and monitors at launch because
 Bind can suspend and auto-resume the same tool call. The task-input failure is
@@ -915,8 +926,10 @@ caches into the sandbox.
 `publish_branch_and_pr({title, body})` is the only GitHub write surface. It is
 always exposed with the other Terminal tools, then executes as follows:
 
-1. Revalidate the participant grant, connection, installation, repository,
-   recorded base/head refs, and current known remote head.
+1. Revalidate the host-created participant grant, its source participant
+   message, principal/run/repository/ref binding, expiry and single-action use,
+   plus the connection, installation, repository, recorded base/head refs, and
+   current known remote head.
 2. Ask the sandbox for `git status --porcelain`, current branch and `HEAD`, base
    ancestry, changed paths, and a bounded Git bundle containing the committed
    branch. Reject a dirty tree, wrong branch, missing ancestry, size limit, or
@@ -940,6 +953,11 @@ publications on one PR while allowing a later authorized invocation to update it
 title or body. A lost response resumes from provider state: matching remote
 branch/PR resolves success, absence resumes the remaining steps, and contradictory
 state returns a stable conflict. The model cannot create duplicate PRs by retrying.
+An existing open PR may be updated. An existing closed or merged PR returns
+`publication_target_closed`; a new invocation does not reopen it, invent another
+branch, or create a second PR. A completed receipt still replays its original
+successful result after later PR closure because that receipt answers what its
+own invocation did.
 
 This design intentionally avoids a smart-HTTP receive-pack proxy. The untrusted
 sandbox only creates a local bundle; a bounded typed host operation performs and
@@ -975,12 +993,26 @@ gate rather than an assumption hidden in code. Production probes cover baseline
 reachability, an unlisted domain, wildcard boundaries, direct IP, redirects,
 metadata and private destinations, and alternate-host secret substitution. A
 failure leaves Trusted-only unavailable; it does not route around Daytona.
+The compiler compares the provider-read effective policy with its requested
+manifest. A Daytona-required destination is allowed only when named in the
+reviewed immutable manifest and disclosed in Settings; an undocumented or
+non-suppressible extra target fails verification.
+
+The same release probe resolves an allowed controlled hostname repeatedly across
+TTL changes and redirects it to private and special-use address classes. Native
+enforcement must re-check the resolved address for every connection and redirect,
+not just the original hostname string. Failure disables Trusted only and custom
+domains for that provider version rather than introducing a launch proxy.
 
 Policy writes are owner/admin compare-and-swap operations against a regional
-revision. Any write records the mutation and activity, cancels active commands,
-and stops affected sandboxes. Once the provider configuration is verified, only a
-subsequent tool call starts work. A running sandbox never gains a widened policy;
-the policy change stops it first.
+revision. The save endpoint first returns an affected-work summary; a second
+confirmed request with the same revision records the mutation and activity,
+cancels active commands, and stops affected sandboxes. The D1 row remains
+`pending` until provider read-back matches the compiled policy. Conflict or
+provider failure returns the authoritative last verified revision and affected
+stop results so Settings can preserve the proposed value without pretending it
+applied. Once verified, only a subsequent tool call starts work. A running
+sandbox never gains a widened policy; the policy change stops it first.
 
 Full internet changes destination reach, not secret authority. Daytona still
 substitutes each placeholder only on its configured HTTPS host, and the trusted
@@ -1042,8 +1074,7 @@ mode `unsupported`; lack of a model derivative is not publication failure.
 
 ## External references
 
-- [`workstream-origin-attachments.md`](../../workstream-origin-attachments.md) —
-  PR #144's authoritative
+- [`agent-attachments.md`](../../agent-attachments.md) — PR #144's authoritative
   resource identity, visibility, derivative, compaction, replay, and object-
   cleanup boundary reused by generated resources.
 - [`agent-tools.md`](../../agent-tools.md) — strict schema, naming, recovery,
