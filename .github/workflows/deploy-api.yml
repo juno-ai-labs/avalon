@@ -138,6 +138,9 @@ jobs:
           test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
           test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
 
+      - name: Require every R2 bucket declared by the regional Wrangler configs
+        run: node scripts/check-cloudflare-r2-buckets.mjs
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:

@@ -328,6 +328,36 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-13 — Release artifacts use the regional object API directly
+
+**What changed:** The macOS release publisher now uploads and reads back private
+source maps and native symbols through Cloudflare's object REST API. It hashes
+the exact bounded bytes supplied to the upload, streams and bounds the returned
+hash verification, times out stalled requests, and sends the explicit `eu`
+jurisdiction header only for the EU telemetry bucket. API deployment also
+derives a hosted-R2 inventory from both Wrangler files, logs every binding, and
+proves each bucket exists before remote mutations.
+
+**Why:** Wrangler's object read returned a deleted, earlier native-symbol object
+on a release retry even though Cloudflare's authoritative object listing no
+longer contained it. That made a valid regenerated archive fail the checksum
+gate and prevented an otherwise signed and notarized release from publishing.
+The first attempt also found that `avalon-eu-telemetry` did not actually exist:
+Wrangler had accepted and deployed its binding without provisioning the bucket.
+The previous artifact command also omitted Wrangler's EU-jurisdiction flag, so
+even a provisioned EU bucket could not be addressed by that release path.
+
+**Considered and rejected:** Disabling checksum verification, accepting the old
+archive, or rotating both buckets. Those would respectively remove the
+end-to-end integrity proof, risk publishing symbols for a different binary, or
+replace regional infrastructure to work around a client-path inconsistency.
+
+**Consequences:** The release token must retain `Workers R2 Storage Write`; the
+publisher holds one preflight-bounded artifact in memory at a time and hashes
+the verification response incrementally. Regional isolation is explicit in the
+request rather than inferred from CLI state, and a retry remains fail-closed on
+any upload, readback, timeout, size, or checksum error.
+
 ### 2026-08-13 — Telemetry dependencies can be staged safely
 
 **What changed:** Production now accepts a healthy collector before PostHog
