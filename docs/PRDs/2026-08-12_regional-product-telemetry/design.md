@@ -1,5 +1,7 @@
 # Design: regional product telemetry and crash reporting
 
+> Created 2026-08-12.
+>
 > Related: [research](research.md)
 
 ## Design principles
@@ -59,7 +61,7 @@ flowchart LR
   ProvisionalRoute -->|"EU: immediate named RPC"| Validate
   ProvisionalRoute -.-> CrashGate
   CrashUploader -->|"header-authenticated minidump + sidecar"| CrashIngest
-  Preference["Canonical account preference\nGlobal identity control plane"] -.-> IdentityIngest
+  Preference["Canonical account preference (Global identity control plane)"] -.-> IdentityIngest
   Preference -.->|"named RPC: opaque subject + boolean + version"| Validate
   Router -->|"Global deployment only"| PostHog["US PostHog project"]
   Router -->|"EU deployment only"| EUInternal["Isolated internal EU telemetry sink"]
@@ -157,7 +159,7 @@ A generator produces:
 - Markdown data dictionary;
 - golden valid/invalid/privacy fixtures.
 
-CI fails on unregistered event names, arbitrary properties, incompatible changes without a version bump, missing owners, prohibited property classifications, or a destination transform that emits a field absent from its allowed mapping. A new optional property may be compatible; semantic meaning changes require a new event or schema version.
+CI fails on unregistered event names, arbitrary properties, incompatible changes without a version bump, missing owners, prohibited property classifications, or a destination transform that emits a field absent from its allowed mapping. An additive diagnostic or breadcrumb field may remain in the same schema version only when it is optional, bounded, classified, and covered by privacy fixtures. A required field, removal, type change, broadened meaning, or changed privacy classification requires a version bump and migration/deprecation note; a semantic meaning change requires a new event or schema version.
 
 ## Electron design
 
@@ -338,6 +340,8 @@ Regardless of mechanism, the endpoint enforces:
 
 An inferred-EU pre-region launch never starts Crashpad and therefore creates neither a dump nor a crash sidecar. Every native dump waits until the next launch for custom upload, including renderer and child-process dumps. Crash-free dashboards expose awaiting-restart, rotated, expired-local, policy-invalidated, rejected, and uploaded counts so delayed delivery cannot silently improve the apparent rate.
 
+At the next successful launch, prior-generation rotation and eligibility validation finish before the first renderer is created. The uploader schedules every eligible prior-generation native report ahead of normal telemetry and begins its first attempt as soon as route-appropriate authentication and network are available. Avalon makes no wall-clock delivery promise while the app is closed or offline. If the new launch crashes before the prior report uploads, the independent rotated spool preserves that prior report for a later attempt and the new crash remains in the fresh active generation for the following launch; neither event can renew the other's absolute deadline.
+
 Disabling Product analytics stops Avalon's upload-spool worker immediately, marks any bootstrap capability for revocation, and fsyncs an invalidation record for the active Crashpad generation before acknowledging the local change. A telemetry-region change or newly restrictive workspace policy performs the same generation invalidation before changing product state. Avalon does not open, mutate, or delete the active Crashpad database. On the next launch, the rotation step recognizes the invalidation and purges the entire generation and sidecars rather than uploading any report from it; Crashpad then remains stopped for opt-out or starts a fresh generation under the new effective route/policy. This deliberately discards even an earlier dump from an invalidated launch to avoid relying on racy per-report timing. Packaged tests cover database locks, crashes before and after invalidation, region changes, an upload already in flight from an older rotated generation, and a failed purge. An upload accepted before the server acknowledges the opt-out cannot be recalled synchronously and follows the regional deletion workflow; the UI does not claim otherwise.
 
 ### Crash-surviving breadcrumbs
@@ -482,8 +486,10 @@ At minimum operators need:
 - local spool drop reports by reason and release;
 - crash upload accepted/rejected, dump age, symbolication backlog/failure class, missing artifacts;
 - crash-free launches/sessions with eligible, ineligible, delivered, and lost denominators;
-- internal retention reconciliation and deletion-job state;
+- internal retention reconciliation and deletion-job completion percentage, expected-versus-processed rows, oldest surviving age by region and retention class, and recomputation/deletion state for derived EU issues;
 - strict alerts without event property or crash content in log messages.
+
+Deletion alerts fire when a lifecycle or reconciliation job misses its deadline or any Avalon-controlled row, object, index, materialized contribution, or correlation survives its immutable ceiling; an EU semantic event or minimized issue contribution older than 13 months is always an alert rather than an accepted backlog.
 
 Runbooks cover provider outage, outbox backlog, schema rejection spike, crash-upload abuse, missing symbols, accidental prohibited-data detection, cross-region test failure, consent-policy incident, and deletion failure.
 
