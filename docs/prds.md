@@ -335,9 +335,9 @@ art into `design.md` or `research.md` when needed, but preserve all of the
 following somewhere in the PRD folder:
 
 1. **Plugin contract.** Give the canonical plugin ID, model-visible wire prefix,
-   activation and frozen-authority conditions, preload/lazy-load behavior, tool
-   order, and the exact high-salience system-prompt guidance. State what loading
-   the plugin does and does not start, authorize, or persist.
+   availability, selection, and authority conditions, preload/lazy-load
+   behavior, tool order, and the exact high-salience system-prompt guidance.
+   State what loading the plugin does and does not start, authorize, or persist.
 2. **Complete tool catalog.** For every tool, give its canonical and
    model-visible names, model-facing description, capability, `read`/`write`
    mode, idempotency class, timeout, and whether execution must be serial. A
