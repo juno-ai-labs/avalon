@@ -25,12 +25,13 @@ The recommended architecture is an Avalon-owned regional collector and crash pip
 | Product | Strongest relevant capabilities | Risk or mismatch for Avalon | What Avalon adopts |
 | --- | --- | --- | --- |
 | PostHog | Product analytics, funnels, retention, cohorts, exceptions, experiments, EU Cloud, data controls | Renderer SDK can load optional bundles; autocapture/replay can collect UI content; native crash workflow is not its core contract; provider administration is separate from Avalon's internal lifecycle | Global product destination, server-side capture, exception summaries, experiment exposure convention; no EU forwarding until Avalon has an approved EU-specific instance |
+| Cloudflare Analytics Engine | Cheap high-cardinality operational aggregates queried with SQL | Adaptive sampling prevents exact event history; three-month retention misses EU's 13-month analytics window; Customer Metadata Boundary does not provide the needed EU availability guarantee | Continue only existing content-free service operations; create no EU telemetry dataset or duplicate in V1 |
 | Segment | Canonical envelope, source/destination routing, message IDs, four timestamps, Protocols tracking plans, validation, transformations, regional offering | Full CDP and identity/audience product are unnecessary; direct client source would weaken Avalon's regional and privacy enforcement | Envelope, timestamp normalization, source authority, adapters, deterministic IDs, validation |
 | Sentry | Electron SDK, native minidumps, issue grouping, breadcrumbs, source maps/debug IDs, releases, crash-free sessions/users, scrubbing | A second vendor and potentially a second crash data store; rich automatic breadcrumbs can over-collect; detailed native residency needs diligence | Crash coverage bar, fingerprints, releases, safe breadcrumbs, symbol pipeline, crash-free measures |
 | Bugsnag | Electron main/renderer coverage, launch crashes, explicit session semantics, stability targets, release adoption, configurable minidump endpoint | Similar second-vendor and privacy diligence; automatic breadcrumbs need restriction | Launch-window semantics, session stability denominator, rate-limit transparency, feature/release correlation |
 | OpenTelemetry | Vendor-neutral receiver/processor/exporter pipelines, batching/retry, semantic conventions, trace context | Generic tracing does not define product event meaning, consent, identity, or crash artifacts | Processor/exporter pattern and W3C trace IDs where operational traces already exist |
 | Snowplow | Self-describing versioned events, JSON Schema/Iglu registry, validate/enrich stages, failed-event recovery | Full event pipeline and schema registry product are more than V1 needs | Versioned schemas, accepted/rejected separation, recoverable governance |
-| RudderStack | Tracking plans as code, typed event contracts, CI workflow, destination allow/deny/mask transforms | Full warehouse/CDP deployment is unnecessary for one initial destination | Git-owned tracking plan, generated interfaces, per-destination transformations |
+| RudderStack | Tracking plans as code, typed event contracts, CI workflow, destination allow/deny/mask transforms | Full warehouse/CDP deployment and a custom code generator are unnecessary for one initial destination | Git-owned TypeScript registry, runtime schemas, exhaustive destination transformations |
 | Amplitude | Hybrid autocapture plus precision tracking, schema governance, privacy levels, fail-closed replay behavior | Click autocapture includes displayed element text; replay/URL capture is high risk for Avalon content | Explicit business events; fail-closed detailed diagnostics; no DOM autocapture |
 | Honeycomb | High-cardinality structured events, trace/log correlation, manual business attributes, OTel collection | An observability product does not replace product analytics or crash management | Rich opaque correlation IDs and manual semantic context without content |
 
@@ -38,7 +39,7 @@ The recommended architecture is an Avalon-owned regional collector and crash pip
 
 ### Integration surface
 
-PostHog accepts individual and batch events over its public capture API. A project token is intended to be public; secrecy is not the reason to proxy it. Avalon's reason to proxy is stronger: regional selection, server-derived identity, consent enforcement, schema validation, durable delivery, centralized redaction, and destination replaceability. The [capture API](https://posthog.com/docs/api/capture) requires an API key, distinct ID, and event name, supports batches below its documented size limit, and exposes different US and EU hosts.
+PostHog accepts individual and batch events over its public capture API. A project token is intended to be public; secrecy is not the reason to proxy it. Avalon's reason to proxy is stronger: regional selection, server-assigned identity, consent enforcement, schema validation, durable delivery, centralized redaction, and destination replaceability. The [capture API](https://posthog.com/docs/api/capture) requires an API key, distinct ID, and event name, supports batches below its documented size limit, and exposes different US and EU hosts.
 
 The [JavaScript SDK](https://posthog.com/docs/libraries/js) specifically notes Electron's restriction on remote-code loading. Its no-external builds either disable or prebundle optional features such as replay, surveys, and exception capture. That makes a direct Electron integration technically possible, but still undesirable in Avalon's renderer: it duplicates policy and delivery logic, increases bundle and CSP complexity, and creates an easy path to turn on content-rich collection.
 
@@ -46,7 +47,7 @@ The [Node SDK](https://posthog.com/docs/libraries/node) supports server capture 
 
 ### Identity
 
-PostHog recommends calling `identify` with a stable authentication identifier and explicitly warns against email addresses or display names as distinct IDs. It also supports anonymous events without creating person profiles through `$process_person_profile: false`. Its [official Node client alias example and implementation](https://github.com/PostHog/posthog-js/blob/main/packages/node/src/client.ts#L927-L949) use the existing anonymous identifier as `distinctId`/`distinct_id` and the newly identified user as `alias`; Avalon preserves that outbound direction. Avalon should go further: derive unlinkable analytics IDs on the regional server and minimize PostHog person properties. Reset-on-logout behavior is necessary but not sufficient because queued events and historical aliasing are Avalon responsibilities.
+PostHog recommends calling `identify` with a stable authentication identifier and explicitly warns against email addresses or display names as distinct IDs. Its official Node client exposes [person identification with properties](https://github.com/PostHog/posthog-js/blob/main/packages/node/src/client.ts#L807-L823), [group identification with properties](https://github.com/PostHog/posthog-js/blob/main/packages/node/src/client.ts#L2163-L2177), and anonymous events without creating person profiles through `$process_person_profile: false`. PostHog's [identity requirements and merge restrictions](https://posthog.com/docs/product-analytics/identify) make `alias` unsuitable for Avalon's recurring login epochs because an alias value cannot already belong to another identified person. The browser SDK instead implements login identification as an [`$identify` event with the new person as `distinct_id`, the old anonymous value as `$anon_distinct_id`, and person properties in `$set`](https://github.com/PostHog/posthog-js/blob/main/packages/browser/src/posthog-core.ts#L2755-L2775); Avalon reproduces that documented transition at its server adapter immediately after eligible Global authentication and prioritizes it ahead of later person delivery. One immutable random person ID and workspace ID per environment/region/subject provide PostHog's required stability without exposing database IDs or creating a key-rotation migration. Avalon sets only verified email/display name for people and current name for workspace groups through native profile semantics, permits normal person processing on authenticated captures, and keeps direct fields out of semantic event and diagnostic properties.
 
 ### Error tracking
 
@@ -72,13 +73,19 @@ Use the current US PostHog project as the first product-analysis destination for
 
 Research into PostHog informs the payload boundary and adapter contract, but provider-side retention, deletion, access, profiles, and issue workflow are deliberately out of scope after PostHog acknowledges delivery.
 
+## Cloudflare Analytics Engine
+
+Workers Analytics Engine is optimized for high-cardinality aggregate queries, not an exact telemetry ledger. Cloudflare documents [adaptive sampling at both write and query time](https://developers.cloudflare.com/analytics/analytics-engine/sampling/), including that individual records and exact event sequences are not guaranteed to be recoverable. Its [limits](https://developers.cloudflare.com/analytics/analytics-engine/limits/) retain data for three months, shorter than Avalon's 13-month EU semantic-event requirement. Cloudflare's [Data Localization compatibility table](https://developers.cloudflare.com/data-localization/compatibility/) lists Workers Analytics Engine with a Customer Metadata Boundary caveat that logs/analytics are unavailable outside the US region, so it cannot supply the desired EU locality guarantee.
+
+V1 therefore creates no Analytics Engine dataset or binding for EU product telemetry, crash reports, fingerprint contributions, or duplicated operational rollups. The canonical EU sink can compute its initial operational views directly, avoiding two sources of truth. Existing content-free service-operation rows remain separate. If demonstrated volume later makes aggregate reads too expensive, a dedicated identifier-free Analytics Engine dataset may be considered as an optional operational cache, never as the canonical sink.
+
 ## Twilio Segment
 
 Segment's strongest contribution is not a vendor feature but an event discipline.
 
 The [Segment common specification](https://www.twilio.com/docs/segment/connections/spec/common) defines a consistent envelope around events: anonymous or authenticated identity, context, integrations, unique message ID, type, version, and multiple timestamps. It distinguishes client-original time, client send time, server receipt time, and a normalized timestamp corrected for clock skew. That is directly relevant to an intermittently connected desktop whose clock may be wrong.
 
-The [Track specification](https://www.twilio.com/docs/segment/connections/spec/track) keeps business actions human-readable and carries structured properties. Its broader [Connections guidance](https://www.twilio.com/docs/segment/guides) separates Sources from Destinations through a common event structure. Avalon adopts that separation but constrains event names and properties with generated types.
+The [Track specification](https://www.twilio.com/docs/segment/connections/spec/track) keeps business actions human-readable and carries structured properties. Its broader [Connections guidance](https://www.twilio.com/docs/segment/guides) separates Sources from Destinations through a common event structure. Avalon adopts that separation but constrains event names and properties through a checked-in typed registry and runtime schemas.
 
 Segment uses `messageId` for cross-system debugging and documents [deduplication within a bounded window](https://help.twilio.com/articles/43240224731547). The lesson is to make deduplication scope explicit. Avalon uses a deterministic `event_id`, preserves it through destination retries and replay, and promises at-least-once—not exactly-once—delivery.
 
@@ -164,7 +171,7 @@ Snowplow's [event fundamentals](https://docs.snowplow.io/docs/fundamentals/event
 
 Avalon adopts schema identity and version, validated enrichment, and a visible rejection path. It intentionally does not retain a malformed raw event: storing it would create a shadow content lake outside the approved tracking plan.
 
-RudderStack's [tracking-plans-as-code guidance](https://www.rudderstack.com/learn/data-strategy/tracking-plans-as-code/) puts event names, required and optional properties, types, enums, and identity rules under version control and CI. Its [transformations product](https://www.rudderstack.com/product/transformations/) supports destination-specific allow, deny, mask, and transformation logic. Avalon adopts both practices: generated client/server interfaces from the plan and a separately tested PostHog mapping that cannot expand the source schema.
+RudderStack's [tracking-plans-as-code guidance](https://www.rudderstack.com/learn/data-strategy/tracking-plans-as-code/) puts event names, required and optional properties, types, enums, and identity rules under version control and CI. Its [transformations product](https://www.rudderstack.com/product/transformations/) supports destination-specific allow, deny, mask, and transformation logic. Avalon adopts both practices through one checked-in TypeScript registry, colocated runtime schemas, and an exhaustively tested PostHog mapping. It defers a custom interface/documentation generator until manual drift demonstrates a need.
 
 ## Amplitude and automatic capture
 
@@ -179,24 +186,24 @@ The conclusion is not that all automatic capture is unsafe. Automatic, content-f
 Building a regional ingress that forwards JSON to PostHog is small. Building a dependable telemetry and crash product is not. The custom scope includes:
 
 - SDK lifecycle across main, preload, renderer, offline use, logout, update, and shutdown;
-- schema generation, validation, evolution, sampling, and destination compatibility;
-- consent and admin policy resolution;
+- schema registry, validation, evolution, sampling, and destination compatibility;
+- account preference and regional-route resolution;
 - regional outbox, retry, deduplication, replay, rejection, and dead-letter operations;
-- identity derivation, rotation, aliasing policy, and deletion;
+- stable regional identity allocation, anonymous-to-person transition policy, and deletion;
 - Crashpad database handling plus authenticated main-process native upload;
-- dump retention, private artifacts, release matching, symbolication compute, grouping, regression, and support access;
+- dump retention, private artifacts, release matching, symbolication compute, query-time grouping, and support access;
 - crash-free session denominators and lost-data accounting;
 - destination-adapter compatibility and privacy-fixture monitoring;
 - operational dashboards, alerts, and on-call runbooks.
 
-The PRD keeps the architecture custom because Avalon already has a strong regional API boundary and unusually sensitive content. The decision should be revisited after the native-crash spike. If symbols, grouping, or the private viewer threaten the roadmap, using Sentry or Bugsnag behind the same regional policy and destination abstraction is a valid alternative—not an architectural failure.
+The PRD keeps the architecture custom because Avalon already has a strong regional API boundary and unusually sensitive content. The decision should be revisited after the native-crash spike. If symbols, grouping, or the private viewer threaten the roadmap, using Sentry or Bugsnag behind the same regional-route and destination abstraction is a valid alternative—not an architectural failure.
 
 ## Research-driven requirements checklist
 
 - Canonical envelope includes unique ID and four timestamps.
-- Tracking plan is versioned, generated, reviewed, and CI-enforced.
+- Tracking registry is versioned, typed, reviewed, runtime-validated, and CI-enforced without a V1 code generator.
 - Invalid-event metadata is visible without retaining invalid raw payloads.
-- Direct and derived identities are minimized, scoped, rotatable, and deletable.
+- Direct identity fields are allowlisted, while immutable random analytics IDs are environment/region scoped and deletable with their authoritative subject.
 - Automatic capture is limited by mechanism, not merely convention.
 - Detailed diagnostics fail closed when policy is unknown.
 - Native dumps never rely on graceful in-process delivery.
@@ -205,4 +212,4 @@ The PRD keeps the architecture custom because Avalon already has a strong region
 - Destination acknowledgement cannot extend or restart an Avalon-controlled retention clock.
 - EU/Global applies to the full lifecycle, not just the ingest URL.
 - Destination mappings and replays preserve event identity and adapter version.
-- Public-site collection remains separately gated from desktop/API collection.
+- Public-site collection remains absent from V1 and requires a separate PRD.
