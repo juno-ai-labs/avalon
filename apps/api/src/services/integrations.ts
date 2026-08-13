@@ -2823,6 +2823,7 @@ async function createInlineChildHarnessSurface(options: {
       || !tool.definition.capability.startsWith("web."))
     .map((tool): HarnessTool => ({
       definition: tool.definition,
+      ...(tool.validateInput ? { validateInput: tool.validateInput } : {}),
       execute: async (toolInput, toolContext) => {
         await options.assertChildOwned();
         const result = await tool.execute(toolInput, toolContext);
@@ -2872,6 +2873,7 @@ async function createInlineChildHarnessSurface(options: {
       .filter((tool) => tool.definition.mode === "read")
       .map((tool): HarnessTool => ({
         definition: tool.definition,
+        ...(tool.validateInput ? { validateInput: tool.validateInput } : {}),
         execute: async (toolInput, toolContext) => {
           await options.assertChildOwned();
           return executeAuthorizedConnectorTool(
@@ -4177,7 +4179,10 @@ async function loadHarnessTools(
       ...(runAuthoritySnapshot ? { runAuthoritySnapshot } : {}),
     };
     const pluginTools: HarnessTool[] = [];
-    const addPluginTool = (definition: ToolDefinition): HarnessTool | null => {
+    const addPluginTool = (
+      definition: ToolDefinition,
+      includeStaticInputValidator = false,
+    ): HarnessTool | null => {
       // A mailbox From header is not a strong authentication primitive. Email-
       // triggered automations may inspect bound connector data, but external
       // connector writes require a subsequent human-started run.
@@ -4186,6 +4191,14 @@ async function loadHarnessTools(
       if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return null;
       const tool: HarnessTool = {
         definition,
+        ...(includeStaticInputValidator && adapter.validateToolInput
+          ? {
+              validateInput: (toolInput) => adapter.validateToolInput!(
+                definition.providerOperationName ?? definition.name,
+                toolInput,
+              ),
+            }
+          : {}),
         execute: (toolInput, context) => executeAuthorizedConnectorTool(
           env,
           input,
@@ -4212,7 +4225,7 @@ async function loadHarnessTools(
       return tool;
     };
     for (const definition of staticDefinitions) {
-      const tool = addPluginTool(definition);
+      const tool = addPluginTool(definition, true);
       if (tool) pluginTools.push(tool);
     }
     frozenConnections.set(pluginId, frozen);
@@ -4255,7 +4268,7 @@ async function loadHarnessTools(
                 ),
               );
               const discoveredTools = definitions
-                .map(addPluginTool)
+                .map((definition) => addPluginTool(definition))
                 .filter((tool): tool is HarnessTool => tool !== null);
               if (!discoveredTools.length) {
                 throw new ConnectorError("unsupported_capability", `${adapter.manifest.displayName} MCP exposed no usable tools`);
@@ -5814,6 +5827,10 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     },
     {
       definition: AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+      validateInput: (raw) => {
+        const result = RequestElicitationInputSchema.safeParse(raw);
+        return result.success ? null : result.error;
+      },
       execute: async (raw, context) => {
         const args = RequestElicitationInputSchema.parse(raw);
         const providerIdempotencyKey = requireProviderIdempotencyKey(

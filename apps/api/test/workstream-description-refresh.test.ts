@@ -250,7 +250,7 @@ describe("who wrote the description", () => {
       now: NOW,
     });
     // Stand in for a long-settled description that has earned the ceiling.
-    const earned = new Date(NOW.getTime() + 48 * 60 * 60 * 1_000).toISOString();
+    const earned = new Date(Date.now() + 48 * 60 * 60 * 1_000).toISOString();
     database.prepare(
       "UPDATE workstream_description_refreshes SET rest_until = ?, consecutive_keeps = 4 WHERE workstream_id = ?",
     ).run(earned, WORKSTREAM_ID);

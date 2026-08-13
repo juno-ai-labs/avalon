@@ -14,6 +14,7 @@ import type {
   Scope,
   ToolDefinition,
 } from "@avalon/contracts";
+import type { ZodError, ZodType } from "zod";
 
 /** Marks one polled activity as withheld from digests by its own stream. */
 function withheldFromDigest(
@@ -723,6 +724,12 @@ export interface ConnectorAdapter {
    * already described well enough by `connectorOriginFromActivity`.
    */
   origin?: ConnectorOriginSource;
+  /**
+   * Re-run code-authored tool-input refinements that cannot be represented in
+   * the provider-facing JSON Schema. The harness uses the result only to
+   * classify an escaped Zod error; execution still parses its own arguments.
+   */
+  validateToolInput?(name: string, args: unknown): ZodError | null;
   executeTool(name: string, args: unknown, context: ConnectorToolContext): Promise<ConnectorToolResult>;
   /**
    * Restores provider-side state a connection needs but that has drifted —
@@ -771,6 +778,15 @@ export interface ConnectorAdapter {
      */
     warning?: string;
   }>;
+}
+
+export function zodToolInputValidationError(
+  schema: ZodType | undefined,
+  input: unknown,
+): ZodError | null {
+  if (!schema) return null;
+  const result = schema.safeParse(input);
+  return result.success ? null : result.error;
 }
 
 export function connectorCapabilitySupportsScope(

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AutomationDraft } from "@avalon/contracts";
+import { z } from "zod";
 import {
   __testing,
   canonicalToolInputHash,
@@ -1941,6 +1942,261 @@ describe("agent harness", () => {
     ]);
   });
 
+  it("normalizes schema-declared numeric strings before receipts and execution", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-read",
+            "read_page",
+            JSON.stringify({ startCharacter: "0", ratio: "1.25", pages: ["2", "3"] }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    let received: unknown;
+    const inputSchema = z.object({
+      startCharacter: z.number().int(),
+      ratio: z.number(),
+      pages: z.array(z.number().int()),
+    }).strict();
+    const tool: HarnessTool = {
+      definition: {
+        name: "read_page",
+        description: "Read one page",
+        capability: "pages.read",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: z.toJSONSchema(inputSchema) as Record<string, unknown>,
+      },
+      execute: async (input) => {
+        received = inputSchema.parse(input);
+        return { output: { ok: true }, summary: "Read page" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "done" });
+    expect(received).toEqual({ startCharacter: 0, ratio: 1.25, pages: [2, 3] });
+    expect(events.find((event) => event.type === "tool_started")).toMatchObject({
+      input: { startCharacter: 0, ratio: 1.25, pages: [2, 3] },
+    });
+    expect(requestBodies[1]?.messages.find((message) => message.role === "tool")?.content)
+      .toContain('"success":true');
+  });
+
+  it("returns concise model-visible validation guidance for strict executor failures", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-read",
+            "read_resource",
+            JSON.stringify({ resourceId: "resource-1", startCharacter: "not-a-number" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "I corrected the arguments." }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const inputSchema = z.union([
+      z.object({ resourceId: z.string(), startCharacter: z.number().int().optional() }).strict(),
+      z.object({ cursor: z.string() }).strict(),
+    ]);
+    const tool: HarnessTool = {
+      definition: {
+        name: "read_resource",
+        description: "Read a resource",
+        capability: "resources.read",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: z.toJSONSchema(inputSchema) as Record<string, unknown>,
+      },
+      execute: async (input) => {
+        inputSchema.parse(input);
+        return { output: { ok: true }, summary: "Read resource" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "I corrected the arguments." });
+    const toolMessage = requestBodies[1]?.messages.find((message) => message.role === "tool");
+    expect(toolMessage).toBeDefined();
+    const result = JSON.parse(String(toolMessage!.content)) as {
+      success: boolean;
+      kind: string;
+      error: string;
+    };
+    expect(result).toMatchObject({
+      success: false,
+      kind: "validation",
+      error: expect.stringContaining("startCharacter: expected number, received string"),
+    });
+    expect(result.error).not.toContain("invalid_union");
+    expect(result.error).not.toContain("cursor");
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      error: expect.stringContaining("startCharacter: expected number, received string"),
+      outcome: "definitive_failure",
+    });
+  });
+
+  it("does not misclassify downstream Zod failures as invalid tool arguments", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-read",
+            "read_resource",
+            JSON.stringify({ resourceId: "resource-1" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "The provider data was invalid." }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const inputSchema = z.object({ resourceId: z.string() }).strict();
+    const tool: HarnessTool = {
+      definition: {
+        name: "read_resource",
+        description: "Read a resource",
+        capability: "resources.read",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: z.toJSONSchema(inputSchema) as Record<string, unknown>,
+      },
+      execute: async (input) => {
+        inputSchema.parse(input);
+        z.object({ content: z.string() }).parse({ content: 42 });
+        return { output: { ok: true }, summary: "Read resource" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "The provider data was invalid." });
+    const toolMessage = requestBodies[1]?.messages.find((message) => message.role === "tool");
+    const result = JSON.parse(String(toolMessage?.content)) as {
+      success: boolean;
+      kind: string;
+      error: string;
+    };
+    expect(result).toMatchObject({
+      success: false,
+      kind: "external",
+      error: expect.stringContaining("after accepting its arguments"),
+    });
+    expect(result.error).toContain("instead of changing the arguments");
+    expect(result.error).not.toContain("content");
+  });
+
+  it("preserves model-actionable errors from code-only input refinements", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-write",
+            "update_resource",
+            JSON.stringify({ resourceId: "resource-1" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "I supplied the missing update." }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const inputSchema = z.object({
+      resourceId: z.string(),
+      title: z.string().optional(),
+    }).strict().refine((input) => input.title !== undefined, {
+      message: "At least one resource field must be updated",
+    });
+    const tool: HarnessTool = {
+      definition: {
+        name: "update_resource",
+        description: "Update a resource",
+        capability: "resources.write",
+        mode: "write",
+        idempotency: "record_before_execute",
+        inputSchema: z.toJSONSchema(inputSchema) as Record<string, unknown>,
+      },
+      validateInput: (input) => {
+        const result = inputSchema.safeParse(input);
+        return result.success ? null : result.error;
+      },
+      execute: async (input) => {
+        inputSchema.parse(input);
+        return { output: { ok: true }, summary: "Updated resource" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "I supplied the missing update." });
+    const toolMessage = requestBodies[1]?.messages.find((message) => message.role === "tool");
+    const result = JSON.parse(String(toolMessage?.content)) as {
+      success: boolean;
+      kind: string;
+      error: string;
+    };
+    expect(result).toMatchObject({
+      success: false,
+      kind: "validation",
+      error: expect.stringContaining("at least one resource field must be updated"),
+    });
+    expect(result.error).not.toContain("after accepting its arguments");
+  });
+
   it("keeps blocked write tools visible while rejecting them before durable or provider work", async () => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: string }>;
@@ -2080,6 +2336,38 @@ describe("agent harness", () => {
       outcome: "definitive_failure",
     });
     expect(onAmbiguousExternalWrite).not.toHaveBeenCalled();
+  });
+
+  it("stops instead of retrying when a record-before-execute write response is invalid", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const onAmbiguousExternalWrite = vi.fn();
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([recordBeforeExecuteTool("create_record", async () => {
+        z.object({ id: z.string() }).parse({ id: 42 });
+        throw new Error("unreachable");
+      })])],
+      onAmbiguousExternalWrite,
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "ambiguous_external_write", code: "ambiguous_external_write" },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      error: expect.stringContaining("stopped without retrying"),
+      phase: "execution",
+      outcome: "ambiguous_external_write",
+    });
+    expect(onAmbiguousExternalWrite).toHaveBeenCalledTimes(1);
   });
 
   it("marks a timed-out record-before-execute write as ambiguous", async () => {

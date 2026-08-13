@@ -23,6 +23,7 @@ import {
   connectorCapabilityRefused,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
+  zodToolInputValidationError,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
@@ -708,6 +709,15 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         return boundNotionValue(await request(connection, signal, "GET", `/comments/${encodeURIComponent(resourceId)}`));
       }
       throw new ConnectorError("unsupported_capability", `Notion cannot hydrate resource type ${resourceType} from its resource ID alone`);
+    },
+
+    validateToolInput(name, rawArgs) {
+      const schema = name === "create_page"
+        ? createPageSchema
+        : name === "create_comment"
+          ? createCommentSchema
+          : undefined;
+      return zodToolInputValidationError(schema, rawArgs);
     },
 
     async executeTool(name, rawArgs, context) {

@@ -69,6 +69,11 @@ import {
   createSkillRuntime,
   type SkillRuntime,
 } from "./skills";
+import {
+  formatToolArgumentValidationError,
+  normalizeToolArguments,
+  validateToolArguments,
+} from "./tool-arguments";
 
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
 const DEFAULT_CATALOG_TOKENS = 2_500;
@@ -625,6 +630,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             }),
           };
         }
+        // Models sometimes serialize schema-declared numbers as JSON strings.
+        // Normalize that one unambiguous representation before hashing or durable
+        // planning so `1` and `"1"` are the same request everywhere downstream.
+        args = normalizeToolArguments(args, dispatched.tool.definition.inputSchema);
         const inputHash = await canonicalToolInputHash(args);
         const position = toolCallPositions.get(toolCall.id);
         const receiptId = position
@@ -727,9 +736,30 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             signal: toolSignal,
           }), toolSignal);
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Tool execution failed";
+          const downstreamValidationError = error instanceof z.ZodError;
+          // A tool may use Zod both for its initial argument parse and for
+          // downstream provider/stored data. Only blame the model when its
+          // normalized arguments also violate the schema it was shown.
+          const declaredArgumentError = downstreamValidationError
+            ? dispatched.tool.validateInput?.(args)
+              ?? validateToolArguments(args, dispatched.tool.definition.inputSchema)
+            : null;
+          const argumentValidationError = declaredArgumentError !== null;
+          const ambiguousResponseValidation = downstreamValidationError
+            && !argumentValidationError
+            && dispatched.tool.definition.mode === "write"
+            && dispatched.tool.definition.idempotency === "record_before_execute";
+          const message = argumentValidationError
+            ? formatToolArgumentValidationError(declaredArgumentError)
+            : ambiguousResponseValidation
+              ? "The write may have succeeded, but the tool could not validate the provider response. Avalon stopped without retrying because repeating the call could duplicate the write."
+            : downstreamValidationError
+              ? "The tool failed while validating data after accepting its arguments. Retry once; if it fails again, report that the tool could not validate its data instead of changing the arguments."
+            : error instanceof Error
+              ? error.message
+              : "Tool execution failed";
           const interrupted = toolSignal.aborted;
-          const ambiguousExternalWrite = interrupted
+          const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation)
             && dispatched.tool.definition.mode === "write"
             && dispatched.tool.definition.idempotency === "record_before_execute";
           const failureOutcome = ambiguousExternalWrite
@@ -749,9 +779,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             phase: "execution",
             outcome: failureOutcome,
           });
-          // A cancellation or timeout racing a non-idempotent write leaves the
-          // provider outcome unknown. Preserve that ambiguity before honoring
-          // the parent abort so a cancelled run cannot silently retry the write.
+          // A cancellation, timeout, or invalid response after a non-idempotent
+          // write leaves the provider outcome unknown. Preserve that ambiguity
+          // before the run can silently retry the write.
           if (ambiguousExternalWrite) {
             await requiredPort("Ambiguous write checkpoint persistence failed", () => input.checkpointToolInvocation?.({ toolCallId: receiptId, state: "timed_out" }));
             await requiredPort("Ambiguous write persistence failed", () => input.onAmbiguousExternalWrite?.({
@@ -759,7 +789,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               pluginId: dispatched.pluginId,
               toolName: dispatched.tool.definition.name,
             }));
-            throw new AmbiguousExternalWriteError(receiptId, `Interrupted write ${dispatched.tool.definition.name} has an unknown external outcome`);
+            throw new AmbiguousExternalWriteError(
+              receiptId,
+              ambiguousResponseValidation
+                ? `Write ${dispatched.tool.definition.name} has an unknown external outcome because its response could not be validated`
+                : `Interrupted write ${dispatched.tool.definition.name} has an unknown external outcome`,
+            );
           }
           if (signal.aborted) throw abortReason(signal);
           if (error instanceof FatalHarnessPortError || error instanceof HarnessLimitError || error instanceof AmbiguousExternalWriteError) {
@@ -782,9 +817,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           return {
             toolMessage: toolResultMessage(toolCall.id, {
               success: false,
-              kind: "external",
+              kind: argumentValidationError ? "validation" : "external",
               error: message,
-              ...(structured ? { data: structured } : {}),
+              ...(!argumentValidationError && structured ? { data: structured } : {}),
             }),
           };
         } finally {
