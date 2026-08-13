@@ -134,7 +134,7 @@ test('each Azure reviewer preserves the proven Monad Cline harness', async () =>
 		assert.match(modelReview, /PROMPT=\$\(cat <<EOF/u);
 		assert.match(
 			modelReview,
-			/cline --cwd "\$GITHUB_WORKSPACE" --auto-approve true "\$PROMPT"/u,
+			/cline --cwd "\$GITHUB_WORKSPACE" --auto-approve true(?: --thinking high)? "\$PROMPT"/u,
 		);
 		assert.doesNotMatch(
 			modelReview,
