@@ -44,6 +44,7 @@ const TOOL_REPOSITORY_SCAN_LIMIT = 1_000;
 const TOOL_REPOSITORY_SCAN_PAGE_SIZE = 100;
 const TOOL_TREE_ENTRY_LIMIT = 200;
 const TOOL_TREE_PATH_DEPTH_LIMIT = 32;
+const GITHUB_CONTENTS_DIRECTORY_LIMIT = 1_000;
 const PINNED_REPOSITORIES_QUERY = `
   query AvalonPinnedRepositories($login: String!) {
     repositoryOwner(login: $login) {
@@ -1294,7 +1295,7 @@ async function executeGitHubTool(
         totalCount,
         page: args.page,
         perPage: args.perPage,
-        hasMore: start + pageRepositories.length < totalCount || scan.truncated,
+        hasMore: start + pageRepositories.length < sorted.length,
         truncated: scan.truncated,
         totalCountIsExact: !query || !scan.truncated,
         sort: "pinned_then_recent_activity",
@@ -1332,6 +1333,11 @@ async function executeGitHubTool(
         );
       }
       const entries = value.filter(isRecord);
+      // GitHub does not return an explicit truncation flag for this endpoint;
+      // a full 1,000-entry response may have omitted additional directory
+      // entries. Callers can still page through every entry we received, while
+      // recursive tree mode is the recovery path for the unavailable tail.
+      const providerTruncated = entries.length >= GITHUB_CONTENTS_DIRECTORY_LIMIT;
       const pageEntries = entries.slice(args.offset, args.offset + args.limit);
       return {
         output: {
@@ -1340,10 +1346,11 @@ async function executeGitHubTool(
           ref: args.ref ?? null,
           entries: pageEntries.map((entry) => boundGitHubValue(entry)),
           totalCount: entries.length,
+          totalCountIsExact: !providerTruncated,
           offset: args.offset,
           limit: args.limit,
           hasMore: args.offset + pageEntries.length < entries.length,
-          truncated: false,
+          truncated: providerTruncated,
         },
         summary: `Listed ${pageEntries.length} entries in ${args.owner}/${args.repo}:${path || "/"}`,
       };
@@ -1405,7 +1412,7 @@ async function executeGitHubTool(
         totalCountIsExact: !providerTruncated,
         offset: args.offset,
         limit: args.limit,
-        hasMore: args.offset + pageEntries.length < entries.length || providerTruncated,
+        hasMore: args.offset + pageEntries.length < entries.length,
         truncated: providerTruncated,
       },
       summary: `Listed ${pageEntries.length} tree entries in ${args.owner}/${args.repo}:${path || "/"}`,

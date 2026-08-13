@@ -190,12 +190,14 @@ transient and may be retried. A deterministic bad-input failure that throws gets
 retried pointlessly; a transient provider failure returned as a clean structured
 result gets dropped when a retry would have worked.
 
-Strict executor validation is the fallback for shapes the provider still gets
-wrong. The harness condenses a Zod union tree to the closest branch, caps it, and
-returns `kind: "validation"` with field paths and one instruction to fix the
-arguments and retry. Do not catch and stringify a Zod error inside a tool: that
-turns a correctable validation failure back into an opaque external error and
-restores the branch noise the common boundary removes.
+When an executor throws a Zod error, the harness compares its normalized input
+with the same JSON Schema advertised to the model. If that input is invalid, it
+condenses the closest union branch, caps it, and returns `kind: "validation"`
+with field paths and an instruction to retry. If the declared input is valid,
+the Zod failure came from a stricter domain check or downstream data; the harness
+keeps it external and tells the model not to mutate accepted arguments. Do not
+catch and stringify either Zod error inside the tool, which would restore the
+raw issue tree and defeat that distinction.
 
 ### 6. Hard, predictable limits beat hidden privilege gates
 
@@ -347,14 +349,13 @@ that remediation.
 - **Validate in the executor — numeric normalization is not validation.** Bind
   is handed `z.unknown()` as the executable schema and carries `inputSchema` as
   `rawJsonSchema`, the provider-facing declaration. The runtime `JSON.parse`s
-  the model's arguments and uses that schema only to normalize the exact numeric
-  strings described above; it does not strip unknown keys or enforce required,
-  enum, format, range, or refinement constraints. Author the real schema with
-  zod, convert it for `inputSchema`, and parse `rawArgs` with it as the first
-  statement of the executor, as the connector tools do. Make it `.strict()` if
+  the model's arguments and uses that schema to normalize exact numeric strings
+  and classify a caught Zod error; it does not enforce the full contract before
+  execution. Author the real schema with zod, convert it for `inputSchema`, and
+  parse `rawArgs` as the first statement of the executor. Make it `.strict()` if
   an unexpected key should be an error. Let a Zod rejection reach the harness so
-  its bounded validation formatter can guide the model. Never cast across the
-  boundary.
+  it can distinguish downstream validation from bad declared input. Never cast
+  across the boundary.
 - **Choose `serial` deliberately.** This one is not a `ToolDefinition` field: it
   lives on the `HarnessTool` wrapper beside `definition` and `execute`, because
   it orders *execution* rather than describing policy. Bind already runs writes

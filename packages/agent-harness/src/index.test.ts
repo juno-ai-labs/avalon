@@ -2070,6 +2070,66 @@ describe("agent harness", () => {
     });
   });
 
+  it("does not misclassify downstream Zod failures as invalid tool arguments", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-read",
+            "read_resource",
+            JSON.stringify({ resourceId: "resource-1" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "The provider data was invalid." }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const inputSchema = z.object({ resourceId: z.string() }).strict();
+    const tool: HarnessTool = {
+      definition: {
+        name: "read_resource",
+        description: "Read a resource",
+        capability: "resources.read",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: z.toJSONSchema(inputSchema) as Record<string, unknown>,
+      },
+      execute: async (input) => {
+        inputSchema.parse(input);
+        z.object({ content: z.string() }).parse({ content: 42 });
+        return { output: { ok: true }, summary: "Read resource" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "The provider data was invalid." });
+    const toolMessage = requestBodies[1]?.messages.find((message) => message.role === "tool");
+    const result = JSON.parse(String(toolMessage?.content)) as {
+      success: boolean;
+      kind: string;
+      error: string;
+    };
+    expect(result).toMatchObject({
+      success: false,
+      kind: "external",
+      error: expect.stringContaining("after accepting its arguments"),
+    });
+    expect(result.error).toContain("instead of changing the arguments");
+    expect(result.error).not.toContain("content");
+  });
+
   it("keeps blocked write tools visible while rejecting them before durable or provider work", async () => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: string }>;
