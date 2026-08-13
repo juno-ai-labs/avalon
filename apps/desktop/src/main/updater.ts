@@ -8,7 +8,7 @@ import type { AppUpdater, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from
 import electronUpdater from 'electron-updater';
 import { updatePolicy } from './update-policy';
 
-const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_INTERVAL_MS = 3 * 60 * 60 * 1000;
 const DOWNLOAD_RETRY_BASE_DELAY_MS = 3_000;
 const MAX_DOWNLOAD_RETRIES = 5;
 
