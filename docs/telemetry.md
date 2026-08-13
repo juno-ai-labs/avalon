@@ -52,6 +52,15 @@ the authoritative API emits the outcome with the same `operation_id`. Avalon doe
 not capture DOM interactions, console output, arbitrary network traffic, URLs,
 request bodies, prompts, messages, documents, or session replay.
 
+The renderer's shared API adapter explicitly reports non-abort `fetch` failures
+and upload-XHR network failures as `network_error` because product UI handles
+those rejections and the global `error` and `unhandledrejection` listeners will
+not observe them. The report still crosses the same narrow error-candidate IPC as
+other JavaScript diagnostics: only bounded bundle-relative generated frames and
+the stable error code survive. The failing URL, request headers and body, error
+message, and underlying transport detail do not. Reporting the same `Error` object
+again is suppressed, so a later global handler cannot double-count it.
+
 ### Route and identity
 
 Before the first renderer exists, main resolves telemetry routing. An existing
@@ -215,6 +224,9 @@ analytics are advisory and may be incomplete; D1 product records remain canonica
 - A destination outage backs off to the immutable deadline and opens a five-minute
   circuit after five consecutive transient failures. The product action is not
   retried or failed because telemetry is unavailable.
+- A caught renderer transport failure keeps its normal user-facing `network_error`
+  behavior even when the preload bridge or regional telemetry endpoint is
+  unavailable. Diagnostic delivery never retries the product request.
 - Opt-out cannot synchronously stop Electron's already-running Crashpad handler.
   It stops upload and invalidates the generation immediately; restart purges that
   generation before a new handler can start.
@@ -230,7 +242,7 @@ pnpm --filter @avalon/contracts test
 pnpm --filter @avalon/db test
 pnpm --filter @avalon/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
 pnpm --filter @avalon/api test:crash-symbolicator-container
-pnpm --filter @avalon/desktop exec vitest run src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts
+pnpm --filter @avalon/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts
 pnpm --filter @avalon/desktop test:release
 pnpm --filter @avalon/desktop test:crashpad
 ```
@@ -327,6 +339,30 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-13 — Caught renderer transport failures reach exception telemetry
+
+**What changed:** The shared renderer HTTP boundary now sends caught, non-abort
+transport failures through the existing sanitized JavaScript-exception route as
+`network_error`, with same-object duplicate suppression. The API CORS policy and
+its production-shaped preflight test now admit the desktop's
+`X-Avalon-Operation-Id` mutation header.
+
+**Why:** Production desktop requests carried that header, but the Worker omitted
+it from `Access-Control-Allow-Headers`. Chromium rejected new-work-stream and
+message mutations before they reached the Worker. The UI converted and handled
+the rejected `fetch`, so neither global renderer error listener ran and PostHog
+contained no exception explaining the outage.
+
+**Considered and rejected:** Relying on `unhandledrejection`, embedding PostHog in
+the renderer, or reporting the request URL/message/body. The first misses handled
+failures, the second violates the main-owned telemetry boundary, and the third
+could copy workspace content or credentials into diagnostics.
+
+**Consequences:** Eligible Global failures reach PostHog while EU failures remain
+inside EU. Both contain only stable classification and sanitized generated
+frames. Any new desktop request header must be added to the explicit CORS
+allowlist and the preflight regression before it ships.
 
 ### 2026-08-13 — Artifact verification uses authoritative upload metadata
 

@@ -4,10 +4,10 @@ import { normalizeJavascriptErrorCandidate } from './javascript-error-candidate'
 describe('JavaScript error candidate normalization', () => {
   it('accepts only bounded bundle-relative frames and returns a stable content-free fingerprint', async () => {
     await expect(normalizeJavascriptErrorCandidate({
-      process: 'renderer', errorCode: 'react_boundary',
+      process: 'renderer', errorCode: 'network_error',
       frames: ['index-CX8Z.js:120:4', 'vendor.js:88:2'],
     })).resolves.toEqual({
-      process: 'renderer', errorCode: 'react_boundary',
+      process: 'renderer', errorCode: 'network_error',
       fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
       generatedFrames: ['index-CX8Z.js:120:4', 'vendor.js:88:2'],
     });

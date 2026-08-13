@@ -155,7 +155,7 @@ function safeStackCoordinate(value: unknown): number {
 function javascriptExceptionError(row: GlobalTelemetryDeliveryRow): Error {
   const properties = row.envelope.properties as {
     process: "main" | "preload" | "renderer";
-    errorCode: "type_error" | "range_error" | "unhandled_rejection" | "react_boundary" | "unknown";
+    errorCode: "type_error" | "range_error" | "unhandled_rejection" | "react_boundary" | "network_error" | "unknown";
     generatedFrames: string[];
   };
   const name = properties.errorCode.split("_")
