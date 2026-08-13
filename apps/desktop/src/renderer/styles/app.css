@@ -841,6 +841,8 @@ pre {
 .region-option-copy span { color: var(--muted); font-size: 11px; }
 .region-check { color: var(--brand); }
 .region-note { color: #77766f; font-size: 10.5px; line-height: 1.45; }
+.region-availability-note { color: #8a887f; font-size: 10px; line-height: 1.45; margin: 8px 0 0; }
+.region-availability-note:empty { display: none; }
 .onboarding-continue { margin-top: 20px; width: 100%; }
 
 .signin-card { text-align: center; width: min(400px, 100%); }
