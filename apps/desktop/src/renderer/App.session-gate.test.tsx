@@ -160,6 +160,10 @@ describe('SessionGate identity-first ordering', () => {
     renderGate();
 
     expect(await screen.findByText('Opening European Research…')).toBeVisible();
-    await vi.waitFor(() => expect(sessionState.activateWorkspace).toHaveBeenCalledWith('eu', 'workspace-eu'));
+    await vi.waitFor(() => expect(sessionState.activateWorkspace).toHaveBeenCalledWith(
+      'eu',
+      'workspace-eu',
+      expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    ));
   });
 });

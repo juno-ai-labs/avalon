@@ -20,6 +20,7 @@ knowing an object's ID is enough to read it — it never is.
 | `packages/db/seed.sql` | The local development seed. |
 | `apps/api/src/lib/workstream-visibility.ts` | The single expression of who may read a work stream, parameterized by the SQL naming the reader. |
 | `apps/api/src/mappers/connection.ts`, `apps/api/src/mappers/workstream.ts` | Row schemas parsed at the read — the pattern the remaining hand-coercing readers are converging on. |
+| `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
@@ -337,6 +338,46 @@ includes it. Knowing an object ID is never sufficient authorization.
 - `audit_events` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
+### Regional telemetry
+
+Telemetry uses regional D1 as a durable policy boundary, not as product truth.
+`users.analytics_person_id` and `workspaces.analytics_workspace_id` are random,
+immutable destination identities; they are deliberately unrelated to product
+primary keys. The user row also owns the default-on product-analytics preference,
+its compare-and-set version, and an opaque handle through which Global projects a
+preference change to an EU account without copying its regional user ID.
+
+The tables have distinct lifecycles rather than one catch-all event store:
+
+- `telemetry_onboarding_journeys` binds one anonymous login epoch to an immediate
+  coarse Global or EU route while no workspace exists. It is a route record, not a
+  region-pending queue.
+- `telemetry_accepted_events` and `telemetry_delivery_receipts` make event upload
+  idempotent. Global accepted rows are an outbox for PostHog; EU accepted rows are
+  internal-only. `telemetry_eu_events` is an independently expiring semantic
+  projection with trusted release, platform, channel, launch/session, and
+  operation dimensions for regional funnel and reliability queries.
+- `telemetry_identity_links` records the one anonymous-epoch-to-person link.
+  `telemetry_profile_jobs` separates that non-superseding transition from
+  coalescible person and workspace profile updates.
+- `telemetry_crash_reports` indexes one raw object and owns processing, retry,
+  destination, launch-correlation, and absolute-deletion state. EU occurrences
+  also contribute one flat row to `telemetry_eu_crash_contributions`; query-time
+  aggregation ages each contribution out independently instead of extending old
+  observations when an issue recurs. `telemetry_crash_access_audit` records
+  reason-coded support access without copying the object key or report.
+- `telemetry_destination_state`, `telemetry_ingest_rate_buckets`,
+  `telemetry_rejection_buckets`, and `telemetry_replay_audit` hold bounded
+  operational control and audit data without product payloads.
+
+Every telemetry row that retains data carries an absolute deadline, and migration
+triggers reject deadline extension. Accepted delivery metadata and full crash
+occurrences live for at most 90 days; EU semantic and minimized crash
+contributions live for at most 13 months. Raw dumps, source maps, and native
+symbols are outside the ordinary regional payload bucket in the region's dedicated
+`TELEMETRY_PAYLOADS` R2 bucket. See [`telemetry.md`](telemetry.md) for routing,
+collection, opt-out, and destination behavior.
+
 ## Invariants
 
 1. **Every tenant-owned table carries `workspace_id`, and every repository lookup
@@ -368,6 +409,10 @@ includes it. Knowing an object ID is never sufficient authorization.
     diverged from every database that has not.
 11. **Runtime request handlers never attempt broad schema migration.** A Worker
     that migrates on demand migrates concurrently, once per isolate.
+12. **A telemetry deletion deadline is absolute and immutable.** Delivery,
+    processing, replay, recurrence, or destination acknowledgement may change a
+    state column but never renew the row. EU aggregate queries operate on
+    independently expiring contribution rows rather than a mutable issue lifetime.
 
 ## Boundary
 
@@ -385,6 +430,7 @@ has a document, and the column notes above point at it rather than restating it:
 | The draft automation lifecycle | [`automation-drafts.md`](automation-drafts.md) |
 | The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
+| Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Running and reverting migrations against hosted databases | [`runbook.md`](runbook.md) |
 
 ## Failure modes and limits
@@ -439,6 +485,32 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-13 — Telemetry rows enforce independent absolute lifecycles
+
+**What changed:** Migration `0074` adds random analytics identities, the account
+preference, regional accepted/outbox and EU projection rows, ordered
+identity/profile jobs, native crash indexes and contributions, replay/access
+audits, rate buckets, destination circuits, processing leases, and analysis
+context. Immutable-deadline triggers cover every retained telemetry record.
+
+**Why:** Offline Electron delivery, destination retries, and recurring crash
+issues all need durable state, but none may renew old data or turn Global into a
+holding area for an unresolved region. EU analysis also needs useful release and
+launch dimensions without a US destination.
+
+**Considered and rejected:** One polymorphic event table, a mutable crash-issue
+aggregate, product primary keys as PostHog identities, and extending retention on
+retry. Each would either erase distinct policy lifecycles, keep old contributions
+alive indefinitely, leak internal identifiers, or defeat the published ceiling.
+
+**Consequences:** New telemetry schema changes are additive migrations; code must
+preserve the stored random identities and original deadlines. Operators reap D1
+and dedicated R2 together, and EU analysis reconstructs issue and crash-free views
+from surviving rows.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-12 — One pointer and one outbox replace the model-object catalog
 

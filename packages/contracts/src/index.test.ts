@@ -584,6 +584,27 @@ describe("boundary contracts", () => {
     expect(result.success).toBe(false);
   });
 
+  it("carries only a bounded server-owned telemetry correlation for a user-started run", () => {
+    const parsed = WorkstreamWorkflowInputSchema.parse({
+      region: "global",
+      workspaceId: id,
+      workstreamId: id,
+      harnessRunId: id,
+      triggerMessageId: id,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "user", userId: id },
+      telemetryOperationId: id,
+      telemetrySubjectUserId: id,
+      reason: "human_message",
+    });
+    expect(parsed).toMatchObject({ telemetryOperationId: id, telemetrySubjectUserId: id });
+    expect(WorkstreamWorkflowInputSchema.safeParse({
+      ...parsed,
+      telemetryOperationId: "not-an-id",
+    }).success).toBe(false);
+  });
+
   it("bounds Slack-origin context carried into a work-stream run", () => {
     const parsed = WorkstreamWorkflowInputSchema.parse({
       region: "global",

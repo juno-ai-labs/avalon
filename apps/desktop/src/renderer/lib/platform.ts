@@ -33,6 +33,14 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // toggle is offered where it could not work.
   launchAtLogin: false,
   launchAtLoginAvailable: false,
+  // Browser development follows the account-level default. There is no
+  // Electron main process here to persist an offline mutation, so the browser
+  // bridge exposes the state but declines writes below.
+  productAnalyticsEnabled: true,
+  productAnalyticsAvailable: false,
+  productAnalyticsEffective: true,
+  productAnalyticsPreferencePending: false,
+  nativeCrashRestartRequired: false,
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
@@ -215,6 +223,21 @@ const browserBridge: AvalonDesktopBridge = {
   },
   async setLaunchAtLogin() {
     throw new Error('Opening at login is available only in the Avalon desktop app.');
+  },
+  async setProductAnalyticsEnabled() {
+    throw new Error('Product analytics is managed in the Avalon desktop app.');
+  },
+  async reportTelemetryScreen() {
+    // Public-site/browser telemetry is outside this feature's V1 scope.
+  },
+  async reportTelemetryProductIntent() {
+    // Public-site/browser telemetry is outside this feature's V1 scope.
+  },
+  async getTelemetryInspector() {
+    return [];
+  },
+  async reportJavascriptError() {
+    // Browser telemetry is outside this feature's V1 scope.
   },
   onApplicationSettingsChanged(listener) {
     browserApplicationSettingsListeners.add(listener);

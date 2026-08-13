@@ -52,6 +52,7 @@ function fixture(): { database: DatabaseSync; env: Env; auth: AuthContext } {
       error_code TEXT,
       expires_at TEXT NOT NULL,
       completed_at TEXT,
+      telemetry_operation_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

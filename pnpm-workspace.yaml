@@ -23,6 +23,9 @@ catalog:
 
 minimumReleaseAgeExclude:
   - '@juno-ai/bind@10.0.0 || 11.0.0'
+  - '@posthog/core@1.47.1'
+  - '@posthog/types@1.403.0'
+  - posthog-node@5.48.2
 
 auditConfig:
   ignoreGhsas:

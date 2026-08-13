@@ -48,6 +48,7 @@ type ExactKeys<Base, Value extends Base> = Value
 type CloudflareBinding =
   | Ai
   | DurableObjectNamespace
+  | Env["CRASH_SYMBOLICATOR"]
   | DurableObjectState
   | DurableObjectStorage
   | Flagship
