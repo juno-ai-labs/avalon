@@ -53,9 +53,19 @@ function commandRunner() {
   return { calls, runCommand };
 }
 
-function objectApi({ corruptVerification = false } = {}) {
+function objectApi({
+  corruptVerification = false,
+  getStatus = 200,
+  putErrors = [],
+  putInvalidJson = false,
+  putStatus = 200,
+  putSuccess = putStatus >= 200 && putStatus < 300,
+  verificationBytes,
+  verificationContentLength,
+} = {}) {
   const objects = new Map();
   const calls = [];
+  let errorBodyCancelled = false;
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(input);
     const match = /\/r2\/buckets\/([^/]+)\/objects\/(.+)/u.exec(url.pathname);
@@ -67,17 +77,48 @@ function objectApi({ corruptVerification = false } = {}) {
       method: init.method ?? 'GET',
       target,
       jurisdiction: headers.get('cf-r2-jurisdiction'),
+      contentType: headers.get('content-type'),
+      signal: init.signal,
+      url: url.href,
     };
     calls.push(call);
+    assert.ok(call.method === 'PUT' || call.method === 'GET', `unexpected object API method ${call.method}`);
     if (call.method === 'PUT') {
-      objects.set(target, Buffer.from(init.body));
-      return Response.json({ success: true, result: { key } });
+      if (putStatus >= 200 && putStatus < 300 && putSuccess) {
+        objects.set(target, Buffer.from(init.body));
+      }
+      if (putInvalidJson) return new Response('not-json', { status: putStatus });
+      return Response.json({ success: putSuccess, errors: putErrors, result: { key } }, { status: putStatus });
+    }
+    if (getStatus < 200 || getStatus >= 300) {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(Buffer.from('provider error'));
+        },
+        cancel() {
+          errorBodyCancelled = true;
+        },
+      });
+      return new Response(body, { status: getStatus });
     }
     const object = objects.get(target);
     assert.ok(object, `expected uploaded object ${target}`);
-    return new Response(corruptVerification ? Buffer.from('corrupt') : object);
+    const body = verificationBytes
+      ?? (corruptVerification ? Buffer.from('corrupt') : object);
+    return new Response(body, {
+      headers: verificationContentLength === undefined
+        ? undefined
+        : { 'content-length': verificationContentLength },
+    });
   };
-  return { calls, fetchImpl, objects };
+  return {
+    calls,
+    fetchImpl,
+    objects,
+    get errorBodyCancelled() {
+      return errorBodyCancelled;
+    },
+  };
 }
 
 test('publishes every private artifact to both isolated regional buckets and verifies its bytes', async () => {
@@ -110,6 +151,12 @@ test('publishes every private artifact to both isolated regional buckets and ver
     }
     const verificationGets = api.calls.filter(({ method }) => method === 'GET');
     assert.equal(verificationGets.length, 10);
+    assert.equal(api.calls.every(({ signal }) => signal instanceof AbortSignal && !signal.aborted), true);
+    assert.equal(
+      api.calls.filter(({ method }) => method === 'PUT')
+        .every(({ contentType }) => contentType === 'application/octet-stream'),
+      true,
+    );
     assert.equal(
       api.calls.filter(({ target }) => target.startsWith('avalon-global-telemetry/'))
         .every(({ jurisdiction }) => jurisdiction === null),
@@ -120,6 +167,24 @@ test('publishes every private artifact to both isolated regional buckets and ver
         .every(({ jurisdiction }) => jurisdiction === 'eu'),
       true,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('encodes Cloudflare object URL components', async () => {
+  const { root, desktopDirectory } = await fixture();
+  const api = objectApi();
+  try {
+    await publishTelemetryArtifacts({
+      desktopDirectory,
+      environment: { ...runtimeEnvironment, CLOUDFLARE_ACCOUNT_ID: 'test/account id' },
+      fetchImpl: api.fetchImpl,
+      runCommand: commandRunner().runCommand,
+      temporaryRoot: root,
+    });
+
+    assert.match(api.calls[0].url, /\/accounts\/test%2Faccount%20id\/r2\/buckets\//u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -184,4 +249,127 @@ test('rejects shared regional buckets and a post-upload checksum mismatch', asyn
   } finally {
     await rm(second.root, { recursive: true, force: true });
   }
+});
+
+test('rejects oversized artifacts before any upload', async () => {
+  const { root, desktopDirectory } = await fixture();
+  await writeFile(
+    join(desktopDirectory, 'out/main/index.js.map'),
+    Buffer.alloc((16 * 1024 * 1024) + 1),
+  );
+  const api = objectApi();
+  try {
+    await assert.rejects(
+      publishTelemetryArtifacts({
+        desktopDirectory,
+        environment: runtimeEnvironment,
+        fetchImpl: api.fetchImpl,
+        runCommand: commandRunner().runCommand,
+        temporaryRoot: root,
+      }),
+      /telemetry\/javascript-symbols\/.*outside its allowed size/u,
+    );
+    assert.equal(api.calls.length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects Cloudflare upload failures without exposing provider response bodies', async (t) => {
+  const cases = [
+    {
+      name: 'HTTP failure',
+      api: objectApi({ putStatus: 503, putSuccess: false, putErrors: [{ code: 10001, message: 'secret detail' }] }),
+      expected: /HTTP 503 \(success=false; error codes 10001\)/u,
+    },
+    {
+      name: 'protocol failure',
+      api: objectApi({ putSuccess: false }),
+      expected: /HTTP 200 \(success=false\)/u,
+    },
+    {
+      name: 'invalid JSON',
+      api: objectApi({ putInvalidJson: true }),
+      expected: /HTTP 200 \(invalid JSON response\)/u,
+    },
+  ];
+  for (const failure of cases) {
+    await t.test(failure.name, async () => {
+      const { root, desktopDirectory } = await fixture();
+      try {
+        await assert.rejects(
+          publishTelemetryArtifacts({
+            desktopDirectory,
+            environment: runtimeEnvironment,
+            fetchImpl: failure.api.fetchImpl,
+            runCommand: commandRunner().runCommand,
+            temporaryRoot: root,
+          }),
+          (error) => failure.expected.test(error.message) && !error.message.includes('secret detail'),
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('cancels failed verification responses and bounds successful readback bytes', async (t) => {
+  await t.test('failed verification response', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ getStatus: 503 });
+    try {
+      await assert.rejects(
+        publishTelemetryArtifacts({
+          desktopDirectory,
+          environment: runtimeEnvironment,
+          fetchImpl: api.fetchImpl,
+          runCommand: commandRunner().runCommand,
+          temporaryRoot: root,
+        }),
+        /Could not verify .* HTTP 503/u,
+      );
+      assert.equal(api.errorBodyCancelled, true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('oversized verification stream', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ verificationBytes: Buffer.alloc(64) });
+    try {
+      await assert.rejects(
+        publishTelemetryArtifacts({
+          desktopDirectory,
+          environment: runtimeEnvironment,
+          fetchImpl: api.fetchImpl,
+          runCommand: commandRunner().runCommand,
+          temporaryRoot: root,
+        }),
+        /Verification response .* exceeds the uploaded artifact size/u,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('oversized declared content length', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ verificationContentLength: '999' });
+    try {
+      await assert.rejects(
+        publishTelemetryArtifacts({
+          desktopDirectory,
+          environment: runtimeEnvironment,
+          fetchImpl: api.fetchImpl,
+          runCommand: commandRunner().runCommand,
+          temporaryRoot: root,
+        }),
+        /Verification response .* exceeds the uploaded artifact size/u,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
