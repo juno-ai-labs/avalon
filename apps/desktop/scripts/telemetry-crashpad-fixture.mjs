@@ -66,6 +66,8 @@ try {
     copyFile(join(fixtureDirectory, 'package.json'), join(packagedFixtureDirectory, 'package.json')),
   ]);
   await run('pnpm', [
+    '--filter',
+    '@avalon/desktop',
     'exec',
     'esbuild',
     join(fixtureDirectory, 'production-controller.mjs'),
