@@ -428,6 +428,7 @@ Common failures are designed as loop repairs:
 | `match_not_found`, `match_not_unique` | Call `terminal_read_file` again, copy exact current text with enough surrounding context, then rebuild the edit; use `replaceAll` only when every match should change. This is the revision-drift recovery. |
 | `patch_does_not_apply`, `patch_invalid` | Re-read every affected file and regenerate the whole context-bearing patch; no partial patch is reported as successful. |
 | `destination_exists` | Choose a new import destination or set `overwrite: true` only after confirming replacement is intended. |
+| `destination_not_regular` | Choose an absent destination or a regular file; Avalon will not write through links, devices, or directories. |
 | `limit_exceeded`, `resource_limit_exceeded` | Narrow/split the operation or reduce the input/output size before retrying. Archives and unfamiliar binary types still publish as download-only `other` resources. |
 | `resource_empty`, `resource_not_ready` | Regenerate a non-empty file beneath `AVALON_RESOURCE_DIR`, wait for its producer to finish, then publish the stable final path with a new invocation. |
 | `command_rejected` | Use one bounded foreground command, a dedicated file tool, or `terminal_publish_branch_and_pr`; do not retry a PTY, background process, `git push`, or mutating `gh` spelling. |

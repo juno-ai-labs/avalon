@@ -22,7 +22,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network controls and participant-visible work-stream state/repository selection. |
-| `packages/db/migrations/0074_terminal_workspaces.sql` | Authoritative regional Terminal schema. |
+| `packages/db/migrations/0075_terminal_workspaces.sql` | Authoritative regional Terminal schema. |
 
 ## How it works
 
@@ -187,7 +187,7 @@ network proxy, or a general GitHub administration surface.
   lines and 256 KiB. A patch is at most 2 MiB and 100 files.
 - A command is at most 32 KiB, defaults to 120 seconds, and is capped at 900
   seconds. Inline stdout and stderr are each head/tail bounded to 128 KiB; the
-  complete generated log is capped at 25 MB and then the command reports
+  complete generated log is capped at 5 MB and then the command reports
   `output_limit_exceeded`.
 - Generated publication accepts one nonempty stable regular file, not a
   directory, symlink, device, or changing file. Resource bridge byte and count
@@ -230,7 +230,7 @@ reviews.
 
 ## Data model
 
-Migration `0074_terminal_workspaces.sql` adds:
+Migration `0075_terminal_workspaces.sql` adds:
 
 - `workspace_sandbox_network_policies`, `_domains`, and `_mutations` for the
   revisioned preview/confirm/read-back protocol;
@@ -328,6 +328,32 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-13 — Provider replay and durable receipts reject stale state
+
+**What changed:** The command envelope now stops when its working directory or
+session environment cannot be entered, and a named Daytona session is reused
+only when its stored command exactly matches. Git bootstrap clears incomplete
+clone staging and avoids duplicate excludes. Publication receipts are unique to
+the tool invocation rather than overwritten by the next update to the same
+branch. Imports refuse non-regular destinations, policy reconciliation uses
+generation/provider guards, and complete command-log capture is capped at 5 MB.
+
+**Why:** A stale provider session could return another operation's output, a
+failed clone could wedge later starts, branch-target uniqueness erased earlier
+audit receipts, and unguarded state updates could mutate a replacement sandbox.
+The former 25 MB log cap also required several simultaneous Worker-sized copies
+before Avalon could publish the bounded resource.
+
+**Considered and rejected:** Blindly adopting the only named-session command,
+using the Git branch as the receipt key, writing through a resolved link, and
+streaming an unbounded provider log through the request. None preserves the
+exact operation or generation boundary that makes response-loss recovery safe.
+
+**Consequences:** Exact response-loss retries remain recoverable; a changed
+command recreates the provider session, each publication invocation retains its
+own evidence, and noisy commands fail with a bounded generated log instead of
+risking isolate exhaustion.
 
 ### 2026-08-13 — Daytona phase telemetry makes the image decision empirical
 

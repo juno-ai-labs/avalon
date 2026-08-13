@@ -208,7 +208,7 @@ function snapshot(sandbox: DaytonaSandboxLike): TerminalSandboxSnapshot {
 }
 
 const defaultClientFactory: DaytonaClientFactory = (config) => new Daytona(config);
-const MAX_STREAMED_COMMAND_LOG_BYTES = 25_000_000;
+const MAX_STREAMED_COMMAND_LOG_BYTES = 5_000_000;
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/gu, `'"'"'`)}'`;
@@ -568,7 +568,7 @@ export function createDaytonaTerminalProvider(
           cancelled = true;
           throw new Error("Terminal command cancelled");
         }
-        const command = `cd -- ${shellQuote(input.cwd)} && if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; avalon_status=$?; if [ "$avalon_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit "$avalon_status"`;
+        const command = `cd -- ${shellQuote(input.cwd)} || exit $?; if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; avalon_status=$?; if [ "$avalon_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit "$avalon_status"`;
         const supportsObservation = Boolean(
           sandbox.process.getSession
           && sandbox.process.getSessionCommand
@@ -592,6 +592,16 @@ export function createDaytonaTerminalProvider(
           }
           if (commands.length > 1) {
             throw new Error("The stable Daytona command session contains more than one command");
+          }
+          if (commands[0] && commands[0].command !== command) {
+            try {
+              await sandbox.process!.deleteSession(input.taskName);
+              await sandbox.process!.createSession(input.taskName);
+              commands = [];
+            } catch (error) {
+              await sandbox.stop?.();
+              throw error;
+            }
           }
           let commandId = commands[0]?.id;
           let observedExitCode = commands[0]?.exitCode;
