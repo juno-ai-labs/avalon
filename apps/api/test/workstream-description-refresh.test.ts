@@ -28,6 +28,7 @@ const openDatabases: DatabaseSync[] = [];
 
 afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -242,6 +243,8 @@ describe("who wrote the description", () => {
   });
 
   it("never shortens a rest the work stream had already earned", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
     const { database, env } = fixture();
     addQualifyingConversation(database);
     await refreshWorkstreamDescription(env, {
