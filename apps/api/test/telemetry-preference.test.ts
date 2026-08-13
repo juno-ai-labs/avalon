@@ -90,4 +90,32 @@ describe('canonical regional Product analytics preference', () => {
     globalDatabase.close();
     euDatabase.close();
   });
+
+  it('projects the canonical winner back to EU when a stale mutation conflicts', async () => {
+    const globalDatabase = migratedSqliteDatabase();
+    const euDatabase = migratedSqliteDatabase();
+    seed(globalDatabase, 'global');
+    seed(euDatabase, 'eu');
+    globalDatabase.prepare(`UPDATE users SET product_analytics_enabled = 0,
+      product_analytics_preference_version = 2 WHERE id = 'global-user'`).run();
+    const canonicalEnv = createTestEnv({ DB: sqliteD1(globalDatabase), AVALON_REGION: 'global' });
+    const euEnv = createTestEnv({
+      DB: sqliteD1(euDatabase),
+      AVALON_REGION: 'eu',
+      GLOBAL_TELEMETRY_CONTROL: {
+        mutatePreference: (input: unknown) => applyCanonicalPreferenceMutation(canonicalEnv, input),
+      },
+    });
+
+    await expect(new ProductAnalyticsPreferenceService(euEnv, 'eu-user').update({
+      enabled: true, expectedVersion: 1, operationId,
+    })).rejects.toMatchObject({ status: 409, code: 'telemetry_preference_conflict' });
+    expect(euDatabase.prepare(`SELECT product_analytics_enabled, product_analytics_preference_version
+      FROM users WHERE id = 'eu-user'`).get()).toEqual({
+      product_analytics_enabled: 0,
+      product_analytics_preference_version: 2,
+    });
+    globalDatabase.close();
+    euDatabase.close();
+  });
 });

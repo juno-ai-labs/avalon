@@ -178,8 +178,17 @@ export class ProductAnalyticsPreferenceService {
           expectedVersion: input.expectedVersion,
           operationId,
         });
-    if (result.result === 'conflict' || result.enabled !== input.enabled
-      || result.version !== input.expectedVersion + 1) {
+    if (result.result === 'conflict') {
+      if (this.env.AVALON_REGION === 'eu') {
+        await applyRegionalPreferenceProjection(this.env, this.userId, {
+          preferenceSubjectHandle: handle,
+          enabled: result.enabled,
+          version: result.version,
+        });
+      }
+      throw new ApiError(409, 'telemetry_preference_conflict', 'The analytics preference changed on another installation');
+    }
+    if (result.enabled !== input.enabled || result.version !== input.expectedVersion + 1) {
       throw new ApiError(409, 'telemetry_preference_conflict', 'The analytics preference changed on another installation');
     }
     if (this.env.AVALON_REGION === 'eu') {

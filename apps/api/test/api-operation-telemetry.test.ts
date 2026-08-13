@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import type { HonoAppEnv } from '../src/env';
+import { ApiError } from '../src/lib/api-error';
 import { apiOperationTelemetry } from '../src/middleware/api-operation-telemetry';
 import { createTestEnv } from './helpers/cloudflare-test';
 
@@ -65,6 +67,54 @@ describe('allowlisted API operation telemetry', () => {
       duration: 'lt_100ms',
       correlationOperationId: operationId,
     }));
+  });
+
+  it('classifies an expected thrown API error by status instead of as an internal failure', async () => {
+    const emit = vi.fn(async () => undefined);
+    const app = new Hono<HonoAppEnv>();
+    app.use('*', async (c, next) => { c.set('auth', auth); await next(); });
+    app.use('*', apiOperationTelemetry({ emit, now: sequentialClock(0, 20) }));
+    app.post('/workstreams', () => {
+      throw new ApiError(409, 'workstream_conflict', 'The work stream already exists');
+    });
+    app.onError((error, c) => c.json({ error: 'handled' }, error instanceof ApiError ? error.status : 500));
+
+    const response = await app.request('/workstreams', { method: 'POST' },
+      createTestEnv({ AVALON_REGION: 'global' }));
+
+    expect(response.status).toBe(409);
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledWith(expect.anything(), auth, {
+      operation: 'workstream_create',
+      result: 'conflict',
+      duration: 'lt_100ms',
+    }));
+  });
+
+  it('emits once when sibling sub-apps are mounted at the same root', async () => {
+    const emit = vi.fn(async () => undefined);
+    const app = new Hono<HonoAppEnv>();
+    app.use('*', apiOperationTelemetry({ emit }));
+    const identityApi = new Hono<HonoAppEnv>();
+    identityApi.use('*', async (c, next) => { c.set('auth', auth); await next(); });
+    identityApi.get('/onboarding', (c) => c.json({ ok: true }));
+    app.route('/', identityApi);
+
+    const protectedApi = new Hono<HonoAppEnv>();
+    protectedApi.use('*', async (c, next) => { c.set('auth', auth); await next(); });
+    protectedApi.post('/workstreams', (c) => c.json({ ok: true }, 201));
+    app.route('/', protectedApi);
+
+    const response = await app.request('/workstreams', { method: 'POST' },
+      createTestEnv({ AVALON_REGION: 'global' }));
+
+    expect(response.status).toBe(201);
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(1));
+  });
+
+  it('mounts the production middleware once above the sibling sub-apps', () => {
+    const source = readFileSync(`${process.cwd()}/src/app.ts`, 'utf8');
+    expect(source.match(/apiOperationTelemetry\(\)/gu)).toHaveLength(1);
+    expect(source.indexOf('apiOperationTelemetry()')).toBeLessThan(source.indexOf('app.route("/health"'));
   });
 });
 

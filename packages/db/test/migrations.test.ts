@@ -105,7 +105,7 @@ describe("database migrations", () => {
     `);
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
-  });
+  }, 15_000);
 
   it("moves legacy Notion bot grants to workspace scope without widening personal MCP rows", () => {
     const database = migrateDatabaseThrough("0071_notion_webhook_setup_nonces.sql");

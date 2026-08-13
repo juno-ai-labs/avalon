@@ -13,4 +13,21 @@ describe('Electron telemetry wiring', () => {
     expect(handler).toContain("process: 'preload'");
     expect(handler).not.toContain('preloadPath');
   });
+
+  it('applies breadcrumb teardown to Product analytics changes rather than Debug changes', () => {
+    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+    const debugController = source.match(
+      /const debugSettingsController = new DebugSettingsController\([\s\S]*?\n\}\);/u,
+    )?.[0];
+    const productAnalyticsController = source.match(
+      /const productAnalyticsSettingsController = new ProductAnalyticsSettingsController\([\s\S]*?\n\}\);/u,
+    )?.[0];
+
+    expect(debugController).toBeDefined();
+    expect(debugController).not.toContain('telemetryBreadcrumbs');
+    expect(productAnalyticsController).toContain(
+      'if (!state.effectiveEnabled) telemetryBreadcrumbs = null',
+    );
+    expect(productAnalyticsController).toContain('new TelemetryBreadcrumbRing');
+  });
 });

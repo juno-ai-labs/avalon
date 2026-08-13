@@ -121,6 +121,32 @@ describe("regional telemetry collector", () => {
     database.close();
   });
 
+  it("anchors the EU semantic-event deadline to the normalized occurrence, not delayed acceptance", async () => {
+    const database = migratedSqliteDatabase();
+    const collector = new TelemetryCollector(createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "eu" }));
+    const delayed = productEvent({
+      originalTimestamp: "2026-08-01T00:00:00.000Z",
+      sentAt: "2026-08-12T20:00:04.000Z",
+      properties: { selectedRegion: "eu", entrypoint: "first_run" },
+    });
+
+    await collector.accept(delayed, {
+      route: "eu",
+      routingBasis: "ip_geolocation",
+      analyticsSubjectId: "eu-anonymous-epoch-1",
+      subjectUserId: null,
+      workspaceAnalyticsId: null,
+    });
+
+    expect(database.prepare(`
+      SELECT normalized_timestamp, delete_at FROM telemetry_eu_events WHERE event_id = ?
+    `).get(eventId)).toEqual({
+      normalized_timestamp: "2026-08-01T00:00:01.000Z",
+      delete_at: "2027-09-01T00:00:01.000Z",
+    });
+    database.close();
+  });
+
   it("acknowledges identical retries and rejects an event id reused for another payload", async () => {
     const database = migratedSqliteDatabase();
     const collector = new TelemetryCollector(createTestEnv({
