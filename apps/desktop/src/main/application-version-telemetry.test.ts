@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -85,5 +85,21 @@ describe('application version telemetry', () => {
     });
     await acknowledgeApplicationVersionTransition({ userDataDirectory: directory, eventId });
     await expect(applicationVersionTransition(update)).resolves.toBeNull();
+  });
+
+  it('baselines a corrupt existing marker instead of reporting a false installation', async () => {
+    const directory = await root();
+    await mkdir(join(directory, 'telemetry'));
+    await writeFile(join(directory, 'telemetry', 'application-version.json'), '{not-json', 'utf8');
+    const input = {
+      userDataDirectory: directory,
+      version: '1.102.0',
+      build: '10200',
+      newInstallation: true,
+      eventId: () => '018f0000-0000-7000-8000-000000000012',
+    };
+
+    await expect(applicationVersionTransition(input)).resolves.toBeNull();
+    await expect(applicationVersionTransition(input)).resolves.toBeNull();
   });
 });

@@ -1448,6 +1448,10 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       const pending = await applicationVersionTransition({
         userDataDirectory: userDataDirectory(),
         version: runtime.appVersion,
+        // Avalon publishes one immutable desktop artifact for each semantic
+        // version today, so that version is also the packaged build identity.
+        // Keep the fields separate for the native SDK contract and a future
+        // independently versioned build without changing stored history.
         build: runtime.appVersion,
         newInstallation: identityState.created,
       });
