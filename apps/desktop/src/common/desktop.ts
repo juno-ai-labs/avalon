@@ -111,7 +111,7 @@ export interface DesktopTelemetryInspectorEntry {
 
 export interface DesktopJavascriptErrorCandidate {
   process: 'preload' | 'renderer';
-  errorCode: 'type_error' | 'range_error' | 'unhandled_rejection' | 'react_boundary' | 'unknown';
+  errorCode: 'type_error' | 'range_error' | 'unhandled_rejection' | 'react_boundary' | 'network_error' | 'unknown';
   frames: string[];
 }
 

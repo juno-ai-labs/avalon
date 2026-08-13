@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   javascriptErrorCandidate,
   reportJavascriptError,
@@ -10,6 +10,8 @@ import {
 
 const desktopBridge = vi.hoisted(() => vi.fn());
 vi.mock('./platform', () => ({ desktopBridge }));
+
+afterEach(() => vi.useRealTimers());
 
 describe('renderer semantic telemetry helpers', () => {
   it('maps only planned router destinations to stable screen enums', () => {
@@ -44,6 +46,75 @@ describe('renderer semantic telemetry helpers', () => {
     const error = new Error('private customer value');
     error.stack = 'Error: private customer value\n at render (/Users/person/customer/App.tsx:1:2)';
     expect(javascriptErrorCandidate(error, 'unknown')).toBeNull();
+  });
+
+  it('suppresses a duplicate network classification but allows a later crash classification', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportJavascriptError: report });
+    const error = new Error('private transport detail');
+    error.stack = 'Error: private transport detail\n at send (app://avalon/assets/index.js:10:2)';
+
+    reportJavascriptError(error, 'network_error');
+    reportJavascriptError(error, 'network_error');
+    expect(report).toHaveBeenCalledOnce();
+
+    reportJavascriptError(error, 'unhandled_rejection');
+
+    expect(report).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenNthCalledWith(1, {
+      process: 'renderer',
+      errorCode: 'network_error',
+      frames: ['index.js:10:2'],
+    });
+    expect(report).toHaveBeenNthCalledWith(2, {
+      process: 'renderer',
+      errorCode: 'unhandled_rejection',
+      frames: ['index.js:10:2'],
+    });
+  });
+
+  it('coalesces repeated network failures with the same sanitized fingerprint', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-13T20:00:00.000Z'));
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportJavascriptError: report });
+    const errorAtSameFrame = (): Error => {
+      const error = new Error('private transport detail');
+      error.stack = 'Error: private transport detail\n at send (app://avalon/assets/throttle.js:20:2)';
+      return error;
+    };
+
+    reportJavascriptError(errorAtSameFrame(), 'network_error');
+    reportJavascriptError(errorAtSameFrame(), 'network_error');
+    expect(report).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(5 * 60 * 1_000);
+    reportJavascriptError(errorAtSameFrame(), 'network_error');
+    expect(report).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let a coalesced network report suppress a later crash classification', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportJavascriptError: report });
+    const errorAtSameFrame = (): Error => {
+      const error = new Error('private transport detail');
+      error.stack = 'Error: private transport detail\n at send (app://avalon/assets/upgrade.js:20:2)';
+      return error;
+    };
+    const laterCrash = errorAtSameFrame();
+
+    reportJavascriptError(errorAtSameFrame(), 'network_error');
+    reportJavascriptError(laterCrash, 'network_error');
+    expect(report).toHaveBeenCalledOnce();
+
+    reportJavascriptError(laterCrash, 'unhandled_rejection');
+
+    expect(report).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenLastCalledWith({
+      process: 'renderer',
+      errorCode: 'unhandled_rejection',
+      frames: ['upgrade.js:20:2'],
+    });
   });
 
   it('keeps telemetry observational when preload lookup or invocation throws synchronously', () => {

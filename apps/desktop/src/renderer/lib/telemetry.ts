@@ -5,6 +5,31 @@ import type {
 } from '../../common/desktop';
 import { desktopBridge } from './platform';
 
+const reportedJavascriptErrorPriorities = new WeakMap<Error, number>();
+const recentNetworkErrorSignatures = new Map<string, number>();
+const networkErrorReportIntervalMs = 5 * 60 * 1_000;
+const maximumNetworkErrorSignatures = 100;
+
+function javascriptErrorPriority(errorCode: DesktopJavascriptErrorCandidate['errorCode']): number {
+  return errorCode === 'network_error' ? 0 : 1;
+}
+
+function shouldReportNetworkError(candidate: DesktopJavascriptErrorCandidate): boolean {
+  if (candidate.errorCode !== 'network_error') return true;
+  const signature = candidate.frames.join('\0');
+  const now = Date.now();
+  const previous = recentNetworkErrorSignatures.get(signature);
+  if (previous !== undefined && now - previous < networkErrorReportIntervalMs) return false;
+  if (previous !== undefined) {
+    recentNetworkErrorSignatures.delete(signature);
+  } else if (recentNetworkErrorSignatures.size >= maximumNetworkErrorSignatures) {
+    const oldest = recentNetworkErrorSignatures.keys().next().value as string | undefined;
+    if (oldest !== undefined) recentNetworkErrorSignatures.delete(oldest);
+  }
+  recentNetworkErrorSignatures.set(signature, now);
+  return true;
+}
+
 export function telemetryScreenForPath(pathname: string): DesktopTelemetryScreen | null {
   if (pathname === '/workstreams/new' || pathname === '/') return 'workspace_home';
   if (/^\/workstreams\/[^/]+$/u.test(pathname)) return 'workstream';
@@ -50,8 +75,15 @@ export function reportJavascriptError(
   error: unknown,
   errorCode: DesktopJavascriptErrorCandidate['errorCode'],
 ): void {
+  if (!(error instanceof Error)) return;
+  const priority = javascriptErrorPriority(errorCode);
+  const reportedPriority = reportedJavascriptErrorPriorities.get(error);
+  if (reportedPriority !== undefined && reportedPriority >= priority) return;
   const candidate = javascriptErrorCandidate(error, errorCode);
-  if (candidate) fireAndForget(() => desktopBridge().reportJavascriptError(candidate));
+  if (!candidate) return;
+  if (!shouldReportNetworkError(candidate)) return;
+  reportedJavascriptErrorPriorities.set(error, priority);
+  fireAndForget(() => desktopBridge().reportJavascriptError(candidate));
 }
 
 export function installRendererErrorTelemetry(): () => void {
