@@ -101,6 +101,34 @@ describe("attachment derivative conversion", () => {
     expect(ocr).toHaveBeenCalledOnce();
   });
 
+  it("trusts a verified MIME type before a contradictory filename extension", async () => {
+    const pdfExtractor = vi.fn(async () => ({ pageCount: 1, pages: ["Verified PDF"] }));
+    const [pdf, disguisedArchive, genericMarkdown] = await Promise.all([
+      buildAttachmentDerivative({
+        bytes: encoder.encode("%PDF fixture"),
+        fileName: "misleading.txt",
+        mimeType: "application/pdf",
+        pdfExtractor,
+      }),
+      buildAttachmentDerivative({
+        bytes: zipSync({ "word/document.xml": strToU8("<w:document/>") }),
+        fileName: "misleading.docx",
+        mimeType: "application/zip",
+      }),
+      buildAttachmentDerivative({
+        bytes: encoder.encode("# Generic Markdown"),
+        fileName: "notes.md",
+        mimeType: "application/octet-stream",
+      }),
+    ]);
+
+    expect(pdf.status === "ready" ? pdf.modelMimeType : null).toBe("text/markdown");
+    expect(pdf.status === "ready" ? pdf.text : null).toContain("Verified PDF");
+    expect(disguisedArchive).toMatchObject({ status: "unsupported" });
+    expect(genericMarkdown.status === "ready" ? genericMarkdown.modelMimeType : null).toBe("text/markdown");
+    expect(pdfExtractor).toHaveBeenCalledOnce();
+  });
+
   it("fails explicitly for invalid UTF-8, corrupt or encrypted Office data, and unsupported binary content", async () => {
     const [invalidText, corruptOffice, encryptedOffice, unsupported] = await Promise.all([
       buildAttachmentDerivative({ bytes: new Uint8Array([0xc3, 0x28]), fileName: "bad.md", mimeType: "text/markdown" }),
@@ -187,6 +215,7 @@ describe("attachment derivative conversion", () => {
       contentSha256: "0d79b05d5f5a26ef53e9a4e3443ad6555391cc60aecfcb7b6282e7aa864eb1ed",
       modelContentRef: null, modelMimeType: null, modelContentSha256: null, modelIndexRef: null,
       modelContentStatus: "pending", modelContentExtractorVersion: null, modelContentCharacterCount: null,
+      modelContentClaimedAt: null, modelContentClaimId: null,
     };
 
     const results = await Promise.all([
@@ -198,7 +227,7 @@ describe("attachment derivative conversion", () => {
     expect(puts).toHaveLength(2);
     expect(puts.every((key) => key.includes(`/resource-1/${resource.contentSha256}/${ATTACHMENT_TEXT_EXTRACTOR_VERSION}/`))).toBe(true);
     expect(state).toMatchObject({ status: "ready", mime: "text/markdown", count: source.length });
-    expect(statements.some((statement) => statement.sql.includes("resource_model_objects"))).toBe(true);
+    expect(statements.some((statement) => statement.sql.includes("model_content_claim_id = ?"))).toBe(true);
 
     const reused = await materializeAttachmentDerivative(database, bucket, {
       ...resource,
@@ -209,8 +238,64 @@ describe("attachment derivative conversion", () => {
       modelContentStatus: "ready",
       modelContentExtractorVersion: ATTACHMENT_TEXT_EXTRACTOR_VERSION,
       modelContentCharacterCount: state.count,
+      modelContentClaimedAt: null,
+      modelContentClaimId: null,
     });
     expect(reused.status).toBe("ready");
     expect(gets).toEqual(["original", "original"]);
+  });
+
+  it("reclaims an expired processing lease but waits for a current fenced claim", async () => {
+    const source = encoder.encode("# Recovered\n\nLease recovery works.");
+    const sql: string[] = [];
+    const database = createTestD1Database({
+      prepare(statement: string) {
+        sql.push(statement);
+        return {
+          bind() {
+            return { async run() { return { meta: { changes: 1 } }; } };
+          },
+        };
+      },
+    });
+    const gets = vi.fn(async () => ({
+      async arrayBuffer() {
+        return source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength);
+      },
+    }));
+    const bucket = createCloudflareTestBinding<R2Bucket>({
+      get: gets,
+      async put() { return {}; },
+      async delete() { return undefined; },
+    });
+    const common: AuthorizedDerivativeResource = {
+      id: "resource-lease",
+      fileName: "lease.md",
+      mimeType: "text/markdown",
+      contentRef: "original",
+      contentSha256: "97cbc8d940300fd8d5c1984f429421c55c30a6c25f1f1c32bdedce5ab03028bb",
+      modelContentRef: null,
+      modelMimeType: null,
+      modelContentSha256: null,
+      modelIndexRef: null,
+      modelContentStatus: "processing",
+      modelContentExtractorVersion: ATTACHMENT_TEXT_EXTRACTOR_VERSION,
+      modelContentCharacterCount: null,
+      modelContentClaimId: "old-claim",
+      modelContentClaimedAt: "2026-08-12T10:00:00.000Z",
+    };
+
+    await expect(materializeAttachmentDerivative(database, bucket, common, {
+      now: () => new Date("2026-08-12T10:04:59.000Z"),
+    })).resolves.toEqual({ status: "processing", retryAfterMs: 1_000 });
+    expect(gets).not.toHaveBeenCalled();
+
+    const recovered = await materializeAttachmentDerivative(database, bucket, common, {
+      now: () => new Date("2026-08-12T10:05:01.000Z"),
+    });
+    expect(recovered.status).toBe("ready");
+    expect(gets).toHaveBeenCalledOnce();
+    expect(sql.some((statement) => statement.includes("model_content_claimed_at <= ?"))).toBe(true);
+    expect(sql.some((statement) => statement.includes("AND model_content_claim_id = ?"))).toBe(true);
   });
 });

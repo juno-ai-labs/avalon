@@ -198,13 +198,42 @@ function summaryRanges(totalCharacters: number): Array<{ start: number; end: num
 }
 
 function boundSummaryDraft(draft: AttachmentSummaryDraft, maximum: number): AttachmentSummaryDraft {
-  const outline = draft.outline.map((item) => ({ ...item, heading: item.heading.slice(0, 200) }));
-  const citations = draft.citations.map((item) => ({ ...item, label: item.label.slice(0, 200) }));
-  const limitations = draft.coverage.limitations.map((item) => item.slice(0, 500)).slice(0, 20);
+  const metadataBudget = Math.floor(maximum / 2);
+  const limitationBudget = Math.min(
+    Math.floor(metadataBudget / 4),
+    draft.coverage.limitations.reduce((total, item) => total + Math.min(item.length, 500), 0),
+  );
+  let limitationCharacters = 0;
+  const limitations = draft.coverage.limitations.slice(0, 20).flatMap((item) => {
+    const remaining = limitationBudget - limitationCharacters;
+    if (remaining <= 0) return [];
+    const value = item.slice(0, Math.min(500, remaining));
+    limitationCharacters += value.length;
+    return value ? [value] : [];
+  });
+  const remainingMetadata = metadataBudget - limitationCharacters;
+  const outlineBudget = Math.floor(remainingMetadata / 2);
+  let outlineCharacters = 0;
+  const outline = draft.outline.flatMap((item) => {
+    const remaining = outlineBudget - outlineCharacters;
+    if (remaining <= 0) return [];
+    const heading = item.heading.slice(0, Math.min(200, remaining));
+    outlineCharacters += heading.length;
+    return heading ? [{ ...item, heading }] : [];
+  });
+  const citationBudget = remainingMetadata - outlineCharacters;
+  let citationCharacters = 0;
+  const citations = draft.citations.flatMap((item) => {
+    const remaining = citationBudget - citationCharacters;
+    if (remaining <= 0) return [];
+    const label = item.label.slice(0, Math.min(200, remaining));
+    citationCharacters += label.length;
+    return label ? [{ ...item, label }] : [];
+  });
   const authoredMetadataCharacters = [
-    ...outline.map((item) => item.heading.length),
-    ...citations.map((item) => item.label.length),
-    ...limitations.map((item) => item.length),
+    outlineCharacters,
+    citationCharacters,
+    limitationCharacters,
   ].reduce((total, length) => total + length, 0);
   return {
     outline,

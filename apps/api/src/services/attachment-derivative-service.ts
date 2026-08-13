@@ -1,3 +1,4 @@
+import { classifyAttachmentKind } from "@avalon/contracts";
 import { unzipSync } from "fflate";
 
 export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v1";
@@ -8,6 +9,7 @@ const MAX_OFFICE_XML_BYTES = 8 * 1_024 * 1_024;
 const MAX_DERIVATIVE_CHARACTERS = 20_000_000;
 const MAX_PDF_PAGES = 500;
 const CONVERTER_TIMEOUT_MS = 30_000;
+const PROCESSING_LEASE_MS = 5 * 60_000;
 const DEFAULT_INDEX_CHUNK_CHARACTERS = 4_000;
 const MAX_INDEX_CHUNKS = 5_000;
 
@@ -79,6 +81,8 @@ export interface AuthorizedDerivativeResource {
   modelContentStatus: "pending" | "processing" | "ready" | "failed" | "unsupported" | null;
   modelContentExtractorVersion: string | null;
   modelContentCharacterCount: number | null;
+  modelContentClaimedAt: string | null;
+  modelContentClaimId: string | null;
 }
 
 export type MaterializedAttachmentDerivative =
@@ -153,6 +157,10 @@ export async function materializeAttachmentDerivative(
   resource: AuthorizedDerivativeResource,
   options: MaterializeAttachmentDerivativeOptions = {},
 ): Promise<MaterializedAttachmentDerivative> {
+  const now = (options.now ?? (() => new Date()))();
+  const at = now.toISOString();
+  const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS).toISOString();
+  const claimId = crypto.randomUUID();
   if (!resource.contentRef) return updateTerminalState(database, resource, "failed", "source_unavailable", options);
   if (isReadyCurrentVersion(resource)) {
     return {
@@ -166,7 +174,10 @@ export async function materializeAttachmentDerivative(
     };
   }
   if (resource.modelContentStatus === "processing"
-    && resource.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION) {
+    && resource.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION
+    && resource.modelContentClaimedAt !== null
+    && resource.modelContentClaimId !== null
+    && resource.modelContentClaimedAt > staleBefore) {
     return { status: "processing", retryAfterMs: 1_000 };
   }
 
@@ -174,7 +185,6 @@ export async function materializeAttachmentDerivative(
   if (!object) return updateTerminalState(database, resource, "failed", "source_unavailable", options);
   const bytes = new Uint8Array(await object.arrayBuffer());
   const sourceSha256 = resource.contentSha256 ?? await sha256Hex(bytes);
-  const at = (options.now ?? (() => new Date()))().toISOString();
   if (!resource.contentSha256) {
     const hashUpdate = await database.prepare(
       `UPDATE resources SET content_sha256 = ?, updated_at = ?
@@ -186,12 +196,17 @@ export async function materializeAttachmentDerivative(
   const claim = await database.prepare(
     `UPDATE resources
         SET model_content_status = 'processing', model_content_extractor_version = ?,
+            model_content_claimed_at = ?, model_content_claim_id = ?,
             model_content_error_code = NULL, updated_at = ?
       WHERE id = ? AND content_ref = ? AND content_sha256 = ?
-        AND NOT (model_content_status = 'processing' AND model_content_extractor_version = ?)`,
+        AND (model_content_status IS NOT 'processing'
+          OR model_content_extractor_version IS NOT ?
+          OR model_content_claimed_at IS NULL
+          OR model_content_claim_id IS NULL
+          OR model_content_claimed_at <= ?)`,
   ).bind(
-    ATTACHMENT_TEXT_EXTRACTOR_VERSION, at, resource.id, resource.contentRef,
-    sourceSha256, ATTACHMENT_TEXT_EXTRACTOR_VERSION,
+    ATTACHMENT_TEXT_EXTRACTOR_VERSION, at, claimId, at, resource.id, resource.contentRef,
+    sourceSha256, ATTACHMENT_TEXT_EXTRACTOR_VERSION, staleBefore,
   ).run();
   if ((claim.meta.changes ?? 0) === 0) return { status: "processing", retryAfterMs: 1_000 };
 
@@ -204,10 +219,17 @@ export async function materializeAttachmentDerivative(
     ...(options.signal ? { signal: options.signal } : {}),
   });
   if (converted.status !== "ready") {
-    return updateTerminalState(database, { ...resource, contentSha256: sourceSha256 }, converted.status, converted.errorCode, options);
+    return updateTerminalState(
+      database,
+      { ...resource, contentSha256: sourceSha256 },
+      converted.status,
+      converted.errorCode,
+      options,
+      claimId,
+    );
   }
 
-  const prefix = derivativeObjectPrefix(resource.id, sourceSha256, converted.extractorVersion);
+  const prefix = derivativeObjectPrefix(resource.id, sourceSha256, converted.extractorVersion, crypto.randomUUID());
   const contentRef = `${prefix}/content.${converted.modelMimeType === "text/markdown" ? "md" : "txt"}`;
   const indexRef = `${prefix}/index.json`;
   const contentBytes = new TextEncoder().encode(converted.text);
@@ -228,33 +250,23 @@ export async function materializeAttachmentDerivative(
   }
 
   try {
-    const statements = [database.prepare(
+    const result = await database.prepare(
       `UPDATE resources
           SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?,
               model_metadata_json = ?, model_index_ref = ?, model_content_status = 'ready',
               model_content_extractor_version = ?, model_content_character_count = ?,
-              model_content_extracted_at = ?, model_content_error_code = NULL, updated_at = ?
+              model_content_extracted_at = ?, model_content_claimed_at = NULL,
+              model_content_claim_id = NULL, model_content_error_code = NULL, updated_at = ?
         WHERE id = ? AND content_ref = ? AND content_sha256 = ?
-          AND model_content_status = 'processing' AND model_content_extractor_version = ?`,
+          AND model_content_status = 'processing' AND model_content_extractor_version = ?
+          AND model_content_claim_id = ?`,
     ).bind(
       contentRef, converted.modelMimeType, derivativeSha256,
       JSON.stringify(converted.metadata), indexRef, converted.extractorVersion,
       converted.text.length, at, at, resource.id, resource.contentRef,
-      sourceSha256, converted.extractorVersion,
-    ), database.prepare(
-      `INSERT INTO resource_model_objects
-        (resource_id, object_ref, object_kind, lifecycle_status, created_at)
-       VALUES (?, ?, 'derivative', 'active', ?)
-       ON CONFLICT(resource_id, object_ref) DO UPDATE SET lifecycle_status = 'active'`,
-    ).bind(resource.id, contentRef, at), database.prepare(
-      `INSERT INTO resource_model_objects
-        (resource_id, object_ref, object_kind, lifecycle_status, created_at)
-       VALUES (?, ?, 'index', 'active', ?)
-       ON CONFLICT(resource_id, object_ref) DO UPDATE SET lifecycle_status = 'active'`,
-    ).bind(resource.id, indexRef, at)];
-    appendSupersededObjectStatements(database, statements, resource, contentRef, indexRef, at);
-    const results = await database.batch(statements);
-    if ((results[0]?.meta.changes ?? 0) === 0) {
+      sourceSha256, converted.extractorVersion, claimId,
+    ).run();
+    if ((result.meta.changes ?? 0) === 0) {
       await Promise.allSettled([payloads.delete(contentRef), payloads.delete(indexRef)]);
       return { status: "processing", retryAfterMs: 250 };
     }
@@ -269,9 +281,10 @@ export async function materializeAttachmentDerivative(
   };
 }
 
-export function derivativeObjectPrefix(resourceId: string, sourceSha256: string, extractorVersion: string): string {
+export function derivativeObjectPrefix(resourceId: string, sourceSha256: string, extractorVersion: string, generation = "current"): string {
   const safeVersion = extractorVersion.replace(/[^a-zA-Z0-9._-]/gu, "_").slice(0, 100);
-  return `model-derivatives/${resourceId}/${sourceSha256}/${safeVersion}`;
+  const safeGeneration = generation.replace(/[^a-zA-Z0-9._-]/gu, "_").slice(0, 100);
+  return `model-derivatives/${resourceId}/${sourceSha256}/${safeVersion}/${safeGeneration}`;
 }
 
 export function buildDerivativeIndex(
@@ -311,6 +324,12 @@ export function buildDerivativeIndex(
 
 async function convertAttachment(input: BuildAttachmentDerivativeInput): Promise<ConvertedText | null> {
   const mime = input.mimeType?.trim().toLowerCase() ?? "";
+  const kind = classifyAttachmentKind({ mimeType: mime, fileName: input.fileName });
+  if (kind === "pdf" && isPdf(mime, input.fileName)) return convertPdf(input);
+  if (kind === "document" && isDocx(mime, input.fileName)) return convertDocx(input.bytes);
+  if (kind === "presentation" && isPptx(mime, input.fileName)) return convertPptx(input.bytes);
+  if (kind === "spreadsheet" && isXlsx(mime, input.fileName)) return convertXlsx(input.bytes);
+  if (kind !== "text" && kind !== "markdown") return null;
   if (isPlainText(mime, input.fileName)) {
     let text: string;
     try {
@@ -324,10 +343,6 @@ async function convertAttachment(input: BuildAttachmentDerivativeInput): Promise
       metadata: { extractionMethod: "utf8", omissions: [] },
     };
   }
-  if (isDocx(mime, input.fileName)) return convertDocx(input.bytes);
-  if (isPptx(mime, input.fileName)) return convertPptx(input.bytes);
-  if (isXlsx(mime, input.fileName)) return convertXlsx(input.bytes);
-  if (isPdf(mime, input.fileName)) return convertPdf(input);
   return null;
 }
 
@@ -637,23 +652,27 @@ function numericXmlOrder(value: string): number {
 function isPlainText(mime: string, fileName: string): boolean {
   return mime.startsWith("text/")
     || ["application/json", "application/xml", "application/yaml", "application/x-yaml", "application/csv"].includes(mime)
-    || /\.(?:txt|md|markdown|csv|tsv|json|jsonl|xml|yaml|yml|html|htm|log|sql|js|jsx|ts|tsx|css|py|rb|go|rs|java|c|cc|cpp|h|hpp)$/iu.test(fileName);
+    || (genericMime(mime) && /\.(?:txt|md|markdown|csv|tsv|json|jsonl|xml|yaml|yml|html|htm|log|sql|js|jsx|ts|tsx|css|py|rb|go|rs|java|c|cc|cpp|h|hpp)$/iu.test(fileName));
 }
 
 function isDocx(mime: string, fileName: string): boolean {
-  return mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || /\.docx$/iu.test(fileName);
+  return mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || (genericMime(mime) && /\.docx$/iu.test(fileName));
 }
 
 function isPptx(mime: string, fileName: string): boolean {
-  return mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" || /\.pptx$/iu.test(fileName);
+  return mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" || (genericMime(mime) && /\.pptx$/iu.test(fileName));
 }
 
 function isXlsx(mime: string, fileName: string): boolean {
-  return mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || /\.xlsx$/iu.test(fileName);
+  return mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || (genericMime(mime) && /\.xlsx$/iu.test(fileName));
 }
 
 function isPdf(mime: string, fileName: string): boolean {
-  return mime === "application/pdf" || /\.pdf$/iu.test(fileName);
+  return mime === "application/pdf" || (genericMime(mime) && /\.pdf$/iu.test(fileName));
+}
+
+function genericMime(mime: string): boolean {
+  return mime === "" || mime === "application/octet-stream" || mime === "binary/octet-stream";
 }
 
 function decodeXml(value: string): string {
@@ -693,45 +712,25 @@ async function updateTerminalState(
   status: "failed" | "unsupported",
   errorCode: string,
   options: MaterializeAttachmentDerivativeOptions,
+  claimId?: string,
 ): Promise<MaterializedAttachmentDerivative> {
   const boundedCode = /^[a-z0-9_]{1,80}$/u.test(errorCode) ? errorCode : "conversion_failed";
   const at = (options.now ?? (() => new Date()))().toISOString();
-  await database.prepare(
+  const claimPredicate = claimId
+    ? "AND model_content_status = 'processing' AND model_content_claim_id = ?"
+    : "AND model_content_status IS NOT 'ready'";
+  const statement = database.prepare(
     `UPDATE resources
         SET model_content_status = ?, model_content_extractor_version = ?,
-            model_content_error_code = ?, model_content_extracted_at = ?, updated_at = ?
-      WHERE id = ? AND content_ref IS ?`,
-  ).bind(status, ATTACHMENT_TEXT_EXTRACTOR_VERSION, boundedCode, at, at, resource.id, resource.contentRef).run();
+            model_content_error_code = ?, model_content_extracted_at = ?,
+            model_content_claimed_at = NULL, model_content_claim_id = NULL, updated_at = ?
+      WHERE id = ? AND content_ref IS ? ${claimPredicate}`,
+  );
+  await (claimId
+    ? statement.bind(status, ATTACHMENT_TEXT_EXTRACTOR_VERSION, boundedCode, at, at, resource.id, resource.contentRef, claimId)
+    : statement.bind(status, ATTACHMENT_TEXT_EXTRACTOR_VERSION, boundedCode, at, at, resource.id, resource.contentRef)
+  ).run();
   return { status, errorCode: boundedCode };
-}
-
-function appendSupersededObjectStatements(
-  database: D1Database,
-  statements: D1PreparedStatement[],
-  resource: AuthorizedDerivativeResource,
-  contentRef: string,
-  indexRef: string,
-  at: string,
-): void {
-  const superseded = [
-    ...(resource.modelContentRef && resource.modelContentRef !== contentRef
-      ? [{ ref: resource.modelContentRef, kind: "derivative" as const }]
-      : []),
-    ...(resource.modelIndexRef && resource.modelIndexRef !== indexRef
-      ? [{ ref: resource.modelIndexRef, kind: "index" as const }]
-      : []),
-  ];
-  for (const object of superseded) {
-    statements.push(database.prepare(
-      `INSERT OR IGNORE INTO resource_object_deletion_outbox
-        (object_ref, resource_id, object_kind, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).bind(object.ref, resource.id, object.kind, at, at));
-    statements.push(database.prepare(
-      `UPDATE resource_model_objects SET lifecycle_status = 'superseded'
-       WHERE resource_id = ? AND object_ref = ?`,
-    ).bind(resource.id, object.ref));
-  }
 }
 
 function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {

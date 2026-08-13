@@ -145,14 +145,23 @@ The canonical `request_elicitation` tool belongs to `avalon:core` and is rendere
 
 Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before execution, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to D1 before Bind can observe it.
 
-Completed receipts replay without another provider call. Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior write, or timed-out `record_before_execute` write becomes `ambiguous_external_write` and is never blindly repeated. Lifecycle events are append-only, and terminalization is idempotent and lease-fenced.
+Completed receipts replay without another provider call only while their owning
+subsystem's authorization and dependency checks still pass. Attachment list
+results always re-execute; attachment content results require every resource to
+remain visible at the exact derivative hash recorded before completion.
+Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior
+write, or timed-out `record_before_execute` write becomes
+`ambiguous_external_write` and is never blindly repeated. Lifecycle events are
+append-only, and terminalization is idempotent and lease-fenced.
 
 An attachment view is the one result with two representations. Its durable
 receipt and `tool_completed` event contain only the bounded JSON inclusion
 summary. The in-memory tool message adds ordered image parts after that JSON for
 the next model turn. On receipt replay the regional host reauthorizes the
-resource and recreates those parts from the selected image derivative; no data
-URI enters D1, the replay object, or a persisted transcript row.
+resource and recreates those parts from the selected image derivative. If the
+parts cannot be recreated, it invalidates the safe-read receipt and executes the
+tool again rather than returning the JSON inclusion summary alone. No data URI
+enters D1, the replay object, or a persisted transcript row.
 
 ### Model routing and inference ledger
 
@@ -400,7 +409,7 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store a principal-neutral summary regionally with the durable sequence boundary. The live checkpoint and every replay append a freshly authorized, fixed-size resource inventory before newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store a principal-and-resource-visibility-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`runbook.md`](runbook.md).
 
@@ -454,6 +463,24 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-12 — Compaction summaries fail closed across authorization changes
+
+**What changed:** The harness exposes a required host preparation boundary before
+the compaction summary call. Avalon uses it to capture resource authorization,
+then verifies that scope after the call, before persistence, and on replay.
+
+**Why:** The summary itself may preserve attachment IDs and conclusions, so
+keeping only the appendix authorization-aware left principal changes and
+revocations able to expose model-authored private context.
+
+**Considered and rejected:** Post-hoc summary redaction. A model conclusion can
+encode private content without retaining a filename or ID, so string filtering
+cannot establish authorization.
+
+**Consequences:** A changed resource view invalidates the checkpoint rather than
+reusing it. Hosts adding compaction authorization state must capture it before
+the summary sees the transcript and must fail the compaction if it changes.
 
 ### 2026-08-12 — Compaction separates durable summary from live authorized context
 

@@ -4,9 +4,10 @@ When a run's live context approaches the selected model's window, Avalon
 replaces it with a summary of itself. The compacted context is the stable system
 prompt plus **one** synthetic user message holding an LLM continuation summary
 followed by a deterministic, freshly authorized resource inventory. Nothing
-from the conversation survives verbatim, not even its first message. Only the
-principal-neutral summary is stored; the inventory is regenerated when the
-checkpoint is applied or replayed.
+from the conversation survives verbatim, not even its first message. The raw
+summary is stored with the execution-principal key and exact resource-visibility
+fingerprint under which it was produced; the inventory is regenerated only
+while both still match.
 
 This document owns the policy: when a compaction fires, what it asks the model
 for, what shape it leaves behind, and how a checkpoint is stored and replayed.
@@ -76,15 +77,23 @@ count exists.
 
 ### Persisting and replaying
 
+Before the summary call, Avalon captures the current execution-principal key and
+authorized resource-visibility fingerprint. It verifies the same fingerprint
+after the summary and again immediately before persistence, so an attachment
+revocation or visibility change cannot race with checkpoint creation.
+
 The base checkpoint is persisted without its system message or authorized
 appendix, keyed by work stream, in `workstream_context_compactions`, together
-with the raw summary, checkpoint-template version, model, before/window token
-counts, and the compaction's own usage and cost. The upsert
+with that scope, the raw summary, checkpoint-template version, model,
+before/window token counts, and the compaction's own usage and cost. The upsert
 advances a row only when `compacted_through_sequence` moves forward, or when the
 same `harness_run_id` rewrites its own checkpoint.
 
-A later run loads that row first, regenerates the current-version message from
-the raw summary and a new inventory for that run's execution principal, pages
+A later run loads that row first and compares both scope fields. When either the
+principal or authorized resource set changed, it ignores the checkpoint and
+replays the uncompacted transcript instead of exposing a stale summary. With an
+exact match it regenerates the current-version message from the raw summary and
+fresh inventory, pages
 the durable transcript backward from its trigger's sequence number down to
 `compacted_through_sequence`, and assembles
 `[...checkpoint messages, ...projected transcript, ...run prompt context]`. The
@@ -184,8 +193,8 @@ pnpm --filter @avalon/agent-harness exec vitest run src/index.test.ts
 
 `packages/db/test/migrations.test.ts` asserts the table's columns.
 `apps/api/test/workstream-resource-inventory.test.ts` covers zero and all-kind
-rendering, bounded metadata, principal-neutral persistence, and fresh replay
-after visibility changes.
+rendering, bounded metadata, principal-and-visibility-scoped persistence, and
+fail-closed replay after visibility changes.
 
 ## Open questions
 
@@ -213,19 +222,39 @@ after visibility changes.
 
 ## Changelog
 
+### 2026-08-12 — Raw summaries are scoped to the authorization state that produced them
+
+**What changed:** Compaction captures the execution-principal key and authorized
+resource fingerprint before summarization, verifies it after summarization and
+before persistence, and stores both with the raw summary. Replay ignores the
+checkpoint when either value differs and rebuilds context from durable messages.
+
+**Why:** A continuation summary can contain exact IDs and conclusions from a
+private attachment. Regenerating only the aggregate appendix did not make that
+model-authored prose safe for a different viewer or after revocation.
+
+**Considered and rejected:** Treating the raw summary as principal-neutral and
+attempting to redact attachment details on replay. Redaction cannot reliably
+separate a private conclusion from ordinary prose, while an exact scope match is
+deterministic and fail-closed.
+
+**Consequences:** Resource membership or visibility changes invalidate the
+checkpoint and may cause a later run to replay and compact more history. Future
+summary persistence must retain the before-summary scope capture and both race
+checks; the deterministic inventory remains excluded from the stored message.
+
 ### 2026-08-12 — Authorized resource inventory is regenerated after every summary
 
 **What changed:** The harness now appends a host-rendered resource inventory to
 the live checkpoint after the LLM summary, while persistence keeps only the base
-summary checkpoint and template version. Replay reconstructs the current
-template from the raw summary and reruns the shared sidebar visibility query for
-the active execution principal. The summary prompt retains exact details only
+summary checkpoint, template version, and authorization scope. Matching replay
+reconstructs the current template from the raw summary and reruns the shared
+sidebar visibility query. The summary prompt retains exact details only
 for relevant attachments and refuses a complete catalog.
 
 **Why:** The summarizer is intentionally selective and therefore cannot be the
-authority for every current resource. Persisting a user's resource view would
-also become stale after relationship or note-visibility changes and could expose
-one principal's private inventory to another. A full ID list would grow with the
+authority for every current resource. Persisting a rendered resource view would
+become stale after relationship or note-visibility changes. A full ID list would grow with the
 work stream and immediately spend the context compaction reclaimed.
 
 **Considered and rejected:** Asking the LLM to maintain totals, persisting the
@@ -236,8 +265,8 @@ keeps discovery complete without storing principal-specific prose.
 
 **Consequences:** Every current-version replay performs one authorized resource
 visibility read. Future checkpoint templates must increment the stored version,
-keep unknown versions readable through their persisted base messages, and never
-put resource metadata or binary parts into the principal-neutral row.
+keep unknown versions readable only inside the matching stored scope, and never
+put resource metadata or binary parts into the stored base message.
 
 ### 2026-08-12 — Ordinary work-stream compaction has no run cost ceiling
 
