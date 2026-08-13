@@ -1376,7 +1376,7 @@ jobs:
           # aiming it at `pr-head/` would collapse the isolation the checkout step
           # describes. The tree is read through `pr-head/`, and the post step
           # reads 'cline-review.md' from here.
-          cline --cwd "$GITHUB_WORKSPACE" --auto-approve true "$PROMPT" 2> >(
+          cline --cwd "$GITHUB_WORKSPACE" --auto-approve true --thinking high "$PROMPT" 2> >(
             grep -vF "The 'openai-compatible' key in providerOptions is deprecated. Use 'openaiCompatible' instead." >&2
           )
       - name: Post Cline review
@@ -1684,7 +1684,7 @@ jobs:
           # aiming it at `pr-head/` would collapse the isolation the checkout step
           # describes. The tree is read through `pr-head/`, and the post step
           # reads 'cline-review.md' from here.
-          cline --cwd "$GITHUB_WORKSPACE" --auto-approve true "$PROMPT" 2> >(
+          cline --cwd "$GITHUB_WORKSPACE" --auto-approve true --thinking high "$PROMPT" 2> >(
             grep -vF "The 'openai-compatible' key in providerOptions is deprecated. Use 'openaiCompatible' instead." >&2
           )
       - name: Post Cline review
