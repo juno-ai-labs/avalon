@@ -118,6 +118,22 @@ describe('TelemetrySpool', () => {
     expect(await spool.ready(new Date('2026-08-12T00:10:00.000Z'))).toEqual([]);
   });
 
+  it('reports whether an anonymous identity epoch still has locally queued rows', async () => {
+    const directory = await root();
+    const spool = new TelemetrySpool({ rootDirectory: directory });
+    const acceptedAt = new Date('2026-08-12T00:00:00.000Z');
+    await spool.enqueue({
+      route: 'global',
+      accountEpochId: uuid7('02'),
+      event: envelope(uuid7('52')),
+      acceptedAt,
+    });
+
+    await expect(spool.hasPendingAccountEpoch(uuid7('02'), acceptedAt)).resolves.toBe(true);
+    await spool.acknowledge(uuid7('52'));
+    await expect(spool.hasPendingAccountEpoch(uuid7('02'), acceptedAt)).resolves.toBe(false);
+  });
+
   it('serializes concurrent writes without losing rows', async () => {
     const directory = await root();
     const spool = new TelemetrySpool({ rootDirectory: directory, maxRows: 20, maxBytes: 100_000 });

@@ -19,6 +19,7 @@ async function harness(input: {
   auth?: { apiBaseUrl: string; accessToken: string; workspace: boolean; route: 'global' | 'eu' } | null;
   anonymous?: { capability: string; journeyId: string; expiresAt: string } | null;
   refreshAnonymous?: () => Promise<{ capability: string; journeyId: string; expiresAt: string } | null>;
+  now?: () => Date;
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'avalon-reporter-'));
   roots.push(directory);
@@ -34,7 +35,7 @@ async function harness(input: {
     anonymousSession: () => input.anonymous ?? null,
     refreshAnonymousSession: input.refreshAnonymous,
     fetch,
-    now: () => new Date('2026-08-12T20:00:00.000Z'),
+    now: input.now ?? (() => new Date('2026-08-12T20:00:00.000Z')),
     runtime: {
       environment: 'development', release: '1.96.0', buildId: 'test',
       platform: 'darwin', arch: 'arm64', channel: 'development',
@@ -234,5 +235,35 @@ describe('TelemetryReporter', () => {
     await expect(reporter.flush()).resolves.toBeUndefined();
     expect(await spool.ready(new Date('2026-08-12T20:00:59.000Z'))).toEqual([]);
     expect(await spool.ready(new Date('2026-08-12T20:02:00.000Z'))).toHaveLength(1);
+  });
+
+  it('records the first actual send time and preserves it across delivery retries', async () => {
+    let now = new Date('2026-08-01T20:00:00.000Z');
+    const { reporter, spool, fetch } = await harness({
+      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+      now: () => now,
+    });
+    fetch
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        results: [{ result: 'accepted', eventId: '018f0000-0000-7000-8000-000000000010' }],
+      }), { status: 202 }));
+
+    await reporter.screenViewed('workspace_home');
+    now = new Date('2026-08-05T20:00:00.000Z');
+    await reporter.flush();
+    const [retry] = await spool.ready(new Date('2026-08-05T20:02:00.000Z'));
+    expect(retry?.event).toMatchObject({
+      originalTimestamp: '2026-08-01T20:00:00.000Z',
+      sentAt: '2026-08-05T20:00:00.000Z',
+    });
+
+    now = new Date('2026-08-05T20:02:00.000Z');
+    await reporter.flush();
+    const secondRequest = JSON.parse(String(fetch.mock.calls[1]?.[1]?.body));
+    expect(secondRequest.events[0]).toMatchObject({
+      originalTimestamp: '2026-08-01T20:00:00.000Z',
+      sentAt: '2026-08-05T20:00:00.000Z',
+    });
   });
 });

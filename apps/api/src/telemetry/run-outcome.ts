@@ -66,7 +66,7 @@ export async function emitCorrelatedRunOutcome(
     input.telemetryOperationId,
     'workspace-user',
     env.AVALON_REGION,
-    input.telemetryOperationId,
+    input.harnessRunId,
   );
   await emitAuthenticatedApiTelemetry(env, auth, event);
 }

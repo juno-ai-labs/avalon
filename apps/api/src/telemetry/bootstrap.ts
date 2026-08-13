@@ -122,8 +122,8 @@ export class TelemetryBootstrapService {
       closed_at: string | null;
       delete_at: string;
     }>();
-    if (existing?.closed_at) throw new Error('telemetry_journey_closed');
     if (existing && Date.parse(existing.delete_at) > now.getTime()) {
+      if (existing.closed_at) throw new Error('telemetry_journey_closed');
       const expiresAt = new Date(Math.min(
         Date.parse(existing.delete_at),
         now.getTime() + CAPABILITY_LIFETIME_MS,
@@ -147,14 +147,21 @@ export class TelemetryBootstrapService {
         expiresAt: expiresAt.toISOString(),
       });
     }
+    if (existing) {
+      await this.env.DB.prepare(
+        `DELETE FROM telemetry_onboarding_journeys
+         WHERE anonymous_epoch_id = ? AND delete_at <= ?`,
+      ).bind(anonymousEpochId, now.toISOString()).run();
+    }
     const journeyId = newId(now.getTime());
     const route = coarseRoute(country);
     const expiresAt = new Date(now.getTime() + CAPABILITY_LIFETIME_MS);
     const deleteAt = new Date(now.getTime() + CONTROL_RETENTION_MS);
-    await this.env.DB.prepare(
+    const inserted = await this.env.DB.prepare(
       `INSERT INTO telemetry_onboarding_journeys
         (journey_id, anonymous_epoch_id, route, routing_basis, created_at, expires_at, delete_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(anonymous_epoch_id) DO NOTHING`,
     ).bind(
       journeyId,
       anonymousEpochId,
@@ -164,6 +171,12 @@ export class TelemetryBootstrapService {
       expiresAt.toISOString(),
       deleteAt.toISOString(),
     ).run();
+    if (Number(inserted.meta.changes ?? 0) !== 1) {
+      // A concurrent bootstrap won the anonymous-epoch uniqueness race. Reuse
+      // its fixed route rather than returning a capability for an unpersisted
+      // journey or replacing its coarse-location decision.
+      return this.bootstrap(anonymousEpochId, country);
+    }
     const claims: CapabilityClaims = {
       version: 1,
       journeyId,

@@ -104,6 +104,7 @@ export function createApp(): Hono<HonoAppEnv> {
     }
     await next();
   });
+  app.use("*", apiOperationTelemetry());
 
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
@@ -118,7 +119,6 @@ export function createApp(): Hono<HonoAppEnv> {
 
   const identityApi = new Hono<HonoAppEnv>();
   identityApi.use("*", requireIdentityAuth);
-  identityApi.use("*", apiOperationTelemetry());
   identityApi.route("/onboarding", onboardingRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);
   identityApi.route("/telemetry", authenticatedTelemetryRoutes);
@@ -126,7 +126,6 @@ export function createApp(): Hono<HonoAppEnv> {
 
   const protectedApi = new Hono<HonoAppEnv>();
   protectedApi.use("*", requireAuth);
-  protectedApi.use("*", apiOperationTelemetry());
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);

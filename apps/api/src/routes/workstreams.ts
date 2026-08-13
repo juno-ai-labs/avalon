@@ -119,7 +119,7 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
   if (operationId) {
     const event = apiTelemetryEnvelope(
       c.env, 'workstream_create_completed', { result: 'success' }, operationId, 'workspace-user',
-      c.env.AVALON_REGION, operationId,
+      c.env.AVALON_REGION, created.workstream.id,
     );
     requestDeferral(c)(emitAuthenticatedApiTelemetry(c.env, auth, event).catch(() => undefined));
   }

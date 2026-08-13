@@ -20,6 +20,7 @@ async function fixture() {
   for (const process of ['main', 'preload', 'renderer']) {
     await writeFileBelow(desktopDirectory, `out/${process}/index.js.map`, `map:${process}`);
   }
+  await writeFileBelow(desktopDirectory, 'out/main/chunk.js.map', 'map:main-chunk');
   await writeFileBelow(
     desktopDirectory,
     'release/mac-arm64/Avalon.app/Contents/MacOS/Avalon',
@@ -79,7 +80,7 @@ test('publishes every private artifact to both isolated regional buckets and ver
     });
 
     const targets = [...runner.objects.keys()].sort();
-    assert.equal(targets.length, 8);
+    assert.equal(targets.length, 10);
     for (const bucket of ['avalon-global-telemetry', 'avalon-eu-telemetry']) {
       for (const process of ['main', 'preload', 'renderer']) {
         assert.ok(targets.includes(
@@ -89,9 +90,12 @@ test('publishes every private artifact to both isolated regional buckets and ver
       assert.ok(targets.includes(
         `${bucket}/telemetry/symbols/1.96.0/1.96.0/darwin/arm64.tar`,
       ));
+      assert.ok(targets.includes(
+        `${bucket}/telemetry/javascript-symbols/1.96.0/1.96.0/main/chunk.js.map`,
+      ));
     }
     const verificationGets = runner.calls.filter(({ arguments: args }) => args.includes('get'));
-    assert.equal(verificationGets.length, 8);
+    assert.equal(verificationGets.length, 10);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -110,10 +110,11 @@ export class TelemetryCollector {
 
     const acceptedAt = new Date();
     const acceptedDeadline = addDays(acceptedAt, ACCEPTED_RETENTION_DAYS);
+    const occurrenceTimestamp = normalizedTimestamp(event, acceptedAt);
     const isEu = context.route === "eu";
     const registry = TELEMETRY_EVENTS[event.name as keyof typeof TELEMETRY_EVENTS];
     const regionalDeadline = registry.regionalRetention === "13-months"
-      ? addMonths(acceptedAt, 13)
+      ? addMonths(new Date(occurrenceTimestamp), 13)
       : acceptedDeadline;
     const statements = [
       this.env.DB.prepare(
@@ -132,7 +133,7 @@ export class TelemetryCollector {
         context.workspaceAnalyticsId,
         context.subjectUserId,
         acceptedAt.toISOString(),
-        normalizedTimestamp(event, acceptedAt),
+        occurrenceTimestamp,
         acceptedDeadline,
         isEu ? "terminal" : "pending",
         isEu ? "eu_internal" : null,
@@ -167,7 +168,7 @@ export class TelemetryCollector {
         event.identityScope,
         context.analyticsSubjectId,
         context.workspaceAnalyticsId,
-        normalizedTimestamp(event, acceptedAt),
+        occurrenceTimestamp,
         event.context.environment,
         event.context.release,
         event.context.buildId,

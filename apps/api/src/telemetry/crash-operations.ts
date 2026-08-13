@@ -118,7 +118,7 @@ export async function queryEuCrashFreeLaunches(
   const now = new Date().toISOString();
   const rows = await env.DB.prepare(
     `SELECT e.release, e.platform, e.architecture, e.channel,
-            COUNT(*) AS eligible_launches,
+            COUNT(DISTINCT e.launch_id) AS eligible_launches,
             COUNT(DISTINCT c.launch_id) AS crashed_launches
      FROM telemetry_eu_events e
      LEFT JOIN telemetry_eu_crash_contributions c

@@ -291,6 +291,7 @@ export class TelemetryReporter {
 
   private async deliver(row: TelemetrySpoolRow, now: Date): Promise<void> {
     try {
+      row = await this.options.spool.prepareSend(row.event.eventId, now);
       const anonymous = row.event.identityScope === 'anonymous-epoch';
       const authenticated = anonymous ? null : await this.options.authenticatedSession();
       const capabilityDelivery = anonymous || (row.event.identityScope === 'installation' && !authenticated);
