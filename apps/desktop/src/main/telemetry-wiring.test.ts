@@ -30,4 +30,29 @@ describe('Electron telemetry wiring', () => {
     );
     expect(productAnalyticsController).toContain('new TelemetryBreadcrumbRing');
   });
+
+  it('observes real Electron application focus transitions', () => {
+    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+
+    expect(source).toContain("app.on('browser-window-focus'");
+    expect(source).toContain("app.on('browser-window-blur'");
+    expect(source).toContain('BrowserWindow.getFocusedWindow()');
+    expect(source).toContain('applicationLifecycle(state)');
+    expect(source).toContain('if (startsHidden) applicationLifecycleTelemetry.observeFocused(false)');
+  });
+
+  it('derives PostHog-compatible window metadata in main instead of trusting renderer values', () => {
+    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+    const context = source.match(
+      /function telemetryWindowContext\(contents: WebContents\)[\s\S]*?\n\}\n\nasync function reportJavascriptErrorCandidate/u,
+    )?.[0];
+
+    expect(context).toContain('BrowserWindow.fromWebContents(contents)');
+    expect(context).toContain('window.getContentSize()');
+    expect(context).toContain('electronScreen.getDisplayMatching(window.getBounds())');
+    expect(context).toContain('telemetryWindowIds.get(contents)');
+    expect(source).toContain('screenViewed(screen, telemetryWindowContext(event.sender))');
+    expect(source).toContain('reportTelemetryProductIntent(rawIntent, telemetryWindowContext(event.sender))');
+    expect(source).toContain('reportJavascriptErrorCandidate(rawCandidate, telemetryWindowContext(event.sender))');
+  });
 });

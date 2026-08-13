@@ -5,6 +5,10 @@ const APPROVED_POSTHOG_ORIGINS = new Set([
   "https://us.i.posthog.com",
   "https://us.posthog.com",
 ]);
+const POSTHOG_APP_NAME = "Avalon";
+const POSTHOG_APP_NAMESPACE = "app.avalon.desktop";
+const POSTHOG_LIBRARY = "avalon-regional-telemetry";
+const POSTHOG_LIBRARY_VERSION = "1";
 
 export interface GlobalTelemetryDeliveryRow {
   eventId: string;
@@ -18,6 +22,7 @@ export interface GlobalTelemetryDeliveryRow {
 
 export interface GlobalCrashDeliveryRow {
   crashId: string;
+  deviceId: string;
   analyticsSubjectId: string;
   workspaceAnalyticsId: string | null;
   processPersonProfile: boolean;
@@ -78,21 +83,130 @@ function optionalContext(envelope: TelemetryEnvelope): Record<string, unknown> {
   };
 }
 
+function postHogOsName(platform: "darwin" | "win32" | "linux"): "macOS" | "Windows" | "Linux" {
+  if (platform === "darwin") return "macOS";
+  if (platform === "win32") return "Windows";
+  return "Linux";
+}
+
+function postHogWebOsName(platform: "darwin" | "win32" | "linux"): "Mac OS X" | "Windows" | "Linux" {
+  if (platform === "darwin") return "Mac OS X";
+  return platform === "win32" ? "Windows" : "Linux";
+}
+
+function desktopApplicationContext(input: {
+  release: string;
+  buildId: string;
+  platform: "darwin" | "win32" | "linux" | undefined;
+  deviceId?: string | undefined;
+  osVersion?: string | undefined;
+  locale?: string | undefined;
+  timezone?: string | undefined;
+  screenWidth?: number | undefined;
+  screenHeight?: number | undefined;
+  viewportWidth?: number | undefined;
+  viewportHeight?: number | undefined;
+  windowId?: string | undefined;
+}): Record<string, unknown> {
+  const osName = input.platform ? postHogOsName(input.platform) : undefined;
+  return {
+    $app_name: POSTHOG_APP_NAME,
+    $app_namespace: POSTHOG_APP_NAMESPACE,
+    $app_version: input.release,
+    $app_build: input.buildId,
+    $device_type: "Desktop",
+    ...(osName && input.platform ? { $os_name: osName, $os: postHogWebOsName(input.platform) } : {}),
+    ...(input.deviceId ? { $device_id: input.deviceId } : {}),
+    ...(input.osVersion ? { $os_version: input.osVersion } : {}),
+    ...(input.locale ? { $locale: input.locale } : {}),
+    ...(input.timezone ? { $timezone: input.timezone } : {}),
+    ...(input.screenWidth ? { $screen_width: input.screenWidth } : {}),
+    ...(input.screenHeight ? { $screen_height: input.screenHeight } : {}),
+    ...(input.viewportWidth ? { $viewport_width: input.viewportWidth } : {}),
+    ...(input.viewportHeight ? { $viewport_height: input.viewportHeight } : {}),
+    ...(input.windowId ? { $window_id: input.windowId } : {}),
+  };
+}
+
+function destinationEvent(envelope: TelemetryEnvelope): {
+  event: string;
+  properties: Record<string, unknown>;
+} {
+  if (envelope.name === "screen_viewed") {
+    return {
+      event: "$screen",
+      properties: { $screen_name: envelope.properties["screen"] },
+    };
+  }
+  if (envelope.name === "application_lifecycle") {
+    const state = envelope.properties["state"];
+    if (state === "launch_started" || state === "foreground") {
+      return {
+        event: "Application Opened",
+        properties: {
+          from_background: state === "foreground",
+          ...(state === "launch_started"
+            ? { version: envelope.context.release, build: envelope.context.buildId }
+            : {}),
+        },
+      };
+    }
+    if (state === "background") return { event: "Application Backgrounded", properties: {} };
+  }
+  if (envelope.name === "application_version_changed") {
+    if (envelope.properties["state"] === "installed") {
+      return {
+        event: "Application Installed",
+        properties: { version: envelope.context.release, build: envelope.context.buildId },
+      };
+    }
+    return {
+      event: "Application Updated",
+      properties: {
+        version: envelope.context.release,
+        build: envelope.context.buildId,
+        previous_version: envelope.properties["previousVersion"],
+        previous_build: envelope.properties["previousBuild"],
+      },
+    };
+  }
+  return { event: envelope.name, properties: {} };
+}
+
 export function mapPostHogCapture(row: GlobalTelemetryDeliveryRow): PostHogCapture {
   const envelope = row.envelope;
   const personless = envelope.identityScope === "installation" || envelope.identityScope === "anonymous-epoch";
+  const mapped = destinationEvent(envelope);
+  const desktopSource = envelope.source !== "api";
   return {
-    event: envelope.name,
+    event: mapped.event,
     timestamp: row.normalizedTimestamp,
     properties: {
       distinct_id: row.analyticsSubjectId,
       $insert_id: row.eventId,
       $geoip_disable: true,
       ...(row.workspaceAnalyticsId ? { $groups: { workspace: row.workspaceAnalyticsId } } : {}),
-      $lib: "avalon-regional-telemetry",
-      $lib_version: "1",
+      $lib: POSTHOG_LIBRARY,
+      $lib_version: POSTHOG_LIBRARY_VERSION,
+      ...(envelope.source === "api" ? { $is_server: true } : {}),
       $process_person_profile: !personless,
+      $is_identified: !personless,
       ...(!personless ? { $set_once: { first_avalon_release: envelope.context.release } } : {}),
+      ...(desktopSource ? desktopApplicationContext({
+        release: envelope.context.release,
+        buildId: envelope.context.buildId,
+        platform: envelope.context.platform,
+        deviceId: envelope.context.deviceId,
+        osVersion: envelope.context.osVersion,
+        locale: envelope.context.locale,
+        timezone: envelope.context.timezone,
+        screenWidth: envelope.context.screenWidth,
+        screenHeight: envelope.context.screenHeight,
+        viewportWidth: envelope.context.viewportWidth,
+        viewportHeight: envelope.context.viewportHeight,
+        windowId: envelope.context.windowId,
+      }) : {}),
+      avalon_event_name: envelope.name,
       schema_version: envelope.schemaVersion,
       source: envelope.source,
       category: envelope.category,
@@ -101,6 +215,7 @@ export function mapPostHogCapture(row: GlobalTelemetryDeliveryRow): PostHogCaptu
       build_id: envelope.context.buildId,
       ...optionalContext(envelope),
       ...envelope.properties,
+      ...mapped.properties,
     },
   };
 }
@@ -172,8 +287,9 @@ export function mapPostHogProfileCapture(row: GlobalProfileDeliveryRow): PostHog
   const shared = {
     $insert_id: row.jobId,
     $geoip_disable: true,
-    $lib: "avalon-regional-telemetry",
-    $lib_version: "1",
+    $lib: POSTHOG_LIBRARY,
+    $lib_version: POSTHOG_LIBRARY_VERSION,
+    $is_server: true,
   };
   if (row.kind === "epoch_transition") {
     if (!row.anonymousEpochId) throw new Error("posthog_anonymous_epoch_required");
@@ -249,7 +365,14 @@ export async function sendPostHogCrashBatch(input: {
       client.captureException(nativeCrashError(row), row.analyticsSubjectId, {
         $geoip_disable: true,
         ...(row.workspaceAnalyticsId ? { $groups: { workspace: row.workspaceAnalyticsId } } : {}),
+        ...desktopApplicationContext({
+          release: row.release,
+          buildId: row.buildId,
+          platform: row.platform,
+          deviceId: row.deviceId,
+        }),
         $process_person_profile: row.processPersonProfile,
+        $is_identified: row.processPersonProfile,
         $exception_fingerprint: row.fingerprint,
         $exception_source: "avalon_native",
         $exception_level: "fatal",
@@ -294,7 +417,23 @@ export async function sendPostHogJavascriptExceptionBatch(input: {
       client.captureException(javascriptExceptionError(row), row.analyticsSubjectId, {
         $geoip_disable: true,
         ...(row.workspaceAnalyticsId ? { $groups: { workspace: row.workspaceAnalyticsId } } : {}),
+        ...desktopApplicationContext({
+          release: row.envelope.context.release,
+          buildId: row.envelope.context.buildId,
+          platform: row.envelope.context.platform,
+          deviceId: row.envelope.context.deviceId,
+          osVersion: row.envelope.context.osVersion,
+          locale: row.envelope.context.locale,
+          timezone: row.envelope.context.timezone,
+          screenWidth: row.envelope.context.screenWidth,
+          screenHeight: row.envelope.context.screenHeight,
+          viewportWidth: row.envelope.context.viewportWidth,
+          viewportHeight: row.envelope.context.viewportHeight,
+          windowId: row.envelope.context.windowId,
+        }),
         $process_person_profile: true,
+        $is_identified: true,
+        avalon_event_name: row.envelope.name,
         $exception_fingerprint: properties.fingerprint,
         $exception_source: "avalon_javascript",
         category: "diagnostic",
@@ -322,6 +461,7 @@ function createExceptionClient(projectToken: string, host: string): PostHogExcep
     disableGeoip: true,
     enableExceptionAutocapture: false,
     enableLocalEvaluation: false,
+    isServer: false,
     flushAt: 50,
     flushInterval: 0,
     fetchRetryCount: 0,

@@ -29,6 +29,19 @@ interface ReporterRuntime {
   arch?: 'arm64' | 'x64';
   channel?: 'development' | 'alpha' | 'beta' | 'stable';
   launchId?: string;
+  osVersion?: string;
+  locale?: string;
+  timezone?: string;
+  screenWidth?: number;
+  screenHeight?: number;
+}
+
+export interface TelemetryWindowContext {
+  windowId: string;
+  screenWidth: number;
+  screenHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
 }
 
 interface AuthenticatedTelemetrySession {
@@ -80,23 +93,34 @@ export class TelemetryReporter {
 
   constructor(private readonly options: TelemetryReporterOptions) {}
 
-  applicationLifecycle(state: 'launch_started' | 'ready' | 'foreground' | 'background' | 'graceful_exit'): Promise<void> {
-    return this.capture('application_lifecycle', 'desktop-main', 'installation', {
+  async applicationLifecycle(state: 'launch_started' | 'ready' | 'foreground' | 'background' | 'graceful_exit'): Promise<void> {
+    await this.capture('application_lifecycle', 'desktop-main', 'installation', {
       state,
       crashReportingEligible: this.options.crashReportingEligible?.()
         ?? this.options.productAnalyticsEnabled(),
     });
   }
 
-  desktopSession(state: 'started' | 'ended', continuouslyEligible: boolean): Promise<void> {
-    return this.capture('desktop_session', 'desktop-main', 'installation', { state, continuouslyEligible });
+  applicationVersionChanged(
+    transition: { state: 'installed' } | {
+      state: 'updated';
+      previousVersion: string;
+      previousBuild: string;
+    },
+    eventId: string,
+  ): Promise<boolean> {
+    return this.capture('application_version_changed', 'desktop-main', 'installation', transition, undefined, eventId);
+  }
+
+  async desktopSession(state: 'started' | 'ended', continuouslyEligible: boolean): Promise<void> {
+    await this.capture('desktop_session', 'desktop-main', 'installation', { state, continuouslyEligible });
   }
 
   crashUploadState(
     state: 'awaiting_restart' | 'rotated' | 'queued' | 'uploading' | 'accepted' | 'rejected'
       | 'retrying' | 'expired' | 'invalidated' | 'evicted' | 'corrupt' | 'lost',
   ): Promise<void> {
-    return this.capture('crash_upload_state', 'desktop-main', 'installation', { state });
+    return this.capture('crash_upload_state', 'desktop-main', 'installation', { state }).then(() => undefined);
   }
 
   telemetrySpoolState(
@@ -106,35 +130,67 @@ export class TelemetryReporter {
     return this.capture('telemetry_spool_state', 'desktop-main', 'installation', {
       state,
       count: bucketCount(count),
-    });
+    }).then(() => undefined);
   }
 
-  screenViewed(screen: TelemetryScreen): Promise<void> {
-    return this.captureProduct('screen_viewed', 'desktop-renderer', { screen });
+  screenViewed(screen: TelemetryScreen, windowContext?: TelemetryWindowContext): Promise<void> {
+    return this.captureProduct('screen_viewed', 'desktop-renderer', { screen }, undefined, windowContext);
   }
 
-  onboardingRegionSelected(selectedRegion: 'global' | 'eu', entrypoint: TelemetryEntrypoint): Promise<void> {
-    return this.captureProduct('onboarding_region_selected', 'desktop-renderer', { selectedRegion, entrypoint });
+  onboardingRegionSelected(
+    selectedRegion: 'global' | 'eu',
+    entrypoint: TelemetryEntrypoint,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct(
+      'onboarding_region_selected', 'desktop-renderer', { selectedRegion, entrypoint }, undefined, windowContext,
+    );
   }
 
-  workspaceCreateRequested(selectedRegion: 'global' | 'eu', entrypoint: TelemetryEntrypoint, operationId: string): Promise<void> {
-    return this.captureProduct('workspace_create_requested', 'desktop-renderer', { selectedRegion, entrypoint }, operationId);
+  workspaceCreateRequested(
+    selectedRegion: 'global' | 'eu',
+    entrypoint: TelemetryEntrypoint,
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct(
+      'workspace_create_requested', 'desktop-renderer', { selectedRegion, entrypoint }, operationId, windowContext,
+    );
   }
 
-  workspaceActivationRequested(selectedRegion: 'global' | 'eu', entrypoint: TelemetryEntrypoint, operationId: string): Promise<void> {
-    return this.captureProduct('workspace_activation_requested', 'desktop-renderer', { selectedRegion, entrypoint }, operationId);
+  workspaceActivationRequested(
+    selectedRegion: 'global' | 'eu',
+    entrypoint: TelemetryEntrypoint,
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct(
+      'workspace_activation_requested', 'desktop-renderer', { selectedRegion, entrypoint }, operationId, windowContext,
+    );
   }
 
-  workstreamCreateRequested(entrypoint: TelemetryEntrypoint, operationId: string): Promise<void> {
-    return this.captureProduct('workstream_create_requested', 'desktop-renderer', { entrypoint }, operationId);
+  workstreamCreateRequested(
+    entrypoint: TelemetryEntrypoint,
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('workstream_create_requested', 'desktop-renderer', { entrypoint }, operationId, windowContext);
   }
 
-  runRequested(entrypoint: TelemetryEntrypoint, operationId: string): Promise<void> {
-    return this.captureProduct('run_requested', 'desktop-renderer', { entrypoint }, operationId);
+  runRequested(
+    entrypoint: TelemetryEntrypoint,
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('run_requested', 'desktop-renderer', { entrypoint }, operationId, windowContext);
   }
 
-  connectorSetupRequested(connector: 'github' | 'google' | 'linear' | 'notion' | 'slack', operationId: string): Promise<void> {
-    return this.captureProduct('connector_setup_requested', 'desktop-renderer', { connector }, operationId);
+  connectorSetupRequested(
+    connector: 'github' | 'google' | 'linear' | 'notion' | 'slack',
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('connector_setup_requested', 'desktop-renderer', { connector }, operationId, windowContext);
   }
 
   processHealth(
@@ -142,7 +198,8 @@ export class TelemetryReporter {
     state: 'gone' | 'unresponsive' | 'responsive' | 'exception' | 'rejection' | 'unclean_exit',
     reasonClass: 'crashed' | 'killed' | 'oom' | 'launch_failure' | 'unknown',
   ): Promise<void> {
-    return this.capture('process_health', 'desktop-main', 'installation', { process, state, reasonClass });
+    return this.capture('process_health', 'desktop-main', 'installation', { process, state, reasonClass })
+      .then(() => undefined);
   }
 
   updateOutcome(
@@ -154,7 +211,7 @@ export class TelemetryReporter {
       phase,
       result,
       duration: bucketDuration(durationMs),
-    });
+    }).then(() => undefined);
   }
 
   async javascriptException(
@@ -163,6 +220,7 @@ export class TelemetryReporter {
     fingerprint: string,
     breadcrumbStatus: 'available' | 'stale' | 'unavailable',
     generatedFrames: string[],
+    windowContext?: TelemetryWindowContext,
   ): Promise<void> {
     const authenticated = await this.options.authenticatedSession().catch(() => null);
     if (!authenticated) return;
@@ -171,7 +229,7 @@ export class TelemetryReporter {
       'desktop-main',
       authenticated.workspace ? 'workspace-user' : 'platform-user',
       { process, errorCode, breadcrumbStatus, fingerprint, generatedFrames },
-      { authenticated, anonymous: null },
+      { authenticated, anonymous: null, windowContext },
     );
   }
 
@@ -190,6 +248,7 @@ export class TelemetryReporter {
     source: TelemetrySource,
     properties: Record<string, unknown>,
     operationId?: string,
+    windowContext?: TelemetryWindowContext,
   ): Promise<void> {
     const authenticated = await this.options.authenticatedSession().catch(() => null);
     const route = this.options.route();
@@ -205,6 +264,7 @@ export class TelemetryReporter {
       authenticated: effectiveAuthenticated,
       anonymous,
       operationId,
+      windowContext,
     });
   }
 
@@ -217,8 +277,10 @@ export class TelemetryReporter {
       authenticated: AuthenticatedTelemetrySession | null;
       anonymous: AnonymousTelemetrySession | null;
       operationId?: string;
+      windowContext?: TelemetryWindowContext;
     },
-  ): Promise<void> {
+    eventId?: string,
+  ): Promise<boolean> {
     const registry = TELEMETRY_EVENTS[name];
     const route = this.options.route();
     const inspected: TelemetryInspectorEntry = {
@@ -233,25 +295,26 @@ export class TelemetryReporter {
     if (registry.category !== 'essential' && !this.options.productAnalyticsEnabled()) {
       inspected.validation = 'suppressed';
       this.record(inspected);
-      return;
+      return false;
     }
     try {
       const authenticated = resolved?.authenticated ?? await this.options.authenticatedSession().catch(() => null);
       const anonymous = resolved?.anonymous ?? (authenticated ? null : this.options.anonymousSession());
       if (identityScope === 'anonymous-epoch' && !anonymous) {
         this.record(inspected);
-        return;
+        return false;
       }
       if ((identityScope === 'platform-user' || identityScope === 'workspace-user') && !authenticated) {
         this.record(inspected);
-        return;
+        return false;
       }
       const now = this.options.now();
       const identity = this.options.identity();
       const event = TelemetryEnvelopeSchema.parse({
         schema: 'com.avalon.telemetry.event',
         schemaVersion: 1,
-        eventId: (this.options.eventId ?? uuidV7)(now),
+        contextSchemaVersion: 2,
+        eventId: eventId ?? (this.options.eventId ?? uuidV7)(now),
         name,
         source,
         category: registry.category,
@@ -261,6 +324,8 @@ export class TelemetryReporter {
         context: {
           ...this.options.runtime,
           region: route,
+          deviceId: identity.installationId,
+          ...resolved?.windowContext,
           ...(anonymous && identityScope === 'anonymous-epoch'
             ? { onboardingJourneyId: anonymous.journeyId }
             : {}),
@@ -278,8 +343,10 @@ export class TelemetryReporter {
       inspected.validation = 'accepted';
       inspected.queueState = 'queued';
       this.record(inspected);
+      return true;
     } catch {
       this.record(inspected);
+      return false;
     }
   }
 
@@ -320,7 +387,7 @@ export class TelemetryReporter {
         body: JSON.stringify(capabilityDelivery
           ? {
               capability: anonymousSession!.capability,
-              ...(row.event.identityScope === 'installation' ? { installationId: row.installationId } : {}),
+              installationId: row.installationId,
               events: [row.event],
             }
           : { installationId: row.installationId, events: [row.event] }),

@@ -7,7 +7,9 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 const eventId = "018f22f2-4c22-7abc-8def-0123456789ab";
 const timestamp = "2026-08-12T20:00:00.000Z";
 
-function productEvent(overrides: Partial<TelemetryEnvelope> = {}): TelemetryEnvelope {
+function productEvent(
+  overrides: Partial<Pick<TelemetryEnvelope, "eventId" | "originalTimestamp" | "sentAt" | "properties">> = {},
+): TelemetryEnvelope {
   return {
     schema: "com.avalon.telemetry.event",
     schemaVersion: 1,

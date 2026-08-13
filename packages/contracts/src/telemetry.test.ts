@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AnonymousTelemetryBatchSchema,
   CrashIngestResponseSchema,
   LinkAnonymousTelemetryResponseSchema,
   TelemetryAcceptanceBatchResponseSchema,
@@ -17,6 +18,7 @@ function envelope(name: string, properties: unknown) {
   return {
     schema: "com.avalon.telemetry.event",
     schemaVersion: 1,
+    contextSchemaVersion: 2,
     eventId,
     name,
     source: "desktop-renderer",
@@ -28,6 +30,7 @@ function envelope(name: string, properties: unknown) {
       environment: "production",
       release: "0.24.0",
       buildId: "build-0123456789",
+      deviceId: "018f22f2-4c22-7abc-8def-0123456789aa",
       onboardingJourneyId: eventId,
       operationId: eventId,
     },
@@ -63,6 +66,94 @@ describe("telemetry registry", () => {
       selectedRegion: "eu",
       entrypoint: "first_run",
     }))).toMatchObject({ name: "onboarding_region_selected" });
+  });
+
+  it("accepts legacy context v1 while requiring native desktop fields to declare context v2", () => {
+    const current = envelope("onboarding_region_selected", {
+      selectedRegion: "eu",
+      entrypoint: "first_run",
+    });
+    const withoutContextVersion: Record<string, unknown> = { ...current };
+    delete withoutContextVersion.contextSchemaVersion;
+    const legacyContext: Record<string, unknown> = { ...current.context };
+    delete legacyContext.deviceId;
+    const legacy = { ...withoutContextVersion, context: legacyContext };
+
+    expect(TelemetryEnvelopeSchema.safeParse(legacy).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse(current).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...withoutContextVersion,
+      context: current.context,
+    }).success).toBe(false);
+  });
+
+  it("accepts bounded native desktop SDK context and rejects malformed dimensions", () => {
+    const base = envelope("onboarding_region_selected", {
+      selectedRegion: "eu",
+      entrypoint: "first_run",
+    });
+    const candidate = {
+      ...base,
+      context: {
+        ...base.context,
+        osVersion: "15.6.1",
+        locale: "en-US",
+        timezone: "America/Los_Angeles",
+        screenWidth: 2560,
+        screenHeight: 1440,
+        viewportWidth: 1480,
+        viewportHeight: 940,
+        windowId: "018f22f2-4c22-7abc-8def-0123456789a9",
+      },
+    };
+    expect(TelemetryEnvelopeSchema.safeParse(candidate).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...candidate,
+      context: { ...candidate.context, viewportWidth: -1 },
+    }).success).toBe(false);
+  });
+
+  it.each([
+    "Version 15.6.1 (Build 24G1234)",
+    "6.1.0-0~bpo11+1",
+    "10.0.26100.4770",
+  ])("accepts a bounded platform OS version: %s", (osVersion) => {
+    const candidate = envelope("onboarding_region_selected", {
+      selectedRegion: "eu",
+      entrypoint: "first_run",
+    });
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...candidate,
+      context: { ...candidate.context, osVersion },
+    }).success).toBe(true);
+  });
+
+  it("rejects control characters in an OS version", () => {
+    const candidate = envelope("onboarding_region_selected", {
+      selectedRegion: "eu",
+      entrypoint: "first_run",
+    });
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...candidate,
+      context: { ...candidate.context, osVersion: "15.6.1\nforged" },
+    }).success).toBe(false);
+  });
+
+  it("requires both previous build fields only for application updates", () => {
+    const candidate = {
+      ...envelope("application_version_changed", {
+        state: "updated",
+        previousVersion: "0.23.0",
+      }),
+      source: "desktop-main",
+      category: "essential",
+      identityScope: "installation",
+    };
+    expect(TelemetryEnvelopeSchema.safeParse(candidate).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...candidate,
+      properties: { state: "installed", previousVersion: "0.23.0" },
+    }).success).toBe(false);
   });
 
   it("accepts only bounded bundle-relative generated frames for JavaScript diagnostics", () => {
@@ -128,10 +219,38 @@ describe("telemetry registry", () => {
       selectedRegion: "global",
       entrypoint: "first_run",
     });
-    expect(TelemetryBatchSchema.safeParse({ events: Array.from({ length: 50 }, () => candidate) }).success)
+    const installationId = candidate.context.deviceId;
+    expect(TelemetryBatchSchema.safeParse({
+      installationId,
+      events: Array.from({ length: 50 }, () => candidate),
+    }).success)
       .toBe(true);
-    expect(TelemetryBatchSchema.safeParse({ events: Array.from({ length: 51 }, () => candidate) }).success)
+    expect(TelemetryBatchSchema.safeParse({
+      installationId,
+      events: Array.from({ length: 51 }, () => candidate),
+    }).success)
       .toBe(false);
+  });
+
+  it("binds desktop device context to the batch installation identity at ingress", () => {
+    const candidate = envelope("onboarding_region_selected", {
+      selectedRegion: "global",
+      entrypoint: "first_run",
+    });
+    const installationId = candidate.context.deviceId;
+    expect(TelemetryBatchSchema.safeParse({ installationId, events: [candidate] }).success).toBe(true);
+    expect(TelemetryBatchSchema.safeParse({ events: [candidate] }).success).toBe(false);
+    expect(TelemetryBatchSchema.safeParse({ installationId: eventId, events: [candidate] }).success).toBe(false);
+    expect(AnonymousTelemetryBatchSchema.safeParse({
+      capability: "c".repeat(64),
+      installationId,
+      events: [candidate],
+    }).success).toBe(true);
+    expect(AnonymousTelemetryBatchSchema.safeParse({
+      capability: "c".repeat(64),
+      installationId: eventId,
+      events: [candidate],
+    }).success).toBe(false);
   });
 
   it("validates narrow telemetry responses without exposing destination identities", () => {
