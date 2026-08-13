@@ -34,7 +34,9 @@ A click on **Image** or **PDF** starts one pass:
    so nothing about the current screen reaches the markup.
 2. **It names the file.** `messageExportFileName` takes the first line of the
    message that carries words, strips markdown punctuation, slugifies it, and
-   appends the date: `acme-follow-up-2026-08-13`.
+   appends the date from `messageExportDate` — the person's own calendar date,
+   not UTC, or an evening's saves west of Greenwich would all be filed under
+   tomorrow: `acme-follow-up-2026-08-13`.
 3. **It sends the request over the bridge.** HTML, file name, format, and the
    Avalon mark as a PNG data URL. The main process re-validates all four; the file
    name in particular must match `^[a-z0-9][a-z0-9-]{0,79}$`, so a name is
@@ -42,8 +44,9 @@ A click on **Image** or **PDF** starts one pass:
 4. **The main process builds the document** — `messageExportDocument` — and files
    it under a random token.
 5. **A hidden window loads it** from `avalon-export://sheet/<token>`. The document
-   is served from memory, with its own restrictive `Content-Security-Policy`
-   response header, and the token is dropped as soon as the window has it.
+   is served from memory with its own restrictive `Content-Security-Policy`
+   response header, and **reading it spends it** — the token resolves once, for
+   the one navigation it was minted for.
 6. **The bytes are made**, one of two ways, below.
 7. **The save dialog opens** over the focused window, defaulting to the person's
    Downloads folder, and the bytes are written to whatever they chose. A dismissed
@@ -54,6 +57,11 @@ A click on **Image** or **PDF** starts one pass:
 Both formats share a stylesheet built around the class names `MarkdownBody`
 emits, so the two stay in step by construction: a class added there is a missing
 rule here, visible the first time a card is looked at.
+
+Two things on the card are drawn rather than reproduced: the code block's copy
+button is hidden, and a task list's checkboxes are redrawn as marks. A picture of
+a control is a lie, and a greyed system checkbox reads as broken rather than as a
+task that is not done.
 
 The colours are the light inverse of the application's, with one deliberate
 exception — a code block stays dark. The highlighter writes its colours as inline
@@ -125,8 +133,18 @@ The chain recovers from a rejected export rather than wedging behind it.
 - **The export window is destroyed on every path.** It is created per export and
   released in a `finally`, including when the render times out. A leaked hidden
   window is invisible by definition.
-- **A token stops resolving once its window has loaded.** The protocol serves one
-  document to one window and nothing afterwards.
+- **A token is spent by the read that resolves it.** The protocol serves one
+  document to one navigation; a second request for the same URL — a reload, a
+  request that raced the render — gets nothing. Dropping it when the load
+  *finished* was the first attempt, and it left the document readable for as long
+  as a capture took.
+- **The application's `onHeadersReceived` leaves export responses alone.**
+  `installContentSecurityPolicy` asks `isMessageExportUrl` first and returns
+  without touching the headers. Falling through would attach the renderer's much
+  broader policy to a document built out of model output, and while two policies
+  are enforced conjunctively today, that only holds because the two handlers case
+  the header name differently. A boundary that survives on header casing is not
+  one.
 - **The measurement runs before the capture.** Without it the picture is the
   height of whatever the window happened to be, which is a silent crop.
 
@@ -155,8 +173,14 @@ main-process capabilities and a browser has neither.
 - **A dismissed save dialog** answers `{ saved: false }`. Nothing is written and
   the row returns to rest — a dismissal is a decision, not an error.
 - **A render or write that fails** turns the button's label into *Image failed* or
-  *PDF failed* until the next attempt. Unlike a failed copy, there is no other
-  copy of the file to fall back on, so it is worth saying.
+  *PDF failed* until the pointer leaves the row or another save starts. Unlike a
+  failed copy, there is no other copy of the file to fall back on, so it is worth
+  saying — and worth forgetting, because a stale failure under yesterday's turn
+  reads as a broken feature.
+- **Neither state is visual only.** Each button keeps a fixed accessible name, so
+  the spinner and the changed label announce nothing by themselves; the active
+  button is marked `aria-busy` and a `role="status"` region in the row speaks
+  *Preparing the image…* and *The image could not be saved.*
 - **A stalled Chromium** is not waited on: the load is capped at 15 seconds, the
   measurement at 15, and the whole render at 60. The window is destroyed and the
   failure surfaces on the button.
@@ -205,6 +229,12 @@ never captures, that the window is destroyed on every path, and that a failed
 export does not wedge the queue. Its fake asserts that only one window is ever
 open at a time, so a change that breaks serialization fails there rather than in
 production memory.
+
+What no test here can reach is the policy Chromium actually applies. The suites
+assert on the `Response` the handler returns and on `isMessageExportUrl`, which
+is what `installContentSecurityPolicy` branches on; whether a *third* handler
+later attaches a policy of its own is only visible by loading the document in a
+real window and trying something the policy forbids.
 
 Two traps:
 
@@ -256,6 +286,23 @@ Three details are load-bearing and look arbitrary from inside the file:
   a `position: fixed` layer paints over the flowing content instead of behind it.
   Both were tried; both produced pages that were white where the design called
   for colour.
+
+Review added three constraints that are easy to undo by accident. The
+application's own `onHeadersReceived` now returns early for export responses:
+it had been attaching the renderer's policy alongside the strict one, and while
+two policies are enforced conjunctively — so the export document was never
+actually loosened — that held only because the two handlers case the header name
+differently, which is not a boundary. A token is spent by the read that resolves
+it rather than when the load finishes, so the document is not on offer for the
+seconds a capture takes. And the window is created before the token is
+published, so a `createWindow` that throws cannot leave a 600 KB document behind
+with no `finally` to clear it.
+
+JPEG rather than PNG for the picture, measured on a full sample card: 294 KB
+against PNG's 454 KB. The saving is entirely the gradient splash — on a
+text-only crop PNG is both smaller and lossless — so the choice follows the card
+having a photograph-like background rather than the text having one, and it is
+worth re-measuring if the splash ever goes.
 
 **Consequences:** The card's stylesheet is a second place markdown is styled, and
 the one thing a future change has to respect is that it is styling *the same
