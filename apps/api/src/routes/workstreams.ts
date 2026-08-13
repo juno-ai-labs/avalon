@@ -28,6 +28,7 @@ import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { WorkstreamService } from "../services/workstream-service";
 import { HyperSightService } from "../services/hypersight-service";
+import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
 
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
@@ -106,12 +107,23 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
 });
 workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
   const body = c.req.valid("json");
+  const auth = getAuth(c);
+  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
   // This is the one create path where a person is at a keyboard, so it is the
   // only one that can claim an objective was authored rather than derived.
-  return c.json(CreatedWorkstreamSchema.parse(await new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).create({
+  const created = CreatedWorkstreamSchema.parse(await new WorkstreamService(c.env, auth, requestDeferral(c)).create({
     ...body,
     descriptionSource: body.objective ? "authored" : "derived",
-  })), 201);
+    ...(operationId ? { telemetryOperationId: operationId } : {}),
+  }));
+  if (operationId) {
+    const event = apiTelemetryEnvelope(
+      c.env, 'workstream_create_completed', { result: 'success' }, operationId, 'workspace-user',
+      c.env.AVALON_REGION, operationId,
+    );
+    requestDeferral(c)(emitAuthenticatedApiTelemetry(c.env, auth, event).catch(() => undefined));
+  }
+  return c.json(CreatedWorkstreamSchema.parse(created), 201);
 });
 // Registered ahead of every `/:id` route so the literal segment is never read
 // as an id, whatever order Hono would otherwise resolve them in.
@@ -180,8 +192,12 @@ workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("
   )));
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
+  const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
   const result = await new WorkstreamService(c.env, getAuth(c), requestDeferral(c))
-    .createMessage(c.req.valid("param").id, c.req.valid("json"));
+    .createMessage(c.req.valid("param").id, {
+      ...c.req.valid("json"),
+      ...(operationId ? { telemetryOperationId: operationId } : {}),
+    });
   return c.json(CreatedMessageSchema.parse(result), 201);
 });
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) =>

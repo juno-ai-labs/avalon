@@ -32,6 +32,7 @@ import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
 import { workstreamWorkflowStepTimeout } from "../services/workstream-run-policy";
+import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 
 const HarnessWorkflowOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
@@ -143,7 +144,12 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         input,
         { ...identity, leaseSeconds: 300 },
       ));
-      if (claim.state === "terminal") return { status: claim.status };
+      if (claim.state === "terminal") {
+        await step.do("emit-recovered-run-outcome-telemetry", async () => {
+          await this.emitRunOutcomeBestEffort(input);
+        });
+        return { status: claim.status };
+      }
       if (claim.state === "cancelled") {
         const outcome: HarnessWorkflowOutcome = { status: "stopped" };
         await step.do("terminalize-cancelled-queued-run", async () => {
@@ -154,6 +160,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
             { code: "run_cancelled", message: "The run was stopped before it started" },
             "stopped",
           );
+        });
+        await step.do("emit-cancelled-run-outcome-telemetry", async () => {
+          await this.emitRunOutcomeBestEffort(input);
         });
         if (hyperSightRun) {
           await step.do("publish-hypersight-cancelled-before-start", async () => {
@@ -188,6 +197,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       };
       await step.do("terminalize-queued-admission-timeout", async () => {
         await terminalizeQueuedHarnessRun(this.env.DB, input, identity, outcome.error!);
+      });
+      await step.do("emit-timeout-run-outcome-telemetry", async () => {
+        await this.emitRunOutcomeBestEffort(input);
       });
       if (hyperSightRun) {
         await step.do("publish-hypersight-admission-timeout", async () => {
@@ -250,6 +262,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           : {},
       });
       if (!hyperSightRun) await this.finalizeAutomation(input, effectiveOutcome, lease!);
+    });
+    await step.do("emit-run-outcome-telemetry", async () => {
+      await this.emitRunOutcomeBestEffort(input);
     });
 
     const runMetrics = outcome.metrics;
@@ -329,6 +344,10 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       });
     });
     return effectiveOutcome;
+  }
+
+  private async emitRunOutcomeBestEffort(input: WorkstreamWorkflowInput): Promise<void> {
+    await emitCorrelatedRunOutcome(this.env, input).catch(() => undefined);
   }
 
   // The `deliver-slack-*` step names are durable workflow step identities and

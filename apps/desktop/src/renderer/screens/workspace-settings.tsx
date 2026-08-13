@@ -34,11 +34,11 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@avalon/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
-import type { DesktopApplicationSettings } from '../../common/desktop';
+import type { DesktopApplicationSettings, DesktopTelemetryInspectorEntry } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { DigestSettings } from '../components/digest-settings';
@@ -102,7 +102,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance menu bar status item startup login dock customize version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app security privacy analytics telemetry crash diagnostics lockdown encryption keychain session icon appearance menu bar status item startup login dock customize version platform api realtime', icon: MonitorCog },
     ],
   },
 ];
@@ -368,6 +368,10 @@ export function WorkspaceSettingsScreen({
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [logAgentInference, setLogAgentInference] = useState(workspace.logAgentInference);
   const [applicationSettings, setApplicationSettings] = useState<DesktopApplicationSettings | null>(null);
+  const [telemetryInspector, setTelemetryInspector] = useState<DesktopTelemetryInspectorEntry[]>([]);
+  const [telemetryInspectorLoading, setTelemetryInspectorLoading] = useState(false);
+  const [telemetryInspectorError, setTelemetryInspectorError] = useState<string | null>(null);
+  const telemetryInspectorRequest = useRef(0);
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
@@ -469,7 +473,10 @@ export function WorkspaceSettingsScreen({
   });
   const reconnectConnection = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
-      const authorization: ConnectorOAuthStart = await api!.reconnectConnection(connection.id);
+      const provider = ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)
+        ? connection.connectorType as 'google' | 'github' | 'linear' | 'notion' | 'slack'
+        : undefined;
+      const authorization: ConnectorOAuthStart = await api!.reconnectConnection(connection.id, provider);
       const attempt = await api!.getConnectorOAuthAttempt(authorization.attemptId);
       await desktopBridge().openExternal(authorization.url);
       return { authorization, provider: attempt.provider };
@@ -535,6 +542,10 @@ export function WorkspaceSettingsScreen({
     mutationFn: (enabled: boolean) => bridge.setLaunchAtLogin(enabled),
     onSuccess: setApplicationSettings,
   });
+  const updateProductAnalytics = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setProductAnalyticsEnabled(enabled),
+    onSuccess: setApplicationSettings,
+  });
   const pendingInvitations = useMemo(
     () => (invitations.data ?? []).filter((invitation) => invitation.status === 'pending'),
     [invitations.data],
@@ -595,6 +606,36 @@ export function WorkspaceSettingsScreen({
     setNavigationQuery('');
     setActiveSection(nextSection);
   }), [bridge]);
+
+  const loadTelemetryInspector = useCallback(async (): Promise<void> => {
+    const request = telemetryInspectorRequest.current + 1;
+    telemetryInspectorRequest.current = request;
+    setTelemetryInspectorLoading(true);
+    setTelemetryInspectorError(null);
+    try {
+      const entries = await bridge.getTelemetryInspector();
+      if (telemetryInspectorRequest.current === request) setTelemetryInspector(entries);
+    } catch (error) {
+      if (telemetryInspectorRequest.current === request) {
+        setTelemetryInspectorError(
+          error instanceof Error ? error.message : 'Telemetry decisions could not be loaded.',
+        );
+      }
+    } finally {
+      if (telemetryInspectorRequest.current === request) setTelemetryInspectorLoading(false);
+    }
+  }, [bridge]);
+
+  useEffect(() => {
+    if (!applicationSettings?.developerSettingsAvailable) {
+      telemetryInspectorRequest.current += 1;
+      setTelemetryInspector([]);
+      setTelemetryInspectorError(null);
+      setTelemetryInspectorLoading(false);
+      return;
+    }
+    void loadTelemetryInspector();
+  }, [applicationSettings?.developerSettingsAvailable, loadTelemetryInspector]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1121,6 +1162,43 @@ export function WorkspaceSettingsScreen({
                 {(applicationSettingsLoadError || updateLockdownMode.error) && (
                   <InlineError>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</InlineError>
                 )}
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Privacy & diagnostics</h2><p>Control product analytics and detailed crash reporting for your account.</p></div>
+                <div className="settings-list-card">
+                  <label className="settings-preference-row">
+                    <span className="settings-row-icon"><ShieldCheck aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy">
+                      <strong>Product analytics</strong>
+                      <small>
+                        Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Global telemetry can include your verified name and email so Avalon can contact you; EU telemetry stays in Avalon’s EU platform. Essential content-free reliability signals continue when this is off.
+                      </small>
+                    </span>
+                    <span className="settings-toggle">
+                      <input
+                        aria-label="Product analytics"
+                        checked={applicationSettings?.productAnalyticsEnabled ?? true}
+                        disabled={
+                          applicationSettings?.productAnalyticsAvailable === false
+                          || applicationSettings === null
+                          || updateProductAnalytics.isPending
+                        }
+                        onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
+                        role="switch"
+                        type="checkbox"
+                      />
+                      <span aria-hidden="true" />
+                    </span>
+                  </label>
+                </div>
+                {applicationSettings?.productAnalyticsAvailable === false && (
+                  <p className="settings-oauth-status">Product analytics is managed in the Avalon desktop app.</p>
+                )}
+                {applicationSettings?.productAnalyticsPreferencePending && (
+                  <p className="settings-oauth-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={14} />Waiting to sync this account preference.</p>
+                )}
+                {applicationSettings?.nativeCrashRestartRequired && (
+                  <p className="settings-oauth-status" role="status">Crash upload has stopped for this launch. Restart Avalon to remove local native crash dumps and apply the current setting.</p>
+                )}
+                {updateProductAnalytics.error && <InlineError>{updateProductAnalytics.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
                 {applicationSettings?.menuBarAvailable !== false && (
                   <>
@@ -1234,6 +1312,35 @@ export function WorkspaceSettingsScreen({
                       </label>
                     </div>
                     {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
+                    <div className="settings-pane-heading settings-pane-heading-spaced">
+                      <div><h3>Telemetry inspector</h3><p>Recent contract decisions only. Values and identifiers are always redacted.</p></div>
+                      <Button
+                        aria-label="Refresh telemetry inspector"
+                        disabled={telemetryInspectorLoading}
+                        onClick={() => void loadTelemetryInspector()}
+                      >
+                        <RefreshCcw aria-hidden="true" className={telemetryInspectorLoading ? 'spin' : undefined} size={14} />
+                        Refresh
+                      </Button>
+                    </div>
+                    {telemetryInspectorError && <InlineError>{telemetryInspectorError}</InlineError>}
+                    {telemetryInspectorLoading && telemetryInspector.length === 0 ? (
+                      <div className="settings-list-card"><p role="status">Loading telemetry decisions…</p></div>
+                    ) : telemetryInspector.length === 0 ? (
+                      <div className="settings-list-card"><p>No telemetry decisions in this process yet.</p></div>
+                    ) : (
+                      <dl className="settings-list-card settings-diagnostics">
+                        {telemetryInspector.map((entry, index) => (
+                          <div key={`${entry.name}-${index}`}>
+                            <dt>{entry.name}</dt>
+                            <dd>
+                              {entry.propertyNames.join(', ') || 'No properties'}
+                              <small>{entry.route === 'eu' ? 'EU' : 'Global'} · {entry.validation} · {entry.queueState}</small>
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
                   </>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Avalon installation.</p></div>
