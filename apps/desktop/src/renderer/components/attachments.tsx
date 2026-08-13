@@ -1,12 +1,15 @@
 import clsx from 'clsx';
 import { File, RefreshCcw, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { MessageAttachment } from '../lib/types';
 
 export interface AttachmentPreview {
   name: string;
-  src: string;
+  mimeType?: string;
+  src?: string;
+  loadContent?: (signal?: AbortSignal) => Promise<Blob>;
+  returnFocus?: HTMLElement;
 }
 
 function extension(fileName: string): string {
@@ -46,7 +49,7 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
         aria-label={image ? `Preview ${attachment.file.name}` : attachment.file.name}
         className="attachment-tile-content"
         disabled={!image}
-        onClick={() => image && onOpen({ name: attachment.file.name, src: attachment.previewUrl! })}
+        onClick={(event) => image && onOpen({ name: attachment.file.name, src: attachment.previewUrl!, returnFocus: event.currentTarget })}
         type="button"
       >
         {image ? <img alt="" src={attachment.previewUrl} /> : <span className="attachment-extension">{extension(attachment.file.name)}</span>}
@@ -83,10 +86,16 @@ function RemoteAttachmentTile({ attachment, loadContent, onOpen }: {
   return (
     <div className="attachment-tile sent-attachment" title={attachment.fileName}>
       <button
-        aria-label={isImage ? `Preview ${attachment.fileName}` : attachment.fileName}
+        aria-label={`Preview ${attachment.fileName}`}
         className="attachment-tile-content"
-        disabled={!src}
-        onClick={() => src && onOpen({ name: attachment.fileName, src })}
+        disabled={!attachment.contentAvailable}
+        onClick={(event) => onOpen({
+          name: attachment.fileName,
+          mimeType: attachment.mimeType,
+          returnFocus: event.currentTarget,
+          ...(src ? { src } : {}),
+          loadContent: (signal) => loadContent(attachment.id, signal),
+        })}
         type="button"
       >
         {src ? <img alt={attachment.fileName} src={src} /> : <span className="attachment-extension">{isImage ? <File size={18} /> : extension(attachment.fileName)}</span>}
@@ -102,21 +111,4 @@ export function MessageAttachments({ attachments, loadContent, onOpen }: {
 }): React.JSX.Element | null {
   if (attachments.length === 0) return null;
   return <div className="message-attachments">{attachments.map((attachment) => <RemoteAttachmentTile attachment={attachment} key={attachment.id} loadContent={loadContent} onOpen={onOpen} />)}</div>;
-}
-
-export function AttachmentLightbox({ preview, onClose }: { preview: AttachmentPreview | null; onClose: () => void }): React.JSX.Element | null {
-  const label = useMemo(() => preview ? `Preview of ${preview.name}` : '', [preview]);
-  useEffect(() => {
-    if (!preview) return;
-    const close = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
-  }, [onClose, preview]);
-  if (!preview) return null;
-  return (
-    <div aria-label={label} aria-modal="true" className="attachment-lightbox" onMouseDown={(event) => event.target === event.currentTarget && onClose()} role="dialog">
-      <button aria-label="Close preview" className="attachment-lightbox-close" onClick={onClose} type="button"><X size={20} /></button>
-      <img alt={preview.name} src={preview.src} />
-    </div>
-  );
 }

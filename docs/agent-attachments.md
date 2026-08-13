@@ -31,7 +31,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/attachment-tool-receipts.ts` | Atomically binds completed attachment results to current derivative hashes and revalidates replay dependencies. |
 | `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
-| `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects and current model image derivatives. |
+| `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
@@ -198,6 +198,14 @@ references, display values, and formulas. PDFs are page-delimited; a bounded OCR
 adapter is required when the text layer is materially empty, and incomplete OCR
 is a failure rather than empty success.
 
+The message-feed preview endpoint reuses this same current derivative after the
+ordinary resource visibility query authorizes the signed-in person. Images,
+Markdown, and readable text such as plain text or CSV come from their exact
+original object; PDF and Office formats materialize or reuse the semantic derivative. The endpoint never treats
+a resource ID as authority and never creates a second display-only conversion.
+Presentation remains a desktop concern: Markdown derivatives go through the
+shared renderer, while plain source text stays literal monospace text.
+
 Search derives UTF-16-safe ranges and section labels directly from the bounded
 versioned derivative, so it needs no second R2 object or lifecycle. Tool reads
 and searches check offsets against the same hash and extractor version. At the
@@ -252,9 +260,10 @@ rediscovery. It depends on `resources`, `workstream_resources`,
 `message_attachments`, note visibility, regional D1/R2 bindings, and the harness
 tool loop.
 
-It does not own composer upload UX or transcript download/display; those remain
-with the resource and composer modules. It does not turn an ID into authority,
-search arbitrary workspace content, edit documents, or transcribe audio/video.
+It does not own composer upload UX or the desktop lightbox presentation; those
+remain with the composer and renderer modules. It does not turn an ID into
+authority, search arbitrary workspace content, edit documents, or transcribe
+audio/video.
 Connector-origin relationships are owned by
 [`workstream-origin-attachments.md`](workstream-origin-attachments.md), and the
 generic tool execution/receipt loop is owned by
@@ -333,6 +342,9 @@ generic tool execution/receipt loop is owned by
   `apps/api/test/resource-object-cleanup.test.ts` cover lifecycle schema,
   exact-byte hashing, legacy interpretation, derivative-change and deletion
   receipt invalidation, cleanup retry, and convergence.
+- `apps/desktop/src/renderer/components/attachments.test.tsx` covers lazy
+  message-feed opening plus image, Markdown, literal text, and converted-document
+  presentation.
 
 Run focused suites from their package directories through `pnpm --filter`, then
 run the repository-wide lint, typecheck, and test gates before committing. Cursor
@@ -398,6 +410,34 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Message previews reuse the authorized derivative boundary
+
+**What changed:** A resource preview endpoint now returns exact originals for
+images, Markdown, and plain text, and lazily materializes or reuses the current
+semantic derivative for PDF and Office attachments. It applies the existing
+resource visibility query before either R2 read. The desktop message feed opens
+all available attachments in a window-sized lightbox: intrinsic-size or
+viewport-scaled images, shared-renderer Markdown, and literal monospace text.
+
+**Why:** Sent attachments were image-only thumbnails: non-images were disabled,
+even though the attachment system already held complete bounded derivatives for
+the model. A separate client converter would duplicate parsing, drift from the
+model-visible document, and move untrusted Office/PDF processing into Electron.
+
+**Considered and rejected:** Downloading every original into the renderer,
+building a second display derivative, and eagerly fetching every transcript
+attachment. They respectively expose formats the renderer cannot safely render,
+split one document into two interpretations, or turn transcript loading into an
+unbounded content fetch.
+
+**Consequences:** Clicking is the hydration boundary for non-image previews;
+unchanged derivatives are reused by source hash and extractor version. New
+previewable document kinds must extend the shared classifier/converter rather
+than add a desktop-only parser. Missing, unsupported, processing, or failed
+derivatives remain explicit preview errors. Closing a preview while it owns a
+conversion releases the fenced claim back to pending rather than persisting
+ordinary viewer cancellation as a shared derivative failure.
 
 ### 2026-08-12 — Attachment hydration drops speculative indexes and fan-out summaries
 
