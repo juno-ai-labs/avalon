@@ -1197,10 +1197,6 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
     started: "Loading the selected plugin…",
     completed: "Plugin guidance and tools are ready",
   },
-  automation_list_resources: {
-    started: "Checking the attached automation resources…",
-    completed: "Attached resources are ready",
-  },
   automation_read_resource: {
     started: "Reading an attached automation resource…",
     completed: "Attached resource is ready",

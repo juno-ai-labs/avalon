@@ -9,7 +9,7 @@ import type {
   VisibleWorkstreamResourceSet,
 } from "./workstream-resource-visibility";
 
-const MAXIMUM_IDS_PER_QUERY = 90;
+const MAXIMUM_DRAFT_ATTACHMENTS = 10;
 
 export interface AutomationDraftAttachmentScope {
   workspaceId: string;
@@ -47,7 +47,7 @@ export function createAutomationDraftAttachmentTools(
       ...scope,
       frozenResourceIds,
     }),
-  });
+  }).filter((tool) => tool.definition.name !== "list_resources");
 }
 
 export async function loadVisibleAutomationDraftResources(
@@ -55,21 +55,21 @@ export async function loadVisibleAutomationDraftResources(
   scope: AutomationDraftAttachmentScope,
 ): Promise<VisibleWorkstreamResourceSet> {
   const frozenResourceIds = [...new Set(scope.frozenResourceIds)];
-  const rows: VisibleWorkstreamResourceRow[] = [];
-  for (let offset = 0; offset < frozenResourceIds.length; offset += MAXIMUM_IDS_PER_QUERY) {
-    const ids = frozenResourceIds.slice(offset, offset + MAXIMUM_IDS_PER_QUERY);
-    const placeholders = ids.map(() => "?").join(", ");
-    const result = await database.prepare(
-      `SELECT r.*, 'automation_draft' AS relationship_type,
-              r.created_at AS attached_at, 0 AS message_attachment,
-              0 AS attached_watch_enabled, r.updated_at AS visibility_version
-         FROM resources r
-        WHERE r.id IN (${placeholders})
-          AND r.workspace_id = ? AND r.provider = 'avalon_upload'
-          AND r.uploaded_by_user_id = ? AND r.attachment_status = 'draft'`,
-    ).bind(...ids, scope.workspaceId, scope.userId).all<VisibleWorkstreamResourceRow>();
-    rows.push(...(result.results ?? []));
+  if (frozenResourceIds.length > MAXIMUM_DRAFT_ATTACHMENTS) {
+    throw new Error(`Automation drafts support at most ${MAXIMUM_DRAFT_ATTACHMENTS} attachments`);
   }
+  if (frozenResourceIds.length === 0) return { rows: [], fingerprint: await sha256("[]") };
+  const placeholders = frozenResourceIds.map(() => "?").join(", ");
+  const result = await database.prepare(
+    `SELECT r.*, 'automation_draft' AS relationship_type,
+            r.created_at AS attached_at, 0 AS message_attachment,
+            0 AS attached_watch_enabled, r.updated_at AS visibility_version
+       FROM resources r
+      WHERE r.id IN (${placeholders})
+        AND r.workspace_id = ? AND r.provider = 'avalon_upload'
+        AND r.uploaded_by_user_id = ? AND r.attachment_status = 'draft'`,
+  ).bind(...frozenResourceIds, scope.workspaceId, scope.userId).all<VisibleWorkstreamResourceRow>();
+  const rows = result.results ?? [];
   rows.sort((left, right) => right.attached_at.localeCompare(left.attached_at) || left.id.localeCompare(right.id));
   const fingerprint = await sha256(JSON.stringify({
     frozenResourceIds,

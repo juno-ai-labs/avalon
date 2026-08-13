@@ -90,6 +90,7 @@ import {
 } from "./workstream-resource-inventory";
 import {
   executionPrincipalKey,
+  loadWorkstreamResourceInventoryFingerprint,
   loadVisibleWorkstreamResourceInventory,
   WorkstreamResourceInventoryChangedError,
 } from "./workstream-resource-visibility";
@@ -584,24 +585,10 @@ async function persistWorkstreamContextCompaction(
   input: WorkstreamWorkflowInput,
   compactedThroughSequence: number,
   checkpoint: HarnessCompactionCheckpoint,
-  expectedVisibilityFingerprint?: string,
+  expectedVisibilityFingerprint: string,
 ): Promise<void> {
   const at = nowIso();
-  let visible;
-  try {
-    visible = await loadVisibleWorkstreamResourceInventory(database, {
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-      principal: input.executionPrincipal,
-      ...(expectedVisibilityFingerprint ? { expectedFingerprint: expectedVisibilityFingerprint } : {}),
-    });
-  } catch (error) {
-    if (error instanceof WorkstreamResourceInventoryChangedError) {
-      throw new Error("compaction_resource_visibility_changed", { cause: error });
-    }
-    throw error;
-  }
-  const revision = Number.parseInt(visible.fingerprint.replace(/^inventory:/u, ""), 10);
+  const revision = Number.parseInt(expectedVisibilityFingerprint.replace(/^inventory:/u, ""), 10);
   if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("invalid_resource_inventory_revision");
   const persisted = await database.prepare(
     `INSERT INTO workstream_context_compactions
@@ -646,7 +633,7 @@ async function persistWorkstreamContextCompaction(
     checkpoint.summary,
     CHECKPOINT_TEMPLATE_VERSION,
     executionPrincipalKey(input.executionPrincipal),
-    visible.fingerprint,
+    expectedVisibilityFingerprint,
     checkpoint.model,
     checkpoint.contextTokensBeforeCompaction,
     checkpoint.contextWindowTokens,
@@ -660,12 +647,12 @@ async function persistWorkstreamContextCompaction(
     revision,
   ).run();
   if ((persisted.meta.changes ?? 0) === 0) {
-    const current = await loadVisibleWorkstreamResourceInventory(database, {
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-      principal: input.executionPrincipal,
-    });
-    if (current.fingerprint !== visible.fingerprint) {
+    const currentFingerprint = await loadWorkstreamResourceInventoryFingerprint(
+      database,
+      input.workspaceId,
+      input.workstreamId,
+    );
+    if (currentFingerprint !== expectedVisibilityFingerprint) {
       throw new Error("compaction_resource_visibility_changed");
     }
   }
@@ -2017,7 +2004,7 @@ export async function runWorkstreamHarness(
     source: hyperSightRun ? "hypersight" : "workstream",
     workstreamId: input.workstreamId,
   });
-  let preparedCompactionVisibility: Awaited<ReturnType<typeof loadVisibleWorkstreamResourceInventory>> | null = null;
+  let preparedCompactionVisibilityFingerprint: string | null = null;
   let outcome: Awaited<ReturnType<typeof runHarness>>;
   try {
     outcome = await runHarness({
@@ -2056,16 +2043,16 @@ export async function runWorkstreamHarness(
           prepare: async () => {
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
-            preparedCompactionVisibility = await loadVisibleWorkstreamResourceInventory(env.DB, {
-              workspaceId: input.workspaceId,
-              workstreamId: input.workstreamId,
-              principal: input.executionPrincipal,
-            });
+            preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
+              env.DB,
+              input.workspaceId,
+              input.workstreamId,
+            );
           },
           renderAppendix: async () => {
             await liveness.pulse("compaction_inventory", true);
             await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
-            if (!preparedCompactionVisibility) {
+            if (!preparedCompactionVisibilityFingerprint) {
               throw new Error("compaction_resource_visibility_changed");
             }
             let current;
@@ -2074,7 +2061,7 @@ export async function runWorkstreamHarness(
                 workspaceId: input.workspaceId,
                 workstreamId: input.workstreamId,
                 principal: input.executionPrincipal,
-                expectedFingerprint: preparedCompactionVisibility.fingerprint,
+                expectedFingerprint: preparedCompactionVisibilityFingerprint,
               });
             } catch (error) {
               if (error instanceof WorkstreamResourceInventoryChangedError) {
@@ -2090,14 +2077,17 @@ export async function runWorkstreamHarness(
           persist: async (checkpoint) => {
             await liveness.pulse("compaction_persist", true);
             await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+            if (!preparedCompactionVisibilityFingerprint) {
+              throw new Error("compaction_resource_visibility_changed");
+            }
             await persistWorkstreamContextCompaction(
               env.DB,
               input,
               compactedThroughSequence,
               checkpoint,
-              preparedCompactionVisibility?.fingerprint,
+              preparedCompactionVisibilityFingerprint,
             );
-            preparedCompactionVisibility = null;
+            preparedCompactionVisibilityFingerprint = null;
           },
         },
       } : {}),

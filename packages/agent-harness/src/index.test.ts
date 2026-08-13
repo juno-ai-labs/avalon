@@ -26,7 +26,6 @@ import {
 describe("agent harness", () => {
   it("presents every automation attachment tool as visible compiler activity", () => {
     for (const toolName of [
-      "automation_list_resources",
       "automation_read_resource",
       "automation_search_resource",
       "automation_view_resource",
@@ -224,10 +223,6 @@ describe("agent harness", () => {
       "followUpQuestion",
       "requiredCapabilities",
     ]));
-    const listResourcesTool = (requestBody!.tools as Array<{
-      function: { name: string; description: string };
-    }>).find((tool) => tool.function.name === "automation_list_resources");
-    expect(listResourcesTool?.function.description).toContain("image, markdown, pdf, document, spreadsheet, presentation, text, other");
     const elicitationTool = (requestBody!.tools as Array<{
       function: { name: string; description: string; parameters: { properties: Record<string, unknown> } };
     }>).find((tool) => tool.function.name === "core_request_elicitation");

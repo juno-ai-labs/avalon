@@ -292,7 +292,7 @@ async function persistModelImage(
     const result = await database.prepare(
       `UPDATE resources
           SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?,
-              model_metadata_json = ?, model_index_ref = NULL,
+              model_metadata_json = ?,
               model_content_status = 'ready', model_content_extractor_version = 'image-v1',
               model_content_character_count = NULL, model_content_extracted_at = ?,
               model_content_claimed_at = NULL, model_content_claim_id = NULL,

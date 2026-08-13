@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ATTACHMENT_TEXT_EXTRACTOR_VERSION,
   buildAttachmentDerivative,
-  buildDerivativeIndex,
   materializeAttachmentDerivative,
   type AuthorizedDerivativeResource,
 } from "../src/services/attachment-derivative-service";
@@ -172,7 +171,7 @@ describe("attachment derivative conversion", () => {
     expect(archiveLimit).toMatchObject({ status: "failed", errorCode: "office_archive_too_large" });
   });
 
-  it("rejects partial OCR and an index that would exceed its bounded chunk catalog", async () => {
+  it("rejects partial OCR", async () => {
     const partialOcr = await buildAttachmentDerivative({
       bytes: encoder.encode("%PDF scanned"),
       fileName: "partial.pdf",
@@ -182,7 +181,6 @@ describe("attachment derivative conversion", () => {
     });
 
     expect(partialOcr).toMatchObject({ status: "failed", errorCode: "pdf_ocr_incomplete" });
-    expect(() => buildDerivativeIndex("x".repeat(2_000_000), 3_999)).toThrow("index_too_large");
   });
 
   it("fails at bounded source, derivative, PDF, and deadline limits", async () => {
@@ -224,25 +222,9 @@ describe("attachment derivative conversion", () => {
     await expect(result).resolves.toMatchObject({ status: "failed", errorCode: "conversion_aborted" });
   });
 
-  it("creates a bounded deterministic index against exact UTF-16 offsets", () => {
-    const text = "# Alpha\n\n😀 one two three\n\n## Beta\n\nfour five six";
-    const first = buildDerivativeIndex(text, 18);
-    const second = buildDerivativeIndex(text, 18);
-
-    expect(first).toEqual(second);
-    expect(first.chunks.length).toBeGreaterThan(1);
-    for (const chunk of first.chunks) {
-      expect(text.slice(chunk.start, chunk.end).length).toBeLessThanOrEqual(18);
-      expect(chunk).not.toHaveProperty("text");
-      expect(chunk.terms.length).toBeLessThanOrEqual(64);
-    }
-    expect(first.chunks.some((chunk) => chunk.sectionLabel === "Alpha")).toBe(true);
-    expect(first.chunks.some((chunk) => chunk.sectionLabel === "Beta")).toBe(true);
-  });
-
   it("allows one concurrent materialization claim and reuses the atomically selected version", async () => {
     const source = encoder.encode("# Current\n\nThe complete reusable derivative.");
-    const state = { status: "pending", contentRef: null as string | null, indexRef: null as string | null, mime: null as string | null, sha: null as string | null, count: null as number | null };
+    const state = { status: "pending", contentRef: null as string | null, mime: null as string | null, sha: null as string | null, count: null as number | null };
     const statements: Array<{ sql: string; values: unknown[] }> = [];
     const database = createTestD1Database({
       prepare(sql: string) {
@@ -262,8 +244,7 @@ describe("attachment derivative conversion", () => {
                   state.contentRef = String(values[0]);
                   state.mime = String(values[1]);
                   state.sha = String(values[2]);
-                  state.indexRef = String(values[4]);
-                  state.count = Number(values[6]);
+                  state.count = Number(values[5]);
                 }
                 return { meta: { changes: 1 } };
               },
@@ -294,7 +275,7 @@ describe("attachment derivative conversion", () => {
     const resource: AuthorizedDerivativeResource = {
       id: "resource-1", workspaceId: "workspace-1", fileName: "brief.md", mimeType: "text/markdown", contentRef: "original",
       contentSha256: "0d79b05d5f5a26ef53e9a4e3443ad6555391cc60aecfcb7b6282e7aa864eb1ed",
-      modelContentRef: null, modelMimeType: null, modelContentSha256: null, modelIndexRef: null,
+      modelContentRef: null, modelMimeType: null, modelContentSha256: null,
       modelContentStatus: "pending", modelContentExtractorVersion: null, modelContentCharacterCount: null,
       modelContentClaimedAt: null, modelContentClaimId: null,
     };
@@ -305,7 +286,7 @@ describe("attachment derivative conversion", () => {
     ]);
 
     expect(results.map((result) => result.status).sort()).toEqual(["processing", "ready"]);
-    expect(puts).toHaveLength(2);
+    expect(puts).toHaveLength(1);
     expect(puts.every((key) => key.includes(`/resource-1/${resource.contentSha256}/${ATTACHMENT_TEXT_EXTRACTOR_VERSION}/`))).toBe(true);
     expect(state).toMatchObject({ status: "ready", mime: "text/markdown", count: source.length });
     expect(statements.some((statement) => statement.sql.includes("model_content_claim_id = ?"))).toBe(true);
@@ -313,7 +294,6 @@ describe("attachment derivative conversion", () => {
     const reused = await materializeAttachmentDerivative(database, bucket, {
       ...resource,
       modelContentRef: state.contentRef,
-      modelIndexRef: state.indexRef,
       modelMimeType: state.mime,
       modelContentSha256: state.sha,
       modelContentStatus: "ready",
@@ -362,7 +342,6 @@ describe("attachment derivative conversion", () => {
       modelContentRef: null,
       modelMimeType: null,
       modelContentSha256: null,
-      modelIndexRef: null,
       modelContentStatus: "processing",
       modelContentExtractorVersion: ATTACHMENT_TEXT_EXTRACTOR_VERSION,
       modelContentCharacterCount: null,
@@ -391,7 +370,6 @@ describe("attachment derivative conversion", () => {
       claimId: null as string | null,
       claimedAt: null as string | null,
       contentRef: null as string | null,
-      indexRef: null as string | null,
     };
     const outbox = new Set<string>();
     const database = createTestD1Database({
@@ -415,10 +393,9 @@ describe("attachment derivative conversion", () => {
                   return { meta: { changes: 1 } };
                 }
                 if (sql.includes("SET model_content_ref = ?")) {
-                  if (state.status !== "processing" || state.claimId !== values[14]) return { meta: { changes: 0 } };
+                  if (state.status !== "processing" || state.claimId !== values[13]) return { meta: { changes: 0 } };
                   state.status = "ready";
                   state.contentRef = String(values[0]);
-                  state.indexRef = String(values[4]);
                   return { meta: { changes: 1 } };
                 }
                 return { meta: { changes: 1 } };
@@ -458,7 +435,6 @@ describe("attachment derivative conversion", () => {
       modelContentRef: null,
       modelMimeType: null,
       modelContentSha256: null,
-      modelIndexRef: null,
       modelContentStatus: "pending",
       modelContentExtractorVersion: null,
       modelContentCharacterCount: null,
@@ -480,14 +456,15 @@ describe("attachment derivative conversion", () => {
       pdfExtractor: async () => ({ pageCount: 1, pages: ["generation B"] }),
     });
     expect(publisherB.status).toBe("ready");
-    const winningRefs = [state.contentRef, state.indexRef] as const;
+    const winningRef = state.contentRef;
 
     releaseFirst();
     await expect(publisherA).resolves.toEqual({ status: "processing", retryAfterMs: 250 });
-    expect([state.contentRef, state.indexRef]).toEqual(winningRefs);
-    expect(winningRefs.every((key) => key !== null && objects.has(key))).toBe(true);
-    expect(deleted).toHaveLength(2);
-    expect(deleted.every((key) => !winningRefs.includes(key))).toBe(true);
+    expect(state.contentRef).toBe(winningRef);
+    expect(winningRef).not.toBeNull();
+    expect(objects.has(winningRef!)).toBe(true);
+    expect(deleted).toHaveLength(1);
+    expect(deleted).not.toContain(winningRef);
     expect(deleted.every((key) => outbox.has(key))).toBe(true);
   });
 });

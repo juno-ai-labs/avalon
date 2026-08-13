@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { createAutomationDraftAttachmentTools } from "../src/services/automation-draft-attachment-tools";
-import { sealAttachmentCursor } from "../src/lib/attachment-cursor";
 import {
   createWorkstreamAttachmentTools,
   rehydrateWorkstreamViewReceipt,
@@ -160,22 +159,17 @@ function insertReadyResource(database: DatabaseSync, bucket: MemoryBucket, ordin
   const contentRef = `original/${id}`;
   const attachedAt = new Date(Date.UTC(2026, 7, 12, 0, ordinal)).toISOString();
   const modelRef = `model/${id}.md`;
-  const indexRef = `model/${id}.json`;
   bucket.objects.set(contentRef, new TextEncoder().encode(text));
   bucket.objects.set(modelRef, new TextEncoder().encode(text));
-  bucket.objects.set(indexRef, new TextEncoder().encode(JSON.stringify({
-    offsetUnit: "utf16", totalCharacters: text.length,
-    chunks: [{ ordinal: 0, start: 0, end: text.length, sectionLabel: title, terms: ["needle", "evidence", String(ordinal)] }],
-  })));
   database.prepare(`
     INSERT INTO resources
       (id, workspace_id, resource_type, provider, title, mime_type, content_ref, metadata_json,
        created_at, updated_at, content_sha256, model_content_ref, model_mime_type,
-       model_content_sha256, model_metadata_json, model_index_ref, model_content_status,
+       model_content_sha256, model_metadata_json, model_content_status,
        model_content_extractor_version, model_content_character_count, model_content_extracted_at)
-    VALUES (?, ?, 'file', 'avalon_upload', ?, ?, ?, '{"size":123}', ?, ?, ?, ?, 'text/markdown', ?, '{}', ?, 'ready',
+    VALUES (?, ?, 'file', 'avalon_upload', ?, ?, ?, '{"size":123}', ?, ?, ?, ?, 'text/markdown', ?, '{}', 'ready',
             'attachment-text-v1', ?, ?)
-  `).run(id, WORKSPACE_ID, title, mime, contentRef, attachedAt, attachedAt, SOURCE_HASH, modelRef, DERIVATIVE_HASH, indexRef, text.length, "2026-08-12T01:00:00.000Z");
+  `).run(id, WORKSPACE_ID, title, mime, contentRef, attachedAt, attachedAt, SOURCE_HASH, modelRef, DERIVATIVE_HASH, text.length, "2026-08-12T01:00:00.000Z");
   database.prepare(`
     INSERT INTO workstream_resources
       (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
@@ -196,9 +190,9 @@ function insertReadyImage(database: DatabaseSync, bucket: MemoryBucket, ordinal:
     INSERT INTO resources
       (id, workspace_id, resource_type, provider, title, mime_type, content_ref, metadata_json,
        created_at, updated_at, content_sha256, model_content_ref, model_mime_type,
-       model_content_sha256, model_metadata_json, model_index_ref, model_content_status,
+       model_content_sha256, model_metadata_json, model_content_status,
        model_content_extractor_version, model_content_character_count, model_content_extracted_at)
-    VALUES (?, ?, 'file', 'avalon_upload', 'Diagram', 'image/png', ?, '{"size":8}', ?, ?, ?, ?, 'image/png', ?, NULL, NULL, 'ready',
+    VALUES (?, ?, 'file', 'avalon_upload', 'Diagram', 'image/png', ?, '{"size":8}', ?, ?, ?, ?, 'image/png', ?, NULL, 'ready',
             'image-v1', NULL, ?)
   `).run(id, WORKSPACE_ID, contentRef, "2026-08-12T02:00:00.000Z", "2026-08-12T02:00:00.000Z", SOURCE_HASH, modelRef, imageHash, "2026-08-12T02:00:00.000Z");
   database.prepare(`
@@ -257,22 +251,10 @@ describe("work-stream attachment tools", () => {
     const resourceId = insertReadyResource(database, bucket, 50, { title: "Tuple transcript.md" });
     const text = `${"opening context. ".repeat(4_200)}\n# Later decision\nThe decisive second-half evidence is MONAD_ATTACHMENT_COMPLETE.\n`;
     const modelRef = `model/${resourceId}.md`;
-    const indexRef = `model/${resourceId}.json`;
     bucket.objects.set(modelRef, new TextEncoder().encode(text));
-    bucket.objects.set(indexRef, new TextEncoder().encode(JSON.stringify({
-      offsetUnit: "utf16",
-      totalCharacters: text.length,
-      chunks: [{
-        ordinal: 0,
-        start: 60_000,
-        end: text.length,
-        sectionLabel: "Later decision",
-        terms: ["decisive", "second-half", "evidence", "monad_attachment_complete"],
-      }],
-    })));
     database.prepare(
-      "UPDATE resources SET model_content_character_count = ?, model_content_ref = ?, model_index_ref = ? WHERE id = ?",
-    ).run(text.length, modelRef, indexRef, resourceId);
+      "UPDATE resources SET model_content_character_count = ?, model_content_ref = ? WHERE id = ?",
+    ).run(text.length, modelRef, resourceId);
     const tools = __integrationTesting.createAvalonTools(env, input());
     const read = tools.find((tool) => tool.definition.name === "read_resource")!;
     const search = tools.find((tool) => tool.definition.name === "search_resource")!;
@@ -295,22 +277,10 @@ describe("work-stream attachment tools", () => {
     const vocabulary = Array.from({ length: 70 }, (_, index) => `token${String(index).padStart(2, "0")}`);
     const text = `# Dense vocabulary\n\n${vocabulary.join(" ")} late_unique_evidence`;
     const modelRef = `model/${resourceId}.md`;
-    const indexRef = `model/${resourceId}.json`;
     bucket.objects.set(modelRef, new TextEncoder().encode(text));
-    bucket.objects.set(indexRef, new TextEncoder().encode(JSON.stringify({
-      offsetUnit: "utf16",
-      totalCharacters: text.length,
-      chunks: [{
-        ordinal: 0,
-        start: 0,
-        end: text.length,
-        sectionLabel: "Dense vocabulary",
-        terms: vocabulary.slice(0, 64),
-      }],
-    })));
     database.prepare(
-      "UPDATE resources SET model_content_character_count = ?, model_content_ref = ?, model_index_ref = ? WHERE id = ?",
-    ).run(text.length, modelRef, indexRef, resourceId);
+      "UPDATE resources SET model_content_character_count = ?, model_content_ref = ? WHERE id = ?",
+    ).run(text.length, modelRef, resourceId);
     const search = __integrationTesting.createAvalonTools(env, input())
       .find((tool) => tool.definition.name === "search_resource")!;
 
@@ -320,6 +290,26 @@ describe("work-stream attachment tools", () => {
         returnedMatches: 1,
         passages: [{ text: expect.stringContaining("late_unique_evidence") }],
       },
+    });
+  });
+
+  it("finds one-character and separated multi-term queries around actual matches", async () => {
+    const { database, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, bucket, 52, { title: "Query behavior" });
+    const text = `# Query behavior\n\n${"padding ".repeat(430)}x marker ${"between ".repeat(20)}alpha evidence omega`;
+    const modelRef = `model/${resourceId}.md`;
+    bucket.objects.set(modelRef, new TextEncoder().encode(text));
+    database.prepare(
+      "UPDATE resources SET model_content_character_count = ?, model_content_ref = ? WHERE id = ?",
+    ).run(text.length, modelRef, resourceId);
+    const search = __integrationTesting.createAvalonTools(env, input())
+      .find((tool) => tool.definition.name === "search_resource")!;
+
+    await expect(search.execute({ resourceId, query: "x", maxPassageCharacters: 500 }, context())).resolves.toMatchObject({
+      output: { returnedMatches: 1, passages: [{ text: expect.stringContaining("x marker") }] },
+    });
+    await expect(search.execute({ resourceId, query: "alpha omega", maxPassageCharacters: 500 }, context())).resolves.toMatchObject({
+      output: { returnedMatches: 1, passages: [{ text: expect.stringContaining("alpha evidence omega") }] },
     });
   });
 
@@ -701,31 +691,23 @@ describe("automation-draft attachment tools", () => {
       frozenResourceIds: [resourceId],
     });
     expect(tools.map((tool) => tool.definition.name)).toEqual([
-      "list_resources",
       "read_resource",
       "search_resource",
       "view_resource",
       "summarize_resource",
     ]);
-    const list = tools[0]!;
-    for (const kind of ["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]) {
-      expect(list.definition.description).toContain(`- ${kind} —`);
-    }
-    await expect(list.execute({}, context())).resolves.toMatchObject({
-      output: { totalVisibleResources: 1, items: [{ resourceId }] },
-    });
-    await expect(tools[1]!.execute({ resourceId }, context())).resolves.toMatchObject({
+    await expect(tools[0]!.execute({ resourceId }, context())).resolves.toMatchObject({
       output: { resourceId, charactersBefore: 0 },
     });
-    await expect(tools[1]!.execute({ resourceId: excludedId }, context()))
+    await expect(tools[0]!.execute({ resourceId: excludedId }, context()))
       .rejects.toMatchObject({ code: "resource_not_found" });
 
     database.prepare("UPDATE resources SET attachment_status = 'attached' WHERE id = ?").run(resourceId);
-    await expect(tools[1]!.execute({ resourceId }, context()))
+    await expect(tools[0]!.execute({ resourceId }, context()))
       .rejects.toMatchObject({ code: "resource_not_found" });
   });
 
-  it("rejects work-stream cursors and returns automation-specific wrong-tool remediation", async () => {
+  it("returns automation-specific wrong-tool remediation", async () => {
     const { database, bucket, env } = fixture();
     const textId = insertReadyResource(database, bucket, 42);
     const imageId = insertReadyImage(database, bucket, 43);
@@ -737,28 +719,19 @@ describe("automation-draft attachment tools", () => {
       scopeId: HARNESS_RUN_ID,
       frozenResourceIds: [textId, imageId],
     });
-    const workstreamCursor = await sealAttachmentCursor(env.SESSION_SIGNING_KEY, {
-      purpose: "workstream-list-resources",
-      principal: `user:${USER_ID}`,
-      scopeId: HARNESS_RUN_ID,
-      expiresAt: Date.now() + 60_000,
-      state: {},
-    });
-    await expect(tools[0]!.execute({ cursor: workstreamCursor }, context()))
-      .rejects.toMatchObject({ code: "invalid_cursor" });
-    await expect(tools[1]!.execute({ resourceId: imageId }, context()))
+    await expect(tools[0]!.execute({ resourceId: imageId }, context()))
       .rejects.toMatchObject({
         code: "resource_tool_mismatch",
         details: { suggestedCall: { tool: "automation_view_resource", arguments: { resourceIds: [imageId] } } },
       });
-    await expect(tools[3]!.execute({ resourceIds: [textId] }, context()))
+    await expect(tools[2]!.execute({ resourceIds: [textId] }, context()))
       .rejects.toMatchObject({
         code: "resource_tool_mismatch",
         details: { suggestedCall: { tool: "automation_read_resource", arguments: { resourceId: textId } } },
       });
 
     database.prepare("UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?").run(OTHER_USER_ID, textId);
-    await expect(tools[2]!.execute({ resourceId: textId, query: "needle" }, context()))
+    await expect(tools[1]!.execute({ resourceId: textId, query: "needle" }, context()))
       .rejects.toMatchObject({ code: "resource_not_found" });
   });
 });

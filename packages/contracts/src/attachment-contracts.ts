@@ -171,7 +171,7 @@ const CursorSchema = z.string().min(1).max(2_048);
 const MimeTypeSchema = z.string().max(160).nullable();
 const NonNegativeIntegerSchema = z.number().int().nonnegative();
 
-export const ContentModeSchema = z.enum(["read", "search", "view", "unsupported"]);
+export const ContentModeSchema = z.enum(["read", "view", "unsupported"]);
 export type ContentMode = z.infer<typeof ContentModeSchema>;
 export const DerivativeStatusSchema = z.enum([
   "pending",
@@ -272,7 +272,6 @@ export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {
 const ResourceListItemSchema = z.object({
   resourceId: CanonicalUuidSchema,
   title: z.string(),
-  fileName: z.string().nullable(),
   resourceType: z.string(),
   provider: z.string(),
   mimeType: MimeTypeSchema,
