@@ -937,6 +937,17 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.database.prepare(
       "SELECT status, provider_idempotency_key FROM tool_invocations WHERE id = 'invocation-write'",
     ).get()).toEqual({ status: "ambiguous", provider_idempotency_key: "avalon:run:call-write" });
+    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-write",
+      checkpointIndex: 2,
+      outputRef: "payloads/runtime/reconciled-write.json",
+      outputSummary: "Reconciled durable write",
+      allowAmbiguousReconciliation: true,
+    })).toBe("persisted");
+    expect(sqlite.database.prepare(
+      "SELECT status, output_ref FROM tool_invocations WHERE id = 'invocation-write'",
+    ).get()).toEqual({ status: "completed", output_ref: "payloads/runtime/reconciled-write.json" });
     expect(sqlite.database.prepare(
       "SELECT phase FROM tool_invocation_checkpoints WHERE tool_invocation_id = 'invocation-read' ORDER BY checkpoint_index",
     ).all()).toEqual([

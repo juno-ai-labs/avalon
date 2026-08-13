@@ -44,8 +44,15 @@ import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
+import { ApiError } from '../lib/api';
 import { desktopBridge } from '../lib/platform';
-import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
+import type {
+  TerminalNetworkPolicyPreview,
+  TerminalWorkspaceSettings,
+  Workspace,
+  WorkspaceInvitation,
+  WorkstreamConnection,
+} from '../lib/types';
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
@@ -315,6 +322,8 @@ function paneHoldsUnsavedText(pane: Element | null): boolean {
   return [...pane.querySelectorAll('input, textarea')].some((field) => {
     if (field instanceof HTMLInputElement && !TEXT_ENTRY_INPUT_TYPES.has(field.type)) return false;
     const editable = field as HTMLInputElement | HTMLTextAreaElement;
+    const savedValue = editable.dataset.savedValue;
+    if (savedValue !== undefined) return !editable.readOnly && !editable.disabled && editable.value !== savedValue;
     return !editable.readOnly && !editable.disabled && editable.value.trim() !== '';
   });
 }
@@ -367,6 +376,10 @@ export function WorkspaceSettingsScreen({
   const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [logAgentInference, setLogAgentInference] = useState(workspace.logAgentInference);
+  const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
+  const [terminalDomains, setTerminalDomains] = useState('');
+  const [terminalPreview, setTerminalPreview] = useState<TerminalNetworkPolicyPreview | null>(null);
+  const terminalPolicyDirty = useRef(false);
   const [applicationSettings, setApplicationSettings] = useState<DesktopApplicationSettings | null>(null);
   const [telemetryInspector, setTelemetryInspector] = useState<DesktopTelemetryInspectorEntry[]>([]);
   const [telemetryInspectorLoading, setTelemetryInspectorLoading] = useState(false);
@@ -414,6 +427,73 @@ export function WorkspaceSettingsScreen({
     enabled: Boolean(api),
     refetchOnWindowFocus: 'always',
     staleTime: 5_000,
+  });
+  const terminalSettings = useQuery({
+    queryKey: ['terminal-workspace-settings'],
+    queryFn: ({ signal }) => api!.getTerminalWorkspaceSettings(signal),
+    enabled: Boolean(api && activeSection === 'workspace'),
+    staleTime: 10_000,
+  });
+  useEffect(() => {
+    if (!terminalSettings.data || terminalPreview || terminalPolicyDirty.current) return;
+    setTerminalMode(terminalSettings.data.mode);
+    setTerminalDomains(terminalSettings.data.customDomains.join('\n'));
+  }, [terminalPreview, terminalSettings.data]);
+  const terminalCustomDomains = () => [...new Set(
+    terminalDomains.split(/[\s,]+/u).map((domain) => domain.trim().toLowerCase().replace(/\.$/u, '')).filter(Boolean),
+  )].sort();
+  const terminalPolicyChanged = Boolean(terminalSettings.data && (
+    terminalMode !== terminalSettings.data.mode
+    || terminalCustomDomains().join('\n') !== [...terminalSettings.data.customDomains].sort().join('\n')
+  ));
+  const terminalDraftRemainingSlots = terminalPreview?.remainingCustomSlots
+    ?? (!terminalPolicyChanged ? terminalSettings.data?.remainingCustomSlots : null);
+  const [terminalPolicyFailure, setTerminalPolicyFailure] = useState<Array<{
+    workstreamId: string;
+    title: string;
+    outcome: 'stopped' | 'deleted' | 'quarantined';
+  }>>([]);
+  const previewTerminalPolicy = useMutation({
+    mutationFn: () => api!.previewTerminalNetworkPolicy({
+      expectedRevision: terminalSettings.data!.revision,
+      mode: terminalMode,
+      customDomains: terminalCustomDomains(),
+    }),
+    onSuccess: (preview) => {
+      setTerminalPolicyFailure([]);
+      setTerminalPreview(preview);
+    },
+    onError: async () => {
+      setTerminalPreview(null);
+      await queryClient.invalidateQueries({ queryKey: ['terminal-workspace-settings'] });
+    },
+  });
+  const applyTerminalPolicy = useMutation({
+    mutationFn: () => api!.applyTerminalNetworkPolicy({
+      mutationId: terminalPreview!.mutationId,
+      expectedRevision: terminalPreview!.expectedRevision,
+      confirmed: true,
+    }),
+    onSuccess: (settings: TerminalWorkspaceSettings) => {
+      queryClient.setQueryData(['terminal-workspace-settings'], settings);
+      terminalPolicyDirty.current = false;
+      setTerminalMode(settings.mode);
+      setTerminalDomains(settings.customDomains.join('\n'));
+      setTerminalPolicyFailure([]);
+      setTerminalPreview(null);
+    },
+    onError: async (error) => {
+      const outcomes = error instanceof ApiError
+        && typeof error.details === 'object'
+        && error.details !== null
+        && 'sandboxOutcomes' in error.details
+        && Array.isArray((error.details as { sandboxOutcomes?: unknown }).sandboxOutcomes)
+        ? (error.details as { sandboxOutcomes: Array<{ workstreamId: string; title: string; outcome: 'stopped' | 'deleted' | 'quarantined' }> }).sandboxOutcomes
+        : [];
+      setTerminalPolicyFailure(outcomes);
+      setTerminalPreview(null);
+      await queryClient.invalidateQueries({ queryKey: ['terminal-workspace-settings'] });
+    },
   });
   const connectorCatalog = useQuery({
     queryKey: ['connector-catalog'],
@@ -881,6 +961,113 @@ export function WorkspaceSettingsScreen({
                 </div>
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
                 {updateLogAgentInference.error && <InlineError>{updateLogAgentInference.error.message}</InlineError>}
+                <div className="settings-pane-heading settings-pane-heading-spaced">
+                  <h2>Terminal network access</h2>
+                  <p>Choose where code running in Daytona may connect. Avalon-managed platform access is applied automatically.</p>
+                </div>
+                {terminalSettings.isLoading ? (
+                  <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading Terminal policy…</div>
+                ) : terminalSettings.error ? (
+                  <InlineError>{terminalSettings.error.message}</InlineError>
+                ) : terminalSettings.data && (
+                  <div className="terminal-network-card settings-list-card">
+                    {terminalSettings.data.availability !== 'supported' && (
+                      <div className="terminal-network-notice" role="status">
+                        <ShieldCheck aria-hidden="true" size={17} />
+                        <span><strong>Terminal unavailable</strong><small>{terminalSettings.data.availability === 'emergency_disabled' ? 'Temporarily disabled by the regional safety switch.' : 'This regional service has not enabled Daytona Terminal.'}</small></span>
+                      </div>
+                    )}
+                    <fieldset className="terminal-network-modes" disabled={!isAdmin || terminalSettings.data.availability !== 'supported' || previewTerminalPolicy.isPending || applyTerminalPolicy.isPending}>
+                      <legend>Outbound access</legend>
+                      <label>
+                        <input checked={terminalMode === 'trusted_only'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('trusted_only'); setTerminalPreview(null); }} type="radio" />
+                        <span><strong>Trusted only</strong><small>Avalon-managed platform access plus domains your workspace approves.</small></span>
+                      </label>
+                      <label>
+                        <input checked={terminalMode === 'full_internet'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('full_internet'); setTerminalPreview(null); }} type="radio" />
+                        <span><strong>Full internet</strong><small>Allow arbitrary public destinations. Private network access remains blocked by Daytona.</small></span>
+                      </label>
+                    </fieldset>
+                    {terminalMode === 'trusted_only' && (
+                      <div className="terminal-network-domains">
+                        <label>
+                          <span>Workspace-approved domains</span>
+                          <textarea
+                            aria-label="Additional Terminal domains"
+                            data-saved-value={terminalSettings.data.customDomains.join('\n')}
+                            disabled={!isAdmin || terminalSettings.data.availability !== 'supported'}
+                            onChange={(event) => { terminalPolicyDirty.current = true; setTerminalDomains(event.target.value); setTerminalPreview(null); }}
+                            placeholder="packages.example.com&#10;*.downloads.example.com"
+                            rows={3}
+                            value={terminalDomains}
+                          />
+                          <small>{terminalDraftRemainingSlots === null
+                            ? 'Review the change to verify remaining workspace-domain capacity.'
+                            : `${terminalDraftRemainingSlots ?? 0} workspace domain slots remain.`} Enter domains only—no schemes, ports, paths, IPs, or CIDR blocks.</small>
+                        </label>
+                      </div>
+                    )}
+                    <div className="terminal-network-actions">
+                      <span><Badge>{terminalSettings.data.verificationState}</Badge> Revision {terminalSettings.data.revision}</span>
+                      <Button
+                        disabled={!isAdmin || !terminalPolicyChanged || terminalSettings.data.availability !== 'supported' || previewTerminalPolicy.isPending || applyTerminalPolicy.isPending}
+                        onClick={() => previewTerminalPolicy.mutate()}
+                      >
+                        {previewTerminalPolicy.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                        Review network change
+                      </Button>
+                    </div>
+                    {previewTerminalPolicy.error && <InlineError>{previewTerminalPolicy.error.message}</InlineError>}
+                    {applyTerminalPolicy.error && <InlineError>{applyTerminalPolicy.error.message}</InlineError>}
+                    {terminalPolicyFailure.length > 0 && (
+                      <div className="terminal-network-failure-outcomes" role="status">
+                        <strong>Sandbox outcomes</strong>
+                        <ul>{terminalPolicyFailure.map((outcome) => (
+                          <li key={outcome.workstreamId}>{outcome.title}: {outcome.outcome}</li>
+                        ))}</ul>
+                      </div>
+                    )}
+                    {terminalPreview && (
+                      <div className="terminal-network-confirmation" role="alert">
+                        <Wifi aria-hidden="true" size={18} />
+                        <span>
+                          <strong>Confirm {terminalPreview.proposedMode === 'full_internet' ? 'Full internet' : 'Trusted only'}</strong>
+                          <small>{terminalPreview.warning} {terminalPreview.affectedWorkstreamIds.length} active sandbox{terminalPreview.affectedWorkstreamIds.length === 1 ? '' : 'es'} will be stopped.</small>
+                          <details>
+                            <summary>Review exact before and after targets</summary>
+                            <strong>Before</strong>
+                            <ul>{terminalSettings.data.customDomains.length > 0
+                              ? terminalSettings.data.customDomains.map((domain) => <li key={`before:${domain}`}><code>{domain}</code></li>)
+                              : <li>None</li>}</ul>
+                            <strong>After</strong>
+                            <ul>{terminalPreview.customDomains.length > 0
+                              ? terminalPreview.customDomains.map((domain) => <li key={`after:${domain}`}><code>{domain}</code></li>)
+                              : <li>None</li>}</ul>
+                            {terminalPreview.affectedWorkstreams.length > 0 && (
+                              <><strong>Work streams stopped</strong><ul>{terminalPreview.affectedWorkstreams.map((stream) => <li key={stream.id}>{stream.title}</li>)}</ul></>
+                            )}
+                          </details>
+                        </span>
+                        <div className="terminal-network-confirmation-actions">
+                          <Button onClick={() => {
+                            const contents = terminalPreview.customDomains.join('\n');
+                            const url = URL.createObjectURL(new Blob([`${contents}\n`], { type: 'text/plain' }));
+                            const anchor = document.createElement('a');
+                            anchor.href = url;
+                            anchor.download = `terminal-workspace-domains-revision-${terminalPreview.expectedRevision + 1}.txt`;
+                            anchor.click();
+                            URL.revokeObjectURL(url);
+                          }}>Download workspace domains</Button>
+                          <Button disabled={applyTerminalPolicy.isPending} onClick={() => applyTerminalPolicy.mutate()}>
+                            {applyTerminalPolicy.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                            Confirm network change
+                          </Button>
+                          <Button disabled={applyTerminalPolicy.isPending} onClick={() => setTerminalPreview(null)}>Cancel</Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="settings-pane-heading settings-pane-heading-count">
                   <div><h2>Members</h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>

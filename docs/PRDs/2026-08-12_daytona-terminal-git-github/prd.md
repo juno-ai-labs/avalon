@@ -5,7 +5,8 @@
 > An Avalon work stream can lazily acquire an isolated Daytona workspace in
 > which the agent writes and runs code, creates artifacts, edits one repository
 > with real `git`, and publishes an authorized pull request through Avalon.
-> Companion design: [`design.md`](./design.md). Research record:
+> Implementation plan: [`plan.md`](./plan.md). Companion design:
+> [`design.md`](./design.md). Research record:
 > [`research.md`](./research.md). Standing contract:
 > [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
@@ -86,8 +87,9 @@ expiry so the example cost assumptions can be replaced with observed values.
     merged in PR #144.
 11. An owner or administrator can select Trusted only or Full internet. Trusted
     only is the default and accepts additional exact or wildcard domains.
-12. Trusted only visibly includes non-removable named groups for GitHub and
-    Avalon, system packages, Python packages, and JavaScript packages.
+12. Trusted only always includes a non-removable, server-managed baseline for
+    platform and package access without exposing its targets to participants or
+    the model.
 13. Secrets, repository content, command data, outputs, and audit records remain
     in the workspace's selected region; EU availability waits for vendor assurance.
 
@@ -187,7 +189,9 @@ wildcards. Daytona currently limits a domain allow-list to 20 entries, so Avalon
 reserves the entries required by its baseline and shows the remaining custom
 capacity instead of promising a separate product limit.
 
-The baseline is shown as four compact, non-removable groups:
+The baseline remains a server-owned implementation detail and is not shown in
+Settings, confirmations, downloads, or model context. Its reviewed internal
+groups are:
 
 | Settings group | Purpose |
 | --- | --- |
@@ -196,12 +200,11 @@ The baseline is shown as four compact, non-removable groups:
 | Python packages | PyPI package files and the reviewed `uv` distribution endpoints |
 | JavaScript packages | npm package files and the reviewed `pnpm` distribution endpoints |
 
-A reviewed server manifest expands these groups into exact domains. The primary
-settings screen names the groups; an expandable **Effective destinations** panel
-shows Daytona-required targets, the exact baseline expansion, workspace additions,
-and before/after changes, with a download action in the same panel. Reachability
-does not imply package trust, credentials, publishing rights, or account
-administration.
+A reviewed server manifest expands these groups into exact domains. Settings
+shows only workspace-approved domains, their canonical before/after changes, and
+their download. Avalon-managed and Daytona-required destinations remain hidden.
+Reachability does not imply package trust, credentials, publishing rights, or
+account administration.
 
 Daytona documents GitHub, npm, PyPI, and signed system repositories as essential
 services. Provider acceptance tests must prove that they remain reachable with a
@@ -210,8 +213,9 @@ endpoints, and organization-denied targets remain blocked. A failed assertion
 blocks Trusted-only launch; this PRD does not add a proxy fallback.
 The effective provider configuration may contain no implicit Daytona destination
 outside the reviewed manifest. If Daytona requires a non-suppressible target, it
-must appear in **Effective destinations** and be approved into the immutable
-manifest; otherwise that provider version is ineligible for Trusted only.
+must be approved into the internal immutable manifest and recorded in operator
+acceptance evidence; otherwise that provider version is ineligible for Trusted
+only. It is never disclosed through participant settings or APIs.
 
 Domain enforcement also applies after resolution. On every connection,
 re-resolution, and redirect, the provider must reject loopback, link-local,
@@ -222,10 +226,11 @@ rebinding cannot cross that boundary. If Daytona's native primitive cannot meet
 this test, custom-domain and Trusted-only launch remain unavailable; Avalon does
 not add a proxy in this release.
 
-Members can view the mode and named groups but cannot mutate them. The model sees
-the effective mode and a bounded domain summary but receives no network-policy
-tool. A denied request returns `network_policy_denied` and says an owner or
-administrator may approve the domain.
+Members can view the mode but cannot inspect or mutate the managed baseline. The
+model sees the effective mode but receives neither managed targets nor a
+network-policy tool. Daytona reports a denied destination through the ordinary
+command result; the Terminal prompt explains that Trusted-only network failures
+may require an owner or administrator to approve a workspace domain.
 
 Every mode or domain mutation is regional, audited, and creates a workspace
 activity event. Before saving, Settings preflights affected active commands and
@@ -250,8 +255,8 @@ start under the new configuration.
 ### Starting and restoring the workspace
 
 Loading the plugin does not contact Daytona. The first file, command, or resource
-transfer tool obtains a work-stream lease. Avalon atomically creates a sandbox from a
-pinned snapshot or explicitly starts the current stopped or archived sandbox,
+transfer tool obtains a work-stream lease. Avalon atomically creates a sandbox from the
+configured managed snapshot or explicitly starts the current stopped or archived sandbox,
 checks its workspace identity and network revision, and executes the call.
 Concurrent first calls converge on one sandbox.
 
@@ -386,7 +391,7 @@ Launch constants are equally normative:
 | `run_command.command` | — | 32 KiB |
 | `run_command.timeoutMs` | 120,000 ms | 900,000 ms |
 | inline `stdout` and `stderr` | — | 128 KiB each, preserving a head and tail |
-| complete command output retained as a generated log | — | 10 MiB |
+| complete command output retained as a generated log | — | 5 MB |
 | imported or published resource | — | 25,000,000 bytes, the existing `MAX_ATTACHMENT_BYTES` ceiling |
 | imports or published resources per Terminal run | — | 20 each and 100 MiB total source bytes |
 
@@ -537,8 +542,9 @@ type RunCommandOutput = {
 
 The model always receives one final result; Bind may suspend and auto-resume
 internally. There is no running result or poll/input tool. Stable failures include
-`command_rejected`, `network_policy_denied`, `unsupported_runtime`, and
-`unsupported_package_manager`. Once a command is accepted, nonzero exit,
+`command_rejected`, `unsupported_runtime`, and `unsupported_package_manager`.
+Daytona network denials arrive as ordinary command output under the current
+egress-mode guidance. Once a command is accepted, nonzero exit,
 timeout, cancellation, and output-limit termination are successful tool calls
 whose `state` and `terminationReason` tell the model what happened; they are not
 transport failures. The self-healing catalog below defines when another command
@@ -592,7 +598,8 @@ overwriting it or silently choosing another path. An explicit destination that
 already exists also returns `destination_exists` unless `overwrite: true`.
 
 Stable failures include `resource_not_found`, `resource_not_importable`,
-`resource_limit_exceeded`, and `destination_exists`. Import is a sandbox write
+`resource_limit_exceeded`, `destination_exists`, and
+`destination_not_regular`. Import is a sandbox write
 with `record_before_execute` receipt policy; the host reconciles destination
 content hash, resource identity, and source hash before any retry.
 
@@ -741,6 +748,7 @@ File mutation and import failures:
 | `import_resource` | `resource_not_importable` | “The original bytes cannot be imported. Use an available resource read or view tool instead.” | `available` names `workstream_read_resource` or `workstream_view_resource`; reason explains which one to call with the same ID. |
 | `import_resource`, `publish_resource` | `resource_limit_exceeded` | “The resource exceeds the allowed size or count. Select, split, resize, or compress it before trying a new invocation.” | `field` and `expected`. |
 | `import_resource` | `destination_exists` | “The destination already contains different bytes. Choose another path, or use a new explicit import with `overwrite: true` only when replacement is intended.” | Bounded `reason` identifies whether the collision was at the automatic or explicit destination. |
+| `import_resource` | `destination_not_regular` | “The destination is not a regular file Avalon can safely replace. Choose another path.” | Reason requires an absent path or regular file beneath the workspace; links, directories, and devices are never overwritten. |
 
 An accepted command returns `RunCommandOutput`, even when the program does
 not finish successfully. The loop branches on this result rather than treating
@@ -758,7 +766,6 @@ Pre-execution command errors remain failed tool results:
 | `data.code` | Model-visible `error` | Self-healing next step |
 | --- | --- | --- |
 | `command_rejected` | “This command requests forbidden behavior. Use one bounded non-interactive command, dedicated file tools, or the authorized publication tool instead.” | Bounded `reason` names the rejected behavior and applicable route. |
-| `network_policy_denied` | “This workspace does not allow that network destination. Stop retrying it and tell the participant an owner/admin must approve it or choose Full internet.” | Bounded `reason`; the model cannot change workspace policy. |
 | `unsupported_runtime` | “This runtime is unsupported. Choose one of the available runtimes or report the limitation.” | `available` lists Bash, Python, JavaScript, TypeScript, and SQLite. |
 | `unsupported_package_manager` | “This package manager is unsupported. Use the repository’s available supported manager or report the limitation; do not rewrite the project merely to proceed.” | `available` lists apt/dpkg, pip/uv, and npm/pnpm. |
 
@@ -791,14 +798,16 @@ This table is the exhaustive launch support promise:
 | Language | Pinned snapshot capability | Supported managers/hosts |
 | --- | --- | --- |
 | Bash | Bash, POSIX `sh`, standard Unix tools | `apt`/`dpkg` for sandbox-local system packages |
-| Python | One pinned Python 3, `venv` | `pip`, `uv`, and PyPI |
-| JavaScript | Node.js 22 | `npm`, `pnpm`, and the npm registry |
-| TypeScript | Node.js 22, pinned `typescript` and `tsx` | `npm`, `pnpm`, and the npm registry |
-| SQLite | Pinned SQLite 3 CLI and Python/Node bindings in fixtures | Local database files; host-language manager when needed |
+| Python | Daytona-managed Python 3, `venv` | `pip`, `uv`, and PyPI |
+| JavaScript | Daytona-managed Node.js | `npm`, `pnpm`, and the npm registry |
+| TypeScript | Daytona-managed Node.js with tested `typescript` and `tsx` | `npm`, `pnpm`, and the npm registry |
+| SQLite | Tested SQLite 3 CLI and Python/Node bindings in fixtures | Local database files; host-language manager when needed |
 
-Manager binaries and runtime versions are pinned in the snapshot and may not
-self-update globally. Installs are repository-local, virtual-environment-local,
-or sandbox-local. For an existing repository, the agent uses a supported manager
+Effective manager and runtime versions are recorded by the provider acceptance
+probe. Daytona may update its managed default; every first creation reruns the
+compatibility bootstrap and executable manifest, failing closed on drift.
+Model-requested installs are repository-local, virtual-environment-local, or
+sandbox-local. For an existing repository, the agent uses a supported manager
 declared by its lockfile or `packageManager` field. It does not translate an
 unsupported manager or rewrite a lockfile merely to make validation pass; it
 returns `unsupported_package_manager` or `unsupported_runtime`. New scratch work
@@ -807,13 +816,15 @@ uses the smallest suitable supported manager.
 There is no custom package-manager resolver. The model uses the native CLIs and
 repository declarations it already understands. Frozen/locked install modes are
 preferred for validation when the chosen manager provides one. A package that
-redirects to an unlisted domain receives `network_policy_denied` in Trusted only.
+redirects to an unlisted domain fails through the manager's ordinary command
+output in Trusted only; the prompt tells the model to ask for policy review
+instead of attempting a bypass.
 
 The plugin injects the following exact, contract-tested system-prompt block
 alongside the tool descriptions:
 
-> You have a Daytona terminal workspace with Bash, Python, JavaScript (Node.js
-> 22), TypeScript, and SQLite. Use these tools when code is the clearest reliable way
+> You have a Daytona terminal workspace with Bash, Python, JavaScript (Node.js),
+> TypeScript, and SQLite. Use these tools when code is the clearest reliable way
 > to calculate, transform data, analyze files, validate a repository, or create a
 > graph, image, dataset, report, or archive. Prefer Bash for simple CLI/file
 > pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript
@@ -836,18 +847,18 @@ scratch root, or a relative directory below it. The caller supplies the command,
 working directory, and a timeout up to the server cap. It cannot request a PTY,
 daemon, arbitrary environment secret, Daytona ID, or host path.
 
-Short commands return their final structured result directly. For a command that
-outlives the current request window, Avalon starts a Daytona session command,
-persists its task ID, suspends the Bind run, and consumes Daytona's WebSocket log
-stream. Command exit persists bounded stdout/stderr and automatically wakes and
-resumes the Bind run with the final tool result. The model does not receive a
-poll-output tool and spends no turns checking status.
+Avalon records a stable task before starting one asynchronous Daytona session
+command. The host observes that command with bounded backoff until its wall-clock
+deadline, then persists bounded stdout/stderr before deleting the provider
+session. The model does not receive a poll-output tool and spends no turns
+checking status.
 
-If the stream drops, a low-frequency host reconciler checks the provider task
-until it reaches a terminal state or its wall-clock deadline. This is resilience,
-not model polling. Participant cancellation and the server deadline can kill the
-task. A lost result is reconciled from the task record and sandbox state; Avalon
-never blindly submits the command again.
+If the Worker is interrupted, the existing regional harness Workflow retries
+the same Bind call. The exact durable Terminal receipt, command hash, sandbox
+generation, and named Daytona session let the host reattach to the sole existing
+command. A mismatch fails as ambiguous; Avalon never blindly submits the command
+again. Participant cancellation and the server deadline kill the provider
+session and resolve the same call once.
 
 The transcript shows command, working directory, state, duration, exit code, and
 bounded output. Command and normalized `cwd` are the primary row text; the
@@ -1083,11 +1094,11 @@ with it, and every work-stream/task/publication lookup has a corresponding
 - `workspace_sandbox_network_policy_mutations`: append-only regional audit of
   mode and domain changes.
 - `sandbox_tasks`: stable task ID, tool invocation, host-derived Daytona
-  session/task name and provider ID, working directory, `planned`/`submitting`/
-  `running`/`terminal` state, deadline, exit code, bounded-output resource,
-  continuation-emitted marker, optimistic version, and timestamps. This is
-  reconciliation state for `TerminalCommandWorkflow`, not a second receipt
-  ledger.
+  session/task name and optional provider ID, sandbox generation, command hash,
+  `planned`/`submitting`/`running`/terminal state, deadline, exit code,
+  termination reason, bounded output, optional generated-log resource, and
+  timestamps. This is named-session reconciliation state for the existing
+  harness Workflow, not a second receipt ledger.
 - `terminal_publication_grants`: source participant-message and run, selected
   repository and fixed refs, authenticated principal, expiry, consumed action,
   and timestamps. Only run admission or answered host elicitation can create it.
@@ -1178,20 +1189,29 @@ instead of silently substituting another environment.
 2. Provision one least-privilege Daytona principal and secret namespace per
    supported region, on a tier supporting archive, native domain allow-lists, and
    Full internet.
-3. Publish an immutable snapshot containing the five language capabilities,
-   supported managers, `git`, read-only `gh`, `rg`, and `jq`, and verify versions
-   and smoke fixtures before marking a region supported.
+3. Configure Daytona's managed `daytona-small` container snapshot. On first
+   creation Avalon idempotently creates the owned workspace, installs only
+   missing SQLite/`gh`/pnpm/`tsx` capabilities through Trusted-only apt/npm
+   hosts, and executes the complete manifest before use. Record effective
+   versions and smoke fixtures before marking a region supported. A breaking
+   managed update fails closed; VM snapshots remain outside the launch scope.
 4. Configure the trusted regional branch/PR publisher and GitHub App access. All
    tools remain exposed when publication is unhealthy; publication calls fail
    closed with an actionable error.
 5. Validate Daytona's essential-service interaction, 20-entry domain limit,
    wildcard behavior, blocked-target behavior, WebSocket command completion,
    archive/restore, and regional location against the provider contract.
+6. Bind both regional Workers to the dedicated account-level
+   `avalon_terminal_operations` Analytics Engine dataset. Record separate
+   provider-create, policy-read-back, compatibility-install, manifest-verify,
+   stopped-warm, and archived-restore timings without tenant or operation IDs.
+   Provide a sampling-aware human-readable report before deciding that an
+   Avalon-owned image is worth its build/activation/update lifecycle.
 
 Each regional Wrangler configuration declares the non-secret static capability
 `TERMINAL_REGION_CAPABILITY` as `supported` or `unsupported`; local development
 defaults to `unsupported`. A regional Worker may declare `supported` only when
-its `DAYTONA_API_KEY`, pinned snapshot/location, native-policy probes, and
+its `DAYTONA_API_KEY`, managed snapshot/location, native-policy probes, and
 publisher health checks pass. The checked-in Global and EU configurations start
 `unsupported`; Global changes to `supported` in the shipping configuration only
 after its named acceptance flow passes, while EU remains `unsupported` until its
@@ -1220,7 +1240,9 @@ work. A call blocked by the breaker returns the normal model-visible
    Activating the regional circuit breaker leaves all tools visible but makes a
    first sandbox call fail with non-retryable `sandbox_unavailable` unless an
    operator supplies `retryAfterMs`. Startup rejects a missing or unknown
-   `TERMINAL_REGION_CAPABILITY` value.
+   `TERMINAL_REGION_CAPABILITY` value. A region marked supported but missing any
+   Daytona credential, endpoint, target, or snapshot degrades to unsupported
+   without failing Worker startup.
 2. Bash, Python, JavaScript, TypeScript, and SQLite fixtures run, fail once in a
    controlled way, are revised, and pass. Snapshot verification fails on version
    drift.
@@ -1264,9 +1286,9 @@ work. A call blocked by the breaker returns the normal model-visible
     the existing read/search/view/summarize tools as their kind permits.
     Oversized/excessive resources fail explicitly.
 11. New and existing workspaces default to Trusted only. An owner/admin can add
-    and remove exact and wildcard domains; members cannot. Settings show four
-    named baseline groups, every provider-required destination, remaining
-    provider capacity, exact expansion, and download in one panel. With active
+    and remove exact and wildcard domains; members cannot. Settings hide the
+    server-managed baseline and show remaining capacity plus canonical
+    before/after workspace domains and their download. With active
     work, save requires confirmation, exposes pending/verified/failure states,
     preserves a conflicted typed domain, and reports stopped sandboxes.
 12. Trusted only denies an unlisted domain and Full internet admits it after
@@ -1324,6 +1346,17 @@ work. A call blocked by the breaker returns the normal model-visible
     owning subsystem documents and their running changelogs, and every shipped
     descriptor is rechecked against [`../../agent-tools.md`](../../agent-tools.md)
     and the required tool/plugin documentation in [`../../prds.md`](../../prds.md).
+22. Every Daytona create, managed bootstrap, and lifecycle start emits one
+    non-blocking `terminal_platform_v1` Analytics Engine point with operation,
+    outcome, region, configured snapshot, source state, failed phase, release,
+    separate create/read-back/install/verify durations, and only allowlisted
+    installed-capability names. A checked-in CLI validates `--days 1..90`,
+    region, and snapshot filters; queries weighted counts and p50/p95 values;
+    and prints the actual observation start/end, warm/restore latency, bootstrap
+    phases, installed gaps, and an insufficient-sample/image-benchmark signal.
+    Telemetry failure never changes sandbox behavior, and no point carries a
+    workspace, work-stream, run, user, sandbox, repository, resource, command,
+    path, output, or credential identifier.
 
 ## Open questions
 

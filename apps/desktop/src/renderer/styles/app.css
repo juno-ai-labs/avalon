@@ -1149,6 +1149,103 @@ pre {
 .settings-toggle:has(input:focus-visible) > span { box-shadow: 0 0 0 2px #6a7f95; }
 .settings-toggle:has(input:disabled) { cursor: not-allowed; opacity: .52; }
 
+.terminal-network-card { display: flex; flex-direction: column; }
+.terminal-network-notice,
+.terminal-network-confirmation {
+  align-items: center;
+  background: #292d28;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.terminal-network-notice > svg,
+.terminal-network-confirmation > svg { color: var(--brand); flex: none; }
+.terminal-network-notice > span,
+.terminal-network-confirmation > span { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.terminal-network-notice strong,
+.terminal-network-confirmation strong { color: var(--ink); font-size: 11.5px; }
+.terminal-network-notice small,
+.terminal-network-confirmation small { font-size: 10px; line-height: 1.5; margin-top: 2px; }
+.terminal-network-modes { border: 0; display: grid; gap: 8px; margin: 0; padding: 14px; }
+.terminal-network-modes legend {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .025em;
+  padding: 0;
+  text-transform: uppercase;
+}
+.terminal-network-modes > label {
+  align-items: flex-start;
+  background: #292a26;
+  border: 1px solid #3a3b35;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  gap: 9px;
+  padding: 10px;
+}
+.terminal-network-modes > label:has(input:checked) { border-color: #527860; box-shadow: inset 0 0 0 1px #365341; }
+.terminal-network-modes > label:has(input:focus-visible) { outline: 2px solid #6a7f95; outline-offset: 1px; }
+.terminal-network-modes input { accent-color: var(--brand); margin-top: 2px; }
+.terminal-network-modes label > span { display: flex; flex-direction: column; }
+.terminal-network-modes strong { font-size: 11.5px; }
+.terminal-network-modes small { color: var(--muted); font-size: 10px; line-height: 1.45; margin-top: 2px; }
+.terminal-network-modes:disabled { opacity: .58; }
+.terminal-network-domains { border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 9px; padding: 14px; }
+.terminal-network-domains > label { display: flex; flex-direction: column; gap: 5px; }
+.terminal-network-domains > label > span { font-size: 11px; font-weight: 600; }
+.terminal-network-domains textarea {
+  background: #1f201d;
+  border: 1px solid #3a3b35;
+  border-radius: 6px;
+  color: var(--ink);
+  font: 10.5px/1.5 var(--font-mono);
+  min-height: 66px;
+  padding: 8px 9px;
+  resize: vertical;
+}
+.terminal-network-domains textarea:focus { border-color: #607768; outline: none; }
+.terminal-network-domains small { color: var(--muted); font-size: 9.5px; line-height: 1.45; }
+.terminal-network-actions {
+  align-items: center;
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  justify-content: space-between;
+  padding: 11px 14px;
+}
+.terminal-network-actions > span { align-items: center; color: var(--muted); display: flex; font-size: 9.5px; gap: 6px; }
+.terminal-network-failure-outcomes {
+  background: #322724;
+  border-top: 1px solid #65443d;
+  color: #d9b7ae;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 10px 14px;
+}
+.terminal-network-failure-outcomes strong { color: #f0d6cf; }
+.terminal-network-failure-outcomes ul { margin: 4px 0 0; padding-left: 18px; }
+.terminal-network-confirmation {
+  align-items: flex-start;
+  border-bottom: 0;
+  border-top: 1px solid #46604e;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.terminal-network-confirmation > span { grid-column: 2; }
+.terminal-network-confirmation details { margin-top: 8px; }
+.terminal-network-confirmation details > ul { list-style: none; margin: 3px 0 8px; padding: 0; }
+.terminal-network-confirmation details code { overflow-wrap: anywhere; }
+.terminal-network-confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  grid-column: 2;
+  margin-top: 8px;
+}
+
 /* Digest — day chips, the time list, and the save bar. The cards reuse
    .settings-list-card so the pane keeps the same surface as every other
    settings section; only the controls inside them are new. */
@@ -2309,6 +2406,62 @@ pre {
 .detail-list > div:last-child { border-bottom: 0; }
 .detail-list dt { color: #74746d; font-size: 9.5px; }
 .detail-list dd { color: #aaa9a2; font-size: 9.5px; margin: 0; overflow-wrap: anywhere; }
+.terminal-rail-summary { display: flex; flex-direction: column; gap: 9px; }
+.terminal-rail-state { align-items: center; display: flex; gap: 8px; }
+.terminal-rail-state > span:last-child { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.terminal-rail-state strong { color: #c5c4bd; font-size: 10.5px; }
+.terminal-rail-state small { color: #77766f; font-size: 9px; line-height: 1.45; margin-top: 2px; }
+.terminal-rail-details { background: #292a26; border-radius: 6px; padding: 2px 5px; }
+.terminal-repository-select { display: flex; flex-direction: column; gap: 5px; }
+.terminal-repository-select > span { color: #74746d; font-size: 9.5px; }
+.terminal-repository-select select {
+  background: #292a26;
+  border: 1px solid #41423c;
+  border-radius: 6px;
+  color: #b5b4ad;
+  font-size: 9.5px;
+  min-width: 0;
+  padding: 7px 8px;
+  width: 100%;
+}
+.terminal-repository-select select:focus { border-color: #607768; outline: none; }
+.terminal-repository-request-card {
+  align-items: center;
+  background: #292e29;
+  border: 1px solid #46594a;
+  border-radius: 9px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin: 10px 22px;
+  padding: 12px 14px;
+}
+.terminal-repository-request-card strong { color: #d2d7d0; font-size: 12px; }
+.terminal-repository-request-card p { color: #92998f; font-size: 10px; line-height: 1.45; margin: 3px 0 0; }
+.terminal-repository-request-card select {
+  background: #20231f;
+  border: 1px solid #526756;
+  border-radius: 6px;
+  color: #c8cec5;
+  flex: none;
+  font-size: 10px;
+  max-width: 320px;
+  padding: 7px 9px;
+}
+.terminal-retention-warning {
+  align-items: flex-start;
+  background: #332f25;
+  border: 1px solid #51472f;
+  border-radius: 6px;
+  color: #c3b58d;
+  display: flex;
+  font-size: 9px;
+  gap: 6px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 7px 8px;
+}
+.terminal-retention-warning > svg { flex: none; margin-top: 1px; }
 .copy-detail { align-items: flex-start; display: flex; gap: 3px; min-width: 0; }
 .copy-detail > span { display: block; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .copy-detail .icon-button { height: 20px; width: 20px; }
