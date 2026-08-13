@@ -176,7 +176,8 @@ than an email client will honour.
 
 ## Testing
 
-Two suites, and they cover different failures — neither subsumes the other.
+Two source guards and two component suites cover different failures — none
+subsumes the others.
 
 ```bash
 pnpm --filter @avalon/desktop exec vitest run src/renderer/styles/app.css.node.test.ts

@@ -132,6 +132,9 @@ describe('uploaded attachment drafts', () => {
         ('markdown-resource', '${workspaceId}', 'uploaded_file', 'avalon_upload', 'brief.md',
          'text/markdown', 'source-markdown', '${'a'.repeat(64)}', NULL, NULL, NULL,
          'pending', NULL, NULL, '{}', 'attached', '2026-08-12', '2026-08-12'),
+        ('csv-resource', '${workspaceId}', 'uploaded_file', 'avalon_upload', '数据.csv',
+         'text/csv', 'source-csv', '${'d'.repeat(64)}', NULL, NULL, NULL,
+         'pending', NULL, NULL, '{}', 'attached', '2026-08-12', '2026-08-12'),
         ('document-resource', '${workspaceId}', 'uploaded_file', 'avalon_upload', 'proposal.docx',
          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
          'source-document', '${'b'.repeat(64)}', 'model-document', 'text/markdown',
@@ -140,6 +143,7 @@ describe('uploaded attachment drafts', () => {
     `);
     const contents = new Map([
       ['source-markdown', '# Source brief'],
+      ['source-csv', 'month,total\nJuly,42'],
       ['model-document', '# Converted proposal'],
     ]);
     const reads: string[] = [];
@@ -162,11 +166,16 @@ describe('uploaded attachment drafts', () => {
 
     const markdown = await service.preview('markdown-resource', new AbortController().signal);
     expect(await markdown.text()).toBe('# Source brief');
-    expect(markdown.headers.get('content-disposition')).toBe('inline; filename="brief.md"');
+    expect(markdown.headers.get('content-disposition')).toBe("inline; filename=\"brief.md\"; filename*=UTF-8''brief.md");
+
+    const csv = await service.preview('csv-resource', new AbortController().signal);
+    expect(await csv.text()).toBe('month,total\nJuly,42');
+    expect(csv.headers.get('content-disposition'))
+      .toBe("inline; filename=\"__.csv\"; filename*=UTF-8''%E6%95%B0%E6%8D%AE.csv");
 
     const document = await service.preview('document-resource', new AbortController().signal);
     expect(await document.text()).toBe('# Converted proposal');
-    expect(reads).toEqual(['source-markdown', 'model-document']);
+    expect(reads).toEqual(['source-markdown', 'source-csv', 'model-document']);
     database.close();
   });
 
