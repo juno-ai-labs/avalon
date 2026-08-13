@@ -111,6 +111,9 @@ field strict and rely on harness normalization. A broad multi-type domain value,
 such as a spreadsheet cell that can also be boolean or null, remains valid; a
 real string-or-number domain uses explicit `anyOf` branches, documents why the
 types mean different things, and adds focused validation coverage.
+The rule follows only expressions reachable from a tool's `inputSchema`, so a
+module may still use coercion for an unrelated HTTP query or other non-tool
+boundary without receiving a false positive.
 
 If using zod for parsing do not just return the zod error object. Provide natural
 language errors and more importantly provide instructions on how to fix the error.
@@ -193,11 +196,17 @@ result gets dropped when a retry would have worked.
 When an executor throws a Zod error, the harness compares its normalized input
 with the same JSON Schema advertised to the model. If that input is invalid, it
 condenses the closest union branch, caps it, and returns `kind: "validation"`
-with field paths and an instruction to retry. If the declared input is valid,
-the Zod failure came from a stricter domain check or downstream data; the harness
-keeps it external and tells the model not to mutate accepted arguments. Do not
-catch and stringify either Zod error inside the tool, which would restore the
-raw issue tree and defeat that distinction.
+with field paths and an instruction to retry. A code-authored refinement that
+JSON Schema cannot represent must also be exposed through the `HarnessTool`
+`validateInput` hook; connector adapters provide the equivalent
+`validateToolInput` hook. That keeps messages such as “choose at least one field
+to update” model-actionable. If both declared and refined input are valid, the
+Zod failure came from downstream data. A read or provider-idempotent call may
+invite one retry, but a `record_before_execute` write becomes
+`ambiguous_external_write` and stops: the provider mutation may already have
+succeeded, so retry guidance could duplicate it. Do not catch and stringify
+either Zod error inside the tool, which would restore the raw issue tree and
+defeat that distinction.
 
 ### 6. Hard, predictable limits beat hidden privilege gates
 
@@ -353,9 +362,11 @@ that remediation.
   and classify a caught Zod error; it does not enforce the full contract before
   execution. Author the real schema with zod, convert it for `inputSchema`, and
   parse `rawArgs` as the first statement of the executor. Make it `.strict()` if
-  an unexpected key should be an error. Let a Zod rejection reach the harness so
-  it can distinguish downstream validation from bad declared input. Never cast
-  across the boundary.
+  an unexpected key should be an error. When it contains `.refine()` or
+  `.superRefine()`, attach the same schema through `validateInput` (or a
+  connector's `validateToolInput`) because `z.toJSONSchema` cannot carry the
+  callback. Let a Zod rejection reach the harness so it can distinguish
+  downstream validation from bad declared input. Never cast across the boundary.
 - **Choose `serial` deliberately.** This one is not a `ToolDefinition` field: it
   lives on the `HarnessTool` wrapper beside `definition` and `execute`, because
   it orders *execution* rather than describing policy. Bind already runs writes

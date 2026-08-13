@@ -50,6 +50,17 @@ describe("GitHub connector", () => {
         limit: { type: "integer" },
       },
     });
+    expect(adapter.validateToolInput?.("issues.update", {
+      owner: "juno-ai-labs",
+      repo: "avalon",
+      issueNumber: 149,
+    })).toBeInstanceOf(Error);
+    expect(adapter.validateToolInput?.("issues.update", {
+      owner: "juno-ai-labs",
+      repo: "avalon",
+      issueNumber: 149,
+      title: "Updated title",
+    })).toBeNull();
 
     const install = await adapter.beginAuthorization!({
       state: "s".repeat(32),

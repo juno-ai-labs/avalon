@@ -92,6 +92,29 @@ describe("tool argument normalization", () => {
       .toEqual({ filter: { all: [{ value: 2.5 }] } });
   });
 
+  it("bounds work for recursively branching provider schemas", () => {
+    const schema = {
+      $ref: "#/$defs/node",
+      $defs: {
+        node: {
+          allOf: [
+            { $ref: "#/$defs/node" },
+            { $ref: "#/$defs/node" },
+          ],
+        },
+      },
+    };
+
+    expect(normalizeToolArguments("unchanged", schema)).toBe("unchanged");
+  });
+
+  it("uses number semantics when a type array redundantly includes integer", () => {
+    expect(normalizeToolArguments({ value: "1.5" }, {
+      type: "object",
+      properties: { value: { type: ["integer", "number"] } },
+    })).toEqual({ value: 1.5 });
+  });
+
   it("preserves numeric-looking strings whenever the schema accepts strings", () => {
     expect(normalizeToolArguments({ id: "00123", cell: "42" }, {
       type: "object",

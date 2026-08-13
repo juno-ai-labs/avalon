@@ -762,6 +762,9 @@ describe("connector tools selected for harness runs", () => {
       "calendar.create_event",
       "calendar.update_event",
     ]);
+    const updateEvent = mail?.tools.find((tool) => tool.definition.name === "calendar.update_event");
+    expect(updateEvent?.validateInput?.({ eventId: "event-1" })).toBeInstanceOf(Error);
+    expect(updateEvent?.validateInput?.({ eventId: "event-1", summary: "Updated" })).toBeNull();
 
     // The files plugin's examples are checked against its schemas too, so an
     // example cannot outlive the parameter it demonstrates.

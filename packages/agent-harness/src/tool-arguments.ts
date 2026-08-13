@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const MAX_SCHEMA_DEPTH = 64;
+const MAX_SCHEMA_VISITS = 10_000;
 const MAX_VALIDATION_ISSUES = 5;
 const MAX_VALIDATION_ERROR_CHARACTERS = 1_200;
 const JSON_NUMBER_TEXT = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u;
@@ -9,6 +10,7 @@ const UNSAFE_REFERENCE_SEGMENTS = new Set(["__proto__", "constructor", "prototyp
 type JsonObject = Record<string, unknown>;
 type NumericKind = "integer" | "number";
 type Normalized = { value: unknown; changed: boolean };
+type SchemaVisitBudget = { remaining: number };
 
 /**
  * Apply the one model-tolerance rule shared by every harness tool: a string may
@@ -20,7 +22,7 @@ type Normalized = { value: unknown; changed: boolean };
  * text must not change meaning merely because their characters look numeric.
  */
 export function normalizeToolArguments(input: unknown, schema: Record<string, unknown>): unknown {
-  return normalizeValue(input, schema, schema, 0).value;
+  return normalizeValue(input, schema, schema, 0, { remaining: MAX_SCHEMA_VISITS }).value;
 }
 
 /**
@@ -59,19 +61,24 @@ function normalizeValue(
   schemaValue: unknown,
   rootSchema: JsonObject,
   depth: number,
+  budget: SchemaVisitBudget,
 ): Normalized {
-  if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue)) return { value: input, changed: false };
+  if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue) || !consumeSchemaVisit(budget)) {
+    return { value: input, changed: false };
+  }
   const schema = schemaValue;
   let current: Normalized = { value: input, changed: false };
 
   const reference = typeof schema.$ref === "string" ? resolveLocalReference(rootSchema, schema.$ref) : null;
-  if (reference) current = mergeNormalized(current, normalizeValue(current.value, reference, rootSchema, depth + 1));
+  if (reference) {
+    current = mergeNormalized(current, normalizeValue(current.value, reference, rootSchema, depth + 1, budget));
+  }
 
-  current = mergeNormalized(current, normalizeDirect(current.value, schema, rootSchema, depth + 1));
+  current = mergeNormalized(current, normalizeDirect(current.value, schema, rootSchema, depth + 1, budget));
 
   if (Array.isArray(schema.allOf)) {
     for (const branch of schema.allOf) {
-      current = mergeNormalized(current, normalizeValue(current.value, branch, rootSchema, depth + 1));
+      current = mergeNormalized(current, normalizeValue(current.value, branch, rootSchema, depth + 1, budget));
     }
   }
 
@@ -82,11 +89,11 @@ function normalizeValue(
       : null;
   if (alternatives?.length) {
     const candidates = alternatives.map((branch, index) => {
-      const normalized = normalizeValue(current.value, branch, rootSchema, depth + 1);
+      const normalized = normalizeValue(current.value, branch, rootSchema, depth + 1, budget);
       return {
         ...normalized,
         index,
-        score: schemaMismatchScore(normalized.value, branch, rootSchema, depth + 1),
+        score: schemaMismatchScore(normalized.value, branch, rootSchema, depth + 1, budget),
       };
     });
     candidates.sort((left, right) =>
@@ -106,6 +113,7 @@ function normalizeDirect(
   schema: JsonObject,
   rootSchema: JsonObject,
   depth: number,
+  budget: SchemaVisitBudget,
 ): Normalized {
   const numericKind = exclusiveNumericKind(schema);
   if (numericKind && typeof input === "string") {
@@ -118,7 +126,7 @@ function normalizeDirect(
     const prefixItems = Array.isArray(schema.prefixItems) ? schema.prefixItems : [];
     const values = input.map((item, index) => {
       const itemSchema = prefixItems[index] ?? schema.items;
-      const normalized = normalizeValue(item, itemSchema, rootSchema, depth + 1);
+      const normalized = normalizeValue(item, itemSchema, rootSchema, depth + 1, budget);
       changed ||= normalized.changed;
       return normalized.value;
     });
@@ -133,9 +141,9 @@ function normalizeDirect(
   for (const [key, value] of Object.entries(input)) {
     let normalized: Normalized = { value, changed: false };
     if (Object.prototype.hasOwnProperty.call(properties, key)) {
-      normalized = normalizeValue(value, properties[key], rootSchema, depth + 1);
+      normalized = normalizeValue(value, properties[key], rootSchema, depth + 1, budget);
     } else if (isObject(schema.additionalProperties)) {
-      normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1);
+      normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1, budget);
     }
     changed ||= normalized.changed;
     entries.push([key, normalized.value]);
@@ -151,8 +159,8 @@ function exclusiveNumericKind(schema: JsonObject): NumericKind | null {
       ? schema.type.filter((value): value is string => typeof value === "string")
       : [];
   if (types.includes("string")) return null;
-  if (types.includes("integer")) return "integer";
   if (types.includes("number")) return "number";
+  if (types.includes("integer")) return "integer";
   return null;
 }
 
@@ -172,12 +180,13 @@ function schemaMismatchScore(
   schemaValue: unknown,
   rootSchema: JsonObject,
   depth: number,
+  budget: SchemaVisitBudget,
 ): number {
-  if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue)) return 0;
+  if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue) || !consumeSchemaVisit(budget)) return 0;
   const schema = schemaValue;
   let score = 0;
   const reference = typeof schema.$ref === "string" ? resolveLocalReference(rootSchema, schema.$ref) : null;
-  if (reference) score += schemaMismatchScore(input, reference, rootSchema, depth + 1);
+  if (reference) score += schemaMismatchScore(input, reference, rootSchema, depth + 1, budget);
 
   const types = typeof schema.type === "string"
     ? [schema.type]
@@ -196,7 +205,7 @@ function schemaMismatchScore(
     score += required.filter((key) => !Object.prototype.hasOwnProperty.call(input, key)).length * 10;
     for (const [key, nestedSchema] of Object.entries(properties)) {
       if (Object.prototype.hasOwnProperty.call(input, key)) {
-        score += schemaMismatchScore(input[key], nestedSchema, rootSchema, depth + 1);
+        score += schemaMismatchScore(input[key], nestedSchema, rootSchema, depth + 1, budget);
       }
     }
     if (schema.additionalProperties === false) {
@@ -205,13 +214,13 @@ function schemaMismatchScore(
   } else if (Array.isArray(input)) {
     const prefixItems = Array.isArray(schema.prefixItems) ? schema.prefixItems : [];
     for (const [index, item] of input.entries()) {
-      score += schemaMismatchScore(item, prefixItems[index] ?? schema.items, rootSchema, depth + 1);
+      score += schemaMismatchScore(item, prefixItems[index] ?? schema.items, rootSchema, depth + 1, budget);
     }
   }
 
   if (Array.isArray(schema.allOf)) {
     score += schema.allOf.reduce(
-      (total, branch) => total + schemaMismatchScore(input, branch, rootSchema, depth + 1),
+      (total, branch) => total + schemaMismatchScore(input, branch, rootSchema, depth + 1, budget),
       0,
     );
   }
@@ -221,9 +230,16 @@ function schemaMismatchScore(
       ? schema.oneOf
       : null;
   if (alternatives?.length) {
-    score += Math.min(...alternatives.map((branch) => schemaMismatchScore(input, branch, rootSchema, depth + 1)));
+    score += Math.min(...alternatives.map((branch) =>
+      schemaMismatchScore(input, branch, rootSchema, depth + 1, budget)));
   }
   return score;
+}
+
+function consumeSchemaVisit(budget: SchemaVisitBudget): boolean {
+  if (budget.remaining <= 0) return false;
+  budget.remaining -= 1;
+  return true;
 }
 
 function valueMatchesType(value: unknown, type: string): boolean {

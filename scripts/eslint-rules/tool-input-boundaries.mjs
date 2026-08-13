@@ -65,10 +65,9 @@ export const toolInputNumberBoundaryRule = {
   },
   create(context) {
     const sourceCode = context.sourceCode ?? context.getSourceCode();
-    let hasToolInputSchema = false;
-    const coercions = [];
     const schemaInitializers = new Map();
     const toolSchemas = [];
+    const reportedCoercions = new Set();
     const directCoerceBindings = new Set();
     const zodBindings = new Set();
 
@@ -101,6 +100,14 @@ export const toolInputNumberBoundaryRule = {
       if (!value || seen.has(value)) return;
       seen.add(value);
 
+      if (
+        isZodCoerceNumberCall(value, isZodBinding, isDirectCoerceBinding)
+        && !reportedCoercions.has(value)
+      ) {
+        reportedCoercions.add(value);
+        context.report({ node: value, messageId: "coercion" });
+      }
+
       if (value.type === "Identifier") {
         const variable = resolve(value);
         if (variable && schemaInitializers.has(variable)) {
@@ -127,9 +134,15 @@ export const toolInputNumberBoundaryRule = {
         return;
       }
       if (value.type === "CallExpression") {
+        inspectSchema(value.callee, seen);
         for (const argument of value.arguments) {
           if (argument.type !== "SpreadElement") inspectSchema(argument, seen);
         }
+        return;
+      }
+      if (value.type === "MemberExpression") {
+        inspectSchema(value.object, seen);
+        if (value.computed) inspectSchema(value.property, seen);
       }
     }
 
@@ -163,16 +176,10 @@ export const toolInputNumberBoundaryRule = {
       },
       Property(node) {
         if (propertyName(node) !== "inputSchema") return;
-        hasToolInputSchema = true;
         toolSchemas.push(node.value);
       },
-      CallExpression(node) {
-        if (isZodCoerceNumberCall(node, isZodBinding, isDirectCoerceBinding)) coercions.push(node);
-      },
       "Program:exit"() {
-        if (!hasToolInputSchema) return;
         for (const schema of toolSchemas) inspectSchema(schema, new Set());
-        for (const node of coercions) context.report({ node, messageId: "coercion" });
       },
     };
   },
