@@ -89,6 +89,7 @@ update it in the same change.
 | Document | Scope — read and update when changing… |
 | --- | --- |
 | [`dev-environment.md`](dev-environment.md) | **Read at the start of every session.** Install, the local D1 database, starting both regional Workers, and running the Electron client headlessly with screenshots. |
+| [`when-adding-a-new-http-header.md`](when-adding-a-new-http-header.md) | The request, CORS, response-exposure, and production-preflight checklist for adding a header between the Electron renderer and either regional API. Read before adding or consuming an HTTP header. |
 | [`sandbox.md`](sandbox.md) | The Claude Code remote sandbox: environment definition, setup script, egress host list, and version parity against CI and production. |
 | [`sandbox-proxy.md`](sandbox-proxy.md) | Outbound HTTPS failures behind the sandbox proxy — policy denials versus clients that break on the CONNECT tunnel — and the fix for each. |
 | [`e2e.md`](e2e.md) | The local smoke check and the manual desktop acceptance flows for the sidebar, signup, invitations, settings, realtime recovery, and dictation. |

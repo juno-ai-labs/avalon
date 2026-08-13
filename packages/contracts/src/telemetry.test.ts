@@ -69,7 +69,7 @@ describe("telemetry registry", () => {
     const candidate = {
       ...envelope("javascript_exception", {
         process: "renderer",
-        errorCode: "react_boundary",
+        errorCode: "network_error",
         breadcrumbStatus: "available",
         fingerprint: "a".repeat(64),
         generatedFrames: ["index-CX8Z.js:120:4", "vendor.js:88:2"],

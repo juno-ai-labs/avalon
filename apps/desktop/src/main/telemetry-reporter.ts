@@ -159,7 +159,7 @@ export class TelemetryReporter {
 
   async javascriptException(
     process: 'main' | 'preload' | 'renderer',
-    errorCode: 'type_error' | 'range_error' | 'unhandled_rejection' | 'react_boundary' | 'unknown',
+    errorCode: 'type_error' | 'range_error' | 'unhandled_rejection' | 'react_boundary' | 'network_error' | 'unknown',
     fingerprint: string,
     breadcrumbStatus: 'available' | 'stale' | 'unavailable',
     generatedFrames: string[],

@@ -5,6 +5,8 @@ import type {
 } from '../../common/desktop';
 import { desktopBridge } from './platform';
 
+const reportedJavascriptErrors = new WeakSet<Error>();
+
 export function telemetryScreenForPath(pathname: string): DesktopTelemetryScreen | null {
   if (pathname === '/workstreams/new' || pathname === '/') return 'workspace_home';
   if (/^\/workstreams\/[^/]+$/u.test(pathname)) return 'workstream';
@@ -50,8 +52,11 @@ export function reportJavascriptError(
   error: unknown,
   errorCode: DesktopJavascriptErrorCandidate['errorCode'],
 ): void {
+  if (error instanceof Error && reportedJavascriptErrors.has(error)) return;
   const candidate = javascriptErrorCandidate(error, errorCode);
-  if (candidate) fireAndForget(() => desktopBridge().reportJavascriptError(candidate));
+  if (!candidate) return;
+  reportedJavascriptErrors.add(error as Error);
+  fireAndForget(() => desktopBridge().reportJavascriptError(candidate));
 }
 
 export function installRendererErrorTelemetry(): () => void {

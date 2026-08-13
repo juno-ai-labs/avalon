@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto';
 
 export interface NormalizedJavascriptError {
   process: 'main' | 'preload' | 'renderer';
-  errorCode: 'type_error' | 'range_error' | 'unhandled_rejection' | 'react_boundary' | 'unknown';
+  errorCode: 'type_error' | 'range_error' | 'unhandled_rejection' | 'react_boundary' | 'network_error' | 'unknown';
   fingerprint: string;
   generatedFrames: string[];
 }
 
 const processes = new Set(['main', 'preload', 'renderer']);
-const errorCodes = new Set(['type_error', 'range_error', 'unhandled_rejection', 'react_boundary', 'unknown']);
+const errorCodes = new Set(['type_error', 'range_error', 'unhandled_rejection', 'react_boundary', 'network_error', 'unknown']);
 const SAFE_FRAME = /^[a-zA-Z0-9_-][a-zA-Z0-9._/-]{0,159}\.(?:c?js):\d{1,7}:\d{1,5}$/u;
 
 export async function normalizeJavascriptErrorCandidate(value: unknown): Promise<NormalizedJavascriptError> {

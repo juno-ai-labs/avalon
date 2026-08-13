@@ -106,7 +106,7 @@ describe("PostHog adapter", () => {
       },
       properties: {
         process: "renderer",
-        errorCode: "react_boundary",
+        errorCode: "network_error",
         breadcrumbStatus: "available",
         fingerprint: "b".repeat(64),
         generatedFrames: ["index-CX8Z.js:120:4", "vendor.js:88:2"],
@@ -125,7 +125,7 @@ describe("PostHog adapter", () => {
     })).resolves.toEqual({ result: "delivered", requestId: null, retryAfterMs: null });
 
     const capturedError = captureException.mock.calls[0]?.[0] as Error;
-    expect(capturedError).toMatchObject({ name: "ReactBoundary", message: "Avalon renderer exception" });
+    expect(capturedError).toMatchObject({ name: "NetworkError", message: "Avalon renderer exception" });
     expect(capturedError.stack).toContain("at private-source.ts:41:7");
     expect(capturedError.stack).not.toContain("index-CX8Z.js");
     expect(captureException).toHaveBeenCalledWith(
