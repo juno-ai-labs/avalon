@@ -17,6 +17,7 @@ function summary(): WorkstreamSummary {
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     pinPosition: null,
     lastActivityAt: '2026-08-12T12:00:00.000Z',
   };

@@ -255,6 +255,16 @@ Automation drafts may declare automation-scoped tables. Acceptance materializes 
 
 The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. The workspace scheduler fires it: it claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
+Every work-stream response carries `nextPendingWakeup`, the earliest pending row
+by due time, derived with an indexed lookup. The navigation sidebar renders that
+state as a clock at the trailing edge of the row, whether the wake-up came from
+`delay` or `at`; fired and cancelled rows do not qualify. Its tooltip shows the
+exact local due time and the first 40 characters of the prompt, with an ellipsis
+when more remains. The database read bounds the prefix and the mapper finishes
+the preview before the data crosses the API boundary, so the list never carries
+the full prompt just to label a compact marker; the work-stream tools remain the
+boundary for complete wake-up detail.
+
 That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A scheduled digest carries its frozen window the same way ([`digests.md`](digests.md#the-run)). A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
 
 ### Cancellation and deferred systems
@@ -409,7 +419,8 @@ Workspace admins may opt into **Log agent inference** from Workspace preferences
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
 | `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, the D1 reload before exposure, and revision compare-and-swap. |
 | `apps/api/test/hypersight-block-submission.test.ts` | The single nudge, the `hypersight_block_not_submitted` failure, and the discarded trailing text. |
-| `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, and claim-before-launch. |
+| `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, the pending sidebar marker, and claim-before-launch. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
 | `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
 | `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, and `toolActivityName`. |
 
@@ -508,6 +519,32 @@ the unsupported case explicit.
 must update the converter before typecheck passes. OpenRouter-specific request
 tools remain an explicit member of `ModelRequestTool`; they do not masquerade as
 OpenAI function tools.
+
+### 2026-08-12 — Pending wake-ups are visible from the navigation
+
+**What changed:** Every work-stream read reports the due time and a 40-character
+prompt preview for its earliest pending wake-up. The navigation sidebar shows a
+trailing clock for that state and lists both fields in its tooltip. Claiming,
+firing, or cancelling that wake-up advances the marker to the next one; removing
+the last pending wake-up removes it.
+
+**Why:** A completed status dot describes the latest harness run, not work the
+same run deferred. Once an agent scheduled a follow-up, the sidebar looked
+identical to a work stream with nothing left to do; the only way to discover
+the promise was to reopen it and find the earlier tool row in the transcript.
+
+**Considered and rejected:** Returning every pending wake-up or fetching them
+once per sidebar row would expose full prompts, enlarge every list response, or
+turn opening the navigation into an N+1 request path. One indexed earliest-row
+lookup in the existing work-stream projection supplies the only state the
+marker consumes, with truncation before the data crosses the API boundary.
+
+**Consequences:** The clock means a one-shot wake-up is pending; it does not
+mean the latest run is scheduled or that a recurring automation owns the work
+stream. Equal due times use the wake-up id as a stable tie-break. Older servers
+are read as having no pending wake-up during rollout, and the existing list
+reconciliation and poll advance or remove a stale marker without a separate
+wake-up-detail cache.
 
 ### 2026-08-12 — HyperSight shares the root policy and records terminal analytics
 
