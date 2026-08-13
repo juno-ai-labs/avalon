@@ -72,11 +72,17 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      verified_sha: ${{ steps.revision.outputs.sha }}
     steps:
       - name: Check out the revision being deployed
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.sha }}
+
+      - name: Resolve the verified revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -119,12 +125,12 @@ jobs:
       APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' || inputs.apply_migrations }}
 
     steps:
-      # github.sha, not github.ref: a run that waited behind another must deploy
-      # the commit that triggered it, not whatever main has become since.
+      # The dispatch input may name a mutable branch, so deploy the immutable
+      # commit that verify resolved rather than resolving the input again.
       - name: Check out the revision being deployed
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ needs.verify.outputs.verified_sha }}
 
       - name: Require Cloudflare deployment credentials
         run: |
