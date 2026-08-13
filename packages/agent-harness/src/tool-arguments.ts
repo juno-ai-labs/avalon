@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 
 const MAX_SCHEMA_DEPTH = 64;
 const MAX_VALIDATION_ISSUES = 5;
@@ -21,6 +21,27 @@ type Normalized = { value: unknown; changed: boolean };
  */
 export function normalizeToolArguments(input: unknown, schema: Record<string, unknown>): unknown {
   return normalizeValue(input, schema, schema, 0).value;
+}
+
+/**
+ * Validate the normalized model input against the same JSON Schema advertised
+ * to the provider. Tool executors may perform stricter domain checks, but a
+ * failure here is unambiguously an argument-shape error rather than a Zod error
+ * raised later while validating provider or stored data.
+ */
+export function validateToolArguments(
+  input: unknown,
+  schema: Record<string, unknown>,
+): z.ZodError | null {
+  try {
+    const result = z.fromJSONSchema(schema).safeParse(input);
+    return result.success ? null : result.error;
+  } catch {
+    // Hosted tools own their schemas. If one uses a JSON Schema feature this
+    // local classifier cannot compile, do not blame the model for a later Zod
+    // failure; preserve it as an external data-validation error.
+    return null;
+  }
 }
 
 /** Turn a Zod issue tree into one bounded correction a routed model can act on. */

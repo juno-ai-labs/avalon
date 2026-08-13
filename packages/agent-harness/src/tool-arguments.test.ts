@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   formatToolArgumentValidationError,
   normalizeToolArguments,
+  validateToolArguments,
 } from "./tool-arguments";
 
 describe("tool argument normalization", () => {
@@ -108,6 +109,27 @@ describe("tool argument normalization", () => {
         properties: { value: { type: "number" } },
       })).toEqual({ value });
     }
+  });
+
+  it("validates normalized arguments against the provider-facing schema", () => {
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        offset: { type: "integer", minimum: 0 },
+      },
+      required: ["offset"],
+    };
+
+    expect(validateToolArguments({ offset: 0 }, schema)).toBeNull();
+    expect(validateToolArguments({ offset: "0" }, schema)).toBeInstanceOf(z.ZodError);
+    expect(validateToolArguments({ offset: -1 }, schema)).toBeInstanceOf(z.ZodError);
+  });
+
+  it("does not blame arguments when a hosted schema cannot be compiled locally", () => {
+    expect(validateToolArguments({ offset: "invalid" }, {
+      $ref: "https://provider.example/schemas/tool-input.json",
+    })).toBeNull();
   });
 });
 

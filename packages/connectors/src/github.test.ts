@@ -307,6 +307,42 @@ describe("GitHub connector", () => {
     });
   });
 
+  it("does not advertise an unreachable repository page after the scan limit", async () => {
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      expect(url.pathname).toBe("/user/installations/42/repositories");
+      const page = Number(url.searchParams.get("page"));
+      return jsonResponse({
+        total_count: 1_001,
+        repositories: Array.from({ length: 100 }, (_, index) => ({
+          id: (page - 1) * 100 + index + 1,
+          name: `repo-${(page - 1) * 100 + index + 1}`,
+          full_name: `acme/repo-${(page - 1) * 100 + index + 1}`,
+        })),
+      });
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([GitHubCapabilities.metadataRead]),
+      principal: { type: "user" as const, userId: "user-1" },
+      signal: AbortSignal.timeout(1_000),
+    };
+
+    const beyondScan = await adapter.executeTool("repositories.list", {
+      page: 11,
+      perPage: 100,
+    }, context);
+    expect(beyondScan.output).toMatchObject({
+      repositories: [],
+      totalCount: 1_001,
+      totalCountIsExact: true,
+      page: 11,
+      perPage: 100,
+      hasMore: false,
+      truncated: true,
+    });
+  });
+
   it("lists bounded directories and recursive trees before reading code", async () => {
     const fetcher: FetchLike = async (input) => {
       const url = requestUrl(input);
@@ -373,6 +409,61 @@ describe("GitHub connector", () => {
       hasMore: true,
       truncated: false,
       entries: [{ path: "src" }, { path: "src/a.ts" }],
+    });
+  });
+
+  it("separates provider truncation from locally pageable directory and tree entries", async () => {
+    const directoryEntries = Array.from({ length: 1_000 }, (_, index) => ({
+      type: "file",
+      name: `file-${index}.ts`,
+      path: `src/file-${index}.ts`,
+      sha: `sha-${index}`,
+      size: index,
+    }));
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/repos/acme/widget/contents/src") {
+        return jsonResponse(directoryEntries);
+      }
+      if (url.pathname === "/repos/acme/widget/git/trees/main") {
+        expect(url.searchParams.get("recursive")).toBe("1");
+        return jsonResponse({
+          sha: "tree-sha",
+          truncated: true,
+          tree: [{ type: "blob", path: "visible.ts", sha: "visible", size: 10 }],
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([GitHubCapabilities.contentsRead]),
+      principal: { type: "user" as const, userId: "user-1" },
+      signal: AbortSignal.timeout(1_000),
+    };
+
+    const directory = await adapter.executeTool("contents.list", {
+      owner: "acme", repo: "widget", path: "src", offset: 999, limit: 1,
+    }, context);
+    expect(directory.output).toMatchObject({
+      totalCount: 1_000,
+      totalCountIsExact: false,
+      offset: 999,
+      hasMore: false,
+      truncated: true,
+      entries: [{ path: "src/file-999.ts" }],
+    });
+
+    const tree = await adapter.executeTool("contents.list", {
+      owner: "acme", repo: "widget", ref: "main", recursive: true, offset: 1, limit: 1,
+    }, context);
+    expect(tree.output).toMatchObject({
+      totalCount: 1,
+      totalCountIsExact: false,
+      offset: 1,
+      hasMore: false,
+      truncated: true,
+      entries: [],
     });
   });
 

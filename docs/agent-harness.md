@@ -153,9 +153,11 @@ is exclusively numeric and the complete string is a finite JSON number. Unsafe
 integers and ambiguous string-or-number fields remain strings and fail or parse
 under the executor's normal contract. This makes a medium model's `"0"` and the
 preferred `0` one canonical receipt identity without turning numeric-looking
-resource ids or free text into numbers. Executors remain the enforcement point;
-a Zod rejection becomes a bounded `kind: "validation"` tool result selecting the
-closest union branch rather than exposing the raw issue tree.
+resource ids or free text into numbers. Executors remain the enforcement point.
+When one throws a Zod error, the harness checks the normalized input against the
+same JSON Schema the model saw: a matching input means the Zod failure came from
+stricter domain or downstream data validation and remains external; a mismatch
+becomes a bounded `kind: "validation"` result from the closest union branch.
 
 Completed receipts replay without another provider call only while their owning
 subsystem's authorization and dependency checks still pass. Attachment list
@@ -445,13 +447,13 @@ Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceede
 
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
-A Zod error thrown by a strict tool-argument parser is handled separately. The
-model sees `kind: "validation"`, at most five actionable issues from the closest
-union branch, and no raw `invalid_union` tree. The message is capped at 1,200
-characters and never echoes submitted values. The durable execution plan may
-already exist because executor parsing is the final enforcement boundary, but a
-validation rejection performs no provider operation and remains a definitive
-failure the model may correct with a new call.
+When an executor throws a Zod error and its normalized arguments also fail the
+provider-facing schema, the model sees `kind: "validation"`, at most five
+actionable issues from the closest union branch, and no raw `invalid_union`
+tree. The message is capped at 1,200 characters and never echoes submitted
+values. If those arguments pass the declared schema, the Zod failure remains
+`kind: "external"` and tells the model to retry once, then report invalid
+downstream data rather than mutate valid arguments.
 
 The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
@@ -491,10 +493,11 @@ pass locally and fail `pnpm lint`.
 ### 2026-08-12 — Numeric tool strings normalize before receipts and validation errors become actionable
 
 **What changed:** Every Bind tool call now normalizes an exact finite JSON-number
-string only when its declared field is exclusively numeric, before hashing,
-planning, or execution. Strict executor Zod failures reach the model as bounded
-validation guidance from the closest union branch instead of raw external-error
-trees.
+string only when its declared field is exclusively numeric before hashing,
+planning, or execution. A caught Zod failure is compared with the declared
+input schema: argument failures reach the model as bounded guidance from the
+closest union branch, while later Zod failures remain external data-validation
+errors.
 
 **Why:** A production work-stream model sent `"0"` for an integer attachment
 offset. The executor returned the complete two-branch Zod union diagnostic as an
@@ -511,8 +514,8 @@ would miss hosted or future tools.
 
 **Consequences:** Numeric normalization is schema-guided and centralized;
 string-or-number unions preserve strings, malformed and unsafe values still fail,
-and `1` and `"1"` share one receipt identity. Executors must continue strict
-parsing and must let Zod errors reach the harness formatter. ESLint rejects
+and `1` and `"1"` share one receipt identity. Executors must continue stricter
+domain parsing and let downstream Zod errors reach the harness formatter. ESLint rejects
 per-tool `z.coerce.number()` and raw number-or-string compatibility types so new
 tools keep the provider schema precise and inherit the same boundary behavior.
 
