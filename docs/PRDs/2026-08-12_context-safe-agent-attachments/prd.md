@@ -307,12 +307,14 @@ remain relevant to unfinished work still belong in the LLM summary; the appendix
 supplements that working set with deterministic discovery rather than replacing
 it.
 
-The stored compaction record retains the raw LLM summary and the checkpoint
-template version. The inventory appendix is rendered for the active execution
-principal when compaction is applied and rendered again from current state when
-the checkpoint is replayed in a later run. A principal-specific inventory is
-never persisted as reusable work-stream-wide prose. This keeps additions,
-removals, note privacy, and revocation synchronized with the right sidebar.
+The stored compaction record retains the raw LLM summary, checkpoint template
+version, execution-principal key, and authorized resource-visibility fingerprint.
+Avalon captures that scope before summarization and verifies it after the model
+returns and again before persistence. The inventory appendix is never persisted.
+Replay uses the raw summary only when the active principal and resource
+fingerprint exactly match; otherwise it discards the checkpoint and rebuilds
+from durable messages. This prevents IDs or conclusions preserved in the raw
+summary from crossing a note-privacy or revocation boundary.
 
 ## Impact on the product contract
 
@@ -324,7 +326,11 @@ global surface or participation rule.
 
 ## Decision log
 
-None yet.
+- **2026-08-12 — Scope the raw compaction summary, not just its inventory.** The
+  summary may retain exact attachment IDs and conclusions, so it is stored with
+  the principal and authorized-resource fingerprint captured before the summary
+  call. A scope mismatch invalidates the checkpoint. Post-hoc redaction was
+  rejected because a private conclusion need not retain an identifiable ID.
 
 ## Key design decisions
 
@@ -369,6 +375,11 @@ None yet.
     list of names and IDs was rejected because its context cost grows with the
     work stream. Fixed-order groups tell the model what exists, while filtered
     pagination makes every authorized resource discoverable on demand.
+11. **Safe-read receipts are caches, not authority.** Registering a receipt is
+    conditional on every cited derivative hash still being current. Replay
+    rechecks current principal visibility and hashes, while list results and
+    missing visual parts re-execute. Treating a prior authorization decision as
+    durable was rejected because revocation must survive retries.
 
 ## Data model
 
@@ -388,6 +399,9 @@ encoding operational state only inside metadata JSON:
   current derivative;
 - `model_content_character_count` — total readable characters where applicable;
 - `model_content_extracted_at` — completion time; and
+- `model_content_claimed_at` and `model_content_claim_id` — a reclaimable
+  processing lease and fencing token that prevent an abandoned or superseded
+  converter from blocking or publishing; and
 - `model_content_error_code` — a bounded machine-readable terminal reason, with
   no file content or provider body.
 
@@ -403,12 +417,11 @@ the format is unsupported.
 
 No second attachment catalog is persisted for compaction. The existing raw
 `summary` in `workstream_context_compactions` remains the durable LLM output; the
-row gains `checkpoint_template_version` so replay uses the same deterministic
-shape the compaction created. `messages_json` retains only the base checkpoint
-message without a principal-specific appendix for backward compatibility. The
-authorized totals and groups are derived from `workstream_resources`,
-`message_attachments`, resource visibility, and current derivative metadata each
-time the checkpoint is rendered.
+row gains `checkpoint_template_version`, `execution_principal_key`, and
+`resource_visibility_fingerprint`. `messages_json` retains only the base
+checkpoint message without an inventory appendix. Authorized totals and groups
+are derived from current visibility when a matching checkpoint is rendered; a
+principal or fingerprint mismatch invalidates the checkpoint.
 
 ## Regional impact
 
@@ -954,9 +967,11 @@ it never deletes originals or rewrites message relationships.
    resources and message attachments and fixed-order non-empty kind groups after
    the unchanged LLM summary. It includes no filenames, MIME values, content, or
    unbounded ID list.
-7. Replaying that checkpoint after an authorized resource is added, removed, or
-   hidden regenerates the appendix to match the right sidebar for the new
-   execution principal without changing the stored LLM summary.
+7. Replaying that checkpoint with the same principal and resource fingerprint
+   regenerates the appendix to match the right sidebar. Adding, removing, hiding,
+   or revoking a resource, or changing the execution principal, invalidates the
+   checkpoint and falls back to durable transcript replay without exposing its
+   stored LLM summary.
 8. `workstream_list_resources` can filter by every `attachmentKind`, returns
    visible and matching totals, and follows deterministic cursors until
    `nextCursor` is null across more than fifty authorized resources without a
@@ -986,8 +1001,10 @@ it never deletes originals or rewrites message relationships.
    derivatives, chunk indexes, and receipts remain in the owning region and are
    removed according to resource lifecycle policy.
 15. Work-stream and automation-architect regression suites prove that removing
-    eager attachment text does not make draft attachments invisible and that a
-    retry reuses a durable bounded result rather than repeating conversion.
+    eager attachment text does not make draft attachments invisible. A retry
+    reuses a durable bounded result only after current visibility, derivative
+    hashes, and required image parts pass again; otherwise the safe read
+    re-executes without repeating an unchanged conversion.
 16. `pnpm lint`, `pnpm typecheck`, `pnpm test`, both Wrangler dry-run builds, and
     the applicable desktop release invariants are green. The visible composer,
     transcript, image, loading, and failure states are inspected in the real

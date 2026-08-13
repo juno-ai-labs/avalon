@@ -315,6 +315,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       }
       const contextTokensBeforeCompaction = state.lastPromptTokens + state.lastOutputTokens;
       const contextWindowTokens = selectedContextWindowTokens();
+      await requiredPort(
+        "Compaction authorization preparation failed",
+        () => input.compaction?.prepare?.(),
+      );
       compactionIndex += 1;
       const compactionPrimaryModel = model ?? input.config.primaryModel;
       const fallbackModels = [

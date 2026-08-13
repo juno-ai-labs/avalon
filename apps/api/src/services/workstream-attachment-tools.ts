@@ -262,10 +262,13 @@ export function createWorkstreamAttachmentTools(
           throw attachmentError("resource_version_changed", "The selected derivative and index no longer match");
         }
         const queryTerms = normalizedTerms(args.query);
-        const ranked = index.chunks.map((chunk) => ({
-          chunk,
-          score: queryTerms.reduce((score, term) => score + chunk.terms.filter((candidate) => candidate.includes(term)).length, 0),
-        })).filter((candidate) => candidate.score > 0)
+        const ranked = index.chunks.map((chunk) => {
+          const chunkText = text.slice(chunk.start, chunk.end).toLocaleLowerCase("en-US");
+          return {
+            chunk,
+            score: queryTerms.reduce((score, term) => score + (chunkText.includes(term) ? 1 : 0), 0),
+          };
+        }).filter((candidate) => candidate.score > 0)
           .sort((left, right) => right.score - left.score || left.chunk.start - right.chunk.start);
         const limit = args.limit ?? DEFAULT_SEARCH_LIMIT;
         const maxPassageCharacters = args.maxPassageCharacters ?? DEFAULT_PASSAGE_CHARACTERS;
@@ -632,6 +635,8 @@ function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): Author
     modelContentStatus: row.model_content_status,
     modelContentExtractorVersion: row.model_content_extractor_version,
     modelContentCharacterCount: row.model_content_character_count,
+    modelContentClaimedAt: row.model_content_claimed_at,
+    modelContentClaimId: row.model_content_claim_id,
   };
 }
 

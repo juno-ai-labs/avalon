@@ -80,6 +80,32 @@ describe("attachment summary service", () => {
     expect(authoredCharacters).toBeLessThanOrEqual(4_000);
   });
 
+  it("fits metadata-heavy outlines and citations inside the requested total output budget", async () => {
+    const inference = {
+      summarizeChunk: vi.fn(async () => ({
+        heading: "h".repeat(200),
+        summary: "chunk",
+        citations: Array.from({ length: 8 }, (_, index) => ({
+          label: `${index}`.repeat(200),
+          start: index,
+          end: index + 1,
+        })),
+      })),
+      synthesize: vi.fn(async () => "summary".repeat(1_000)),
+    } satisfies AttachmentSummaryInference;
+
+    const result = await summarizeAttachmentWithClient(inference, request("x".repeat(640_000), 2_000));
+    const authoredCharacters = result.summary.length
+      + result.outline.reduce((total, item) => total + item.heading.length, 0)
+      + result.citations.reduce((total, item) => total + item.label.length, 0)
+      + result.coverage.limitations.reduce((total, item) => total + item.length, 0);
+
+    expect(authoredCharacters).toBeLessThanOrEqual(2_000);
+    expect(result.summary.length).toBeGreaterThan(0);
+    expect(result.outline.length).toBeGreaterThan(0);
+    expect(result.citations.length).toBeGreaterThan(0);
+  });
+
   it("propagates isolated provider failures without returning invented coverage", async () => {
     const inference = {
       summarizeChunk: vi.fn(async () => { throw new Error("provider unavailable"); }),

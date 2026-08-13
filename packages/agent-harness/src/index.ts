@@ -2354,6 +2354,8 @@ export interface HarnessCompactionCheckpoint {
 export interface HarnessCompactionConfig {
   /** Optional catalog snapshot, primarily for deterministic hosts/tests. */
   contextWindowTokensByModel?: Readonly<Record<string, number | null | undefined>>;
+  /** Capture host authorization state before the summary sees the transcript. */
+  prepare?: () => void | Promise<void>;
   /** Persist the compacted continuation context after Bind swaps it in. */
   persist?: (checkpoint: HarnessCompactionCheckpoint) => void | Promise<void>;
   /** Render fresh, authorized deterministic context for the live checkpoint only. */

@@ -226,6 +226,40 @@ describe("work-stream attachment tools", () => {
     });
   });
 
+  it("searches complete chunk text even when the query term falls outside bounded index hints", async () => {
+    const { database, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, bucket, 51, { title: "Dense vocabulary" });
+    const vocabulary = Array.from({ length: 70 }, (_, index) => `token${String(index).padStart(2, "0")}`);
+    const text = `# Dense vocabulary\n\n${vocabulary.join(" ")} late_unique_evidence`;
+    const modelRef = `model/${resourceId}.md`;
+    const indexRef = `model/${resourceId}.json`;
+    bucket.objects.set(modelRef, new TextEncoder().encode(text));
+    bucket.objects.set(indexRef, new TextEncoder().encode(JSON.stringify({
+      offsetUnit: "utf16",
+      totalCharacters: text.length,
+      chunks: [{
+        ordinal: 0,
+        start: 0,
+        end: text.length,
+        sectionLabel: "Dense vocabulary",
+        terms: vocabulary.slice(0, 64),
+      }],
+    })));
+    database.prepare(
+      "UPDATE resources SET model_content_character_count = ?, model_content_ref = ?, model_index_ref = ? WHERE id = ?",
+    ).run(text.length, modelRef, indexRef, resourceId);
+    const search = __integrationTesting.createAvalonTools(env, input())
+      .find((tool) => tool.definition.name === "search_resource")!;
+
+    await expect(search.execute({ resourceId, query: "late_unique_evidence" }, context())).resolves.toMatchObject({
+      output: {
+        totalMatches: 1,
+        returnedMatches: 1,
+        passages: [{ text: expect.stringContaining("late_unique_evidence") }],
+      },
+    });
+  });
+
   it("lists more than fifty visible resources without duplicates and filters by every natural-language kind", async () => {
     const { database, bucket, env } = fixture();
     for (let ordinal = 0; ordinal < 55; ordinal += 1) insertReadyResource(database, bucket, ordinal);
@@ -340,6 +374,69 @@ describe("work-stream attachment tools", () => {
       code: "resource_tool_mismatch",
       details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } } },
     });
+  });
+
+  it("reauthorizes image receipts and re-executes when visual rehydration is unavailable", async () => {
+    const { database, bucket, env } = fixture();
+    const imageId = insertReadyImage(database, bucket, 62);
+    const view = __integrationTesting.createAvalonTools(env, input())
+      .find((tool) => tool.definition.name === "view_resource")!;
+    const result = await view.execute({ resourceIds: [imageId], maxDimension: 2_048 }, context());
+    expect(result.output).toMatchObject({ returned: 1, items: [{ status: "included" }] });
+    const output = result.output as { items: Array<{ version: { sha256: string } | null }> };
+    const invocationId = "70000000-0000-4000-8000-000000000001";
+    const outputRef = "receipts/view.json";
+    database.exec("PRAGMA foreign_keys = OFF");
+    database.prepare(`
+      INSERT INTO tool_invocations
+        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+         input_hash, input_json, output_ref, output_summary, status)
+      VALUES (?, ?, ?, ?, 'view-call', 'workstream_view_resource', 'hash', ?, ?, 'Viewed image', 'completed')
+    `).run(
+      invocationId,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      HARNESS_RUN_ID,
+      JSON.stringify({ resourceIds: [imageId], maxDimension: 2_048 }),
+      outputRef,
+    );
+    database.prepare(`
+      INSERT INTO attachment_tool_receipts
+        (resource_id, tool_invocation_id, derivative_sha256, created_at)
+      VALUES (?, ?, ?, '2026-08-12')
+    `).run(imageId, invocationId, output.items[0]!.version!.sha256);
+    database.exec("PRAGMA foreign_keys = ON");
+    await bucket.put(outputRef, __integrationTesting.serializeToolReplayOutput(result.output));
+
+    await expect(__integrationTesting.loadAuthorizedAttachmentReplay(env, input(), {
+      invocationId,
+      capability: "workstream.resources.view",
+      canonicalToolName: "view_resource",
+      rawInput: { resourceIds: [imageId], maxDimension: 2_048 },
+      outputRef,
+    })).resolves.toMatchObject({
+      output: { returned: 1 },
+      contentParts: [{ type: "image_url" }],
+    });
+
+    const refs = database.prepare(
+      "SELECT content_ref, model_content_ref FROM resources WHERE id = ?",
+    ).get(imageId) as { content_ref: string; model_content_ref: string };
+    bucket.objects.delete(refs.content_ref);
+    bucket.objects.delete(refs.model_content_ref);
+
+    await expect(__integrationTesting.loadAuthorizedAttachmentReplay(env, input(), {
+      invocationId,
+      capability: "workstream.resources.view",
+      canonicalToolName: "view_resource",
+      rawInput: { resourceIds: [imageId], maxDimension: 2_048 },
+      outputRef,
+    })).resolves.toBeNull();
+    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations WHERE id = ?").get(invocationId))
+      .toEqual({ count: 0 });
+    expect(database.prepare(
+      "SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = ?",
+    ).get(outputRef)).toEqual({ object_ref: outputRef, object_kind: "receipt" });
   });
 
   it("runs a focused isolated summary and verifies every returned citation range", async () => {

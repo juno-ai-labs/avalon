@@ -159,9 +159,9 @@ describe("attachment model content", () => {
     expect(parts[1]).toMatchObject({ type: "image_url" });
     expect(bucket.objects.original).toBe(original);
     expect(bucket.puts).toHaveLength(1);
-    expect(bucket.puts[0]?.key).toBe("original.model.jpg");
+    expect(bucket.puts[0]?.key).toMatch(/^original\.model\.[0-9a-f-]+\.jpg$/u);
     expect(bucket.puts[0]?.bytes).toEqual(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
-    expect(updates[0]?.[0]).toBe("original.model.jpg");
+    expect(updates[0]?.[0]).toBe(bucket.puts[0]?.key);
     expect(updates[0]?.[1]).toBe("image/jpeg");
   });
 
@@ -206,7 +206,7 @@ describe("attachment model content", () => {
       text: expect.stringMatching(/animated GIF; duration 0\.6s; 3 frames; approximately 5 fps; 4x3; loops indefinitely/u),
     });
     expect(parts[2]?.type === "image_url" ? parts[2].image_url.url : "").toMatch(/^data:image\/png;base64,/u);
-    expect(bucket.puts[0]?.key).toBe("original.model.png");
+    expect(bucket.puts[0]?.key).toMatch(/^original\.model\.[0-9a-f-]+\.png$/u);
     expect(bucket.objects.original).toEqual(animatedGif());
     expect(updates[0]?.[3]).toBe(JSON.stringify({
       kind: "animated_gif",

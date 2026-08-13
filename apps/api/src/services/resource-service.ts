@@ -310,7 +310,7 @@ export class ResourceService {
     }
     const serialized = JSON.stringify(hydrated);
     const contentSha256 = await sha256Hex(serialized);
-    const idKey = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/hydrated/${contentSha256}.json`;
+    const idKey = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/hydrated/${contentSha256}/${crypto.randomUUID()}.json`;
     const at = nowIso();
     if (resource.content_sha256 === contentSha256) {
       await this.env.DB.prepare(
@@ -341,6 +341,7 @@ export class ResourceService {
                  model_metadata_json = NULL, model_index_ref = NULL,
                  model_content_status = 'pending', model_content_extractor_version = NULL,
                  model_content_character_count = NULL, model_content_extracted_at = NULL,
+                 model_content_claimed_at = NULL, model_content_claim_id = NULL,
                  model_content_error_code = NULL
              WHERE id = ? AND workspace_id = ?`,
           ).bind(idKey, contentSha256, at, at, id, this.auth.workspaceId),

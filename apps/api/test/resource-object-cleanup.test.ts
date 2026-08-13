@@ -8,6 +8,13 @@ describe("resource object cleanup", () => {
   it("reaps exactly one bounded batch before continuing on the next pass", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
+      CREATE TABLE resources (
+        id TEXT PRIMARY KEY, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
+      );
+      CREATE TABLE resource_model_objects (
+        resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
+        lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
+      );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
@@ -44,6 +51,13 @@ describe("resource object cleanup", () => {
   it("keeps a failed object queued with bounded retry metadata, then converges", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
+      CREATE TABLE resources (
+        id TEXT PRIMARY KEY, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
+      );
+      CREATE TABLE resource_model_objects (
+        resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
+        lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
+      );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
@@ -84,6 +98,43 @@ describe("resource object cleanup", () => {
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
       .toEqual({ count: 0 });
     warning.mockRestore();
+    database.close();
+  });
+
+  it("cancels deletion when an object became current again before the reaper ran", async () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec(`
+      CREATE TABLE resources (
+        id TEXT PRIMARY KEY, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
+      );
+      CREATE TABLE resource_model_objects (
+        resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
+        lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
+      );
+      CREATE TABLE resource_object_deletion_outbox (
+        object_ref TEXT PRIMARY KEY, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO resources (id, content_ref, model_content_ref, model_index_ref)
+      VALUES ('resource-current', 'original', 'regional/reactivated', NULL);
+      INSERT INTO resource_model_objects (resource_id, object_ref, lifecycle_status)
+      VALUES ('resource-current', 'regional/reactivated', 'active');
+      INSERT INTO resource_object_deletion_outbox
+        (object_ref, resource_id, object_kind, created_at, updated_at)
+      VALUES ('regional/reactivated', 'resource-current', 'derivative', '2026-08-12', '2026-08-12');
+    `);
+    const deleteObject = vi.fn(async () => undefined);
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      PAYLOADS: { delete: deleteObject },
+    });
+
+    await reapDeletedResourceObjects(env);
+
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
+      .toEqual({ count: 0 });
     database.close();
   });
 });

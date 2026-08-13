@@ -30,6 +30,20 @@ export async function reapDeletedResourceObjects(env: Env): Promise<void> {
 
   for (const object of pending.results) {
     try {
+      const active = await env.DB.prepare(
+        `SELECT 1 AS active FROM resources
+          WHERE content_ref = ? OR model_content_ref = ? OR model_index_ref = ?
+         UNION ALL
+        SELECT 1 AS active FROM resource_model_objects
+          WHERE object_ref = ? AND lifecycle_status = 'active'
+         LIMIT 1`,
+      ).bind(object.object_ref, object.object_ref, object.object_ref, object.object_ref).first();
+      if (active) {
+        await env.DB.prepare(
+          "DELETE FROM resource_object_deletion_outbox WHERE object_ref = ?",
+        ).bind(object.object_ref).run();
+        continue;
+      }
       await env.PAYLOADS.delete(object.object_ref);
       await env.DB.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE object_ref = ?",

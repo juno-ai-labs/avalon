@@ -20,6 +20,8 @@ export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   model_content_status: "pending" | "processing" | "ready" | "failed" | "unsupported" | null;
   model_content_extractor_version: string | null;
   model_content_character_count: number | null;
+  model_content_claimed_at: string | null;
+  model_content_claim_id: string | null;
   model_content_error_code: string | null;
   relationship_type: string;
   attached_at: string;
@@ -35,8 +37,9 @@ export interface VisibleWorkstreamResourceSet {
 
 /**
  * The one resource-visibility boundary shared by the sidebar, tools, and later
- * compaction inventory. Callers may order the already-authorized set but may
- * not add another visibility interpretation.
+ * compaction inventory. Results are newest attachment first by default; callers
+ * may explicitly request oldest attachment first, but may not add another
+ * visibility interpretation.
  */
 export async function loadVisibleWorkstreamResources(
   database: D1Database,
