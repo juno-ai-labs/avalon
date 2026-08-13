@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest } from '../common/message-export';
 import {
+  isMessageExportUrl,
   MESSAGE_EXPORT_SCHEME,
   MessageExporter,
   messageExportDocument,
@@ -36,9 +37,12 @@ function harness(options: {
     destroyed: 0,
     written: [] as Array<{ path: string; bytes: Uint8Array }>,
     documentAtLoad: null as string | null,
+    documentAtMeasure: null as string | null,
   };
+  let loadedUrl = '';
   let openWindows = 0;
   let token = 0;
+  let failNextLoad = false;
 
   const dependencies: MessageExportDependencies = {
     createWindow: () => {
@@ -49,10 +53,18 @@ function harness(options: {
         load: async (url) => {
           state.loaded.push(url);
           // What the window can actually read is what the protocol would serve.
+          loadedUrl = url;
           state.documentAtLoad = exporter.document(url);
+          if (failNextLoad) {
+            failNextLoad = false;
+            throw new Error('did-fail-load');
+          }
           if (options.failOn === 'load') throw new Error('did-fail-load');
         },
-        evaluate: async () => options.measuredHeight ?? 1_400,
+        evaluate: async () => {
+          state.documentAtMeasure = exporter.document(loadedUrl);
+          return options.measuredHeight ?? 1_400;
+        },
         resize: (width, height, zoom) => state.resizes.push({ width, height, zoom }),
         captureJpeg: async (quality) => {
           if (options.failOn === 'capture') throw new Error('no surface');
@@ -81,7 +93,7 @@ function harness(options: {
     delay: async () => undefined,
   };
   const exporter = new MessageExporter(dependencies);
-  return { dependencies, exporter, state };
+  return { dependencies, exporter, state, failNextLoad: () => { failNextLoad = true; } };
 }
 
 describe('message export requests', () => {
@@ -98,6 +110,22 @@ describe('message export requests', () => {
     ['an unknown format', { format: 'svg' as MessageExportRequest['format'] }],
   ])('rejects %s', (_label, overrides) => {
     expect(() => parseMessageExportRequest(request(overrides))).toThrow('Invalid message export request');
+  });
+});
+
+describe('recognising an export URL', () => {
+  // The application's own `onHeadersReceived` asks this before it attaches the
+  // renderer's Content-Security-Policy, so a URL it fails to recognise is an
+  // export document rendered under the wrong — much broader — policy.
+  it.each([
+    [`${MESSAGE_EXPORT_SCHEME}://sheet/token-1`, true],
+    [`${MESSAGE_EXPORT_SCHEME}://sheet/`, true],
+    [`${MESSAGE_EXPORT_SCHEME}://elsewhere/token-1`, false],
+    ['app://avalon/index.html', false],
+    ['https://sheet/token-1', false],
+    ['not a url', false],
+  ])('answers %s with %s', (url, expected) => {
+    expect(isMessageExportUrl(url)).toBe(expected);
   });
 });
 
@@ -192,23 +220,30 @@ describe('saving a message', () => {
     expect(test.state.written).toEqual([]);
   });
 
-  it('recovers after a failed export instead of wedging the queue', async () => {
-    const failing = harness({ failOn: 'load' });
-    await expect(failing.exporter.save(request())).rejects.toThrow('did-fail-load');
-
+  it('recovers after a failed export instead of wedging its own queue', async () => {
+    // One exporter, one queue: a fresh instance would prove nothing, since the
+    // wedge this guards against is a rejected tail the *next* save chains onto.
     const test = harness();
-    await Promise.all([test.exporter.save(request()), test.exporter.save(request({ format: 'pdf' }))]);
+    test.failNextLoad();
 
-    expect(test.state.written).toHaveLength(2);
+    const failure = test.exporter.save(request());
+    const afterwards = test.exporter.save(request({ format: 'pdf' }));
+
+    await expect(failure).rejects.toThrow('did-fail-load');
+    expect(await afterwards).toEqual({ saved: true });
+    expect(test.state.written).toHaveLength(1);
     expect(test.state.destroyed).toBe(2);
   });
 
-  it('stops serving a document once its window has loaded', async () => {
+  it('stops serving a document the moment its window has loaded, not when the render ends', async () => {
     const test = harness();
 
     await test.exporter.save(request());
 
     expect(test.state.documentAtLoad).not.toBeNull();
+    // Measuring and capturing a long card takes seconds, and the window already
+    // holds everything it needs; the document is not still on offer meanwhile.
+    expect(test.state.documentAtMeasure).toBeNull();
     expect(test.exporter.document(`${MESSAGE_EXPORT_SCHEME}://sheet/token-1`)).toBeNull();
   });
 

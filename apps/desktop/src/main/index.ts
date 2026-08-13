@@ -93,6 +93,7 @@ import { LockdownModeController } from './lockdown-mode';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
 import { MenuBarContentStore } from './menu-bar-content';
 import {
+  isMessageExportUrl,
   MESSAGE_EXPORT_CONTENT_SECURITY_POLICY,
   MESSAGE_EXPORT_SCHEME,
   MessageExporter,
@@ -2491,6 +2492,7 @@ function createMessageExportWindow(size: { width: number; height: number }): Mes
     printPdf: async ({ footerHtml, margins }) => new Uint8Array(await contents.printToPDF({
       displayHeaderFooter: true,
       footerTemplate: footerHtml,
+      // Required whenever header and footer are on at all; empty suppresses it.
       headerTemplate: '<div></div>',
       margins: { ...margins },
       pageSize: 'Letter',
@@ -2984,6 +2986,15 @@ async function createMainWindow(): Promise<void> {
 
 function installContentSecurityPolicy(): void {
   electronSession.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // An export document already carries a policy of its own, and a far stricter
+    // one: it is markup built out of a model's words, and it is allowed no
+    // script at all. Leaving its response untouched is what keeps that the
+    // policy in force. Falling through would attach the renderer's policy
+    // alongside it, and while two policies are enforced conjunctively — so the
+    // stricter directives would still win today — that only holds because the
+    // header this handler writes is cased differently from the one the protocol
+    // set. A boundary that survives on header casing is not a boundary.
+    if (isMessageExportUrl(details.url)) return callback({});
     const configuredOrigins = Object.values(runtimeConfig().api).flatMap((rawUrl) => {
       const url = new URL(rawUrl);
       const socketProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
