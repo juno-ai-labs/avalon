@@ -21,6 +21,7 @@ const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
 const SAFE_PART = /^[0-9A-Za-z][0-9A-Za-z._-]{0,159}$/u;
 const REQUEST_TIMEOUT_MS = 5 * 60_000;
+const INVENTORY_TIMESTAMP_TOLERANCE_MS = 1_000;
 // These must not exceed the matching limits enforced by the regional API
 // consumers in javascript-symbolication.ts and crash-processing.ts.
 const MAX_SOURCE_MAP_BYTES = 16 * 1024 * 1024;
@@ -185,10 +186,13 @@ async function uploadAndVerify(
   }
   const stored = inventoryBody.result.find((object) => object?.key === key);
   const storedAt = Date.parse(stored?.last_modified);
+  const uploadedAt = Date.parse(uploaded.uploaded);
   if (stored?.etag !== uploaded.etag
     || stored?.size !== sourceBytes.byteLength
     || !Number.isFinite(storedAt)
-    || storedAt < Date.parse(uploaded.uploaded)) {
+    // Cloudflare may serialize these two representations at different time
+    // precision; tolerate only sub-second truncation, not an older object.
+    || storedAt < uploadedAt - INVENTORY_TIMESTAMP_TOLERANCE_MS) {
     throw new Error(`Stored metadata mismatch for r2://${target}`);
   }
 }
