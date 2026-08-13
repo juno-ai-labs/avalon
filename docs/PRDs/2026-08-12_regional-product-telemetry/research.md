@@ -46,7 +46,7 @@ The [Node SDK](https://posthog.com/docs/libraries/node) supports server capture 
 
 ### Identity
 
-PostHog recommends calling `identify` with a stable authentication identifier and explicitly warns against email addresses or display names as distinct IDs. It also supports anonymous events without creating person profiles through `$process_person_profile: false`. Avalon should go further: derive unlinkable analytics IDs on the regional server and minimize PostHog person properties. Reset-on-logout behavior is necessary but not sufficient because queued events and historical aliasing are Avalon responsibilities.
+PostHog recommends calling `identify` with a stable authentication identifier and explicitly warns against email addresses or display names as distinct IDs. It also supports anonymous events without creating person profiles through `$process_person_profile: false`. Its [official Node client alias example and implementation](https://github.com/PostHog/posthog-js/blob/main/packages/node/src/client.ts#L927-L949) use the existing anonymous identifier as `distinctId`/`distinct_id` and the newly identified user as `alias`; Avalon preserves that outbound direction. Avalon should go further: derive unlinkable analytics IDs on the regional server and minimize PostHog person properties. Reset-on-logout behavior is necessary but not sufficient because queued events and historical aliasing are Avalon responsibilities.
 
 ### Error tracking
 
