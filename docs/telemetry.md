@@ -354,7 +354,8 @@ both byte integrity and storage confirmation without trusting a cached body.
 remain timeout-limited. The publisher relies on R2's default MD5 checksum for a
 non-multipart object and the upload endpoint's returned version; any ETag,
 size, key, timestamp, non-dynamic cache status, or inventory mismatch fails
-closed.
+closed. Inventory time may trail the upload response by at most one second to
+allow for provider timestamp-serialization precision.
 
 ### 2026-08-13 — Release artifacts use the regional object API directly
 
