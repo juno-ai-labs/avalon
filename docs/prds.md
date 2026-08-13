@@ -130,7 +130,7 @@ contract, and it is edited whenever the contract itself changes.
 | --- | --- |
 | `prd.md` | **Required.** The PRD itself: the problem, the goals and non-goals, the proposed product behavior, and the decisions. This is the file other documents link to. |
 | `state.md` | **Required.** The three-line state checklist above, plus a supersession or standing-contract note where one applies. Nothing else. |
-| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Add it when the work is large enough that sequencing matters. |
+| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Write it only after the PRD is approved, and only when the work is large enough that sequencing matters. |
 | `design.md` | Architecture and rationale too detailed for the PRD body — schemas, protocols, migration strategy. |
 | `research.md` | Prior art, competitor behavior, or investigation that informed the PRD but is not itself a proposal. |
 | `README.md` | Only for a folder that has grown into a bundle: a short map saying which file is actionable and which are supporting provenance. |
@@ -397,8 +397,8 @@ provenance rather than guidance.
    seven required ones in order, then whichever optional ones apply. Start with
    **Non-goals** if the scope is contested; the rest gets easier once the edges
    are fixed. **Decision log** starts as `None yet.`
-5. Split out `plan.md`, `design.md`, or `research.md` if the body is carrying
-   material that belongs in one of them.
+5. Split out `design.md` or `research.md` if the body is carrying material that
+   belongs in one of them.
 6. Tick `in progress` in the commit where implementation starts. From here the
    **Decision log** is the live part of the document: append an entry in the same
    change as each decision that moves the scope, the behavior, or the contract.
