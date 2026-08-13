@@ -32,6 +32,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects and current model image derivatives. |
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, model-object catalog, deletion outbox, and checkpoint-template version. |
+| `packages/db/migrations/0074_attachment_tool_receipts.sql` | Binds reusable bounded receipts to exact derivative versions and queues their regional objects for deletion. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
 ## How it works
