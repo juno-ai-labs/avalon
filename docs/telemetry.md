@@ -328,6 +328,31 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-13 — Release artifacts use the regional object API directly
+
+**What changed:** The macOS release publisher now uploads and reads back private
+source maps and native symbols through Cloudflare's object REST API. It hashes
+the exact bytes supplied to the upload, verifies the returned bytes, and sends
+the explicit `eu` jurisdiction header only for the EU telemetry bucket.
+
+**Why:** Wrangler's object read returned a deleted, earlier native-symbol object
+on a release retry even though Cloudflare's authoritative object listing no
+longer contained it. That made a valid regenerated archive fail the checksum
+gate and prevented an otherwise signed and notarized release from publishing.
+
+**Considered and rejected:** Disabling checksum verification, accepting the old
+archive, or rotating both buckets. Those would respectively remove the
+end-to-end integrity proof, risk publishing symbols for a different binary, or
+replace regional infrastructure to work around a client-path inconsistency.
+
+**Consequences:** The release token must retain `Workers R2 Storage Write`; the
+publisher holds one bounded artifact and its verification response in memory at
+a time. Regional isolation is explicit in the request rather than inferred from
+CLI state, and a retry remains fail-closed on any upload, readback, or checksum
+error.
+
+Shipped in the pull request for this change.
+
 ### 2026-08-13 — Telemetry dependencies can be staged safely
 
 **What changed:** Production now accepts a healthy collector before PostHog
