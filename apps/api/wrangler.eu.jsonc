@@ -106,6 +106,10 @@
       "entrypoint": "TelemetryControlBridge"
     }
   ],
+  // These are one-time hosted EU resources: Wrangler deploy validates the
+  // binding shape but does not create the buckets. The deployment preflight
+  // reads this list and proves every name exists in the EU jurisdiction before
+  // migrations or deployment.
   "r2_buckets": [
     { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" },
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-eu-telemetry", "jurisdiction": "eu" }

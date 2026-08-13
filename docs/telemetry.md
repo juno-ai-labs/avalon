@@ -333,12 +333,16 @@ signals, never by weakening policy or deadline tests.
 **What changed:** The macOS release publisher now uploads and reads back private
 source maps and native symbols through Cloudflare's object REST API. It hashes
 the exact bytes supplied to the upload, verifies the returned bytes, and sends
-the explicit `eu` jurisdiction header only for the EU telemetry bucket.
+the explicit `eu` jurisdiction header only for the EU telemetry bucket. API
+deployment also derives a hosted-R2 inventory from both Wrangler files, logs
+every binding, and proves each bucket exists before remote mutations.
 
 **Why:** Wrangler's object read returned a deleted, earlier native-symbol object
 on a release retry even though Cloudflare's authoritative object listing no
 longer contained it. That made a valid regenerated archive fail the checksum
 gate and prevented an otherwise signed and notarized release from publishing.
+The first attempt also found that `avalon-eu-telemetry` did not actually exist:
+Wrangler had accepted and deployed its binding without provisioning the bucket.
 
 **Considered and rejected:** Disabling checksum verification, accepting the old
 archive, or rotating both buckets. Those would respectively remove the
