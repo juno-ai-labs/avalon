@@ -758,6 +758,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             : error instanceof Error
               ? error.message
               : "Tool execution failed";
+          const structured = readStructuredFailure(error);
           const interrupted = toolSignal.aborted;
           const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation)
             && dispatched.tool.definition.mode === "write"
@@ -776,6 +777,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             pluginId: dispatched.pluginId,
             policy,
             error: message,
+            ...(structured ? { data: structured } : {}),
             phase: "execution",
             outcome: failureOutcome,
           });
@@ -813,7 +815,6 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           // for "structured recovery context safe to expose to the model".
           // Excess keys on the result object are silently discarded by
           // `toolResultMessage`, which a spread would not have revealed.
-          const structured = readStructuredFailure(error);
           return {
             toolMessage: toolResultMessage(toolCall.id, {
               success: false,

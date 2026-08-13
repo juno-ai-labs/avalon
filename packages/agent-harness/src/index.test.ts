@@ -2370,6 +2370,46 @@ describe("agent harness", () => {
     expect(onAmbiguousExternalWrite).toHaveBeenCalledTimes(1);
   });
 
+  it("emits the same sanitized recovery data that the model receives", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-read", "read_one")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "I reread the item." }, finish_reason: "stop" }] }]),
+    ];
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: string }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const tool = harnessTool("read_one", "read", [], async () => {
+      throw Object.assign(new Error("The item changed. Read it again by ID."), {
+        code: "revision_conflict",
+        details: { reason: "Call read_one with itemId before retrying." },
+      });
+    });
+
+    await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      error: "The item changed. Read it again by ID.",
+      data: {
+        code: "revision_conflict",
+        details: { reason: "Call read_one with itemId before retrying." },
+      },
+    });
+    expect(requestBodies[1]?.messages.find((message) => message.role === "tool")?.content)
+      .toContain('"code":"revision_conflict"');
+  });
+
   it("marks a timed-out record-before-execute write as ambiguous", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{

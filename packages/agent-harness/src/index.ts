@@ -6,6 +6,7 @@ import type {
   ConnectorActivityTriggerDescriptor,
   ExecutionPrincipal,
   HarnessFailureCode,
+  StructuredFailureDetail,
   ToolDefinition
 } from "@avalon/contracts";
 import {
@@ -2359,6 +2360,8 @@ export type HarnessEvent =
       pluginId: string;
       policy: HarnessToolPolicyIdentity;
       error: string;
+      /** Sanitized model-facing recovery data, when the thrown error declares it. */
+      data?: StructuredFailureDetail;
       phase: "validation" | "execution";
       outcome: "definitive_failure" | "timed_out" | "aborted" | "ambiguous_external_write";
     }

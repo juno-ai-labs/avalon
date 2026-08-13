@@ -176,6 +176,14 @@ write, or timed-out `record_before_execute` write becomes
 `ambiguous_external_write` and is never blindly repeated. Lifecycle events are
 append-only, and terminalization is idempotent and lease-fenced.
 
+Failed receipts preserve the same bounded structured recovery context that Bind
+showed the model when the tool failed. A `tool_failed` event carries the
+allowlisted `data` object, the regional host commits that object beside the code
+and message in `error_json`, and historical protocol reconstruction restores
+the same failed tool result after a Worker retry or run resume. Participant-facing
+tool rows continue to render the ordinary error message; the recovery object is
+for the model protocol, not a second UI error surface.
+
 An attachment view is the one result with two representations. Its durable
 receipt and `tool_completed` event contain only the bounded JSON inclusion
 summary. The in-memory tool message adds ordered image parts after that JSON for
@@ -281,17 +289,31 @@ This deliberately adopts Monad's focused parallel-investigation strategy without
 
 ### Scoped durable memory
 
-Root work-stream runs receive the stable `avalon_memory` plugin. `memory_search` accepts only a query; the host searches every authorized scope and returns scope provenance without allowing the model to select scope IDs. Ad-hoc user runs search workspace, user, and work-stream memory. Personal automations search workspace, owner-user, and automation memory. Workspace automations search workspace and automation memory. All work streams created by one automation subscription therefore share one automation scope.
+Root work-stream runs receive the stable `avalon_memory` plugin. `memory_search`
+accepts exactly one of a content query or `memoryItemId`; the exact-ID form is the
+conflict-recovery read for a mutation and still reauthorizes the item against the
+host-derived scope union. The host returns scope provenance without allowing the
+model to select scope IDs. Ad-hoc user runs search workspace, user, and work-stream
+memory. Personal automations search workspace, owner-user, and automation memory.
+Workspace automations search workspace and automation memory. All work streams
+created by one automation subscription therefore share one automation scope.
 
 Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. D1 FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable D1 outbox. Hybrid hits are always reloaded from D1 before exposure, and each root run stores an immutable admission-recall snapshot and hash.
 
-Root runs also receive the separate stable `avalon_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous D1 FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
+Root runs also receive the separate stable `avalon_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous D1 FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
+
+Memory and table mutations return identifiers and current revisions. On a revision
+conflict, the failed result directs the model to re-read those exact identifiers,
+reconcile its intended change, and retry with the newly observed revision. Table
+insert contention is a separate typed failure because inserts do not have an
+`expectedRevision`; after bounded host retries it directs the model to query by
+the declared natural key and retry only the rows that remain absent.
 
 Automation drafts may declare automation-scoped tables. Acceptance materializes an independent table set under the new subscription, so every work stream from that subscription shares its rows while subscribers to a shared template do not share state. Every automation run receives the materialized table IDs, column IDs, natural keys, purpose, and usage/update instructions in its authorized task context. Table rows are never added to admission recall; the agent must query only the rows and columns needed for the current run.
 
 ### Scheduled wake-ups
 
-`avalon:workstream` carries `schedule_wakeup`, `list_wakeups`, and `cancel_wakeup`, so a run can defer work to a stated instant instead of promising it in text. `schedule_wakeup` takes the prompt plus exactly one of `delay` — a duration in common units, `"5 minutes"`, `"90 sec"`, `"1h30m"`, or an ISO-8601 `"PT2H30M"` — or `at`, an exact ISO-8601 timestamp. An `at` without an offset is read in the run's local zone, or in an explicit `timezone`; an `at` that carries an offset is absolute and rejects `timezone` rather than silently choosing between the two. The resolved instant must be at least one minute and at most one year out, whichever form produced it. Pending wake-ups are capped per work stream, and every rejection returns a stable code with its remediation and the accepted vocabulary inside `output`.
+`avalon:workstream` carries `schedule_wakeup`, `list_wakeups`, and `cancel_wakeup`, so a run can defer work to a stated instant instead of promising it in text. `schedule_wakeup` takes the prompt plus exactly one of `delay` — a duration in common units, `"5 minutes"`, `"90 sec"`, `"1h30m"`, or an ISO-8601 `"PT2H30M"` — or `at`, an exact ISO-8601 timestamp. An `at` without an offset is read in the run's local zone, or in an explicit `timezone`; an `at` that carries an offset is absolute and rejects `timezone` rather than silently choosing between the two. The resolved instant must be at least one minute and at most one year out, whichever form produced it. Pending wake-ups are capped per work stream, and every rejection returns a stable code with its remediation and accepted vocabulary in the model-visible failed result.
 
 The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. The workspace scheduler fires it: it claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
@@ -379,9 +401,10 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   discarded.
 - **A child can never widen the parent's frozen scope**, is read-only by a tool-loop
   hook rather than by what it was given, and cannot recurse.
-- **The model never selects a memory scope.** `memory_search` accepts only a query;
-  the host derives the authorized scope union from the frozen principal and run
-  origin, and hybrid hits are always reloaded from D1 before exposure.
+- **The model never selects a memory scope.** `memory_search` accepts exactly one
+  content query or exact item ID; the host derives the authorized scope union
+  from the frozen principal and run origin, and every hit is reauthorized and
+  reloaded from D1 before exposure.
 - **Whatever starts a run hands the host something to render.** A run whose
   instructions exist only as a transcript `system` row reaches the model with
   nothing but its work stream's objective, because the protocol projector drops
@@ -462,7 +485,7 @@ A `record_before_execute` write instead becomes `ambiguous_external_write` and
 terminates the run without retry guidance, because the provider may have applied
 the mutation before its response failed validation.
 
-The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
+The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
 Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
@@ -470,13 +493,14 @@ Workspace admins may opt into **Log agent inference** from Workspace preferences
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, and terminal commits. |
+| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, and durable structured failures. |
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
-| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, the D1 reload before exposure, and revision compare-and-swap. |
+| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
+| `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/hypersight-block-submission.test.ts` | The single nudge, the `hypersight_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, the pending sidebar marker, and claim-before-launch. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
@@ -496,6 +520,26 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-12 — Revision recovery remains executable after races and resumes
+
+**What changed:** Memory and table reads gained exact-ID selectors for revision
+conflict recovery, table inserts gained a distinct bounded-contention failure,
+and structured tool-failure data is now stored and reconstructed with durable
+receipts.
+
+**Why:** A content search could fail to find the item named by a conflict after a
+concurrent edit, insert rows have no revision to refresh, and a Worker retry
+previously lost the remediation details that Bind had shown the model.
+
+**Considered and rejected:** Separate single-item `get` tools and a second
+failure ledger. Exact selectors on the existing read tools keep the model's
+sequence small, while the existing receipt already owns the durable outcome.
+
+**Consequences:** `memory_search` accepts exactly one of `query` or
+`memoryItemId`; table queries can select exact `memoryTableRowIds`; and
+`error_json` may carry the same sanitized recovery object used in the model
+protocol without changing participant-facing error rows. Implemented in #151.
 
 ### 2026-08-12 — Numeric tool strings normalize before receipts and validation errors become actionable
 

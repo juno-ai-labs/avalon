@@ -1102,7 +1102,14 @@ describe("durable harness attempt runtime", () => {
       invocationId: "invocation-definitive-failure",
       status: "failed",
       phase: "execution_failed",
-      error: { code: "tool_failed", message: "The provider rejected the request" },
+      error: {
+        code: "tool_failed",
+        message: "The provider rejected the request",
+        data: {
+          code: "revision_conflict",
+          details: { reason: "Read the item again by ID before retrying." },
+        },
+      },
     })).toBe("persisted");
 
     await persistToolExecutionPlan(sqlite.binding, claim.lease, {
@@ -1130,7 +1137,7 @@ describe("durable harness attempt runtime", () => {
       {
         id: "invocation-definitive-failure",
         status: "failed",
-        error_json: '{"code":"tool_failed","message":"The provider rejected the request"}',
+        error_json: '{"code":"tool_failed","message":"The provider rejected the request","data":{"code":"revision_conflict","details":{"reason":"Read the item again by ID before retrying."}}}',
       },
       {
         id: "invocation-plan-conflict",

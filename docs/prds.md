@@ -358,7 +358,7 @@ following somewhere in the PRD folder:
 5. **Failure and self-healing contract.** List common failures for every tool,
    with a stable code, an exact model-visible error sentence that includes the
    shortest safe next action, only the structured detail keys Bind actually
-   forwards, and any contextual remediation in model-visible `output`. For
+   forwards, and any contextual remediation in model-visible `data.details`. For
    example, a revision-conflict error says “The file changed after it was read.
    Read it again and rebuild the edit”; it does not merely say “stale revision”
    or hide the reread instruction in `summary`. Say whether the model should
