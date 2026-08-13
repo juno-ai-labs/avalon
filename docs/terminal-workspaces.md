@@ -20,6 +20,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/network-policy.ts`, `settings.ts` | Trusted-only policy compiler and preview/confirm workspace settings transition. |
 | `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/durable-objects/workspace-scheduler.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and alarms. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
+| `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network controls and participant-visible work-stream state/repository selection. |
 | `packages/db/migrations/0074_terminal_workspaces.sql` | Authoritative regional Terminal schema. |
 
@@ -271,6 +272,14 @@ revocation/expiry. The trusted publisher uses a separate ephemeral sandbox and
 credential. Logs include IDs, state, error code, duration, and byte counts—not
 commands, output, diffs, tokens, or resource contents.
 
+The account-level `avalon_terminal_operations` Analytics Engine dataset is even
+narrower: it contains operation, outcome, Avalon region, configured snapshot,
+source lifecycle state, failed phase, release identity, phase durations, and the
+fixed names of compatibility tools installed. It contains no workspace,
+work-stream, run, user, provider-sandbox, command, path, resource, repository, or
+credential identifier. It is sampled aggregate telemetry, never authority or a
+recovery ledger.
+
 ## Operations
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
@@ -279,7 +288,12 @@ activation and recovery. Structured events are
 `terminal_sandbox_lifecycle_failed`, plus
 `terminal_tool_receipt_recovered` or
 `terminal_tool_receipt_recovery_ambiguous` for interrupted commands and PR
-publication. Durable
+publication. Each provider create, managed-image bootstrap, and start also emits
+`terminal_daytona_operation_finished` and one non-blocking
+`TERMINAL_ANALYTICS` point. Create separates provider allocation from policy
+read-back; bootstrap separates directory/package installation from the complete
+capability manifest; start records whether it warmed a stopped sandbox or
+restored an archived one. Durable
 task, policy mutation, sandbox, and publication rows supply exit, duration,
 bytes, retained lifetime, and convergence metrics without logging content. The
 emergency disable is the first response to a provider-wide isolation, secret,
@@ -297,7 +311,52 @@ Avalon does not pay to maintain a second cold filesystem archive. Provider time
 and output bytes are derivable from `workstream_sandboxes` and `sandbox_tasks`,
 so cost changes can be measured without exposing commands.
 
+`pnpm terminal:analytics -- --days 7` queries Cloudflare's SQL API and prints
+the actual first/last observation time, sampled and sampling-weighted counts,
+and average/p50/p95/max latency for create, bootstrap, stopped warming, and
+archived restore. It separately prints provider-create, policy-read-back,
+compatibility-install, and manifest-verification percentiles plus how often each
+missing executable was installed. Region and snapshot filters are available.
+
+Do not replace `daytona-small` from a handful of cold starts. The report waits
+for at least 100 successful bootstraps in the selected cohort. When
+compatibility-install p95 then exceeds ten seconds it recommends a controlled
+prebuilt-snapshot benchmark. Verification remains in both variants, because a
+custom image can remove installation time but cannot remove the fail-closed
+runtime contract. Compare at least the same target/region and include create,
+warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
+update lag before changing the default.
+
 ## Changelog
+
+### 2026-08-13 — Daytona phase telemetry makes the image decision empirical
+
+**What changed:** Provider create, compatibility bootstrap, manifest
+verification, stopped warming, and archived restore now produce separate
+content-free timing dimensions in the dedicated `avalon_terminal_operations`
+Analytics Engine dataset. The managed bootstrap reports only the allowlisted
+tool names it actually installed. `pnpm terminal:analytics` prints the observed
+window, weighted latency percentiles, outcomes, installed gaps, and the sample
+threshold for benchmarking a prebuilt image.
+
+**Why:** One combined bootstrap timer could show that first use was slow but
+could not distinguish Daytona allocation, policy read-back, missing-package
+installation, or the verification Avalon must retain with any image. That would
+make an owned-image decision guess at both the removable latency and its sample
+size.
+
+**Considered and rejected:** Logging a single end-to-end number, persisting raw
+provider output, adding tenant/run identifiers for joins, and immediately
+maintaining an Avalon image. They respectively cannot identify the improvable
+phase, expand the content boundary, misuse sampled analytics as a ledger, or
+commit maintenance before measuring a recurring cost.
+
+**Consequences:** Each provider operation adds one non-blocking Analytics Engine
+write and keeps Workers Logs as the exact diagnostic copy. The account-level
+dataset has Cloudflare's sampling and three-month retention behavior and no
+regional-jurisdiction guarantee. A custom snapshot is considered only after a
+meaningful cohort shows installation—not unavoidable create or verification—is
+the material tail-latency source.
 
 ### 2026-08-13 — Live Daytona verification hardens the managed default snapshot
 

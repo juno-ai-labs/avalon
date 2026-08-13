@@ -11,7 +11,7 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
     DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
     IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
-    RUN_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
+    RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
     WORKSTREAM_ROOMS: binding(), WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
     WORKSTREAM_LOOP_WORKFLOW: binding(), CONNECTOR_POLL_WORKFLOW: binding(),
     APP_ENV: "production",

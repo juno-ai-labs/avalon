@@ -40,15 +40,16 @@ describe("Terminal snapshot manifest", () => {
     expect(command).not.toMatch(/token|secret|credential/iu);
   });
 
-  it("idempotently adapts and verifies Daytona's managed default snapshot", () => {
+  it("idempotently adapts Daytona's managed default snapshot and reports installed gaps", () => {
     const command = terminalManagedSnapshotBootstrapCommand();
     expect(command).toContain("sudo -n install");
     expect(command).toContain("command -v sqlite3");
     expect(command).toContain("command -v gh");
     expect(command).toContain("pnpm@11.13.0");
     expect(command).toContain("tsx@4.20.6");
-    expect(command).toContain("python3 -c");
-    expect(command).toContain("gh --version");
+    expect(command).toContain("AVALON_BOOTSTRAP_INSTALLED=");
+    expect(command).not.toContain("python3 -c");
+    expect(command).not.toContain("gh --version");
   });
 
   it("functionally exercises every supported installer in Trusted only", () => {

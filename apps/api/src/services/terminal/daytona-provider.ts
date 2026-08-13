@@ -1,7 +1,10 @@
 import { Daytona } from "@daytona/sdk";
 
 import type { TerminalRegionConfiguration } from "./contract";
-import { terminalManagedSnapshotBootstrapCommand } from "./snapshot-manifest";
+import {
+  terminalManagedSnapshotBootstrapCommand,
+  terminalSnapshotProbeCommand,
+} from "./snapshot-manifest";
 
 type SupportedTerminalConfiguration = Extract<TerminalRegionConfiguration, { capability: "supported" }>;
 
@@ -18,6 +21,27 @@ export interface TerminalSandboxSnapshot {
   name: string;
   state: TerminalSandboxState;
   domainAllowList: string[];
+}
+
+export type TerminalManagedBootstrapCapability = "sqlite3" | "gh" | "pnpm" | "tsx";
+
+export interface TerminalProviderOperationMeasurement {
+  operation: "sandbox_create" | "sandbox_bootstrap" | "sandbox_start";
+  outcome: "completed" | "failed" | "policy_mismatch";
+  snapshot: string;
+  sourceState: TerminalSandboxState | "absent";
+  failurePhase: "none" | "provider_create" | "policy_readback" | "install" | "verify" | "start";
+  durationMs: number;
+  providerCreateMs: number;
+  policyReadbackMs: number;
+  installMs: number;
+  verifyMs: number;
+  installedCapabilities: TerminalManagedBootstrapCapability[];
+}
+
+interface TerminalProviderInstrumentation {
+  now?: () => number;
+  observe?: (measurement: TerminalProviderOperationMeasurement) => void;
 }
 
 export interface CreateTerminalSandboxInput {
@@ -51,7 +75,11 @@ interface DaytonaSandboxLike {
       cwd?: string,
       env?: Record<string, string>,
       timeout?: number,
-    ): Promise<{ exitCode: number }>;
+    ): Promise<{
+      exitCode: number;
+      result?: string;
+      artifacts?: { stdout: string };
+    }>;
     createSession(sessionId: string): Promise<void>;
     getSession?(sessionId: string): Promise<{
       sessionId: string;
@@ -186,6 +214,16 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/gu, `'"'"'`)}'`;
 }
 
+const MANAGED_BOOTSTRAP_CAPABILITIES = ["sqlite3", "gh", "pnpm", "tsx"] as const;
+
+function parseInstalledCapabilities(output: string): TerminalManagedBootstrapCapability[] {
+  const match = /^AVALON_BOOTSTRAP_INSTALLED=([^\r\n]*)$/mu.exec(output);
+  if (!match) return [];
+  const allowed = new Set<string>(MANAGED_BOOTSTRAP_CAPABILITIES);
+  return [...new Set(match[1]!.split(",").filter((value) => allowed.has(value)))]
+    .map((value) => value as TerminalManagedBootstrapCapability);
+}
+
 function assertTrustedGitInput(input: {
   repositoryFullName: string;
   baseSha: string;
@@ -211,6 +249,7 @@ function assertTrustedGitInput(input: {
 export function createDaytonaTerminalProvider(
   configuration: SupportedTerminalConfiguration,
   clientFactory: DaytonaClientFactory = defaultClientFactory,
+  instrumentation: TerminalProviderInstrumentation = {},
 ): TerminalSandboxProvider {
   const client = clientFactory({
     apiKey: configuration.apiKey,
@@ -220,6 +259,21 @@ export function createDaytonaTerminalProvider(
   });
 
   const load = async (idOrName: string): Promise<DaytonaSandboxLike> => client.get(idOrName);
+  const now = instrumentation.now ?? Date.now;
+  const observe = (measurement: TerminalProviderOperationMeasurement): void => {
+    try {
+      instrumentation.observe?.(measurement);
+    } catch {
+      // Measurement must never change provider behavior or sandbox durability.
+    }
+  };
+  const elapsed = (start: number, end: number): number => Math.max(0, end - start);
+  const emptyDurations = {
+    providerCreateMs: 0,
+    policyReadbackMs: 0,
+    installMs: 0,
+    verifyMs: 0,
+  } as const;
 
   const secretPrefix = (idOrName: string) => `AVALON_READ_${idOrName.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 60)}_`;
   const clearReadSecrets = async (idOrName: string): Promise<void> => {
@@ -233,41 +287,101 @@ export function createDaytonaTerminalProvider(
 
   return {
     async createSandbox(input) {
-      const domains = input.domainAllowList.join(",");
-      const sandbox = await client.create({
-        name: input.stableName,
-        language: "typescript",
-        snapshot: configuration.snapshot,
-        public: false,
-        autoStopInterval: 15,
-        autoArchiveInterval: 60,
-        autoDeleteInterval: -1,
-        ttlMinutes: 0,
-        domainAllowList: domains,
-        envVars: input.environment,
-        labels: {
-          "avalon.workspace": input.workspaceId,
-          "avalon.workstream": input.workstreamId,
-          "avalon.generation": String(input.generation),
-        },
-      }, { timeout: 60 });
-      // A successful create response only proves that Daytona accepted the
-      // request. Read the provider-owned state back before the coordinator is
-      // allowed to treat the egress policy as verified.
-      const observed = await load(sandbox.id);
-      await observed.refreshData?.();
-      return snapshot(observed);
+      const startedAt = now();
+      let createFinishedAt = startedAt;
+      let phase: TerminalProviderOperationMeasurement["failurePhase"] = "provider_create";
+      try {
+        const domains = input.domainAllowList.join(",");
+        const sandbox = await client.create({
+          name: input.stableName,
+          language: "typescript",
+          snapshot: configuration.snapshot,
+          public: false,
+          autoStopInterval: 15,
+          autoArchiveInterval: 60,
+          autoDeleteInterval: -1,
+          ttlMinutes: 0,
+          domainAllowList: domains,
+          envVars: input.environment,
+          labels: {
+            "avalon.workspace": input.workspaceId,
+            "avalon.workstream": input.workstreamId,
+            "avalon.generation": String(input.generation),
+          },
+        }, { timeout: 60 });
+        createFinishedAt = now();
+        phase = "policy_readback";
+        // A successful create response only proves that Daytona accepted the
+        // request. Read the provider-owned state back before the coordinator is
+        // allowed to treat the egress policy as verified.
+        const observed = await load(sandbox.id);
+        await observed.refreshData?.();
+        const finishedAt = now();
+        observe({
+          operation: "sandbox_create",
+          outcome: "completed",
+          snapshot: configuration.snapshot,
+          sourceState: "absent",
+          failurePhase: "none",
+          durationMs: elapsed(startedAt, finishedAt),
+          ...emptyDurations,
+          providerCreateMs: elapsed(startedAt, createFinishedAt),
+          policyReadbackMs: elapsed(createFinishedAt, finishedAt),
+          installedCapabilities: [],
+        });
+        return snapshot(observed);
+      } catch (error) {
+        const finishedAt = now();
+        observe({
+          operation: "sandbox_create",
+          outcome: "failed",
+          snapshot: configuration.snapshot,
+          sourceState: "absent",
+          failurePhase: phase,
+          durationMs: elapsed(startedAt, finishedAt),
+          ...emptyDurations,
+          providerCreateMs: phase === "provider_create"
+            ? elapsed(startedAt, finishedAt)
+            : elapsed(startedAt, createFinishedAt),
+          policyReadbackMs: phase === "policy_readback" ? elapsed(createFinishedAt, finishedAt) : 0,
+          installedCapabilities: [],
+        });
+        throw error;
+      }
     },
     async prepareSandbox(idOrName, expectedDomainAllowList) {
-      const observed = await load(idOrName);
-      await observed.refreshData?.();
-      const observedSnapshot = snapshot(observed);
-      if (
-        observedSnapshot.domainAllowList.slice().sort().join("\n")
-        !== expectedDomainAllowList.slice().sort().join("\n")
-      ) return observedSnapshot;
+      const startedAt = now();
+      let readbackFinishedAt = startedAt;
+      let installFinishedAt = startedAt;
+      let phase: TerminalProviderOperationMeasurement["failurePhase"] = "policy_readback";
+      let sourceState: TerminalSandboxState = "failed";
+      let installedCapabilities: TerminalManagedBootstrapCapability[] = [];
+      let observed: DaytonaSandboxLike | null = null;
       try {
+        observed = await load(idOrName);
+        await observed.refreshData?.();
+        const observedSnapshot = snapshot(observed);
+        sourceState = observedSnapshot.state;
+        readbackFinishedAt = now();
+        if (
+          observedSnapshot.domainAllowList.slice().sort().join("\n")
+          !== expectedDomainAllowList.slice().sort().join("\n")
+        ) {
+          observe({
+            operation: "sandbox_bootstrap",
+            outcome: "policy_mismatch",
+            snapshot: configuration.snapshot,
+            sourceState,
+            failurePhase: "policy_readback",
+            durationMs: elapsed(startedAt, readbackFinishedAt),
+            ...emptyDurations,
+            policyReadbackMs: elapsed(startedAt, readbackFinishedAt),
+            installedCapabilities: [],
+          });
+          return observedSnapshot;
+        }
         if (!observed.process?.executeCommand) throw new Error("Daytona process execution is unavailable");
+        phase = "install";
         const initialized = await observed.process.executeCommand(
           `bash -lc ${shellQuote(terminalManagedSnapshotBootstrapCommand())}`,
           undefined,
@@ -275,11 +389,55 @@ export function createDaytonaTerminalProvider(
           120,
         );
         if (initialized.exitCode !== 0) throw new Error("Avalon workspace initialization failed");
+        installFinishedAt = now();
+        installedCapabilities = parseInstalledCapabilities(
+          initialized.result ?? initialized.artifacts?.stdout ?? "",
+        );
+        phase = "verify";
+        const verified = await observed.process.executeCommand(
+          `bash -lc ${shellQuote(terminalSnapshotProbeCommand())}`,
+          undefined,
+          undefined,
+          120,
+        );
+        if (verified.exitCode !== 0) throw new Error("Avalon workspace verification failed");
+        const finishedAt = now();
+        observe({
+          operation: "sandbox_bootstrap",
+          outcome: "completed",
+          snapshot: configuration.snapshot,
+          sourceState,
+          failurePhase: "none",
+          durationMs: elapsed(startedAt, finishedAt),
+          ...emptyDurations,
+          policyReadbackMs: elapsed(startedAt, readbackFinishedAt),
+          installMs: elapsed(readbackFinishedAt, installFinishedAt),
+          verifyMs: elapsed(installFinishedAt, finishedAt),
+          installedCapabilities,
+        });
+        return observedSnapshot;
       } catch {
-        await observed.delete?.(60, true).catch(() => undefined);
+        const finishedAt = now();
+        observe({
+          operation: "sandbox_bootstrap",
+          outcome: "failed",
+          snapshot: configuration.snapshot,
+          sourceState,
+          failurePhase: phase,
+          durationMs: elapsed(startedAt, finishedAt),
+          ...emptyDurations,
+          policyReadbackMs: phase === "policy_readback"
+            ? elapsed(startedAt, finishedAt)
+            : elapsed(startedAt, readbackFinishedAt),
+          installMs: phase === "install"
+            ? elapsed(readbackFinishedAt, finishedAt)
+            : elapsed(readbackFinishedAt, installFinishedAt),
+          verifyMs: phase === "verify" ? elapsed(installFinishedAt, finishedAt) : 0,
+          installedCapabilities,
+        });
+        await observed?.delete?.(60, true).catch(() => undefined);
         throw new TerminalSandboxInitializationError();
       }
-      return observedSnapshot;
     },
     async getSandbox(idOrName) {
       const sandbox = await load(idOrName);
@@ -287,9 +445,28 @@ export function createDaytonaTerminalProvider(
       return snapshot(sandbox);
     },
     async startSandbox(idOrName) {
-      const sandbox = await load(idOrName);
-      if (!sandbox.start) throw new Error("Daytona sandbox does not support start");
-      await sandbox.start(60);
+      const startedAt = now();
+      let sourceState: TerminalSandboxState = "failed";
+      try {
+        const sandbox = await load(idOrName);
+        sourceState = sandboxState(sandbox.state);
+        if (!sandbox.start) throw new Error("Daytona sandbox does not support start");
+        await sandbox.start(60);
+        const finishedAt = now();
+        observe({
+          operation: "sandbox_start", outcome: "completed", snapshot: configuration.snapshot,
+          sourceState, failurePhase: "none", durationMs: elapsed(startedAt, finishedAt),
+          ...emptyDurations, installedCapabilities: [],
+        });
+      } catch (error) {
+        const finishedAt = now();
+        observe({
+          operation: "sandbox_start", outcome: "failed", snapshot: configuration.snapshot,
+          sourceState, failurePhase: "start", durationMs: elapsed(startedAt, finishedAt),
+          ...emptyDurations, installedCapabilities: [],
+        });
+        throw error;
+      }
     },
     async stopSandbox(idOrName) {
       const sandbox = await load(idOrName);

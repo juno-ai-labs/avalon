@@ -1199,6 +1199,12 @@ instead of silently substituting another environment.
 5. Validate Daytona's essential-service interaction, 20-entry domain limit,
    wildcard behavior, blocked-target behavior, WebSocket command completion,
    archive/restore, and regional location against the provider contract.
+6. Bind both regional Workers to the dedicated account-level
+   `avalon_terminal_operations` Analytics Engine dataset. Record separate
+   provider-create, policy-read-back, compatibility-install, manifest-verify,
+   stopped-warm, and archived-restore timings without tenant or operation IDs.
+   Provide a sampling-aware human-readable report before deciding that an
+   Avalon-owned image is worth its build/activation/update lifecycle.
 
 Each regional Wrangler configuration declares the non-secret static capability
 `TERMINAL_REGION_CAPABILITY` as `supported` or `unsupported`; local development
@@ -1338,6 +1344,17 @@ work. A call blocked by the breaker returns the normal model-visible
     owning subsystem documents and their running changelogs, and every shipped
     descriptor is rechecked against [`../../agent-tools.md`](../../agent-tools.md)
     and the required tool/plugin documentation in [`../../prds.md`](../../prds.md).
+22. Every Daytona create, managed bootstrap, and lifecycle start emits one
+    non-blocking `terminal_platform_v1` Analytics Engine point with operation,
+    outcome, region, configured snapshot, source state, failed phase, release,
+    separate create/read-back/install/verify durations, and only allowlisted
+    installed-capability names. A checked-in CLI validates `--days 1..90`,
+    region, and snapshot filters; queries weighted counts and p50/p95 values;
+    and prints the actual observation start/end, warm/restore latency, bootstrap
+    phases, installed gaps, and an insufficient-sample/image-benchmark signal.
+    Telemetry failure never changes sandbox behavior, and no point carries a
+    workspace, work-stream, run, user, sandbox, repository, resource, command,
+    path, output, or credential identifier.
 
 ## Open questions
 

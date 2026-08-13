@@ -4,7 +4,11 @@ import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 
 import { parseTerminalRegionConfiguration } from "../src/services/terminal/contract";
-import { createDaytonaTerminalProvider, isTerminalProviderNotFound } from "../src/services/terminal/daytona-provider";
+import {
+  createDaytonaTerminalProvider,
+  isTerminalProviderNotFound,
+  type TerminalProviderOperationMeasurement,
+} from "../src/services/terminal/daytona-provider";
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
 import {
   terminalBaselineHostAcceptanceCommand,
@@ -32,7 +36,10 @@ if (configuration.capability !== "supported" || configuration.emergencyDisabled)
 const redirectUrl = requiredUrl("TERMINAL_PROBE_REDIRECT_URL");
 const privateDnsUrl = requiredUrl("TERMINAL_PROBE_PRIVATE_DNS_URL");
 const policy = compileTerminalNetworkPolicy("trusted_only", [redirectUrl.hostname, privateDnsUrl.hostname]);
-const provider = createDaytonaTerminalProvider(configuration);
+const measurements: TerminalProviderOperationMeasurement[] = [];
+const provider = createDaytonaTerminalProvider(configuration, undefined, {
+  observe: (measurement) => measurements.push(measurement),
+});
 const stableName = `avalon-terminal-probe-${randomUUID()}`;
 let sandboxId: string | null = null;
 
@@ -90,6 +97,7 @@ try {
   });
   sandboxId = created.id;
   if (created.domainAllowList.length !== 0) throw new Error("Daytona did not report Full-internet create state");
+  await provider.prepareSandbox?.(sandboxId, []);
 
   await run(terminalSnapshotProbeCommand(), "zero", "snapshot");
   await run("curl --fail --silent --show-error --max-time 15 https://example.com/ >/dev/null", "zero", "full-internet-public-control");
@@ -129,6 +137,11 @@ if (sandboxId) {
   } catch (error) {
     if (!isTerminalProviderNotFound(error)) throw error;
   }
+}
+for (const measurement of measurements) {
+  process.stdout.write(
+    `Daytona timing ${measurement.operation} ${measurement.outcome}: total=${measurement.durationMs}ms create=${measurement.providerCreateMs}ms readback=${measurement.policyReadbackMs}ms install=${measurement.installMs}ms verify=${measurement.verifyMs}ms source=${measurement.sourceState} installed=${measurement.installedCapabilities.join(",") || "none"}\n`,
+  );
 }
 if (probeError) throw probeError;
 process.stdout.write(`Automated Terminal provider probe passed for snapshot ${configuration.snapshot}\n`);

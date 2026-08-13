@@ -32,6 +32,7 @@ export interface Env {
   AI: Ai;
   MEMORY_INDEX: VectorizeIndex;
   RUN_ANALYTICS: AnalyticsEngineDataset;
+  TERMINAL_ANALYTICS: AnalyticsEngineDataset;
   // Optional because a Worker may run without the binding. Note that
   // `wrangler dev --local` still provides the object — it is every *call* that
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
@@ -217,6 +218,7 @@ const EnvContractSchema = z.object({
   AI: binding<Ai>(),
   MEMORY_INDEX: binding<VectorizeIndex>(),
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
+  TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
   WORKSTREAM_ROOMS: binding<DurableObjectNamespace>(),
   WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),

@@ -111,7 +111,8 @@
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-eu-telemetry", "jurisdiction": "eu" }
   ],
   "analytics_engine_datasets": [
-    { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" }
+    { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" },
+    { "binding": "TERMINAL_ANALYTICS", "dataset": "avalon_terminal_operations" }
   ],
   "images": { "binding": "IMAGES" },
   "containers": [
