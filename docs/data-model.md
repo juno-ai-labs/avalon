@@ -130,6 +130,10 @@ includes it. Knowing an object ID is never sufficient authorization.
 - `messages` has a per-work-stream `sequence_number`;
   `workstreams.next_sequence_number` allocates ordered events.
 - `message_mentions` stores validated person and connector spans.
+- `message_attachments` relates a resource to one exact owning message. A
+  resource can appear in multiple work streams, so projections that report
+  message-attachment state must join through `messages.workstream_id`; existence
+  anywhere in the workspace is not the relationship for the current work stream.
 - `resources` holds metadata while `content_ref` points at the user-visible
   regional R2 object and `content_sha256` identifies the exact bytes selected for
   model extraction. Uploads hash before the row commits; connector hydration
@@ -208,6 +212,10 @@ includes it. Knowing an object ID is never sufficient authorization.
   early-open and alarm-driven scheduled-run creation.
 - `harness_runs` records each bounded model loop. `tool_invocations` is unique on
   `(harness_run_id, tool_call_id)` and stores input hashes plus side-effect state.
+- `workstream_context_compactions` stores the raw LLM continuation summary,
+  principal-neutral base message, sequence boundary, and deterministic template
+  version. Current authorized resource totals are regenerated on apply and replay
+  and are intentionally absent from this shared row.
 - `schedules` is canonical. One workspace Durable Object alarm reads due rows and
   advances them transactionally/idempotently. Exactly one of
   `automation_subscription_id`, `connector_connection_id`, and `digest_schedule_id`
@@ -419,6 +427,24 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-12 — Message-attachment projections retain their work-stream boundary
+
+**What changed:** The resource visibility projection now resolves
+`message_attachments` through the owning message's workspace and work stream,
+and includes that relationship bit in its cursor fingerprint.
+
+**Why:** `resources` are reusable workspace objects, while a message attachment
+is a relationship to one message. Testing existence by resource ID alone let a
+message in work stream B change counts and list output in work stream A.
+
+**Considered and rejected:** Storing a message-attached flag on `resources`.
+That denormalizes a many-to-many relationship into a workspace-wide property and
+cannot represent a shared resource correctly.
+
+**Consequences:** Any future aggregate over message-introduced resources must
+join through `messages.workstream_id`; cursor snapshots must include every
+relationship-derived field they return.
 
 ### 2026-08-12 — Attachment receipts follow derivative identity
 

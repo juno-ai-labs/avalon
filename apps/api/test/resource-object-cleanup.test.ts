@@ -5,6 +5,42 @@ import { reapDeletedResourceObjects } from "../src/services/resource-object-clea
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 describe("resource object cleanup", () => {
+  it("reaps exactly one bounded batch before continuing on the next pass", async () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec(`
+      CREATE TABLE resource_object_deletion_outbox (
+        object_ref TEXT PRIMARY KEY, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+    `);
+    const insert = database.prepare(`
+      INSERT INTO resource_object_deletion_outbox
+        (object_ref, resource_id, object_kind, created_at, updated_at)
+      VALUES (?, ?, 'receipt', ?, ?)
+    `);
+    for (let index = 0; index < 101; index += 1) {
+      const key = `regional/receipt-${String(index).padStart(3, "0")}`;
+      insert.run(key, `resource-${index}`, `2026-08-12T00:00:00.${String(index).padStart(3, "0")}Z`, "2026-08-12");
+    }
+    const deleted: string[] = [];
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      PAYLOADS: { async delete(key: string) { deleted.push(key); } },
+    });
+
+    await reapDeletedResourceObjects(env);
+    expect(deleted).toHaveLength(100);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
+      .toEqual({ count: 1 });
+
+    await reapDeletedResourceObjects(env);
+    expect(deleted).toHaveLength(101);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
+      .toEqual({ count: 0 });
+    database.close();
+  });
+
   it("keeps a failed object queued with bounded retry metadata, then converges", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`

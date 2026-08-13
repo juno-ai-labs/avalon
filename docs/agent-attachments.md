@@ -218,8 +218,8 @@ checking offsets against the same hash and extractor version.
 ## Boundary
 
 This module owns model-facing attachment identity, classification, derivative
-selection, hydration contracts, continuation, recovery, and eventually
-compaction rediscovery. It depends on `resources`, `workstream_resources`,
+selection, hydration contracts, continuation, recovery, and compaction
+rediscovery. It depends on `resources`, `workstream_resources`,
 `message_attachments`, note visibility, regional D1/R2 bindings, and the harness
 tool loop.
 
@@ -256,8 +256,9 @@ generic tool execution/receipt loop is owned by
   source, derivative, and frame limits remain owned by the existing normalized
   image path until projection is split at cutover.
 - Invalid UTF-8, XML entity declarations, corrupt/oversized Office archives,
-  encrypted/oversized PDFs, missing OCR, incomplete OCR, timeouts, unsupported
-  formats, and missing source objects have distinct bounded failure codes.
+  encrypted OOXML containers, encrypted/oversized PDFs, missing OCR, incomplete
+  OCR, timeouts, unsupported formats, and missing source objects have distinct
+  bounded failure codes.
 - Image projection admits at most eight images, 20 MiB of source bytes, 40
   million source pixels, 10 MiB of derivative bytes, and a 2,048-pixel native
   long edge. Cloudflare Images scale-down is bounded to that same edge.
@@ -359,6 +360,47 @@ terms rather than duplicating attachment text. Later phases must preserve those
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Encrypted OOXML fails as encryption, not corruption
+
+**What changed:** A compound-file encrypted DOCX, XLSX, or PPTX container now
+returns `office_encryption_unsupported` before ZIP extraction rather than the
+generic `invalid_office_archive` failure.
+
+**Why:** Encrypted OOXML uses the Compound File Binary envelope instead of an
+ordinary ZIP. Treating that known signature as corruption gives the agent and
+person the wrong recovery path and makes a valid but unreadable document look
+damaged.
+
+**Considered and rejected:** Passing the container to the ZIP reader and keeping
+one error for every archive failure. It is safe but not diagnosable; the eight-
+byte signature is sufficient to distinguish the unsupported-encryption class
+without attempting to decrypt or exposing content.
+
+**Consequences:** Avalon still does not request or handle document passwords.
+Adding decryption would require a separate consent and secret-handling contract;
+it must not weaken archive expansion limits or log the password.
+
+### 2026-08-12 — Message-attachment state is scoped and cursor-visible
+
+**What changed:** The shared visibility query now counts a resource as a message
+attachment only when its owning message belongs to the work stream being listed.
+That bit also participates in the inventory fingerprint, so adding or removing a
+message relationship invalidates an outstanding list cursor.
+
+**Why:** A reusable resource can be attached to more than one work stream. The
+unscoped existence check made one work stream report another's message
+relationship, inflating the compaction subset total and changing later list pages
+without invalidating their snapshot.
+
+**Considered and rejected:** Treating `message_attachment` as a workspace-wide
+property. It describes how a resource entered this work stream, not the resource
+itself; sharing that property across work streams loses the relationship boundary.
+
+**Consequences:** Sidebar rows, agent list items, and compaction totals now agree
+on the current work stream's message subset. Future output fields derived from a
+relationship must join through that work stream and participate in the cursor
+fingerprint when they can change between pages.
 
 ### 2026-08-12 — Compaction inventory stays synchronized with visible resources
 

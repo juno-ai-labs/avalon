@@ -101,15 +101,17 @@ describe("attachment derivative conversion", () => {
     expect(ocr).toHaveBeenCalledOnce();
   });
 
-  it("fails explicitly for invalid UTF-8 and corrupt Office data and reports unsupported binary content", async () => {
-    const [invalidText, corruptOffice, unsupported] = await Promise.all([
+  it("fails explicitly for invalid UTF-8, corrupt or encrypted Office data, and unsupported binary content", async () => {
+    const [invalidText, corruptOffice, encryptedOffice, unsupported] = await Promise.all([
       buildAttachmentDerivative({ bytes: new Uint8Array([0xc3, 0x28]), fileName: "bad.md", mimeType: "text/markdown" }),
       buildAttachmentDerivative({ bytes: encoder.encode("not a zip"), fileName: "bad.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+      buildAttachmentDerivative({ bytes: new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), fileName: "encrypted.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
       buildAttachmentDerivative({ bytes: new Uint8Array([0, 1, 2]), fileName: "clip.mp4", mimeType: "video/mp4" }),
     ]);
 
     expect(invalidText).toMatchObject({ status: "failed", errorCode: "invalid_utf8" });
     expect(corruptOffice).toMatchObject({ status: "failed", errorCode: "invalid_office_archive" });
+    expect(encryptedOffice).toMatchObject({ status: "failed", errorCode: "office_encryption_unsupported" });
     expect(unsupported).toMatchObject({ status: "unsupported", errorCode: "resource_format_unsupported" });
   });
 

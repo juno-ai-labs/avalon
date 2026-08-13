@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { loadVisibleWorkstreamRoomResources } from "../src/durable-objects/workstream-room";
+import { loadVisibleWorkstreamResources } from "../src/services/workstream-resource-visibility";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -101,6 +102,78 @@ function service(env: Env, userId: string): WorkstreamService {
 }
 
 describe("per-user work-stream read state", () => {
+  it("counts a resource as a message attachment only inside the current work stream", async () => {
+    const { database, env } = fixture();
+    const resourceId = "00000000-0000-4000-8000-000000000015";
+    const otherWorkstreamId = "00000000-0000-4000-8000-000000000016";
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES
+        ('${otherWorkstreamId}', '${WORKSPACE_ID}', 'Other', 'Other work', 'ad_hoc',
+         '${USER_ONE_ID}', 'completed', '2026-02-01T00:00:00.000Z',
+         '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, author_user_id,
+         message_type, text_content, sequence_number, created_at)
+      VALUES
+        ('other-message', '${WORKSPACE_ID}', '${otherWorkstreamId}', 'human',
+         '${USER_ONE_ID}', 'text', 'Other attachment', 1,
+         '2026-02-01T00:00:00.000Z');
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type,
+         metadata_json, created_at, updated_at)
+      VALUES
+        ('${resourceId}', '${WORKSPACE_ID}', 'file', 'avalon_upload', 'Shared file',
+         'text/markdown', '{}', '2026-02-01T00:00:00.000Z',
+         '2026-02-01T00:00:00.000Z');
+      INSERT INTO workstream_resources
+        (workstream_id, resource_id, attached_by_user_id, watch_enabled,
+         relationship_type, attached_at)
+      VALUES
+        ('${WORKSTREAM_ID}', '${resourceId}', '${USER_ONE_ID}', 0, 'context',
+         '2026-02-01T00:00:00.000Z');
+      INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
+      VALUES ('other-message', '${resourceId}', 0, '2026-02-01T00:00:00.000Z');
+    `);
+
+    await expect(loadVisibleWorkstreamRoomResources(
+      env,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      USER_ONE_ID,
+    )).resolves.toEqual([expect.objectContaining({
+      id: resourceId,
+      message_attachment: 0,
+    })]);
+    const before = await loadVisibleWorkstreamResources(env.DB, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      principal: { type: "user", userId: USER_ONE_ID },
+    });
+
+    database.exec(`
+      INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
+      VALUES ('message-one', '${resourceId}', 0, '2026-02-01T00:00:00.000Z');
+    `);
+    await expect(loadVisibleWorkstreamRoomResources(
+      env,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      USER_ONE_ID,
+    )).resolves.toEqual([expect.objectContaining({
+      id: resourceId,
+      message_attachment: 1,
+    })]);
+    const after = await loadVisibleWorkstreamResources(env.DB, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      principal: { type: "user", userId: USER_ONE_ID },
+    });
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+  });
+
   it("hides private note metadata from non-owners in REST and realtime resource snapshots", async () => {
     const { database, env } = fixture();
     const resourceId = "00000000-0000-4000-8000-000000000005";

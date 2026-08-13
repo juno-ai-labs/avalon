@@ -197,4 +197,33 @@ describe("work-stream compaction resource inventory", () => {
     expect(String(bindings[4])).toContain("# Request");
     expect(String(bindings[4])).not.toContain("Authoritative work-stream resource inventory");
   });
+
+  it("keeps an unknown checkpoint template readable from its persisted base message", async () => {
+    const database = createTestD1Database({
+      prepare() {
+        return createTestD1PreparedStatement({
+          bind() { return this; },
+          async first<T>() {
+            return {
+              compacted_through_sequence: 7,
+              messages_json: JSON.stringify([{ role: "user", content: "future-version base checkpoint" }]),
+              summary: "raw future summary",
+              checkpoint_template_version: 99,
+            } as T;
+          },
+        });
+      },
+    });
+
+    await expect(__integrationTesting.loadWorkstreamContextCompaction(
+      database,
+      "workspace",
+      "workstream",
+      { type: "workspace", workspaceId: "workspace" },
+      AS_OF,
+    )).resolves.toEqual({
+      compactedThroughSequence: 7,
+      messages: [{ role: "user", content: "future-version base checkpoint" }],
+    });
+  });
 });

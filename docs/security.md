@@ -252,6 +252,12 @@ and visibility checks. Failed tools forward only bounded, schema-validated
 recovery fields; arbitrary provider, converter, credential, and file-authored
 objects are discarded before entering the transcript.
 
+Compaction persists only a principal-neutral LLM summary. Its resource inventory
+is regenerated from the same current-principal visibility query as the sidebar
+each time the checkpoint is applied or replayed. It contains fixed kind counts,
+not filenames, IDs, MIME values, content, or image bytes, so one viewer's private
+note inventory is never stored as shared work-stream prose.
+
 ### Logging and audit
 
 Structured logs include correlation IDs and domain IDs needed for operations.
@@ -438,6 +444,25 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-12 — Compaction resource awareness is current-principal data
+
+**What changed:** Authorized resource totals and natural-kind groups are appended
+only to live and replayed checkpoints. The shared compaction row retains the raw
+summary and a principal-neutral base message without the inventory.
+
+**Why:** Persisting a user's current visible-resource projection would both go
+stale after revocation and risk replaying private-note metadata to a different
+execution principal. Asking the LLM for counts is also not an authorization
+check.
+
+**Considered and rejected:** Persisting the rendered appendix and listing exact
+resource metadata. The former freezes authority at compaction time; the latter
+adds unnecessary sensitive metadata and unbounded context growth.
+
+**Consequences:** Replay now requires a fresh authorized visibility read.
+Failures at that boundary fail the run rather than reusing stale inventory, and
+the stored summary remains reusable across principals.
 
 ### 2026-08-12 — Attachment continuations name state without granting authority
 
