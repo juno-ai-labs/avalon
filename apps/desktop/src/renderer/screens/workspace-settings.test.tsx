@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
+import { ApiError } from '../lib/api';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { escapeClosesSettings, WorkspaceSettingsScreen } from './workspace-settings';
 
@@ -23,6 +24,9 @@ const api = vi.hoisted(() => ({
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
   updateWorkspaceLogAgentInference: vi.fn(),
+  getTerminalWorkspaceSettings: vi.fn(),
+  previewTerminalNetworkPolicy: vi.fn(),
+  applyTerminalNetworkPolicy: vi.fn(),
   getDigestSchedule: vi.fn(),
   updateDigestSchedule: vi.fn(),
 }));
@@ -198,6 +202,21 @@ describe('Workspace settings', () => {
       ...workspace,
       logAgentInference: enabled,
     }));
+    api.getTerminalWorkspaceSettings.mockResolvedValue({
+      availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',
+      customDomains: [], remainingCustomSlots: 7, failureCode: null,
+    });
+    api.previewTerminalNetworkPolicy.mockResolvedValue({
+      mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
+      proposedMode: 'full_internet', customDomains: [], remainingCustomSlots: 7,
+      affectedWorkstreamIds: ['00000000-0000-7000-8000-000000000091'],
+      affectedWorkstreams: [{ id: '00000000-0000-7000-8000-000000000091', title: 'Customer export' }],
+      warning: 'Full internet lets Terminal code contact arbitrary public destinations.',
+    });
+    api.applyTerminalNetworkPolicy.mockResolvedValue({
+      availability: 'supported', mode: 'full_internet', revision: 2, verificationState: 'verified',
+      customDomains: [], remainingCustomSlots: 7, failureCode: null,
+    });
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
@@ -305,6 +324,76 @@ describe('Workspace settings', () => {
 
     await waitFor(() => expect(api.updateWorkspaceLogAgentInference).toHaveBeenCalledWith(true));
     expect(toggle).toBeChecked();
+  });
+
+  it('previews and confirms full Terminal internet access before applying it', async () => {
+    renderSettings();
+    openSettingsSection('Workspace');
+    expect(await screen.findByText('Terminal network access')).toBeVisible();
+    const fullInternet = screen.getByRole('radio', { name: /^Full internet/ });
+    fireEvent.click(fullInternet);
+    await waitFor(() => expect(fullInternet).toBeChecked());
+    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
+
+    expect(await screen.findByText(/arbitrary public destinations/u)).toBeVisible();
+    expect(api.previewTerminalNetworkPolicy).toHaveBeenCalledWith({
+      expectedRevision: 1, mode: 'full_internet', customDomains: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm network change' }));
+    await waitFor(() => expect(api.applyTerminalNetworkPolicy).toHaveBeenCalledWith({
+      mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1, confirmed: true,
+    }));
+  });
+
+  it('keeps Avalon-managed Trusted-only domains out of the settings surface', async () => {
+    api.previewTerminalNetworkPolicy.mockResolvedValueOnce({
+      mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
+      proposedMode: 'trusted_only', customDomains: ['packages.example.com'],
+      remainingCustomSlots: 6,
+      affectedWorkstreamIds: [], affectedWorkstreams: [],
+      warning: 'Trusted only applies managed and workspace-approved access.',
+    });
+    renderSettings();
+    openSettingsSection('Workspace');
+
+    expect(await screen.findByText('Workspace-approved domains')).toBeVisible();
+    expect(screen.queryByText('Required targets')).not.toBeInTheDocument();
+    for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
+      expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
+    }
+    fireEvent.change(screen.getByLabelText('Additional Terminal domains'), {
+      target: { value: 'packages.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
+    fireEvent.click(await screen.findByText('Review exact before and after targets'));
+    expect(await screen.findAllByText('packages.example.com')).not.toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Download workspace domains' })).toBeVisible();
+    for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
+      expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
+    }
+  });
+
+  it('reports stopped and quarantined work streams after provider verification fails', async () => {
+    api.applyTerminalNetworkPolicy.mockRejectedValueOnce(new ApiError(
+      'Daytona did not confirm the requested network policy.',
+      502,
+      'terminal_policy_verification_failed',
+      {
+        sandboxOutcomes: [
+          { workstreamId: '00000000-0000-7000-8000-000000000091', title: 'Customer export', outcome: 'stopped' },
+          { workstreamId: '00000000-0000-7000-8000-000000000092', title: 'Weekly report', outcome: 'quarantined' },
+        ],
+      },
+    ));
+    renderSettings();
+    openSettingsSection('Workspace');
+    fireEvent.click(await screen.findByRole('radio', { name: /^Full internet/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm network change' }));
+
+    expect(await screen.findByText('Sandbox outcomes')).toBeVisible();
+    expect(screen.getByText('Customer export: stopped')).toBeVisible();
+    expect(screen.getByText('Weekly report: quarantined')).toBeVisible();
   });
 
   it('opens the exact section requested by a native settings-window URL', async () => {
@@ -1554,6 +1643,24 @@ describe('Closing the settings window with Escape', () => {
       expect(close, `Escape is dead in ${section}`).toHaveBeenCalled();
       close.mockClear();
     }
+  });
+
+  it('closes over persisted Terminal domains until the draft actually changes', async () => {
+    api.getTerminalWorkspaceSettings.mockResolvedValue({
+      availability: 'supported', mode: 'trusted_only', revision: 3, verificationState: 'verified',
+      customDomains: ['packages.example.com'], remainingCustomSlots: 6, failureCode: null,
+    });
+    renderSettings(workspace, createTestQueryClient(), true);
+    openSettingsSection('Workspace');
+    const domains = await screen.findByLabelText('Additional Terminal domains');
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(close).toHaveBeenCalledOnce();
+    close.mockClear();
+
+    fireEvent.change(domains, { target: { value: 'packages.example.com\nnew.example.com' } });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
   });
 
   it('dismisses an open dialog without taking the window with it', async () => {

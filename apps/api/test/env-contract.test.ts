@@ -11,7 +11,7 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
     DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
     IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
-    RUN_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
+    RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
     WORKSTREAM_ROOMS: binding(), WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
     WORKSTREAM_LOOP_WORKFLOW: binding(), CONNECTOR_POLL_WORKFLOW: binding(),
     APP_ENV: "production",
@@ -54,6 +54,33 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
 describe("environment contract", () => {
   it("accepts the production configuration", () => {
     expect(() => assertEnvContract(productionEnv())).not.toThrow();
+  });
+
+  it("disables Terminal gracefully when Daytona configuration is incomplete", () => {
+    const incomplete = productionEnv({ TERMINAL_REGION_CAPABILITY: "supported" });
+    expect(() => assertEnvContract(incomplete)).not.toThrow();
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "not-a-url",
+    }))).not.toThrow();
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "http://daytona.example.com/api",
+      DAYTONA_TARGET: "us",
+      DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
+    }))).toThrow(/DAYTONA_API_URL is invalid/u);
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "https://daytona.example.com/api",
+      DAYTONA_TARGET: "us",
+      DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
+    }))).not.toThrow();
   });
 
   it("names a missing required variable without echoing any value", () => {

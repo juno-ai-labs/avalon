@@ -6,6 +6,7 @@ allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+  protobufjs: false
   workerd: true
 
 peerDependencyRules:

@@ -32,6 +32,7 @@ export interface Env {
   AI: Ai;
   MEMORY_INDEX: VectorizeIndex;
   RUN_ANALYTICS: AnalyticsEngineDataset;
+  TERMINAL_ANALYTICS: AnalyticsEngineDataset;
   // Optional because a Worker may run without the binding. Note that
   // `wrangler dev --local` still provides the object — it is every *call* that
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
@@ -72,6 +73,12 @@ export interface Env {
   NOTION_INGRESS_BASE_URL?: string;
   SLACK_INGRESS_BASE_URL?: string;
   POSTHOG_HOST?: string;
+  TERMINAL_REGION_CAPABILITY?: "supported" | "unsupported";
+  TERMINAL_EMERGENCY_DISABLED?: "true" | "false";
+  DAYTONA_API_KEY?: string;
+  DAYTONA_API_URL?: string;
+  DAYTONA_TARGET?: string;
+  DAYTONA_TERMINAL_SNAPSHOT?: string;
 
   OPENROUTER_API_KEY: string;
   OPENROUTER_PRIMARY_MODEL: string;
@@ -211,6 +218,7 @@ const EnvContractSchema = z.object({
   AI: binding<Ai>(),
   MEMORY_INDEX: binding<VectorizeIndex>(),
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
+  TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
   WORKSTREAM_ROOMS: binding<DurableObjectNamespace>(),
   WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
@@ -225,6 +233,11 @@ const EnvContractSchema = z.object({
   PUBLIC_WEB_BASE_URL: HttpUrlSchema,
   ALLOWED_ORIGINS: z.string().min(1),
   DESKTOP_DEEP_LINK_URI: AvalonUrlSchema,
+  TERMINAL_REGION_CAPABILITY: z.enum(["supported", "unsupported"]).optional(),
+  TERMINAL_EMERGENCY_DISABLED: z.enum(["true", "false"]).optional(),
+  DAYTONA_API_URL: z.string().optional(),
+  DAYTONA_TARGET: z.string().optional(),
+  DAYTONA_TERMINAL_SNAPSHOT: z.string().optional(),
 
   // `OPENROUTER_API_KEY` is deliberately not here; see `productionOnlySecrets`.
   OPENROUTER_PRIMARY_MODEL: z.string().min(1),
@@ -360,7 +373,24 @@ export function assertEnvContract(env: Env): void {
           && !env[secret.key])
         .map((secret) => secret.key)
     : [];
-  if (result.success && missingSecrets.length === 0) {
+  const terminalRequiredKeys = ["DAYTONA_API_KEY", "DAYTONA_API_URL", "DAYTONA_TARGET", "DAYTONA_TERMINAL_SNAPSHOT"] as const;
+  const terminalConfigurationComplete = terminalRequiredKeys.every(
+    (key) => typeof env[key] === "string" && env[key]!.trim().length > 0,
+  );
+  const terminalConfigurationIssues = env.TERMINAL_REGION_CAPABILITY === "supported" && terminalConfigurationComplete
+    ? [
+        ...(typeof env.DAYTONA_API_URL === "string"
+          ? (() => {
+              try {
+                return new URL(env.DAYTONA_API_URL).protocol === "https:" ? [] : ["DAYTONA_API_URL is invalid"];
+              } catch {
+                return ["DAYTONA_API_URL is invalid"];
+              }
+            })()
+          : []),
+      ]
+    : [];
+  if (result.success && missingSecrets.length === 0 && terminalConfigurationIssues.length === 0) {
     validated.add(env);
     return;
   }
@@ -375,6 +405,7 @@ export function assertEnvContract(env: Env): void {
       return `${key} ${present ? "is invalid" : "is missing"}`;
     })),
     ...missingSecrets.map((key) => `${key} is missing`),
+    ...terminalConfigurationIssues,
   ];
   throw new EnvContractError([...new Set(keys)].sort());
 }

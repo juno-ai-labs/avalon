@@ -28,6 +28,7 @@ bridges, or any code that selects a Durable Object namespace.
 | `apps/api/src/lib/durable-object-namespace.ts` | The shared helper that selects a namespace, pinning EU with `jurisdiction("eu")`. |
 | `apps/api/src/lib/region-routed-state.ts` | Region-prefixed provider state, so a callback knows where it started. |
 | `apps/api/src/env.ts` | `assertEnvContract` — region-scoped, not just environment-scoped. |
+| `apps/api/src/services/terminal/contract.ts`, `daytona-provider.ts` | Independent regional Terminal capability gate and Daytona target/credential boundary. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | The two deployments and their bindings. |
 
 ## How it works
@@ -68,6 +69,7 @@ The same Worker source is deployed twice:
 | GitHub App ingress | signature verification and installation-to-region directory | exact signed delivery forwarded through named Worker RPC only when connected in EU |
 | Notion connection ingress | one redirect URI and one webhook subscription, plus the Notion-workspace-to-region directory | authorization code and exact signed delivery forwarded through named Worker RPC; token exchange, credentials, and payloads stay in EU |
 | Work-stream email registry | one authoritative, case-insensitive reservation table for every region | no local allocator; reservations and status changes use the Global named RPC binding |
+| Terminal workspaces | independently gated Daytona target; regional D1/R2/GitHub App services | independently gated Daytona target; no Global fallback or bridge |
 
 Queues and Workflows carry region plus opaque record IDs, never sensitive payload
 bodies. Every service receives a fixed regional dependency container; repositories
@@ -189,6 +191,9 @@ mechanism.
   validated event projection. EU-to-Global carries only opaque preference
   mutation or capability authorization/closure commands; it never carries an EU
   event, dump, regional analytics identity, or destination credential.
+- **Terminal capability is declared and probed independently per region.** An
+  unavailable EU Daytona target cannot fall back to Global without moving
+  repository/resource bytes across the workspace boundary.
 
 ## Boundary
 
@@ -240,6 +245,10 @@ here.
 - **Enterprise-dedicated Workers, databases, buckets, keys, retention, and
   observability** remain an extension point in the repository and service
   interfaces, not a V1 feature.
+- **A region whose Daytona target, residency assurance, snapshot, egress, or
+  lifecycle acceptance has not passed remains `unsupported`.** Settings reports
+  that state and Bind omits Terminal; another region's passing probe changes
+  nothing.
 
 ## Testing
 
@@ -286,14 +295,16 @@ commitments, and establishing contractual processing terms.
 
 Workers Analytics Engine is also an account-level observability service for
 which this repository configures no regional jurisdiction. Both API Workers
-write root-run summaries to the same `avalon_agent_runs` dataset. To keep that
-additional boundary operational-only, its datapoints contain source, outcome,
-model/release metadata, and numeric run totals but no workspace, work-stream,
-run, user, prompt, transcript, tool payload, connector content, or credential
+write root-run summaries to `avalon_agent_runs` and content-free Daytona phase
+measurements to `avalon_terminal_operations`. To keep that additional boundary
+operational-only, datapoints contain operational enums, region, configured
+snapshot/model/release metadata, and numeric totals but no workspace,
+work-stream, run, user, provider-sandbox, prompt, transcript, tool payload,
+command, path, repository, resource, connector content, or credential
 identifier. Exact correlated records remain in the existing D1, Workers
 Logs/Traces, and region-specific R2 Logpush paths. A future requirement for
 jurisdiction-pinned custom analytics must replace or contractually validate
-this shared dataset rather than assuming the EU Worker binding makes it EU
+these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
@@ -346,6 +357,56 @@ must provision their dedicated telemetry resources before rollout.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Daytona fleet timing stays aggregate and account-level
+
+**What changed:** Both regional Workers now write provider create, managed-image
+bootstrap, verification, and lifecycle-start phase measurements to the shared
+`avalon_terminal_operations` Analytics Engine dataset. The sampling cohort is
+the fixed Terminal source plus region, while configured snapshot remains a
+groupable blob; no tenant or operation identifier is stored.
+
+**Why:** Deciding whether to replace Daytona's common managed image requires a
+cross-sandbox latency distribution, while exact regional identifiers add no
+value to that fleet-level question and Analytics Engine has no configured EU
+jurisdiction guarantee.
+
+**Considered and rejected:** Adding Daytona timings to the root-run dataset,
+indexing by workspace/sandbox, and naming a separate EU table as if its name
+established residency. They respectively mix incompatible event grains, expose
+unneeded correlation in a sampled store, or claim a boundary Cloudflare does
+not document.
+
+**Consequences:** EU and Global phase data can be filtered by the explicit
+region blob but shares the same account-level Analytics Engine boundary and
+three-month retention. Regional D1 and R2 Logpush remain the exact sources; a
+future jurisdiction requirement must replace or contractually validate this
+aggregate path.
+
+### 2026-08-13 — Terminal availability is a regional provider gate
+
+**What changed:** Each Worker deployment has an independent
+`TERMINAL_REGION_CAPABILITY` and, only when supported, independent Daytona API,
+target, snapshot, and emergency-disable configuration. Terminal D1/R2 records,
+GitHub App operations, and generated resources stay in the workspace region;
+both checked-in regions currently default to `unsupported`.
+
+**Why:** Daytona becomes a subprocessor for repository and resource content.
+Treating its availability as one global product flag would either advertise a
+target whose residency/isolation had not been verified or silently route EU
+workspace data through Global.
+
+**Considered and rejected:** Global fallback, a shared cross-region sandbox
+control plane, and enabling a region from configuration alone without the real
+provider probe. All make availability outrun the regional data boundary.
+
+**Consequences:** Operations must pass and record the snapshot, egress,
+lifecycle, and residency gates for Global and EU separately. Unsupported is a
+valid shipped state; code must not infer capability from the presence of
+Daytona credentials.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — Root-run aggregate telemetry excludes regional identifiers
 

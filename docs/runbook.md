@@ -78,6 +78,102 @@ To rotate connector credentials in one region, keep the old key, set `CONNECTOR_
 
 Configure the Azure values in every region where dictation is enabled. `AZURE_OPENAI_ENDPOINT` is the HTTPS resource endpoint, and `AZURE_OPENAI_REALTIME_DEPLOYMENT` is the name of an Azure deployment backed by `gpt-live-transcribe`. Azure's GA transcription contract connects to `/openai/v1/realtime?intent=transcription` and identifies that deployment in `session.audio.input.transcription.model`. Do not place any Azure value behind a `VITE_` prefix. Local development may use one unsuffixed set or `_GLOBAL` and `_EU` overrides in `.env.local`.
 
+### Terminal provider activation and recovery
+
+Terminal is fail-closed per region. The checked-in Global and EU Wrangler files
+set `TERMINAL_REGION_CAPABILITY=unsupported`; leave a region there until its
+Daytona data residency, private-sandbox isolation, managed snapshot bootstrap, native
+domain policy, secret-host restriction, stop/archive/restore, and deletion
+behavior have passed for that exact target and provider version. There is no
+cross-region fallback.
+
+An activated region requires:
+
+- `TERMINAL_REGION_CAPABILITY=supported` and
+  `TERMINAL_EMERGENCY_DISABLED=false`;
+- `DAYTONA_API_URL`, `DAYTONA_TARGET`, and
+  `DAYTONA_TERMINAL_SNAPSHOT=daytona-small`; and
+- `DAYTONA_API_KEY` as a regional Worker secret. Never put the Daytona project
+  credential in a `VITE_` variable, D1, a sandbox environment value, or a
+  checked-in Wrangler file.
+
+If any required Daytona value is absent, Avalon treats that region as
+`unsupported` and continues starting without the Terminal plugin. This is the
+normal local-development state. Once every value is present, malformed values
+still fail the environment contract so an intended provider rollout cannot
+silently run against the wrong endpoint.
+
+The managed-snapshot compatibility contract is
+`apps/api/src/services/terminal/snapshot-manifest.ts`: Bash, Python,
+JavaScript/Node.js, TypeScript, SQLite, apt/dpkg, pip/uv, npm/pnpm, Git, `gh`,
+and passwordless sudo. First creation idempotently adds any missing launch tools
+through the Trusted-only apt/npm hosts and then executes every probe. A runtime
+or manager is not supported merely because it happens to exist in one image;
+add its functional probe and update the Terminal prompt in the same change.
+
+Before enabling a region, place the candidate configuration only in the local
+operator environment. Also provide two controlled HTTPS endpoints:
+`TERMINAL_PROBE_REDIRECT_URL` must be an allowed public host that redirects to a
+blocked host, and `TERMINAL_PROBE_PRIVATE_DNS_URL` must be an allowed public name
+that resolves to a private/special-use address. Then run:
+
+```text
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/api terminal:verify-provider
+```
+
+The automated probe creates one private Trusted-only sandbox, verifies the exact
+effective allowlist, every promised runtime/manager, allowed and denied domains,
+direct-IP, redirect, private-DNS, and metadata denial. It then checks
+stop/restart, archive/restore, deletion, and observed absence; cleanup failure is
+a failed probe and success is printed only afterward. It also prints create,
+policy-read-back, compatibility-install, manifest-verification, and start phase
+timings from that disposable sandbox. These are acceptance evidence, not the
+production distribution used for the image decision. The automated result is
+not sufficient by itself: the activation record must also contain controlled
+evidence for TTL-changing public-to-private DNS rebinding and host-scoped secret
+substitution against an alternate host. Preserve those results with the provider
+version, target, snapshot ID, region, and vendor residency evidence; never
+preserve configuration values, canary secret values, or endpoint credentials.
+Only after the complete record exists should the Wrangler region be changed to
+`supported`, the three non-secret values be configured, the API key be set, and
+that region deployed.
+
+Once enabled, query the durable aggregate measurements with:
+
+```text
+pnpm terminal:analytics -- --days 7
+pnpm terminal:analytics -- --days 30 --region eu --snapshot daytona-small
+```
+
+The command uses `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` restricted
+to **Account Analytics: Read**. Its start/end line is the actual first and last
+Analytics Engine observation in the requested window, not merely the requested
+date boundary.
+
+Use the structured events `terminal_tool_finished`,
+`terminal_sandbox_lifecycle_transition`, and
+`terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.
+For regional durable diagnosis, query counts/ages and exact IDs from
+`workstream_sandboxes`, `sandbox_tasks`,
+`workspace_sandbox_network_policy_mutations`, and `repository_publications`;
+inspect generated logs/diffs only through Avalon's authorized resource surface.
+The oldest running `last_activity_at`, nonterminal task beyond
+`command_deadline_at`, expired lifecycle claim, failed policy verification, or
+`ambiguous` publication points to the owning reconciler rather than permission to
+repeat the provider write.
+
+For a provider-wide egress, isolation, or secret incident, set
+`TERMINAL_EMERGENCY_DISABLED=true` and deploy the affected region first. The
+plugin remains visible so its normal tool contract can explain the outage, but
+new sandbox leases and publication starts fail closed with
+`sandbox_unavailable`; regional receipts and generated resources remain intact.
+Revoke/rotate the Daytona project key and GitHub App
+credentials as the incident requires, reconcile retained provider sandboxes
+against `workstream_sandboxes`, and run the full real-provider probe before
+clearing the emergency switch. Do not bulk-delete provider sandboxes by label
+without matching the exact regional D1 workspace/work-stream/generation rows;
+final diffs and ambiguous publication state may still require preservation.
+
 Apply migration `0040_realtime_transcription_admission.sql` before enabling dictation. It stores no audio or transcripts: it records consumed one-minute ticket IDs and five-minute active-session leases. The Worker permits at most two concurrent sessions per user and twenty per workspace, rejects more than thirty client frames per second, and caps PCM audio at five minutes per connection. Expired leases are removed during the next admission attempt.
 
 Alert on `realtime_transcription_session_release_failed`. The Worker retries the idempotent D1 lease deletion before emitting this event; repeated occurrences can leave a user at the concurrency limit until the five-minute lease expires.
@@ -486,6 +582,7 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Broken response contracts | `event = request_failed` and `error_name = ZodError` |
 | Harness run outcomes | `event = harness_run_finished` |
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
+| Slow Terminal bootstrap | `event = terminal_daytona_operation_finished`, `operation = sandbox_bootstrap`, and `install_duration_ms > 10000` |
 
 Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
 
@@ -590,6 +687,63 @@ started yet, so re-check the product page before treating that as a budget.
 Every `writeDataPoint` is one billable write regardless of how many fields it
 contains, which is another reason to record one terminal summary rather than
 every churn.
+
+### Terminal platform analytics
+
+Both API Workers bind `TERMINAL_ANALYTICS` to the account-level
+`avalon_terminal_operations` dataset. This dataset has one point per Daytona
+platform operation and is intentionally separate from `avalon_agent_runs`: a
+provider create/bootstrap/start is a different grain from a completed model
+run. Writes are non-blocking and advisory. A failed analytics write cannot
+change sandbox state.
+
+The fixed `terminal_platform_v1` positions are:
+
+| Column | Meaning |
+| --- | --- |
+| `index1` | `terminal:<region>` sampling cohort; snapshot remains a grouped blob |
+| `blob1` | schema version |
+| `blob2` | `sandbox_create`, `sandbox_bootstrap`, or `sandbox_start` |
+| `blob3` | `completed`, `failed`, or `policy_mismatch` |
+| `blob4` | Avalon region |
+| `blob5` | configured Daytona snapshot |
+| `blob6` | source lifecycle state (`absent`, `stopped`, `archived`, and so on) |
+| `blob7` | failed phase, or `none` |
+| `blob8` | sorted compatibility capabilities installed, or `none` |
+| `blob9` | Avalon app version |
+| `blob10` | build SHA |
+| `double1` | total operation milliseconds |
+| `double2` | provider create milliseconds |
+| `double3` | provider policy read-back milliseconds |
+| `double4` | workspace/package compatibility-install milliseconds |
+| `double5` | full capability-manifest verification milliseconds |
+| `double6` | number of compatibility capabilities installed |
+
+No point contains a workspace, work stream, run, user, sandbox, repository,
+resource, command, path, output, or credential identifier. The dataset therefore
+answers fleet/image questions, not exact-work-stream diagnosis. Exact state
+continues to come from regional D1 and structured Workers Logs.
+
+`pnpm terminal:analytics` sends sampling-aware SQL to Cloudflare's documented
+[Analytics Engine SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/).
+It reports the actual observed start/end, estimated operation counts, and
+average/p50/p95/max total latency. Create is decomposed into allocation and
+policy read-back; bootstrap into read-back, compatibility installation, and
+verification; start is labeled as stopped-sandbox warming or archived restore.
+It also expands the fixed installed-capability set into human-readable counts.
+Use `--days 1..90`, `--region global|eu|all`, and an optional safe snapshot name.
+Analytics Engine retains these points for three months.
+
+The report intentionally refuses to recommend an owned image before 100
+successful bootstraps in the selected cohort. At or beyond that sample, a
+compatibility-install p95 above ten seconds triggers a prebuilt-snapshot
+benchmark—not an automatic switch. Run paired disposable creates in the same
+Daytona target and retain manifest verification in both variants. Adopt an owned
+snapshot only when its first-ready improvement is material after including
+provider create/read-back, warming, archived restore, failure rate, image build
+and activation work, and the cost of following managed Daytona updates. A custom
+image cannot claim savings from verification, because Avalon keeps that phase
+for either image.
 
 Automatic tracing is enabled on both API Workers and on the retention Worker at
 a `traces` head sampling rate of 1. It is a separate switch from logs: the
