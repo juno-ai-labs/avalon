@@ -35,6 +35,9 @@ The approved product contract and rationale are frozen in the [regional telemetr
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md); this document describes
 the implementation that future changes must preserve.
 
+For the implementation checklist, see
+[`adding-new-instrumented-event.md`](adding-new-instrumented-event.md).
+
 ## How it works
 
 ### Contract and producers
@@ -45,12 +48,16 @@ classification, priority, sample rate, retention, and destination. Incompatible
 changes require a new schema version. There is no generic `capture(name,
 properties)` API outside the reporter internals.
 
-Automatic collection is limited to bounded application/session/process/update,
-spool, API-operation, and crash-upload states. Router calls emit registered screen
-enums. Product integrations emit semantic intent before a state-changing request;
-the authoritative API emits the outcome with the same `operation_id`. Avalon does
-not capture DOM interactions, console output, arbitrary network traffic, URLs,
-request bodies, prompts, messages, documents, or session replay.
+Automatic collection is limited to bounded application install/update and
+lifecycle/session/process/update, spool, API-operation, and crash-upload states.
+Main adds a closed native-desktop context: the random installation device ID,
+app/build, OS/version, locale, timezone, display dimensions, and—when an event
+comes from a live renderer—its random window ID and viewport dimensions. Router
+calls emit registered screen enums. Product integrations emit semantic intent
+before a state-changing request; the authoritative API emits the outcome with
+the same `operation_id`. Avalon does not capture DOM interactions, console
+output, arbitrary network traffic, URLs, request bodies, prompts, messages,
+documents, or session replay.
 
 The renderer's shared API adapter explicitly reports non-abort `fetch` failures
 and upload-XHR network failures as `network_error` because product UI handles
@@ -87,13 +94,17 @@ immediately rather than becoming authenticated rows that wait for region
 selection. A later workspace selection is prospective and does not migrate them.
 
 The desktop persists one random installation ID and one rotating anonymous login
-epoch. Only the epoch may link to a random, server-owned regional person ID after
-authentication; the installation ID never links. Logout, account switch, or
-abandoned authentication rotates the epoch. In Global, the ordered transition is
-PostHog `$identify` with the stable person as `distinct_id`, the epoch as
-`$anon_distinct_id`, and the verified email/name profile. A later profile job
-cannot supersede an unresolved transition. Eligible Global workspaces use a
-stable random `workspace` group ID and only the current workspace name.
+epoch. Only the epoch is used for the explicit anonymous-history-to-person
+transition. Global desktop events also send the random installation ID as
+PostHog `$device_id`, matching first-party app SDK attribution, so identified
+events can associate a device with a person. This is not a raw platform ID and
+does not create an Avalon identity link or a cross-region mapping. Logout,
+account switch, or abandoned authentication rotates the epoch. In Global, the
+ordered transition is PostHog `$identify` with the stable person as
+`distinct_id`, the epoch as `$anon_distinct_id`, and the verified email/name
+profile. A later profile job cannot supersede an unresolved transition. Eligible
+Global workspaces use a stable random `workspace` group ID and only the current
+workspace name.
 
 ### Preference and local delivery
 
@@ -126,10 +137,22 @@ the same ID conflicts. EU acceptance also writes the independently expiring
 internal semantic projection. Global acceptance leaves a destination row for the
 five-minute scheduled processor.
 
-Global delivery uses stable `$insert_id`, `$session_id`, `distinct_id`, PostHog
-workspace groups, `$process_person_profile`, `$geoip_disable`, normalized
-timestamps, and the official exception capture path. JavaScript source maps are
-loaded privately and only mapped application frames leave Avalon. Malformed
+Global delivery uses stable `$insert_id`, `$session_id`, `$window_id`,
+`$device_id`, `distinct_id`, PostHog workspace groups, `$is_identified`,
+`$process_person_profile`, `$geoip_disable`, normalized
+timestamps, and the official exception capture path. The adapter translates only
+exact provider equivalents: `screen_viewed` becomes `$screen`, launch/foreground
+becomes `Application Opened`, and background becomes `Application Backgrounded`.
+`application_version_changed` becomes `Application Installed` or
+`Application Updated`; rollout onto an existing installation establishes a
+durable baseline without emitting a false installation event. The adapter keeps
+`avalon_event_name` on every destination event and adds the applicable
+first-party app context: `$app_*`, `$device_type`, `$os`/`$os_name`,
+`$os_version`, `$locale`, `$timezone`, display/viewport dimensions, and
+device/window identity. It marks only events
+that originated in the API with `$is_server`. It never emits both the Avalon and
+provider spelling for one occurrence. JavaScript source maps are loaded privately
+and only mapped application frames leave Avalon. Malformed
 profile jobs are terminalized individually so one corrupt row cannot block later
 profiles, event delivery, or operational snapshots. PostHog 408,
 429, 5xx, and network failures on ordinary event/profile batches retry with
@@ -138,6 +161,34 @@ PostHog exception SDK exposes only flush success/failure for JavaScript/native
 exceptions, so a failed flush retries without status-specific classification.
 Five consecutive transient failures open a per-stream five-minute circuit. EU
 has no PostHog token, host, adapter call, or telemetry Analytics Engine dataset.
+
+### PostHog product compatibility
+
+This table was audited against the Tools catalog visible in the US PostHog
+project on 2026-08-13. "Supported" means Avalon's truthful data contract is
+enough for the product; it does not mean the product has been pinned in the
+sidebar or configured with a saved view. Reserved PostHog events are destination
+formatting only. The regional registry and EU projection keep their Avalon names.
+
+| PostHog tool | Status | Avalon contract |
+| --- | --- | --- |
+| Dashboards, Product analytics, SQL editor | Supported | Semantic events, `$screen`, stable identities, `$session_id`, workspace `$groups`, profiles, release/app context, and request/outcome correlation support trends, paths, funnels, retention, cohorts, and HogQL. |
+| Endpoints, Inbox, Notebooks, Workflows | Supported after PostHog-side configuration | They consume the same truthful events and profiles; no new capture event should be invented merely to enable a destination, alert, notebook, or workflow. |
+| Error tracking | Supported | JavaScript and native reports use the SDK's exception capture path with fingerprints, app frames, releases, sessions, groups, and app context. |
+| Marketing analytics, Web analytics | Not an Electron event contract | These depend on real web `$pageview`/`$pageleave`, URL, referrer, and campaign context. The public site remains outside this subsystem; Electron `$screen` events must not impersonate web traffic. |
+| Heatmaps, Replay vision, Session replay | Not enabled | They require browser/mobile interaction coordinates or `$snapshot` recording data. Semantic screen/action events cannot reconstruct a truthful replay or heatmap. |
+| Surveys, Support | Not enabled | PostHog surveys require survey retrieval/display logic and exact `survey shown`, `survey sent`, and `survey dismissed` events with provider survey IDs and responses. Emitting those events without actually rendering a PostHog survey would corrupt response data. |
+| Logs, Tracing | Not enabled | Logs and traces use their own OpenTelemetry/log ingestion protocols. `trace_id` and `span_id` correlation on a product event is useful but is not a substitute for exporting a trace or log record. |
+| Feature flags, Experiments, Early access features | Not enabled | Cloudflare Flagship is Avalon's flag authority. Do not forge `$feature_flag_called`, `$feature/<key>`, or experiment exposure properties for a flag PostHog did not evaluate. A future PostHog-owned or explicitly mirrored evaluator must emit the exact evaluated variant on exposure and attach it to downstream outcomes. |
+| AI observability, MCP analytics, Clusters, Datasets, Evaluations, Playground, Prompts | Not enabled | These require a truthful `$ai_trace` tree with `$ai_generation`, `$ai_span`, and `$ai_embedding` records. `run_requested`/`run_completed` describe product outcomes and must not be renamed into incomplete AI traces. Prompt/output capture and provider trace export need a separate content and residency decision. |
+| Toolbar, Web scripts | Not applicable to the Electron reporter | These are browser-site runtime/configuration tools, not event schemas. |
+| Skills | No capture dependency | This is a PostHog operator/agent capability and consumes the project's existing data model. |
+
+The compatibility rule is strict: use a PostHog reserved event only when Avalon
+observed the same thing and can provide its required properties. Never duplicate
+one occurrence under a custom and reserved name, and never manufacture a flag
+exposure, survey response, replay, pageview, trace, log, or AI generation to make
+a product appear configured.
 
 ### Native crashes
 
@@ -181,8 +232,11 @@ work still crosses the authenticated Durable Object RPC/exec boundary.
 - **The renderer has no provider or identity authority.** It cannot name an event,
   send an arbitrary property dictionary, read a telemetry credential, or call
   PostHog; otherwise an XSS becomes a data-exfiltration and schema-expansion path.
-- **Only the per-login epoch links.** Linking installation identity would join
-  different people who share a machine and corrupt both funnels and profiles.
+- **Only the per-login epoch performs an anonymous history merge.** The random
+  installation ID may appear as PostHog `$device_id` for SDK-compatible device
+  attribution, but it is never used as `$anon_distinct_id`, entered in Avalon's
+  identity-link table, or exported across regions; conflating these roles would
+  merge login journeys or residency histories.
 - **An anonymous-to-person transition is ordered and never superseded.** Losing
   `$anon_distinct_id` during an outage permanently splits the onboarding funnel.
 - **Opt-out is enforced at creation, regional acceptance, and delivery.** Any one
@@ -347,6 +401,71 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-13 — Native desktop events carry the applicable first-party SDK context
+
+**What changed:** Electron main now adds the random installation device ID,
+identified state, OS version, locale, timezone, display dimensions, and trusted
+per-window viewport/window IDs to the typed event context. The Global adapter
+uses PostHog's reserved native-app properties and emits canonical installation
+and update lifecycle events; a durable local version marker prevents repeated
+updates and treats an existing installation's first upgraded launch as a
+baseline rather than a new install.
+
+**Why:** Navigation events alone made PostHog paths work, but built-in breakdowns
+and session/application views remained poorer than data captured by PostHog's
+first-party app SDKs. The adapter boundary can reproduce those truthful desktop
+signals while preserving regional delivery and without placing a provider SDK
+or token in the renderer.
+
+**Considered and rejected:** Copying the browser SDK's URL, host, referrer,
+campaign, user-agent, and embedded-Chromium fields; exporting a hostname as a
+device model; guessing hardware manufacturers; and reporting every existing
+installation as newly installed. Those choices would respectively classify
+Electron as web acquisition traffic, create identifying high-cardinality data,
+invent device facts, or corrupt installation counts.
+
+**Consequences:** In Global PostHog, `$device_id` can associate Avalon's random
+installation identity with an identified person, matching SDK device
+attribution; the explicit anonymous merge still uses only the rotating login
+epoch. EU keeps the same typed context internally and receives no PostHog
+identity. New context fields must be main-derived and bounded, and browser-only
+metadata remains outside the Electron contract.
+
+Design: [regional telemetry PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — PostHog receives native app semantics without duplicate events
+
+**What changed:** The Global adapter now translates registered screen views and
+the matching desktop lifecycle transitions to PostHog's canonical `$screen`,
+`Application Opened`, and `Application Backgrounded` events. Desktop captures
+and exceptions carry standard app, desktop-device, and OS properties. A
+main-owned focus observer establishes the launch focus as its baseline, ignores
+window-to-window focus handoffs, and reports later application background and
+foreground transitions. Only API-originated captures are marked as server
+events. Every destination event
+retains its single Avalon registry name in `avalon_event_name`, and the live
+PostHog tool catalog is recorded with the exact products this contract can and
+cannot truthfully drive.
+
+**Why:** PostHog's built-in navigation and application views key off reserved
+event names and properties. Sending only Avalon's internal spelling hid screen
+and lifecycle semantics, while treating every regional delivery as server-side
+would erase the originating desktop context. The provider mapping can supply the
+SDK's native semantics without weakening Avalon's regional or typed boundary.
+
+**Considered and rejected:** Emitting both the custom and reserved event for one
+occurrence, renaming the regional registry, embedding the provider SDK in the
+renderer, and fabricating pageviews, flag exposures, surveys, replay snapshots,
+traces, or AI generations. Duplication corrupts counts; the other options either
+move provider concerns into the regional contract or claim observations Avalon
+did not make.
+
+**Consequences:** PostHog queries for provider-standard navigation/lifecycle use
+the reserved event name and can filter or recover Avalon's semantic name through
+`avalon_event_name`. EU storage and queries remain unchanged. Every future
+reserved-name mapping needs an exact semantic-equivalence test and must replace,
+not duplicate, its custom destination spelling.
 
 ### 2026-08-13 — Caught renderer transport failures reach exception telemetry
 
