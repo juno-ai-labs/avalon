@@ -22,6 +22,38 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("moves legacy Notion bot grants to workspace scope without widening personal MCP rows", () => {
+    const database = migrateDatabaseThrough("0071_notion_webhook_setup_nonces.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('notion-owner', 'notion-owner-subject', 'notion@example.com', 'Notion Owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('notion-workspace', 'Notion Workspace', 'notion-workspace', 'global', 'notion-owner', '2026-08-12', '2026-08-12');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, granted_scopes_json, model_plugin_id, status, created_at, updated_at)
+      VALUES
+        ('legacy-notion-bot', 'notion-workspace', 'notion', 'personal', 'notion-owner', 'bot-id',
+         'Legacy bot', '["notion.read","notion.update"]', 'plugin_notion', 'healthy', '2026-08-12', '2026-08-12'),
+        ('personal-notion-mcp', 'notion-workspace', 'notion', 'personal', 'notion-owner', 'workspace:user',
+         'Personal MCP', '["notion.personal.mcp"]', 'plugin_notion_2', 'healthy', '2026-08-12', '2026-08-12');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0072_notion_connection_scope_split.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      "SELECT id, scope, owner_user_id FROM connector_connections WHERE connector_type = 'notion' ORDER BY id",
+    ).all()).toEqual([
+      { id: "legacy-notion-bot", scope: "workspace", owner_user_id: null },
+      { id: "personal-notion-mcp", scope: "personal", owner_user_id: "notion-owner" },
+    ]);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
   it("persists normalized activity targets independently from provider visibility metadata", () => {
     const database = migrateFreshDatabase();
     const columns = database.prepare("PRAGMA table_info(activities)").all() as Array<{ name: string }>;

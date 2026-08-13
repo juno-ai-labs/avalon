@@ -61,10 +61,18 @@ const linearStart = z.object({
     "linear.agent",
   ])).min(1),
 });
-const notionStart = z.object({
-  scope: z.literal("personal"),
-  capabilities: z.array(z.enum(["notion.read", "notion.insert", "notion.update", "notion.comment.read", "notion.comment.insert"])).min(1),
-});
+const notionStart = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("personal"),
+    capabilities: z.array(z.literal("notion.personal.mcp")).length(1),
+  }),
+  z.object({
+    scope: z.literal("workspace"),
+    capabilities: z.array(z.enum([
+      "notion.read", "notion.insert", "notion.update", "notion.comment.read", "notion.comment.insert",
+    ])).min(1),
+  }),
+]);
 const granolaStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.literal("granola.personal.read")).length(1),
@@ -97,11 +105,7 @@ const slackStart = z.discriminatedUnion("scope", [
   }),
   z.object({
     scope: z.literal("personal"),
-    capabilities: z.array(z.enum([
-      "slack.search", "slack.messages.read", "slack.files.read", "slack.messages.write",
-      "slack.conversations.write", "slack.reactions.write", "slack.canvases.read",
-      "slack.canvases.write", "slack.users.read",
-    ])).min(1),
+    capabilities: z.array(z.literal("slack.personal.mcp")).length(1),
   }),
 ]);
 const xCreate = z.object({

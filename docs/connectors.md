@@ -9,6 +9,7 @@ Connectors are typed adapters behind a registry. A manifest declares OAuth needs
 | `packages/connectors/src/index.ts` | The registry, and the cross-validation that runs at its construction. |
 | `packages/connectors/src/types.ts` | The manifest and descriptor types, and the unexported symbol that brands `AuthorizedConnectorConnection`. |
 | `packages/connectors/src/provider-utils.ts` | `withProviderReauthorization` — the shared mid-call recovery every adapter routes through. |
+| `packages/connectors/src/hosted-mcp.ts` | The reusable hosted-MCP OAuth, live discovery, and exact call-forwarding abstraction described in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md). |
 | `packages/connectors/src/<provider>.ts` | One adapter per provider. |
 | `apps/api/src/services/connector-connection-access.ts` | `withAuthorizedConnection` — the one door that mints the brand. |
 | `apps/api/src/services/connector-credential-refresh.ts` | The refresh coordinator and its D1 lease. |
@@ -28,6 +29,15 @@ Connectors are typed adapters behind a registry. A manifest declares OAuth needs
 - A work-stream participant does not expose their personal connections by joining.
 - Tools require both a manifest capability and a capability recorded on the connection.
 - Credentials are decrypted only for the duration of a backend operation.
+
+Hosted MCP personal connections add one more layer without weakening those
+rules. Their static connector descriptor supplies trusted catalog prose and
+policy, while the provider supplies the active tool names, descriptions, input
+schemas, and informational annotations through `tools/list` after `load_plugin`
+reauthorizes the connection. Annotations never downgrade Avalon tool policy,
+and Avalon never copies that response into source. The shared
+mechanism and provider recipe are in
+[`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
 ### Credential freshness
 
@@ -199,7 +209,23 @@ Native sessions are additionally matched by organization, granted `linear.agent`
 
 ### Notion
 
-Notion uses public connections with an `Any workspace` installation scope and the provider's page picker. The agent can search and retrieve pages/data sources, query data sources, create pages, update or append Markdown, and read/create comments. Only pages explicitly shared during installation are visible.
+Notion has two intentionally different Avalon connection modes. A personal
+connection authorizes the official hosted Notion MCP server with OAuth discovery,
+dynamic client registration, and PKCE. It is owned by one Avalon member, acts
+with that member's Notion authorization, and exposes whatever tools Notion
+returns from live `tools/list` when the plugin activates.
+
+A workspace connection remains the public integration path. An Avalon owner or administrator starts the public OAuth flow and chooses the pages to share in Notion's page picker. Notion still requires `owner=user` on that public OAuth request: that identifies the human approving the installation, not Avalon's execution principal. Avalon stores the returned authorization as a workspace connection with no Avalon user owner, and stores the authorizing Notion user only inside the encrypted credential metadata. The installed integration bot is the provider identity used for API calls, so edits and comments are attributed to Avalon in Notion rather than to the person who approved the connection.
+
+Every member's ad-hoc work stream can use the granted Notion tools through the workspace principal; workspace automations still require an explicit binding. The agent can search and retrieve pages/data sources, query data sources, create pages, update or append Markdown, and read/create comments. Only pages explicitly shared during installation are visible. Notion webhook activity is normalized at workspace scope with no target user, because the event belongs to the shared bot grant rather than to its authorizer.
+
+Migration `0072_notion_connection_scope_split.sql` converts legacy personal
+Notion rows from the former public-integration shape into workspace connections
+and clears their Avalon user owner. It identifies that credential dialect by
+the absence of `notion.personal.mcp`; new hosted-MCP rows retain personal scope.
+Historical workspace-bot routes were already registered when those grants were
+created, so the migration changes authorization semantics without rebuilding
+provider credentials or sending content across regions.
 
 Notion's search matches **titles only** — a provider limitation, not a gap Avalon can close from this side. That makes an empty result the most misleading thing this connector can return, so the plugin message states the limit and names the two ways past it: query the data source that would hold the record, or retrieve a page found by title and read its content. Compare Drive and Linear, where searching contents was possible and is now the default.
 
@@ -207,7 +233,7 @@ Notion's one-time webhook verification token is accepted through a guarded setup
 
 ### Granola
 
-Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes Granola's six read tools for querying meetings, listing folders and meetings, reading meeting details and transcripts, and inspecting the connected account. A personal connection remains available only to its Avalon owner.
+Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes the server's live tool surface rather than a code-authored snapshot. A personal connection remains available only to its Avalon owner.
 
 A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Avalon creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Avalon hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting the connection removes the remote endpoint when Granola accepts the request.
 
@@ -350,7 +376,7 @@ Admission failures are retried through new batch windows only while an event's a
 
 A connector's normalized `title`/`summary` is not independently bounded to the API contract's suggestion and resource limits (`ActivitySuggestionSchema`/`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`WorkstreamRoom` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
 
-Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
+Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Avalon's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
 
 ## Invariants
@@ -511,6 +537,83 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-12 — Historical Notion bot grants move with their real identity
+
+**What changed:** Migration `0072_notion_connection_scope_split.sql` converts
+pre-MCP Notion personal rows to workspace scope while leaving rows granted
+`notion.personal.mcp` personal. The Notion adapter is always registered for the
+personal flow; public-integration credentials are optional configuration needed
+only when workspace authorization or bot-token operations run.
+
+**Why:** Existing rows hold public-integration bot credentials, not hosted-MCP
+OAuth metadata. Routing every `scope = personal` row through MCP made them fail
+refresh and disappear from the tool surface, while their stale owner also
+blocked a real personal connection. The capability dialect is deterministic
+evidence of which identity each row contains.
+
+**Considered and rejected:** Disabling the old rows or requiring every member to
+reconnect. That would discard a valid shared bot grant and leave its already
+registered webhook route orphaned. Keeping the public client secret mandatory
+for the whole adapter was also rejected because personal DCR does not use it.
+
+**Consequences:** The migration deliberately broadens legacy rows to the
+workspace semantics their provider bot always had. Operators can offer personal
+Notion MCP without configuring a public integration, although workspace connect
+attempts then fail with an explicit configuration error.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Personal MCP tools are discovered, not guessed
+
+**What changed:** Personal Granola and Slack plugins now pass through their
+servers' live tool surfaces, and Notion gained a personal connection through its
+official hosted MCP server. The shared abstraction is documented in
+[`hosted-mcp-connectors.md`](hosted-mcp-connectors.md). Notion's existing public
+integration remains the workspace bot path.
+
+**Why:** The static Granola and Slack definitions represented one response at
+one point in time, not a contract the MCP server was required to preserve. They
+could drift in either direction and made adding Notion an invitation to repeat
+provider-specific transport and OAuth code.
+
+**Considered and rejected:** Keeping Notion workspace-only after establishing
+that its public integration acts as a bot. That correctly describes the public
+API connection but leaves no member-attributed path; the official hosted MCP
+server is that separate path and should not be conflated with the bot install.
+Keeping static tool allowlists as a safety boundary was also rejected because
+Avalon's capability grant, principal checks, confirmation policy, and receipts
+already provide that boundary without inventing a provider catalog.
+
+**Consequences:** The workspace-only Notion decision immediately below still
+governs the public-integration mode, but no longer the connector as a whole.
+Historical public-integration rows are migrated to that workspace mode.
+Future MCP providers must use live discovery and preserve a static trusted
+catalog/policy boundary; they must not paste a current `tools/list` response
+into `agentPlugin.tools`.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Notion becomes a bot-owned workspace capability
+
+**What changed:** Notion now declares only workspace scope. Its OAuth callback
+still records the Notion user who approved the install, but the Avalon connection
+has no user owner, tools require the workspace execution principal, and webhook
+activity is workspace-scoped with no target user. The administrator gate protects
+both the workspace start and callback, while the same card separately offers
+personal MCP. Legacy public-integration rows are promoted by a capability-aware
+migration rather than interpreted as personal MCP credentials.
+
+**Why:** The provider grant installs an Avalon bot into a selected part of a
+Notion workspace, and Notion attributes the resulting edits and comments to that
+bot. Treating the human who clicked Allow as the runtime owner made an
+organization capability appear personal, hid it from teammates, and sent shared
+change activity only to that person. Reusing Notion's `owner=user` parameter as
+Avalon's scope signal was rejected because it describes who approves public OAuth,
+not who the installed bot acts as. Leaving old rows personal was rejected because
+the credential is an installed bot regardless of the Avalon label; treating that
+label as privacy would both misstate provider authority and break the row once
+personal scope acquired the distinct hosted-MCP credential dialect.
 
 ### 2026-08-12 — Unsigned webhook setup is a connector pattern, not a Notion exception
 

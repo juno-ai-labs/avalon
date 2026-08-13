@@ -52,12 +52,15 @@ export function linearConnectorConfig(env: Env): LinearConnectorConfig | null {
  * host here on purpose; `NotionRoutingService` carries the callback back to the
  * region that started it. See `docs/notion-ingress.md`.
  */
-export function notionConnectorConfig(env: Env): NotionConnectorConfig | null {
-  if (!env.NOTION_OAUTH_CLIENT_ID || !env.NOTION_OAUTH_CLIENT_SECRET) return null;
+export function notionConnectorConfig(env: Env): NotionConnectorConfig {
   return {
-    clientId: env.NOTION_OAUTH_CLIENT_ID,
-    clientSecret: env.NOTION_OAUTH_CLIENT_SECRET,
     redirectUri: notionCallbackUrl(env),
+    ...(env.NOTION_OAUTH_CLIENT_ID && env.NOTION_OAUTH_CLIENT_SECRET
+      ? {
+          clientId: env.NOTION_OAUTH_CLIENT_ID,
+          clientSecret: env.NOTION_OAUTH_CLIENT_SECRET,
+        }
+      : {}),
     ...(env.NOTION_INTEGRATION_ID ? { integrationId: env.NOTION_INTEGRATION_ID } : {}),
   };
 }
@@ -127,7 +130,7 @@ function buildConnectorRegistry(env: Env) {
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),
     ...(linear ? { linear } : {}),
-    ...(notion ? { notion } : {}),
+    notion,
     ...(slack ? { slack } : {}),
     ...(x ? { x } : {}),
   });

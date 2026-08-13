@@ -1641,6 +1641,11 @@ export const ActivityRoutingResultSchema = z.object({
 
 export const ToolDefinitionSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
+  /**
+   * Exact provider-owned operation identity behind a normalized dynamic tool
+   * name. Hosts use this only at execution; it is never model-visible.
+   */
+  providerOperationName: z.string().min(1).max(200).optional(),
   description: z.string().min(1),
   inputSchema: z.record(z.string(), z.unknown()),
   capability: z.string().min(1),
