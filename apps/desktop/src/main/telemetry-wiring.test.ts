@@ -38,6 +38,7 @@ describe('Electron telemetry wiring', () => {
     expect(source).toContain("app.on('browser-window-blur'");
     expect(source).toContain('BrowserWindow.getFocusedWindow()');
     expect(source).toContain('applicationLifecycle(state)');
+    expect(source).toContain('if (startsHidden) applicationLifecycleTelemetry.observeFocused(false)');
   });
 
   it('derives PostHog-compatible window metadata in main instead of trusting renderer values', () => {

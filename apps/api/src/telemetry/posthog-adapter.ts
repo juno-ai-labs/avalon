@@ -143,18 +143,28 @@ function destinationEvent(envelope: TelemetryEnvelope): {
     if (state === "launch_started" || state === "foreground") {
       return {
         event: "Application Opened",
-        properties: { from_background: state === "foreground" },
+        properties: {
+          from_background: state === "foreground",
+          ...(state === "launch_started"
+            ? { version: envelope.context.release, build: envelope.context.buildId }
+            : {}),
+        },
       };
     }
     if (state === "background") return { event: "Application Backgrounded", properties: {} };
   }
   if (envelope.name === "application_version_changed") {
     if (envelope.properties["state"] === "installed") {
-      return { event: "Application Installed", properties: {} };
+      return {
+        event: "Application Installed",
+        properties: { version: envelope.context.release, build: envelope.context.buildId },
+      };
     }
     return {
       event: "Application Updated",
       properties: {
+        version: envelope.context.release,
+        build: envelope.context.buildId,
         previous_version: envelope.properties["previousVersion"],
         previous_build: envelope.properties["previousBuild"],
       },
@@ -423,6 +433,7 @@ export async function sendPostHogJavascriptExceptionBatch(input: {
         }),
         $process_person_profile: true,
         $is_identified: true,
+        avalon_event_name: row.envelope.name,
         $exception_fingerprint: properties.fingerprint,
         $exception_source: "avalon_javascript",
         category: "diagnostic",

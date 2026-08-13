@@ -153,6 +153,7 @@ describe("PostHog adapter", () => {
         $app_version: exceptionEnvelope.context.release,
         $app_build: exceptionEnvelope.context.buildId,
         $device_type: "Desktop",
+        avalon_event_name: "javascript_exception",
         $exception_fingerprint: "b".repeat(64),
         $session_id: exceptionEnvelope.context.launchId,
         launch_id: exceptionEnvelope.context.launchId,
@@ -276,12 +277,17 @@ describe("PostHog adapter", () => {
     [
       { state: "installed" },
       "Application Installed",
-      {},
+      { version: "0.24.0", build: "build-0123456789" },
     ],
     [
       { state: "updated", previousVersion: "0.23.0", previousBuild: "2300" },
       "Application Updated",
-      { previous_version: "0.23.0", previous_build: "2300" },
+      {
+        version: "0.24.0",
+        build: "build-0123456789",
+        previous_version: "0.23.0",
+        previous_build: "2300",
+      },
     ],
   ] as const)("maps application version transition %s to %s", (properties, destinationEvent, destinationProperties) => {
     const versionEnvelope: TelemetryEnvelope = {
@@ -343,6 +349,12 @@ describe("PostHog adapter", () => {
     });
     if (fromBackground === undefined) expect(capture.properties).not.toHaveProperty("from_background");
     else expect(capture.properties).toHaveProperty("from_background", fromBackground);
+    if (state === "launch_started") {
+      expect(capture.properties).toMatchObject({ version: "0.24.0", build: "build-0123456789" });
+    } else {
+      expect(capture.properties).not.toHaveProperty("version");
+      expect(capture.properties).not.toHaveProperty("build");
+    }
   });
 
   it("does not mark proxied desktop events as server events", () => {
