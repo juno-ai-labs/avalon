@@ -2,10 +2,11 @@
 
 When a run's live context approaches the selected model's window, Avalon
 replaces it with a summary of itself. The compacted context is the stable system
-prompt plus **one** synthetic user message holding an LLM continuation summary —
-nothing from the conversation survives verbatim, not even its first message — and
-that pair is what the next model turn, and the work stream's next run, starts
-from.
+prompt plus **one** synthetic user message holding an LLM continuation summary
+followed by a deterministic, freshly authorized resource inventory. Nothing
+from the conversation survives verbatim, not even its first message. Only the
+principal-neutral summary is stored; the inventory is regenerated when the
+checkpoint is applied or replayed.
 
 This document owns the policy: when a compaction fires, what it asks the model
 for, what shape it leaves behind, and how a checkpoint is stored and replayed.
@@ -21,8 +22,10 @@ weeks ago.
 | --- | --- |
 | [`packages/agent-harness/src/bind-runtime.ts`](../packages/agent-harness/src/bind-runtime.ts) | All compaction policy: `COMPACTION_FRACTION`, the OpenRouter context-window lookup, `compact()`, `compactTerminalTurn()`, `COMPACTION_SUMMARY_PROMPT`, and `compactionCheckpointMessage()` — the one place the compacted transcript's shape is decided. |
 | [`packages/agent-harness/src/index.ts`](../packages/agent-harness/src/index.ts) | `HarnessCompactionConfig` and `HarnessCompactionCheckpoint`: the host's opt-in and the checkpoint it is handed to persist. |
+| [`packages/agent-harness/src/prompts/compaction.ts`](../packages/agent-harness/src/prompts/compaction.ts) | Pure checkpoint content renderer shared by live application and API replay. |
 | `@juno-ai/bind` (`loop/tool-loop.ts`) | Calls `needsCompaction` after a turn and `applyCompaction` at a batch boundary, then swaps in whatever transcript it is given. Bind holds no opinion about that transcript's shape. |
 | [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: `persistWorkstreamContextCompaction`, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
+| [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
 | [`packages/db/migrations/0035_workstream_context_compaction.sql`](../packages/db/migrations/0035_workstream_context_compaction.sql) | The `workstream_context_compactions` table — one row per work stream. |
 
 ## How it works
@@ -47,8 +50,11 @@ request a compaction, which Bind flushes at the same boundary with trigger
 followed by a user message containing `COMPACTION_SUMMARY_PROMPT`, with no tools,
 streaming suppressed, on the turn's selected model with the run's own fallbacks
 and reasoning effort. The prompt asks for a sectioned handoff — request,
-decisions, done, facts, open — rather than free prose, and tells the model that
-everything above it leaves the context once it answers.
+decisions, done, facts, relevant attachments, open — rather than free prose, and
+tells the model that everything above it leaves the context once it answers.
+Relevant attachments retain exact resource IDs, derivative versions, consulted
+ranges, conclusions, and unresolved needs. It forbids reproducing the complete
+catalog because the host supplies that part authoritatively.
 
 An empty completion is a defect and is retried by the route plan. The
 compaction's own tokens are accounted as auxiliary spend rather than an agent
@@ -58,21 +64,29 @@ spend before the result is used; ordinary work-stream runs no longer supply one.
 ### The compacted transcript
 
 The live transcript becomes exactly two messages: the system message it already
-had, and `compactionCheckpointMessage(summary)` — a user-role message whose text
-is a fixed preamble naming itself as a checkpoint, then the summary. The live
-token counts reset to zero, which is also what stops the auto-check from firing
-again before a fresh provider count exists.
+had, and a user-role message whose text is a fixed preamble, the unchanged LLM
+summary, then `# Authoritative work-stream resource inventory`. The appendix is
+pure host-rendered data: an `asOf` time, total visible resources, total message
+attachments, and non-empty `image`, `markdown`, `pdf`, `document`, `spreadsheet`,
+`presentation`, `text`, and `other` groups in that order. It names every allowed
+kind and the cursor continuation for `workstream_list_resources`, but no
+filename, resource ID, MIME value, or file content. The live token counts reset
+to zero, which also stops the auto-check from firing before a fresh provider
+count exists.
 
 ### Persisting and replaying
 
-The checkpoint is persisted without its system message, keyed by work stream, in
-`workstream_context_compactions`, together with the summary, the model, the
-before/window token counts, and the compaction's own usage and cost. The upsert
+The base checkpoint is persisted without its system message or authorized
+appendix, keyed by work stream, in `workstream_context_compactions`, together
+with the raw summary, checkpoint-template version, model, before/window token
+counts, and the compaction's own usage and cost. The upsert
 advances a row only when `compacted_through_sequence` moves forward, or when the
 same `harness_run_id` rewrites its own checkpoint.
 
-A later run loads that row first, pages the durable transcript backward from its
-trigger's sequence number down to `compacted_through_sequence`, and assembles
+A later run loads that row first, regenerates the current-version message from
+the raw summary and a new inventory for that run's execution principal, pages
+the durable transcript backward from its trigger's sequence number down to
+`compacted_through_sequence`, and assembles
 `[...checkpoint messages, ...projected transcript, ...run prompt context]`. The
 checkpoint is therefore the prefix of the next run's conversation — which is why
 it must be derived state and nothing else (see the first invariant).
@@ -107,6 +121,15 @@ it must be derived state and nothing else (see the first invariant).
 - **The persisted checkpoint is plain text.** No `data:` URL, file part, or audio
   part may reach the row — attachment bytes are neither replayable nor safe to
   keep, and the summary is expected to have described whatever mattered.
+- **Resource inventory is derived from current authority.** The appendix calls
+  the same visibility loader as the right sidebar and resource tools on every
+  live application and replay. It is never trusted to the summarizer or stored
+  as principal-specific shared prose, so attachment, detachment, deletion,
+  revocation, and private-note visibility changes take effect without rewriting
+  the raw summary.
+- **Inventory cost is constant in resource count.** At most eight fixed kind
+  rows are rendered. Exact names and IDs stay behind the pageable list tool, so
+  compaction cannot refill the context it just reclaimed.
 - **Compaction spend is not a turn.** It is accumulated as auxiliary spend;
   counting it in `stats.turns` would overstate how many model decisions the
   work-stream loop made.
@@ -159,10 +182,10 @@ model turn shifts every later index in `requestBodies`.
 pnpm --filter @avalon/agent-harness exec vitest run src/index.test.ts
 ```
 
-`packages/db/test/migrations.test.ts` asserts the table's columns. The API-side
-replay assembly has no direct test today; a change to
-`loadWorkstreamContextCompaction` or the fenced-transcript paging is checked only
-by reading it.
+`packages/db/test/migrations.test.ts` asserts the table's columns.
+`apps/api/test/workstream-resource-inventory.test.ts` covers zero and all-kind
+rendering, bounded metadata, principal-neutral persistence, and fresh replay
+after visibility changes.
 
 ## Open questions
 
@@ -189,6 +212,32 @@ by reading it.
   every routed model.
 
 ## Changelog
+
+### 2026-08-12 — Authorized resource inventory is regenerated after every summary
+
+**What changed:** The harness now appends a host-rendered resource inventory to
+the live checkpoint after the LLM summary, while persistence keeps only the base
+summary checkpoint and template version. Replay reconstructs the current
+template from the raw summary and reruns the shared sidebar visibility query for
+the active execution principal. The summary prompt retains exact details only
+for relevant attachments and refuses a complete catalog.
+
+**Why:** The summarizer is intentionally selective and therefore cannot be the
+authority for every current resource. Persisting a user's resource view would
+also become stale after relationship or note-visibility changes and could expose
+one principal's private inventory to another. A full ID list would grow with the
+work stream and immediately spend the context compaction reclaimed.
+
+**Considered and rejected:** Asking the LLM to maintain totals, persisting the
+rendered appendix, and listing every filename and ID. Those respectively make
+inventory subjective, freeze authorization at compaction time, or create an
+unbounded checkpoint. The fixed eight-kind aggregate plus paginated list tool
+keeps discovery complete without storing principal-specific prose.
+
+**Consequences:** Every current-version replay performs one authorized resource
+visibility read. Future checkpoint templates must increment the stored version,
+keep unknown versions readable through their persisted base messages, and never
+put resource metadata or binary parts into the principal-neutral row.
 
 ### 2026-08-12 — Ordinary work-stream compaction has no run cost ceiling
 

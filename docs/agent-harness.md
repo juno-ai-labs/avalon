@@ -400,7 +400,7 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store a principal-neutral summary regionally with the durable sequence boundary. The live checkpoint and every replay append a freshly authorized, fixed-size resource inventory before newer messages. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`runbook.md`](runbook.md).
 
@@ -454,6 +454,26 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-12 — Compaction separates durable summary from live authorized context
+
+**What changed:** A compaction host may now render a deterministic appendix after
+the model summary. Bind applies that appendix to the live synthetic message but
+hands persistence a base message containing only the unchanged summary.
+
+**Why:** Resource awareness must survive compaction, while a shared checkpoint
+must not freeze or leak the execution principal's current visibility. Keeping the
+split in the harness contract prevents a host from accidentally persisting its
+live authorization projection.
+
+**Considered and rejected:** Letting the API mutate the checkpoint after Bind
+applies it or asking the summary model to emit authoritative resource totals.
+Both split the live shape across owners, and the latter makes current database
+state depend on lossy model prose.
+
+**Consequences:** `renderAppendix` is a required-port failure boundary when a
+host provides it. It must return bounded trusted host data; persistence remains
+responsible for storing only the base checkpoint it receives.
 
 ### 2026-08-12 — Attachment inspection replaces eager prompt content
 

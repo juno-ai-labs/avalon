@@ -2356,6 +2356,8 @@ export interface HarnessCompactionConfig {
   contextWindowTokensByModel?: Readonly<Record<string, number | null | undefined>>;
   /** Persist the compacted continuation context after Bind swaps it in. */
   persist?: (checkpoint: HarnessCompactionCheckpoint) => void | Promise<void>;
+  /** Render fresh, authorized deterministic context for the live checkpoint only. */
+  renderAppendix?: () => string | Promise<string>;
 }
 
 /**

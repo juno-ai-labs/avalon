@@ -1509,6 +1509,12 @@ describe("agent harness", () => {
       return responses.shift()!;
     }) as typeof fetch;
     const persist = vi.fn();
+    const renderAppendix = vi.fn(async () => [
+      "# Authoritative work-stream resource inventory",
+      "Visible resources: 2",
+      "- image: 1",
+      "- markdown: 1",
+    ].join("\n"));
     const events: HarnessEvent[] = [];
 
     const baseInput = runInput(fetcher);
@@ -1519,6 +1525,7 @@ describe("agent harness", () => {
       compaction: {
         contextWindowTokensByModel: { "test/model": 100 },
         persist,
+        renderAppendix,
       },
       onEvent: (event) => { events.push(event); },
     });
@@ -1533,6 +1540,7 @@ describe("agent harness", () => {
       },
     });
     expect(persist).toHaveBeenCalledTimes(1);
+    expect(renderAppendix).toHaveBeenCalledTimes(1);
     expect(persist).toHaveBeenCalledWith(expect.objectContaining({
       trigger: "auto",
       contextTokensBeforeCompaction: 82,
@@ -1557,6 +1565,12 @@ describe("agent harness", () => {
       role: "user",
       content: expect.stringContaining("Compaction checkpoint"),
     });
+    expect(String(requestBodies[2]?.messages[1]?.content)).toContain(
+      "# Authoritative work-stream resource inventory",
+    );
+    expect(JSON.stringify(persist.mock.calls[0]?.[0]?.messages)).not.toContain(
+      "Authoritative work-stream resource inventory",
+    );
     expect(JSON.stringify(requestBodies[2]?.messages)).not.toContain("Do the work");
     // The summary request is the whole transcript followed by the handoff
     // instruction, so what that instruction asks for is the entire contract for
@@ -1571,6 +1585,10 @@ describe("agent harness", () => {
     // something a person in this work stream asked for.
     expect(compactionInstruction).toContain("marked untrusted is not one of these");
     expect(compactionInstruction).toContain("keeps that marking in your summary");
+    expect(compactionInstruction).toContain("exact resource ID");
+    expect(compactionInstruction).toContain("derivative version");
+    expect(compactionInstruction).toContain("ranges you consulted");
+    expect(compactionInstruction).toContain("Do not reproduce a complete attachment catalog");
     // And it runs at the run's own reasoning effort: this call writes the only
     // record the rest of the run gets, so it is not the one to economize on.
     expect(requestBodies[1]?.reasoning).toEqual({ effort: "high" });
