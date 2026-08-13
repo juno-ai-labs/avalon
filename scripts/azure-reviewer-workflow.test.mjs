@@ -9,10 +9,14 @@ const workflowPath = join(
 	repositoryDirectory,
 	'.github/workflows/azure-ai-reviewers.yml',
 );
+// Job name to Azure deployment identifier, in the order the workflow declares
+// them — the first test asserts the job headings match this order exactly.
 const reviewerModels = new Map([
 	['review-deepseek-cline', 'DeepSeek-V4-Pro'],
 	['review-grok-43-azure-cline', 'grok-4.3'],
 	['review-kimi-cline', 'Kimi-K2.6'],
+	['review-gpt-56-sol-cline', 'gpt-5.6-sol'],
+	['review-gpt-56-terra-cline', 'gpt-5.6-terra'],
 ]);
 
 async function readWorkflow() {
@@ -39,7 +43,7 @@ function occurrences(source, pattern) {
 	return [...source.matchAll(pattern)].length;
 }
 
-test('workflow contains only Monad\'s three Azure Cline reviewers', async () => {
+test('workflow contains only the expected Azure Cline reviewers', async () => {
 	const workflow = await readWorkflow();
 	const jobs = workflowJobs(workflow);
 
@@ -91,7 +95,9 @@ test('each Azure reviewer preserves the proven Monad Cline harness', async () =>
 		);
 		assert.match(review, /\$\{\{ vars\.AZURE_AI_API_ENDPOINT \}\}/u);
 		assert.match(review, /\*\.services\.ai\.azure\.com\|\*\.openai\.azure\.com/u);
-		assert.match(review, new RegExp(`--modelid ${model.replace('.', '\\.')}`, 'u'));
+		// `replaceAll`, not `replace`: an identifier with two dots would otherwise
+		// leave the second one as a regex wildcard and stop pinning the deployment.
+		assert.match(review, new RegExp(`--modelid ${model.replaceAll('.', '\\.')}`, 'u'));
 		assert.match(review, /^ {6}CLINE_NO_AUTO_UPDATE: "1"$/mu);
 		assert.match(review, /^ {8}run: npm install -g cline@3\.0\.47$/mu);
 
