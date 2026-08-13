@@ -59,6 +59,7 @@ function objectApi({
   inventoryCacheStatus = 'DYNAMIC',
   inventoryInvalidJson = false,
   inventoryStatus = 200,
+  inventoryTimestamp = '2026-08-13T19:09:29.001Z',
   putErrors = [],
   putInvalidJson = false,
   putResultOverrides = {},
@@ -100,7 +101,7 @@ function objectApi({
           bytes,
           etag,
           key,
-          lastModified: '2026-08-13T19:09:29.001Z',
+          lastModified: inventoryTimestamp,
         });
       }
       if (putInvalidJson) return new Response('not-json', { status: putStatus });
@@ -441,6 +442,31 @@ test('rejects upload metadata that does not attest to the exact submitted object
           /invalid upload metadata/u,
         );
         assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 0);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('allows only sub-second inventory timestamp precision loss', async (t) => {
+  for (const [name, timestamp, shouldPass] of [
+    ['one second earlier', '2026-08-13T19:09:28.000Z', true],
+    ['more than one second earlier', '2026-08-13T19:09:27.999Z', false],
+  ]) {
+    await t.test(name, async () => {
+      const { root, desktopDirectory } = await fixture();
+      const api = objectApi({ inventoryTimestamp: timestamp });
+      try {
+        const publication = publishTelemetryArtifacts({
+          desktopDirectory,
+          environment: runtimeEnvironment,
+          fetchImpl: api.fetchImpl,
+          runCommand: commandRunner().runCommand,
+          temporaryRoot: root,
+        });
+        if (shouldPass) await publication;
+        else await assert.rejects(publication, /Stored metadata mismatch/u);
       } finally {
         await rm(root, { recursive: true, force: true });
       }
