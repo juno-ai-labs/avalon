@@ -19,6 +19,8 @@ import {
   CircleAlert,
   Clipboard,
   Copy,
+  FileDown,
+  ImageDown,
   LoaderCircle,
   TerminalSquare,
 } from 'lucide-react';
@@ -27,8 +29,10 @@ import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-re
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
-import { desktopBridge } from '../lib/platform';
+import { saveMessageExport } from '../lib/message-export';
+import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useTextClamped } from '../lib/use-text-clamped';
 import type { ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
@@ -337,6 +341,71 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
   );
 }
 
+/**
+ * What a person can do with a finished turn: copy it, or keep it as a file.
+ *
+ * Both exports render the same `MarkdownBody` the turn above is made of, so the
+ * saved card cannot drift from what was on screen —
+ * [`docs/message-export.md`](../../../../../docs/message-export.md) owns the rest.
+ * A dismissed save dialog is not a failure and says nothing; a render or a write
+ * that failed replaces the label until the pointer leaves, because unlike a
+ * failed copy there is no other copy of the file to fall back on.
+ */
+function AssistantMessageActions({ mentions, text }: { mentions: MessageMention[]; text: string }): React.JSX.Element {
+  const [saving, setSaving] = useState<MessageExportFormat | null>(null);
+  const [failed, setFailed] = useState<MessageExportFormat | null>(null);
+  const exportsAvailable = desktopServicesAvailable();
+
+  const save = async (format: MessageExportFormat): Promise<void> => {
+    if (saving) return;
+    setSaving(format);
+    setFailed(null);
+    try {
+      await saveMessageExport({
+        content: <MarkdownBody mentions={mentions}>{text}</MarkdownBody>,
+        fileName: messageExportFileName(text, new Date().toISOString().slice(0, 10)),
+        format,
+      });
+    } catch {
+      setFailed(format);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <footer className="agent-message-actions">
+      <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(text)} type="button"><Clipboard size={12} /> Copy</button>
+      {exportsAvailable && (
+        <>
+          <button
+            aria-label="Download response as an image"
+            disabled={saving !== null}
+            onClick={() => void save('image')}
+            type="button"
+          >
+            {saving === 'image'
+              ? <LoaderCircle aria-hidden="true" className="spin" size={12} />
+              : <ImageDown aria-hidden="true" size={12} />}
+            {failed === 'image' ? 'Image failed' : 'Image'}
+          </button>
+          <button
+            aria-label="Save response as a PDF"
+            disabled={saving !== null}
+            onClick={() => void save('pdf')}
+            type="button"
+          >
+            {saving === 'pdf'
+              ? <LoaderCircle aria-hidden="true" className="spin" size={12} />
+              : <FileDown aria-hidden="true" size={12} />}
+            {failed === 'pdf' ? 'PDF failed' : 'PDF'}
+          </button>
+        </>
+      )}
+    </footer>
+  );
+}
+
 export function AssistantMessageContent({
   mentions = [],
   showCopy = true,
@@ -351,11 +420,7 @@ export function AssistantMessageContent({
   return (
     <>
       {text ? <MarkdownBody mentions={mentions}>{text}</MarkdownBody> : null}
-      {showCopy && !streaming && text && (
-        <footer className="agent-message-actions">
-          <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(text)} type="button"><Clipboard size={12} /> Copy</button>
-        </footer>
-      )}
+      {showCopy && !streaming && text && <AssistantMessageActions mentions={mentions} text={text} />}
       {streaming && <span className="streaming-caret" aria-hidden="true" />}
     </>
   );

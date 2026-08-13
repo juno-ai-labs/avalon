@@ -20,7 +20,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guard that `react-markdown` stays mounted in one place. |
 
-Seven call sites, all passing a markdown string as `children`:
+Eight call sites, all passing a markdown string as `children`:
 
 | Surface | Call site |
 | --- | --- |
@@ -30,6 +30,7 @@ Seven call sites, all passing a markdown string as `children`:
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
+| A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
 
@@ -148,6 +149,16 @@ the digest email has its own converter, for the reason
 [`digests.md`](digests.md) records — a general markdown library emits far more
 than an email client will honour.
 
+The exported message card is the one place outside this stylesheet that styles
+this DOM, and it is not an exception to the invariant above — it is a different
+document. A saved picture or PDF is rendered in a hidden window that loads
+`app.css` not at all, so it needs a full set of element rules of its own, written
+for a light card rather than a dark application. What it shares is the markup:
+`MarkdownBody`'s classes are its contract, so a class introduced here has no rule
+there until someone writes one, and the miss shows up as an unstyled element in
+the first card anyone looks at. [`message-export.md`](message-export.md) owns
+that stylesheet and the reasoning behind not deriving it from this one.
+
 ## Failure modes and limits
 
 - **A language Prism does not know** renders as `plain`. No error, no missing
@@ -207,6 +218,25 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-13 — A saved message is this renderer's DOM, rendered off-screen
+
+**What changed:** Saving one of Avalon's turns as a picture or a PDF renders
+`MarkdownBody` into a detached React root and takes its markup, rather than
+sending the markdown anywhere to be rendered again. An eighth call site, and the
+first that never mounts in the document.
+
+**Why:** The alternative was a markdown library in the main process, where the
+card is assembled. That is the drift this module exists to prevent, and it would
+have been the worst instance of it yet: the divergence would only ever be seen by
+whoever received the file, long after it was sent.
+
+**Consequences:** `MarkdownBody` is now serialized as well as displayed, so it
+must stay renderable outside a screen — nothing in it may depend on layout,
+measurement, or an ancestor's styling to produce correct markup. The exported
+card carries its own element stylesheet against these class names; the boundary
+section says why that is not a second copy of the `.markdown-body` group, and
+[`message-export.md`](message-export.md) owns it.
 
 ### 2026-08-12 — Attachment documents join the shared renderer
 
