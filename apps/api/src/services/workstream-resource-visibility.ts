@@ -51,7 +51,13 @@ export async function loadVisibleWorkstreamResources(
   const result = await database.prepare(
     `SELECT r.*, wr.relationship_type, wr.attached_at,
             CASE WHEN EXISTS (
-              SELECT 1 FROM message_attachments ma WHERE ma.resource_id = r.id
+              SELECT 1
+                FROM message_attachments ma
+                JOIN messages attachment_message
+                  ON attachment_message.id = ma.message_id
+                 AND attachment_message.workspace_id = ?1
+                 AND attachment_message.workstream_id = ?2
+               WHERE ma.resource_id = r.id
             ) THEN 1 ELSE 0 END AS message_attachment,
             CASE WHEN rw.id IS NOT NULL THEN 1 ELSE 0 END AS attached_watch_enabled,
             COALESCE((
@@ -83,6 +89,7 @@ export async function loadVisibleWorkstreamResources(
     row.updated_at,
     row.visibility_version,
     row.relationship_type,
+    row.message_attachment,
   ])));
   return { rows, fingerprint };
 }
