@@ -7,10 +7,10 @@ limits used at the model boundary; the original resource relationships remain
 the source of truth for display, scope, retention, and deletion.
 
 The subsystem is being introduced additively. Shared contracts, lifecycle,
-derivatives, and authorized work-stream list/read/search operations exist now.
-Runtime message projection still uses the legacy eager attachment path until
-draft-scoped hydration and durable manifests make the cutover safe; this
-document changes in the same commits as those boundaries move.
+derivatives, authorized work-stream tools, and durable message manifests exist
+now. Triggering messages still retain their legacy eager content beside the
+manifest until draft-scoped hydration makes the cutover safe; this document
+changes in the same commits as those boundaries move.
 
 ## Where the code lives
 
@@ -25,7 +25,7 @@ document changes in the same commits as those boundaries move.
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Applies the sidebar/list/read/search principal boundary and fingerprints the visible inventory. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
-| `apps/api/src/services/attachment-model-content.ts` | Current upload-to-model extraction and image normalization path; it remains eager until the derivative cutover. |
+| `apps/api/src/services/attachment-model-content.ts` | Renders durable manifests and, during additive rollout, the legacy eager content plus normalized current-turn images. |
 | `apps/api/src/services/integrations.ts` | Current message projection and work-stream resource-tool registration. |
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects and current model image derivatives. |
@@ -62,14 +62,22 @@ understands attachment kind and one strict suggested read or view call, while
 discarding arbitrary provider, converter, credential, and file-authored objects.
 The presence of a suggestion never executes it automatically.
 
-### Current projection boundary
+### Durable projection boundary
 
-Message projection still calls `buildAttachmentModelParts`. It eagerly extracts
-bounded text/Office content, sends small PDFs as provider file parts, and admits
-normalized current-turn images. Historical projection is not yet a durable
-manifest, and triggering non-image attachments remain eagerly projected until
-the draft-scoped tools and manifest phase makes cutover safe. Work-stream
-discovery and hydration no longer use the legacy hard-capped index/read pair.
+Every human message attachment now carries one Avalon-generated JSON manifest
+entry with its stable resource ID, filename, verified MIME, byte count, natural
+kind, content mode, derivative state, bounded error code, and inline state.
+Historical turns keep the manifest but never replay attachment bytes. A current
+image is delivered in the same projection as its manifest and is marked
+`inlined: true` only after normalization succeeds; a missing or failed visual
+keeps the same identity with `inlined: false` and an explicit error code.
+
+Triggering messages still call `buildAttachmentModelParts` during the additive
+rollout. They eagerly extract bounded text/Office content and send small PDFs
+beside the new manifest so deployment cannot strand automation attachments
+before draft-scoped tools exist. That legacy content is removed in the cutover
+phase. Work-stream discovery and hydration no longer use the legacy hard-capped
+index/read pair.
 
 ### Authorized work-stream discovery and text hydration
 
@@ -312,6 +320,30 @@ terms rather than duplicating attachment text. Later phases must preserve those
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Message history gains durable attachment identities
+
+**What changed:** Trigger and historical human-message projection now render a
+compact structured manifest for every attachment. Trigger images carry the same
+resource ID as their visual part and record whether delivery succeeded;
+historical turns retain identity and state without replaying bytes. Legacy
+trigger text, Office, and PDF content remains temporarily additive.
+
+**Why:** A filename-only historical marker cannot rehydrate an image after
+compaction, while switching non-image attachments to references before the
+automation compiler can read those references would make files inaccessible.
+
+**Considered and rejected:** Anonymous image parts, copying historical bytes,
+and an immediate manifest-only cutover. They respectively lose durable visual
+identity, regrow context on every replay, or create an unsafe deployment gap.
+
+**Consequences:** Every model-visible image must be produced alongside its
+same-ID manifest entry, and manifest strings remain JSON-encoded untrusted data.
+The next rollout step must add frozen, draft-scoped automation tools before the
+remaining eager content can be deleted.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Images and large-document understanding become recoverable
 

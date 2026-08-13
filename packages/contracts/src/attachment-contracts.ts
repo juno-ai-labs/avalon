@@ -182,6 +182,19 @@ export const DerivativeStatusSchema = z.enum([
 ]).nullable();
 export type DerivativeStatus = z.infer<typeof DerivativeStatusSchema>;
 
+export const AttachmentManifestEntrySchema = z.object({
+  resourceId: CanonicalUuidSchema,
+  fileName: z.string().max(300),
+  mimeType: z.string().max(160),
+  sizeBytes: NonNegativeIntegerSchema,
+  attachmentKind: AttachmentKindSchema,
+  contentMode: ContentModeSchema,
+  derivativeStatus: DerivativeStatusSchema,
+  errorCode: z.string().min(1).max(160).nullable(),
+  inlined: z.boolean(),
+}).strict();
+export type AttachmentManifestEntry = z.infer<typeof AttachmentManifestEntrySchema>;
+
 export const ResourceVersionSchema = z.object({
   sha256: z.string().min(1).max(128),
   extractorVersion: z.string().min(1).max(160),

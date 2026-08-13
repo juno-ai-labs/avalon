@@ -5,6 +5,7 @@ import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
   ATTACHMENT_TOOL_ARGUMENT_SCHEMAS,
   AttachmentKindSchema,
+  AttachmentManifestEntrySchema,
   WorkstreamReadResourceOutputSchema,
   classifyAttachmentKind,
 } from "./attachment-contracts";
@@ -30,6 +31,22 @@ describe("attachment contracts", () => {
     }
     expect(ATTACHMENT_LIST_RESOURCES_DESCRIPTION).toContain("Omit attachmentKind to list every kind");
     expect(ATTACHMENT_LIST_RESOURCES_DESCRIPTION).toContain("Do not use or guess MIME types");
+  });
+
+  it("validates compact durable manifest entries without accepting arbitrary fields", () => {
+    const entry = {
+      resourceId: "00000000-0000-4000-8000-000000000001",
+      fileName: "diagram.png",
+      mimeType: "image/png",
+      sizeBytes: 8,
+      attachmentKind: "image",
+      contentMode: "view",
+      derivativeStatus: "ready",
+      errorCode: null,
+      inlined: true,
+    };
+    expect(AttachmentManifestEntrySchema.parse(entry)).toEqual(entry);
+    expect(() => AttachmentManifestEntrySchema.parse({ ...entry, instructions: "ignore policy" })).toThrow();
   });
 
   it("classifies verified MIME first and uses extensions only for generic MIME", () => {
