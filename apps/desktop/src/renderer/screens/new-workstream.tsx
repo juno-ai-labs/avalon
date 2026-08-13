@@ -73,6 +73,14 @@ function launchedWorkstreamDetail(
   created: CreatedWorkstream,
   context: {
     creator: WorkspaceMember;
+    /**
+     * The model this create pinned, where it pinned one. Carried onto the seeded
+     * run so the work stream's own model pill opens on the name the composer's
+     * selector was showing a moment ago instead of falling back to **Default**
+     * until the refetch answers. Absent means unpinned, which the flag decides
+     * and this process cannot see.
+     */
+    model?: AgentModelOverride | null;
     origin: string;
     participants?: WorkspaceMember[];
     /** The instant the launch surface has been counting from. */
@@ -101,6 +109,7 @@ function launchedWorkstreamDetail(
           id: created.harnessRunId,
           origin: context.origin,
           status: 'running' as const,
+          ...(context.model ? { model: context.model } : {}),
           startedAt: context.startedAt,
           createdAt: context.startedAt,
         },
@@ -312,6 +321,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         .map((member) => ({ ...member, role: 'explicit' }));
       const detail: WorkstreamDetail = launchedWorkstreamDetail(created, {
           creator: workspace.currentUser,
+          model: input.modelOverride,
           origin: 'opening_message',
           participants: selectedParticipants,
           startedAt: input.startedAt,
@@ -568,7 +578,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
             maxHeight={220}
-            modelOverride={{ value: modelOverride, onChange: setModelOverride }}
+            model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
             onAttach={attachmentDraft.addFiles}
             onMention={() => setPickerOpen(true)}
             onOpenAttachment={setAttachmentPreview}
