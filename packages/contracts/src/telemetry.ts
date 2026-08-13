@@ -60,6 +60,17 @@ function event<T extends RegistryInput>(input: T): T & {
 }
 
 const lifecycleState = z.enum(["launch_started", "ready", "foreground", "background", "graceful_exit"]);
+const applicationVersionProperties = z.object({
+  state: z.enum(["installed", "updated"]),
+  previousVersion: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u).optional(),
+  previousBuild: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u).optional(),
+}).strict().superRefine((value, context) => {
+  const previousCount = Number(value.previousVersion !== undefined) + Number(value.previousBuild !== undefined);
+  if ((value.state === "installed" && previousCount !== 0)
+    || (value.state === "updated" && previousCount !== 2)) {
+    context.addIssue({ code: "custom", message: "application_version_transition_invalid" });
+  }
+});
 const durationBucket = z.enum(["lt_100ms", "100ms_1s", "1s_5s", "5s_30s", "gte_30s"]);
 const resultClass = z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed"]);
 const region = z.enum(["global", "eu"]);
@@ -98,6 +109,24 @@ export const TELEMETRY_EVENTS = {
     properties: z.object({ state: lifecycleState, crashReportingEligible: z.boolean() }).strict(),
     propertyClassifications: { state: "operational", crashReportingEligible: "operational" },
     priority: "critical",
+    regionalRetention: "90-days",
+  }),
+  application_version_changed: event({
+    ...common,
+    name: "application_version_changed",
+    definition: "A durable first-observed installation or application build transition on one desktop installation.",
+    productQuestion: "Which application versions are installed or reached through a confirmed desktop update?",
+    sources: ["desktop-main"],
+    authoritativeSource: "desktop-main",
+    category: "essential",
+    identityScopes: ["installation"],
+    properties: applicationVersionProperties,
+    propertyClassifications: {
+      state: "operational",
+      previousVersion: "operational",
+      previousBuild: "operational",
+    },
+    priority: "high",
     regionalRetention: "90-days",
   }),
   desktop_session: event({
@@ -472,7 +501,7 @@ export const TelemetryBreadcrumbSidecarSchema = z.object({
   }
 });
 export type TelemetryBreadcrumbSidecar = z.infer<typeof TelemetryBreadcrumbSidecarSchema>;
-const TelemetryContextSchema = z.object({
+const telemetryContextCommon = {
   environment: z.enum(["development", "staging", "production"]),
   region: z.enum(["global", "eu"]).optional(),
   release: SafeReleaseSchema,
@@ -487,9 +516,39 @@ const TelemetryContextSchema = z.object({
   requestId: UuidV7Schema.optional(),
   traceId: z.string().regex(/^[a-f0-9]{32}$/u).optional(),
   spanId: z.string().regex(/^[a-f0-9]{16}$/u).optional(),
+};
+
+const telemetryNativeDesktopContext = {
+  deviceId: UuidV7Schema.optional(),
+  osVersion: z.string().trim().min(1).max(128).regex(/^\P{Cc}+$/u).optional(),
+  locale: z.string().min(2).max(35).regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/u).optional(),
+  timezone: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_+-]+(?:\/[a-zA-Z0-9_+-]+)*$/u).optional(),
+  screenWidth: z.number().int().positive().max(100_000).optional(),
+  screenHeight: z.number().int().positive().max(100_000).optional(),
+  viewportWidth: z.number().int().positive().max(100_000).optional(),
+  viewportHeight: z.number().int().positive().max(100_000).optional(),
+  windowId: UuidV7Schema.optional(),
+};
+
+const TelemetryContextV1Schema = z.object({
+  ...telemetryContextCommon,
+  deviceId: z.never().optional(),
+  osVersion: z.never().optional(),
+  locale: z.never().optional(),
+  timezone: z.never().optional(),
+  screenWidth: z.never().optional(),
+  screenHeight: z.never().optional(),
+  viewportWidth: z.never().optional(),
+  viewportHeight: z.never().optional(),
+  windowId: z.never().optional(),
 }).strict();
 
-const EnvelopeBaseSchema = z.object({
+const TelemetryContextV2Schema = z.object({
+  ...telemetryContextCommon,
+  ...telemetryNativeDesktopContext,
+}).strict();
+
+const envelopeCommon = {
   schema: z.literal("com.avalon.telemetry.event"),
   schemaVersion: z.literal(1),
   eventId: UuidV7Schema,
@@ -499,9 +558,17 @@ const EnvelopeBaseSchema = z.object({
   identityScope: z.enum(TELEMETRY_IDENTITY_SCOPES),
   originalTimestamp: z.string().datetime({ offset: true }),
   sentAt: z.string().datetime({ offset: true }),
-  context: TelemetryContextSchema,
   properties: z.record(z.string(), z.unknown()),
-}).strict();
+};
+
+const EnvelopeBaseSchema = z.union([
+  z.object({ ...envelopeCommon, context: TelemetryContextV1Schema }).strict(),
+  z.object({
+    ...envelopeCommon,
+    contextSchemaVersion: z.literal(2),
+    context: TelemetryContextV2Schema,
+  }).strict(),
+]);
 
 export const TelemetryEnvelopeSchema = EnvelopeBaseSchema.superRefine((value, context) => {
   const entry = TELEMETRY_EVENTS[value.name as TelemetryEventName];
@@ -529,10 +596,25 @@ export const TelemetryEnvelopeSchema = EnvelopeBaseSchema.superRefine((value, co
 
 export type TelemetryEnvelope = z.infer<typeof TelemetryEnvelopeSchema>;
 
+function validateBatchDeviceBinding(
+  value: { installationId?: string | undefined; events: TelemetryEnvelope[] },
+  context: z.RefinementCtx,
+): void {
+  value.events.forEach((event, index) => {
+    if (event.context.deviceId !== undefined && event.context.deviceId !== value.installationId) {
+      context.addIssue({
+        code: "custom",
+        message: "telemetry_device_binding_invalid",
+        path: ["events", index, "context", "deviceId"],
+      });
+    }
+  });
+}
+
 export const TelemetryBatchSchema = z.object({
   installationId: UuidV7Schema.optional(),
   events: z.array(TelemetryEnvelopeSchema).min(1).max(50),
-}).strict();
+}).strict().superRefine(validateBatchDeviceBinding);
 export type TelemetryBatch = z.infer<typeof TelemetryBatchSchema>;
 
 export const TELEMETRY_BATCH_MAX_BYTES = 256 * 1024;
@@ -555,7 +637,7 @@ export const AnonymousTelemetryBatchSchema = z.object({
   capability: z.string().min(32).max(2_048),
   installationId: UuidV7Schema.optional(),
   events: z.array(TelemetryEnvelopeSchema).min(1).max(50),
-}).strict();
+}).strict().superRefine(validateBatchDeviceBinding);
 export type AnonymousTelemetryBatch = z.infer<typeof AnonymousTelemetryBatchSchema>;
 
 export const LinkAnonymousTelemetrySchema = z.object({

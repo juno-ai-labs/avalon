@@ -834,7 +834,9 @@ describe('Workspace settings', () => {
 
       const slackCard = (await screen.findByText('Slack')).closest('article');
       expect(slackCard).not.toBeNull();
-      expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+      await waitFor(() => {
+        expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+      });
       expect(within(slackCard!).queryByRole('button', { name: 'Connect another workspace' })).not.toBeInTheDocument();
       const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
       await waitFor(() => expect(workspaceButton).toBeDisabled());
