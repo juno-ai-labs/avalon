@@ -333,8 +333,9 @@ signals, never by weakening policy or deadline tests.
 **What changed:** Private artifact publication now verifies Cloudflare's
 single-PUT response against the submitted byte count and MD5 ETag, requires a
 new upload version and timestamp, then confirms that same key, size, ETag, and
-timestamp through the exact-prefix object inventory. It rejects an inventory
-served as a cache hit and no longer verifies through the object-body GET.
+timestamp through the exact-prefix object inventory. It accepts only an
+inventory explicitly marked `DYNAMIC` and no longer verifies through the
+object-body GET.
 
 **Why:** The first release after moving off Wrangler proved that Cloudflare had
 stored a new native-symbol object at 19:09:29 with a new ETag, while the REST
@@ -352,7 +353,8 @@ both byte integrity and storage confirmation without trusting a cached body.
 **Consequences:** Release artifacts remain bounded before upload and requests
 remain timeout-limited. The publisher relies on R2's default MD5 checksum for a
 non-multipart object and the upload endpoint's returned version; any ETag,
-size, key, timestamp, cache-status, or inventory mismatch fails closed.
+size, key, timestamp, non-dynamic cache status, or inventory mismatch fails
+closed.
 
 ### 2026-08-13 — Release artifacts use the regional object API directly
 
