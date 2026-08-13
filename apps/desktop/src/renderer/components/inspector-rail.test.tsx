@@ -289,7 +289,7 @@ describe('InspectorRail details', () => {
             availability: 'supported', state: 'stopped',
             lastActivityAt: '2026-08-13T12:00:00.000Z', expiresAt: '2026-09-12T12:00:00.000Z',
             retentionWarning: null, localFilesRetained: true, finalDiffResourceId: null,
-            failureCode: null, repository: null,
+            failureCode: null, repository: null, repositoryRequest: null,
           }}
           workstream={workstream}
         />

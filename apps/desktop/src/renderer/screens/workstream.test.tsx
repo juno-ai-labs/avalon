@@ -13,11 +13,57 @@ import {
   JumpToLatestButton,
   manualElicitationResponse,
   RunFailureNotice,
+  TerminalRepositoryRequestCard,
   WorkstreamErrorState,
   WorkstreamHeader,
   workstreamRunTiming,
   workspaceMemberFromSession,
 } from './workstream';
+
+const repositoryRequest = {
+  id: '61000000-0000-4000-8000-000000000006',
+  harnessRunId: '61000000-0000-4000-8000-000000000005',
+};
+const terminalRepositoryCatalog = {
+  state: 'available' as const,
+  connections: [{
+    connectionId: '61000000-0000-4000-8000-000000000004',
+    displayName: 'GitHub',
+    repositories: [{ id: 42, fullName: 'owner/repo', defaultBranch: 'main', private: true }],
+  }],
+};
+
+describe('Terminal repository request', () => {
+  it('stays hidden until a run durably requests a repository', () => {
+    render(<TerminalRepositoryRequestCard
+      catalog={terminalRepositoryCatalog}
+      disabled={false}
+      onSelect={vi.fn()}
+      request={null}
+    />);
+
+    expect(screen.queryByRole('region', { name: 'Repository required' })).not.toBeInTheDocument();
+  });
+
+  it('passes the durable request identity through repository selection', () => {
+    const onSelect = vi.fn();
+    render(<TerminalRepositoryRequestCard
+      catalog={terminalRepositoryCatalog}
+      disabled={false}
+      onSelect={onSelect}
+      request={repositoryRequest}
+    />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Repository for Terminal request' }), {
+      target: { value: `${terminalRepositoryCatalog.connections[0]!.connectionId}::owner/repo` },
+    });
+    expect(onSelect).toHaveBeenCalledWith(
+      terminalRepositoryCatalog.connections[0]!.connectionId,
+      'owner/repo',
+      repositoryRequest.id,
+    );
+  });
+});
 
 const copyText = vi.hoisted(() => vi.fn());
 const getRuntimeConfig = vi.hoisted(() => vi.fn());

@@ -1704,7 +1704,7 @@ export const ToolDefinitionSchema = z.object({
   mode: z.enum(["read", "write"]),
   idempotency: z.enum(["safe", "provider_key", "record_before_execute"]),
   /** Optional per-tool ceiling. The host still applies its overall run limit. */
-  timeoutMs: z.number().int().positive().max(930_000).optional()
+  timeoutMs: z.number().int().positive().max(1_050_000).optional()
 });
 
 /**
@@ -2137,6 +2137,10 @@ export const TerminalSelectedRepositorySchema = z.object({
   baseSha: z.string().regex(/^[0-9a-f]{40}$/u),
   headRef: z.string().min(1).max(240),
 }).strict();
+export const TerminalRepositoryRequestSchema = z.object({
+  id: IdSchema,
+  harnessRunId: IdSchema,
+}).strict();
 export const TerminalWorkstreamStateSchema = z.object({
   availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
   state: TerminalSandboxStateSchema,
@@ -2147,6 +2151,7 @@ export const TerminalWorkstreamStateSchema = z.object({
   finalDiffResourceId: IdSchema.nullable(),
   failureCode: z.string().min(1).max(160).nullable(),
   repository: TerminalSelectedRepositorySchema.nullable(),
+  repositoryRequest: TerminalRepositoryRequestSchema.nullable().default(null),
 }).strict();
 export const TerminalCatalogRepositorySchema = z.object({
   id: z.number().int().positive(),
@@ -2166,6 +2171,7 @@ export const SelectTerminalRepositoryRequestSchema = z.object({
   connectionId: IdSchema,
   repositoryFullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
   confirmDiscardLocalFiles: z.boolean().optional(),
+  repositoryRequestId: IdSchema.optional(),
 }).strict();
 export type TerminalWorkspaceSettings = z.infer<typeof TerminalWorkspaceSettingsSchema>;
 export type TerminalNetworkPolicyPreview = z.infer<typeof TerminalNetworkPolicyPreviewSchema>;

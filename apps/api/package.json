@@ -15,6 +15,7 @@
     "test:crash-symbolicator-container": "node scripts/test-crash-symbolicator-container.mjs",
     "test:watch": "vitest",
     "test:workers": "vitest run --config vitest.workers.config.ts",
+    "terminal:verify-provider-interface": "tsx scripts/verify-terminal-provider-interface.ts",
     "terminal:verify-provider": "tsx scripts/verify-terminal-provider.ts",
     "db:migrate": "wrangler d1 migrations apply DB --local --persist-to .wrangler/state/global --config wrangler.global.jsonc --env-file .dev.vars.global",
     "db:migrate:eu": "wrangler d1 migrations apply DB --local --persist-to .wrangler/state/eu --config wrangler.eu.jsonc --env-file .dev.vars.eu",
