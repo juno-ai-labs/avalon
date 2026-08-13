@@ -304,10 +304,17 @@ describe("Daytona Terminal provider", () => {
   });
 
   it("moves file bytes without host paths and runs one non-interactive session command", async () => {
-    const uploadFileStream = vi.fn(async () => undefined);
+    const uploadFile = vi.fn(async () => undefined);
     const downloadFile = vi.fn(async () => new Uint8Array([104, 105]));
     const createSession = vi.fn(async () => undefined);
-    const executeSessionCommand = vi.fn(async () => ({ cmdId: "cmd-1" }));
+    const executeSessionCommand = vi.fn(async (
+      sessionId: string,
+      request: { command: string; runAsync: boolean; suppressInputEcho: boolean },
+    ) => {
+      void sessionId;
+      void request;
+      return { cmdId: "cmd-1", exitCode: null };
+    });
     const getSession = vi.fn()
       .mockRejectedValueOnce(new Error("not found"))
       .mockResolvedValue({ sessionId: "avalon-task-1", commands: [] });
@@ -318,7 +325,7 @@ describe("Daytona Terminal provider", () => {
     const deleteSession = vi.fn(async () => undefined);
     const sandbox = {
       id: "sandbox-1", name: "sandbox", state: "started",
-      fs: { uploadFileStream, downloadFile },
+      fs: { uploadFile, downloadFile },
       process: { createSession, getSession, getSessionCommand, getSessionCommandLogs, executeSessionCommand, deleteSession },
     };
     const provider = createDaytonaTerminalProvider({
@@ -332,10 +339,10 @@ describe("Daytona Terminal provider", () => {
       taskName: "avalon-task-1", command: "printf ok", cwd: "workspace", timeoutMs: 120_000,
     })).resolves.toEqual({ exitCode: 0, stdout: "ok\n", stderr: "" });
 
-    expect(uploadFileStream).toHaveBeenCalledWith(expect.any(Uint8Array), "workspace/hello.txt", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(uploadFile).toHaveBeenCalledWith(expect.any(Uint8Array), "workspace/hello.txt", 120);
     expect(downloadFile).toHaveBeenCalledWith("workspace/hello.txt", 120);
     expect(executeSessionCommand).toHaveBeenCalledWith("avalon-task-1", {
-      command: expect.stringMatching(/^cd -- 'workspace' \|\| exit \$\?;.*timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf ok'/u),
+      command: expect.stringMatching(/^\(cd -- 'workspace' \|\| exit \$\?;.*timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf ok'/u),
       runAsync: true,
       suppressInputEcho: true,
     }, 130);
@@ -344,7 +351,30 @@ describe("Daytona Terminal provider", () => {
       runAsync: true,
       suppressInputEcho: true,
     }, 130);
+    const submittedCommand = executeSessionCommand.mock.calls[0]?.[1].command;
+    expect(submittedCommand).toMatch(/^\(.*; exit "\$avalon_status"\)$/u);
     expect(deleteSession).toHaveBeenCalledWith("avalon-task-1");
+  });
+
+  it("does not report a completed write when its Worker deadline expires during upload", async () => {
+    const controller = new AbortController();
+    const uploadFile = vi.fn(async () => { controller.abort(); });
+    const sandbox = {
+      id: "sandbox-1", name: "sandbox", state: "started",
+      fs: { uploadFile, downloadFile: vi.fn() },
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }));
+
+    await expect(provider.writeFile(
+      "sandbox-1",
+      "/workspace/.avalon/tmp/write",
+      new Uint8Array([1, 2, 3]),
+      controller.signal,
+    )).rejects.toThrow("Terminal file transfer cancelled");
+    expect(uploadFile).toHaveBeenCalledOnce();
   });
 
   it("cancels a command by deleting its provider session and stops the sandbox if cleanup fails", async () => {
@@ -378,7 +408,7 @@ describe("Daytona Terminal provider", () => {
   });
 
   it("reattaches to the one command in a stable provider session after a lost Worker response", async () => {
-    const expectedEnvelope = "cd -- '/workspace' || exit $?; if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf recovered'; avalon_status=$?; if [ \"$avalon_status\" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit \"$avalon_status\"";
+    const expectedEnvelope = "(cd -- '/workspace' || exit $?; if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf recovered'; avalon_status=$?; if [ \"$avalon_status\" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit \"$avalon_status\")";
     const sessionCommand = {
       id: "cmd-existing",
       command: expectedEnvelope,
@@ -462,7 +492,7 @@ describe("Daytona Terminal provider", () => {
   });
 
   it("publishes a verified bundle from a fresh ephemeral sandbox with a host-scoped secret", async () => {
-    const uploadFileStream = vi.fn(async () => undefined);
+    const uploadFile = vi.fn(async () => undefined);
     const createSession = vi.fn(async () => undefined);
     const executeSessionCommand = vi.fn(async () => ({
       cmdId: "publisher-cmd",
@@ -476,7 +506,7 @@ describe("Daytona Terminal provider", () => {
     const removePublisher = vi.fn(async () => undefined);
     const publisherSandbox = {
       id: "publisher-1", name: "avalon-publisher", state: "started",
-      fs: { uploadFileStream, downloadFile: vi.fn() },
+      fs: { uploadFile, downloadFile: vi.fn() },
       process: { createSession, getSession, getSessionCommand, getSessionCommandLogs, executeSessionCommand, deleteSession },
       delete: removePublisher,
     };
@@ -522,7 +552,7 @@ describe("Daytona Terminal provider", () => {
       domainAllowList: "github.com",
       secrets: { GITHUB_WRITE_BASIC: expect.any(String) },
     }), { timeout: 60 });
-    expect(uploadFileStream).toHaveBeenCalledWith(expect.any(Uint8Array), "/workspace/publication.bundle", expect.anything());
+    expect(uploadFile).toHaveBeenCalledWith(expect.any(Uint8Array), "/workspace/publication.bundle", 120);
     expect(executeSessionCommand).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       command: expect.stringContaining("git fsck --strict"),
     }), 180);

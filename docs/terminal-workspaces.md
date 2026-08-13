@@ -211,16 +211,25 @@ are covered by `workspace-settings.test.tsx` and `inspector-rail.test.tsx`.
 Run the API set with:
 
 ```text
-pnpm --filter @avalon/api exec vitest run test/terminal-*.test.ts
+pnpm --filter @avalon/api exec vitest run terminal-
 ```
+
+`pnpm --filter @avalon/api terminal:verify-provider-interface` is the disposable
+real-provider smoke gate that needs only the normal supported Daytona variables.
+It verifies create/read-back, managed bootstrap, a binary buffered upload and
+download, command sessions, stop/restart, stop/archive/restore, policy update
+read-back, persistence across every transition, deletion, and observed absence.
+The buffered upload deliberately exercises `uploadFile`; Daytona's
+`uploadFileStream` is unavailable in Cloudflare Workers and must not be used by
+the provider. This smoke gate does not prove network escape resistance.
 
 `pnpm --filter @avalon/api terminal:verify-provider` is the destructive,
 ephemeral real-provider acceptance gate. It requires the normal supported
 Daytona configuration plus controlled HTTPS redirect and private-DNS probe URLs,
-creates one private sandbox, checks the snapshot manifest and Trusted-only escape
-cases, verifies stop/restart, stop/archive/restore, deletion, and observed
-absence. The explicit second stop is required because Daytona rejects archive
-requests for running sandboxes.
+creates one private sandbox, checks a binary file round-trip, the snapshot
+manifest and Trusted-only escape cases, verifies stop/restart,
+stop/archive/restore, deletion, and observed absence. The explicit second stop
+is required because Daytona rejects archive requests for running sandboxes.
 The regional activation record must separately include controlled DNS-rebinding
 and alternate-host secret-substitution evidence. A region remains `unsupported`
 when any automated or controlled gate cannot run or fails.
@@ -330,6 +339,41 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-13 — Worker-safe uploads and durable repository requests fix first use
+
+**What changed:** Provider file and Git-bundle transfers now use Daytona's
+bounded `uploadFile` API with a cross-runtime Buffer, reject cancellation before
+the atomic target move, and have a disposable real-interface probe. Session
+commands preserve Daytona's parent shell and normalize both `null` and omitted
+in-progress exit codes before polling. The managed-image acceptance check uses
+the promised passwordless `sudo` boundary for apt metadata. Tool deadlines
+reserve two minutes for lazy sandbox acquisition in addition to their operation
+budget. The transcript repository chooser now appears only for the latest run's
+durable `repository_not_configured` failure, and only that request identity can
+trigger its one continuation.
+
+**Why:** The first production `terminal_write_file` reached Daytona but timed
+out after one minute because `uploadFileStream` throws in serverless runtimes.
+Daytona also reports an accepted asynchronous command with `exitCode: null`, and
+exiting its persistent session shell prevents a final status from being stored.
+The renderer independently inferred that every repository-less Terminal work
+stream needed GitHub, so a local Python request displayed an unrelated chooser.
+Cold allocation also consumed the same deadline intended for the requested
+operation.
+
+**Considered and rejected:** Keeping the streaming API because Node-based
+acceptance passed, showing repository selection proactively in the transcript,
+and increasing only the write timeout. Those choices preserve the Worker/runtime
+mismatch, conflate optional rail configuration with model-required input, or
+leave every other cold-start tool vulnerable to the same budget error.
+
+**Consequences:** Transfers buffer at most the existing 10 MiB file or 50 MiB
+publication limit and work in Node and Workers. Manual rail selection does not
+manufacture a participant message; a genuine repository request resumes with
+its invocation UUID as the idempotency key. The full provider gate now includes
+file and asynchronous-session round-trip evidence, while the lighter interface
+gate can run with only the standard Daytona variables.
 
 ### 2026-08-13 — Provider acceptance stops before archive
 

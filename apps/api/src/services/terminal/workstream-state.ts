@@ -49,6 +49,7 @@ interface RepositoryRow {
 }
 
 interface ConnectionRow { id: string; display_name: string | null }
+interface RepositoryRequestRow { id: string; harness_run_id: string }
 
 function publicState(state: string): "absent" | "starting" | "running" | "stopped" | "archived" | "restoring" | "expired" | "failed" {
   switch (state) {
@@ -76,7 +77,7 @@ export class TerminalWorkstreamService {
 
   async get(workstreamId: string) {
     await this.requireVisible(workstreamId);
-    const [sandbox, repository] = await Promise.all([
+    const [sandbox, repository, repositoryRequest] = await Promise.all([
       this.env.DB.prepare(
         `SELECT state, provider_sandbox_id, last_activity_at, expire_due_at,
                 final_diff_resource_id, failure_code
@@ -87,6 +88,33 @@ export class TerminalWorkstreamService {
            FROM workstream_terminal_repositories
           WHERE workspace_id = ? AND workstream_id = ?`,
       ).bind(this.auth.workspaceId, workstreamId).first<RepositoryRow>(),
+      this.env.DB.prepare(
+        `SELECT invocation.id, invocation.harness_run_id
+           FROM harness_runs run
+           JOIN tool_invocations invocation
+             ON invocation.harness_run_id = run.id
+            AND invocation.workspace_id = run.workspace_id
+            AND invocation.workstream_id = run.workstream_id
+          WHERE run.workspace_id = ? AND run.workstream_id = ?
+            AND run.parent_harness_run_id IS NULL
+            AND run.status = 'needs_input'
+            AND invocation.status = 'failed'
+            AND json_extract(invocation.error_json, '$.code') = 'repository_not_configured'
+            AND run.id = (
+              SELECT latest.id FROM harness_runs latest
+               WHERE latest.workspace_id = ? AND latest.workstream_id = ?
+                 AND latest.parent_harness_run_id IS NULL
+               ORDER BY latest.created_at DESC, latest.id DESC
+               LIMIT 1
+            )
+          ORDER BY invocation.started_at DESC, invocation.id DESC
+          LIMIT 1`,
+      ).bind(
+        this.auth.workspaceId,
+        workstreamId,
+        this.auth.workspaceId,
+        workstreamId,
+      ).first<RepositoryRequestRow>(),
     ]);
     const configuration = parseTerminalRegionConfiguration(this.env);
     const state = sandbox ? publicState(sandbox.state) : "absent";
@@ -111,6 +139,10 @@ export class TerminalWorkstreamService {
         baseRef: repository.base_ref,
         baseSha: repository.base_sha,
         headRef: repository.head_ref,
+      } : null,
+      repositoryRequest: repositoryRequest ? {
+        id: repositoryRequest.id,
+        harnessRunId: repositoryRequest.harness_run_id,
       } : null,
     };
   }

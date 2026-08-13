@@ -74,7 +74,7 @@ export function terminalPackageManagerAcceptanceCommand(): string {
     "printf 'const value: number = 42; if (value !== 42) throw new Error();\n' > fixture.ts",
     "tsc fixture.ts --outDir typescript",
     "node typescript/fixture.js",
-    "apt-get update -qq",
+    "sudo -n apt-get update -qq",
     "mkdir -p -- \"$probe/apt\" && cd -- \"$probe/apt\"",
     "apt-get download dash >/dev/null && test -s dash_*.deb && dpkg-deb --info dash_*.deb >/dev/null",
     "python3 -m pip install --disable-pip-version-check --no-cache-dir --target \"$probe/pip\" 'six==1.17.0' >/dev/null",

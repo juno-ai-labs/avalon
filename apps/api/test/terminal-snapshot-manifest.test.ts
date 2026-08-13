@@ -54,7 +54,7 @@ describe("Terminal snapshot manifest", () => {
 
   it("functionally exercises every supported installer in Trusted only", () => {
     const command = terminalPackageManagerAcceptanceCommand();
-    expect(command).toContain("apt-get update");
+    expect(command).toContain("sudo -n apt-get update");
     expect(command).toContain("apt-get download");
     expect(command).toContain("dpkg-deb --info");
     expect(command).toContain("python3 -m pip install");

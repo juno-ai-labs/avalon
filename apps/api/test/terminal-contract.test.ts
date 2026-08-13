@@ -55,14 +55,14 @@ describe("Terminal plugin contract", () => {
       serial: tool.serial,
       additionalProperties: tool.definition.inputSchema.additionalProperties,
     }))).toEqual([
-      { name: "read_file", capability: "terminal.file.read", mode: "read", idempotency: "safe", timeoutMs: 30_000, serial: true, additionalProperties: false },
-      { name: "edit_file", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 60_000, serial: true, additionalProperties: false },
-      { name: "write_file", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 60_000, serial: true, additionalProperties: false },
-      { name: "apply_patch", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 60_000, serial: true, additionalProperties: false },
-      { name: "run_command", capability: "terminal.command.run", mode: "write", idempotency: "record_before_execute", timeoutMs: 930_000, serial: true, additionalProperties: false },
-      { name: "import_resource", capability: "terminal.resource.import", mode: "write", idempotency: "record_before_execute", timeoutMs: 120_000, serial: true, additionalProperties: false },
-      { name: "publish_resource", capability: "terminal.resource.publish", mode: "write", idempotency: "provider_key", timeoutMs: 120_000, serial: true, additionalProperties: false },
-      { name: "publish_branch_and_pr", capability: "terminal.repository.publish", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
+      { name: "read_file", capability: "terminal.file.read", mode: "read", idempotency: "safe", timeoutMs: 150_000, serial: true, additionalProperties: false },
+      { name: "edit_file", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
+      { name: "write_file", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
+      { name: "apply_patch", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
+      { name: "run_command", capability: "terminal.command.run", mode: "write", idempotency: "record_before_execute", timeoutMs: 1_050_000, serial: true, additionalProperties: false },
+      { name: "import_resource", capability: "terminal.resource.import", mode: "write", idempotency: "record_before_execute", timeoutMs: 240_000, serial: true, additionalProperties: false },
+      { name: "publish_resource", capability: "terminal.resource.publish", mode: "write", idempotency: "provider_key", timeoutMs: 240_000, serial: true, additionalProperties: false },
+      { name: "publish_branch_and_pr", capability: "terminal.repository.publish", mode: "write", idempotency: "record_before_execute", timeoutMs: 300_000, serial: true, additionalProperties: false },
     ]);
   });
 
