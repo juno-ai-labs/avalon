@@ -74,7 +74,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "4110366440a2b966f58661015ccf7139d83445a9342d3a75d617ef714dfaefe1",
+        hash: "84d3ee69bf92d84e8664729f007729ae832ab2539fc350e6233cca7994de3290",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -85,14 +85,14 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "b758cf46c954874ed61853ee2a8afb71ec571abeae8d2936d8b1316a949c2cd4",
+        hash: "31d4cc88c2bd3068cd3cc81d8019f400978a3bc126457d7e14a4401bf1a01837",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "8c4c55048236e1c761aef5bf68f8d97afa45d1dcd9e4c03dd8a3562a58baafc0",
+        hash: "8c65d13a515af943f34b7fc81aa6aa4c781fcbb30e6528cd3fb7a4d560e6fe3e",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -100,7 +100,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "045016a615d291c97e9a619575b90a14bad6d45c0bcbb08caa7f10643243b843",
+        hash: "e140dcc462583c7a91d3aaaaaf5a3779564f552021c7c645a66685d071ef3b9f",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -512,7 +512,19 @@ describe("prompt renderers", () => {
     // next author to delete a rule to fit a new one: raising it deliberately,
     // with the reason in the agent-harness.md changelog, is a valid move and
     // usually the better one. See that entry before cutting policy to fit.
-    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(9_000);
+    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(10_000);
+  });
+
+  it("requires both agents to hydrate referenced attachments and respect exact partial coverage", () => {
+    const workstreamPrompt = renderWorkstreamSystemPrompt({ title: "Review", objective: "Review the attachment." });
+    const compilerPrompt = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
+    for (const prompt of [workstreamPrompt, compilerPrompt]) {
+      expect(prompt).toContain("refers to an attachment");
+      expect(prompt).toContain("inspect the relevant attachment before answering");
+      expect(prompt).toContain("charactersBefore");
+      expect(prompt).toContain("charactersAfter");
+      expect(prompt).toContain("do not describe that page as the whole resource");
+    }
   });
 
   it("renders a stable active and loadable plugin catalog using model-facing IDs", () => {

@@ -406,7 +406,7 @@ Per-tool time and the model catalog fetch use a **cancellable** deadline whose t
 
 When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is available in memory for the immediate control decision and is never logged: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose.
 
-Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, and WebP are normalized through Cloudflare Images; TIFF and HEIF/HEIC also have bounded local conversion fallbacks. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript.
+Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, and WebP are normalized through Cloudflare Images; TIFF and HEIF/HEIC also have bounded local conversion fallbacks. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
 The same derivative backs `workstream_view_resource`, including after replay or
 compaction. A requested smaller long edge is an ephemeral scale-down and never
@@ -454,6 +454,30 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-12 — Attachment inspection replaces eager prompt content
+
+**What changed:** Work-stream and automation policy now requires the model to
+inspect a referenced attachment before answering and forbids calling a partial
+read the whole resource when either exact side count is nonzero. Non-image
+projection is manifest-only; validated images retain bounded current-turn
+delivery.
+
+**Why:** A plausible first 60,000 characters caused a routed model to answer
+without the rest of a Markdown transcript. Correctness requires explicit
+coverage, not a larger invisible cutoff.
+
+**Considered and rejected:** Keeping eager PDF/file parts and relying on models
+to infer truncation from prose. Neither provides one versioned continuation
+contract across routed models.
+
+**Consequences:** The automation compiler's fixed prompt ceiling rises from 9
+KB to 10 KB for the shared attachment policy. Future prompt growth must retain
+the golden hashes and explicit byte ceiling rather than deleting coverage rules
+to fit the older bound.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — The automation architect accepts request-scoped attachment tools
 

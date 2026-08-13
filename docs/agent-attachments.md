@@ -6,11 +6,11 @@ cursor, or extracted byte an authorization grant. It owns the vocabulary and
 limits used at the model boundary; the original resource relationships remain
 the source of truth for display, scope, retention, and deletion.
 
-The subsystem is being introduced additively. Shared contracts, lifecycle,
-derivatives, authorized work-stream tools, and durable message manifests exist
-now. Triggering messages still retain their legacy eager content beside the
-manifest until draft-scoped hydration makes the cutover safe; this document
-changes in the same commits as those boundaries move.
+Shared contracts, lifecycle, derivatives, authorized work-stream and automation
+tools, and durable message manifests now form the runtime attachment boundary.
+Non-image bytes never enter transcript projection. A triggering image may be
+visible immediately, but its durable manifest and derivative are still the
+source of truth for retry, replay, and compaction recovery.
 
 ## Where the code lives
 
@@ -26,7 +26,7 @@ changes in the same commits as those boundaries move.
 | `apps/api/src/services/workstream-resource-visibility.ts` | Applies the sidebar/list/read/search principal boundary and fingerprints the visible inventory. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
 | `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
-| `apps/api/src/services/attachment-model-content.ts` | Renders durable manifests and, during additive rollout, the legacy eager content plus normalized current-turn images. |
+| `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives. |
 | `apps/api/src/services/integrations.ts` | Current message projection and work-stream resource-tool registration. |
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects and current model image derivatives. |
@@ -73,12 +73,13 @@ image is delivered in the same projection as its manifest and is marked
 `inlined: true` only after normalization succeeds; a missing or failed visual
 keeps the same identity with `inlined: false` and an explicit error code.
 
-Triggering messages still call `buildAttachmentModelParts` during the additive
-rollout. They eagerly extract bounded text/Office content and send small PDFs
-beside the new manifest so deployment cannot strand automation attachments
-before draft-scoped tools exist. That legacy content is removed in the cutover
-phase. Work-stream discovery and hydration no longer use the legacy hard-capped
-index/read pair.
+Triggering messages call `buildAttachmentModelParts`, but that name now means a
+manifest plus successfully normalized image parts only. Text, Office, PDF, and
+other source objects are not fetched during projection; all extraction happens
+after current authorization through read, search, or summarize. The platform
+prompt requires both the work-stream agent and automation architect to inspect a
+referenced attachment before answering and to use `charactersBefore` and
+`charactersAfter` rather than treating one page as the whole resource.
 
 ### Authorized work-stream discovery and text hydration
 
@@ -227,9 +228,8 @@ generic tool execution/receipt loop is owned by
 - Structured recovery details are at most 8,000 serialized characters; reason
   text is at most 1,000, MIME/enum-like values at most 160, and `available` at
   most twenty bounded strings.
-- The current runtime still has the legacy eager extraction limits documented in
-  [`agent-harness.md`](agent-harness.md). Those limits are not evidence that the
-  entire attachment was inspected.
+- Transcript projection fetches no non-image source or derivative bytes. One
+  manifest entry is emitted even when the source is missing or conversion fails.
 - Object cleanup reads at most 100 outbox rows per pass. Failures keep their row
   and store only a bounded machine error code.
 - Derivative conversion admits at most 50 MiB of source bytes, 40 MiB of expanded
@@ -240,6 +240,9 @@ generic tool execution/receipt loop is owned by
 - Invalid UTF-8, XML entity declarations, corrupt/oversized Office archives,
   encrypted/oversized PDFs, missing OCR, incomplete OCR, timeouts, unsupported
   formats, and missing source objects have distinct bounded failure codes.
+- Image projection admits at most eight images, 20 MiB of source bytes, 40
+  million source pixels, 10 MiB of derivative bytes, and a 2,048-pixel native
+  long edge. Cloudflare Images scale-down is bounded to that same edge.
 
 ## Testing
 
@@ -251,8 +254,9 @@ generic tool execution/receipt loop is owned by
   cross-purpose/principal/scope replay, expiry, and the length cap.
 - `packages/agent-harness/src/tool-activity.test.ts` covers human prose for every
   attachment tool wire name.
-- Existing eager projection behavior remains covered by
-  `apps/api/test/attachment-model-content.test.ts` until its replacement phase.
+- `apps/api/test/attachment-model-content.test.ts` proves non-image objects are
+  never fetched, every failure keeps a manifest, same-ID image delivery, and the
+  exact source-byte, pixel, derivative-byte, count, and edge boundaries.
 - `apps/api/test/attachment-derivative-service.test.ts` covers complete long
   Markdown, semantic Office structures, page/OCR extraction, malformed and
   unsupported inputs, exact UTF-16 indexing, concurrent claims, atomic
@@ -337,6 +341,31 @@ terms rather than duplicating attachment text. Later phases must preserve those
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Projection becomes manifest-only for non-images
+
+**What changed:** Work-stream and automation transcript projection no longer
+reads or emits text, Office, PDF, or unsupported-file bytes. Platform guidance
+requires attachment inspection and honest continuation from exact side counts.
+Native image admission now validates dimensions and enforces source, pixel,
+derivative, count, and long-edge limits before emitting a same-ID visual part.
+
+**Why:** The legacy 60,000-character prefix looked complete enough for a model
+to answer while hiding decisive evidence in the second half. Larger prompt caps
+only move that silent cutoff and increase every later turn's context cost.
+
+**Considered and rejected:** Raising the inline limit, keeping native PDF parts,
+and allowing signature-only native images. They preserve partial coverage,
+bypass the common derivative/read contract, or leave pixel and dimension bombs
+unchecked.
+
+**Consequences:** A task about an attachment must hydrate it through the scoped
+tools unless its required visual is already inlined. A page with characters on
+either side is explicitly partial. Projection remains cheap and deterministic;
+complete content lives only in regional derivative storage and bounded results.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Automation drafts gain revocable attachment tools
 
