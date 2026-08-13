@@ -218,7 +218,9 @@ pnpm --filter @avalon/api exec vitest run test/terminal-*.test.ts
 ephemeral real-provider acceptance gate. It requires the normal supported
 Daytona configuration plus controlled HTTPS redirect and private-DNS probe URLs,
 creates one private sandbox, checks the snapshot manifest and Trusted-only escape
-cases, verifies stop/restart, archive/restore, deletion, and observed absence.
+cases, verifies stop/restart, stop/archive/restore, deletion, and observed
+absence. The explicit second stop is required because Daytona rejects archive
+requests for running sandboxes.
 The regional activation record must separately include controlled DNS-rebinding
 and alternate-host secret-substitution evidence. A region remains `unsupported`
 when any automated or controlled gate cannot run or fails.
@@ -328,6 +330,24 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-13 — Provider acceptance stops before archive
+
+**What changed:** The real-provider acceptance probe now performs the archive
+transition as stop, archive, then start before checking the restored workspace.
+Its restart-and-restore lifecycle order has a focused regression test.
+
+**Why:** The probe restarted the sandbox to verify warm start and then attempted
+to archive that running sandbox. Daytona requires a stopped sandbox before
+archive, so a valid provider and snapshot failed the acceptance gate.
+
+**Considered and rejected:** Making the provider silently stop on every archive
+request. Lifecycle callers own state transitions, and hiding an extra provider
+mutation would weaken their read-back and durable-state assumptions.
+
+**Consequences:** The acceptance probe performs one additional stop operation
+and now exercises the same explicit transition required by Daytona. Production
+lifecycle behavior is unchanged.
 
 ### 2026-08-13 — Provider replay and durable receipts reject stale state
 
