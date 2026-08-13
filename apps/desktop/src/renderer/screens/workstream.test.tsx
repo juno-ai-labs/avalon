@@ -39,6 +39,7 @@ const headerWorkstream: WorkstreamDetail = {
   manualUnreadGeneration: 0,
   hasUnread: false,
   firstUnreadSequenceNumber: null,
+  nextPendingWakeup: null,
   pinPosition: null,
   createdAt: '2026-08-07T12:00:00.000Z',
   participants: [],
@@ -813,4 +814,3 @@ describe('workspaceMemberFromSession', () => {
     });
   });
 });
-

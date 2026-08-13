@@ -322,6 +322,10 @@ function workstreamRow(id: string, emailAddress: string | null, lastActivityAt: 
     title_status: "settled",
     latest_attention_sequence_number: 0,
     unread_tracking_start_sequence_number: 0,
+    // The viewer projection joins the next pending wake-up; these rows stand in
+    // for the completed SELECT rather than just for the workstreams table.
+    next_pending_wakeup_at: null,
+    next_pending_wakeup_prompt_prefix: null,
   };
 }
 

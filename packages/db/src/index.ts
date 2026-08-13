@@ -1,4 +1,7 @@
-import { ExternalActorSchema } from "@avalon/contracts";
+import {
+  ExternalActorSchema,
+  WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
+} from "@avalon/contracts";
 import { truncateUtf16Safe } from "@avalon/contracts/text";
 import type {
   AutomationSummary,
@@ -183,6 +186,13 @@ function workstreamTitleStatus(value: unknown): Workstream["titleStatus"] {
   return value === "naming" || value === "automatic" ? value : "settled";
 }
 
+/** Turns the bounded database prefix into the exact compact wire preview. */
+function wakeupPromptPreview(prefix: string): string {
+  const truncated = truncateUtf16Safe(prefix, WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH);
+  const trimmed = truncated.trimEnd();
+  return truncated.length < prefix.length ? `${trimmed}…` : truncated;
+}
+
 function toWorkstream(row: Record<string, unknown>): Workstream {
   const latestAttentionSequenceNumber = Number(row.latest_attention_sequence_number ?? 0);
   return {
@@ -212,6 +222,13 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     archivedAt: row.archived_at == null ? null : String(row.archived_at),
     scope: row.scope === "personal" ? "personal" : "workspace",
     systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
+    nextPendingWakeup: row.next_pending_wakeup_at != null
+      && row.next_pending_wakeup_prompt_prefix != null
+      ? {
+        dueAt: String(row.next_pending_wakeup_at),
+        promptPreview: wakeupPromptPreview(String(row.next_pending_wakeup_prompt_prefix)),
+      }
+      : null,
     // Nothing is pinned at the moment it is created, and this mapper has no
     // viewer to ask anyway — the per-viewer read is in `mappers/workstream.ts`.
     pinPosition: null
@@ -338,10 +355,24 @@ export function createDatabase(db: D1DatabaseLike) {
     async list(workspaceId: string, limit = 100, before?: string): Promise<Workstream[]> {
       const cursorClause = before ? "AND w.last_activity_at < ?" : "";
       const statement = db.prepare(
-        `SELECT w.*, t.name AS origin_label
+        `SELECT w.*, t.name AS origin_label,
+                next_wakeup.due_at AS next_pending_wakeup_at,
+                substr(
+                  next_wakeup.prompt,
+                  1,
+                  ${WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1}
+                ) AS next_pending_wakeup_prompt_prefix
          FROM workstreams w
          LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
          LEFT JOIN automation_templates t ON t.id = s.template_id
+         LEFT JOIN workstream_wakeups next_wakeup ON next_wakeup.id = (
+           SELECT wakeup.id FROM workstream_wakeups wakeup
+           WHERE wakeup.workspace_id = w.workspace_id
+             AND wakeup.workstream_id = w.id
+             AND wakeup.status = 'pending'
+           ORDER BY wakeup.due_at, wakeup.id
+           LIMIT 1
+         )
          WHERE w.workspace_id = ? AND w.archived_at IS NULL ${cursorClause}
          ORDER BY w.last_activity_at DESC
          LIMIT ?`
@@ -356,10 +387,24 @@ export function createDatabase(db: D1DatabaseLike) {
     async get(workspaceId: string, id: string): Promise<Workstream | null> {
       const row = await db
         .prepare(
-          `SELECT w.*, t.name AS origin_label
+          `SELECT w.*, t.name AS origin_label,
+                  next_wakeup.due_at AS next_pending_wakeup_at,
+                  substr(
+                    next_wakeup.prompt,
+                    1,
+                    ${WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1}
+                  ) AS next_pending_wakeup_prompt_prefix
            FROM workstreams w
            LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
            LEFT JOIN automation_templates t ON t.id = s.template_id
+           LEFT JOIN workstream_wakeups next_wakeup ON next_wakeup.id = (
+             SELECT wakeup.id FROM workstream_wakeups wakeup
+             WHERE wakeup.workspace_id = w.workspace_id
+               AND wakeup.workstream_id = w.id
+               AND wakeup.status = 'pending'
+             ORDER BY wakeup.due_at, wakeup.id
+             LIMIT 1
+           )
            WHERE w.workspace_id = ? AND w.id = ? AND w.archived_at IS NULL`
         )
         .bind(workspaceId, id)
