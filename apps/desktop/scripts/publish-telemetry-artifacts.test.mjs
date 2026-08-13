@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -54,43 +55,70 @@ function commandRunner() {
 }
 
 function objectApi({
-  corruptVerification = false,
-  getStatus = 200,
+  corruptInventory = false,
+  inventoryCached = false,
+  inventoryInvalidJson = false,
+  inventoryStatus = 200,
   putErrors = [],
   putInvalidJson = false,
+  putResultOverrides = {},
   putStatus = 200,
   putSuccess = putStatus >= 200 && putStatus < 300,
-  verificationBytes,
-  verificationContentLength,
 } = {}) {
   const objects = new Map();
   const calls = [];
   let errorBodyCancelled = false;
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(input);
-    const match = /\/r2\/buckets\/([^/]+)\/objects\/(.+)/u.exec(url.pathname);
-    assert.ok(match, `unexpected object API URL ${url}`);
-    const [, bucket, key] = match;
-    const target = `${bucket}/${key}`;
+    const objectMatch = /\/r2\/buckets\/([^/]+)\/objects\/(.+)/u.exec(url.pathname);
+    const inventoryMatch = /\/r2\/buckets\/([^/]+)\/objects$/u.exec(url.pathname);
+    assert.ok(objectMatch || inventoryMatch, `unexpected object API URL ${url}`);
+    const bucket = objectMatch?.[1] ?? inventoryMatch[1];
+    const key = objectMatch?.[2] ?? url.searchParams.get('prefix');
+    const target = `${bucket}/${key ?? ''}`;
     const headers = new Headers(init.headers);
     const call = {
       method: init.method ?? 'GET',
       target,
       jurisdiction: headers.get('cf-r2-jurisdiction'),
       contentType: headers.get('content-type'),
+      cacheControl: headers.get('cache-control'),
+      perPage: url.searchParams.get('per_page'),
+      prefix: url.searchParams.get('prefix'),
       signal: init.signal,
       url: url.href,
     };
     calls.push(call);
     assert.ok(call.method === 'PUT' || call.method === 'GET', `unexpected object API method ${call.method}`);
     if (call.method === 'PUT') {
+      assert.ok(objectMatch, 'PUT must address one object');
+      const bytes = Buffer.from(init.body);
+      const etag = createHash('md5').update(bytes).digest('hex');
+      const uploaded = '2026-08-13T19:09:29.000Z';
       if (putStatus >= 200 && putStatus < 300 && putSuccess) {
-        objects.set(target, Buffer.from(init.body));
+        objects.set(target, {
+          bytes,
+          etag,
+          key,
+          lastModified: '2026-08-13T19:09:29.001Z',
+        });
       }
       if (putInvalidJson) return new Response('not-json', { status: putStatus });
-      return Response.json({ success: putSuccess, errors: putErrors, result: { key } }, { status: putStatus });
+      return Response.json({
+        success: putSuccess,
+        errors: putErrors,
+        result: {
+          etag,
+          key,
+          size: String(bytes.byteLength),
+          uploaded,
+          version: 'test-upload-version',
+          ...putResultOverrides,
+        },
+      }, { status: putStatus });
     }
-    if (getStatus < 200 || getStatus >= 300) {
+    assert.ok(inventoryMatch, 'GET must use the authoritative object inventory');
+    if (inventoryStatus < 200 || inventoryStatus >= 300) {
       const body = new ReadableStream({
         start(controller) {
           controller.enqueue(Buffer.from('provider error'));
@@ -99,16 +127,21 @@ function objectApi({
           errorBodyCancelled = true;
         },
       });
-      return new Response(body, { status: getStatus });
+      return new Response(body, { status: inventoryStatus });
     }
     const object = objects.get(target);
     assert.ok(object, `expected uploaded object ${target}`);
-    const body = verificationBytes
-      ?? (corruptVerification ? Buffer.from('corrupt') : object);
-    return new Response(body, {
-      headers: verificationContentLength === undefined
-        ? undefined
-        : { 'content-length': verificationContentLength },
+    if (inventoryInvalidJson) return new Response('not-json');
+    return Response.json({
+      success: true,
+      result: [{
+        etag: corruptInventory ? 'corrupt' : object.etag,
+        key: object.key,
+        last_modified: object.lastModified,
+        size: object.bytes.byteLength,
+      }],
+    }, {
+      headers: inventoryCached ? { 'cf-cache-status': 'HIT' } : { 'cf-cache-status': 'DYNAMIC' },
     });
   };
   return {
@@ -121,7 +154,7 @@ function objectApi({
   };
 }
 
-test('publishes every private artifact to both isolated regional buckets and verifies its bytes', async () => {
+test('publishes every private artifact and verifies upload metadata in each regional inventory', async () => {
   const { root, desktopDirectory } = await fixture();
   const runner = commandRunner();
   const api = objectApi();
@@ -149,8 +182,14 @@ test('publishes every private artifact to both isolated regional buckets and ver
         `${bucket}/telemetry/javascript-symbols/1.96.0/1.96.0/main/chunk.js.map`,
       ));
     }
-    const verificationGets = api.calls.filter(({ method }) => method === 'GET');
-    assert.equal(verificationGets.length, 10);
+    const inventoryGets = api.calls.filter(({ method }) => method === 'GET');
+    assert.equal(inventoryGets.length, 10);
+    assert.equal(
+      inventoryGets.every(({ cacheControl, perPage, prefix }) => (
+        cacheControl === 'no-cache' && perPage === '2' && prefix?.startsWith('telemetry/')
+      )),
+      true,
+    );
     assert.equal(api.calls.every(({ signal }) => signal instanceof AbortSignal && !signal.aborted), true);
     assert.equal(
       api.calls.filter(({ method }) => method === 'PUT')
@@ -212,7 +251,7 @@ test('fails closed before upload when a packaged process source map is missing',
   }
 });
 
-test('rejects shared regional buckets and a post-upload checksum mismatch', async () => {
+test('rejects shared regional buckets and a post-upload inventory mismatch', async () => {
   const first = await fixture();
   const firstApi = objectApi();
   try {
@@ -234,7 +273,7 @@ test('rejects shared regional buckets and a post-upload checksum mismatch', asyn
   }
 
   const second = await fixture();
-  const secondApi = objectApi({ corruptVerification: true });
+  const secondApi = objectApi({ corruptInventory: true });
   try {
     await assert.rejects(
       publishTelemetryArtifacts({
@@ -244,7 +283,7 @@ test('rejects shared regional buckets and a post-upload checksum mismatch', asyn
         runCommand: commandRunner().runCommand,
         temporaryRoot: second.root,
       }),
-      /Checksum mismatch/u,
+      /Stored metadata mismatch/u,
     );
   } finally {
     await rm(second.root, { recursive: true, force: true });
@@ -314,10 +353,10 @@ test('rejects Cloudflare upload failures without exposing provider response bodi
   }
 });
 
-test('cancels failed verification responses and bounds successful readback bytes', async (t) => {
-  await t.test('failed verification response', async () => {
+test('validates authoritative inventory responses without trusting cached object reads', async (t) => {
+  await t.test('failed inventory response', async () => {
     const { root, desktopDirectory } = await fixture();
-    const api = objectApi({ getStatus: 503 });
+    const api = objectApi({ inventoryStatus: 503 });
     try {
       await assert.rejects(
         publishTelemetryArtifacts({
@@ -335,9 +374,9 @@ test('cancels failed verification responses and bounds successful readback bytes
     }
   });
 
-  await t.test('oversized verification stream', async () => {
+  await t.test('cached inventory response', async () => {
     const { root, desktopDirectory } = await fixture();
-    const api = objectApi({ verificationBytes: Buffer.alloc(64) });
+    const api = objectApi({ inventoryCached: true });
     try {
       await assert.rejects(
         publishTelemetryArtifacts({
@@ -347,16 +386,16 @@ test('cancels failed verification responses and bounds successful readback bytes
           runCommand: commandRunner().runCommand,
           temporaryRoot: root,
         }),
-        /Verification response .* exceeds the uploaded artifact size/u,
+        /Cloudflare returned a cached inventory/u,
       );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  await t.test('oversized declared content length', async () => {
+  await t.test('invalid inventory response', async () => {
     const { root, desktopDirectory } = await fixture();
-    const api = objectApi({ verificationContentLength: '999' });
+    const api = objectApi({ inventoryInvalidJson: true });
     try {
       await assert.rejects(
         publishTelemetryArtifacts({
@@ -366,10 +405,41 @@ test('cancels failed verification responses and bounds successful readback bytes
           runCommand: commandRunner().runCommand,
           temporaryRoot: root,
         }),
-        /Verification response .* exceeds the uploaded artifact size/u,
+        /invalid inventory metadata/u,
       );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+test('rejects upload metadata that does not attest to the exact submitted object', async (t) => {
+  const cases = [
+    ['etag', { etag: 'not-the-source-md5' }],
+    ['size', { size: '999' }],
+    ['key', { key: 'another-object' }],
+    ['version', { version: '' }],
+    ['timestamp', { uploaded: 'not-a-date' }],
+  ];
+  for (const [name, putResultOverrides] of cases) {
+    await t.test(name, async () => {
+      const { root, desktopDirectory } = await fixture();
+      const api = objectApi({ putResultOverrides });
+      try {
+        await assert.rejects(
+          publishTelemetryArtifacts({
+            desktopDirectory,
+            environment: runtimeEnvironment,
+            fetchImpl: api.fetchImpl,
+            runCommand: commandRunner().runCommand,
+            temporaryRoot: root,
+          }),
+          /invalid upload metadata/u,
+        );
+        assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 0);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
 });
