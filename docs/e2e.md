@@ -41,7 +41,7 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 
 ## Desktop signup, invitations, and settings
 
-1. Start from an empty desktop profile. Enter an organization name, verify both Global and European Union selectors change the target API, and create a development workspace or complete Google sign-in in a provider test account.
+1. Start from an empty desktop profile. Enter an organization name and verify both Global and European Union selectors change the target API. Select European Union and confirm the small secondary line names **Terminal access for the Avalon agent** as unavailable; select Global again and confirm the line disappears. Create a development workspace or complete Google sign-in in a provider test account.
 2. During Google sign-in, confirm the system browser visits `/auth/desktop/`, its address bar is stripped of the fragment, and the **Open Avalon** fallback returns the app to the correct regional session. Confirm the renderer never receives a Google code, token, or native PKCE verifier; relaunching the app before ticket redemption must require starting sign-in again.
 3. Open an invitation while signed out and confirm its organization, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
 4. While signed into a Global organization, open an EU invitation. Confirm the current session is not retargeted, the preview still uses the EU API, and the app requires sign-out before continuing with the invited account. Closing the invitation must restore the Global session route.

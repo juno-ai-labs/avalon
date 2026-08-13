@@ -212,6 +212,9 @@ export function RegionOnboarding(): React.JSX.Element {
         <p className="region-note">
           Your Avalon sign-in stays the same. This choice controls only where workspace data is stored and cannot be changed later.
         </p>
+        <p aria-live="polite" className="region-availability-note">
+          {selected === 'eu' ? 'Unavailable in the EU region: Terminal access for the Avalon agent.' : null}
+        </p>
         {error && <InlineError>{error}</InlineError>}
         <Button className="button-primary onboarding-continue" disabled={working || name.trim().length < 2} onClick={() => void continueSetup()}>
           {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}

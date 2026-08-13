@@ -111,6 +111,18 @@ describe('identity-first onboarding screens', () => {
     ));
   });
 
+  it('shows Terminal as unavailable only while the European Union region is selected', () => {
+    render(<RegionOnboarding />);
+
+    expect(screen.queryByText('Unavailable in the EU region: Terminal access for the Avalon agent.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
+    expect(screen.getByText('Unavailable in the EU region: Terminal access for the Avalon agent.')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('radio', { name: /Global/u }));
+    expect(screen.queryByText('Unavailable in the EU region: Terminal access for the Avalon agent.')).not.toBeInTheDocument();
+  });
+
   it('accepts a pending invitation through its own region without another login prompt', async () => {
     render(<InvitationOnboarding invitations={[invitation]} onChanged={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
