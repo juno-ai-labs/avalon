@@ -101,6 +101,7 @@ import {
 } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
+  buildAttachmentManifestPart,
   buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
@@ -867,7 +868,10 @@ async function projectModelProtocolTranscript(
           id: attachment.id,
           fileName: attachment.fileName,
           mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
           contentRef: null,
+          modelContentStatus: "failed" as const,
+          modelContentErrorCode: "source_unavailable",
         });
         const parts = await buildAttachmentModelParts(env.PAYLOADS, sources, {
           database: env.DB,
@@ -881,10 +885,26 @@ async function projectModelProtocolTranscript(
           ],
         });
       } else {
-        const attachmentMarker = message.attachments.length === 0
-          ? ""
-          : `\n\n[Attachments in this historical message: ${message.attachments.map((attachment) => attachment.fileName).join(", ")}. Binary content is not replayed.]`;
-        projected.push({ role: "user", content: `${content}${attachmentMarker}`.trim() });
+        if (message.attachments.length === 0) {
+          projected.push({ role: "user", content });
+        } else {
+          const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
+            id: attachment.id,
+            fileName: attachment.fileName,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            contentRef: null,
+            modelContentStatus: "failed" as const,
+            modelContentErrorCode: "source_unavailable",
+          });
+          projected.push({
+            role: "user",
+            content: [
+              ...(content.trim().length > 0 ? [{ type: "text" as const, text: content }] : []),
+              buildAttachmentManifestPart(sources),
+            ],
+          });
+        }
       }
     }
     else if (message.author.type === "agent") projected.push({ role: "assistant", content });
@@ -905,15 +925,20 @@ async function loadModelAttachmentSources(
     title: string;
     mime_type: string | null;
     content_ref: string | null;
+    metadata_json: string | null;
     model_content_ref: string | null;
     model_mime_type: string | null;
+    model_content_sha256: string | null;
     model_metadata_json: string | null;
+    model_content_status: Exclude<ModelAttachmentSource["modelContentStatus"], undefined>;
+    model_content_error_code: string | null;
   };
   const attachmentRows: AttachmentRow[] = [];
   for (const idBatch of arrayBatches(ids, 90)) {
     const placeholders = idBatch.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
-      `SELECT id, title, mime_type, content_ref, model_content_ref, model_mime_type, model_metadata_json
+      `SELECT id, title, mime_type, content_ref, metadata_json, model_content_ref, model_mime_type,
+              model_content_sha256, model_metadata_json, model_content_status, model_content_error_code
          FROM resources
         WHERE workspace_id = ? AND id IN (${placeholders})`,
     ).bind(workspaceId, ...idBatch).all<AttachmentRow>();
@@ -923,11 +948,25 @@ async function loadModelAttachmentSources(
     id: row.id,
     fileName: row.title,
     mimeType: row.mime_type ?? "application/octet-stream",
+    sizeBytes: attachmentMetadataSize(row.metadata_json),
     contentRef: row.content_ref,
     modelContentRef: row.model_content_ref,
     modelMimeType: row.model_mime_type,
+    modelContentSha256: row.model_content_sha256,
     modelMetadataJson: row.model_metadata_json,
+    modelContentStatus: row.model_content_status,
+    modelContentErrorCode: row.model_content_error_code,
   }]));
+}
+
+function attachmentMetadataSize(metadataJson: string | null): number {
+  if (!metadataJson) return 0;
+  try {
+    const size = Number((JSON.parse(metadataJson) as { size?: unknown }).size ?? 0);
+    return Number.isSafeInteger(size) && size >= 0 ? size : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function arrayBatches<T>(values: T[], size: number): T[][] {
@@ -1004,7 +1043,8 @@ async function loadAutomationDraftAttachmentParts(
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(", ");
   const rows = await env.DB.prepare(
-    `SELECT id, title, mime_type, content_ref, model_content_ref, model_mime_type, model_metadata_json
+    `SELECT id, title, mime_type, content_ref, metadata_json, model_content_ref, model_mime_type,
+            model_content_sha256, model_metadata_json, model_content_status, model_content_error_code
        FROM resources
       WHERE id IN (${placeholders}) AND workspace_id = ? AND provider = 'avalon_upload'
         AND uploaded_by_user_id = ? AND attachment_status = 'draft'`,
@@ -1015,16 +1055,24 @@ async function loadAutomationDraftAttachmentParts(
     content_ref: string | null;
     model_content_ref: string | null;
     model_mime_type: string | null;
+    model_content_sha256: string | null;
     model_metadata_json: string | null;
+    metadata_json: string | null;
+    model_content_status: Exclude<ModelAttachmentSource["modelContentStatus"], undefined>;
+    model_content_error_code: string | null;
   }>();
   const sources = new Map((rows.results ?? []).map((row) => [row.id, {
     id: row.id,
     fileName: row.title,
     mimeType: row.mime_type ?? "application/octet-stream",
+    sizeBytes: attachmentMetadataSize(row.metadata_json),
     contentRef: row.content_ref,
     modelContentRef: row.model_content_ref,
     modelMimeType: row.model_mime_type,
+    modelContentSha256: row.model_content_sha256,
     modelMetadataJson: row.model_metadata_json,
+    modelContentStatus: row.model_content_status,
+    modelContentErrorCode: row.model_content_error_code,
   } satisfies ModelAttachmentSource]));
   if (sources.size !== ids.length) {
     throw new ApiError(422, "invalid_automation_attachment", "One or more automation attachments are unavailable");
