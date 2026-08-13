@@ -119,7 +119,10 @@ describe("Terminal repository publication", () => {
       ghToken: "read-token",
     });
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
-      command: expect.stringContaining("clone --no-checkout 'https://github.com/owner/repo.git'"),
+      command: expect.stringMatching(/rm -rf -- \/workspace\/repository\.tmp\n.*clone --no-checkout 'https:\/\/github\.com\/owner\/repo\.git'/su),
+    }));
+    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+      command: expect.stringContaining("grep -qxF '.avalon/' .git/info/exclude || printf '.avalon/\\n' >> .git/info/exclude"),
     }));
     expect(database.prepare(
       "SELECT bootstrapped_sandbox_generation, read_token_expires_at FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
@@ -190,6 +193,15 @@ describe("Terminal repository publication", () => {
     expect(database.prepare(
       "SELECT consumed_by_invocation_id FROM terminal_publication_grants WHERE workspace_id = ?",
     ).get(W)).toEqual({ consumed_by_invocation_id: I });
+
+    await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
+      providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
+      authorityFingerprint: "authority", networkRevision: 1,
+    }, provider)).resolves.toMatchObject({ outcome: "unchanged", publishedSha: HEAD });
+    expect(provider.publishGitBundle).toHaveBeenCalledOnce();
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM repository_publications WHERE workspace_id = ? AND tool_invocation_id = ?",
+    ).get(W, I)).toEqual({ count: 1 });
   });
 
   it("refuses a dirty tree with actionable guidance", async () => {

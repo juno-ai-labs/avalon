@@ -176,6 +176,13 @@ export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
           );
         }
       }
+      if (existence.exitCode !== 0 && existence.exitCode !== 44) {
+        throw new TerminalToolError(
+          "destination_not_regular",
+          "The destination exists but is not a regular file Avalon can safely replace. Choose a different destinationPath and retry.",
+          { reason: "Choose a destinationPath that is absent or names a regular file beneath the Terminal workspace." },
+        );
+      }
       const plannedAt = nowIso();
       await env.DB.prepare(
         `INSERT INTO sandbox_imported_resources

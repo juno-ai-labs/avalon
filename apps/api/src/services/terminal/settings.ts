@@ -190,7 +190,7 @@ export class TerminalSettingsService {
          FROM workstream_sandboxes sandbox
          JOIN workstreams workstream ON workstream.id = sandbox.workstream_id
         WHERE sandbox.workspace_id = ? AND sandbox.provider_sandbox_id IS NOT NULL
-          AND sandbox.state NOT IN ('absent', 'expired')
+          AND sandbox.state NOT IN ('absent', 'expired', 'failed')
         ORDER BY sandbox.workstream_id`,
     ).bind(this.auth.workspaceId).all<SandboxRow>();
     const affected = sandboxes.results ?? [];
@@ -226,8 +226,15 @@ export class TerminalSettingsService {
           `UPDATE workstream_sandboxes
               SET state = 'stopped', operation_run_id = NULL, operation_lease_expires_at = NULL,
                   version = version + 1, updated_at = ?
-            WHERE workspace_id = ? AND workstream_id = ?`,
-        ).bind(timestamp, this.auth.workspaceId, sandbox.workstream_id).run();
+            WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
+              AND provider_sandbox_id = ?`,
+        ).bind(
+          timestamp,
+          this.auth.workspaceId,
+          sandbox.workstream_id,
+          sandbox.generation,
+          sandbox.provider_sandbox_id,
+        ).run();
       } catch {
         failures.push(`${sandbox.workstream_id}:stop`);
         try {
@@ -238,16 +245,30 @@ export class TerminalSettingsService {
                 SET state = 'failed', provider_sandbox_id = NULL,
                     operation_run_id = NULL, operation_lease_expires_at = NULL,
                     failure_code = 'policy_stop_failed_deleted', version = version + 1, updated_at = ?
-              WHERE workspace_id = ? AND workstream_id = ?`,
-          ).bind(timestamp, this.auth.workspaceId, sandbox.workstream_id).run();
+              WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
+                AND provider_sandbox_id = ?`,
+          ).bind(
+            timestamp,
+            this.auth.workspaceId,
+            sandbox.workstream_id,
+            sandbox.generation,
+            sandbox.provider_sandbox_id,
+          ).run();
         } catch {
           failures.push(`${sandbox.workstream_id}:delete`);
           await this.env.DB.prepare(
             `UPDATE workstream_sandboxes
                 SET state = 'failed', operation_run_id = NULL, operation_lease_expires_at = NULL,
                     failure_code = 'policy_quarantine_failed', version = version + 1, updated_at = ?
-              WHERE workspace_id = ? AND workstream_id = ?`,
-          ).bind(timestamp, this.auth.workspaceId, sandbox.workstream_id).run();
+              WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
+                AND provider_sandbox_id = ?`,
+          ).bind(
+            timestamp,
+            this.auth.workspaceId,
+            sandbox.workstream_id,
+            sandbox.generation,
+            sandbox.provider_sandbox_id,
+          ).run();
         }
       }
     }
@@ -286,8 +307,15 @@ export class TerminalSettingsService {
             await this.env.DB.prepare(
               `UPDATE workstream_sandboxes SET state = 'failed', provider_sandbox_id = NULL,
                       failure_code = 'policy_rollback_deleted', version = version + 1, updated_at = ?
-                WHERE workspace_id = ? AND workstream_id = ?`,
-            ).bind(nowIso(), this.auth.workspaceId, sandbox.workstream_id).run();
+                WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
+                  AND provider_sandbox_id = ?`,
+            ).bind(
+              nowIso(),
+              this.auth.workspaceId,
+              sandbox.workstream_id,
+              sandbox.generation,
+              sandbox.provider_sandbox_id,
+            ).run();
           }).catch(() => undefined);
         }
       }

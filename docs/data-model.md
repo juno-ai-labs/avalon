@@ -535,7 +535,7 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-13 — Regional Terminal state separates authority from provider facts
 
-**What changed:** Migration `0074_terminal_workspaces.sql` adds tenant-first
+**What changed:** Migration `0075_terminal_workspaces.sql` adds tenant-first
 sandbox, task, import, network-policy, repository-selection, publication-grant,
 and convergent-publication rows with work-stream/workspace guards and unique
 replay keys.
@@ -552,8 +552,10 @@ needed to reconcile races or prove exact GitHub identity.
 
 **Consequences:** Every Terminal query and mutation includes `workspace_id`;
 provider identifiers never authorize; command/publication state converges on the
-existing tool invocation; and future schema changes receive a new migration
-rather than editing `0074` after deployment.
+existing tool invocation; publication retries never replace an earlier
+invocation's audit row merely because they target the same branch; and future
+schema changes receive a new migration rather than editing `0075` after
+deployment.
 
 Shipped in the pull request for this change. Design:
 [`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
