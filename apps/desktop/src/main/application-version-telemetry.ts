@@ -44,11 +44,12 @@ export async function applicationVersionTransition(input: {
     pending: null,
   };
   const path = join(input.userDataDirectory, 'telemetry', 'application-version.json');
-  const previous = await readVersion(path);
+  const stored = await readVersion(path);
+  const previous = stored.kind === 'valid' ? stored.value : null;
   if (previous?.pending) return previous.pending;
   if (previous?.appVersion === current.appVersion && previous.appBuild === current.appBuild) return null;
 
-  if (!previous && !input.newInstallation) {
+  if (!previous && (!input.newInstallation || stored.kind !== 'missing')) {
     await writeVersion(path, current);
     return null;
   }
@@ -71,19 +72,26 @@ export async function acknowledgeApplicationVersionTransition(input: {
   eventId: string;
 }): Promise<void> {
   const path = join(input.userDataDirectory, 'telemetry', 'application-version.json');
-  const current = await readVersion(path);
-  if (!current?.pending || current.pending.eventId !== EventId.parse(input.eventId)) return;
-  await writeVersion(path, { ...current, pending: null });
+  const stored = await readVersion(path);
+  if (stored.kind !== 'valid'
+    || !stored.value.pending
+    || stored.value.pending.eventId !== EventId.parse(input.eventId)) return;
+  await writeVersion(path, { ...stored.value, pending: null });
 }
 
-async function readVersion(path: string): Promise<z.infer<typeof StoredApplicationVersionSchema> | null> {
+type ReadVersionResult =
+  | { kind: 'valid'; value: z.infer<typeof StoredApplicationVersionSchema> }
+  | { kind: 'missing' }
+  | { kind: 'invalid' };
+
+async function readVersion(path: string): Promise<ReadVersionResult> {
   try {
     const parsed = StoredApplicationVersionSchema.safeParse(JSON.parse(await readFile(path, 'utf8')) as unknown);
-    return parsed.success ? parsed.data : null;
+    return parsed.success ? { kind: 'valid', value: parsed.data } : { kind: 'invalid' };
   } catch (error) {
-    if (!(error instanceof SyntaxError)
-      && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-    return null;
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return { kind: 'missing' };
+    if (error instanceof SyntaxError) return { kind: 'invalid' };
+    throw error;
   }
 }
 
