@@ -25,6 +25,7 @@ const FIXTURES = [
   },
 ];
 const IMAGE = `avalon-crash-symbolicator-integration:${process.pid}`;
+const PROCESS_PRESSURE_CONTAINER = `avalon-symbolicator-pressure-${process.pid}`;
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const BUILD_CONTEXT = resolve(SCRIPT_DIRECTORY, '../crash-symbolicator');
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'avalon-symbolicator-'));
@@ -98,6 +99,17 @@ function assertSanitized(value, key) {
   }
 }
 
+async function waitForProcessPressure() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const result = spawnSync('docker', ['logs', PROCESS_PRESSURE_CONTAINER], {
+      encoding: 'utf8',
+    });
+    if (result.status === 0 && result.stdout.includes('ready')) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  assert.fail('process-pressure container did not become ready');
+}
+
 try {
   for (const fixture of FIXTURES) await downloadFixture(fixture);
   writeFileSync(join(temporaryRoot, 'malformed.dmp'), 'not a minidump', { mode: 0o600 });
@@ -118,12 +130,33 @@ try {
   ].join('\n');
   runDocker(containerArguments('python3', '-c', noEgressProbe));
 
+  const processPressureProbe = [
+    'import subprocess',
+    'import time',
+    "children = [subprocess.Popen(['sleep', '300']) for _ in range(40)]",
+    "print('ready', flush=True)",
+    'time.sleep(300)',
+  ].join('\n');
+  runDocker([
+    'run',
+    '--detach',
+    '--rm',
+    '--network=none',
+    '--name',
+    PROCESS_PRESSURE_CONTAINER,
+    IMAGE,
+    'python3',
+    '-c',
+    processPressureProbe,
+  ]);
+  await waitForProcessPressure();
+
   const report = JSON.parse(runDocker(containerArguments(
     '/usr/local/bin/avalon-symbolicate',
     '/fixtures/test.dmp',
     '/fixtures/symbols',
   )));
-  assert.equal(report.status, 'ok');
+  assert.equal(report.status, 'ok', `valid fixture was rejected: ${JSON.stringify(report)}`);
   assert.ok(Array.isArray(report.threads) && report.threads.length > 0, 'fixture produced no threads');
   assert.match(JSON.stringify(report), /test_app/u, 'matching symbols were not applied');
   assertSanitized(report);
@@ -137,6 +170,7 @@ try {
 
   console.log('Crash symbolicator container integration passed.');
 } finally {
+  spawnSync('docker', ['stop', PROCESS_PRESSURE_CONTAINER], { encoding: 'utf8' });
   spawnSync('docker', ['image', 'rm', '--force', IMAGE], { encoding: 'utf8' });
   rmSync(temporaryRoot, { recursive: true, force: true });
 }

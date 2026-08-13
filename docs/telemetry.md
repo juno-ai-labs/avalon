@@ -321,6 +321,30 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-13 — Parser limits do not depend on a shared host UID
+
+**What changed:** Removed the processor's `RLIMIT_NPROC` setting while retaining
+its address-space, CPU, output-size, file-descriptor, timeout, read-only
+filesystem, and no-network controls.
+
+**Why:** Linux accounts `RLIMIT_NPROC` across every process with the same host
+UID. A sibling container using the symbolicator's non-root UID could therefore
+consume the allowance and make a valid dump fail as malformed. The stack walker
+does not execute dump content or launch child processes, so the shared-UID limit
+added denial-of-service coupling without containing an available behavior.
+
+**Considered and rejected:** Raising the process limit. Any fixed per-UID value
+would preserve the same cross-container coupling and merely move the failure
+threshold.
+
+**Consequences:** Parser isolation continues to rely on the dedicated container,
+fixed executable, and the remaining explicit resource limits. Future parser
+changes that add child processes must introduce a container-scoped process bound
+instead of restoring a host-UID `RLIMIT_NPROC`.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
 ### 2026-08-13 — The native processor is tested at its deployment boundary
 
 **What changed:** Added a CI gate that builds the symbolicator image and runs a

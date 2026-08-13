@@ -29,7 +29,11 @@ def apply_limits() -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (PROCESS_TIMEOUT_SECONDS, PROCESS_TIMEOUT_SECONDS))
     resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
-    resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
+    # Do not set RLIMIT_NPROC here. Linux accounts it against the host UID, so
+    # unrelated containers that map this non-root UID can exhaust the limit and
+    # make a valid report fail nondeterministically. The wrapper launches one
+    # fixed parser binary, which does not execute dump content or spawn child
+    # processes; the container boundary and the limits above constrain it.
 
 
 def safe_path(value: str) -> str:
