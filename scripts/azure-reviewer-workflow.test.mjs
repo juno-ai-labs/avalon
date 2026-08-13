@@ -99,7 +99,7 @@ test('each Azure reviewer preserves the proven Monad Cline harness', async () =>
 		// leave the second one as a regex wildcard and stop pinning the deployment.
 		assert.match(review, new RegExp(`--modelid ${model.replaceAll('.', '\\.')}`, 'u'));
 		assert.match(review, /^ {6}CLINE_NO_AUTO_UPDATE: "1"$/mu);
-		assert.match(review, /^ {8}run: npm install -g cline@3\.0\.47$/mu);
+		assert.match(review, /^ {8}run: npm install -g cline@3\.0\.54$/mu);
 
 		const stepNames = [...review.matchAll(/^ {6}- name: (.+)$/gmu)].map(
 			(match) => match[1],
@@ -134,7 +134,7 @@ test('each Azure reviewer preserves the proven Monad Cline harness', async () =>
 		assert.match(modelReview, /PROMPT=\$\(cat <<EOF/u);
 		assert.match(
 			modelReview,
-			/cline --cwd "\$GITHUB_WORKSPACE" --auto-approve true(?: --thinking high)? "\$PROMPT"/u,
+			/cline --cwd "\$GITHUB_WORKSPACE" --auto-approve true(?: --thinking (?:high|xhigh))? "\$PROMPT"/u,
 		);
 		assert.doesNotMatch(
 			modelReview,

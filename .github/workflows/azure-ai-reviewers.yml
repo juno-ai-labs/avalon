@@ -221,7 +221,7 @@ jobs:
       - name: Install Cline CLI
         # Match the other Cline reviewers' version. `CLINE_NO_AUTO_UPDATE` (job
         # env) is what makes this pin hold — see the note there.
-        run: npm install -g cline@3.0.47
+        run: npm install -g cline@3.0.54
       - name: Verify Cline CLI
         run: cline --version
       - name: Configure Cline authentication (DeepSeek V4 Pro on Azure AI Foundry)
@@ -403,10 +403,12 @@ jobs:
           Mention you used the DeepSeek V4 Pro model (via Cline, on Azure AI) to review this PR.
           EOF
           )
-          # Cline 3.0.47 fans OpenAI-compatible options out under both the new
+          # Cline 3.0.47 fanned OpenAI-compatible options out under both the new
           # `openaiCompatible` key and its deprecated `openai-compatible` alias,
-          # so AI SDK 6 repeats one warning on every turn. Keep every other
-          # stderr line visible; remove this filter once Cline drops the alias.
+          # so AI SDK 6 repeated one warning on every turn. 3.0.54 no longer
+          # emits it, so this filter now matches nothing; it is kept only so the
+          # line stays identical across all five jobs. Keep every other stderr
+          # line visible.
           # `--cwd` pins the agent to `$GITHUB_WORKSPACE` — the PARENT of the
           # checkout, not the checkout itself. That is deliberate: workspace
           # discovery (rules, hooks, plugins) runs against this directory, so
@@ -603,7 +605,7 @@ jobs:
       - name: Install Cline CLI
         # Match the other Cline reviewers' version. `CLINE_NO_AUTO_UPDATE` (job
         # env) is what makes this pin hold — see the note there.
-        run: npm install -g cline@3.0.47
+        run: npm install -g cline@3.0.54
       - name: Verify Cline CLI
         run: cline --version
       - name: Configure Cline authentication (Grok 4.3 on Azure AI Foundry)
@@ -931,7 +933,7 @@ jobs:
         # to at install time. This pin is only real because `CLINE_NO_AUTO_UPDATE`
         # (job env) stops the CLI replacing itself on first invocation — see the
         # note there and the CLI-pin gotcha in docs/automated-code-review.md.
-        run: npm install -g cline@3.0.47
+        run: npm install -g cline@3.0.54
       - name: Verify Cline CLI
         run: cline --version
       - name: Configure Cline authentication (Kimi K2.6 on Azure AI Foundry)
@@ -1261,7 +1263,7 @@ jobs:
       - name: Install Cline CLI
         # Match the other Cline reviewers' version. `CLINE_NO_AUTO_UPDATE` (job
         # env) is what makes this pin hold — see the note there.
-        run: npm install -g cline@3.0.47
+        run: npm install -g cline@3.0.54
       - name: Verify Cline CLI
         run: cline --version
       - name: Configure Cline authentication (GPT-5.6 Sol on Azure AI Foundry)
@@ -1569,7 +1571,7 @@ jobs:
       - name: Install Cline CLI
         # Match the other Cline reviewers' version. `CLINE_NO_AUTO_UPDATE` (job
         # env) is what makes this pin hold — see the note there.
-        run: npm install -g cline@3.0.47
+        run: npm install -g cline@3.0.54
       - name: Verify Cline CLI
         run: cline --version
       - name: Configure Cline authentication (GPT-5.6 Terra on Azure AI Foundry)
@@ -1684,7 +1686,7 @@ jobs:
           # aiming it at `pr-head/` would collapse the isolation the checkout step
           # describes. The tree is read through `pr-head/`, and the post step
           # reads 'cline-review.md' from here.
-          cline --cwd "$GITHUB_WORKSPACE" --auto-approve true --thinking high "$PROMPT" 2> >(
+          cline --cwd "$GITHUB_WORKSPACE" --auto-approve true --thinking xhigh "$PROMPT" 2> >(
             grep -vF "The 'openai-compatible' key in providerOptions is deprecated. Use 'openaiCompatible' instead." >&2
           )
       - name: Post Cline review
