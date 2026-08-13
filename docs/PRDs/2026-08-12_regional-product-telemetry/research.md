@@ -24,7 +24,7 @@ The recommended architecture is an Avalon-owned regional collector and crash pip
 
 | Product | Strongest relevant capabilities | Risk or mismatch for Avalon | What Avalon adopts |
 | --- | --- | --- | --- |
-| PostHog | Product analytics, funnels, retention, cohorts, exceptions, experiments, EU Cloud, data controls | Renderer SDK can load optional bundles; autocapture/replay can collect UI content; native crash workflow is not its core contract; provider privacy terms need explicit configuration | Global product destination, server-side capture, exception summaries, experiment exposure convention; no EU forwarding until Avalon has an approved EU-specific instance |
+| PostHog | Product analytics, funnels, retention, cohorts, exceptions, experiments, EU Cloud, data controls | Renderer SDK can load optional bundles; autocapture/replay can collect UI content; native crash workflow is not its core contract; provider administration is separate from Avalon's internal lifecycle | Global product destination, server-side capture, exception summaries, experiment exposure convention; no EU forwarding until Avalon has an approved EU-specific instance |
 | Segment | Canonical envelope, source/destination routing, message IDs, four timestamps, Protocols tracking plans, validation, transformations, regional offering | Full CDP and identity/audience product are unnecessary; direct client source would weaken Avalon's regional and privacy enforcement | Envelope, timestamp normalization, source authority, adapters, deterministic IDs, validation |
 | Sentry | Electron SDK, native minidumps, issue grouping, breadcrumbs, source maps/debug IDs, releases, crash-free sessions/users, scrubbing | A second vendor and potentially a second crash data store; rich automatic breadcrumbs can over-collect; detailed native residency needs diligence | Crash coverage bar, fingerprints, releases, safe breadcrumbs, symbol pipeline, crash-free measures |
 | Bugsnag | Electron main/renderer coverage, launch crashes, explicit session semantics, stability targets, release adoption, configurable minidump endpoint | Similar second-vendor and privacy diligence; automatic breadcrumbs need restriction | Launch-window semantics, session stability denominator, rate-limit transparency, feature/release correlation |
@@ -56,11 +56,11 @@ Readable production stacks require build-time source-map handling. PostHog's [so
 
 ### Privacy and residency
 
-PostHog documents an [EU Cloud deployment in Frankfurt and project IP controls](https://posthog.com/docs/privacy/data-storage). Its [product analytics privacy controls](https://posthog.com/docs/product-analytics/privacy) include IP disabling, `before_send`, cookieless modes, and opt-out. Those controls help, but provider-side settings are defense in depth; Avalon's regional API must discard IP and prohibited properties before forwarding.
+PostHog documents an [EU Cloud deployment in Frankfurt and project IP controls](https://posthog.com/docs/privacy/data-storage). Its [product analytics privacy controls](https://posthog.com/docs/product-analytics/privacy) include IP disabling, `before_send`, cookieless modes, and opt-out. Avalon does not depend on those separately administered settings: its regional API must discard IP and prohibited properties before forwarding.
 
 Session replay deserves a separate warning. PostHog says inputs are masked by default while general text is not necessarily masked unless maximum-privacy options such as full text masking are configured. Its [replay privacy documentation](https://posthog.com/docs/session-replay/privacy) also highlights the risk of network bodies and headers. Avalon does not enable replay in this PRD.
 
-PostHog's [privacy policy](https://posthog.com/privacy) currently describes use of Customer Content for provider product and model development unless the customer opts out or has contrary contract terms. Avalon must exercise and document that opt-out before production data flows. The [PostHog Trust Center](https://trust.posthog.com) is the starting point for the DPA, security, and compliance review, not a substitute for reviewing the executed terms.
+PostHog's [privacy policy](https://posthog.com/privacy) currently describes provider-side choices for Customer Content, while the [PostHog Trust Center](https://trust.posthog.com) provides its security and compliance materials. Those contract, access, retention, deletion, profile, and product/model-development settings belong to a separate provider-administration process. This PRD uses the successful destination acknowledgement as its boundary and does not make PostHog configuration part of Avalon's internal telemetry lifecycle or launch gates.
 
 ### Experiments and feature flags
 
@@ -69,6 +69,8 @@ Avalon does not need to move runtime flags from Flagship. PostHog documents [exp
 ### PostHog decision
 
 Use the current US PostHog project as the first product-analysis destination for Global only. Keep EU product and crash telemetry in Avalon's isolated Cloudflare-backed internal path until an EU-specific PostHog instance receives a new approval. Do not embed PostHog in the renderer, store native dumps in it, make it the consent authority, or design the canonical event schema around PostHog property names.
+
+Research into PostHog informs the payload boundary and adapter contract, but provider-side retention, deletion, access, profiles, and issue workflow are deliberately out of scope after PostHog acknowledges delivery.
 
 ## Twilio Segment
 
@@ -117,7 +119,7 @@ Do not add Sentry as a production destination in this PRD. Use it as the accepta
 
 ## Electron Crashpad
 
-Electron's official [`crashReporter` API](https://www.electronjs.org/docs/latest/api/crash-reporter) uses Crashpad. It starts a separate process that can upload a crash even after Electron terminates, must start before renderer processes are created, and cannot simply be disabled after it starts. It submits multipart minidump data plus configured extra fields to a fixed endpoint.
+Electron's official [`crashReporter` API](https://www.electronjs.org/docs/latest/api/crash-reporter) uses Crashpad. It starts a separate process that can upload a crash even after Electron terminates, must start before renderer processes are created, and cannot simply be disabled after it starts. Its native submission surface uses a fixed endpoint and multipart minidump data plus configured extra fields; the supported start options do not expose Avalon's required custom authorization-header boundary.
 
 These properties drive several requirements:
 
@@ -125,8 +127,9 @@ These properties drive several requirements:
 - changing regions requires an application restart;
 - the crash endpoint cannot depend on graceful JavaScript execution or a live session-refresh flow;
 - configured extra fields must be sparse because they can accompany the most sensitive diagnostic payload;
-- custom headers/authentication and upload behavior must be verified in a packaged spike rather than assumed;
-- native upload is separate from the normal JSON event batch and local spool;
+- Avalon must not place a credential in the fixed submission URL, so Crashpad records locally; on the next launch, before a new handler starts, main rotates the inactive database into a separate route-final spool and uploads with header authentication;
+- Avalon never reads or mutates the live Crashpad database; packaged tests must verify database completion, process coverage, whole-generation rotation, invalidation/purge behavior, and next-launch upload rather than assuming Crashpad internals;
+- native upload is separate from the normal JSON event batch and normal-event spool;
 - a forced native crash on every supported packaged target is a release invariant.
 
 Electron also documents a local Crashpad database and upload controls. Disabling detailed diagnostics must stop future uploads and remove or expire pending dumps according to the approved policy; merely changing a UI toggle is insufficient.
@@ -180,10 +183,10 @@ Building a regional ingress that forwards JSON to PostHog is small. Building a d
 - consent and admin policy resolution;
 - regional outbox, retry, deduplication, replay, rejection, and dead-letter operations;
 - identity derivation, rotation, aliasing policy, and deletion;
-- native unauthenticated-but-abuse-resistant upload;
+- Crashpad database handling plus authenticated main-process native upload;
 - dump retention, private artifacts, release matching, symbolication compute, grouping, regression, and support access;
 - crash-free session denominators and lost-data accounting;
-- provider configuration drift and privacy fixture monitoring;
+- destination-adapter compatibility and privacy-fixture monitoring;
 - operational dashboards, alerts, and on-call runbooks.
 
 The PRD keeps the architecture custom because Avalon already has a strong regional API boundary and unusually sensitive content. The decision should be revisited after the native-crash spike. If symbols, grouping, or the private viewer threaten the roadmap, using Sentry or Bugsnag behind the same regional policy and destination abstraction is a valid alternative—not an architectural failure.
@@ -199,8 +202,7 @@ The PRD keeps the architecture custom because Avalon already has a strong region
 - [ ] Native dumps never rely on graceful in-process delivery.
 - [ ] Release artifacts are private, immutable, matched by debug/build identity, and uploaded before release.
 - [ ] Crash-free measures disclose loss, sampling, and rate limiting.
-- [ ] Provider-side privacy controls supplement server-side enforcement.
+- [ ] Destination acknowledgement cannot extend or restart an Avalon-controlled retention clock.
 - [ ] EU/Global applies to the full lifecycle, not just the ingest URL.
 - [ ] Destination mappings and replays preserve event identity and adapter version.
-- [ ] PostHog model/product-development opt-out and GeoIP configuration are verified.
 - [ ] Public-site collection remains separately gated from desktop/API collection.
