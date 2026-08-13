@@ -55,7 +55,18 @@ export async function processProfileOutbox(env: Env): Promise<ProfileDeliverySum
       summary.suppressed += 1;
       continue;
     }
-    const properties = parseProfileProperties(row);
+    let properties: Record<string, string>;
+    try {
+      properties = parseProfileProperties(row);
+    } catch {
+      const terminalized = await env.DB.prepare(
+        `UPDATE telemetry_profile_jobs
+         SET state = 'terminal', attempt_count = attempt_count + 1, next_attempt_at = NULL
+         WHERE id = ? AND state = 'pending'`,
+      ).bind(row.id).run();
+      summary.terminal += Number(terminalized.meta.changes ?? 0);
+      continue;
+    }
     const delivery: GlobalProfileDeliveryRow = {
       jobId: row.id,
       kind: row.job_kind,
@@ -110,7 +121,10 @@ function parseProfileProperties(row: ProfileJobRow): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('telemetry_profile_properties_invalid');
   const candidate = value as Record<string, unknown>;
   const allowed = row.job_kind === 'group_profile' ? new Set(['name']) : new Set(['email', 'name']);
-  if (Object.keys(candidate).some((key) => !allowed.has(key))) throw new Error('telemetry_profile_properties_invalid');
+  const keys = Object.keys(candidate);
+  if (keys.length === 0 || keys.some((key) => !allowed.has(key))) {
+    throw new Error('telemetry_profile_properties_invalid');
+  }
   const properties: Record<string, string> = {};
   for (const [key, child] of Object.entries(candidate)) {
     if (typeof child !== 'string' || child.length === 0 || child.length > 320) {

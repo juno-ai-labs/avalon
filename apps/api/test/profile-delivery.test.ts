@@ -67,4 +67,44 @@ describe('PostHog profile job delivery', () => {
     expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get()).toEqual({ state: 'suppressed' });
     database.close();
   });
+
+  it('marks malformed or empty profile jobs terminal without blocking later valid work', async () => {
+    const database = migratedSqliteDatabase();
+    const insert = database.prepare(`INSERT INTO telemetry_profile_jobs
+      (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
+       properties_json, version, state, created_at, delete_at)
+      VALUES (?, NULL, 'person_profile', ?, NULL, ?, 1, 'pending', ?, ?)`);
+    const deleteAt = '2026-11-10T20:00:00.000Z';
+    insert.run('job-malformed', 'person-malformed', '{', '2026-08-12T19:00:00.000Z', deleteAt);
+    insert.run('job-empty', 'person-empty', '{}', '2026-08-12T19:01:00.000Z', deleteAt);
+    insert.run(
+      'job-valid',
+      'person-valid',
+      JSON.stringify({ name: 'Valid user' }),
+      '2026-08-12T19:02:00.000Z',
+      deleteAt,
+    );
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: 'global',
+      POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(processProfileOutbox(env)).resolves.toEqual({
+      selected: 3, delivered: 1, retried: 0, terminal: 2, suppressed: 0,
+    });
+    expect(database.prepare('SELECT id, state, attempt_count FROM telemetry_profile_jobs ORDER BY id').all())
+      .toEqual([
+        { id: 'job-empty', state: 'terminal', attempt_count: 1 },
+        { id: 'job-malformed', state: 'terminal', attempt_count: 1 },
+        { id: 'job-valid', state: 'acknowledged', attempt_count: 1 },
+      ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).batch[0]).toMatchObject({
+      event: '$set',
+      properties: { distinct_id: 'person-valid', $set: { name: 'Valid user' } },
+    });
+    database.close();
+  });
 });

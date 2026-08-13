@@ -15,11 +15,15 @@ const StoredRowSchema = z.object({
   event: TelemetryEnvelopeSchema,
   acceptedAt: z.string().datetime({ offset: true }),
   deleteAfter: z.string().datetime({ offset: true }),
+  firstSentAt: z.string().datetime({ offset: true }).nullable().default(null),
   attempts: z.number().int().nonnegative(),
   nextAttemptAt: z.string().datetime({ offset: true }),
 }).strict().superRefine((row, context) => {
   if (Date.parse(row.deleteAfter) !== Date.parse(row.acceptedAt) + LOCAL_RETENTION_MS) {
     context.addIssue({ code: 'custom', message: 'telemetry_deadline_invalid', path: ['deleteAfter'] });
+  }
+  if (row.firstSentAt !== null && row.event.sentAt !== row.firstSentAt) {
+    context.addIssue({ code: 'custom', message: 'telemetry_send_time_invalid', path: ['firstSentAt'] });
   }
 });
 
@@ -84,6 +88,7 @@ export class TelemetrySpool {
         event: parsedEvent.data,
         acceptedAt,
         deleteAfter: new Date(input.acceptedAt.getTime() + LOCAL_RETENTION_MS).toISOString(),
+        firstSentAt: null,
         attempts: 0,
         nextAttemptAt: acceptedAt,
       });
@@ -119,6 +124,32 @@ export class TelemetrySpool {
         rm(this.rowPath(eventId), { force: true }),
         rm(this.deadlinePath(eventId), { force: true }),
       ]);
+    });
+  }
+
+  prepareSend(eventId: string, sentAt: Date): Promise<TelemetrySpoolRow> {
+    return this.serialize(async () => {
+      assertEventId(eventId);
+      if (!Number.isFinite(sentAt.getTime())) throw new Error('Invalid telemetry send time');
+      const row = await this.readRow(this.rowPath(eventId));
+      if (!row) throw new Error('Telemetry row is unavailable');
+      if (row.firstSentAt !== null) return row;
+      const firstSentAt = sentAt.toISOString();
+      const updated = StoredRowSchema.parse({
+        ...row,
+        firstSentAt,
+        event: { ...row.event, sentAt: firstSentAt },
+      });
+      await writeAtomically(this.rowPath(eventId), `${JSON.stringify(updated)}\n`);
+      return updated;
+    });
+  }
+
+  hasPendingAccountEpoch(accountEpochId: string, now: Date): Promise<boolean> {
+    return this.serialize(async () => {
+      if (!UUID_V7.test(accountEpochId)) throw new Error('Invalid telemetry identity epoch');
+      await this.maintainUnlocked(now);
+      return (await this.readRows(now)).some((row) => row.accountEpochId === accountEpochId);
     });
   }
 

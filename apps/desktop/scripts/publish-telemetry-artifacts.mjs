@@ -207,19 +207,21 @@ export async function publishTelemetryArtifacts(options = {}) {
   const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'avalon-telemetry-artifacts-'));
   try {
     const maps = (await filesBelow(join(sourceDesktopDirectory, 'out'))).filter((path) => path.endsWith('.map'));
-    const expectedProcesses = new Set(['main', 'preload', 'renderer']);
+    const allowedProcesses = new Set(['main', 'preload', 'renderer']);
+    const foundProcesses = new Set();
     const artifacts = maps.map((path) => {
       const process = relative(join(sourceDesktopDirectory, 'out'), path).split(sep)[0];
-      if (!expectedProcesses.has(process)) throw new Error(`Unexpected source-map process: ${process}`);
-      expectedProcesses.delete(process);
+      if (!allowedProcesses.has(process)) throw new Error(`Unexpected source-map process: ${process}`);
+      foundProcesses.add(process);
       return {
         source: path,
         key: javascriptArtifactKey({ release, buildId, process, file: basename(path) }),
         contentType: 'application/json',
       };
     });
-    if (expectedProcesses.size > 0) {
-      throw new Error(`Missing source maps for: ${[...expectedProcesses].join(', ')}`);
+    const missingProcesses = [...allowedProcesses].filter((process) => !foundProcesses.has(process));
+    if (missingProcesses.length > 0) {
+      throw new Error(`Missing source maps for: ${missingProcesses.join(', ')}`);
     }
     const nativeArchive = await buildNativeArchive(
       await findPackagedApplication(sourceDesktopDirectory),

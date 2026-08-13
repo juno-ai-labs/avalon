@@ -560,6 +560,8 @@ function linkCurrentAnonymousTelemetry(): Promise<void> {
     // locally accepted anonymous events first so a successful link cannot
     // strand them behind a deliberately revoked journey.
     await telemetryReporter?.flush();
+    const identity = telemetryIdentity;
+    if (!identity || await telemetrySpool.hasPendingAccountEpoch(identity.anonymousEpochId, new Date())) return;
     const auth = await loadStoredAuth();
     if (!auth || auth.binding.region !== anonymous.route) return;
     const response = await telemetryFetch(`${apiBaseForAuth(auth)}/telemetry/link-anonymous`, {
@@ -581,6 +583,15 @@ function linkCurrentAnonymousTelemetry(): Promise<void> {
     logWarn('avalon', 'could not link the anonymous analytics epoch', error);
   }).finally(() => { telemetryLinkInFlight = null; });
   return telemetryLinkInFlight;
+}
+
+function flushTelemetryAndRetryLink(): void {
+  const flush = telemetryReporter?.flush();
+  if (!flush) return;
+  void flush.then(() => {
+    if (telemetryAccountBinding) return linkCurrentAnonymousTelemetry();
+    return undefined;
+  });
 }
 
 function refreshCurrentTelemetryCapability(): Promise<ResolvedTelemetryRoute['anonymous']> {
@@ -750,15 +761,7 @@ const lockdownModeController = new LockdownModeController({
 const debugSettingsController = new DebugSettingsController({
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
   writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
-  onChange: () => {
-    if (!productAnalyticsSettingsController.state().effectiveEnabled) telemetryBreadcrumbs = null;
-    else if (!telemetryBreadcrumbs && telemetryLaunchId) {
-      telemetryBreadcrumbs = new TelemetryBreadcrumbRing({
-        launchId: telemetryLaunchId, sidecarPath: null, now: () => new Date(),
-      });
-    }
-    broadcastApplicationSettingsChanged(desktopApplicationSettings());
-  },
+  onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
 });
 
 async function requestProductAnalyticsPreference(): Promise<{
@@ -791,10 +794,11 @@ async function syncProductAnalyticsPreference(
     body: JSON.stringify({ enabled, expectedVersion: version }),
     signal: AbortSignal.timeout(15_000),
   });
-  let response = await apply(expectedVersion);
+  const response = await apply(expectedVersion);
   if (response.status === 409) {
-    const current = await requestProductAnalyticsPreference();
-    response = await apply(current.version);
+    // Another installation won the compare-and-set. Adopt that canonical
+    // preference instead of replaying this installation's stale choice over it.
+    return requestProductAnalyticsPreference();
   }
   if (!response.ok) throw await responseError(response);
   return ProductAnalyticsPreferenceSchema.parse(await readJsonBody(response));
@@ -821,7 +825,15 @@ const productAnalyticsSettingsController = new ProductAnalyticsSettingsControlle
       nativeCrashUploader?.purgeInactive() ?? Promise.resolve(),
     ]);
   },
-  onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+  onChange: (state) => {
+    if (!state.effectiveEnabled) telemetryBreadcrumbs = null;
+    else if (!telemetryBreadcrumbs && telemetryLaunchId) {
+      telemetryBreadcrumbs = new TelemetryBreadcrumbRing({
+        launchId: telemetryLaunchId, sidecarPath: null, now: () => new Date(),
+      });
+    }
+    broadcastApplicationSettingsChanged(desktopApplicationSettings());
+  },
 });
 
 const developerSettingsFlagController = new DeveloperSettingsFlagController({
@@ -1374,10 +1386,10 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
     await telemetryReporter.processHealth('main', 'unclean_exit', launchState.priorUncleanExit);
   }
   if (launchAuth) void linkCurrentAnonymousTelemetry();
-  void telemetryReporter.flush();
+  flushTelemetryAndRetryLink();
   void nativeCrashUploader.flush();
   telemetryFlushTimer = setInterval(() => {
-    void telemetryReporter?.flush();
+    flushTelemetryAndRetryLink();
     void nativeCrashUploader?.flush();
   }, 30_000);
   telemetryFlushTimer.unref();
@@ -2941,7 +2953,7 @@ if (!singleInstanceLock) {
         logWarn('avalon', 'could not mark the telemetry launch ready', error);
       });
     }
-    void telemetryReporter?.flush();
+    flushTelemetryAndRetryLink();
     void initializeApplicationIcon();
 
     const initialDeepLink = process.argv.find((argument) => argument.startsWith(`${customProtocol}://`));

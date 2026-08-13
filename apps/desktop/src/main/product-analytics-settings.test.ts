@@ -95,4 +95,26 @@ describe('Product analytics settings controller', () => {
     expect(base.controller.state()).toEqual({ desiredEnabled: false, effectiveEnabled: false, pending: true });
     expect(base.stored().productAnalyticsPreferencePending).toBe(true);
   });
+
+  it('adopts a newer canonical opt-out instead of overwriting it with a stale pending opt-in', async () => {
+    const base = harness({
+      productAnalyticsEnabled: true,
+      productAnalyticsPreferencePending: true,
+      productAnalyticsPreferenceVersion: 4,
+    });
+    base.sync.mockResolvedValue({ enabled: false, version: 5 });
+    await base.controller.initialize();
+
+    await expect(base.controller.retryPending()).resolves.toEqual({
+      desiredEnabled: false,
+      effectiveEnabled: false,
+      pending: false,
+    });
+    expect(base.sync).toHaveBeenCalledWith(true, 4);
+    expect(base.stored()).toMatchObject({
+      productAnalyticsEnabled: false,
+      productAnalyticsPreferencePending: false,
+      productAnalyticsPreferenceVersion: 5,
+    });
+  });
 });

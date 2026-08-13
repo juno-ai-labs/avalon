@@ -188,4 +188,30 @@ describe("anonymous telemetry bootstrap", () => {
     ).get()).toEqual({ analytics_subject_id: installationId, subject_user_id: null });
     database.close();
   });
+
+  it("replaces an expired journey row before its retention sweep runs", async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO telemetry_onboarding_journeys
+      (journey_id, anonymous_epoch_id, route, routing_basis, created_at, expires_at, delete_at)
+      VALUES (?, ?, 'eu', 'ip_geolocation', ?, ?, ?)`).run(
+      "018f22f2-4c22-7abc-8def-0123456789aa",
+      epochId,
+      "2026-05-13T19:00:00.000Z",
+      "2026-05-13T20:00:00.000Z",
+      "2026-08-12T19:59:59.000Z",
+    );
+    const service = new TelemetryBootstrapService(createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      SESSION_SIGNING_KEY: "test-telemetry-bootstrap-signing-key",
+    }));
+
+    const result = await service.bootstrap(epochId, "US");
+
+    expect(result).toMatchObject({ route: "global", routingBasis: "ip_geolocation" });
+    expect(result.journeyId).not.toBe("018f22f2-4c22-7abc-8def-0123456789aa");
+    expect(database.prepare(`SELECT COUNT(*) AS count FROM telemetry_onboarding_journeys
+      WHERE anonymous_epoch_id = ?`).get(epochId)).toEqual({ count: 1 });
+    database.close();
+  });
 });

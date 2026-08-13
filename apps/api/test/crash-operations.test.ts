@@ -72,6 +72,10 @@ describe('regional crash operations', () => {
       'launch-crashed', '2027-09-12T19:30:00.000Z',
     );
     insertCrash.run(
+      'crash-matched-again', 'c'.repeat(64), '2026-08-12T19:31:00.000Z',
+      'launch-crashed', '2027-09-12T19:31:00.000Z',
+    );
+    insertCrash.run(
       'crash-uncorrelated', 'b'.repeat(64), '2026-08-12T19:40:00.000Z',
       'launch-unknown', '2027-09-12T19:40:00.000Z',
     );

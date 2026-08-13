@@ -93,7 +93,12 @@ Main validates and writes complete envelopes to an owner-only file spool. Each r
 has a separate deadline file, so corrupt JSON still has an enforceable ceiling.
 Rows are serialized, atomically replaced, retried with bounded backoff, and removed
 only after regional acknowledgement. Product/diagnostic rows are evicted before
-essential rows. The renderer sees only named IPC methods; main validates the
+essential rows. `originalTimestamp` remains the capture time; immediately before
+the first transmission, main atomically fixes `sentAt`, and every retry preserves
+that value so server clock-skew normalization cannot turn offline delay into a
+later occurrence. An anonymous epoch is linked only after its local rows have all
+been acknowledged, and the periodic flush retries the link after transient
+delivery failures. The renderer sees only named IPC methods; main validates the
 sender against a live Avalon window and the pinned application origin.
 
 ### Regional acceptance and destinations
@@ -109,7 +114,9 @@ five-minute scheduled processor.
 Global delivery uses stable `$insert_id`, `$session_id`, `distinct_id`, PostHog
 workspace groups, `$process_person_profile`, `$geoip_disable`, normalized
 timestamps, and the official exception capture path. JavaScript source maps are
-loaded privately and only mapped application frames leave Avalon. PostHog 408,
+loaded privately and only mapped application frames leave Avalon. Malformed
+profile jobs are terminalized individually so one corrupt row cannot block later
+profiles, event delivery, or operational snapshots. PostHog 408,
 429, 5xx, and network failures on ordinary event/profile batches retry with
 `Retry-After` or exponential backoff; other 4xx responses become terminal. The
 PostHog exception SDK exposes only flush success/failure for JavaScript/native
@@ -320,6 +327,50 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-13 — Telemetry seams preserve policy and metric correctness
+
+**What changed:** Server outcomes now use event-specific idempotency keys while
+keeping the client operation ID only as correlation; valid onboarding failures
+emit bounded authoritative outcomes; desktop rows fix `sentAt` at their first
+transmission; EU semantic retention starts at normalized occurrence; anonymous
+identity linking waits for local epoch rows to drain; and a regional preference
+conflict projects and adopts the canonical winner instead of replaying a stale
+device choice. API-operation middleware now mounts once above sibling routers;
+expired onboarding journeys are replaced safely; invalid profile jobs terminate
+per row; crash-free denominators count distinct launches; Product analytics owns
+breadcrumb teardown; and release publication accepts every source-map chunk for
+each approved Electron process.
+
+**Why:** Reusing an operation ID across different outcome kinds caused the
+accepted-event primary key to discard one funnel step. Capture-time `sentAt`
+shifted delayed events forward during clock normalization, acceptance-time EU
+deadlines exceeded the occurrence-based ceiling, and closing a journey after a
+best-effort flush could strand backoff rows. Separately, compare-and-set retries
+must preserve a newer account preference, especially an opt-out. Review also
+proved duplicated operation events, retained-expired journey conflicts, delivery
+poison pills, inflated crash-free denominators, an inverted settings callback,
+and a source-map allowlist that became mutable discovery state.
+
+**Considered and rejected:** Removing idempotency, treating capture time as send
+time, extending retention by offline delay, linking while rows merely have a
+future retry scheduled, and automatically overwriting the canonical preference
+after a conflict. Each would trade correctness or user control for a simpler
+happy path. Silently dropping corrupt profile work, counting joined rows, or
+assuming one source map per process were also rejected because they make healthy
+operations and dashboards depend on accidental input shape.
+
+**Consequences:** New authoritative producers need a durable event-specific key
+and a separate operation correlation. Spool schema changes must preserve the
+first-send marker, EU lifecycle tests must anchor semantic deadlines to
+occurrence, and identity-link or preference retry changes must retain the new
+conflict/drain regressions. Middleware remains a single root concern, profile
+validation remains row-isolated, crash-free queries deduplicate launch IDs, only
+Product analytics changes may control breadcrumbs, and artifact discovery must
+keep its allowlist immutable.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-13 — Parser limits do not depend on a shared host UID
 
