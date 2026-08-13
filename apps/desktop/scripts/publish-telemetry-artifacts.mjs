@@ -20,6 +20,11 @@ import { isEntryPoint } from '../../../scripts/entry-point.mjs';
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
 const SAFE_PART = /^[0-9A-Za-z][0-9A-Za-z._-]{0,159}$/u;
+const REQUEST_TIMEOUT_MS = 5 * 60_000;
+// These must not exceed the matching limits enforced by the regional API
+// consumers in javascript-symbolication.ts and crash-processing.ts.
+const MAX_SOURCE_MAP_BYTES = 16 * 1024 * 1024;
+const MAX_NATIVE_SYMBOL_ARCHIVE_BYTES = 64 * 1024 * 1024;
 
 function required(name, environment = process.env) {
   const value = environment[name]?.trim();
@@ -60,12 +65,6 @@ async function filesBelow(directory) {
   return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name));
 }
 
-async function sha256(path) {
-  const hash = createHash('sha256');
-  await pipeline((await import('node:fs')).createReadStream(path), hash);
-  return hash.digest('hex');
-}
-
 function assertSafePart(value, label) {
   if (!SAFE_PART.test(value)) throw new Error(`Unsafe ${label}: ${value}`);
   return value;
@@ -102,29 +101,93 @@ async function uploadAndVerify(
   bucket,
   key,
   source,
-  contentType,
-  temporaryDirectory,
-  { environment, runCommand },
+  maximumBytes,
+  { environment, fetchImpl },
 ) {
-  const commandEnvironment = {
-    ...environment,
-    CLOUDFLARE_ACCOUNT_ID: required('CLOUDFLARE_ACCOUNT_ID', environment),
-    CLOUDFLARE_API_TOKEN: required('CLOUDFLARE_API_TOKEN', environment),
-  };
-  const target = `${bucket}/${key}`;
-  const put = await runCommand('pnpm', [
-    '--filter', '@avalon/api', 'exec', 'wrangler', 'r2', 'object', 'put', target,
-    '--remote', '--file', source, '--content-type', contentType, '--force',
-  ], { env: commandEnvironment });
-  if (put.code !== 0) throw new Error(`Could not upload r2://${target}: ${put.stderr.slice(0, 2_000)}`);
-  const verified = join(temporaryDirectory, `verify-${createHash('sha256').update(target).digest('hex')}`);
-  const get = await runCommand('pnpm', [
-    '--filter', '@avalon/api', 'exec', 'wrangler', 'r2', 'object', 'get', target,
-    '--remote', '--file', verified,
-  ], { env: commandEnvironment });
-  if (get.code !== 0) throw new Error(`Could not verify r2://${target}: ${get.stderr.slice(0, 2_000)}`);
-  const [sourceHash, verifiedHash] = await Promise.all([sha256(source), sha256(verified)]);
+  const accountId = required('CLOUDFLARE_ACCOUNT_ID', environment);
+  const token = required('CLOUDFLARE_API_TOKEN', environment);
+  const target = `${bucket.name}/${key}`;
+  const encodedKey = key.split('/').map(encodeURIComponent).join('/');
+  const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}`
+    + `/r2/buckets/${encodeURIComponent(bucket.name)}/objects/${encodedKey}`;
+  const authorization = `Bearer ${token}`;
+  const jurisdictionHeaders = bucket.jurisdiction === 'eu'
+    ? { 'cf-r2-jurisdiction': 'eu' }
+    : {};
+  const sourceBytes = await readFile(source);
+  if (sourceBytes.byteLength === 0 || sourceBytes.byteLength > maximumBytes) {
+    throw new Error(`Artifact for r2://${target} is outside its allowed size`);
+  }
+  const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+  const put = await fetchImpl(url, {
+    method: 'PUT',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    headers: {
+      Authorization: authorization,
+      'Content-Type': 'application/octet-stream',
+      ...jurisdictionHeaders,
+    },
+    body: sourceBytes,
+  });
+  const putBody = await put.json().catch(() => null);
+  if (!put.ok || putBody?.success !== true) {
+    const codes = Array.isArray(putBody?.errors)
+      ? putBody.errors.map((error) => error?.code).filter((code) => Number.isInteger(code)).slice(0, 5)
+      : [];
+    const detail = putBody === null
+      ? 'invalid JSON response'
+      : putBody?.success === false
+        ? 'success=false'
+        : 'missing success=true';
+    const codeDetail = codes.length > 0 ? `; error codes ${codes.join(',')}` : '';
+    throw new Error(
+      `Could not upload r2://${target}: Cloudflare returned HTTP ${put.status} (${detail}${codeDetail})`,
+    );
+  }
+  const get = await fetchImpl(url, {
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    headers: {
+      Authorization: authorization,
+      ...jurisdictionHeaders,
+    },
+  });
+  if (!get.ok) {
+    await get.body?.cancel();
+    throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${get.status}`);
+  }
+  const contentLength = get.headers.get('content-length');
+  if (contentLength !== null
+    && (!/^\d+$/u.test(contentLength) || Number(contentLength) > sourceBytes.byteLength)) {
+    await get.body?.cancel();
+    throw new Error(`Verification response for r2://${target} exceeds the uploaded artifact size`);
+  }
+  if (!get.body) throw new Error(`Could not verify r2://${target}: Cloudflare returned no body`);
+  const verified = createHash('sha256');
+  const reader = get.body.getReader();
+  let verifiedBytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      verifiedBytes += chunk.value.byteLength;
+      if (verifiedBytes > sourceBytes.byteLength) {
+        await reader.cancel();
+        throw new Error(`Verification response for r2://${target} exceeds the uploaded artifact size`);
+      }
+      verified.update(chunk.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const verifiedHash = verified.digest('hex');
   if (sourceHash !== verifiedHash) throw new Error(`Checksum mismatch for r2://${target}`);
+}
+
+async function validateArtifactSize(artifact) {
+  const metadata = await stat(artifact.source);
+  if (metadata.size === 0 || metadata.size > artifact.maximumBytes) {
+    throw new Error(`Artifact ${artifact.key} is outside its allowed size`);
+  }
 }
 
 async function findPackagedApplication(sourceDesktopDirectory) {
@@ -189,6 +252,7 @@ async function buildNativeArchive(application, temporaryDirectory, runCommand) {
 export async function publishTelemetryArtifacts(options = {}) {
   const sourceDesktopDirectory = options.desktopDirectory ?? desktopDirectory;
   const environment = options.environment ?? process.env;
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const runCommand = options.runCommand ?? run;
   const temporaryRoot = options.temporaryRoot ?? tmpdir();
   const packageJson = JSON.parse(await readFile(join(sourceDesktopDirectory, 'package.json'), 'utf8'));
@@ -198,11 +262,13 @@ export async function publishTelemetryArtifacts(options = {}) {
   // tree that the release job never published.
   const buildId = release;
   const buckets = [
-    required('AVALON_GLOBAL_TELEMETRY_R2_BUCKET', environment),
-    required('AVALON_EU_TELEMETRY_R2_BUCKET', environment),
+    { name: required('AVALON_GLOBAL_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'default' },
+    { name: required('AVALON_EU_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'eu' },
   ];
-  for (const bucket of buckets) assertSafePart(bucket, 'R2 bucket');
-  if (new Set(buckets).size !== 2) throw new Error('Global and EU telemetry artifacts require distinct buckets');
+  for (const bucket of buckets) assertSafePart(bucket.name, 'R2 bucket');
+  if (new Set(buckets.map(({ name }) => name)).size !== 2) {
+    throw new Error('Global and EU telemetry artifacts require distinct buckets');
+  }
 
   const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'avalon-telemetry-artifacts-'));
   try {
@@ -216,7 +282,7 @@ export async function publishTelemetryArtifacts(options = {}) {
       return {
         source: path,
         key: javascriptArtifactKey({ release, buildId, process, file: basename(path) }),
-        contentType: 'application/json',
+        maximumBytes: MAX_SOURCE_MAP_BYTES,
       };
     });
     const missingProcesses = [...allowedProcesses].filter((process) => !foundProcesses.has(process));
@@ -231,17 +297,17 @@ export async function publishTelemetryArtifacts(options = {}) {
     artifacts.push({
       source: nativeArchive,
       key: nativeArtifactKey({ release, buildId, platform: 'darwin', architecture: 'arm64' }),
-      contentType: 'application/x-tar',
+      maximumBytes: MAX_NATIVE_SYMBOL_ARCHIVE_BYTES,
     });
+    for (const artifact of artifacts) await validateArtifactSize(artifact);
     for (const bucket of buckets) {
       for (const artifact of artifacts) {
         await uploadAndVerify(
           bucket,
           artifact.key,
           artifact.source,
-          artifact.contentType,
-          temporaryDirectory,
-          { environment, runCommand },
+          artifact.maximumBytes,
+          { environment, fetchImpl },
         );
       }
     }
