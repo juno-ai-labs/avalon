@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -35,8 +35,7 @@ async function writeFileBelow(root, relativePath, value) {
   await writeFile(path, value);
 }
 
-function commandRunner({ corruptVerification = false } = {}) {
-  const objects = new Map();
+function commandRunner() {
   const calls = [];
   const runCommand = async (command, arguments_, options = {}) => {
     calls.push({ command, arguments: arguments_ });
@@ -49,37 +48,52 @@ function commandRunner({ corruptVerification = false } = {}) {
       await writeFile(arguments_[1], 'native-archive');
       return { code: 0, signal: null, stdout: '', stderr: '' };
     }
-    if (command === 'pnpm' && arguments_.includes('put')) {
-      const target = arguments_[arguments_.indexOf('put') + 1];
-      const source = arguments_[arguments_.indexOf('--file') + 1];
-      objects.set(target, await readFile(source));
-      return { code: 0, signal: null, stdout: '', stderr: '' };
-    }
-    if (command === 'pnpm' && arguments_.includes('get')) {
-      const target = arguments_[arguments_.indexOf('get') + 1];
-      const destination = arguments_[arguments_.indexOf('--file') + 1];
-      const object = objects.get(target);
-      assert.ok(object, `expected uploaded object ${target}`);
-      await writeFile(destination, corruptVerification ? Buffer.from('corrupt') : object);
-      return { code: 0, signal: null, stdout: '', stderr: '' };
-    }
     throw new Error(`Unexpected command: ${command} ${arguments_.join(' ')}`);
   };
-  return { calls, objects, runCommand };
+  return { calls, runCommand };
+}
+
+function objectApi({ corruptVerification = false } = {}) {
+  const objects = new Map();
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(input);
+    const match = /\/r2\/buckets\/([^/]+)\/objects\/(.+)/u.exec(url.pathname);
+    assert.ok(match, `unexpected object API URL ${url}`);
+    const [, bucket, key] = match;
+    const target = `${bucket}/${key}`;
+    const headers = new Headers(init.headers);
+    const call = {
+      method: init.method ?? 'GET',
+      target,
+      jurisdiction: headers.get('cf-r2-jurisdiction'),
+    };
+    calls.push(call);
+    if (call.method === 'PUT') {
+      objects.set(target, Buffer.from(init.body));
+      return Response.json({ success: true, result: { key } });
+    }
+    const object = objects.get(target);
+    assert.ok(object, `expected uploaded object ${target}`);
+    return new Response(corruptVerification ? Buffer.from('corrupt') : object);
+  };
+  return { calls, fetchImpl, objects };
 }
 
 test('publishes every private artifact to both isolated regional buckets and verifies its bytes', async () => {
   const { root, desktopDirectory } = await fixture();
   const runner = commandRunner();
+  const api = objectApi();
   try {
     await publishTelemetryArtifacts({
       desktopDirectory,
       environment: runtimeEnvironment,
+      fetchImpl: api.fetchImpl,
       runCommand: runner.runCommand,
       temporaryRoot: root,
     });
 
-    const targets = [...runner.objects.keys()].sort();
+    const targets = [...api.objects.keys()].sort();
     assert.equal(targets.length, 10);
     for (const bucket of ['avalon-global-telemetry', 'avalon-eu-telemetry']) {
       for (const process of ['main', 'preload', 'renderer']) {
@@ -94,8 +108,18 @@ test('publishes every private artifact to both isolated regional buckets and ver
         `${bucket}/telemetry/javascript-symbols/1.96.0/1.96.0/main/chunk.js.map`,
       ));
     }
-    const verificationGets = runner.calls.filter(({ arguments: args }) => args.includes('get'));
+    const verificationGets = api.calls.filter(({ method }) => method === 'GET');
     assert.equal(verificationGets.length, 10);
+    assert.equal(
+      api.calls.filter(({ target }) => target.startsWith('avalon-global-telemetry/'))
+        .every(({ jurisdiction }) => jurisdiction === null),
+      true,
+    );
+    assert.equal(
+      api.calls.filter(({ target }) => target.startsWith('avalon-eu-telemetry/'))
+        .every(({ jurisdiction }) => jurisdiction === 'eu'),
+      true,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -105,17 +129,19 @@ test('fails closed before upload when a packaged process source map is missing',
   const { root, desktopDirectory } = await fixture();
   await rm(join(desktopDirectory, 'out/preload/index.js.map'));
   const runner = commandRunner();
+  const api = objectApi();
   try {
     await assert.rejects(
       publishTelemetryArtifacts({
         desktopDirectory,
         environment: runtimeEnvironment,
+        fetchImpl: api.fetchImpl,
         runCommand: runner.runCommand,
         temporaryRoot: root,
       }),
       /Missing source maps for: preload/u,
     );
-    assert.equal(runner.calls.some(({ arguments: args }) => args.includes('put')), false);
+    assert.equal(api.calls.length, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -123,6 +149,7 @@ test('fails closed before upload when a packaged process source map is missing',
 
 test('rejects shared regional buckets and a post-upload checksum mismatch', async () => {
   const first = await fixture();
+  const firstApi = objectApi();
   try {
     await assert.rejects(
       publishTelemetryArtifacts({
@@ -131,6 +158,7 @@ test('rejects shared regional buckets and a post-upload checksum mismatch', asyn
           ...runtimeEnvironment,
           AVALON_EU_TELEMETRY_R2_BUCKET: runtimeEnvironment.AVALON_GLOBAL_TELEMETRY_R2_BUCKET,
         },
+        fetchImpl: firstApi.fetchImpl,
         runCommand: commandRunner().runCommand,
         temporaryRoot: first.root,
       }),
@@ -141,12 +169,14 @@ test('rejects shared regional buckets and a post-upload checksum mismatch', asyn
   }
 
   const second = await fixture();
+  const secondApi = objectApi({ corruptVerification: true });
   try {
     await assert.rejects(
       publishTelemetryArtifacts({
         desktopDirectory: second.desktopDirectory,
         environment: runtimeEnvironment,
-        runCommand: commandRunner({ corruptVerification: true }).runCommand,
+        fetchImpl: secondApi.fetchImpl,
+        runCommand: commandRunner().runCommand,
         temporaryRoot: second.root,
       }),
       /Checksum mismatch/u,

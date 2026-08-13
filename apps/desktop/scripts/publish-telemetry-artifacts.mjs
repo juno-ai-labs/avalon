@@ -60,12 +60,6 @@ async function filesBelow(directory) {
   return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name));
 }
 
-async function sha256(path) {
-  const hash = createHash('sha256');
-  await pipeline((await import('node:fs')).createReadStream(path), hash);
-  return hash.digest('hex');
-}
-
 function assertSafePart(value, label) {
   if (!SAFE_PART.test(value)) throw new Error(`Unsafe ${label}: ${value}`);
   return value;
@@ -103,27 +97,41 @@ async function uploadAndVerify(
   key,
   source,
   contentType,
-  temporaryDirectory,
-  { environment, runCommand },
+  { environment, fetchImpl },
 ) {
-  const commandEnvironment = {
-    ...environment,
-    CLOUDFLARE_ACCOUNT_ID: required('CLOUDFLARE_ACCOUNT_ID', environment),
-    CLOUDFLARE_API_TOKEN: required('CLOUDFLARE_API_TOKEN', environment),
-  };
-  const target = `${bucket}/${key}`;
-  const put = await runCommand('pnpm', [
-    '--filter', '@avalon/api', 'exec', 'wrangler', 'r2', 'object', 'put', target,
-    '--remote', '--file', source, '--content-type', contentType, '--force',
-  ], { env: commandEnvironment });
-  if (put.code !== 0) throw new Error(`Could not upload r2://${target}: ${put.stderr.slice(0, 2_000)}`);
-  const verified = join(temporaryDirectory, `verify-${createHash('sha256').update(target).digest('hex')}`);
-  const get = await runCommand('pnpm', [
-    '--filter', '@avalon/api', 'exec', 'wrangler', 'r2', 'object', 'get', target,
-    '--remote', '--file', verified,
-  ], { env: commandEnvironment });
-  if (get.code !== 0) throw new Error(`Could not verify r2://${target}: ${get.stderr.slice(0, 2_000)}`);
-  const [sourceHash, verifiedHash] = await Promise.all([sha256(source), sha256(verified)]);
+  const accountId = required('CLOUDFLARE_ACCOUNT_ID', environment);
+  const token = required('CLOUDFLARE_API_TOKEN', environment);
+  const target = `${bucket.name}/${key}`;
+  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets/${bucket.name}/objects/${key}`;
+  const authorization = `Bearer ${token}`;
+  const jurisdictionHeaders = bucket.jurisdiction === 'eu'
+    ? { 'cf-r2-jurisdiction': 'eu' }
+    : {};
+  const sourceBytes = await readFile(source);
+  const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+  const put = await fetchImpl(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: authorization,
+      'Content-Type': contentType,
+      ...jurisdictionHeaders,
+    },
+    body: sourceBytes,
+  });
+  const putBody = await put.json().catch(() => null);
+  if (!put.ok || putBody?.success !== true) {
+    throw new Error(`Could not upload r2://${target}: Cloudflare returned HTTP ${put.status}`);
+  }
+  const get = await fetchImpl(url, {
+    headers: {
+      Authorization: authorization,
+      ...jurisdictionHeaders,
+    },
+  });
+  if (!get.ok) throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${get.status}`);
+  const verifiedHash = createHash('sha256')
+    .update(Buffer.from(await get.arrayBuffer()))
+    .digest('hex');
   if (sourceHash !== verifiedHash) throw new Error(`Checksum mismatch for r2://${target}`);
 }
 
@@ -189,6 +197,7 @@ async function buildNativeArchive(application, temporaryDirectory, runCommand) {
 export async function publishTelemetryArtifacts(options = {}) {
   const sourceDesktopDirectory = options.desktopDirectory ?? desktopDirectory;
   const environment = options.environment ?? process.env;
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const runCommand = options.runCommand ?? run;
   const temporaryRoot = options.temporaryRoot ?? tmpdir();
   const packageJson = JSON.parse(await readFile(join(sourceDesktopDirectory, 'package.json'), 'utf8'));
@@ -198,11 +207,13 @@ export async function publishTelemetryArtifacts(options = {}) {
   // tree that the release job never published.
   const buildId = release;
   const buckets = [
-    required('AVALON_GLOBAL_TELEMETRY_R2_BUCKET', environment),
-    required('AVALON_EU_TELEMETRY_R2_BUCKET', environment),
+    { name: required('AVALON_GLOBAL_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'default' },
+    { name: required('AVALON_EU_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'eu' },
   ];
-  for (const bucket of buckets) assertSafePart(bucket, 'R2 bucket');
-  if (new Set(buckets).size !== 2) throw new Error('Global and EU telemetry artifacts require distinct buckets');
+  for (const bucket of buckets) assertSafePart(bucket.name, 'R2 bucket');
+  if (new Set(buckets.map(({ name }) => name)).size !== 2) {
+    throw new Error('Global and EU telemetry artifacts require distinct buckets');
+  }
 
   const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'avalon-telemetry-artifacts-'));
   try {
@@ -240,8 +251,7 @@ export async function publishTelemetryArtifacts(options = {}) {
           artifact.key,
           artifact.source,
           artifact.contentType,
-          temporaryDirectory,
-          { environment, runCommand },
+          { environment, fetchImpl },
         );
       }
     }
