@@ -47,6 +47,7 @@ import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import {
   ElicitationSchema,
   ModelPluginIdSchema,
+  ToolDefinitionSchema,
   type AddressingClassification,
   type AutomationDraft,
   type AutomationPluginActivity,
@@ -63,6 +64,7 @@ import {
 } from "@avalon/contracts";
 import { createDatabase, newId, nowIso } from "@avalon/db";
 import {
+  connectorCapabilitySupportsScope,
   ConnectorError,
   GoogleFileWriteAuthorizationGuidance,
   pollCheckpointedActivityStreams,
@@ -324,12 +326,14 @@ function legacyConnectorCanonicalToolName(connectorType: string, currentName: st
 
 function eligibleConnectionCapabilityMap(
   plugins: readonly HarnessPlugin[],
-  frozenConnections: ReadonlyMap<string, { connectionId: string }>,
+  frozenConnections: ReadonlyMap<string, { connectionId: string; toolCapabilities: readonly string[] }>,
 ): Record<string, string[]> {
   return Object.fromEntries(plugins.flatMap((plugin) => {
     const frozen = frozenConnections.get(plugin.canonicalId);
     return frozen
-      ? [[frozen.connectionId, plugin.tools.map((tool) => tool.definition.capability)]]
+      ? [[frozen.connectionId, plugin.tools.length
+          ? plugin.tools.map((tool) => tool.definition.capability)
+          : [...frozen.toolCapabilities]]]
       : [];
   }));
 }
@@ -338,10 +342,12 @@ async function persistInitialPluginActivations(
   requestedPluginIds: readonly string[],
   reauthorize: (pluginId: string) => PluginAuthorization | Promise<PluginAuthorization>,
   persist: (pluginId: string) => void | Promise<void>,
+  prepare?: (pluginId: string) => boolean | Promise<boolean>,
 ): Promise<string[]> {
   const activationHints: string[] = [];
   for (const pluginId of [...new Set(requestedPluginIds)].sort()) {
     if (await reauthorize(pluginId) !== "authorized") continue;
+    if (prepare && !(await prepare(pluginId))) continue;
     await persist(pluginId);
     activationHints.push(pluginId);
   }
@@ -1149,6 +1155,14 @@ async function loadAutomationCreatorPluginCatalog(
     const connectorType = String(row.connector_type);
     const scope = row.scope === "workspace" ? "workspace" as const : "personal" as const;
     const ownerUserId = row.owner_user_id == null ? null : String(row.owner_user_id);
+    const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
+    const staticDefinitions = dynamicCapability
+      ? []
+      : adapter.agentPlugin.tools.filter((definition) => (
+          granted.has(definition.capability)
+          && connectorCapabilitySupportsScope(adapter, definition.capability, scope)
+        ));
+    if (!dynamicCapability && !staticDefinitions.length) continue;
     const frozen: FrozenConnectorPlugin = {
       pluginId: `connection:${connectionId}`,
       modelPluginId,
@@ -1158,6 +1172,9 @@ async function loadAutomationCreatorPluginCatalog(
       scope,
       ownerUserId,
       grantedScopes: [...grantedScopes],
+      toolCapabilities: dynamicCapability
+        ? [dynamicCapability]
+        : [...new Set(staticDefinitions.map((definition) => definition.capability))],
       shortWireName: stableConnectionWireName(modelPluginId),
     };
     const wirePrefix = stableConnectionWireName(modelPluginId);
@@ -1167,6 +1184,39 @@ async function loadAutomationCreatorPluginCatalog(
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
+    let definitions = staticDefinitions;
+    if (dynamicCapability) {
+      try {
+        definitions = await withDeadline(30_000, async (signal) => {
+          const { connection } = await loadAutomationCreatorConnectionContext(
+            env,
+            { workspaceId, userId },
+            frozen,
+            dynamicCapability,
+            signal,
+          );
+          return withAuthorizedConnection(
+            env,
+            { connection, adapter, signal },
+            async (authorized) => validateDynamicConnectorTools(
+              adapter,
+              scope,
+              grantedScopes,
+              wirePrefix,
+              await adapter.dynamicAgentTools!.discover(authorized, signal),
+            ),
+          );
+        });
+      } catch (error) {
+        logStructuredEvent(env, "warn", "dynamic_connector_tools_unavailable", {
+          connector_type: connectorType,
+          connection_id: connectionId,
+          surface: "automation_creator",
+          error_name: error instanceof Error ? error.name : "unknown",
+        });
+        continue;
+      }
+    }
     catalog.push({
       pluginId: modelPluginId,
       displayName: presentation.displayName,
@@ -1176,9 +1226,7 @@ async function loadAutomationCreatorPluginCatalog(
       searchAliases: presentation.searchAliases,
       systemMessage: presentation.systemMessage,
       activityTriggers: adapter.manifest.activityTriggers,
-      tools: adapter.agentPlugin.tools
-        .filter((definition) => granted.has(definition.capability))
-        .map((definition) => ({
+      tools: definitions.map((definition) => ({
           name: stableWireToolName(wirePrefix, definition.name),
           canonicalName: definition.name,
           description: definition.description,
@@ -1190,7 +1238,7 @@ async function loadAutomationCreatorPluginCatalog(
             env,
             { workspaceId, userId },
             frozen,
-            definition.name,
+            definition.providerOperationName ?? definition.name,
             definition.capability,
             toolInput,
             context.signal,
@@ -1659,6 +1707,7 @@ export async function runWorkstreamHarness(
     ...priorHints,
     ...harnessTools.plugins.filter((plugin) => plugin.preload).map((plugin) => plugin.canonicalId),
   ];
+  const pluginById = new Map(harnessTools.plugins.map((plugin) => [plugin.canonicalId, plugin]));
   const activationHints = await persistInitialPluginActivations(
     requestedActivations,
     async (pluginId) => {
@@ -1676,6 +1725,18 @@ export async function runWorkstreamHarness(
         harnessTools,
       );
       if (harnessTools.frozenConnections.has(pluginId)) activeCredentialPluginIds.add(pluginId);
+    },
+    async (pluginId) => {
+      const plugin = pluginById.get(pluginId);
+      if (!plugin?.loadTools) return true;
+      return plugin.loadTools().then(() => true, (error: unknown) => {
+        logStructuredEvent(env, "warn", "dynamic_connector_tools_unavailable", {
+          plugin_id: pluginId,
+          surface: "initial_activation",
+          error_name: error instanceof Error ? error.name : "unknown",
+        });
+        return false;
+      });
     },
   );
 
@@ -2570,7 +2631,7 @@ async function createInlineChildHarnessSurface(options: {
             options.env,
             options.childInput,
             frozen,
-            tool.definition.name,
+            tool.definition.providerOperationName ?? tool.definition.name,
             tool.definition.capability,
             toolInput,
             toolContext.signal,
@@ -3777,6 +3838,15 @@ async function loadHarnessTools(
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
+    const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
+    const staticDefinitions = dynamicCapability
+      ? []
+      : adapter.agentPlugin.tools.filter((definition) => (
+          connectorCapabilitySupportsScope(adapter, definition.capability, scope)
+        ));
+    if (!dynamicCapability && !staticDefinitions.some((definition) => grantedScopes.includes(definition.capability))) {
+      continue;
+    }
     const frozen: FrozenConnectorPlugin = {
       pluginId,
       modelPluginId,
@@ -3786,30 +3856,35 @@ async function loadHarnessTools(
       scope,
       ownerUserId: row.owner_user_id == null ? null : String(row.owner_user_id),
       grantedScopes: [...grantedScopes],
+      toolCapabilities: dynamicCapability
+        ? [dynamicCapability]
+        : [...new Set(staticDefinitions
+          .filter((definition) => grantedScopes.includes(definition.capability))
+          .map((definition) => definition.capability))],
       shortWireName,
       ...(runAuthoritySnapshot ? { runAuthoritySnapshot } : {}),
     };
     const pluginTools: HarnessTool[] = [];
-    for (const definition of adapter.agentPlugin.tools) {
+    const addPluginTool = (definition: ToolDefinition): HarnessTool | null => {
       // A mailbox From header is not a strong authentication primitive. Email-
       // triggered automations may inspect bound connector data, but external
       // connector writes require a subsequent human-started run.
-      if (input.reason === "inbound_email" && definition.mode === "write") continue;
-      if (!grantedScopes.includes(definition.capability)) continue;
+      if (input.reason === "inbound_email" && definition.mode === "write") return null;
+      if (!grantedScopes.includes(definition.capability)) return null;
+      if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return null;
       const tool: HarnessTool = {
         definition,
         execute: (toolInput, context) => executeAuthorizedConnectorTool(
           env,
           input,
           frozen,
-          definition.name,
+          definition.providerOperationName ?? definition.name,
           definition.capability,
           toolInput,
           context.signal,
           context.providerIdempotencyKey,
         ),
       };
-      pluginTools.push(tool);
       const wireName = stableWireToolName(shortWireName, definition.name);
       connectionByTool.set(wireName, connectionId);
       idempotencyByTool.set(wireName, definition.idempotency);
@@ -3822,11 +3897,17 @@ async function loadHarnessTools(
         idempotencyByTool.set(definition.name, definition.idempotency);
         modeByTool.set(definition.name, definition.mode);
       }
+      return tool;
+    };
+    for (const definition of staticDefinitions) {
+      const tool = addPluginTool(definition);
+      if (tool) pluginTools.push(tool);
     }
-    const surfaceHash = await connectorToolSurfaceHash(pluginId, pluginTools);
     frozenConnections.set(pluginId, frozen);
-    pluginSurfaceHashes.set(pluginId, surfaceHash);
-    if (LEGACY_PREFIXED_CANONICAL_CONNECTOR_TYPES.has(frozen.connectorType)) {
+    if (!dynamicCapability) {
+      pluginSurfaceHashes.set(pluginId, await connectorToolSurfaceHash(pluginId, pluginTools));
+    }
+    if (!dynamicCapability && LEGACY_PREFIXED_CANONICAL_CONNECTOR_TYPES.has(frozen.connectorType)) {
       legacyPluginSurfaceHashes.set(
         pluginId,
         await connectorToolSurfaceHash(
@@ -3836,6 +3917,58 @@ async function loadHarnessTools(
         ),
       );
     }
+    let dynamicToolsPromise: Promise<HarnessTool[]> | null = null;
+    const loadTools = dynamicCapability
+      ? async (): Promise<HarnessTool[]> => {
+          if (dynamicToolsPromise) return dynamicToolsPromise;
+          dynamicToolsPromise = withDeadline(
+            numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
+            async (signal) => {
+              const { connection } = await loadAuthorizedConnectionContext(
+                env,
+                input,
+                frozen,
+                dynamicCapability,
+                signal,
+              );
+              const definitions = await withAuthorizedConnection(
+                env,
+                { connection, adapter, signal },
+                async (authorized) => validateDynamicConnectorTools(
+                  adapter,
+                  scope,
+                  grantedScopes,
+                  shortWireName,
+                  await adapter.dynamicAgentTools!.discover(authorized, signal),
+                ),
+              );
+              const discoveredTools = definitions
+                .map(addPluginTool)
+                .filter((tool): tool is HarnessTool => tool !== null);
+              if (!discoveredTools.length) {
+                throw new ConnectorError("unsupported_capability", `${adapter.manifest.displayName} MCP exposed no usable tools`);
+              }
+              // Bind replaces its registry entry when the deferred plugin
+              // activates, while inline children narrow authority from this
+              // host-owned plugin object. Keep the shared array current so a
+              // child created after activation inherits the same frozen read
+              // surface instead of seeing the original empty placeholder.
+              installDynamicPluginTools(pluginTools, discoveredTools);
+              pluginSurfaceHashes.set(
+                pluginId,
+                await connectorToolSurfaceHash(pluginId, pluginTools),
+              );
+              return pluginTools;
+            },
+          );
+          try {
+            return await dynamicToolsPromise;
+          } catch (error) {
+            dynamicToolsPromise = null;
+            throw error;
+          }
+        }
+      : undefined;
     plugins.push({
       canonicalId: pluginId,
       modelId: modelPluginId,
@@ -3845,6 +3978,7 @@ async function loadHarnessTools(
       description: presentation.description,
       systemMessage: presentation.systemMessage,
       tools: pluginTools,
+      ...(loadTools ? { loadTools } : {}),
       preload: defaultModelPluginIds.has(modelPluginId) || attached.has(connectionId),
       explicit: defaultModelPluginIds.has(modelPluginId) || attached.has(connectionId),
     });
@@ -4136,6 +4270,7 @@ interface FrozenConnectorPlugin {
   scope: "personal" | "workspace";
   ownerUserId: string | null;
   grantedScopes: string[];
+  toolCapabilities: string[];
   shortWireName: string;
   runAuthoritySnapshot?: RunAuthoritySnapshot;
 }
@@ -4156,6 +4291,62 @@ function stableWireToolName(prefix: string, toolName: string): string {
   return `${prefix}_${normalized}`.slice(0, 64);
 }
 
+function dynamicConnectorCapability(
+  adapter: ResolvedConnectorAdapter,
+  scope: "personal" | "workspace",
+  grantedScopes: readonly string[],
+): string | null {
+  const dynamic = adapter.dynamicAgentTools;
+  if (!dynamic?.connectionScopes.includes(scope)) return null;
+  return dynamic.capabilities.find((capability) => grantedScopes.includes(capability)) ?? null;
+}
+
+function validateDynamicConnectorTools(
+  adapter: ResolvedConnectorAdapter,
+  scope: "personal" | "workspace",
+  grantedScopes: readonly string[],
+  wirePrefix: string,
+  rawDefinitions: readonly ToolDefinition[],
+): ToolDefinition[] {
+  if (rawDefinitions.length > 128) {
+    throw new ConnectorError("payload_too_large", `${adapter.manifest.displayName} exposed too many dynamic tools`);
+  }
+  const names = new Set<string>();
+  const wireNames = new Set<string>();
+  return rawDefinitions.map((raw) => {
+    const definition = ToolDefinitionSchema.parse(raw);
+    if (
+      names.has(definition.name)
+      || !grantedScopes.includes(definition.capability)
+      || !adapter.dynamicAgentTools?.capabilities.includes(definition.capability)
+      || !connectorCapabilitySupportsScope(adapter, definition.capability, scope)
+    ) {
+      throw new ConnectorError(
+        "provider_error",
+        `${adapter.manifest.displayName} returned an unauthorized or duplicate dynamic tool`,
+      );
+    }
+    const wireName = stableWireToolName(wirePrefix, definition.name);
+    if (!wireName || wireNames.has(wireName)) {
+      throw new ConnectorError(
+        "provider_error",
+        `${adapter.manifest.displayName} dynamic tool names collide after model-facing normalization`,
+      );
+    }
+    names.add(definition.name);
+    wireNames.add(wireName);
+    return definition;
+  });
+}
+
+function installDynamicPluginTools(
+  hostTools: HarnessTool[],
+  discoveredTools: readonly HarnessTool[],
+): HarnessTool[] {
+  hostTools.splice(0, hostTools.length, ...discoveredTools);
+  return hostTools;
+}
+
 async function connectorToolSurfaceHash(
   pluginId: string,
   tools: readonly HarnessTool[],
@@ -4165,6 +4356,9 @@ async function connectorToolSurfaceHash(
     pluginId,
     tools: tools.map(({ definition }) => ({
       name: canonicalToolName(definition.name),
+      ...(definition.providerOperationName
+        ? { providerOperationName: definition.providerOperationName }
+        : {}),
       capability: definition.capability,
       mode: definition.mode,
       idempotency: definition.idempotency,
@@ -6099,6 +6293,7 @@ export const __integrationTesting = {
   hyperSightSubmissionPlugin,
   hyperSightBlockOutcome,
   installInlineChildAgentTool,
+  installDynamicPluginTools,
   createWorkstreamCorePlugins,
   loadHarnessTools,
   loadToolInvocation,

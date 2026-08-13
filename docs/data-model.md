@@ -267,7 +267,10 @@ includes it. Knowing an object ID is never sufficient authorization.
 ### Connectors and activities
 
 - `connector_connections` owns scope, encrypted provider credentials,
-  capabilities, cursors, and health.
+  capabilities, cursors, and health. Migration
+  `0072_notion_connection_scope_split.sql` uses the capability dialect to move
+  historical Notion public-integration bot rows from personal to workspace
+  scope while preserving new `notion.personal.mcp` ownership.
 - `notion_webhook_setup_nonces` exists in both regional schemas but is used only
   by Global. It stores a SHA-256 nonce hash, a 30-minute expiry, and — only after
   consumption — the hash of the Notion verification token that claimed it. Its
@@ -403,6 +406,27 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-12 — Notion scope migration follows credential dialect
+
+**What changed:** Migration `0072_notion_connection_scope_split.sql` changes
+historical personal Notion rows without `notion.personal.mcp` to workspace scope
+and clears their user owner.
+
+**Why:** Those rows contain public-integration bot credentials created before a
+separate personal hosted-MCP mode existed. Reusing `personal` for the new DCR
+credential shape made the old rows both unusable and incorrectly user-owned.
+
+**Considered and rejected:** Detecting credential fields at runtime. Credentials
+are encrypted, so every selection path would need decryption and two dialects
+would remain indefinitely. The granted capability is relational, deterministic,
+and already distinguishes the modes.
+
+**Consequences:** Existing bot grants become available to the workspace without
+rotating provider tokens. New hosted-MCP connections remain personal because
+they carry `notion.personal.mcp` before this one-time migration runs.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-12 — Notion setup nonces are token-bound and superseding
 
