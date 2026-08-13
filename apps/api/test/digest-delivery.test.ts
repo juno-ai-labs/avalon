@@ -5,6 +5,7 @@ import type { Env } from "../src/env";
 import { deliverDigest } from "../src/services/digest-delivery-service";
 import { settleDigestRun } from "../src/services/digest-run-settlement";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
 const OWNER = "00000000-0000-7000-8000-000000000002";
@@ -43,14 +44,14 @@ afterEach(() => {
  * what the non-production short circuit skips.
  */
 function envFor(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "production",
     RESEND_API_KEY: "test-key",
     RESEND_FROM_EMAIL: "Avalon <invites@example.com>",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-  } as unknown as Env;
+  });
 }
 
 function seededDatabase(status = "running"): DatabaseSync {

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { Env, HonoAppEnv } from "../src/env";
 import { healthRoutes } from "../src/routes/health";
 import { misconfiguredResponse } from "../src/lib/misconfigured-response";
+import { createInvalidTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * The answer a misconfigured deployment gives, and why it carries CORS headers
@@ -19,7 +20,7 @@ import { misconfiguredResponse } from "../src/lib/misconfigured-response";
 const ORIGIN = "app://avalon";
 
 function envWith(allowedOrigins: string | undefined): Env {
-  return { ALLOWED_ORIGINS: allowedOrigins } as unknown as Env;
+  return createInvalidTestEnv({ ALLOWED_ORIGINS: allowedOrigins });
 }
 
 function requestFrom(origin: string | null, method = "GET"): Request {
@@ -75,12 +76,12 @@ describe("the health probe under a misconfigured environment", () => {
     // being wrong, and the parse would answer a bare 500 naming nothing.
     const app = new Hono<HonoAppEnv>();
     app.route("/health", healthRoutes);
-    const env = {
+    const env = createInvalidTestEnv({
       DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
       PAYLOADS: { list: async () => ({ objects: [] }) },
       AVALON_REGION: "eu-west-1",
       APP_ENV: "prod",
-    } as unknown as Env;
+    });
 
     const response = await app.request("/health", undefined, env);
 
@@ -105,7 +106,7 @@ describe("the health probe under a misconfigured environment", () => {
     const app = new Hono<HonoAppEnv>();
     app.route("/health", healthRoutes);
     const room = { fetch: async () => new Response(null, { status: 200 }) };
-    const response = await app.request("/health", undefined, {
+    const response = await app.request("/health", undefined, createInvalidTestEnv({
       DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
       PAYLOADS: { list: async () => ({ objects: [] }) },
       WORKSTREAM_ROOMS: { idFromName: () => "id", get: () => room },
@@ -118,7 +119,7 @@ describe("the health probe under a misconfigured environment", () => {
       // Development, so the production-only checks stay out of `required` and
       // the contract is the single remaining fault.
       APP_ENV: "development",
-    } as unknown as Env);
+    }));
 
     const body = await response.json() as {
       ok: boolean;
@@ -147,10 +148,10 @@ describe("the health probe under a misconfigured environment", () => {
     // failing on two of the very violations this route exists to report.
     const app = new Hono<HonoAppEnv>();
     app.route("/health", healthRoutes);
-    const response = await app.request("/health", undefined, {
+    const response = await app.request("/health", undefined, createInvalidTestEnv({
       DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
       PAYLOADS: { list: async () => ({ objects: [] }) },
-    } as unknown as Env);
+    }));
 
     expect(response.status).toBe(503);
     const body = await response.json() as {
@@ -172,12 +173,12 @@ describe("the health probe under a misconfigured environment", () => {
     // cannot serve a request as healthy. That is what let a real EU outage sit.
     const app = new Hono<HonoAppEnv>();
     app.route("/health", healthRoutes);
-    const response = await app.request("/health", undefined, {
+    const response = await app.request("/health", undefined, createInvalidTestEnv({
       DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
       PAYLOADS: { list: async () => ({ objects: [] }) },
       AVALON_REGION: "global",
       APP_ENV: "production",
-    } as unknown as Env);
+    }));
 
     expect(response.status).toBe(503);
     const body = await response.json() as {
@@ -202,7 +203,7 @@ describe("the health probe under a misconfigured environment", () => {
     const app = new Hono<HonoAppEnv>();
     app.route("/health", healthRoutes);
     const report = async (region: string, configured = false) => {
-      const response = await app.request("/health", undefined, {
+      const response = await app.request("/health", undefined, createInvalidTestEnv({
         DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
         PAYLOADS: { list: async () => ({ objects: [] }) },
         AVALON_REGION: region,
@@ -210,7 +211,7 @@ describe("the health probe under a misconfigured environment", () => {
         ...(configured
           ? { GOOGLE_OAUTH_CLIENT_ID: "login-client", GOOGLE_OAUTH_CLIENT_SECRET: "login-secret" }
           : {}),
-      } as unknown as Env);
+      }));
       const body = await response.json() as { checks: { googleLoginOAuth: { ok: boolean; message: string } } };
       return body.checks.googleLoginOAuth;
     };

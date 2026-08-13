@@ -15,6 +15,7 @@ import {
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   pollCheckpointedActivityStreams,
+  zodToolInputValidationError,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
   type ConnectorPollingActivitySource,
@@ -29,6 +30,17 @@ export {
   refreshExpiringCredentials,
   withProviderReauthorization,
 } from "./provider-utils";
+export {
+  createHostedMcpPassthrough,
+  type AuthorizedHostedMcpPassthrough,
+  type HostedMcpAuthorization,
+  type HostedMcpOAuthConfig,
+  type HostedMcpOAuthState,
+  type HostedMcpPassthrough,
+  type HostedMcpPassthroughConfig,
+  type HostedMcpTokenResponse,
+  type HostedMcpTool,
+} from "./hosted-mcp";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
@@ -57,6 +69,7 @@ export {
   pollCheckpointedActivityStreams,
   type ConnectorActivityStreamError,
   type ConnectorAgentPluginDescriptor,
+  type ConnectorDynamicAgentTools,
   type ConnectorAdapter,
   type ConnectorAuthorizationCallbackInput,
   type ConnectorAuthorizationInput,
@@ -76,7 +89,6 @@ export {
   type ConnectorWebhookVerificationInput,
 } from "./types";
 export {
-  callSlackMcp,
   createSlackConnector,
   joinAllSlackPublicChannels,
   joinSlackPublicChannel,
@@ -105,13 +117,11 @@ export {
   type SlackApiResponse,
   type SlackConnectorConfig,
   type SlackIngressEnvelope,
-  type SlackMcpTool,
   type SlackPublicChannelJoinResult,
   type SlackPublicChannelSyncResult,
   type SlackWebApiMethod,
 } from "./slack";
 export {
-  callGranolaMcp,
   createGranolaConnector,
   createGranolaWebhookEndpoint,
   deleteGranolaWebhookEndpoint,
@@ -120,7 +130,6 @@ export {
   GranolaCapabilities,
   granolaTools,
   type GranolaConnectorConfig,
-  type GranolaMcpTool,
   type GranolaWebhookEndpoint,
   type VerifiedGranolaWebhook,
 } from "./granola";
@@ -1985,6 +1994,19 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
 
       throw new ConnectorError("unsupported_capability", `Unsupported Google resource type: ${resourceType}`);
+    },
+
+    validateToolInput(name, rawArgs) {
+      const schema = name === "gmail.create_draft" || name === "gmail.send"
+        ? EmailArgsSchema
+        : name === "calendar.create_event"
+          ? CalendarEventCreateArgsSchema
+          : name === "calendar.update_event"
+            ? CalendarEventUpdateArgsSchema
+            : name === "sheets.update_values" || name === "sheets.append_values"
+              ? SheetValuesWriteArgsSchema
+              : undefined;
+      return zodToolInputValidationError(schema, rawArgs);
     },
 
     async executeTool(name, rawArgs, context) {
@@ -4406,6 +4428,31 @@ export class ConnectorRegistry {
               `Connector ${manifest.type} has invalid connection scopes for capability ${capability}`,
             );
           }
+        }
+      }
+      if (adapter.dynamicAgentTools) {
+        const declaredToolCapabilities = new Set(
+          manifest.capabilities
+            .filter((capability) => capability.kind === "tool")
+            .map((capability) => capability.id),
+        );
+        if (
+          !adapter.dynamicAgentTools.capabilities.length
+          || adapter.dynamicAgentTools.capabilities.some((capability) => !declaredToolCapabilities.has(capability))
+        ) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} dynamic tools must use declared tool capabilities`,
+          );
+        }
+        if (
+          !adapter.dynamicAgentTools.connectionScopes.length
+          || adapter.dynamicAgentTools.connectionScopes.some((scope) => !manifest.supportedScopes.includes(scope))
+        ) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} dynamic tools declare unsupported connection scopes`,
+          );
         }
       }
       this.adapters.set(manifest.type, { ...adapter, manifest });

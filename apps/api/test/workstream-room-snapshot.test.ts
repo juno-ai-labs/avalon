@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Env } from "../src/env";
 import { loadWorkstreamRoomSnapshot } from "../src/durable-objects/workstream-room";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-0000000000b0";
 const readerId = "00000000-0000-7000-8000-0000000000b2";
@@ -24,7 +24,7 @@ describe("work-stream room snapshot", () => {
   // including the rename the naming agent publishes seconds after creation.
   it("satisfies the work-stream contract, read state included", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     const snapshot = await loadWorkstreamRoomSnapshot(env, {
       workspaceId,
@@ -45,6 +45,42 @@ describe("work-stream room snapshot", () => {
     });
   });
 
+  it("omits pending Suggested context from the room snapshot while the surface is paused", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, created_at, updated_at)
+      VALUES
+        ('00000000-0000-7000-8000-0000000000d1', '${workspaceId}', 'github', 'workspace', NULL,
+         'GitHub', '[]', 'plugin_github', 'healthy', '${at}', '${at}');
+      INSERT INTO activities
+        (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
+         event_type, occurred_at, received_at, title, summary, dedupe_key)
+      VALUES
+        ('00000000-0000-7000-8000-0000000000d2', '${workspaceId}',
+         '00000000-0000-7000-8000-0000000000d1', 'workspace', 'github', 'push-1',
+         'github.push', '${at}', '${at}', 'A push landed', 'Review the launch change', 'github:push-1');
+      INSERT INTO activity_suggestions
+        (id, workspace_id, activity_id, workstream_id, confidence, reason, status, created_at)
+      VALUES
+        ('00000000-0000-7000-8000-0000000000d3', '${workspaceId}',
+         '00000000-0000-7000-8000-0000000000d2', '${workstreamId}', 0.9,
+         'The work stream tracks this repository.', 'pending', '${at}');
+    `);
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
+
+    const snapshot = await loadWorkstreamRoomSnapshot(env, {
+      workspaceId,
+      workstreamId,
+      viewerUserId: readerId,
+      viewers: [],
+    });
+
+    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_suggestions").get()).toEqual({ count: 1 });
+    expect(snapshot.suggestions).toEqual([]);
+  });
+
   // A snapshot replaces the client's whole detail rather than merging into it,
   // so a field the snapshot omits is a field the client loses until its next
   // REST read. Naming only the run's id cost a work stream its work timer for
@@ -63,7 +99,7 @@ describe("work-stream room snapshot", () => {
       at,
       at,
     );
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     const snapshot = await loadWorkstreamRoomSnapshot(env, {
       workspaceId,
@@ -105,7 +141,7 @@ describe("work-stream room snapshot", () => {
       JSON.stringify({ type: "user", userId: readerId }), "scheduled",
       null, null, "2026-08-11T10:00:00.000Z",
     );
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     const snapshot = await loadWorkstreamRoomSnapshot(env, {
       workspaceId,
@@ -122,7 +158,7 @@ describe("work-stream room snapshot", () => {
     const database = seededDatabase();
     database.prepare("UPDATE workstreams SET title_status = 'naming', created_at = ? WHERE id = ?")
       .run("2020-01-01T00:00:00.000Z", workstreamId);
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     // The row was created hours ago and its naming pass never settled it, so
     // the placeholder title is the title — a skeleton in front of it would
@@ -148,7 +184,7 @@ describe("work-stream room snapshot", () => {
 
   it("reads the read state of the subscriber it is built for", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
     const other = await loadWorkstreamRoomSnapshot(env, {
       workspaceId,

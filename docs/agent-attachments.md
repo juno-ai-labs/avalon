@@ -1,0 +1,803 @@
+# Agent attachments
+
+The agent-attachment subsystem turns a file related to a work stream or an
+automation draft into model-visible data without making a filename, resource ID,
+cursor, or extracted byte an authorization grant. It owns the vocabulary and
+limits used at the model boundary; the original resource relationships remain
+the source of truth for display, scope, retention, and deletion.
+
+Shared contracts, lifecycle, derivatives, authorized work-stream and automation
+tools, and durable message manifests now form the runtime attachment boundary.
+Non-image bytes never enter transcript projection. A triggering image may be
+visible immediately, but its durable manifest and derivative are still the
+source of truth for retry, replay, and compaction recovery.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/contracts/src/attachment-contracts.ts` | Single registry for attachment kinds, MIME/extension classification, strict tool argument schemas, exact success-output schemas, and the complete list-tool description. |
+| `packages/contracts/src/index.ts` | Sanitizes bounded structured recovery data before Bind puts it in a model-visible failed tool result. |
+| `apps/api/src/lib/attachment-cursor.ts` | Signs, verifies, scopes, expires, and bounds opaque attachment continuations. |
+| `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
+| `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives, then atomically selects their regional objects. |
+| `apps/api/src/services/attachment-summary-service.ts` | Runs one isolated bounded reader over server-identified source ranges and reports honest complete or sampled coverage. |
+| `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
+| `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries. |
+| `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
+| `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
+| `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
+| `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives. |
+| `apps/api/src/services/attachment-tool-receipts.ts` | Atomically binds completed attachment results to current derivative hashes and revalidates replay dependencies. |
+| `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
+| `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
+| `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
+| `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
+| `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
+
+## How it works
+
+### Kind and schema selection
+
+Avalon classifies an attachment into exactly one of `image`, `markdown`, `pdf`,
+`document`, `spreadsheet`, `presentation`, `text`, or `other`. A verified MIME
+type wins. A sanitized final filename extension participates only when MIME is
+missing or a generic binary type. The model selects a natural-language kind in
+a list request; it never supplies or guesses a MIME filter.
+
+The same registry renders the complete model-facing explanation and the Zod
+enum. Strict schemas cover list, read, search, view, and summarize arguments and
+their exact success results. Work streams expose all five operations; the
+automation architect receives the four content operations because its complete
+set of at most ten resources is already present in the current-turn manifest.
+JSON Schema guides the provider, while the executor must parse the same strict
+Zod schema because the harness does not enforce provider-facing JSON Schema.
+
+### Continuations and recovery
+
+An attachment cursor contains a version, purpose, expiry, principal identity,
+owning scope, and operation-specific state. Avalon signs it using a key derived
+for the attachment-cursor purpose from the regional Worker's configured session
+signing secret. A cursor presented to another operation, principal, or scope is
+the same bounded `invalid_cursor` failure as a malformed or tampered value;
+expiry is separately recoverable as `cursor_expired`.
+
+The common failed-tool sanitizer passes only fixed, bounded recovery fields. It
+understands attachment kind and one strict suggested read or view call, while
+discarding arbitrary provider, converter, credential, and file-authored objects.
+The presence of a suggestion never executes it automatically.
+
+### Durable projection boundary
+
+Every human message attachment now carries one Avalon-generated JSON manifest
+entry with its stable resource ID, filename, verified MIME, byte count, natural
+kind, content mode, derivative state, bounded error code, and inline state.
+Historical turns keep the manifest but never replay attachment bytes. A current
+image is delivered in the same projection as its manifest and is marked
+`inlined: true` only after normalization succeeds; a missing or failed visual
+keeps the same identity with `inlined: false` and an explicit error code.
+
+Triggering messages call `buildAttachmentModelParts`, but that name now means a
+manifest plus successfully normalized image parts only. Text, Office, PDF, and
+other source objects are not fetched during projection; all extraction happens
+after current authorization through read, search, or summarize. The platform
+prompt requires the active agent—work-stream agent or automation architect—to
+inspect a referenced attachment before answering and to use `charactersBefore`
+and `charactersAfter` rather than treating one page as the whole resource.
+
+### Authorized work-stream discovery and text hydration
+
+The right sidebar and attachment tools compose one visibility SQL boundary. It
+binds the work stream to its workspace and applies current note scope, ownership,
+and archive state for the execution principal. The sidebar loads its displayed
+set, while model tools use bounded point, batch, aggregate, and keyset-page
+queries. A workspace principal never inherits a user's private-note view.
+Knowledge of a resource ID or cursor does not bypass this query.
+
+`workstream_list_resources` returns 25 rows by default and at most 50, optionally
+filtered by one of the eight natural-language kinds. Continuations bind the
+principal, work stream, filters, size, ordering key, and a monotonic work-stream
+inventory revision. D1 advances that revision for relationship, message-
+attachment, classification/content identity, and note-visibility mutations, but
+not hydration timestamps or derivative processing bookkeeping. A continuation
+compares it before and after its bounded queries, so a relevant change
+invalidates the scan rather than mixing old and new pages.
+
+`workstream_read_resource` targets 12,000 and never exceeds 24,000 UTF-16
+characters. Every result reports exact range, total, and character counts on
+both sides, with independently usable previous and next cursors.
+`workstream_search_resource` scans deterministic in-memory ranges from the
+already bounded derivative, centers passages on actual phrase or term matches,
+returns no more than five passages or 20,000 passage characters, and gives every
+passage a read cursor against the same derivative version.
+
+`workstream_view_resource` accepts up to eight unique image IDs, keeps valid
+members in request order, and returns a JSON inclusion summary followed by
+ephemeral image parts. The JSON is the only durable receipt. A replay
+reauthorizes every dependency, verifies the exact derivative hashes, and
+rebuilds those parts from the selected regional derivative. Missing visual bytes
+invalidate the receipt and re-execute the safe read; they never degrade to stale
+JSON without pixels. `workstream_summarize_resource` makes one isolated inference
+over at most 80,000 characters sampled across the derivative. The model selects
+Avalon-generated source IDs, which the server maps to exact ranges rather than
+trusting model-authored offsets. All model-authored strings are capped, and a
+derivative beyond the reader budget explicitly returns `partial` coverage.
+
+### Compaction rediscovery
+
+After the LLM produces its continuation summary, Avalon appends current visible
+resource and message-attachment totals plus non-empty groups for the same eight
+natural-language kinds used by the list tool. The aggregate comes from a grouped
+query using the shared sidebar visibility predicate, not the summary. It contains no name, ID, MIME
+type, or content, so its size is constant in the number of resources. Exact
+entries remain discoverable by paging `workstream_list_resources` until
+`nextCursor` is null.
+
+The stored checkpoint contains the raw LLM summary plus the execution-principal
+key and authorized resource-inventory revision captured by an O(1) read before
+summarization. Avalon runs the grouped inventory query once when rendering the
+appendix, verifies the revision there, and includes it in the conditional D1
+statement that persists the checkpoint. Replay uses
+the summary only for an exact scope match; attachment, detachment, deletion,
+revocation, private-note visibility, or principal changes invalidate it and fall
+back to durable transcript replay. Relevant resource IDs and consulted
+derivative ranges still belong in the summary when unfinished work needs them;
+the aggregate supplements that working set rather than replacing it.
+
+### Automation-draft hydration
+
+When a compiler request includes attachments, Avalon freezes the unique resource
+IDs after verifying that every row is a draft upload owned by the requesting
+user in the current workspace. The preloaded automation architect receives the
+complete manifest plus read, search, view, and summarize definitions under
+`automation_*` wire names. It has no paginated list tool because the frozen set
+is already visible and cannot exceed ten resources.
+
+The frozen set is only an upper bound, never cached authority. Every operation
+queries those IDs again and requires the same workspace, owner, upload provider,
+and `attachment_status = 'draft'`. One bounded query reloads the entire frozen
+set. Deletion, ownership change, or promotion to
+an attached resource therefore returns the same `resource_not_found` result as a
+guessed ID. Automation cursors use a separate purpose namespace, so a work-stream
+continuation cannot be replayed into the compiler. Conversion, paging, image
+normalization, isolated summaries, and result bounds remain shared.
+
+### Regional lifecycle
+
+Uploads hash the exact bounded bytes before the resource row commits. Connector
+hydration hashes a serialized result, writes a hash-versioned R2 object, then
+atomically advances the resource and invalidates older model state. A legacy row
+with a valid model-native image remains ready; another historical row with
+original bytes becomes pending on first authorized use, while a missing original
+is failed rather than an empty success.
+
+Writers pre-register each generation-unique object in
+`resource_object_deletion_outbox` before its R2 write. A successful pointer
+compare-and-swap cancels the new object's pending deletion and enqueues the former
+pointer. Deleting a resource—not merely detaching one relationship—enqueues its
+current original and derivative. Scheduled cleanup reaps at most 100 references
+per pass; a failed R2 deletion increments bounded retry metadata and remains
+queued.
+
+### Reusable derivatives
+
+The derivative service accepts a resource that its caller has already
+authorized. It reads the exact original R2 object, claims conversion through a
+fenced, time-bounded conditional D1 update, writes one generation-unique content
+object, then advances the current resource pointer only when that object is
+complete and the same claim still owns publication. A concurrent caller sees
+`processing`; an abandoned claim becomes reclaimable after five minutes. An
+unchanged source hash and extractor version reuses the selected objects without
+reading or converting the original again.
+
+UTF-8 text retains its full ordering and is rejected rather than replacement-
+decoded when invalid. DOCX becomes semantic Markdown with headings, lists,
+tables, hyperlinks, headers, footers, footnotes, and endnotes. PPTX preserves
+slide order, tables, and speaker-note text. XLSX identifies sheets, cell
+references, display values, and formulas. PDFs are page-delimited; a bounded OCR
+adapter is required when the text layer is materially empty, and incomplete OCR
+is a failure rather than empty success.
+
+The message-feed preview endpoint reuses this same current derivative after the
+ordinary resource visibility query authorizes the signed-in person. Images,
+Markdown, and readable text such as plain text or CSV come from their exact
+original object; PDF and Office formats materialize or reuse the semantic derivative. The endpoint never treats
+a resource ID as authority and never creates a second display-only conversion.
+Presentation remains a desktop concern: Markdown derivatives go through the
+shared renderer, while plain source text stays literal monospace text.
+
+Search derives UTF-16-safe ranges and section labels directly from the bounded
+versioned derivative, so it needs no second R2 object or lifecycle. Tool reads
+and searches check offsets against the same hash and extractor version. At the
+two-million-character derivative ceiling, read, search, and
+summarize may hold one complete derivative while returning bounded model
+content; that proved Worker-memory ceiling replaces the former twenty-million-
+character envelope.
+
+## Invariants
+
+- A verified MIME type outranks a filename extension, so renamed hostile bytes
+  cannot choose their converter or model tool.
+- All eight kinds and their descriptions come from one registry, so a smaller
+  routed model never receives an enum whose meaning exists only in unrelated
+  prose.
+- Provider-facing schemas and executor parsing remain strict, so an invented
+  MIME filter, old field, or mixed cursor/first-call shape fails instead of being
+  silently ignored.
+- A cursor is authenticated and bound to purpose, principal, and scope, but every
+  dereference still reauthorizes current state; stealing or guessing a cursor
+  cannot preserve revoked access.
+- Structured failure data is allowlisted and bounded before it enters the model
+  transcript, so a converter or provider cannot smuggle a response body,
+  credential, or attachment instruction through an error.
+- Runtime eager projection is removed only after replacement tools exist on both
+  work-stream and automation-draft surfaces, so an intermediate deployment
+  cannot strand a file behind a manifest the model cannot hydrate.
+- Relationship detachment revokes discovery and access but does not delete shared
+  objects; resource deletion, expiry, or orphan ownership ends the object
+  lifecycle.
+- Original content identity describes the exact selected R2 bytes, so a cursor or
+  derivative version cannot silently cross into newly hydrated content.
+- A model derivative becomes current only after its content object is complete;
+  losing a fenced claim cannot publish that object or
+  overwrite the newer claim's terminal state.
+- Every completed attachment receipt rechecks current resource visibility and
+  derivative hashes before replay. List results and receipts without a complete
+  dependency set re-execute instead of becoming stale authorization snapshots.
+- Search and read offsets use JavaScript UTF-16 units and do not split surrogate
+  pairs.
+- The sidebar and agent inventory share one visibility predicate. Full sidebar,
+  point, keyset-page, and grouped queries may differ only in result shape and
+  bounds, never authorization semantics.
+- `nextCursor: null` is the only evidence that a filtered listing is exhausted,
+  while zero characters on both sides is the only whole-resource read.
+
+## Boundary
+
+This module owns model-facing attachment identity, classification, derivative
+selection, hydration contracts, continuation, recovery, and compaction
+rediscovery. It depends on `resources`, `workstream_resources`,
+`message_attachments`, note visibility, regional D1/R2 bindings, and the harness
+tool loop.
+
+It does not own composer upload UX or the desktop lightbox presentation; those
+remain with the composer and renderer modules. It does not turn an ID into
+authority, search arbitrary workspace content, edit documents, or transcribe
+audio/video.
+Connector-origin relationships are owned by
+[`workstream-origin-attachments.md`](workstream-origin-attachments.md), and the
+generic tool execution/receipt loop is owned by
+[`agent-harness.md`](agent-harness.md).
+
+## Failure modes and limits
+
+- Opaque cursors are at most 2,048 characters. Invalid scope, purpose, signature,
+  encoding, or shape returns `invalid_cursor`; an elapsed expiry returns
+  `cursor_expired`.
+- List calls accept 1–50 items, defaulting to 25. View calls accept 1–8
+  unique resource IDs and a long edge from 64–2,048 pixels.
+- Search accepts a 1–1,000-character query, at most five matches, and passages
+  from 500–4,000 characters. A complete result is capped at 20,000 passage
+  characters.
+- Summarize accepts a 1–2,000-character prompt addition and a 2,000–20,000
+  output-character budget.
+- Structured recovery details are at most 8,000 serialized characters; reason
+  text is at most 1,000, MIME/enum-like values at most 160, and `available` at
+  most twenty bounded strings.
+- Transcript projection fetches no non-image source or derivative bytes. One
+  manifest entry is emitted even when the source is missing or conversion fails.
+- Object cleanup reads at most 100 outbox rows per pass. Failures keep their row
+  and store only a bounded machine error code.
+- Derivative conversion admits at most 8 MiB of source bytes, 12 MiB of selected
+  expanded Office XML, 3 MiB per selected XML part, 200 PDF pages, two million
+  UTF-16 output characters. Async PDF/OCR work has a
+  30-second deadline. Local Office parsing is not timer-preemptible; its safety
+  boundary is the smaller source, selected-entry, and expansion ceilings checked
+  before rendering.
+- Invalid UTF-8, XML entity declarations, corrupt/oversized Office archives,
+  encrypted OOXML containers, encrypted/oversized PDFs, missing OCR, incomplete
+  OCR, timeouts, unsupported formats, and missing source objects have distinct
+  bounded failure codes.
+- Image projection admits at most eight images, 20 MiB per source, 40 million
+  source pixels, 8 MiB per derivative, 12 MiB across all delivered derivatives,
+  and a 2,048-pixel native long edge. Cloudflare Images scale-down is bounded to
+  that edge. HEIF is accepted only through that isolated service; TIFF
+  dimensions are checked before pixels are decoded in the Worker.
+
+## Testing
+
+- `packages/contracts/src/attachment-contracts.test.ts` locks kind order,
+  description coverage, MIME precedence, strict arguments, and exact outputs.
+- `packages/contracts/src/index.test.ts` locks structured-failure allowlisting
+  and rejects malformed remediation.
+- `apps/api/test/attachment-cursor.test.ts` covers round trips, tampering,
+  cross-purpose/principal/scope replay, expiry, and the length cap.
+- `packages/agent-harness/src/tool-activity.test.ts` covers human prose for every
+  attachment tool wire name.
+- `apps/api/test/attachment-model-content.test.ts` proves non-image objects are
+  never fetched, every failure keeps a manifest, same-ID image delivery, and the
+  exact source-byte, pixel, derivative-byte, count, and edge boundaries.
+- `apps/api/test/attachment-derivative-service.test.ts` covers complete long
+  Markdown, semantic Office structures, page/OCR extraction, malformed and
+  unsupported inputs, MIME precedence, fenced lease
+  recovery, atomic selection, and ready-version reuse against `unpdf` 1.8.0.
+- `apps/api/test/workstream-attachment-tools.test.ts` covers more-than-fifty
+  pagination, natural-language filtering, exact two-sided read arithmetic,
+  tampering/version invalidation, bounded search, ordered image batches,
+  normalization failure, wrong-kind recovery, focused summaries, receipt
+  reauthorization and visual rehydration, complete-range search, and
+  workspace/private-note equivalence.
+- `apps/api/test/attachment-tool-receipts.test.ts` proves dependency registration
+  is conditional on the current hash and every replay rechecks visibility,
+  version identity, and durable output cleanup.
+- `apps/api/test/attachment-summary-service.test.ts` covers single-call complete
+  and sampled-partial summaries, prompt trust placement, source-ID citation
+  validation, output budgets, and provider failure. The harness suite proves
+  ephemeral image parts reach only the next model request and never its durable
+  completion event. `apps/api/test/workstream-read-state.test.ts` proves the
+  sidebar uses the same visibility boundary.
+- `packages/db/test/migrations.test.ts`,
+  `apps/api/test/resource-upload.test.ts`,
+  `apps/api/test/attachment-derivative-state.test.ts`, and
+  `apps/api/test/resource-object-cleanup.test.ts` cover lifecycle schema,
+  exact-byte hashing, legacy interpretation, derivative-change and deletion
+  receipt invalidation, cleanup retry, and convergence.
+- `apps/desktop/src/renderer/components/attachments.test.tsx` covers lazy
+  message-feed opening plus image, Markdown, literal text, and converted-document
+  presentation.
+
+Run focused suites from their package directories through `pnpm --filter`, then
+run the repository-wide lint, typecheck, and test gates before committing. Cursor
+tests use an explicit clock value; do not replace it with sleeps or retries.
+
+## Data model
+
+`resources` owns original and current model refs plus original SHA-256,
+derivative status, extractor version, readable-character count, extraction time,
+bounded error code, and fenced claim ID/time.
+`resource_object_deletion_outbox` owns failed, superseded, and deleted regional
+objects until bounded cleanup succeeds.
+`attachment_tool_receipts` maps completed read, search, view, and summary
+receipts to the exact derivative hashes they used. A replacement or deletion
+invalidates the complete invocation and queues its JSON replay object. Receipt
+registration itself is conditional on those hashes still being current, and
+replay additionally rechecks current principal visibility; the map stores no
+excerpts, prompts, image parts, or data URIs.
+`message_attachments` and `workstream_resources` remain relationship and
+visibility authorities. [`data-model.md`](data-model.md) and migrations are
+authoritative.
+
+## Regional impact
+
+Contracts, lifecycle, and conversion execute identically in both regions. Cursor
+signing happens inside the Worker that handles the owning regional run. Existing
+originals and model derivatives remain in that region's R2 bucket and
+relationship, lifecycle, and outbox rows in its D1 database. Scheduled cleanup
+uses the same regional R2 binding. No new Global-plane storage or bridge payload
+is introduced by this phase.
+
+## Security and trust model
+
+Filenames, declared MIME, extracted text, file metadata, and provider/converter
+failures are untrusted. Classification consumes a server-verified MIME value;
+the extension fallback is deliberately narrow and cannot override a specific
+MIME type. Cursor signatures prevent state tampering but do not replace database
+authorization. Unknown structured error keys are discarded before Bind builds a
+tool result.
+
+The shared session secret is not used directly as a cursor MAC key: a fixed
+purpose-separation derivation produces the attachment-cursor signing key. Cursor
+payloads contain identifiers and offsets, never credentials, file contents, or
+resource bytes.
+
+## Operations
+
+An unexpected raw tool name in a transcript points first to
+`packages/agent-harness/src/tool-activity.ts`. Repeated `invalid_cursor` failures
+should be split into schema/length, signature, expiry, and authorization metrics
+without logging the cursor itself. The scheduled Worker drains
+`resource_object_deletion_outbox`; a growing oldest `created_at` or
+`attempt_count` means R2 cleanup is unhealthy. Inspect bounded events by resource
+ID and object kind, never object key.
+
+## Performance and cost
+
+Kind classification is constant-time over bounded metadata. Cursor verification
+performs two HMAC operations and parses at most 2,048 characters. Conversion is
+lazy and reused by exact original hash plus extractor version; only scanned PDFs
+need the injected provider OCR path. Index storage grows with bounded chunks and
+terms rather than duplicating attachment text. Future changes must preserve those
+cheap discovery and continuation paths.
+
+## Changelog
+
+### 2026-08-12 — Message previews reuse the authorized derivative boundary
+
+**What changed:** A resource preview endpoint now returns exact originals for
+images, Markdown, and plain text, and lazily materializes or reuses the current
+semantic derivative for PDF and Office attachments. It applies the existing
+resource visibility query before either R2 read. The desktop message feed opens
+all available attachments in a window-sized lightbox: intrinsic-size or
+viewport-scaled images, shared-renderer Markdown, and literal monospace text.
+
+**Why:** Sent attachments were image-only thumbnails: non-images were disabled,
+even though the attachment system already held complete bounded derivatives for
+the model. A separate client converter would duplicate parsing, drift from the
+model-visible document, and move untrusted Office/PDF processing into Electron.
+
+**Considered and rejected:** Downloading every original into the renderer,
+building a second display derivative, and eagerly fetching every transcript
+attachment. They respectively expose formats the renderer cannot safely render,
+split one document into two interpretations, or turn transcript loading into an
+unbounded content fetch.
+
+**Consequences:** Clicking is the hydration boundary for non-image previews;
+unchanged derivatives are reused by source hash and extractor version. New
+previewable document kinds must extend the shared classifier/converter rather
+than add a desktop-only parser. Missing, unsupported, processing, or failed
+derivatives remain explicit preview errors. Closing a preview while it owns a
+conversion releases the fenced claim back to pending rather than persisting
+ordinary viewer cancellation as a shared derivative failure.
+
+### 2026-08-12 — Attachment hydration drops speculative indexes and fan-out summaries
+
+**What changed:** Search now derives UTF-16-safe chunks directly from the bounded
+derivative and centers results on actual matches. The persisted index object and
+model-object catalog are removed. Summaries use one inference over deterministic
+server-owned source ranges, automation drafts expose only content tools for their
+already-visible ten-item manifest, and resource revisions ignore processing-only
+updates. Compaction performs one grouped inventory aggregation.
+
+**Why:** An adversarial complexity review found that the stored index was never
+used to select candidates, the catalog duplicated current pointers while retaining
+superseded rows, summary fan-out could not reliably fit the tool deadline, and
+processing state could invalidate a model's unrelated list cursor.
+
+**Considered and rejected:** Keeping dormant index hints for future performance,
+parallelizing nine summary calls, and retaining pagination solely for symmetry
+with work streams. Each preserves lifecycle or model-facing complexity without a
+current product need.
+
+**Consequences:** A text derivative has one regional model object. Search spends
+CPU proportional to the bounded derivative, summary coverage above 80,000
+characters is explicitly partial, and future persisted indexing requires measured
+need plus a candidate lookup that avoids the full scan.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Review closes replay, memory, and inventory race boundaries
+
+**What changed:** Historical attachment results now reauthorize before transcript
+projection; tenant-owned lifecycle tables carry workspace scope; MIME selection
+is verified from bytes; source, derivative, image, and transcript replay budgets
+are enforced before dangerous allocations. Resource tools use bounded point,
+keyset-page, and grouped queries fenced by a monotonic revision. Production
+scanned-PDF reads invoke the regional OCR binding, and compaction persistence is
+conditionally fenced against the same revision.
+
+**Why:** The implementation review found that a detached private result could
+still enter a later model transcript, nominally paginated discovery first loaded
+the entire inventory, synchronous converters and image decoders could cross
+Worker memory limits before checking them, and a visibility change could race
+between summary generation and checkpoint storage.
+
+**Considered and rejected:** Redacting replayed text, computing cursors from a
+full in-memory inventory, relying on best-effort R2 deletes, and treating a timer
+around synchronous ZIP parsing as cancellation. None establishes the required
+authorization, storage, or resource-consumption fence.
+
+**Consequences:** Attachment history and receipts are caches over current
+authority, never durable grants. A resource mutation invalidates outstanding
+list/checkpoint revisions. Local Office work remains byte-bounded rather than
+timer-preemptible, and readable derivatives deliberately stop at two million
+UTF-16 characters to keep whole-derivative operations inside the Worker budget.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Attachment publication and replay are fenced end to end
+
+**What changed:** Derivative claims now carry reclaimable lease times and unique
+fencing IDs; every generated object key includes a unique generation, and D1
+triggers catalog only a successful current-pointer update. Receipt registration
+is conditional on current derivative hashes, and every replay rechecks current
+visibility, hashes, and required image parts. Compaction summaries are scoped to
+the principal and resource fingerprint captured before summarization.
+
+**Why:** Review found four variants of the same stale-authority race: an
+abandoned converter could block forever, an older converter could publish after
+reclaim, cleanup could delete a reactivated key, and a completed receipt or raw
+summary could outlive the authority that produced it.
+
+**Considered and rejected:** Timestamp-only claims, deterministic generation
+keys, replaying safe-read JSON without reauthorization, swallowing image
+rehydration errors, and redacting summaries after the fact. None supplies a
+fence across the relevant storage and authorization boundary.
+
+**Consequences:** Safe attachment reads may re-execute when dependencies,
+visibility, or visual bytes changed. Cleanup checks current pointers before R2
+deletion. Future converters and receipt consumers must use the same claim,
+publication-trigger, dependency, and replay-validation paths.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Encrypted OOXML fails as encryption, not corruption
+
+**What changed:** A compound-file encrypted DOCX, XLSX, or PPTX container now
+returns `office_encryption_unsupported` before ZIP extraction rather than the
+generic `invalid_office_archive` failure.
+
+**Why:** Encrypted OOXML uses the Compound File Binary envelope instead of an
+ordinary ZIP. Treating that known signature as corruption gives the agent and
+person the wrong recovery path and makes a valid but unreadable document look
+damaged.
+
+**Considered and rejected:** Passing the container to the ZIP reader and keeping
+one error for every archive failure. It is safe but not diagnosable; the eight-
+byte signature is sufficient to distinguish the unsupported-encryption class
+without attempting to decrypt or exposing content.
+
+**Consequences:** Avalon still does not request or handle document passwords.
+Adding decryption would require a separate consent and secret-handling contract;
+it must not weaken archive expansion limits or log the password.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Message-attachment state is scoped and cursor-visible
+
+**What changed:** The shared visibility query now counts a resource as a message
+attachment only when its owning message belongs to the work stream being listed.
+That bit also participates in the inventory fingerprint, so adding or removing a
+message relationship invalidates an outstanding list cursor.
+
+**Why:** A reusable resource can be attached to more than one work stream. The
+unscoped existence check made one work stream report another's message
+relationship, inflating the compaction subset total and changing later list pages
+without invalidating their snapshot.
+
+**Considered and rejected:** Treating `message_attachment` as a workspace-wide
+property. It describes how a resource entered this work stream, not the resource
+itself; sharing that property across work streams loses the relationship boundary.
+
+**Consequences:** Sidebar rows, agent list items, and compaction totals now agree
+on the current work stream's message subset. Future output fields derived from a
+relationship must join through that work stream and participate in the cursor
+fingerprint when they can change between pages.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Compaction inventory stays synchronized with visible resources
+
+**What changed:** Live and replayed checkpoints now include fixed-order totals
+for visible resources, message attachments, and non-empty natural attachment
+kinds. The appendix is rebuilt from the same current-principal visibility loader
+as the sidebar; the LLM summary is persisted only with its captured principal
+and resource-visibility fingerprint.
+
+**Why:** Images and documents remain durable resources after their prompt bytes
+leave context, but a selective summary is not a complete or current catalog.
+Regenerating a bounded aggregate restores discovery without copying every
+attachment into the checkpoint or leaking one viewer's private notes to another.
+
+**Considered and rejected:** MIME summaries, a stored filename/ID catalog, and
+LLM-generated totals. Natural kinds are easier for routed models, a full catalog
+grows without bound, and model prose cannot track current authorization.
+
+**Consequences:** Changes to sidebar visibility must continue flowing through
+`loadVisibleWorkstreamResources`; compaction, sidebar, and list must never grow
+independent interpretations. Exact recovery always goes through the filtered,
+paginated resource tool.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Projection becomes manifest-only for non-images
+
+**What changed:** Work-stream and automation transcript projection no longer
+reads or emits text, Office, PDF, or unsupported-file bytes. Platform guidance
+requires attachment inspection and honest continuation from exact side counts.
+Native image admission now validates dimensions and enforces source, pixel,
+derivative, count, and long-edge limits before emitting a same-ID visual part.
+
+**Why:** The legacy 60,000-character prefix looked complete enough for a model
+to answer while hiding decisive evidence in the second half. Larger prompt caps
+only move that silent cutoff and increase every later turn's context cost.
+
+**Considered and rejected:** Raising the inline limit, keeping native PDF parts,
+and allowing signature-only native images. They preserve partial coverage,
+bypass the common derivative/read contract, or leave pixel and dimension bombs
+unchecked.
+
+**Consequences:** A task about an attachment must hydrate it through the scoped
+tools unless its required visual is already inlined. A page with characters on
+either side is explicitly partial. Projection remains cheap and deterministic;
+complete content lives only in regional derivative storage and bounded results.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Automation drafts gain revocable attachment tools
+
+**What changed:** Compiler requests with attachments now preload draft-scoped
+list, read, search, view, and summarize tools. The executor freezes the admitted
+ID set, rechecks current workspace/owner/draft state on every call, uses a
+separate cursor namespace, and emits automation-specific self-healing calls.
+
+**Why:** Durable manifests cannot safely replace eager compiler prompt bytes
+until the architect has a bounded way to hydrate every admitted format. A frozen
+ID list alone is not enough because an upload can be deleted or cease to be the
+caller's draft while the model is working.
+
+**Considered and rejected:** A globally readable attachment-by-ID tool, copying
+the work-stream visibility query into the compiler, and treating the frozen set
+as permanent authorization. They respectively turn IDs into bearer tokens,
+conflate unrelated ownership models, or preserve revoked access.
+
+**Consequences:** Draft and work-stream wrappers share conversion and paging but
+not cursor purposes or authorization. The eager non-image compiler projection
+can now be removed together with the work-stream legacy projection in the next
+cutover commit.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Message history gains durable attachment identities
+
+**What changed:** Trigger and historical human-message projection now render a
+compact structured manifest for every attachment. Trigger images carry the same
+resource ID as their visual part and record whether delivery succeeded;
+historical turns retain identity and state without replaying bytes. Legacy
+trigger text, Office, and PDF content remains temporarily additive.
+
+**Why:** A filename-only historical marker cannot rehydrate an image after
+compaction, while switching non-image attachments to references before the
+automation compiler can read those references would make files inaccessible.
+
+**Considered and rejected:** Anonymous image parts, copying historical bytes,
+and an immediate manifest-only cutover. They respectively lose durable visual
+identity, regrow context on every replay, or create an unsafe deployment gap.
+
+**Consequences:** Every model-visible image must be produced alongside its
+same-ID manifest entry, and manifest strings remain JSON-encoded untrusted data.
+The next rollout step must add frozen, draft-scoped automation tools before the
+remaining eager content can be deleted.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Images and large-document understanding become recoverable
+
+**What changed:** Work-stream agents can reload up to eight ordered image
+derivatives and request a focused, isolated summary of a readable derivative.
+Wrong content tools return exact read/view calls after authorization. Live image
+parts are stripped from completion events and receipts, then rehydrated from
+regional state on safe receipt replay.
+
+**Why:** An image visible only on its trigger turn disappears after retry or
+compaction, while copying it into durable JSON creates the opposite context and
+storage failure. Streaming every page of a large document into the main run has
+the same context cost in text form.
+
+**Considered and rejected:** Binary JSON results, automatic execution of a
+suggested correction, and unqualified whole-document summaries over sampled
+input. The chosen contracts keep the model in control of correction while
+making coverage and persistence boundaries explicit.
+
+**Consequences:** The model-facing result may contain ephemeral parts that are
+absent from its receipt by design. Every new view kind therefore needs a
+reauthorizing rehydrator, and every summary provider must return ranges the host
+can verify before exposing them.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Sidebar-parity discovery and bounded text hydration ship
+
+**What changed:** `workstream_list_resources` replaces the hard-capped
+`workstream_read` index, and work-stream runs can page, filter, read exact
+character ranges in either direction, and search one versioned derivative. One
+principal-aware loader now supplies both agent inventory and sidebar resources.
+
+**Why:** A model cannot inspect what it cannot completely discover, and a
+separate fifty-row tool query could silently drift from the person's Resources
+rail. Whole-file text results also recreate the context failure the derivative
+was meant to solve.
+
+**Considered and rejected:** Offset pagination without an inventory fingerprint,
+MIME filters, and a read response with only `complete`. Those respectively mix
+changed inventories, force smaller models to guess provider formats, and hide
+how much context remains on either side of a passage.
+
+**Consequences:** Every attachment dereference re-runs current visibility and
+checks the selected derivative version. Models follow list cursors until null
+for complete inventory coverage and use the explicit before/after counts for
+complete document coverage. Later compaction aggregation must call the same
+visibility loader.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Complete derivatives replace trigger-specific conversion
+
+**What changed:** Avalon can now lazily create complete, reusable UTF-8,
+semantic Office, and page-delimited PDF derivatives with a bounded range/term
+index. Regional D1 conditionally claims work and atomically selects finished R2
+objects; unchanged source and extractor versions reuse the current result.
+
+**Why:** The old trigger converter discarded everything after 60,000 characters
+and could not support deterministic page/search continuation. Moving the same
+helpers behind a reusable boundary also lets work-stream and automation tools
+share conversion without sharing authorization.
+
+**Considered and rejected:** Persisting chunk text in the index, accepting lossy
+UTF-8 replacement, and treating an empty PDF text layer as a successful empty
+file. Those choices respectively create a second unbounded content copy, hide
+corrupt input, or let a scanned document masquerade as inspected.
+
+**Consequences:** Callers authorize before invoking this service and supply the
+bounded OCR adapter for scanned PDFs. Future text tools slice the versioned
+derivative using UTF-16 ranges and must not read the source directly. A new
+extractor version creates new versioned objects and lets lifecycle cleanup reap
+the superseded pair.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Derivative state and cleanup follow the resource lifecycle
+
+**What changed:** Regional resources now identify exact original content and
+carry explicit pending, processing, ready, failed, or unsupported model state.
+Active and superseded model objects are cataloged, and resource deletion durably
+enqueues every original, derivative, and index reference for bounded cleanup.
+Historical resources are interpreted lazily without a backfill.
+
+**Why:** Paging and compaction recovery need a stable derivative version, while
+the old image-only columns could not distinguish “not converted yet” from
+“conversion failed” or prove which original produced them. Deleting only current
+columns also leaves superseded conversions behind in regional R2.
+
+**Considered and rejected:** A workspace-wide eager conversion backfill and
+object deletion on relationship detachment. The former creates unbounded regional
+load before anyone asks to read the files; the latter mistakes a many-to-many
+visibility edge for ownership and can destroy a resource still in use.
+
+**Consequences:** Every ingestion path that stores bytes must maintain their
+SHA-256 or let the first authorized derivative request calculate it. Derivative
+writers register objects and advance rows atomically; resource owners delete the
+row to end storage, while detachment only changes authorization.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Attachment contracts are centralized before runtime cutover
+
+**What changed:** Avalon now has one natural-language attachment-kind registry,
+strict argument and success schemas for the complete attachment tool family,
+bounded self-healing failure data, authenticated scoped cursors, and explicit
+transcript prose for the future wire names. Runtime projection remains on the
+legacy path until replacement tools are safe to activate.
+
+**Why:** A large Markdown trigger was presented as a plausible 60,000-character
+prefix and answered without its second half, while images lost their reloadable
+identity at compaction. The replacement surface has to work for medium and small
+models: free-form MIME guessing, ambiguous paging knobs, and vague wrong-tool
+errors would move the same correctness failure into the tool loop.
+
+**Considered and rejected:** Separate model tools per MIME type, a free-form MIME
+filter, unauthenticated base64 continuations, and removing eager projection in
+the contract commit. Each either makes the model memorize provider formats,
+allows cursor state to be altered, or creates a deployment window in which a
+manifest points to no usable hydration path.
+
+**Consequences:** Every later attachment surface must reuse the registry and
+strict schemas, retain cursor reauthorization, and update this document in the
+same commit. The repository temporarily carries inert replacement contracts
+beside legacy runtime behavior; that duplication is the deliberate price of an
+additive rollout and must disappear at the manifest-only cutover.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).

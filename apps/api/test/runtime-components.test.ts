@@ -9,13 +9,16 @@ import {
   workspaceSchedulerName
 } from "../src/durable-objects/workspace-scheduler";
 import {
+  applyActiveStreamCheckpointEvent,
   consumeSocketTicket,
   distinctNonParticipantViewers,
   isPersonalEventAudience,
   planSocketReplay,
+  splitActiveStreamCheckpointText,
   workstreamRoomName,
 } from "../src/durable-objects/workstream-room";
 import { durableObjectNamespaceForRegion } from "../src/lib/durable-object-namespace";
+import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 
 function timing(overrides: Partial<ScheduleTiming> = {}): ScheduleTiming {
   return {
@@ -47,9 +50,9 @@ describe("runtime component invariants", () => {
   });
 
   it("pins EU Durable Object IDs to the EU jurisdiction namespace", () => {
-    const euNamespace = {} as DurableObjectNamespace;
+    const euNamespace = createCloudflareTestBinding<DurableObjectNamespace>({});
     const jurisdiction = vi.fn(() => euNamespace);
-    const namespace = { jurisdiction } as unknown as DurableObjectNamespace;
+    const namespace = createCloudflareTestBinding<DurableObjectNamespace>({ jurisdiction });
 
     expect(durableObjectNamespaceForRegion(namespace, "eu")).toBe(euNamespace);
     expect(jurisdiction).toHaveBeenCalledWith("eu");
@@ -80,6 +83,117 @@ describe("runtime component invariants", () => {
       type: "replay",
       events: [firstEvent],
     });
+  });
+
+  it("checkpoints the exact active stream for subscribers joining mid-response", () => {
+    const messageId = "00000000-0000-7000-8000-000000000010";
+    const harnessRunId = "00000000-0000-7000-8000-000000000011";
+    const at = "2026-01-01T00:00:00.000Z";
+    expect(applyActiveStreamCheckpointEvent([], ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 9,
+      occurredAt: at,
+      messageId,
+      harnessRunId,
+      turnId: "turn-one",
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: "Missing prefix",
+    }))).toEqual([]);
+    let checkpoints = applyActiveStreamCheckpointEvent([], ServerSocketEventSchema.parse({
+      type: "stream_started",
+      sequence: 10,
+      occurredAt: at,
+      messageId,
+      harnessRunId,
+      turnId: "turn-one",
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 11,
+      occurredAt: at,
+      messageId,
+      turnId: "turn-one",
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: "First answer.",
+    }));
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "stream_started",
+      sequence: 12,
+      occurredAt: at,
+      messageId,
+      harnessRunId,
+      turnId: "turn-two",
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 13,
+      occurredAt: at,
+      messageId,
+      turnId: "turn-two",
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: " Discard this attempt.",
+    }));
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 14,
+      occurredAt: at,
+      messageId,
+      turnId: "turn-two",
+      epoch: 1,
+      streamSeq: 2,
+      reset: true,
+      delta: " Final continuation.",
+    }));
+
+    expect(checkpoints).toEqual([expect.objectContaining({
+      messageId,
+      harnessRunId,
+      text: "First answer. Final continuation.",
+      turnStartOffset: "First answer.".length,
+      roomSequence: 14,
+      seenTurnIds: ["turn-one", "turn-two"],
+    })]);
+
+    checkpoints = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "harness_status_changed",
+      sequence: 15,
+      occurredAt: at,
+      status: "running",
+    }));
+    expect(checkpoints).toHaveLength(1);
+
+    const completed = applyActiveStreamCheckpointEvent(checkpoints, ServerSocketEventSchema.parse({
+      type: "harness_status_changed",
+      sequence: 16,
+      occurredAt: at,
+      status: "completed",
+    }));
+    expect(completed).toEqual([]);
+  });
+
+  it("segments checkpoints before one Durable Object value can exceed its limit", () => {
+    const text = `${"a".repeat(2_100_000)}😀${"z".repeat(35_000)}`;
+    const chunks = splitActiveStreamCheckpointText(text);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.length <= 30_000)).toBe(true);
+    expect(chunks.join("")).toBe(text);
+    expect(chunks.every((chunk) => {
+      const last = chunk.charCodeAt(chunk.length - 1);
+      return !(last >= 0xD800 && last <= 0xDBFF);
+    })).toBe(true);
   });
 
   it("skips missed interval ticks without creating a catch-up storm", () => {
@@ -131,13 +245,13 @@ describe("runtime component invariants", () => {
     };
     const values = new Map<string, unknown>([["workspaceId", workspaceId]]);
     const setAlarm = vi.fn(async (at: number) => { void at; });
-    const storage = {
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
       get: async <T>(key: string) => values.get(key) as T | undefined,
       put: async (key: string, value: unknown) => { values.set(key, value); },
       delete: async (key: string) => values.delete(key),
       setAlarm,
       deleteAlarm: vi.fn(async () => undefined),
-    } as unknown as DurableObjectStorage;
+    });
     let auditWrites = 0;
     const prepare = vi.fn((sql: string) => ({
       bind: vi.fn(() => ({
@@ -167,7 +281,7 @@ describe("runtime component invariants", () => {
       })),
     }));
     const scheduler = new WorkspaceScheduler(
-      { storage } as unknown as DurableObjectState,
+      createCloudflareTestBinding<DurableObjectState>({ storage }),
       { DB: { prepare } } as never,
     );
 
@@ -205,14 +319,14 @@ describe("runtime component invariants", () => {
       get: async <T>(key: string) => values.get(key) as T | undefined,
       put: async (key: string, value: unknown) => { values.set(key, value); },
     };
-    const storage = {
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
       transaction: async (callback: (value: Transaction) => Promise<boolean>) => callback(transaction),
       list: async () => new Map(values) as Map<string, number>,
       delete: async (keys: string[]) => {
         for (const key of keys) values.delete(key);
         return true;
       },
-    } as unknown as DurableObjectStorage;
+    });
 
     await expect(consumeSocketTicket(storage, "ticket-1", 2_000, 1_000)).resolves.toBe(true);
     await expect(consumeSocketTicket(storage, "ticket-1", 2_000, 1_000)).resolves.toBe(false);

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
+import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const userId = "00000000-0000-7000-8000-000000000002";
@@ -47,7 +48,7 @@ describe("resource listing", () => {
       ],
       [],
     ];
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         const recorded = { sql, values: [] as unknown[] };
         statements.push(recorded);
@@ -61,8 +62,8 @@ describe("resource listing", () => {
           },
         };
       },
-    } as unknown as D1Database;
-    const service = new ResourceService({ DB: database } as Env, auth);
+    });
+    const service = new ResourceService(createTestEnv({ DB: database }), auth);
 
     const first = await service.list({ limit: 2 });
     expect(first.items.map((resource) => resource.id)).toEqual([firstResourceId, secondResourceId]);
@@ -98,13 +99,13 @@ describe("resource listing", () => {
 
   it("rejects malformed cursors before querying storage", async () => {
     let prepared = false;
-    const database = {
+    const database = createTestD1Database({
       prepare() {
         prepared = true;
         throw new Error("storage should not be queried");
       },
-    } as unknown as D1Database;
-    const service = new ResourceService({ DB: database } as Env, auth);
+    });
+    const service = new ResourceService(createTestEnv({ DB: database }), auth);
 
     await expect(service.list({ cursor: "not-a-cursor", limit: 25 })).rejects.toMatchObject({
       status: 422,
@@ -162,7 +163,7 @@ describe("resource listing", () => {
     `);
     const d1 = sqliteD1(database);
     const payloadReads: string[] = [];
-    const environment = {
+    const environment = createTestEnv({
       DB: d1,
       PAYLOADS: {
         async get(key: string) {
@@ -170,7 +171,7 @@ describe("resource listing", () => {
           return null;
         },
       },
-    } as unknown as Env;
+    });
 
     // Provider identity keeps the email private even before the attachment
     // transaction has committed.
@@ -188,6 +189,8 @@ describe("resource listing", () => {
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
     await expect(new ResourceService(environment, authFor("outsider-user")).content("email-resource"))
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
+    await expect(new ResourceService(environment, authFor("outsider-user")).preview("email-resource", new AbortController().signal))
+      .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
     expect(payloadReads).toHaveLength(0);
 
     await expect(new ResourceService(environment, authFor("participant-user")).list({ limit: 10 }))
@@ -203,7 +206,7 @@ function authFor(authUserId: string): AuthContext {
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
-  return {
+  return createTestD1Database({
     prepare(sql: string) {
       let values: Array<string | number | null> = [];
       return {
@@ -215,15 +218,15 @@ function sqliteD1(database: DatabaseSync): D1Database {
           return (database.prepare(sql).get(...values) ?? null) as T | null;
         },
         async all<T>() {
-          return {
+          return createTestD1Result<T>({
             results: database.prepare(sql).all(...values) as T[],
             success: true,
             meta: emptyD1Meta(),
-          } as D1Result<T>;
+          });
         },
       };
     },
-  } as unknown as D1Database;
+  });
 }
 
 function emptyD1Meta(): D1Meta {

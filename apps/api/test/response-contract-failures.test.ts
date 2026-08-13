@@ -5,13 +5,14 @@ import { z } from "zod";
 import type { Env, HonoAppEnv } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { errorHandler } from "../src/middleware/errors";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 function testEnv(): Env {
-  return {
+  return createTestEnv({
     ALLOWED_ORIGINS: "app://avalon",
     AVALON_REGION: "global",
     LOG_LEVEL: "info",
-  } as Env;
+  });
 }
 
 /** A route that serves a row its own response contract rejects. */

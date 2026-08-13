@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decryptString, encryptString } from "../src/lib/crypto";
 import { decryptVersionedConnectorCredentials } from "../src/services/connector-credential-envelope";
+import { createTestD1Database, createTestD1PreparedStatement } from "./helpers/cloudflare-test";
 
 class RotationStatement {
   private values: unknown[] = [];
@@ -27,7 +28,7 @@ class RotationDatabase {
 
   prepare(sql: string) {
     expect(sql).toContain("WHERE id = ? AND encrypted_credentials = ?");
-    return new RotationStatement(this) as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(new RotationStatement(this));
   }
 }
 
@@ -40,7 +41,7 @@ describe("versioned connector credential envelopes", () => {
     const database = new RotationDatabase();
 
     await expect(decryptVersionedConnectorCredentials({
-      DB: database as unknown as D1Database,
+      DB: createTestD1Database(database),
       CONNECTOR_CREDENTIALS_KEY: activeKey,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "2",
       CONNECTOR_CREDENTIALS_KEYS_JSON: JSON.stringify({ 1: oldKey }),
@@ -69,7 +70,7 @@ describe("versioned connector credential envelopes", () => {
     const database = new RotationDatabase();
 
     await expect(decryptVersionedConnectorCredentials({
-      DB: database as unknown as D1Database,
+      DB: createTestD1Database(database),
       CONNECTOR_CREDENTIALS_KEY: "active-key",
       CONNECTOR_CREDENTIALS_KEY_VERSION: "2",
     }, {

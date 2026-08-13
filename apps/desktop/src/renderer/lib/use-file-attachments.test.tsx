@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, type AvalonApi } from './api';
+import { ApiError } from './api';
 import type * as DraftCache from './draft-cache';
 import { clearAllDrafts, readDraftAttachments } from './draft-cache';
 
@@ -16,7 +16,7 @@ vi.mock('./draft-cache', async (importOriginal) => {
     },
   };
 });
-import { useFileAttachments } from './use-file-attachments';
+import { type FileAttachmentsApi, useFileAttachments } from './use-file-attachments';
 import type { WorkstreamResource } from './types';
 
 const draftKey = 'workstream:019fcc00-0000-7000-8000-0000000000ff';
@@ -33,12 +33,12 @@ const resource: WorkstreamResource = {
   sizeBytes: 5,
 };
 
-function apiMock(overrides: Partial<AvalonApi> = {}): AvalonApi {
+function apiMock(overrides: Partial<FileAttachmentsApi> = {}): FileAttachmentsApi {
   return {
     uploadResource: vi.fn(async () => resource),
     deleteDraftResource: vi.fn(async () => undefined),
     ...overrides,
-  } as unknown as AvalonApi;
+  } satisfies FileAttachmentsApi;
 }
 
 describe('useFileAttachments', () => {

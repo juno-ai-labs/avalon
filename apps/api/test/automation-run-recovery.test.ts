@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 interface StoredRun {
   id: string;
@@ -76,8 +77,8 @@ class ManualRunDatabase {
   workstreamInsertCount = 0;
   automationRunInsertCount = 0;
 
-  readonly binding = {
-    prepare: (sql: string) => new ManualRunStatement(this, sql) as unknown as D1PreparedStatement,
+  readonly binding = createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new ManualRunStatement(this, sql)),
     batch: async <T = unknown>(statements: D1PreparedStatement[]) => {
       const results: D1Result<T>[] = [];
       for (const statement of statements) {
@@ -85,7 +86,7 @@ class ManualRunDatabase {
       }
       return results;
     },
-  } as unknown as D1Database;
+  });
 }
 
 class ManualRunStatement {
@@ -179,11 +180,11 @@ class ManualRunStatement {
         && route.workspace_id === this.values[5]
         && route.workstream_id === this.values[6];
       if (matches) route.status = String(this.values[0]) as StoredEmailRoute["status"];
-      return {
+      return createTestD1Result<T>({
         success: true,
         results: [],
         meta: { changes: matches ? 1 : 0 },
-      } as unknown as D1Result<T>;
+      });
     } else if (normalized.startsWith("UPDATE workstreams SET email_route_status")) {
       const owner = this.database.workstreamEmailOwner;
       const matches = owner
@@ -193,11 +194,11 @@ class ManualRunStatement {
       if (matches) {
         owner.email_route_status = String(this.values[0]) as StoredWorkstreamEmailOwner["email_route_status"];
       }
-      return {
+      return createTestD1Result<T>({
         success: true,
         results: [],
         meta: { changes: matches ? 1 : 0 },
-      } as unknown as D1Result<T>;
+      });
     } else if (normalized.startsWith("INSERT INTO automation_runs")) {
       this.database.automationRunInsertCount += 1;
       this.database.run = {
@@ -263,11 +264,11 @@ class ManualRunStatement {
     } else {
       throw new Error(`Unexpected run() query: ${normalized}`);
     }
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: [],
       meta: { changes: 1 },
-    } as unknown as D1Result<T>;
+    });
   }
 
   private normalizedSql(): string {
@@ -290,14 +291,14 @@ describe("manual automation run recovery", () => {
         ownerUserId: "user-1",
         archived,
       };
-      const service = new AutomationService({
+      const service = new AutomationService(createTestEnv({
         DB: database.binding,
         WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn().mockResolvedValue({}) },
         AVALON_REGION: "global",
         OPENROUTER_PRIMARY_MODEL: "test-model",
         WORKSTREAM_EMAIL_ADDRESS_KEY: `note-visibility-${scope}-address-key-v1`,
         WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
-      } as unknown as Env, {
+      }), {
         sessionId: "session-1",
         userId: "user-1",
         workspaceId: "workspace-1",
@@ -319,14 +320,14 @@ describe("manual automation run recovery", () => {
     const createWorkflow = vi.fn()
       .mockRejectedValueOnce(new Error("temporary workflow service outage"))
       .mockResolvedValueOnce({});
-    const env = {
+    const env = createTestEnv({
       DB: database.binding,
       WORKSTREAM_LOOP_WORKFLOW: { create: createWorkflow },
       AVALON_REGION: "global",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       WORKSTREAM_EMAIL_ADDRESS_KEY: "manual-run-recovery-address-key-v1",
       WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
-    } as unknown as Env;
+    });
     const auth: AuthContext = {
       sessionId: "session-1",
       userId: "user-1",
@@ -383,14 +384,14 @@ describe("manual automation run recovery", () => {
   it("creates exactly one work stream and run for duplicate inbound email delivery", async () => {
     const database = new ManualRunDatabase();
     const createWorkflow = vi.fn().mockResolvedValue({});
-    const env = {
+    const env = createTestEnv({
       DB: database.binding,
       WORKSTREAM_LOOP_WORKFLOW: { create: createWorkflow },
       AVALON_REGION: "global",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       WORKSTREAM_EMAIL_ADDRESS_KEY: "inbound-email-automation-address-key-v1",
       WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
-    } as unknown as Env;
+    });
     const service = new AutomationService(env, {
       sessionId: "system-inbound-email",
       userId: "user-1",

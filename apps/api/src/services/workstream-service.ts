@@ -18,6 +18,7 @@ import type {
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
 import {
@@ -875,7 +876,7 @@ export class WorkstreamService {
       this.loadResources(id),
       this.loadConnections(),
       this.loadElicitations(id),
-      this.loadSuggestions(id),
+      SUGGESTED_CONTEXT_ENABLED ? this.loadSuggestions(id) : Promise.resolve([]),
       this.env.DB.prepare(
         `SELECT id, origin, status, model, error_json, started_at, completed_at, created_at
          FROM harness_runs

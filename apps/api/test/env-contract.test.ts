@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { assertEnvContract, EnvContractError, type Env } from "../src/env";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 function binding(): never {
   return {} as never;
 }
 
 function productionEnv(overrides: Partial<Env> = {}): Env {
-  return {
+  return createTestEnv({
     DB: binding(), PAYLOADS: binding(), IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
+    RUN_ANALYTICS: binding(),
     WORKSTREAM_ROOMS: binding(), WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
     WORKSTREAM_LOOP_WORKFLOW: binding(), CONNECTOR_POLL_WORKFLOW: binding(),
     APP_ENV: "production",
@@ -30,9 +32,6 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
     GOOGLE_OAUTH_CLIENT_ID: "google-client",
     GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
-    HARNESS_MAX_MODEL_ITERATIONS: "8",
-    HARNESS_MAX_TOOL_CALLS: "24",
-    HARNESS_MAX_WALL_CLOCK_MS: "240000",
     TOOL_DEFAULT_TIMEOUT_MS: "30000",
     WEB_SEARCH_MAX_RESULTS: "8",
     WEB_FETCH_MAX_BYTES: "2000000",
@@ -40,7 +39,7 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
     WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
     CONNECTOR_POLL_TIMEOUT_MS: "20000",
     ...overrides,
-  } as Env;
+  });
 }
 
 describe("environment contract", () => {
@@ -65,22 +64,17 @@ describe("environment contract", () => {
     }
   });
 
-  it("rejects a numeric ceiling that would silently fall back to its default", () => {
-    // The real failure mode: `numericEnv` reads this as unparseable and
-    // substitutes 240000, so the configured ceiling never takes effect and
-    // nothing anywhere says so.
-    expect(() => assertEnvContract(productionEnv({ HARNESS_MAX_WALL_CLOCK_MS: "24O000" })))
-      .toThrow(/HARNESS_MAX_WALL_CLOCK_MS is invalid/u);
+  it("rejects a numeric deadline that would silently fall back to its default", () => {
     expect(() => assertEnvContract(productionEnv({ CONNECTOR_POLL_TIMEOUT_MS: "20s" })))
       .toThrow(/CONNECTOR_POLL_TIMEOUT_MS is invalid/u);
   });
 
-  it("accepts a ceiling of zero, which `numericEnv` already reads as the default", () => {
+  it("accepts a child ceiling of zero, which `numericEnv` already reads as the default", () => {
     // Readability is the check, not policy. Zero is a value an operator may
     // legitimately set to drop a ceiling during an incident, and `numericEnv`
     // treats a non-positive value as "use the default" — so rejecting it here
     // would turn a documented mitigation into a region-wide 503.
-    expect(() => assertEnvContract(productionEnv({ HARNESS_MAX_TOOL_CALLS: "0" }))).not.toThrow();
+    expect(() => assertEnvContract(productionEnv({ HARNESS_CHILD_MAX_TOOL_CALLS: "0" }))).not.toThrow();
   });
 
   it("says whether a key is missing or merely wrong", () => {

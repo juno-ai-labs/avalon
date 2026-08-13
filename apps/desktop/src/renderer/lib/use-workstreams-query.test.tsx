@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { WorkstreamSummary } from './types';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from './use-workstreams-query';
+import { setCachedWorkstreams } from './workstreams-cache';
 
 const getWorkstreams = vi.hoisted(() => vi.fn());
 const getApplicationSettings = vi.hoisted(() => vi.fn());
@@ -31,12 +32,20 @@ function summary(id: string, title: string): WorkstreamSummary {
   return {
     id,
     title,
+    titleStatus: 'settled',
+    origin: 'ad_hoc',
     scope: 'workspace',
-    systemKind: null,
-    harnessStatus: 'idle',
+    harnessStatus: 'completed',
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     lastActivityAt: '2026-08-11T12:00:00.000Z',
-    unreadCount: 0,
-  } as unknown as WorkstreamSummary;
+    pinPosition: null,
+  } satisfies WorkstreamSummary;
 }
 
 describe('useWorkstreamsQuery', () => {
@@ -85,7 +94,7 @@ describe('useWorkstreamsQuery', () => {
     await waitFor(() => expect(result.current.data).toHaveLength(1));
 
     act(() => {
-      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+      setCachedWorkstreams(queryClient, (current) =>
         current?.map((item) => ({ ...item, title: 'Renamed in place' })),
       );
     });

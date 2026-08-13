@@ -48,10 +48,23 @@ export function logEvent(
   // having its value overwritten with `undefined`.
   const requestId = c.get("requestId");
   const workspaceId = c.get("auth")?.workspaceId;
-  logStructuredEvent(c.env, level, event, {
+  logRequestEvent(c.env, {
+    ...(requestId == null ? {} : { requestId }),
+    ...(workspaceId == null ? {} : { workspaceId }),
+  }, level, event, fields);
+}
+
+export function logRequestEvent(
+  env: LogEnv,
+  correlation: { requestId?: string; workspaceId?: string },
+  level: LogLevel,
+  event: string,
+  fields: LogFields = {},
+): void {
+  logStructuredEvent(env, level, event, {
     ...fields,
-    ...(requestId === undefined ? {} : { request_id: requestId }),
-    ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
+    ...(correlation.requestId === undefined ? {} : { request_id: correlation.requestId }),
+    ...(correlation.workspaceId === undefined ? {} : { workspace_id: correlation.workspaceId }),
   });
 }
 

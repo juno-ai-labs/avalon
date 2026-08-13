@@ -18,7 +18,7 @@ const api = vi.hoisted(() => ({
   getAutomationDraftSystemPrompt: vi.fn(),
   getConnections: vi.fn(),
   getNotes: vi.fn(),
-  getResourceContent: vi.fn(),
+  getResourcePreviewContent: vi.fn(),
   uploadResource: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
@@ -111,7 +111,7 @@ describe('New automation composer', () => {
     });
     api.createAutomation.mockResolvedValue({ id: 'automation-1' });
     api.deleteDraftResource.mockResolvedValue(undefined);
-    api.getResourceContent.mockResolvedValue(new Blob(['notes'], { type: 'text/plain' }));
+    api.getResourcePreviewContent.mockResolvedValue(new Blob(['notes'], { type: 'text/plain' }));
     api.uploadResource.mockResolvedValue({
       id: 'resource-notes',
       title: 'notes.txt',
@@ -173,7 +173,7 @@ describe('New automation composer', () => {
       message: '',
       attachmentIds: ['resource-notes'],
     }, expect.any(Function)));
-    expect(await screen.findByRole('button', { name: 'notes.txt' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Preview notes.txt' })).toBeInTheDocument();
     expect(api.deleteDraftResource).not.toHaveBeenCalled();
   });
 

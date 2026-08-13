@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { IdSchema } from '@avalon/contracts';
-import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
+import type { AvalonDesktopBridge, DesktopSession, RuntimeConfig } from '../../common/desktop';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { AvalonApi } from './api';
 import { clearAllDrafts } from './draft-cache';
@@ -66,6 +66,28 @@ export interface AppSessionValue {
 
 const AppSessionContext = createContext<AppSessionValue | null>(null);
 
+export type AppSessionDesktopBridge = Pick<
+  AvalonDesktopBridge,
+  | 'acceptInvitation'
+  | 'activateWorkspace'
+  | 'cancelDesktopAuthAttempt'
+  | 'consumePendingDeepLinks'
+  | 'createDevelopmentSession'
+  | 'createWorkspace'
+  | 'declineInvitation'
+  | 'exchangeDesktopTicket'
+  | 'getOnboardingState'
+  | 'getRuntimeConfig'
+  | 'getSession'
+  | 'hasStoredCredential'
+  | 'logout'
+  | 'onDeepLink'
+  | 'onSessionChanged'
+  | 'openExternal'
+  | 'openSettings'
+  | 'refreshSession'
+>;
+
 function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Region {
   if (session.workspace) return session.workspace.region;
   return runtime.api.eu === session.apiBaseUrl ? 'eu' : 'global';
@@ -108,7 +130,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
   const sessionRef = useRef<DesktopSession | null>(null);
   sessionRef.current = session;
-  const bridge = useMemo(() => desktopBridge(), []);
+  const bridge = useMemo<AppSessionDesktopBridge>(() => desktopBridge(), []);
   const queryClient = useQueryClient();
 
   const applySession = useCallback((nextSession: DesktopSession): void => {
@@ -395,7 +417,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const section = deepLink.pathname === '/connections'
           ? 'connections'
           : deepLink.pathname === '/digest' ? 'digest' : 'workspace';
-        void desktopBridge().openSettings(section);
+        void bridge.openSettings(section);
         return;
       }
       if (
@@ -451,13 +473,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               // the link failing, and reporting "your Slack account could not be
               // linked" for a link that committed is the error the whole change
               // is about.
-              await desktopBridge().openSettings('connections');
+              await bridge.openSettings('connections');
               const authorization = await api.startProviderConnection(
                 'slack',
                 'you',
                 [...SLACK_PERSONAL_CAPABILITIES],
               );
-              await desktopBridge().openExternal(authorization.url);
+              await bridge.openExternal(authorization.url);
             } catch (error: unknown) {
               // The link committed and is useful on its own. Surface the
               // failure without retracting what already succeeded.

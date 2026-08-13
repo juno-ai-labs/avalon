@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { hasAvalonToolProse } from "@avalon/agent-harness";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * A wire name with no prose fails silently into the humanizer and renders the
@@ -21,7 +21,7 @@ const workflowInput = (): WorkstreamWorkflowInput => ({
 
 describe("Avalon tool prose coverage", () => {
   it("gives every registered Avalon tool its own transcript prose", () => {
-    const tools = __integrationTesting.createAvalonTools({} as Env, workflowInput());
+    const tools = __integrationTesting.createAvalonTools(createTestEnv({}), workflowInput());
     const plugins = [
       ...__integrationTesting.createWorkstreamCorePlugins(tools),
       __integrationTesting.createAvalonWorkstreamPlugin(tools),

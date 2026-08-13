@@ -9,6 +9,7 @@ import {
   reapExpiredActivityEvents,
 } from "../src/services/activity-event-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const { projectActivityEvent } = __testing;
 
@@ -32,7 +33,7 @@ function envFor(database: DatabaseSync): Env {
   // and the registry is what answers whether an event type is digestible.
   // Without them every projection here would be withheld for the uninteresting
   // reason that the connector is unregistered in this region.
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -40,7 +41,7 @@ function envFor(database: DatabaseSync): Env {
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
-  } as unknown as Env;
+  });
 }
 
 function seededDatabase(): DatabaseSync {

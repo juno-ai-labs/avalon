@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results } from "./cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../../packages/db/migrations/", import.meta.url));
 
@@ -27,20 +28,20 @@ export function sqliteD1(database: DatabaseSync): D1Database {
         return (database.prepare(sql).get(...values as SQLInputValue[]) as T | undefined) ?? null;
       },
       async all<T>() {
-        return {
+        return createTestD1Result<T>({
           success: true,
           results: database.prepare(sql).all(...values as SQLInputValue[]) as T[],
           meta: { changes: 0 },
-        } as unknown as D1Result<T>;
+        });
       },
       async run<T>() {
         const result = database.prepare(sql).run(...values as SQLInputValue[]);
-        return { success: true, results: [], meta: { changes: Number(result.changes) } } as unknown as D1Result<T>;
+        return createTestD1Result<T>({ success: true, results: [], meta: { changes: Number(result.changes) } });
       },
     };
-    return statement as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(statement);
   };
-  return {
+  return createTestD1Database({
     prepare,
     // D1 runs a batch as one transaction, and code under test relies on that:
     // a pair written to be all-or-nothing is only all-or-nothing here if the
@@ -56,7 +57,7 @@ export function sqliteD1(database: DatabaseSync): D1Database {
         database.exec("ROLLBACK");
         throw error;
       }
-      return results as D1Result<T>[];
+      return createTestD1Results<T>(results);
     },
-  } as unknown as D1Database;
+  });
 }

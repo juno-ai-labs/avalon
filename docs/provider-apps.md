@@ -190,6 +190,18 @@ surface model, event matrix, and that gate.
 
 ### Notion public connection
 
+The personal Notion connection uses the official hosted MCP server at
+`https://mcp.notion.com/mcp`. It requires no second Notion Developer portal app,
+client ID, client secret, webhook, or checked-in provider manifest. Avalon uses
+MCP OAuth discovery and dynamic client registration for each authorization,
+with PKCE and the shared
+`https://notion.with-avalon.com/connections/notion/callback` redirect. The DCR
+client and rotating credentials are encrypted in the member's owning region.
+The public connection below is still required for the separate workspace bot
+and webhook mode. The API registers personal Notion even when the public client
+ID and secret are absent; attempting workspace authorization in that state fails
+with an explicit configuration error rather than hiding personal MCP too.
+
 Create **one** public Notion connection in the Notion Developer portal, serving
 both regions:
 
@@ -198,7 +210,14 @@ both regions:
 | Name | Avalon |
 | Installation scope | Any workspace |
 | Redirect URI | `https://notion.with-avalon.com/connections/notion/callback` |
-| Webhook URL | `https://notion.with-avalon.com/ingest/notion?setup=<Global setup token>` |
+| Webhook URL | Run `pnpm notion:webhook:prepare` and paste the URL it copies |
+
+An Avalon workspace owner or administrator initiates installation. The authorize
+URL deliberately uses Notion's `owner=user`, because public OAuth needs a human
+approver and page picker; do not change that parameter to model Avalon scope.
+Avalon stores the resulting bot grant as a workspace connection with no user
+owner. The approver's Notion identity remains encrypted metadata, while edits and
+comments made through the API appear as the Avalon integration bot.
 
 A Notion connection accepts one redirect URI and delivers to one webhook URL, and
 it has no way to know which region a Notion workspace belongs to — so unlike Linear
@@ -212,10 +231,21 @@ upload `assets/brand/avalon-mark.png`. A public Notion connection can be install
 into any workspace permitted by its immutable installation scope. Marketplace
 publication is a separate, optional review.
 
-When the webhook subscription is created, Notion sends a one-time
-`verification_token`. Avalon accepts it only when the Global setup token matches,
-encrypts it in D1, replicates it to the EU Worker so that region can verify
-signatures for itself, and uses it for every later `X-Notion-Signature` check.
+Apply migration `0071_notion_webhook_setup_nonces.sql` and deploy the API before
+preparing the URL. `pnpm notion:webhook:prepare` writes only a SHA-256 nonce hash
+to Global D1 and copies a URL whose plaintext nonce expires after 30 minutes. It
+replaces the current generation in one D1 transaction, and the database permits
+only one current generation, so concurrent preparation cannot leave two live URLs.
+
+Create the subscription with that URL. Notion sends a one-time
+`verification_token`; the ingress atomically binds the nonce to that token,
+encrypts the token in D1, and replicates it to EU so that region can verify
+signatures for itself. Run `pnpm notion:webhook:copy-token` to decrypt the Global
+row locally and copy the plaintext directly to the clipboard, then paste it into
+Notion's **Verify subscription** dialog. Neither command prints the nonce, URL,
+or verification token. The copy command refuses until the encrypted row is linked
+to the current consumed nonce and its plaintext hash matches that nonce's token
+binding. The token then signs every later `X-Notion-Signature`.
 
 ### Slack app
 
@@ -259,9 +289,9 @@ secret:
 Global and EU share the same single public Notion connection identity:
 
 - `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_INTEGRATION_ID` —
-  identical in both regions, because there is one connection.
-  `NOTION_WEBHOOK_SETUP_TOKEN` stays region-specific; only Global's guards the live
-  subscription.
+  identical in both regions, because there is one connection. Webhook setup has
+  no long-lived Worker secret; the operator command stores a short-lived nonce
+  hash in Global D1.
 
 Both regions need `TWITTER_API_IO_API_KEY` to expose the read-only X connector, and
 `FIRECRAWL_API_KEY` for the agent's web search and page fetch tools.
@@ -293,8 +323,10 @@ Both regions need `TWITTER_API_IO_API_KEY` to expose the read-only X connector, 
 - **Do not publish broader Google scopes than the two presets request.** The
   capability mapping matches the scopes approved for the production client; adding
   one re-opens verification.
-- **The Notion `verification_token` is accepted only when the Global setup token
-  matches**, is encrypted in D1, and never appears in logs or source control.
+- **The Notion `verification_token` is accepted only by an unexpired one-time
+  setup nonce**, is encrypted in D1, and never appears in logs or source control.
+  A consumed nonce is bound to the first token it sees, and a superseded nonce
+  cannot restore an earlier signing secret.
 - **`notion.with-avalon.com` exists as a custom domain on `avalon-api-global`
   before the connection is registered**, or the one redirect URI Notion accepts
   points at nothing.
@@ -361,9 +393,82 @@ repository. What can be:
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the registrations above — beyond the reasons already written inline — was not
-recorded here and was not reconstructed. `git log` and the PRDs under `docs/PRDs/`
-are what exist. The next substantial change to a provider registration starts the
-record, and that entry is that change, written in full.
+### 2026-08-12 — Public Notion credentials gate only workspace mode
+
+**What changed:** The Notion adapter is registered with its shared redirect URI
+even when no public-integration client ID and secret are configured. Workspace
+OAuth operations require the pair at the point of use.
+
+**Why:** Personal hosted MCP dynamically registers its own OAuth client and does
+not use the public integration. Gating the whole adapter on workspace secrets
+made the supposedly independent personal mode unavailable.
+
+**Considered and rejected:** Registering two Notion provider types. They share
+one product card and callback router, and splitting them would duplicate the
+connection lifecycle merely to express optional configuration.
+
+**Consequences:** Personal-only environments can connect Notion. The workspace
+button may still be shown by the connector-level catalog, but starting it returns
+the specific missing-public-integration error; production environments offering
+workspace mode continue storing the same credentials in both Workers.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Personal Notion MCP needs no developer registration
+
+**What changed:** The registration guide now separates the hosted personal MCP
+flow, which discovers and dynamically registers an OAuth client, from the one
+public integration used for workspace bot installs and webhooks.
+
+**Why:** Reusing `NOTION_OAUTH_CLIENT_ID` and its public-integration secret for a
+personal MCP connection would couple two provider identities and bypass the
+official server's advertised authorization flow. Asking operators to create a
+second static registration would duplicate something the server creates through
+DCR.
+
+**Considered and rejected:** A separate callback or a second manually registered
+Notion connection for personal use. Neither changes the regional destination of
+the token, and both add provider configuration the standards-based flow does not
+need.
+
+**Consequences:** The existing Notion secrets remain required in both Workers
+for workspace mode only. A personal MCP outage or DCR change is diagnosed at
+the hosted server boundary, not by editing the public connection dashboard.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Notion's user approver installs an Avalon workspace bot
+
+**What changed:** The registration guide now distinguishes Notion's required
+`owner=user` OAuth parameter from Avalon's workspace-only connection scope. An
+Avalon owner or administrator authorizes the selected pages, the regional row has
+no user owner, and the installed bot is the provider actor.
+
+**Why:** The provider dashboard and token response name the approving user, which
+made it tempting to classify the connection as personal. That classification was
+wrong for the product surface: the integration bot authors mutations and the
+selected pages are intended as a shared Avalon workspace capability. Changing the
+provider parameter was rejected because it would break the public OAuth contract
+rather than change Avalon's authorization model.
+
+### 2026-08-12 — Notion setup secrets leave the webhook URL and Cloudflare logs
+
+**What changed:** Notion's reusable `NOTION_WEBHOOK_SETUP_TOKEN` was replaced by
+a 30-minute, single-use nonce prepared in Global D1. Two operator commands copy
+the subscription URL and the captured verification token directly to the local
+clipboard without printing either. Recreating a subscription prepares a new
+current generation in one D1 transaction; its first challenge supersedes every
+older nonce, and an older in-flight request cannot win the ciphertext write in
+Global or arrive late and overwrite a newer EU replica.
+
+**Why:** Cloudflare records full request URLs independently of Avalon's logger,
+so a reusable query-string guard became a 90-day credential in Workers Logs and
+Logpush. Logging the verification token instead would be worse: it is the HMAC
+secret for every later delivery. A public reveal endpoint was rejected because
+it would add a remotely reachable secret-reading surface solely for a one-time
+operator action. The D1-and-local-clipboard path keeps the only plaintext handoff
+on the operator's machine, while token-binding and supersession retain safe
+retries without letting an old URL rotate the active secret.
+
+Earlier registration reasoning was not recorded in a changelog; the prose above,
+`git log`, and the PRDs under `docs/PRDs/` are the surviving record.

@@ -1,5 +1,5 @@
 import type { MessageBoxOptions, MessageBoxReturnValue } from 'electron';
-import type { AppUpdater } from 'electron-updater';
+import type { AppUpdater, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater';
 // electron-updater is published as CommonJS. Electron's native ESM loader does
 // not reliably synthesize named exports for it in a packaged app, so import the
 // CommonJS namespace through the default export. Keep the lazy singleton read
@@ -8,7 +8,7 @@ import type { AppUpdater } from 'electron-updater';
 import electronUpdater from 'electron-updater';
 import { updatePolicy } from './update-policy';
 
-const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_INTERVAL_MS = 3 * 60 * 60 * 1000;
 const DOWNLOAD_RETRY_BASE_DELAY_MS = 3_000;
 const MAX_DOWNLOAD_RETRIES = 5;
 
@@ -31,6 +31,33 @@ interface IntervalHandle {
   unref(): unknown;
 }
 
+interface ConsumedUpdaterEvents {
+  readonly 'checking-for-update': () => void;
+  readonly 'update-available': (info: UpdateInfo) => void;
+  readonly 'update-not-available': (info: UpdateInfo) => void;
+  readonly 'download-progress': (progress: ProgressInfo) => void;
+  readonly 'update-downloaded': (info: UpdateDownloadedEvent) => void;
+  readonly error: (error: Error, message?: string) => void;
+}
+
+/** The updater surface this module consumes; tests must implement this port. */
+export type AutoUpdaterPort = Omit<Pick<
+  AppUpdater,
+  | 'autoDownload'
+  | 'autoInstallOnAppQuit'
+  | 'disableDifferentialDownload'
+  | 'logger'
+  | 'checkForUpdates'
+  | 'downloadUpdate'
+  | 'quitAndInstall'
+  | 'on'
+>, 'on'> & {
+  on<Event extends keyof ConsumedUpdaterEvents>(
+    event: Event,
+    listener: ConsumedUpdaterEvents[Event],
+  ): AutoUpdaterPort;
+};
+
 export interface AutoUpdateDependencies {
   readonly isPackaged: boolean;
   readonly platform: NodeJS.Platform;
@@ -46,7 +73,7 @@ export interface AutoUpdateDependencies {
   readonly onStatusChange?: (status: UpdateStatus) => void;
   readonly log?: UpdateLogger;
   /** Test seam; production uses electron-updater's singleton. */
-  readonly updater?: AppUpdater;
+  readonly updater?: AutoUpdaterPort;
   /** Test seam; production uses the Node interval. */
   readonly scheduleInterval?: (callback: () => void, delayMs: number) => IntervalHandle;
   /** Test seam; production uses the Node timeout. */
@@ -169,9 +196,10 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   };
 
   const scheduleTimeout = deps.scheduleTimeout
-    ?? ((callback: () => void, delayMs: number) => (
-      setTimeout(callback, delayMs) as unknown as IntervalHandle
-    ));
+    ?? ((callback: () => void, delayMs: number) => {
+      const handle = setTimeout(callback, delayMs);
+      return { unref: () => handle.unref() };
+    });
   const handleDownloadFailure = (error: unknown): void => {
     log.error('[avalon] update download failed', error);
     if (!downloadInFlight || downloadRetryScheduled) return;
@@ -287,9 +315,10 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   );
   runCheck(false);
   const scheduleInterval = deps.scheduleInterval
-    ?? ((callback: () => void, delayMs: number) => (
-      setInterval(callback, delayMs) as unknown as IntervalHandle
-    ));
+    ?? ((callback: () => void, delayMs: number) => {
+      const handle = setInterval(callback, delayMs);
+      return { unref: () => handle.unref() };
+    });
   const interval = scheduleInterval(() => runCheck(false), UPDATE_INTERVAL_MS);
   interval.unref();
 

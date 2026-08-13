@@ -2,6 +2,7 @@ import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
+import { createTestD1Database, createTestD1PreparedStatement } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
@@ -29,9 +30,9 @@ class AuthorityDatabase {
   readonly binding: D1Database;
 
   constructor(readonly state: AuthorityState) {
-    this.binding = {
-      prepare: (sql: string) => new AuthorityStatement(this, sql) as unknown as D1PreparedStatement,
-    } as D1Database;
+    this.binding = createTestD1Database({
+      prepare: (sql: string) => createTestD1PreparedStatement(new AuthorityStatement(this, sql)),
+    });
   }
 }
 

@@ -2,10 +2,12 @@
 
 When a run's live context approaches the selected model's window, Avalon
 replaces it with a summary of itself. The compacted context is the stable system
-prompt plus **one** synthetic user message holding an LLM continuation summary —
-nothing from the conversation survives verbatim, not even its first message — and
-that pair is what the next model turn, and the work stream's next run, starts
-from.
+prompt plus **one** synthetic user message holding an LLM continuation summary
+followed by a deterministic, freshly authorized resource inventory. Nothing
+from the conversation survives verbatim, not even its first message. The raw
+summary is stored with the execution-principal key and exact resource-inventory
+revision under which it was produced; the inventory is regenerated only
+while both still match.
 
 This document owns the policy: when a compaction fires, what it asks the model
 for, what shape it leaves behind, and how a checkpoint is stored and replayed.
@@ -21,9 +23,11 @@ weeks ago.
 | --- | --- |
 | [`packages/agent-harness/src/bind-runtime.ts`](../packages/agent-harness/src/bind-runtime.ts) | All compaction policy: `COMPACTION_FRACTION`, the OpenRouter context-window lookup, `compact()`, `compactTerminalTurn()`, `COMPACTION_SUMMARY_PROMPT`, and `compactionCheckpointMessage()` — the one place the compacted transcript's shape is decided. |
 | [`packages/agent-harness/src/index.ts`](../packages/agent-harness/src/index.ts) | `HarnessCompactionConfig` and `HarnessCompactionCheckpoint`: the host's opt-in and the checkpoint it is handed to persist. |
+| [`packages/agent-harness/src/prompts/compaction.ts`](../packages/agent-harness/src/prompts/compaction.ts) | Pure checkpoint content renderer shared by live application and API replay. |
 | `@juno-ai/bind` (`loop/tool-loop.ts`) | Calls `needsCompaction` after a turn and `applyCompaction` at a batch boundary, then swaps in whatever transcript it is given. Bind holds no opinion about that transcript's shape. |
 | [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: `persistWorkstreamContextCompaction`, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
-| [`packages/db/migrations/0035_workstream_context_compaction.sql`](../packages/db/migrations/0035_workstream_context_compaction.sql) | The `workstream_context_compactions` table — one row per work stream. |
+| [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
+| [`packages/db/migrations/0073_attachment_derivative_lifecycle.sql`](../packages/db/migrations/0073_attachment_derivative_lifecycle.sql) | Principal-scoped `workstream_context_compactions` rows plus the monotonic work-stream resource-inventory revision and its relationship triggers. |
 
 ## How it works
 
@@ -47,32 +51,59 @@ request a compaction, which Bind flushes at the same boundary with trigger
 followed by a user message containing `COMPACTION_SUMMARY_PROMPT`, with no tools,
 streaming suppressed, on the turn's selected model with the run's own fallbacks
 and reasoning effort. The prompt asks for a sectioned handoff — request,
-decisions, done, facts, open — rather than free prose, and tells the model that
-everything above it leaves the context once it answers.
+decisions, done, facts, relevant attachments, open — rather than free prose, and
+tells the model that everything above it leaves the context once it answers.
+Relevant attachments retain exact resource IDs, derivative versions, consulted
+ranges, conclusions, and unresolved needs. It forbids reproducing the complete
+catalog because the host supplies that part authoritatively.
+On successive compactions it also identifies any earlier
+`# Authoritative work-stream resource inventory` appendix as generated state
+that must not be copied or summarized; Avalon replaces it after the new summary.
 
 An empty completion is a defect and is retried by the route plan. The
 compaction's own tokens are accounted as auxiliary spend rather than an agent
-turn, and the run's cost ceiling is checked against them before the result is
-used.
+turn. When the caller supplied a run cost ceiling, it is checked against that
+spend before the result is used; ordinary work-stream runs no longer supply one.
 
 ### The compacted transcript
 
 The live transcript becomes exactly two messages: the system message it already
-had, and `compactionCheckpointMessage(summary)` — a user-role message whose text
-is a fixed preamble naming itself as a checkpoint, then the summary. The live
-token counts reset to zero, which is also what stops the auto-check from firing
-again before a fresh provider count exists.
+had, and a user-role message whose text is a fixed preamble, the unchanged LLM
+summary, then `# Authoritative work-stream resource inventory`. The appendix is
+pure host-rendered data: an `asOf` time, total visible resources, total message
+attachments, and non-empty `image`, `markdown`, `pdf`, `document`, `spreadsheet`,
+`presentation`, `text`, and `other` groups in that order. It names every allowed
+kind and the cursor continuation for `workstream_list_resources`, but no
+filename, resource ID, MIME value, or file content. The live token counts reset
+to zero, which also stops the auto-check from firing before a fresh provider
+count exists.
 
 ### Persisting and replaying
 
-The checkpoint is persisted without its system message, keyed by work stream, in
-`workstream_context_compactions`, together with the summary, the model, the
+Before the summary call, Avalon captures the current execution-principal key and
+monotonic authorized resource-inventory revision with an O(1) lookup. After the
+summary it runs one grouped inventory query under that expected revision to
+render the appendix, then includes the revision in a conditional persistence
+statement. An attachment revocation or visibility change therefore cannot race
+with checkpoint creation without repeating the grouped aggregation.
+
+The base checkpoint is persisted without its system message or authorized
+appendix, keyed by work stream and execution principal, in
+`workstream_context_compactions`, together
+with that scope, the raw summary, checkpoint-template version, model,
 before/window token counts, and the compaction's own usage and cost. The upsert
 advances a row only when `compacted_through_sequence` moves forward, or when the
 same `harness_run_id` rewrites its own checkpoint.
 
-A later run loads that row first, pages the durable transcript backward from its
-trigger's sequence number down to `compacted_through_sequence`, and assembles
+A later run loads only that principal's row and compares its recorded inventory
+revision. When the authorized resource set changed, it ignores the checkpoint
+and replays the uncompacted transcript instead of exposing a stale summary. That
+fallback is capped at 2,000 messages and 4 MiB of serialized protocol content;
+larger history fails with `context_limit_exceeded` before a provider request.
+With an exact match it regenerates the current-version message from the raw
+summary and fresh inventory, pages
+the durable transcript backward from its trigger's sequence number down to
+`compacted_through_sequence`, and assembles
 `[...checkpoint messages, ...projected transcript, ...run prompt context]`. The
 checkpoint is therefore the prefix of the next run's conversation — which is why
 it must be derived state and nothing else (see the first invariant).
@@ -107,9 +138,19 @@ it must be derived state and nothing else (see the first invariant).
 - **The persisted checkpoint is plain text.** No `data:` URL, file part, or audio
   part may reach the row — attachment bytes are neither replayable nor safe to
   keep, and the summary is expected to have described whatever mattered.
+- **Resource inventory is derived from current authority.** The appendix uses
+  the same visibility predicate as the right sidebar and resource tools, but a
+  grouped aggregate query rather than loading every row, on every live
+  application and replay. It is never trusted to the summarizer or stored
+  as principal-specific shared prose, so attachment, detachment, deletion,
+  revocation, and private-note visibility changes take effect without rewriting
+  the raw summary.
+- **Inventory cost is constant in resource count.** At most eight fixed kind
+  rows are rendered. Exact names and IDs stay behind the pageable list tool, so
+  compaction cannot refill the context it just reclaimed.
 - **Compaction spend is not a turn.** It is accumulated as auxiliary spend;
-  counting it in `stats.turns` would make that number incomparable with
-  `maxIterations`.
+  counting it in `stats.turns` would overstate how many model decisions the
+  work-stream loop made.
 - **`compacted_through_sequence` only moves forward** (except for a rewrite by
   the same run). A regression would replay messages the checkpoint already
   summarizes, double-counting them.
@@ -137,13 +178,15 @@ a compaction. Scheduling, receipts, and everything else about the run stay in
 | Model catalog unavailable | 200,000-token window assumed; compaction still runs on real usage. |
 | Threshold crossed with nothing beneath the system prompt | `context_limit_exceeded` — there is nothing to summarize. |
 | Empty summary completion | Treated as a completion defect and retried by the route plan; a persistent one fails the run rather than storing an empty checkpoint. |
-| Cost ceiling exceeded by the compaction | `run_cost_limit_exceeded`, before the compacted transcript is adopted. The ceiling is checked *after* the summary call returns, so a run can overshoot it by one summarization pass — two if the first was truncated. That is the largest single overshoot a run can make, because the summary runs at full reasoning effort over a near-full context; it is accepted because the alternative is estimating a call's cost before making it. |
 | Checkpoint persistence fails | Fatal for the run — a compacted context that was not stored would be lost work the next run cannot recover. |
 | Summary truncated by the provider's output cap | Retried once with a terser instruction appended. If that is truncated too, the run fails with `context_limit_exceeded` rather than checkpointing a partial record. Both attempts' tokens and cost are accounted. |
-| Repeated compactions in one long work stream | Each checkpoint summarizes the previous one. The prompt asks for earlier checkpoint content to be carried forward as written, which slows but does not eliminate decay. |
+| Summary would exceed an explicitly bounded caller's run cost ceiling | `run_cost_limit_exceeded` before the checkpoint is adopted. Ordinary work-stream runs do not configure this ceiling. |
+| Repeated compactions in one long work stream | Each checkpoint summarizes the previous one, but explicitly omits its generated inventory appendix. The prompt asks for the remaining checkpoint content to be carried forward, which slows but does not eliminate decay. |
+| Authorization invalidates a checkpoint and fallback history exceeds 2,000 messages or 4 MiB serialized | `context_limit_exceeded` before provider dispatch rather than building an unbounded request. |
 
 Numbers: threshold 0.8 of the window; catalog TTL one hour, fetch timeout five
-seconds; default window 200,000 tokens; one stored checkpoint per work stream.
+seconds; default window 200,000 tokens; one latest stored checkpoint per work
+stream and execution principal.
 
 ## Testing
 
@@ -159,10 +202,12 @@ model turn shifts every later index in `requestBodies`.
 pnpm --filter @avalon/agent-harness exec vitest run src/index.test.ts
 ```
 
-`packages/db/test/migrations.test.ts` asserts the table's columns. The API-side
-replay assembly has no direct test today; a change to
-`loadWorkstreamContextCompaction` or the fenced-transcript paging is checked only
-by reading it.
+`packages/db/test/migrations.test.ts` asserts the table's columns.
+`apps/api/test/workstream-resource-inventory.test.ts` covers zero and all-kind
+rendering, bounded metadata, principal-and-visibility-scoped persistence, and
+fail-closed replay after visibility changes. API protocol tests cover the
+bounded no-checkpoint fallback and reauthorization of replayed attachment tool
+results.
 
 ## Open questions
 
@@ -189,6 +234,127 @@ by reading it.
   every routed model.
 
 ## Changelog
+
+### 2026-08-12 — Compaction fences one aggregate instead of repeating it
+
+**What changed:** Preparation now reads only the monotonic inventory revision.
+Appendix rendering performs the sole grouped inventory query under that expected
+revision, and persistence uses the captured revision directly in its conditional
+upsert. A zero-row write checks only the current revision.
+
+**Why:** The earlier race fence was correct but performed the same grouped count
+at preparation, rendering, and persistence even though only rendering consumed
+the groups.
+
+**Considered and rejected:** Removing the before/after fence or trusting a
+render-time comparison through persistence. Revision-only checks keep both race
+windows closed without repeated aggregation.
+
+**Consequences:** Compaction still fails closed on any relevant inventory change,
+but a normal checkpoint performs one grouped resource query instead of three.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Checkpoints are principal-scoped and inventory-race fenced
+
+**What changed:** Compaction rows are keyed by work stream and execution
+principal, authorized inventory carries a monotonic revision, and persistence
+is conditional on that revision still being current. Invalidated fallback
+history is bounded before provider dispatch. Successive compactions explicitly
+discard the earlier generated inventory appendix before Avalon appends a fresh
+one.
+
+**Why:** A single work-stream row let one participant evict another's usable
+checkpoint; a compare-then-insert sequence still admitted a final revocation
+race; unlimited fallback could exhaust a Worker; and a smaller summarizer could
+copy stale aggregate counts into prose beside the new authoritative counts.
+
+**Considered and rejected:** Sharing raw summaries across principals, hashing a
+fully loaded inventory at every boundary, trusting a pre-insert comparison, and
+letting the model reconcile old and new appendices. Each leaves either an
+authorization ambiguity or an unbounded runtime path.
+
+**Consequences:** Every checkpoint lookup supplies the exact principal key,
+resource relationships advance the revision through D1 triggers, and the final
+write fails closed if that revision changed. The old inventory appendix is
+generated state, never durable summary content.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Raw summaries are scoped to the authorization state that produced them
+
+**What changed:** Compaction captures the execution-principal key and authorized
+resource fingerprint before summarization, verifies it after summarization and
+before persistence, and stores both with the raw summary. Replay ignores the
+checkpoint when either value differs and rebuilds context from durable messages.
+
+**Why:** A continuation summary can contain exact IDs and conclusions from a
+private attachment. Regenerating only the aggregate appendix did not make that
+model-authored prose safe for a different viewer or after revocation.
+
+**Considered and rejected:** Treating the raw summary as principal-neutral and
+attempting to redact attachment details on replay. Redaction cannot reliably
+separate a private conclusion from ordinary prose, while an exact scope match is
+deterministic and fail-closed.
+
+**Consequences:** Resource membership or visibility changes invalidate the
+checkpoint and may cause a later run to replay and compact more history. Future
+summary persistence must retain the before-summary scope capture and both race
+checks; the deterministic inventory remains excluded from the stored message.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Authorized resource inventory is regenerated after every summary
+
+**What changed:** The harness now appends a host-rendered resource inventory to
+the live checkpoint after the LLM summary, while persistence keeps only the base
+summary checkpoint, template version, and authorization scope. Matching replay
+reconstructs the current template from the raw summary and reruns the shared
+sidebar visibility query. The summary prompt retains exact details only
+for relevant attachments and refuses a complete catalog.
+
+**Why:** The summarizer is intentionally selective and therefore cannot be the
+authority for every current resource. Persisting a rendered resource view would
+become stale after relationship or note-visibility changes. A full ID list would grow with the
+work stream and immediately spend the context compaction reclaimed.
+
+**Considered and rejected:** Asking the LLM to maintain totals, persisting the
+rendered appendix, and listing every filename and ID. Those respectively make
+inventory subjective, freeze authorization at compaction time, or create an
+unbounded checkpoint. The fixed eight-kind aggregate plus paginated list tool
+keeps discovery complete without storing principal-specific prose.
+
+**Consequences:** Every current-version replay performs one authorized resource
+visibility read. Future checkpoint templates must increment the stored version,
+keep unknown versions readable only inside the matching stored scope, and never
+put resource metadata or binary parts into the stored base message.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Ordinary work-stream compaction has no run cost ceiling
+
+**What changed:** A work-stream compaction still records the tokens and cost of
+every summary attempt. Ordinary work-stream runs no longer provide a run-wide
+cost ceiling to compare that spend with before adopting the checkpoint; the
+conditional check remains for harness callers that explicitly configure one.
+
+**Why:** Ordinary work-stream runs now carry a 1,000-turn ceiling and no
+tool-call, wall-time, or cost ceiling after a successful source-gathering run
+was stopped one turn before it could answer. Keeping the compaction-only cost
+check would have left a hidden copy of one removed ceiling on the path long runs
+are most likely to exercise.
+
+**Considered and rejected:** Keeping a separate compaction budget. It would make
+the run unlimited only until it needed the mechanism that permits long context
+to continue, coupling survivability to an unrelated spend threshold.
+
+**Consequences:** Repeated and retried summaries can add unbounded recorded
+model spend to an ordinary work-stream run. Truncation detection, the single
+terser retry, context failure, and checkpoint durability remain unchanged.
 
 ### 2026-08-12 — The summary carries provenance, not just content
 

@@ -5,6 +5,7 @@ import type { AuthContext, Env } from "../src/env";
 import { enqueueActivityOpportunity } from "../src/services/work-opportunity-batching";
 import { __workOpportunityTesting, WorkOpportunityService } from "../src/services/work-opportunity-service";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const userOne = "00000000-0000-7000-8000-000000000002";
@@ -39,8 +40,12 @@ class D1Adapter {
     private readonly database: DatabaseSync,
     private readonly afterFirst?: (sql: string) => void,
   ) {}
-  prepare(sql: string): Statement { return new Statement(this.database.prepare(sql), sql, this.afterFirst); }
-  async batch(statements: Statement[]) { return Promise.all(statements.map((statement) => statement.run())); }
+  prepare(sql: string): D1PreparedStatement {
+    return createTestD1PreparedStatement(new Statement(this.database.prepare(sql), sql, this.afterFirst));
+  }
+  async batch<T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    return Promise.all(statements.map((statement) => statement.run<T>()));
+  }
 }
 
 afterEach(() => {
@@ -75,7 +80,7 @@ function seed(database: DatabaseSync): void {
       ('00000000-0000-7000-8000-000000000011', '${workspaceId}', 'github', 'workspace', NULL, 'tenant-gh', 'GitHub', '[]', 'plugin_github', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'),
       ('00000000-0000-7000-8000-000000000012', '${workspaceId}', 'linear', 'workspace', NULL, 'tenant-linear', 'Linear', '[]', 'plugin_linear', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'),
       ('00000000-0000-7000-8000-000000000013', '${workspaceId}', 'google', 'personal', '${userOne}', 'one@example.com', 'Google One', '[]', 'plugin_google_one', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'),
-      ('00000000-0000-7000-8000-000000000014', '${workspaceId}', 'notion', 'personal', '${userTwo}', 'notion-two', 'Notion Two', '[]', 'plugin_notion_two', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+      ('00000000-0000-7000-8000-000000000014', '${workspaceId}', 'granola', 'personal', '${userTwo}', 'granola-two', 'Granola Two', '[]', 'plugin_granola_two', 'healthy', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
   `);
 }
 
@@ -98,12 +103,12 @@ function insertActivity(
 }
 
 function environment(database: DatabaseSync, overrides: Partial<Env> = {}): Env {
-  return {
+  return createTestEnv({
     DB: new D1Adapter(database),
     APP_ENV: "development",
     AVALON_REGION: "global",
     ...overrides,
-  } as unknown as Env;
+  });
 }
 
 function insertOpportunity(database: DatabaseSync, id: string, version = 1): void {
@@ -199,7 +204,7 @@ describe("suggested-work aggregation", () => {
     });
 
     await enqueueActivityOpportunity(
-      environment(database, { DB: racingDatabase as unknown as D1Database }),
+      environment(database, { DB: createTestD1Database(racingDatabase) }),
       "00000000-0000-7000-8000-000000000108",
     );
 
@@ -360,7 +365,7 @@ describe("suggested-work aggregation", () => {
     ]);
   });
 
-  it("turns route_existing activity decisions into work-stream suggestions", async () => {
+  it("does not turn route_existing decisions into work-stream suggestions while the surface is paused", async () => {
     const database = migratedDatabase();
     seed(database);
     const activityId = "00000000-0000-7000-8000-000000000110";
@@ -376,10 +381,10 @@ describe("suggested-work aggregation", () => {
       "2026-08-07T00:00:00.000Z", "2026-08-07T00:00:00.000Z", "2026-08-07T00:00:00.000Z",
     );
     const roomFetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
-    const rooms = {
+    const rooms = createCloudflareTestBinding<DurableObjectNamespace>({
       idFromName: vi.fn().mockReturnValue({}),
       get: vi.fn().mockReturnValue({ fetch: roomFetch }),
-    } as unknown as DurableObjectNamespace;
+    });
     const routed = await __workOpportunityTesting.routeExistingDecision(
       environment(database, { WORKSTREAM_ROOMS: rooms }),
       {
@@ -419,15 +424,9 @@ describe("suggested-work aggregation", () => {
       }],
       [{ id: workstreamId, title: "Existing launch work", objective: "Ship the launch" }],
     );
-    expect(routed).toBe(true);
-    expect(database.prepare(
-      "SELECT activity_id, workstream_id, reason FROM activity_suggestions",
-    ).get()).toEqual({
-      activity_id: activityId,
-      workstream_id: workstreamId,
-      reason: "Route the launch dependency update here",
-    });
-    expect(roomFetch).toHaveBeenCalledOnce();
+    expect(routed).toBe(false);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_suggestions").get()).toEqual({ count: 0 });
+    expect(roomFetch).not.toHaveBeenCalled();
 
     await expect(__workOpportunityTesting.routeExistingDecision(
       environment(database, { WORKSTREAM_ROOMS: rooms }),
@@ -452,7 +451,7 @@ describe("suggested-work aggregation", () => {
       [],
       [{ id: workstreamId, title: "Existing launch work", objective: "Ship the launch" }],
     )).resolves.toBe(false);
-    expect(roomFetch).toHaveBeenCalledOnce();
+    expect(roomFetch).not.toHaveBeenCalled();
   });
 
   it("keeps execution prompts and reasoning out of the renderer contract and rejects stale starts", async () => {

@@ -29,7 +29,7 @@ import {
 import { newId, nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
-import { encryptString, timingSafeEqualText } from "../lib/crypto";
+import { encryptString, sha256, timingSafeEqualText } from "../lib/crypto";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { connectorRegistryForEnv, linearConnectorConfig } from "../lib/connector-registry";
 import { decryptVersionedConnectorCredentials, decryptVersionedCredentialValue } from "./connector-credential-envelope";
@@ -281,7 +281,7 @@ export class ProviderWebhookService {
   async ingestNotion(
     rawBody: ProviderWebhookRawBody,
     headers: ProviderWebhookHeaders,
-    setupToken: string | null = null,
+    setupNonce: string | null = null,
   ): Promise<ProviderWebhookIngestionResult> {
     return this.stableProviderError("Notion", async () => {
       const raw = this.exactRawBody(rawBody);
@@ -291,7 +291,7 @@ export class ProviderWebhookService {
         this.maxBytes(),
       );
       if (verificationToken !== null) {
-        return this.captureNotionChallenge(verificationToken, setupToken);
+        return this.captureNotionChallenge(verificationToken, setupNonce);
       }
 
       const challenge = await this.loadNotionChallenge();
@@ -361,87 +361,74 @@ export class ProviderWebhookService {
 
   private async captureNotionChallenge(
     verificationToken: string,
-    suppliedSetupToken: string | null,
+    suppliedSetupNonce: string | null,
   ): Promise<ProviderWebhookIngestionResult> {
-    const configuredSetupToken = requiredConfiguration(
-      this.env.NOTION_WEBHOOK_SETUP_TOKEN,
-      "Notion webhook setup token",
+    const setupNonceHash = await this.authorizeNotionSetupNonce(
+      verificationToken,
+      suppliedSetupNonce,
     );
-    if (
-      !suppliedSetupToken ||
-      !timingSafeEqualText(configuredSetupToken, suppliedSetupToken)
-    ) {
-      throw new ConnectorError(
-        "unauthorized",
-        "The Notion webhook setup token is invalid",
-      );
-    }
 
     const existing = await this.loadNotionChallenge();
     if (existing) {
       const existingToken = await this.decryptNotionChallenge(existing);
-      if (timingSafeEqualText(existingToken, verificationToken)) {
+      const duplicate = timingSafeEqualText(existingToken, verificationToken);
+      if (
+        duplicate
+        && existing.setup_nonce_hash
+        && timingSafeEqualText(existing.setup_nonce_hash, setupNonceHash)
+      ) {
         return { accepted: true, duplicate: true, activityCount: 0 };
       }
-      // Notion explicitly requires replacing the stored token when a webhook
-      // subscription is rotated or recreated. The operator-only setup token
-      // above is the authority for this regional secret replacement.
-      const replacement = await encryptString(
-        verificationToken,
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        this.notionChallengeAad(),
-      );
-      await this.env.DB.prepare(
-        `UPDATE provider_webhook_challenges
-         SET encrypted_token = ?, token_iv = ?, credential_key_version = ?,
-             created_at = ?, consumed_at = NULL
-         WHERE provider = 'notion' AND region = ?`,
-      ).bind(
-        replacement.ciphertext,
-        replacement.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        nowIso(),
-        this.env.AVALON_REGION,
-      ).run();
-      return { accepted: true, duplicate: false, activityCount: 0 };
+      await this.storeNotionChallengeToken(verificationToken, setupNonceHash);
+      return { accepted: true, duplicate, activityCount: 0 };
     }
 
-    const encrypted = await encryptString(
-      verificationToken,
-      this.env.CONNECTOR_CREDENTIALS_KEY,
-      this.notionChallengeAad(),
-    );
-    const inserted = await this.env.DB.prepare(
-      `INSERT INTO provider_webhook_challenges
-       (provider, region, encrypted_token, token_iv, credential_key_version,
-        created_at, consumed_at)
-       VALUES ('notion', ?, ?, ?, ?, ?, NULL)
-       ON CONFLICT(provider, region) DO NOTHING`,
-    ).bind(
-      this.env.AVALON_REGION,
-      encrypted.ciphertext,
-      encrypted.iv,
-      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-      nowIso(),
-    ).run();
-    if (resultChanges(inserted) === 0) {
-      const winner = await this.loadNotionChallenge();
-      if (!winner) {
-        throw new ConnectorError(
-          "provider_error",
-          "The Notion webhook verification token could not be stored",
-        );
-      }
-      const winnerToken = await this.decryptNotionChallenge(winner);
-      if (!timingSafeEqualText(winnerToken, verificationToken)) {
-        throw new ConnectorError(
-          "unauthorized",
-          "Notion webhook verification is already configured and cannot be replaced through the setup endpoint",
-        );
-      }
-      return { accepted: true, duplicate: true, activityCount: 0 };
-    }
+    await this.storeNotionChallengeToken(verificationToken, setupNonceHash);
     return { accepted: true, duplicate: false, activityCount: 0 };
+  }
+
+  /**
+   * Claims an unexpired setup nonce for the first verification token that uses
+   * it. A consumed nonce may retry only that same token, and only while it is
+   * still the current setup generation. Encrypted storage checks that same
+   * generation again in its write statement, closing the claim-to-store race.
+   */
+  private async authorizeNotionSetupNonce(
+    verificationToken: string,
+    suppliedSetupNonce: string | null,
+  ): Promise<string> {
+    if (!suppliedSetupNonce || suppliedSetupNonce.length > 200) {
+      throw new ConnectorError("unauthorized", "The Notion webhook setup nonce is invalid");
+    }
+    const nonceHash = await sha256(suppliedSetupNonce);
+    const verificationTokenHash = await sha256(verificationToken);
+    const at = new Date(this.now()).toISOString();
+    const claimed = await this.env.DB.prepare(
+      `UPDATE notion_webhook_setup_nonces
+       SET verification_token_hash = ?, consumed_at = ?
+       WHERE nonce_hash = ? AND is_current = 1
+         AND consumed_at IS NULL AND expires_at > ?`,
+    ).bind(verificationTokenHash, at, nonceHash, at).run();
+    if (resultChanges(claimed) === 1) return nonceHash;
+
+    const nonce = await this.env.DB.prepare(
+      `SELECT verification_token_hash, consumed_at, is_current
+       FROM notion_webhook_setup_nonces
+       WHERE nonce_hash = ?`,
+    ).bind(nonceHash).first<{
+      verification_token_hash: string | null;
+      consumed_at: string | null;
+      is_current: number;
+    }>();
+    if (
+      !nonce?.consumed_at
+      || !nonce.verification_token_hash
+      || nonce.is_current !== 1
+      || !timingSafeEqualText(nonce.verification_token_hash, verificationTokenHash)
+    ) {
+      throw new ConnectorError("unauthorized", "The Notion webhook setup nonce is invalid or expired");
+    }
+    return nonceHash;
   }
 
   private async ingestVerified(
@@ -880,7 +867,7 @@ export class ProviderWebhookService {
     const statusClause = "status <> 'disabled'";
     const query = provider === "notion"
       ? `SELECT * FROM connector_connections
-         WHERE connector_type = 'notion' AND scope = 'personal'
+         WHERE connector_type = 'notion' AND scope = 'workspace'
            AND provider_account_id IN (${routingAccountIds!.map(() => "?").join(", ")})
            AND ${statusClause}`
       : provider === "github" && accountId === null
@@ -1167,25 +1154,75 @@ export class ProviderWebhookService {
    * One public Notion connection means one subscription and one challenge, sent
    * to whichever host is registered. EU never receives that request and could
    * not otherwise verify a forwarded delivery for itself — so Global replicates
-   * the token rather than have EU trust the hop. The operator setup token was
-   * checked where the challenge arrived; this is reachable only over the
+   * the token rather than have EU trust the hop. The one-time setup nonce was
+   * consumed where the challenge arrived; this is reachable only over the
    * account-internal bridge and has no URL of its own.
    */
-  async storeNotionChallengeToken(verificationToken: string): Promise<void> {
+  async storeNotionChallengeToken(
+    verificationToken: string,
+    setupNonceHash: string | null = null,
+    setupGeneration: number | null = null,
+  ): Promise<void> {
     const encrypted = await encryptString(
       verificationToken,
       this.env.CONNECTOR_CREDENTIALS_KEY,
       this.notionChallengeAad(),
     );
-    await this.env.DB.prepare(
-      `INSERT INTO provider_webhook_challenges
+    const createdAt = new Date(this.now()).toISOString();
+    const upsert = `INSERT INTO provider_webhook_challenges
        (provider, region, encrypted_token, token_iv, credential_key_version,
-        created_at, consumed_at)
-       VALUES ('notion', ?, ?, ?, ?, ?, NULL)
+        setup_nonce_hash, setup_generation, created_at, consumed_at)
+       VALUES ('notion', ?, ?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT(provider, region) DO UPDATE SET
          encrypted_token = excluded.encrypted_token,
          token_iv = excluded.token_iv,
          credential_key_version = excluded.credential_key_version,
+         setup_nonce_hash = excluded.setup_nonce_hash,
+         setup_generation = excluded.setup_generation,
+         created_at = excluded.created_at,
+         consumed_at = NULL
+       WHERE provider_webhook_challenges.setup_generation IS NULL
+          OR excluded.setup_generation >= provider_webhook_challenges.setup_generation`;
+    if (setupNonceHash === null) {
+      if (!setupGeneration || !Number.isSafeInteger(setupGeneration)) {
+        throw new ConnectorError(
+          "invalid_configuration",
+          "The Notion webhook setup generation is required for regional replication",
+        );
+      }
+      const replicated = await this.env.DB.prepare(upsert).bind(
+        this.env.AVALON_REGION,
+        encrypted.ciphertext,
+        encrypted.iv,
+        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+        null,
+        setupGeneration,
+        createdAt,
+      ).run();
+      if (resultChanges(replicated) !== 1) {
+        throw new ConnectorError(
+          "unauthorized",
+          "The Notion webhook setup generation has been superseded",
+        );
+      }
+      return;
+    }
+
+    const verificationTokenHash = await sha256(verificationToken);
+    const stored = await this.env.DB.prepare(
+       `INSERT INTO provider_webhook_challenges
+       (provider, region, encrypted_token, token_iv, credential_key_version,
+        setup_nonce_hash, setup_generation, created_at, consumed_at)
+       SELECT 'notion', ?, ?, ?, ?, ?, nonce.rowid, ?, NULL
+       FROM notion_webhook_setup_nonces AS nonce
+       WHERE nonce.nonce_hash = ? AND nonce.is_current = 1
+         AND nonce.consumed_at IS NOT NULL AND nonce.verification_token_hash = ?
+       ON CONFLICT(provider, region) DO UPDATE SET
+         encrypted_token = excluded.encrypted_token,
+         token_iv = excluded.token_iv,
+         credential_key_version = excluded.credential_key_version,
+         setup_nonce_hash = excluded.setup_nonce_hash,
+         setup_generation = excluded.setup_generation,
          created_at = excluded.created_at,
          consumed_at = NULL`,
     ).bind(
@@ -1193,23 +1230,58 @@ export class ProviderWebhookService {
       encrypted.ciphertext,
       encrypted.iv,
       Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-      nowIso(),
+      setupNonceHash,
+      createdAt,
+      setupNonceHash,
+      verificationTokenHash,
     ).run();
+    if (resultChanges(stored) !== 1) {
+      throw new ConnectorError(
+        "unauthorized",
+        "The Notion webhook setup nonce has been superseded",
+      );
+    }
+  }
+
+  async notionSetupGenerationForToken(verificationToken: string): Promise<number> {
+    const verificationTokenHash = await sha256(verificationToken);
+    const row = await this.env.DB.prepare(
+      `SELECT nonce.rowid AS setup_generation
+       FROM provider_webhook_challenges AS challenge
+       INNER JOIN notion_webhook_setup_nonces AS nonce
+         ON nonce.nonce_hash = challenge.setup_nonce_hash
+       WHERE challenge.provider = 'notion' AND challenge.region = ?
+         AND nonce.is_current = 1 AND nonce.consumed_at IS NOT NULL
+         AND nonce.verification_token_hash = ?
+         AND challenge.setup_generation = nonce.rowid`,
+    ).bind(this.env.AVALON_REGION, verificationTokenHash).first<{ setup_generation: number }>();
+    if (!row?.setup_generation) {
+      throw new ConnectorError(
+        "unauthorized",
+        "The Notion webhook setup generation has been superseded",
+      );
+    }
+    return row.setup_generation;
   }
 
   private async loadNotionChallenge(): Promise<{
     encrypted_token: string;
     token_iv: string;
     credential_key_version: number;
+    setup_nonce_hash: string | null;
+    setup_generation: number | null;
   } | null> {
     return this.env.DB.prepare(
-      `SELECT encrypted_token, token_iv, credential_key_version
+      `SELECT encrypted_token, token_iv, credential_key_version,
+              setup_nonce_hash, setup_generation
        FROM provider_webhook_challenges
        WHERE provider = 'notion' AND region = ?`,
     ).bind(this.env.AVALON_REGION).first<{
       encrypted_token: string;
       token_iv: string;
       credential_key_version: number;
+      setup_nonce_hash: string | null;
+      setup_generation: number | null;
     }>();
   }
 

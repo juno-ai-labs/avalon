@@ -61,10 +61,18 @@ const linearStart = z.object({
     "linear.agent",
   ])).min(1),
 });
-const notionStart = z.object({
-  scope: z.literal("personal"),
-  capabilities: z.array(z.enum(["notion.read", "notion.insert", "notion.update", "notion.comment.read", "notion.comment.insert"])).min(1),
-});
+const notionStart = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("personal"),
+    capabilities: z.array(z.literal("notion.personal.mcp")).length(1),
+  }),
+  z.object({
+    scope: z.literal("workspace"),
+    capabilities: z.array(z.enum([
+      "notion.read", "notion.insert", "notion.update", "notion.comment.read", "notion.comment.insert",
+    ])).min(1),
+  }),
+]);
 const granolaStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.literal("granola.personal.read")).length(1),
@@ -97,11 +105,7 @@ const slackStart = z.discriminatedUnion("scope", [
   }),
   z.object({
     scope: z.literal("personal"),
-    capabilities: z.array(z.enum([
-      "slack.search", "slack.messages.read", "slack.files.read", "slack.messages.write",
-      "slack.conversations.write", "slack.reactions.write", "slack.canvases.read",
-      "slack.canvases.write", "slack.users.read",
-    ])).min(1),
+    capabilities: z.array(z.literal("slack.personal.mcp")).length(1),
   }),
 ]);
 const xCreate = z.object({
@@ -379,14 +383,14 @@ webhookIngestionRoutes.post("/linear", async (c) => {
 });
 webhookIngestionRoutes.post("/notion", async (c) => {
   const rawBody = new Uint8Array(await c.req.arrayBuffer());
-  const setupToken = c.req.query("setup") ?? null;
+  const setupNonce = c.req.query("setup") ?? null;
   // Only the shared ingress replicates the captured token to the other region,
-  // and `setup=` is sent on nothing but the one-time challenge. Accepting that
-  // challenge on a regional host would store a token here, answer 200, and
-  // leave the other region unable to verify anything — surfacing much later as
-  // a total delivery failure for every workspace it owns. Refuse instead, and
-  // name the host the subscription is supposed to use.
-  if (setupToken !== null && notionIngressIsElsewhere(c.env, c.req.url)) {
+  // and `setup=` carries a nonce that only the shared host can consume.
+  // Accepting that challenge on a regional host would store a token here,
+  // answer 200, and leave the other region unable to verify anything —
+  // surfacing much later as a total delivery failure for every workspace it
+  // owns. Refuse instead, and name the registered host.
+  if (setupNonce !== null && notionIngressIsElsewhere(c.env, c.req.url)) {
     throw new ApiError(
       400,
       "notion_setup_wrong_host",
@@ -394,8 +398,8 @@ webhookIngestionRoutes.post("/notion", async (c) => {
     );
   }
   const result = isSharedNotionIngress(c.env, c.req.url)
-    ? await new NotionRoutingService(c.env).ingestNotion(rawBody, c.req.raw.headers, setupToken)
-    : await new ProviderWebhookService(c.env).ingestNotion(rawBody, c.req.raw.headers, setupToken);
+    ? await new NotionRoutingService(c.env).ingestNotion(rawBody, c.req.raw.headers, setupNonce)
+    : await new ProviderWebhookService(c.env).ingestNotion(rawBody, c.req.raw.headers, setupNonce);
   // Notion requires a successful 2xx response; acknowledge verified durable
   // deliveries consistently with 200 so setup and normal delivery semantics
   // do not depend on whether a receipt was already present.

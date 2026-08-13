@@ -29,7 +29,6 @@ const baseMessage: Message = {
 
 const actions = {
   onAnswerElicitation: vi.fn(async () => undefined),
-  onResolveSuggestion: vi.fn(async () => undefined),
 };
 
 describe('MessageBlock model timing', () => {

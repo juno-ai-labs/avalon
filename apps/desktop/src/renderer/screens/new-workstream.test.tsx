@@ -79,6 +79,7 @@ function workstream(id: string, title: string, harnessStatus: WorkstreamSummary[
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     pinPosition: null,
     preview: `${title} preview`,
   };
@@ -213,6 +214,28 @@ describe('New work-stream home', () => {
       openingMessage: 'Prepare the launch brief',
       participantIds: ['user-2'],
     }));
+  });
+
+  it('focuses the first member when the participant picker opens', async () => {
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants: Adam Juhasz' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
+    await waitFor(() => expect(within(dialog).getByRole('checkbox', { name: /Samantha Lee/u })).toHaveFocus());
+    expect(within(dialog).getByRole('button', { name: 'Close dialog' })).not.toHaveFocus();
+  });
+
+  it('focuses Done when the participant picker has no available members', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([currentUser]);
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants: Adam Juhasz' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add people' });
+    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Done' })).toHaveFocus());
+    expect(within(dialog).getByRole('button', { name: 'Close dialog' })).not.toHaveFocus();
   });
 
   it('hides the model selector unless developer mode is on', async () => {
@@ -431,10 +454,10 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled());
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening work-stream message' }), { key: 'Enter' });
 
-    // The tile shows the extension and carries the file name as its accessible
-    // name, exactly as the sent turn will once the message is persisted.
+    // The tile shows the extension and exposes the same preview action as the
+    // sent turn will once the message is persisted.
     const turn = await screen.findByRole('article', { name: 'Message from Adam Juhasz' });
-    expect(within(turn).getByRole('button', { name: 'notes.txt' })).toBeInTheDocument();
+    expect(within(turn).getByRole('button', { name: 'Preview notes.txt' })).toBeInTheDocument();
   });
 
   it('takes back the optimistic work stream when creation fails', async () => {

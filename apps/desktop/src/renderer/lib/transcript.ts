@@ -4,6 +4,10 @@ type TextMessageInput = Omit<Message, 'messageType' | 'text'> & { text: string }
 type ToolEventMessageInput = Omit<Message, 'messageType' | 'toolEvent'> & { toolEvent: ToolEventData };
 type ElicitationMessageInput = Omit<Message, 'messageType' | 'elicitation'> & { elicitation: ElicitationData };
 
+export function visibleTranscriptMessages(messages: Message[]): Message[] {
+  return messages.filter((message) => message.messageType !== 'activity_suggestion');
+}
+
 export function createTextMessage({ text, ...message }: TextMessageInput): Message {
   return { ...message, messageType: 'text', text };
 }

@@ -75,6 +75,11 @@ and a shipped one reads:
 - [x] completed
 ```
 
+Approval is a review gate, not a fourth state. A PRD is approved when the pull
+request that introduces it has been reviewed and merged. It remains `planned`
+from creation through approval and until implementation starts. Write any
+`plan.md` in a later change, never in the pull request that writes the PRD.
+
 Advancing a PRD is therefore ticking a box, and nothing else moves. Do it in the
 commit that makes it true: `in progress` when the first implementing change
 lands, `completed` when the last one does.
@@ -130,7 +135,7 @@ contract, and it is edited whenever the contract itself changes.
 | --- | --- |
 | `prd.md` | **Required.** The PRD itself: the problem, the goals and non-goals, the proposed product behavior, and the decisions. This is the file other documents link to. |
 | `state.md` | **Required.** The three-line state checklist above, plus a supersession or standing-contract note where one applies. Nothing else. |
-| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Add it when the work is large enough that sequencing matters. |
+| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Write it only after the PRD is approved, and only when the work is large enough that sequencing matters. |
 | `design.md` | Architecture and rationale too detailed for the PRD body — schemas, protocols, migration strategy. |
 | `research.md` | Prior art, competitor behavior, or investigation that informed the PRD but is not itself a proposal. |
 | `README.md` | Only for a folder that has grown into a bundle: a short map saying which file is actionable and which are supporting provenance. |
@@ -150,13 +155,14 @@ prose:
 > Created 2026-08-10.
 >
 > A participant can silence a busy work stream for a fixed period without
-> leaving it. Companion plan: [`plan.md`](./plan.md). Standing contract:
+> leaving it. Standing contract:
 > [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 ```
 
 It carries the creation date, a one-line scope, and links to the companion files
 and to the documents a reader needs alongside it. Keep it to what orients a
-reader who arrived from a search result.
+reader who arrived from a search result. If an approved PRD later gains a
+`plan.md`, add its companion link here in the same change.
 
 **No state and no owner in the header.** State lives in `state.md` and nowhere
 else; an owner line in a document that outlives the assignment is stale the day
@@ -304,8 +310,8 @@ provenance rather than guidance.
   [`security.md`](security.md) defines the boundaries.
 - **Agent behavior** — What the agent may now do, which typed tools it gains,
   what it is still forbidden, and what a user sees while it works. Required
-  whenever the change touches the harness or adds a tool; see
-  [`agent-harness.md`](agent-harness.md).
+  whenever the change touches the harness or adds or changes a tool or plugin;
+  see [`agent-harness.md`](agent-harness.md) and the requirements below.
 - **Provider configuration** — Any Slack, GitHub, Linear, Notion, Google,
   Resend, or Cloudflare setting that must change outside the repository, in
   which region, and what breaks if it is not applied before the change ships.
@@ -318,6 +324,71 @@ provenance rather than guidance.
 - **Open questions** — What is genuinely undecided, and what each answer would
   change. An open question that blocks the build says so. Delete each one as it
   is resolved — resolved questions belong in **Key design decisions**.
+
+### Required documentation for agent tools and plugins
+
+A PRD that adds or changes an agent tool or plugin must include an **Agent
+behavior** section and follow [`agent-tools.md`](agent-tools.md). “Add a tool
+that edits files” or a table of tool names is not a buildable contract. Put
+concise behavior in `prd.md` and split detailed schemas, sequencing, and prior
+art into `design.md` or `research.md` when needed, but preserve all of the
+following somewhere in the PRD folder:
+
+1. **Plugin contract.** Give the canonical plugin ID, model-visible wire prefix,
+   availability, selection, and authority conditions, preload/lazy-load
+   behavior, tool order, and the exact high-salience system-prompt guidance.
+   State what loading the plugin does and does not start, authorize, or persist.
+2. **Complete tool catalog.** For every tool, give its canonical and
+   model-visible names, model-facing description, capability, `read`/`write`
+   mode, idempotency class, timeout, and whether execution must be serial. A
+   model should be able to choose the right tool from this material without
+   hidden implementation knowledge.
+3. **Exact wire shapes.** Document every input property, whether it is required,
+   optional, nullable, mutually exclusive, or forbidden, plus the complete
+   successful output. Use the repository's real casing and Bind envelope. Name
+   hard limits, defaults, cursor rules, strict unknown-field rejection, and the
+   runtime validation that enforces the advertised JSON Schema.
+4. **Discovery and sequencing.** Show where every ID, enum, cursor, revision,
+   path, or other prerequisite comes from and include short common call
+   sequences. If a consumer accepts `expectedRevision`, name the producing
+   tool/output, define create-only semantics such as `null`, return the next
+   revision after success, and require rereading after a conflict rather than
+   returning a replacement token. Identify shell or other paths that bypass the
+   guard and how they serialize with typed mutations.
+5. **Failure and self-healing contract.** List common failures for every tool,
+   with a stable code, an exact model-visible error sentence that includes the
+   shortest safe next action, only the structured detail keys Bind actually
+   forwards, and any contextual remediation in model-visible `data.details`. For
+   example, a revision-conflict error says “The file changed after it was read.
+   Read it again and rebuild the edit”; it does not merely say “stale revision”
+   or hide the reread instruction in `summary`. Say whether the model should
+   correct and retry, inspect state first, retry once after `retryAfterMs`, or
+   stop for participant/policy/external-state change. Distinguish normal domain
+   outcomes—such as a command exiting nonzero—from transport failures and
+   ambiguous writes. Never put the only recovery instruction in the human-only
+   `summary` or require the model to translate an internal error code into a
+   procedure.
+6. **Authority, safety, and lifecycle.** State what is model choice versus
+   host-derived, how paths and identifiers are authorized, where credentials
+   live, what the OS/provider boundary enforces, how network access works, and
+   how cancellation, timeout, output truncation, replay, reconciliation, and
+   cleanup behave. Permission prompts and command parsing are not described as
+   a sandbox.
+7. **Next-step outputs.** Return the IDs, revisions, URLs, hashes, statuses, and
+   continuation values a likely following call needs. Document how a replay
+   returns persisted values and how truncation exposes a bounded recovery path.
+8. **Model-usability acceptance.** Add schema snapshot and contract tests for
+   required, optional, forbidden, success, and failed shapes. Add prompt/tool
+   evaluations on the configured medium fallback model that cover discovery,
+   at least one successful multi-tool sequence, predictable wrong first calls,
+   conflict recovery, stop conditions, and the absence of loops or blind
+   side-effect retries. A frontier model succeeding is not sufficient evidence.
+
+When implementation ships, the same durable material moves into the owning
+subsystem documents and tests; the completed PRD remains provenance. If the
+feature creates a large plugin or tool subsystem with no owner, add a module
+document per [`module-documents.md`](module-documents.md) and register it in
+[`README.md`](README.md).
 
 ### Conventions
 
@@ -353,7 +424,7 @@ provenance rather than guidance.
 ## Data model                <!-- optional -->
 ## Regional impact           <!-- optional -->
 ## Security and trust model  <!-- optional -->
-## Agent behavior            <!-- optional -->
+## Agent behavior            <!-- required when adding/changing an agent tool or plugin -->
 ## Provider configuration    <!-- optional -->
 ## Rollout                   <!-- optional -->
 ## Acceptance                <!-- optional -->
@@ -397,11 +468,14 @@ provenance rather than guidance.
    seven required ones in order, then whichever optional ones apply. Start with
    **Non-goals** if the scope is contested; the rest gets easier once the edges
    are fixed. **Decision log** starts as `None yet.`
-5. Split out `plan.md`, `design.md`, or `research.md` if the body is carrying
+5. If the PRD adds or changes an agent tool or plugin, complete the
+   [tool-and-plugin documentation](#required-documentation-for-agent-tools-and-plugins)
+   and verify each tool against [`agent-tools.md`](agent-tools.md).
+6. Split out `design.md` or `research.md` if the body is carrying
    material that belongs in one of them.
-6. Tick `in progress` in the commit where implementation starts. From here the
+7. Tick `in progress` in the commit where implementation starts. From here the
    **Decision log** is the live part of the document: append an entry in the same
    change as each decision that moves the scope, the behavior, or the contract.
-7. When it ships, tick `completed`, read back through the decision log and make
+8. When it ships, tick `completed`, read back through the decision log and make
    sure the subsystem documents describe the shipped behavior, and stop editing
    the PRD.

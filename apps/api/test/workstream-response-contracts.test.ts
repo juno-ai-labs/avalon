@@ -8,6 +8,7 @@ import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { workstreamRoutes } from "../src/routes/workstreams";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * The response and row contracts driven through the real queries.
@@ -87,14 +88,14 @@ function seedAgentRun(database: DatabaseSync): void {
 }
 
 function envFor(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
     LOG_LEVEL: "error",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
-  } as unknown as Env;
+  });
 }
 
 function appFor(database: DatabaseSync) {
@@ -157,11 +158,7 @@ describe("work-stream response contracts, driven through the real queries", () =
     ]);
   });
 
-  it("truncates an activity title the column does not bound rather than failing the work stream", async () => {
-    // The production incident, end to end: a GitHub push title is the whole
-    // commit body, `activities.title` has no length constraint, and
-    // `ActivitySuggestionSchema` caps it at 300. Before the read bounded it,
-    // one such row made this work stream unopenable for the whole workspace.
+  it("does not return pending activity suggestions while the surface is paused", async () => {
     const database = seededDatabase();
     const title = `juno-ai-labs/avalon: push — ${"x".repeat(500)}`;
     database.exec(`
@@ -188,8 +185,7 @@ describe("work-stream response contracts, driven through the real queries", () =
 
     expect(response.status).toBe(200);
     const body = await response.json() as { suggestions: Array<{ id: string; title: string }> };
-    expect(body.suggestions).toHaveLength(1);
-    expect(body.suggestions[0]?.title).toHaveLength(300);
+    expect(body.suggestions).toEqual([]);
   });
 
   it("fails the read, naming the column, when a row leaves the state its table allows", async () => {

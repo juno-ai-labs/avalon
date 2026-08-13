@@ -5,14 +5,15 @@ import {
   initializeAutoUpdate,
   MANUAL_UPDATE_URL,
   type AutoUpdateDependencies,
+  type AutoUpdaterPort,
   type UpdateStatus,
 } from './updater';
 
-class FakeUpdater extends EventEmitter {
+class FakeUpdater extends EventEmitter implements AutoUpdaterPort {
   autoDownload = false;
   autoInstallOnAppQuit = false;
   disableDifferentialDownload = false;
-  logger: unknown;
+  logger: AutoUpdaterPort['logger'] = null;
   checkForUpdates = vi.fn(async () => null);
   downloadUpdate = vi.fn(async () => []);
   quitAndInstall = vi.fn();
@@ -39,7 +40,7 @@ function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
     showMessageBox,
     openExternal,
     onStatusChange: (status) => statuses.push(status),
-    updater: updater as unknown as AutoUpdateDependencies['updater'],
+    updater,
     scheduleInterval,
     scheduleTimeout,
     ...overrides,
@@ -58,7 +59,7 @@ function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
 }
 
 describe('desktop auto-update runtime', () => {
-  it('checks immediately and daily without disabling differential downloads', () => {
+  it('checks immediately and every three hours without disabling differential downloads', () => {
     const { controller, updater, statuses, scheduleInterval, unref } = setup();
 
     expect(controller.enabled).toBe(true);
@@ -67,7 +68,7 @@ describe('desktop auto-update runtime', () => {
     expect(updater.disableDifferentialDownload).toBe(false);
     expect(updater.checkForUpdates).toHaveBeenCalledOnce();
     expect(statuses).toEqual([{ kind: 'checking' }]);
-    expect(scheduleInterval).toHaveBeenCalledWith(expect.any(Function), 86_400_000);
+    expect(scheduleInterval).toHaveBeenCalledWith(expect.any(Function), 10_800_000);
     expect(unref).toHaveBeenCalledOnce();
   });
 

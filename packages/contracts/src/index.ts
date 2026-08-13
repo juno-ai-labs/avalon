@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
+import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
+
+export * from "./attachment-contracts";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
@@ -204,6 +207,9 @@ export const ViewerSchema = z.object({
 
 export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
 
+/** The most prompt text a compact work-stream wake-up marker may expose. */
+export const WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH = 40;
+
 export const WorkstreamSchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -250,6 +256,11 @@ export const WorkstreamSchema = z.object({
    * them as secondary when they do.
    */
   systemKind: z.enum(["digest"]).nullable().default(null),
+  /** The first one-shot wake-up still waiting to fire, if there is one. */
+  nextPendingWakeup: z.object({
+    dueAt: TimestampSchema,
+    promptPreview: z.string().min(1).max(WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1),
+  }).nullable().default(null),
   /**
    * Where this work stream sits in *the reader's* pinned list, or `null` when
    * they have not pinned it. Per-viewer the way the read-state fields above are:
@@ -1280,6 +1291,27 @@ const StreamEventBaseSchema = ServerEventBaseSchema.extend({
   streamSeq: z.number().int().nonnegative()
 });
 /**
+ * The accumulated assistant text a room can hand to somebody who subscribes
+ * after the stream began. `turnStartOffset` identifies the prefix that survives
+ * a retry without storing that prefix twice in Durable Object storage.
+ */
+export const ActiveStreamCheckpointSchema = z.object({
+  messageId: IdSchema,
+  harnessRunId: IdSchema,
+  turnId: z.string().min(1).max(180),
+  epoch: z.number().int().nonnegative(),
+  streamSeq: z.number().int().nonnegative(),
+  seenTurnIds: z.array(z.string().min(1).max(180)),
+  text: z.string(),
+  turnStartOffset: z.number().int().nonnegative(),
+  roomSequence: z.number().int().nonnegative(),
+  createdAt: TimestampSchema,
+}).refine((checkpoint) => checkpoint.turnStartOffset <= checkpoint.text.length, {
+  message: "Turn start must fall within the accumulated stream text",
+  path: ["turnStartOffset"],
+});
+export const ActiveStreamCheckpointsSchema = z.array(ActiveStreamCheckpointSchema).max(1);
+/**
  * The close code the work-stream room uses when it disconnects a socket whose
  * reader may no longer see the work stream.
  *
@@ -1295,7 +1327,11 @@ const StreamEventBaseSchema = ServerEventBaseSchema.extend({
 export const WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE = 1008;
 
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
-  ServerEventBaseSchema.extend({ type: z.literal("snapshot"), workstream: WorkstreamDetailSchema }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("snapshot"),
+    workstream: WorkstreamDetailSchema,
+    activeStreams: ActiveStreamCheckpointsSchema.default([]),
+  }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
   ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
   /** The title changed — a person renamed the work stream, or Avalon named it. */
@@ -1323,6 +1359,8 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   StreamEventBaseSchema.extend({
     type: z.literal("stream_delta"),
     messageId: IdSchema,
+    /** Present on new publishers; optional while older regional Workers drain. */
+    harnessRunId: IdSchema.optional(),
     delta: z.string(),
     /** Replaces text from the prior attempt instead of concatenating it. */
     reset: z.boolean()
@@ -1345,7 +1383,9 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
     reason: z.enum(["history_unavailable", "sequence_ahead"]),
-    latestSequence: z.number().int().nonnegative()
+    latestSequence: z.number().int().nonnegative(),
+    /** Preserves an in-flight response while canonical REST state is refreshed. */
+    activeStreams: ActiveStreamCheckpointsSchema.default([]),
   }),
   ServerEventBaseSchema.extend({ type: z.literal("error"), code: z.string(), message: z.string() })
 ]);
@@ -1612,6 +1652,11 @@ export const ActivityRoutingResultSchema = z.object({
 
 export const ToolDefinitionSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
+  /**
+   * Exact provider-owned operation identity behind a normalized dynamic tool
+   * name. Hosts use this only at execution; it is never model-visible.
+   */
+  providerOperationName: z.string().min(1).max(200).optional(),
   description: z.string().min(1),
   inputSchema: z.record(z.string(), z.unknown()),
   capability: z.string().min(1),
@@ -1991,6 +2036,7 @@ export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptSt
 export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
+export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
 export type GenerateMeetingNotesRequest = z.infer<typeof GenerateMeetingNotesRequestSchema>;
@@ -2052,13 +2098,60 @@ const FORWARDED_FAILURE_DETAIL_KEYS = [
   "available",
   "reconnectRequired",
   "retryAfterMs",
+  "actualMimeType",
+  "attachmentKind",
+  "suggestedCall",
 ] as const;
 
-const MAXIMUM_FAILURE_DETAIL_BYTES = 2_000;
+const MAXIMUM_FAILURE_DETAIL_BYTES = 8_000;
+const MAXIMUM_FAILURE_REASON_LENGTH = 1_000;
+const MAXIMUM_FAILURE_VALUE_LENGTH = 160;
+const MAXIMUM_FAILURE_AVAILABLE_VALUES = 20;
 
 export interface StructuredFailureDetail {
   code: string;
   details?: Record<string, unknown>;
+}
+
+function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEYS[number], value: unknown): {
+  valid: boolean;
+  value?: unknown;
+} {
+  switch (key) {
+    case "reason":
+      return typeof value === "string" && value.length <= MAXIMUM_FAILURE_REASON_LENGTH
+        ? { valid: true, value }
+        : { valid: false };
+    case "field":
+    case "expected":
+      return typeof value === "string" && value.length <= MAXIMUM_FAILURE_VALUE_LENGTH
+        ? { valid: true, value }
+        : { valid: false };
+    case "available":
+      return Array.isArray(value)
+        && value.length <= MAXIMUM_FAILURE_AVAILABLE_VALUES
+        && value.every((entry) => typeof entry === "string" && entry.length <= MAXIMUM_FAILURE_VALUE_LENGTH)
+        ? { valid: true, value }
+        : { valid: false };
+    case "reconnectRequired":
+      return typeof value === "boolean" ? { valid: true, value } : { valid: false };
+    case "retryAfterMs":
+      return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 86_400_000
+        ? { valid: true, value }
+        : { valid: false };
+    case "actualMimeType":
+      return value === null || (typeof value === "string" && value.length <= MAXIMUM_FAILURE_VALUE_LENGTH)
+        ? { valid: true, value }
+        : { valid: false };
+    case "attachmentKind": {
+      const parsed = AttachmentKindSchema.safeParse(value);
+      return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
+    }
+    case "suggestedCall": {
+      const parsed = SuggestedAttachmentToolCallSchema.safeParse(value);
+      return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
+    }
+  }
 }
 
 export function readStructuredFailure(error: unknown): StructuredFailureDetail | null {
@@ -2073,7 +2166,9 @@ export function readStructuredFailure(error: unknown): StructuredFailureDetail |
     if (!Object.hasOwn(source, key)) continue;
     const value = source[key];
     if (value === undefined) continue;
-    details[key] = value;
+    const sanitized = sanitizeForwardedFailureDetail(key, value);
+    if (!sanitized.valid) return { code };
+    details[key] = sanitized.value;
   }
   if (Object.keys(details).length === 0) return { code };
   // A bound on the allowlisted values as well: `available` is a provider-shaped

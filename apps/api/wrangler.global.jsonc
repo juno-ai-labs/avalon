@@ -28,10 +28,6 @@
     "RESEND_FROM_EMAIL": "Avalon <invites@with-avalon.com>",
     "WORKSTREAM_EMAIL_DOMAIN": "automation.with-avalon.com",
     "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
-    "HARNESS_MAX_MODEL_ITERATIONS": "8",
-    "HARNESS_MAX_TOOL_CALLS": "24",
-    "HARNESS_MAX_WALL_CLOCK_MS": "240000",
-    "HARNESS_MAX_COST_CENTS": "500",
     "HARNESS_MAX_PLUGIN_CATALOG_TOKENS": "2500",
     "HARNESS_CHILD_MAX_MODEL_ITERATIONS": "4",
     "HARNESS_CHILD_MAX_TOOL_CALLS": "8",
@@ -114,6 +110,9 @@
   ],
   "r2_buckets": [
     { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" }
+  ],
+  "analytics_engine_datasets": [
+    { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" }
   ],
   "images": { "binding": "IMAGES" },
   "durable_objects": {

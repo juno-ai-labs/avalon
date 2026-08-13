@@ -16,6 +16,7 @@ const STRUCTURED_INFERENCE_TIMEOUT_MS = 2 * 60_000;
 
 type StructuredInferenceRole = Extract<
   AgentModelRole,
+  | "workstream"
   | "activity_structured"
   | "work_opportunity_admission"
   | "work_opportunity_ranking"

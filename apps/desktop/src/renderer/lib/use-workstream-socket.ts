@@ -2,6 +2,7 @@ import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  type ActiveStreamCheckpoint,
   type PersonalSocketEvent,
   type ServerSocketEvent,
 } from '@avalon/contracts';
@@ -13,7 +14,6 @@ import {
   messagesWithTransientBlocks,
   mapParticipant,
   mapResource,
-  mapSuggestion,
   mapToolInvocation,
   mapViewer,
   mapWorkstreamDetail,
@@ -30,9 +30,18 @@ import {
   upsertTranscriptMessage,
 } from './transcript';
 import type { HarnessStatus, HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
-import { WORKSTREAMS_QUERY_KEY } from './use-workstreams-query';
+import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
+
+export type { StreamCursor } from './workstream-socket-resume';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+
+/** The exact API capability the realtime cache reconciler is allowed to use. */
+export type WorkstreamSocketApi = Pick<
+  AvalonApi,
+  'getMessages' | 'getSocketTicket' | 'getWorkstream' | 'getWorkstreams'
+>;
 
 const HEARTBEAT_BASE_MS = 45_000;
 const HEARTBEAT_JITTER_MS = 10_000;
@@ -98,16 +107,6 @@ type StreamingSocketEvent = Extract<
   ServerSocketEvent,
   { type: 'stream_started' | 'stream_delta' }
 >;
-
-export interface StreamCursor {
-  readonly turnId: string;
-  readonly epoch: number;
-  readonly streamSeq: number;
-  readonly seenTurnIds: ReadonlySet<string>;
-  readonly turnStartText: string;
-  readonly roomSequence: number;
-  readonly completed: boolean;
-}
 
 function streamingMessageId(event: StreamingSocketEvent): string {
   return event.messageId;
@@ -221,10 +220,75 @@ export function applyStreamingSocketEvent(
 }
 
 /**
- * A REST refresh replaces canonical transcript rows, but realtime tool updates
- * do not share the D1 message sequence domain. Retain those blocks until a
- * canonical tool row with the same invocation arrives, anchored before the
- * final assistant row for the turn.
+ * Install the exact accumulated text carried by an initial room snapshot. The
+ * cursor lands with the text, so replayed overlap is ignored while the first
+ * genuinely newer chunk appends in place to the same transcript row.
+ */
+export function applyActiveStreamCheckpoints(
+  messages: Message[] | undefined,
+  checkpoints: readonly ActiveStreamCheckpoint[],
+  workstreamId: string,
+  cursors: Map<string, StreamCursor>,
+): Message[] {
+  let nextMessages = messages ?? [];
+  for (const checkpoint of checkpoints) {
+    const cursor = cursors.get(checkpoint.messageId);
+    if (cursor && cursor.roomSequence > checkpoint.roomSequence) continue;
+    cursors.set(checkpoint.messageId, {
+      turnId: checkpoint.turnId,
+      epoch: checkpoint.epoch,
+      streamSeq: checkpoint.streamSeq,
+      seenTurnIds: new Set(checkpoint.seenTurnIds),
+      turnStartText: checkpoint.text.slice(0, checkpoint.turnStartOffset),
+      roomSequence: checkpoint.roomSequence,
+      completed: false,
+    });
+
+    const existing = nextMessages.find((message) => message.id === checkpoint.messageId);
+    if (existing) {
+      if (
+        existing.text === checkpoint.text
+        && existing.streaming === true
+        && existing.realtimeOrder?.eventSequence === checkpoint.roomSequence
+      ) continue;
+      nextMessages = nextMessages.map((message) => message.id === checkpoint.messageId
+        ? {
+            ...message,
+            text: checkpoint.text,
+            streaming: true,
+            realtimeOrder: message.realtimeOrder
+              ? { ...message.realtimeOrder, eventSequence: checkpoint.roomSequence }
+              : message.realtimeOrder,
+          }
+        : message);
+      continue;
+    }
+
+    const anchorSequenceNumber = nextTranscriptSequence(nextMessages);
+    nextMessages = insertMessage(nextMessages, createTextMessage({
+      id: checkpoint.messageId,
+      workstreamId,
+      sequenceNumber: anchorSequenceNumber,
+      authorType: 'agent',
+      text: checkpoint.text,
+      createdAt: checkpoint.createdAt,
+      streaming: true,
+      realtimeOrder: {
+        anchorSequenceNumber,
+        eventSequence: checkpoint.roomSequence,
+        placement: 'at_anchor',
+      },
+    }));
+  }
+  return nextMessages;
+}
+
+/**
+ * A REST refresh replaces canonical transcript rows, but an active assistant
+ * stream and realtime tool updates do not yet exist in D1. Retain both until
+ * their canonical rows arrive. In particular, the streaming row must survive
+ * the refresh a socket handoff triggers: removing and recreating it makes the
+ * response visibly pop and loses the prefix that replayed deltas append to.
  */
 export function mergeCanonicalTranscript(previous: Message[] | undefined, canonical: Message[]): Message[] {
   const canonicalIds = new Set(canonical.map((message) => message.id));
@@ -244,7 +308,12 @@ export function mergeCanonicalTranscript(previous: Message[] | undefined, canoni
     message.messageType === 'tool_event'
     && message.realtimeOrder !== undefined
     && !canonicalIds.has(message.id)
-    && (!message.toolEvent || !canonicalToolIds.has(message.toolEvent.id)),
+      && (!message.toolEvent || !canonicalToolIds.has(message.toolEvent.id)),
+  );
+  const streamingAgentMessages = (previous ?? []).filter((message) =>
+    message.authorType === 'agent'
+    && message.streaming === true
+    && !canonicalIds.has(message.id),
   );
   const pendingHumanMessages = (previous ?? []).filter((message) =>
     message.authorType === 'human'
@@ -252,7 +321,53 @@ export function mergeCanonicalTranscript(previous: Message[] | undefined, canoni
     && !canonicalIds.has(message.id)
     && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
   );
-  return orderTranscript([...olderPersistedMessages, ...canonical, ...realtimeTools, ...pendingHumanMessages]);
+  const realtimeMessages = [
+    ...realtimeTools,
+    ...streamingAgentMessages,
+    ...pendingHumanMessages,
+  ];
+  const canonicalById = new Map(canonical.map((message) => [message.id, message]));
+  const settledRealtimeAnchors = new Map<number, number>();
+  for (const message of previous ?? []) {
+    const canonicalMessage = canonicalById.get(message.id);
+    if (message.realtimeOrder && canonicalMessage) {
+      settledRealtimeAnchors.set(
+        message.realtimeOrder.anchorSequenceNumber,
+        canonicalMessage.sequenceNumber,
+      );
+    }
+  }
+  const anchorsThatMustFollowCanonical = new Set(
+    [...streamingAgentMessages, ...pendingHumanMessages]
+      .flatMap((message) => message.realtimeOrder ? [message.realtimeOrder.anchorSequenceNumber] : []),
+  );
+  const firstRealtimeAnchor = [...anchorsThatMustFollowCanonical].reduce(
+    (lowest, anchor) => Math.min(lowest, anchor),
+    Number.POSITIVE_INFINITY,
+  );
+  const canonicalBoundary = nextTranscriptSequence([...olderPersistedMessages, ...canonical]);
+  const anchorShift = Number.isFinite(firstRealtimeAnchor)
+    ? Math.max(0, canonicalBoundary - firstRealtimeAnchor)
+    : 0;
+  const reanchoredRealtimeMessages = anchorShift === 0 && settledRealtimeAnchors.size === 0
+    ? realtimeMessages
+    : realtimeMessages.map((message) => message.realtimeOrder
+      ? {
+          ...message,
+          realtimeOrder: {
+            ...message.realtimeOrder,
+            anchorSequenceNumber: settledRealtimeAnchors.get(message.realtimeOrder.anchorSequenceNumber)
+              ?? (anchorsThatMustFollowCanonical.has(message.realtimeOrder.anchorSequenceNumber)
+                ? message.realtimeOrder.anchorSequenceNumber + anchorShift
+                : message.realtimeOrder.anchorSequenceNumber),
+          },
+        }
+      : message);
+  return orderTranscript([
+    ...olderPersistedMessages,
+    ...canonical,
+    ...reanchoredRealtimeMessages,
+  ]);
 }
 
 /**
@@ -311,8 +426,18 @@ export function mergeCanonicalTranscriptAfterConcurrentEvent(
   );
 }
 
-function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
+export function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
   return status === 'running' || status === 'scheduled';
+}
+
+export function reconcileCanonicalTranscript(
+  previous: Message[] | undefined,
+  canonical: Message[],
+  harnessStatus: WorkstreamDetail['harnessStatus'],
+): Message[] {
+  return runMayStillEmitRealtime(harnessStatus)
+    ? mergeCanonicalTranscript(previous, canonical)
+    : replaceWithCanonicalTranscript(previous, canonical);
 }
 
 /**
@@ -330,7 +455,7 @@ export function applyHarnessStatus(
 ): void {
   queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
     current && current.harnessStatus !== harnessStatus ? { ...current, harnessStatus } : current);
-  queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+  setCachedWorkstreams(queryClient, (current) =>
     current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
       ? { ...workstream, harnessStatus }
       : workstream));
@@ -363,17 +488,16 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
 }
 
 export function useWorkstreamSocket(
-  api: AvalonApi | null,
+  api: WorkstreamSocketApi | null,
   workstreamId: string,
   enabled: boolean,
 ): SocketState {
   const queryClient = useQueryClient();
+  const resumeState = useWorkstreamSocketResumeState(workstreamId);
   const [state, setState] = useState<SocketState>('idle');
-  const lastSequence = useRef(0);
   const attempts = useRef(0);
 
   useEffect(() => {
-    lastSequence.current = 0;
     attempts.current = 0;
     if (!api || !enabled) {
       setState('idle');
@@ -393,8 +517,9 @@ export function useWorkstreamSocket(
     let ticketRequestInFlight = false;
     let canonicalResyncInFlight = false;
     let canonicalResyncTarget: number | null = null;
+    let canonicalResyncActiveStreams: readonly ActiveStreamCheckpoint[] = [];
     let canonicalReconcileGeneration = 0;
-    const streamCursors = new Map<string, StreamCursor>();
+    const streamCursors = resumeState.streamCursors;
     const isOffline = (): boolean => navigator.onLine === false;
 
     const syncHyperSightQueries = (): Promise<unknown> => Promise.all([
@@ -413,16 +538,16 @@ export function useWorkstreamSocket(
 
     const reconcileCanonicalState = async (): Promise<void> => {
       const generation = ++canonicalReconcileGeneration;
-      const sequenceAtStart = lastSequence.current;
+      const sequenceAtStart = resumeState.lastSequence;
       try {
-        const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreams] = await Promise.all([
+        const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreamPage] = await Promise.all([
           api.getWorkstream(workstreamId),
           api.getMessages(workstreamId),
           api.getWorkstreams(),
         ]);
         const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
         if (closedByEffect || generation !== canonicalReconcileGeneration) return;
-        if (lastSequence.current > sequenceAtStart) {
+        if (resumeState.lastSequence > sequenceAtStart) {
           queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
             mergeCanonicalTranscriptAfterConcurrentEvent(current, canonicalMessages));
           // The detail and list snapshots may be stale too. Keep the socket's
@@ -437,8 +562,9 @@ export function useWorkstreamSocket(
           mayStillEmitRealtime
             ? mergeCanonicalTranscript(current, canonicalMessages)
             : replaceWithCanonicalTranscript(current, canonicalMessages));
-        queryClient.setQueryData(WORKSTREAMS_QUERY_KEY, canonicalWorkstreams);
+        mergeCachedWorkstreamPage(queryClient, canonicalWorkstreamPage.items);
         void Promise.all([
+          queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
           syncHyperSightQueries(),
         ]);
@@ -460,6 +586,13 @@ export function useWorkstreamSocket(
 
     const applyEvent = (event: ServerSocketEvent): void => {
       if (event.type === 'resync_required') {
+        canonicalResyncActiveStreams = event.reason === 'history_unavailable'
+          ? event.activeStreams
+          : [];
+        if (canonicalResyncActiveStreams.length > 0) {
+          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
+            applyActiveStreamCheckpoints(current, canonicalResyncActiveStreams, workstreamId, streamCursors));
+        }
         canonicalResyncTarget = Math.max(canonicalResyncTarget ?? 0, event.latestSequence);
         clearHeartbeat();
         clearStabilityTimer();
@@ -474,17 +607,20 @@ export function useWorkstreamSocket(
       // Snapshots are valid at sequence zero and may intentionally replace
       // state at the same sequence after an explicit initial subscription.
       if (event.type === 'snapshot') {
-        if (event.sequence < lastSequence.current) return;
-        lastSequence.current = event.sequence;
+        if (event.sequence < resumeState.lastSequence) return;
+        resumeState.lastSequence = event.sequence;
         streamCursors.clear();
       } else {
-        if (event.sequence <= lastSequence.current) return;
-        lastSequence.current = event.sequence;
+        if (event.sequence <= resumeState.lastSequence) return;
+        resumeState.lastSequence = event.sequence;
       }
 
       if (event.type === 'snapshot') {
         queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
-        // A room snapshot intentionally omits transcript history; REST remains canonical.
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
+          applyActiveStreamCheckpoints(current, event.activeStreams, workstreamId, streamCursors));
+        // Completed transcript history remains canonical over REST. Active text
+        // is retained by that merge until its final canonical row arrives.
         syncCanonicalTranscriptAndList();
       } else if (event.type === 'presence_changed') {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
@@ -495,7 +631,7 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, message));
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? advanceWorkstreamAttention(current, message) : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? advanceWorkstreamAttention(workstream, message)
             : workstream));
@@ -512,7 +648,7 @@ export function useWorkstreamSocket(
         const renamed = { title: event.title, titleStatus: event.titleStatus };
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, ...renamed } : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? { ...workstream, ...renamed }
             : workstream));
@@ -522,7 +658,7 @@ export function useWorkstreamSocket(
         // their sidebar row and the header they are reading to agree.
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, scope: event.scope } : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? { ...workstream, scope: event.scope }
             : workstream));
@@ -540,7 +676,7 @@ export function useWorkstreamSocket(
           insertMessage(current, message));
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? advanceWorkstreamAttention(current, message) : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? advanceWorkstreamAttention(workstream, message)
             : workstream));
@@ -621,32 +757,6 @@ export function useWorkstreamSocket(
               : [...current.resources, resource],
           };
         });
-      } else if (event.type === 'activity_suggestion_created' || event.type === 'activity_suggestion_resolved') {
-        // The detail's pending suggestions are what a transcript rebuild draws
-        // its cards from, so a resolution that only reached the transcript
-        // would be undone by the next message fetch.
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
-          if (!current) return current;
-          const remaining = (current.suggestions ?? []).filter((suggestion) => suggestion.id !== event.suggestion.id);
-          return {
-            ...current,
-            // The server lists suggestions newest first, and position in this
-            // array decides position in the transcript, so a new one belongs at
-            // the head. Appending would make the card jump on the next fetch.
-            suggestions: event.suggestion.status === 'pending'
-              ? [mapSuggestion(event.suggestion), ...remaining]
-              : remaining,
-          };
-        });
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, {
-          id: `suggestion-${event.suggestion.id}`,
-          workstreamId,
-          sequenceNumber: event.sequence,
-          authorType: 'system',
-          messageType: 'activity_suggestion',
-          createdAt: event.suggestion.createdAt,
-          activitySuggestion: mapSuggestion(event.suggestion),
-        }));
       } else if (event.type === 'hypersight_configuration_updated') {
         queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], event.hypersight);
       } else if (event.type === 'hypersight_block_run_updated') {
@@ -722,10 +832,12 @@ export function useWorkstreamSocket(
      */
     const handleAccessRevoked = (): void => {
       accessRevoked = true;
+      resumeState.lastSequence = 0;
+      streamCursors.clear();
       clearReconnectTimer();
       setState('unavailable');
       queryClient.removeQueries({ queryKey: ['messages', workstreamId], exact: true });
-      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+      setCachedWorkstreams(queryClient, (current) =>
         current?.filter((workstream) => workstream.id !== workstreamId));
       queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
     };
@@ -762,7 +874,7 @@ export function useWorkstreamSocket(
         canonicalResyncInFlight = true;
         try {
           const targetSequence = canonicalResyncTarget;
-          const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreams] = await Promise.all([
+          const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreamPage] = await Promise.all([
             api.getWorkstream(workstreamId),
             api.getMessages(workstreamId),
             api.getWorkstreams(),
@@ -771,18 +883,31 @@ export function useWorkstreamSocket(
           if (closedByEffect) return;
           queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
           const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
-          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-            mayStillEmitRealtime
-              ? mergeCanonicalTranscript(current, canonicalMessages)
-              : replaceWithCanonicalTranscript(current, canonicalMessages));
-          queryClient.setQueryData(WORKSTREAMS_QUERY_KEY, canonicalWorkstreams);
+          const validatedActiveStreams = mayStillEmitRealtime
+            ? canonicalResyncActiveStreams.filter((checkpoint) =>
+                checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
+            : [];
+          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
+            const canonicalTranscript = replaceWithCanonicalTranscript(current, canonicalMessages);
+            streamCursors.clear();
+            return applyActiveStreamCheckpoints(
+              canonicalTranscript,
+              validatedActiveStreams,
+              workstreamId,
+              streamCursors,
+            );
+          });
+          mergeCachedWorkstreamPage(queryClient, canonicalWorkstreamPage.items);
           void Promise.all([
+            queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
             syncHyperSightQueries(),
           ]);
-          streamCursors.clear();
-          lastSequence.current = Math.max(lastSequence.current, targetSequence);
-          if (canonicalResyncTarget === targetSequence) canonicalResyncTarget = null;
+          resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
+          if (canonicalResyncTarget === targetSequence) {
+            canonicalResyncTarget = null;
+            canonicalResyncActiveStreams = [];
+          }
         } catch {
           scheduleReconnect();
           return;
@@ -809,9 +934,9 @@ export function useWorkstreamSocket(
         socket = nextSocket;
         nextSocket.addEventListener('open', () => {
           if (closedByEffect || socket !== nextSocket) return;
-          const isReconnect = attempts.current > 0 || lastSequence.current > 0;
+          const isReconnect = attempts.current > 0 || resumeState.lastSequence > 0;
           setState('connected');
-          nextSocket.send(JSON.stringify({ type: 'subscribe', afterSequence: lastSequence.current }));
+          nextSocket.send(JSON.stringify({ type: 'subscribe', afterSequence: resumeState.lastSequence }));
           if (isReconnect) void reconcileCanonicalState();
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
@@ -890,7 +1015,7 @@ export function useWorkstreamSocket(
       clearStabilityTimer();
       socket?.close();
     };
-  }, [api, enabled, queryClient, workstreamId]);
+  }, [api, enabled, queryClient, resumeState, workstreamId]);
 
   return state;
 }

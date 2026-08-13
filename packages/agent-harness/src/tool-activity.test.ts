@@ -13,8 +13,15 @@ describe("tool activity names", () => {
       .toBe("Searching the public web");
     expect(toolActivityName({ toolName: "web_search", status: "completed" }))
       .toBe("Searched the public web");
-    expect(toolActivityName({ toolName: "workstream_read", status: "completed" }))
-      .toBe("Read the work stream");
+    expect(toolActivityName({ toolName: "workstream_list_resources", status: "completed" }))
+      .toBe("Listed attached resources");
+    expect(hasAvalonToolProse("workstream_read")).toBe(false);
+    expect(toolActivityName({ toolName: "workstream_search_resource", status: "started" }))
+      .toBe("Searching an attached resource");
+    expect(toolActivityName({ toolName: "workstream_view_resource", status: "completed" }))
+      .toBe("Viewed attached images");
+    expect(toolActivityName({ toolName: "workstream_summarize_resource", status: "completed" }))
+      .toBe("Summarized an attached resource");
     expect(toolActivityName({ toolName: "table_insert_rows", status: "started" }))
       .toBe("Adding durable table rows");
   });

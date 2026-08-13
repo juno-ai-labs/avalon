@@ -218,19 +218,30 @@ would make the client discard the very event that closed the work stream.
 The room accepts sockets with Cloudflare's hibernation API and stores connection
 identity in serialized attachments. After opening, the client sends `subscribe`
 with its last applied `afterSequence`. Sequence zero receives a snapshot; a
-reconnect within the bounded in-memory event window receives only newer events. If
-hibernation discarded that window, the cursor is ahead, or the gap cannot be
-proved complete, the server sends `resync_required` and the client invalidates its
-canonical REST queries. The replay cache is intentionally memory-only and bounded
-to 256 events or 512 KB to avoid per-token Durable Object storage writes.
+reconnect within the bounded in-memory event window receives only newer events.
+An active assistant response is the exception to REST-only snapshots: the room
+atomically checkpoints its accumulated text and Bind cursor with each sequenced,
+batched stream frame, and includes that checkpoint in both an initial snapshot
+and a `history_unavailable` resync. This lets a first-time or post-hibernation
+subscriber cross into catch-up and live delivery without a missing or duplicated
+chunk. The checkpoint is removed at terminal state; D1 still stores only the
+complete final assistant message.
+
+If hibernation discarded the replay window or the gap cannot be proved complete,
+the server sends `resync_required` and the client refreshes its canonical REST
+queries while retaining any active checkpoint carried by that frame. A cursor
+ahead of the room takes the same REST path without trusting the checkpoint. The
+replay cache itself remains memory-only and bounded to 256 events or 512 KB.
 
 Room `sequence` orders replayable socket events. Model streaming has a second
 cursor domain: stable `turnId`, retry `epoch`, and per-epoch `streamSeq`; `reset`
 replaces only the active turn's partial text from an abandoned route, preserving
 completed text from earlier tool turns. Deltas are batched without crossing
 turn/epoch boundaries, and reset frames are emitted alone. The desktop retains
-stream cursors across reconnects, drops duplicate or stale frames, and still
-treats the final D1 message and REST snapshot as canonical.
+room and stream cursors across socket and route handoffs, keeps background
+subscribers only for listed running work streams, drops duplicate or stale
+frames, and still treats the final D1 message and terminal REST state as
+canonical.
 
 The desktop holds a work stream's harness status in two caches: the detail query
 behind the open work stream's header, and the list query behind every sidebar row.
@@ -291,10 +302,25 @@ execution. The loop overlaps safe reads, serializes writes, records execution pl
 and results, replays completed receipts, and stops rather than repeating an
 ambiguous external write.
 
-The run also enforces context, token, cost, iteration, tool-call, wall-clock, and
-streaming-watchdog limits. Classified provider attempts append to an immutable
-inference ledger. Cancellation is a durable request observed by the lease owner,
-which alone commits the final `stopped` transition.
+Run limits are caller-specific. Root ordinary work-stream and HyperSight runs
+enforce a 1,000-turn cap but no aggregate tool-call, model-cost, or task-scale
+wall-time ceiling; their Workflow step retains a one-year platform deadline.
+Inline children and other deliberately bounded one-shot harness callers keep
+smaller explicit ceilings. Context, token, and per-operation streaming
+watchdogs still apply, and classified provider attempts append to an immutable
+inference ledger. Cancellation is a durable request observed by the lease
+owner, which alone commits the final `stopped` transition.
+
+After durable cancellation is rechecked and the effective terminal status is
+committed, every root harness execution also emits one exact structured Workers
+Log and one aggregate Workers Analytics Engine datapoint. The datapoint carries
+the already-computed run totals—duration, turns, routed model attempts, tool
+calls, model/tool time, tokens, cost, and outcome—and no member content or run
+identifier. Analytics Engine is sampled and optimized for distributions and
+time series, not exact event recovery, so Avalon never reconstructs a run from
+loop-churn datapoints. D1 remains canonical; Workers Logs and Traces provide
+correlated diagnosis. [`runbook.md`](runbook.md#root-run-analytics) owns the
+positional dataset schema and sampling-aware queries.
 
 Durable memory is scoped to an ad-hoc work stream, an installed automation
 subscription, a user inside a workspace, or the workspace itself. The host — not
@@ -473,10 +499,13 @@ it.
 - **A socket that cannot prove its replay gap is complete is resynced, not
   guessed.** If hibernation discarded the in-memory window, the client's cursor is
   ahead, or the gap cannot be proved complete, the room sends `resync_required` and
-  the client invalidates its canonical REST queries.
+  the client refreshes its canonical REST queries. A history-gap frame also
+  carries the accumulated active stream; a sequence-ahead frame does not trust it.
 - **The replay cache is bounded to 256 events or 512 KB**, and is memory-only by
-  design — persisting it would mean a Durable Object storage write per streamed
-  token.
+  design. The active-stream checkpoint is a separate logical value whose text is
+  segmented across bounded Durable Object values and updated once per batched
+  delta; it is not an event log and cannot replay
+  non-stream mutations.
 - **Publishing to a room is best-effort** and swallows its own failures. The one
   exception is a retraction: `publishWorkstreamEvent` reports whether the room
   accepted it, and the room re-asks D1 before delivering anything other than a
@@ -492,8 +521,11 @@ it.
   ticket, a bounded regional session count, and rate- and size-limited audio
   events. Raw microphone audio and transcripts are not persisted by that bridge.
 - **A run stops rather than repeating an ambiguous external write.** Context,
-  token, cost, iteration, tool-call, wall-clock, and streaming-watchdog limits all
-  terminate the run; the numbers are in [`agent-harness.md`](agent-harness.md).
+  token, iteration, and streaming-watchdog limits terminate root runs;
+  HyperSight shares the root policy, while inline children and the other
+  bounded callers also enforce their explicit cost, tool-call, and wall-clock
+  ceilings. The caller-specific numbers are in
+  [`agent-harness.md`](agent-harness.md).
 - **A missing or malformed Worker variable fails the isolate at its entrypoint**
   rather than inside the first request that happened to read it.
 - **Cross-region workspace-content access is not implemented.** A caller that
@@ -547,9 +579,101 @@ activation can narrow, but never widen, a run's original authority.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one), and the reasoning
-behind the decisions described above was not recorded here and was not
-reconstructed — `git log` and the PRDs under `docs/PRDs/` are what exist. The next
-substantial change to the system's shape starts the record, and that entry is that
-change, written in full.
+### 2026-08-12 — HyperSight adopts the root policy with aggregate run telemetry
+
+**What changed:** HyperSight no longer has separate 8-turn, 24-tool,
+four-minute, and 500-cent ceilings. It now shares the root run's 1,000-turn
+policy and one-year Workflow deadline. Every completed root harness execution
+emits one structured Workers Log and one versioned Workers Analytics Engine
+summary datapoint.
+
+**Why:** HyperSight's prior safety thresholds were selected without a measured
+distribution of successful and failed run duration, tool use, or cost. They
+could terminate useful unattended work for the same reason the ordinary
+eight-turn limit did. The policy now gathers the measurements needed to set a
+future threshold from observed behavior rather than a guess.
+
+**Considered and rejected:** Emitting every loop iteration and reconstructing a
+run in Analytics Engine was rejected because the product uses adaptive
+sampling, does not guarantee retrieval of an individual point, and cannot
+reliably reconstruct event sequences. Keeping only Workers Logs was rejected
+because logs are the exact diagnostic stream, not the sampling-aware aggregate
+time-series store. Removing the final iteration guard was rejected because
+1,000 turns still terminates a pathological model loop.
+
+**Consequences:** An unattended HyperSight refresh can consume materially more
+provider and tool capacity before it is cancelled or reaches 1,000 routed model
+attempts. Per-operation watchdogs, read-only enforcement, durable
+cancellation, lease fencing, and ambiguous-write handling remain mandatory.
+Analytics Engine is advisory telemetry with three-month retention; D1 remains
+the source of truth, telemetry failure cannot change a run result, and rows
+whose Bind failure path lacks detailed timing are explicitly marked rather than
+treated as zero-latency work.
+
+Shipped in #130.
+
+### 2026-08-12 — Root work-stream runs use a caller-specific resource policy
+
+**What changed:** Ordinary root runs now allow 1,000 model turns without
+aggregate tool-call, model-cost, or task-scale wall-time ceilings. HyperSight and
+other bounded harness products retain their own smaller ceilings, per-operation
+watchdogs remain, and Cloudflare's required Workflow deadline is one year for an
+ordinary run.
+
+**Why:** A production research run completed eight successful turns and fetched
+its final source on the eighth, then the old eight-turn ceiling prevented the
+ninth turn from reading that result and answering. The shared defaults treated
+legitimate long research and unattended bounded work as the same product.
+
+**Considered and rejected:** Keeping the eight-turn ordinary default would leave
+the observed failure intact. Removing the iteration guard entirely was rejected
+because 1,000 turns leaves practical research room while still terminating a
+pathological model loop. Applying the expanded policy to HyperSight was rejected
+because its scheduled refreshes run without a person present to cancel them.
+
+**Consequences:** Cost and tool usage remain recorded but are not aggregate stop
+conditions for ordinary root runs. Future resource-policy changes must name the
+execution product they govern and preserve the relationship between harness and
+Workflow deadlines. The reasoning behind architecture decisions before this
+entry was not recorded here and was not reconstructed.
+
+Shipped in #130.
+
+### 2026-08-12 — Active streams cross initial joins, route changes, and replay gaps
+
+**What changed:** `WorkstreamRoom` gained one accumulated active-stream
+checkpoint in Durable Object storage. Its metadata and storage-safe text chunks
+advance with the room sequence in one transaction; initial snapshots and
+`history_unavailable` resync frames carry it to the desktop. The checkpoint holds
+the active harness run, message, accumulated text, turn/epoch/stream cursor, seen
+turns, and retry-prefix offset. Terminal events remove it. The desktop shares its
+room and Bind cursors above routed screens, keeps bounded background subscribers
+for listed running work streams, and retains the transient assistant row across
+active-run REST merges. Canonical reconciliation re-anchors cold-join rows after
+persisted history, drops synthetic streams once a run is terminal, and validates
+a history-gap checkpoint against freshly fetched run identity rather than stale
+cache state.
+
+**Why:** Partial assistant text exists only in realtime until completion. A
+screen-owned socket closed on route change and returned with sequence zero, where
+the room supplied detail but no transcript; an entirely new viewer had even less
+state. Later deltas therefore appended to a missing prefix, and a REST refresh
+could visibly remove and recreate the bubble. A bounded in-memory replay buffer
+cannot repair a cold join or survive room hibernation, so recovery needed one
+current-state value rather than a longer event log.
+
+**Considered and rejected:** Writing partial messages to D1 would make the
+canonical transcript represent incomplete work and add high-frequency database
+writes. Replaying from zero grows with the response and still fails after
+hibernation. Keeping a socket for every sidebar work stream scales connections
+with history rather than active work; only running work streams receive a
+background subscriber.
+
+**Consequences:** Each coalesced delta adds bounded Durable Object checkpoint
+writes to the sequence transaction, while D1 remains final-only and the replay
+buffer remains bounded and in memory. Snapshot consumers must install checkpoint text
+and its Bind cursor together: either half alone creates a duplicate or a
+truncation at the catch-up boundary. The optional/defaulted contract fields keep
+regional and desktop rollout skew compatible. The checkpoint is not a general
+replay store; all completed transcript rows and every non-stream mutation still
+reconcile through D1.

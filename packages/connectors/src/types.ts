@@ -14,6 +14,7 @@ import type {
   Scope,
   ToolDefinition,
 } from "@avalon/contracts";
+import type { ZodError, ZodType } from "zod";
 
 /** Marks one polled activity as withheld from digests by its own stream. */
 function withheldFromDigest(
@@ -50,9 +51,9 @@ function humanizeActivityEventType(eventType: string): string {
  * back to them?** A pull request opened, yes. The eleven check runs it started,
  * no.
  *
- * One surface besides the digest reads this: contextual routing starts an
- * operational type at a higher confidence bar before offering it as context
- * (`docs/contextual-routing.md`). It is a prior only — a workspace's own
+ * The paused contextual-routing surface retains this as a prior for a future
+ * re-enable: an operational type starts at a higher confidence bar before it
+ * can be offered as context (`docs/contextual-routing.md`). A workspace's own
  * acceptances overrule it, and a connector that classifies nothing as
  * digestible is read as having drawn no line rather than as having said no —
  * so answer the digest question here and nothing else.
@@ -656,6 +657,34 @@ export interface ConnectorAgentPluginDescriptor {
 }
 
 /**
+ * A connection-specific agent tool surface discovered from a provider at
+ * plugin activation time.
+ *
+ * Hosted MCP servers are the motivating case: `tools/list` is the authority on
+ * what exists, so copying one observed response into a static connector
+ * manifest guarantees drift. The provider adapter still owns the trusted
+ * catalog prose, safety policy, and credential lifecycle; only tool names,
+ * descriptions, and input schemas cross this dynamic boundary. Provider
+ * annotations remain untrusted transport metadata and cannot select mode or
+ * idempotency.
+ */
+export interface ConnectorDynamicAgentTools {
+  /** Capabilities which may authorize discovery for an existing connection. */
+  readonly capabilities: readonly string[];
+  /** Connection scopes on which this dynamic surface replaces static tools. */
+  readonly connectionScopes: readonly Scope[];
+  /**
+   * Discover one frozen activation's tool definitions. The host validates the
+   * returned definitions, grants, and model-facing wire-name uniqueness before
+   * exposing them.
+   */
+  discover(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+  ): Promise<readonly ToolDefinition[]>;
+}
+
+/**
  * Freeze a code-authored connector plugin descriptor at its trust boundary.
  * This helper deliberately accepts no connection context.
  */
@@ -671,6 +700,8 @@ export function defineConnectorAgentPlugin(
 export interface ConnectorAdapter {
   manifest: ConnectorManifestInput;
   agentPlugin: ConnectorAgentPluginDescriptor;
+  /** Live provider-authored tools, resolved only when this plugin activates. */
+  dynamicAgentTools?: ConnectorDynamicAgentTools;
   /**
    * Optional per-capability narrowing of the connector-wide supported scopes.
    * Omitted capabilities inherit `manifest.supportedScopes`.
@@ -693,6 +724,12 @@ export interface ConnectorAdapter {
    * already described well enough by `connectorOriginFromActivity`.
    */
   origin?: ConnectorOriginSource;
+  /**
+   * Re-run code-authored tool-input refinements that cannot be represented in
+   * the provider-facing JSON Schema. The harness uses the result only to
+   * classify an escaped Zod error; execution still parses its own arguments.
+   */
+  validateToolInput?(name: string, args: unknown): ZodError | null;
   executeTool(name: string, args: unknown, context: ConnectorToolContext): Promise<ConnectorToolResult>;
   /**
    * Restores provider-side state a connection needs but that has drifted —
@@ -741,6 +778,15 @@ export interface ConnectorAdapter {
      */
     warning?: string;
   }>;
+}
+
+export function zodToolInputValidationError(
+  schema: ZodType | undefined,
+  input: unknown,
+): ZodError | null {
+  if (!schema) return null;
+  const result = schema.safeParse(input);
+  return result.success ? null : result.error;
 }
 
 export function connectorCapabilitySupportsScope(

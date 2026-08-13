@@ -1,12 +1,13 @@
 import { renderWorkstreamSystemPrompt } from "@avalon/agent-harness";
-import { AutomationService } from "../src/services/automation-service";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Env, HonoAppEnv } from "../src/env";
+import type { HonoAppEnv } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { errorHandler } from "../src/middleware/errors";
 import { automationRoutes } from "../src/routes/automations";
 import { renderAutomationDraftSystemPrompt } from "../src/services/automation-draft-system-prompt";
+import { AutomationService } from "../src/services/automation-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const TASK_CONTEXT_HEADING = "\n\n# Authorized task context\n";
 
@@ -166,7 +167,7 @@ describe("automation draft system prompt", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ draftId: "00000000-0000-7000-8000-000000000009", scope: "personal" }),
       },
-      {} as Env,
+      createTestEnv({}),
     );
 
     expect(response.status).toBe(200);
@@ -190,7 +191,7 @@ describe("automation draft system prompt", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ draftId: "00000000-0000-7000-8000-000000000009", scope: "personal" }),
       },
-      {} as Env,
+      createTestEnv({}),
     );
 
     expect(response.status).toBe(404);
@@ -208,7 +209,7 @@ describe("automation draft system prompt", () => {
         body: JSON.stringify({ draft, scope: "personal" }),
       },
       // Only the error handler's logger reads it; the route itself never does.
-      {} as Env,
+      createTestEnv({}),
     );
 
     expect(response.status).toBe(400);

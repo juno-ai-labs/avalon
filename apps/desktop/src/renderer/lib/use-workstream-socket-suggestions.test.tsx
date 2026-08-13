@@ -1,10 +1,10 @@
+import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AvalonApi } from './api';
 import type { WorkstreamDetail } from './types';
-import { useWorkstreamSocket } from './use-workstream-socket';
+import { type WorkstreamSocketApi, useWorkstreamSocket } from './use-workstream-socket';
 
 const workstreamId = '00000000-0000-7000-8000-000000000210';
 const suggestionId = '00000000-0000-7000-8000-000000000211';
@@ -72,6 +72,7 @@ function detail(): WorkstreamDetail {
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     pinPosition: null,
     lastActivityAt: '2026-08-10T22:19:29.657Z',
     createdAt: '2026-08-10T22:18:23.197Z',
@@ -85,8 +86,8 @@ function detail(): WorkstreamDetail {
   };
 }
 
-describe('activity suggestions over the work-stream socket', () => {
-  it('takes a resolved suggestion out of the detail its cards are rebuilt from', async () => {
+describe('paused activity suggestions over the work-stream socket', () => {
+  it('ignores created and resolved suggestion events', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail());
@@ -94,8 +95,12 @@ describe('activity suggestions over the work-stream socket', () => {
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-    } as unknown as AvalonApi;
+      getMessages: vi.fn(async () => []),
+      getWorkstream: vi.fn(async () => detail()),
+      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
+    } satisfies WorkstreamSocketApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
       wrapper: function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
         return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
@@ -115,8 +120,8 @@ describe('activity suggestions over the work-stream socket', () => {
       suggestion: wireSuggestion,
     }));
 
-    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions)
-      .toMatchObject([{ id: suggestionId, status: 'pending' }]);
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions).toEqual([]);
+    expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
 
     act(() => socket.message({
       type: 'activity_suggestion_resolved',
@@ -125,10 +130,7 @@ describe('activity suggestions over the work-stream socket', () => {
       suggestion: { ...wireSuggestion, status: 'accepted', resolvedAt: '2026-08-10T22:21:01.158Z' },
     }));
 
-    // The detail's pending suggestions are the source a rebuilt transcript draws
-    // its cards from. Leaving the accepted one there would put the card back in
-    // its pending state on the next message fetch, offering buttons whose
-    // request the API has already resolved.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions).toEqual([]);
+    expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
   });
 });

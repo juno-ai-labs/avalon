@@ -37,15 +37,30 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Asked for a decision",
     failed: "Could not ask for a decision",
   },
-  workstream_read: {
-    started: "Reading the work stream",
-    settled: "Read the work stream",
-    failed: "Could not read the work stream",
-  },
   workstream_read_resource: {
     started: "Reading an attached resource",
     settled: "Read an attached resource",
     failed: "Could not read an attached resource",
+  },
+  workstream_list_resources: {
+    started: "Listing attached resources",
+    settled: "Listed attached resources",
+    failed: "Could not list attached resources",
+  },
+  workstream_search_resource: {
+    started: "Searching an attached resource",
+    settled: "Searched an attached resource",
+    failed: "Could not search an attached resource",
+  },
+  workstream_view_resource: {
+    started: "Viewing attached images",
+    settled: "Viewed attached images",
+    failed: "Could not view attached images",
+  },
+  workstream_summarize_resource: {
+    started: "Summarizing an attached resource",
+    settled: "Summarized an attached resource",
+    failed: "Could not summarize an attached resource",
   },
   memory_search: {
     started: "Searching memory",

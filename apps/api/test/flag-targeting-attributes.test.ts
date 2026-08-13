@@ -6,6 +6,7 @@ import {
   loadFlagTargetingAttributes,
 } from "../src/services/flag-targeting-attributes";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const OTHER_WORKSPACE_ID = "00000000-0000-4000-8000-000000000002";
@@ -24,12 +25,12 @@ const THIRTY_DAYS_AGO = "2026-07-12T12:00:00.000Z";
 let database: DatabaseSync;
 
 function envWith(db: D1Database): Env {
-  return {
+  return createTestEnv({
     DB: db,
     AVALON_REGION: "global",
     APP_ENV: "production",
     LOG_LEVEL: "error",
-  } as unknown as Env;
+  });
 }
 
 function seedUser(id: string, email: string, name: string): void {
@@ -243,11 +244,11 @@ describe("flag targeting attributes", () => {
   });
 
   it("evaluates on identifiers alone when the subject's rows cannot be read", async () => {
-    const failing = {
+    const failing = createTestD1Database({
       prepare: () => {
         throw new Error("D1_ERROR: no such table");
       },
-    } as unknown as D1Database;
+    });
 
     await expect(
       loadFlagTargetingAttributes(envWith(failing), {
@@ -267,7 +268,7 @@ describe("flag targeting attributes", () => {
     const prepare = vi.fn(() => {
       throw new Error("D1_ERROR: storage unavailable");
     });
-    const env = envWith({ prepare } as unknown as D1Database);
+    const env = envWith(createTestD1Database({ prepare }));
 
     await loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID });
     await loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID });
@@ -283,12 +284,12 @@ describe("flag targeting attributes", () => {
   it("suppresses only the subject whose read failed", async () => {
     const healthy = sqliteD1(database);
     const prepare = vi.spyOn(healthy, "prepare");
-    const flaky = {
+    const flaky = createTestD1Database({
       prepare: (sql: string) => {
         if (sql.includes("FROM workspaces")) throw new Error("D1_ERROR: storage unavailable");
         return healthy.prepare(sql);
       },
-    } as unknown as D1Database;
+    });
     const env = envWith(flaky);
 
     await loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID });

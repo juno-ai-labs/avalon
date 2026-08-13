@@ -53,6 +53,7 @@ const detail = {
   archivedAt: null,
   scope: 'workspace' as const,
   systemKind: null,
+  nextPendingWakeup: null,
   pinPosition: null,
   participants: [{ user, participationReason: 'creator' as const, joinedAt: timestamp }],
   viewers: [{ user, connectedAt: timestamp }],
@@ -562,6 +563,34 @@ describe('Avalon API wire adapter', () => {
     )).toEqual([answeredResponse]);
   });
 
+  it('omits activity suggestions from rebuilt transcripts while the surface is paused', () => {
+    const suggestion = {
+      id: taskId,
+      activityId: resourceId,
+      workstreamId,
+      title: 'A noisy context suggestion',
+      summary: 'This should not be shown in the work stream.',
+      confidence: 0.95,
+      reason: 'The classifier guessed this belonged here.',
+      status: 'pending' as const,
+      createdAt: timestamp,
+      resolvedAt: null,
+    };
+    const mappedDetail = mapWorkstreamDetail({ ...detail, suggestions: [suggestion] });
+    const legacySuggestion = mapMessage({
+      ...message,
+      id: taskId,
+      author: { type: 'system' as const },
+      messageType: 'suggestion' as const,
+      textContent: '',
+      structuredContent: { suggestion },
+      mentions: [],
+      sequenceNumber: 5,
+    });
+
+    expect(messagesWithTransientBlocks([legacySuggestion], mappedDetail)).toEqual([]);
+  });
+
   it('maps background activity into the durable rail model', () => {
     expect(mapWorkstreamDetail({
       ...detail,
@@ -992,9 +1021,32 @@ describe('Avalon API wire adapter', () => {
       sequenceNumber: 3,
       textContent: 'Earlier context.',
     };
+    const dismissedSuggestion = {
+      ...message,
+      id: noteId,
+      author: { type: 'system' as const },
+      messageType: 'suggestion' as const,
+      textContent: '',
+      structuredContent: {
+        suggestion: {
+          id: taskId,
+          activityId: resourceId,
+          workstreamId,
+          title: 'Review the launch plan',
+          summary: 'The launch plan changed.',
+          confidence: 0.93,
+          reason: 'It matches the work stream objective.',
+          status: 'dismissed' as const,
+          createdAt: timestamp,
+          resolvedAt: timestamp,
+        },
+      },
+    };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/messages?') && url.includes('before=4')) return json({ items: [older], nextCursor: null });
+      if (url.includes('/messages?') && url.includes('before=4')) {
+        return json({ items: [older, dismissedSuggestion], nextCursor: null });
+      }
       if (url.includes('/messages?') && url.includes('around=4')) {
         return json({ items: [older, message], nextCursor: '3', newerCursor: '4' });
       }

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 // The real launcher creates the `harness_runs` row the delivery then points at,
 // so the stub creates one too — without it the foreign key would be the only
@@ -46,12 +47,12 @@ afterEach(() => {
 });
 
 function envFor(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-  } as unknown as Env;
+  });
 }
 
 function seededDatabase(enabled = 1): DatabaseSync {

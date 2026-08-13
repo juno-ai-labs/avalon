@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
 import { AuthService } from "../src/services/auth-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const oldRefreshToken = "old-refresh-token-with-more-than-twenty-characters";
 const userId = "00000000-0000-7000-8000-000000000001";
@@ -14,7 +15,7 @@ class SessionDatabase {
   revokedSessionIds: string[] = [];
   refreshRevocations = 0;
 
-  readonly binding = {
+  readonly binding = createTestD1Database({
     prepare: (rawSql: string) => {
       const sql = rawSql.replace(/\s+/gu, " ").trim();
       let values: unknown[] = [];
@@ -55,21 +56,21 @@ class SessionDatabase {
           } else {
             throw new Error(`Unexpected run query: ${sql}`);
           }
-          return { success: true, results: [], meta: { changes: 1 } } as unknown as D1Result<T>;
+          return createTestD1Result<T>({ success: true, results: [], meta: { changes: 1 } });
         },
       };
-      return statement as unknown as D1PreparedStatement;
+      return createTestD1PreparedStatement(statement);
     },
-  } as unknown as D1Database;
+  });
 }
 
 function environment(database: SessionDatabase): Env {
-  return {
+  return createTestEnv({
     DB: database.binding,
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     SESSION_SIGNING_KEY: "global-session-signing-key-with-enough-entropy",
-  } as unknown as Env;
+  });
 }
 
 describe("authentication session lifecycle", () => {

@@ -12,7 +12,8 @@ import { useWindowFilePaste } from '../lib/use-file-paste';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
-import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
+import { AttachmentLightbox } from '../components/attachment-lightbox';
+import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
 import { Avatar, AvatarStack, AvalonMark, Button, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
@@ -202,22 +203,27 @@ function ParticipantPicker({
   onOpenChange: (open: boolean) => void;
   onToggle: (member: WorkspaceMember) => void;
 }): React.JSX.Element {
+  const availableMembers = members.filter((member) => member.id !== currentUser.id);
+  const firstCheckboxRef = useRef<HTMLInputElement>(null);
+  const doneButtonRef = useRef<HTMLButtonElement>(null);
+
   return (
     <Modal
       description="Only individual workspace members can be added in this version."
-      footer={<Button className="button-primary" onClick={() => onOpenChange(false)}>Done</Button>}
+      footer={<Button ref={doneButtonRef} className="button-primary" onClick={() => onOpenChange(false)}>Done</Button>}
+      initialFocusRef={availableMembers.length > 0 ? firstCheckboxRef : doneButtonRef}
       onOpenChange={onOpenChange}
       open={open}
       title="Add people"
     >
       <div className="member-picker-list" role="group" aria-label="Workspace members">
-        {members
-          .filter((member) => member.id !== currentUser.id)
-          .map((member) => (
+        {availableMembers
+          .map((member, index) => (
             <label className="member-picker-row" key={member.id}>
               <input
                 checked={selected.has(member.id)}
                 onChange={() => onToggle(member)}
+                ref={index === 0 ? firstCheckboxRef : undefined}
                 type="checkbox"
               />
               <Avatar member={member} size="medium" />
@@ -252,7 +258,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const homeLeaving = useHomeHandOff(launching !== null);
   const attachmentDraft = useFileAttachments(api, draftKey);
   const loadAttachmentContent = useCallback(
-    (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
+    (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
   );
   // The composer autofocuses here, but focus moves away the moment anything else
@@ -517,7 +523,6 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
                     message={openingTurn}
                     onAnswerElicitation={async () => undefined}
                     onOpenAttachment={setAttachmentPreview}
-                    onResolveSuggestion={async () => undefined}
                   />
                 </div>
               )}

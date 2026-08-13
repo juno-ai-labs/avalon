@@ -1,10 +1,11 @@
 import { WorkstreamDetailSchema } from "@avalon/contracts";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import type { Env, HonoAppEnv } from "../src/env";
+import type { HonoAppEnv } from "../src/env";
 import { workstreamRoutes } from "../src/routes/workstreams";
 import type { GlobalWorkstreamEmailRouterRpcBinding } from "../src/services/workstream-email-routing-service";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const EMAIL_DOMAIN = "automation.with-avalon.com";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -26,11 +27,11 @@ describe("work-stream recency ordering", () => {
       return statement;
     });
     const service = new WorkstreamService(
-      {
+      createTestEnv({
         APP_ENV: "production",
         AVALON_REGION: "global",
         DB: { prepare, batch: vi.fn() },
-      } as unknown as Env,
+      }),
       { workspaceId: WORKSPACE_ID, userId: USER_ID } as never,
     );
 
@@ -55,11 +56,11 @@ describe("work-stream recency ordering", () => {
       return statement;
     });
     const service = new WorkstreamService(
-      {
+      createTestEnv({
         APP_ENV: "production",
         AVALON_REGION: "global",
         DB: { prepare, batch: vi.fn() },
-      } as unknown as Env,
+      }),
       { workspaceId: WORKSPACE_ID, userId: USER_ID } as never,
     );
 
@@ -84,11 +85,11 @@ describe("work-stream recency ordering", () => {
       };
       return statement;
     });
-    const environment = {
+    const environment = createTestEnv({
       APP_ENV: "production",
       AVALON_REGION: "global",
       DB: { prepare, batch: vi.fn() },
-    } as unknown as Env;
+    });
     const app = new Hono<HonoAppEnv>();
     app.use("*", async (context, next) => {
       context.set("auth", {
@@ -128,11 +129,11 @@ describe("work-stream recency ordering", () => {
       return statement;
     });
     const service = new WorkstreamService(
-      {
+      createTestEnv({
         APP_ENV: "production",
         AVALON_REGION: "global",
         DB: { prepare, batch: vi.fn() },
-      } as unknown as Env,
+      }),
       { workspaceId: WORKSPACE_ID, userId: USER_ID } as never,
     );
 
@@ -266,14 +267,14 @@ describe("work-stream recency ordering", () => {
       reserveMany,
       activateMany,
       setStatus: vi.fn(),
-    } as unknown as GlobalWorkstreamEmailRouterRpcBinding;
+    } satisfies GlobalWorkstreamEmailRouterRpcBinding;
     const service = new WorkstreamService(
-      {
+      createTestEnv({
         APP_ENV: "production",
         AVALON_REGION: "eu",
         DB: { prepare, batch },
         GLOBAL_EMAIL_ROUTER: globalRouter,
-      } as unknown as Env,
+      }),
       { workspaceId: "workspace-1", userId: "user-1" } as never,
     );
 
@@ -321,6 +322,10 @@ function workstreamRow(id: string, emailAddress: string | null, lastActivityAt: 
     title_status: "settled",
     latest_attention_sequence_number: 0,
     unread_tracking_start_sequence_number: 0,
+    // The viewer projection joins the next pending wake-up; these rows stand in
+    // for the completed SELECT rather than just for the workstreams table.
+    next_pending_wakeup_at: null,
+    next_pending_wakeup_prompt_prefix: null,
   };
 }
 
@@ -333,9 +338,9 @@ function contractWorkstreamRow() {
 }
 
 function d1Result<T>(changes: number, results: T[] = []): D1Result<T> {
-  return {
+  return createTestD1Result<T>({
     success: true,
     results,
     meta: { changes },
-  } as D1Result<T>;
+  });
 }

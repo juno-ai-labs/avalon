@@ -7,6 +7,7 @@ import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { NoteService } from "../src/services/note-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = "00000000-0000-4000-8000-000000000000";
@@ -26,7 +27,7 @@ class SqliteD1Statement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -34,17 +35,17 @@ class SqliteD1Statement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: { changes: 0 },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
-  return {
-    prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+  return createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
     batch: async (statements: D1PreparedStatement[]) => {
       const results: D1Result<unknown>[] = [];
       database.exec("BEGIN");
@@ -59,7 +60,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
         throw error;
       }
     },
-  } as unknown as D1Database;
+  });
 }
 
 /**
@@ -70,15 +71,20 @@ function sqliteD1(database: DatabaseSync): D1Database {
  * any more, so asserting on puts would only be asserting on this class.
  */
 class MemoryBucket {
-  private readonly objects = new Map<string, string>();
+  private readonly objects = new Map<string, string | ArrayBuffer>();
 
-  async put(key: string, value: string): Promise<void> {
+  async put(key: string, value: string | ArrayBuffer): Promise<void> {
     this.objects.set(key, value);
   }
 
-  async get(key: string): Promise<{ text: () => Promise<string> } | null> {
+  async get(key: string): Promise<{ text: () => Promise<string>; arrayBuffer: () => Promise<ArrayBuffer> } | null> {
     const value = this.objects.get(key);
-    return value === undefined ? null : { text: async () => value };
+    if (value === undefined) return null;
+    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : new Uint8Array(value);
+    return {
+      text: async () => new TextDecoder().decode(bytes),
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+    };
   }
 
   async delete(key: string): Promise<void> {
@@ -117,12 +123,12 @@ function fixture(): { database: DatabaseSync; env: Env } {
   `);
   return {
     database,
-    env: {
+    env: createTestEnv({
       DB: sqliteD1(database),
-      PAYLOADS: new MemoryBucket() as unknown as R2Bucket,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>(new MemoryBucket()),
       AVALON_REGION: "global",
       APP_ENV: "test",
-    } as Env,
+    }),
   };
 }
 
@@ -175,26 +181,26 @@ describe("Avalon core write-tool idempotency", () => {
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
     const tools = __integrationTesting.createAvalonTools(env, workspaceInput);
-    const read = tools.find((tool) => tool.definition.name === "read")!;
+    const listResources = tools.find((tool) => tool.definition.name === "list_resources")!;
     const readResource = tools.find((tool) => tool.definition.name === "read_resource")!;
 
-    await expect(read.execute({}, context())).resolves.toMatchObject({
-      output: { attachedResources: [] },
+    await expect(listResources.execute({}, context())).resolves.toMatchObject({
+      output: { items: [], totalVisibleResources: 0 },
     });
     await expect(readResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toThrow("Attached resource content is not hydrated");
+      .rejects.toMatchObject({ code: "resource_not_found" });
 
     await noteService.update(note.id, { scope: "workspace" });
-    const visible = await read.execute({}, context());
+    const visible = await listResources.execute({}, context());
     expect(visible.output).toMatchObject({
-      attachedResources: [expect.objectContaining({ id: note.resourceId, title: "Sensitive note" })],
+      items: [expect.objectContaining({ resourceId: note.resourceId, title: "Sensitive note" })],
     });
     await expect(readResource.execute({ resourceId: note.resourceId }, context()))
       .resolves.toMatchObject({ output: expect.objectContaining({ title: "Sensitive note" }) });
 
     await noteService.update(note.id, { scope: "personal" });
     await expect(readResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toThrow("Attached resource content is not hydrated");
+      .rejects.toMatchObject({ code: "resource_not_found" });
 
     const ownerReadResource = __integrationTesting.createAvalonTools(env, workflowInput())
       .find((tool) => tool.definition.name === "read_resource")!;
@@ -204,7 +210,7 @@ describe("Avalon core write-tool idempotency", () => {
     database.prepare("UPDATE notes SET archived_at = ? WHERE id = ?")
       .run("2026-08-07T19:00:00.000Z", note.id);
     await expect(ownerReadResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toThrow("Attached resource content is not hydrated");
+      .rejects.toMatchObject({ code: "resource_not_found" });
   });
 
   it("returns easy-English current time in the user's configured timezone", async () => {
@@ -264,9 +270,9 @@ describe("Avalon core write-tool idempotency", () => {
     const { database, env } = fixture();
     const databaseBinding = env.DB;
     let staleExistenceChecks = 0;
-    const staleExistenceEnv = {
+    const staleExistenceEnv = createTestEnv({
       ...env,
-      DB: {
+      DB: createTestD1Database({
         prepare: (sql: string) => {
           if (sql.includes("SELECT id FROM elicitations")) {
             staleExistenceChecks += 1;
@@ -274,13 +280,13 @@ describe("Avalon core write-tool idempotency", () => {
               bind: () => statement,
               first: async () => null,
             };
-            return statement as unknown as D1PreparedStatement;
+            return createTestD1PreparedStatement(statement);
           }
           return databaseBinding.prepare(sql);
         },
         batch: databaseBinding.batch.bind(databaseBinding),
-      } as D1Database,
-    } as Env;
+      }),
+    });
     const tool = __integrationTesting.createAvalonTools(staleExistenceEnv, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");

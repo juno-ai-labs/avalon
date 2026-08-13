@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Env } from "../src/env";
+import type { InferenceRequestEvent } from "@avalon/agent-harness";
 import { createAgentInferenceLogger } from "../src/services/agent-inference-logging";
+import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 interface RecordedStatement {
   sql: string;
@@ -10,7 +11,7 @@ interface RecordedStatement {
 function fixture(enabled: boolean) {
   const statements: RecordedStatement[] = [];
   const objects = new Map<string, string>();
-  const db = {
+  const db = createTestD1Database({
     prepare(sql: string) {
       let values: unknown[] = [];
       const statement = {
@@ -29,21 +30,21 @@ function fixture(enabled: boolean) {
       };
       return statement;
     },
-  } as unknown as D1Database;
-  const bucket = {
+  });
+  const bucket = createCloudflareTestBinding<R2Bucket>({
     async put(key: string, value: string) {
       objects.set(key, value);
     },
     async delete(key: string) {
       objects.delete(key);
     },
-  } as unknown as R2Bucket;
-  const env = {
+  });
+  const env = createTestEnv({
     DB: db,
     PAYLOADS: bucket,
     LOG_LEVEL: "error",
     AVALON_REGION: "global",
-  } as unknown as Env;
+  });
   return { env, objects, statements };
 }
 
@@ -67,7 +68,7 @@ const request = {
     tools: [{ type: "function", function: { name: "github_read", parameters: { type: "object" } } }],
     tool_choice: "auto" as const,
   },
-};
+} satisfies InferenceRequestEvent;
 
 describe("agent inference logging", () => {
   it("does nothing while the workspace preference is off", async () => {
