@@ -11,6 +11,7 @@ import type {
   RuntimeConfig,
 } from '../common/desktop';
 import type { ApplicationIconId, DesktopApplicationIconState } from '../common/application-icons';
+import type { MessageExportResult } from '../common/message-export';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 
@@ -107,6 +108,7 @@ const bridge: AvalonDesktopBridge = {
   hasStoredCredential: () => ipcRenderer.invoke('auth:has-stored-credential') as Promise<boolean>,
   logout: () => ipcRenderer.invoke('auth:logout') as Promise<void>,
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
+  exportMessage: (request) => ipcRenderer.invoke('message-export:save', request) as Promise<MessageExportResult>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,

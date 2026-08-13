@@ -88,6 +88,17 @@ are canonical storage services, not authorization layers.
   [`menu-bar.md`](menu-bar.md) owns the mechanism. Its preference shares
   `application-settings.json` with Lockdown mode and therefore the same shared
   write queue described below.
+- Saving one of Avalon's messages as a picture or a PDF renders it in a hidden
+  window that is deliberately *less* privileged than any other: no preload and
+  therefore no bridge, no Node, no devtools, sandboxed, and served a document
+  under `default-src 'none'; img-src data: https:; style-src 'unsafe-inline'`.
+  That document is built from text a model wrote, so it is given a scheme of its
+  own — `avalon-export://`, one in-memory document per single-use token — rather
+  than the renderer's origin. Its IPC entry point parses all four fields of the
+  request, and the file name it proposes to the save dialog is *rejected* unless
+  it matches `^[a-z0-9][a-z0-9-]{0,79}$`, because that name is derived from the
+  message's own text. The only thing written is the file the person chose in a
+  native dialog. [`message-export.md`](message-export.md) owns the mechanism.
 - The native Settings window uses the same sandbox, preload, CSP, navigation
   denial, and regional session bridge as the main window. **Command-,** opens a
   singleton window rather than a privileged remote page.
@@ -450,6 +461,10 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **Every desktop HTTP header is covered by the regional CORS allowlist and an
   exact preflight test.** A header implemented only in the renderer cannot reach
   the Worker.
+- **A document built out of model output is never same-origin with the
+  application.** The exported message card gets `avalon-export://`, no preload,
+  and a policy that forbids script; putting it on `app://avalon` would buy one
+  fewer scheme at the price of the boundary.
 - **A webhook is verified against its exact raw body before anything parses,
   stores, or queues it.**
 - **A tool call is a proposal, never an instruction.** Name, schema, principal,
@@ -566,6 +581,27 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-13 — A saved message is rendered outside the application's origin
+
+**What changed:** Exporting one of Avalon's messages as a picture or a PDF renders
+it in a hidden, preload-free window on a scheme of its own, `avalon-export://`,
+serving one in-memory document per single-use token under a `default-src 'none'`
+policy. The request's four fields are parsed in main, and its proposed file name
+is rejected rather than sanitized.
+
+**Why:** The card is a page built out of a model's words. The cheap version —
+adding a route to the existing `app://avalon` handler — would have given that page
+the renderer's origin, and with it whatever the application's own origin is ever
+granted. A second scheme costs one registration and removes the question.
+Rejecting the file name rather than stripping it follows the same reasoning as the
+URL-scheme invariant above: text a model wrote reaches a filesystem API, and a
+bounded pattern is checkable in a way that "we strip the dangerous parts" is not.
+
+**Consequences:** The export window must stay preload-free. It has no legitimate
+use for the bridge, and adding one would hand the desktop's privileged API to a
+document assembled from model output.
+[`message-export.md`](message-export.md) owns the rest of the design.
 
 ### 2026-08-13 — GitHub policy drift fails closed without inventing a new gate
 
