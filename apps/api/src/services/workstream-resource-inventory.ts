@@ -4,7 +4,8 @@ import {
   type ExecutionPrincipal,
 } from "@avalon/contracts";
 import {
-  loadVisibleWorkstreamResources,
+  loadVisibleWorkstreamResourceInventory,
+  type VisibleWorkstreamResourceInventory,
   type VisibleWorkstreamResourceRow,
 } from "./workstream-resource-visibility";
 
@@ -14,8 +15,6 @@ export function renderWorkstreamResourceInventory(input: {
   asOf: string;
   rows: readonly VisibleWorkstreamResourceRow[];
 }): string {
-  const asOf = new Date(input.asOf);
-  if (!Number.isFinite(asOf.getTime())) throw new Error("Invalid resource inventory timestamp");
   const counts = new Map(ATTACHMENT_KIND_ENTRIES.map(({ kind }) => [kind, 0]));
   let messageAttachments = 0;
   for (const row of input.rows) {
@@ -23,6 +22,24 @@ export function renderWorkstreamResourceInventory(input: {
     counts.set(kind, (counts.get(kind) ?? 0) + 1);
     if (row.message_attachment === 1) messageAttachments += 1;
   }
+  return renderWorkstreamResourceInventoryAggregate({
+    asOf: input.asOf,
+    inventory: {
+      fingerprint: "render-only",
+      totalVisibleResources: input.rows.length,
+      totalVisibleMessageAttachments: messageAttachments,
+      groups: ATTACHMENT_KIND_ENTRIES.map(({ kind }) => ({ kind, count: counts.get(kind) ?? 0 })),
+    },
+  });
+}
+
+export function renderWorkstreamResourceInventoryAggregate(input: {
+  asOf: string;
+  inventory: VisibleWorkstreamResourceInventory;
+}): string {
+  const asOf = new Date(input.asOf);
+  if (!Number.isFinite(asOf.getTime())) throw new Error("Invalid resource inventory timestamp");
+  const counts = new Map(input.inventory.groups.map(({ kind, count }) => [kind, count]));
   const groups = ATTACHMENT_KIND_ENTRIES
     .map(({ kind }) => ({ kind, count: counts.get(kind) ?? 0 }))
     .filter(({ count }) => count > 0)
@@ -30,8 +47,8 @@ export function renderWorkstreamResourceInventory(input: {
   return [
     "# Authoritative work-stream resource inventory",
     `As of: ${asOf.toISOString()}`,
-    `Visible resources: ${input.rows.length}`,
-    `Message attachments: ${messageAttachments}`,
+    `Visible resources: ${input.inventory.totalVisibleResources}`,
+    `Message attachments: ${input.inventory.totalVisibleMessageAttachments}`,
     groups.length > 0 ? "Groups:" : "Groups: none",
     ...groups,
     "",
@@ -51,13 +68,13 @@ export async function renderAuthorizedWorkstreamResourceInventory(
     asOf?: string;
   },
 ): Promise<string> {
-  const visible = await loadVisibleWorkstreamResources(database, {
+  const visible = await loadVisibleWorkstreamResourceInventory(database, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     principal: input.principal,
   });
-  return renderWorkstreamResourceInventory({
+  return renderWorkstreamResourceInventoryAggregate({
     asOf: input.asOf ?? new Date().toISOString(),
-    rows: visible.rows,
+    inventory: visible,
   });
 }

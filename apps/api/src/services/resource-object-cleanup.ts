@@ -6,6 +6,7 @@ const MAXIMUM_CLEANUP_BATCH = 100;
 
 interface PendingResourceObject {
   object_ref: string;
+  workspace_id: string;
   resource_id: string;
   object_kind: "original" | "derivative" | "index" | "receipt";
 }
@@ -22,7 +23,7 @@ function boundedCleanupErrorCode(error: unknown): string {
 
 export async function reapDeletedResourceObjects(env: Env): Promise<void> {
   const pending = await env.DB.prepare(
-    `SELECT object_ref, resource_id, object_kind
+    `SELECT object_ref, workspace_id, resource_id, object_kind
      FROM resource_object_deletion_outbox
      ORDER BY created_at ASC, object_ref ASC
      LIMIT ?`,
@@ -32,29 +33,41 @@ export async function reapDeletedResourceObjects(env: Env): Promise<void> {
     try {
       const active = await env.DB.prepare(
         `SELECT 1 AS active FROM resources
-          WHERE content_ref = ? OR model_content_ref = ? OR model_index_ref = ?
+          WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ? OR model_index_ref = ?)
          UNION ALL
         SELECT 1 AS active FROM resource_model_objects
-          WHERE object_ref = ? AND lifecycle_status = 'active'
+          WHERE workspace_id = ? AND object_ref = ? AND lifecycle_status = 'active'
          LIMIT 1`,
-      ).bind(object.object_ref, object.object_ref, object.object_ref, object.object_ref).first();
+      ).bind(
+        object.workspace_id,
+        object.object_ref,
+        object.object_ref,
+        object.object_ref,
+        object.workspace_id,
+        object.object_ref,
+      ).first();
       if (active) {
         await env.DB.prepare(
-          "DELETE FROM resource_object_deletion_outbox WHERE object_ref = ?",
-        ).bind(object.object_ref).run();
+          "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+        ).bind(object.workspace_id, object.object_ref).run();
         continue;
       }
       await env.PAYLOADS.delete(object.object_ref);
       await env.DB.prepare(
-        "DELETE FROM resource_object_deletion_outbox WHERE object_ref = ?",
-      ).bind(object.object_ref).run();
+        "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+      ).bind(object.workspace_id, object.object_ref).run();
     } catch (error) {
       const reason = boundedCleanupErrorCode(error);
       await env.DB.prepare(
         `UPDATE resource_object_deletion_outbox
          SET attempt_count = attempt_count + 1, last_error_code = ?, updated_at = ?
-         WHERE object_ref = ?`,
-      ).bind(truncateUtf16Safe(reason, 120), new Date().toISOString(), object.object_ref).run();
+         WHERE workspace_id = ? AND object_ref = ?`,
+      ).bind(
+        truncateUtf16Safe(reason, 120),
+        new Date().toISOString(),
+        object.workspace_id,
+        object.object_ref,
+      ).run();
       logWarn(env, "resource_object_cleanup_failed", {
         resource_id: object.resource_id,
         object_kind: object.object_kind,

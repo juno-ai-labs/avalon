@@ -308,13 +308,14 @@ supplements that working set with deterministic discovery rather than replacing
 it.
 
 The stored compaction record retains the raw LLM summary, checkpoint template
-version, execution-principal key, and authorized resource-visibility fingerprint.
-Avalon captures that scope before summarization and verifies it after the model
-returns and again before persistence. The inventory appendix is never persisted.
-Replay uses the raw summary only when the active principal and resource
-fingerprint exactly match; otherwise it discards the checkpoint and rebuilds
-from durable messages. This prevents IDs or conclusions preserved in the raw
-summary from crossing a note-privacy or revocation boundary.
+version, execution-principal key, and authorized resource-inventory revision.
+Avalon captures that scope before summarization, verifies it after the model
+returns, and makes the final D1 insert conditional on the revision still being
+current. The inventory appendix is never persisted. Replay loads only the active
+principal's row and uses the raw summary only when the resource revision exactly
+matches; otherwise it discards the checkpoint and rebuilds from bounded durable
+history. This prevents IDs or conclusions preserved in the raw summary from
+crossing a note-privacy or revocation boundary.
 
 ## Impact on the product contract
 
@@ -326,11 +327,21 @@ global surface or participation rule.
 
 ## Decision log
 
-- **2026-08-12 — Scope the raw compaction summary, not just its inventory.** The
-  summary may retain exact attachment IDs and conclusions, so it is stored with
-  the principal and authorized-resource fingerprint captured before the summary
-  call. A scope mismatch invalidates the checkpoint. Post-hoc redaction was
-  rejected because a private conclusion need not retain an identifiable ID.
+### 2026-08-12 — Scope the raw compaction summary, not just its inventory
+
+**Decided:** Store one raw summary per execution principal and bind it to the
+monotonic authorized resource-inventory revision captured before the summary
+call. A mismatch invalidates the checkpoint, and persistence is conditional on
+the revision remaining current through the final write.
+
+**Why:** The summary may retain exact attachment IDs and conclusions. Post-hoc
+redaction cannot identify every private conclusion, and a compare followed by an
+unconditional insert leaves a final revocation race.
+
+**Changes:** The goals and user-visible product behavior are unchanged. The
+implementation uses principal-scoped compaction rows, a trigger-maintained
+revision, and bounded fallback replay as delivered in
+[#144](https://github.com/juno-ai-labs/avalon/pull/144).
 
 ## Key design decisions
 
@@ -418,10 +429,12 @@ the format is unsupported.
 No second attachment catalog is persisted for compaction. The existing raw
 `summary` in `workstream_context_compactions` remains the durable LLM output; the
 row gains `checkpoint_template_version`, `execution_principal_key`, and
-`resource_visibility_fingerprint`. `messages_json` retains only the base
-checkpoint message without an inventory appendix. Authorized totals and groups
-are derived from current visibility when a matching checkpoint is rendered; a
-principal or fingerprint mismatch invalidates the checkpoint.
+`resource_visibility_fingerprint`, whose shipped value is the monotonic
+`inventory:<revision>` fence. The primary key includes the execution principal.
+`messages_json` retains only the base checkpoint message without an inventory
+appendix. Authorized totals and groups are derived from current visibility when
+a matching checkpoint is rendered; a principal or inventory-revision mismatch
+invalidates the checkpoint.
 
 ## Regional impact
 
@@ -967,7 +980,7 @@ it never deletes originals or rewrites message relationships.
    resources and message attachments and fixed-order non-empty kind groups after
    the unchanged LLM summary. It includes no filenames, MIME values, content, or
    unbounded ID list.
-7. Replaying that checkpoint with the same principal and resource fingerprint
+7. Replaying that checkpoint with the same principal and inventory revision
    regenerates the appendix to match the right sidebar. Adding, removing, hiding,
    or revoking a resource, or changing the execution principal, invalidates the
    checkpoint and falls back to durable transcript replay without exposing its

@@ -252,11 +252,21 @@ and visibility checks. Failed tools forward only bounded, schema-validated
 recovery fields; arbitrary provider, converter, credential, and file-authored
 objects are discarded before entering the transcript.
 
-Compaction persists only a principal-neutral LLM summary. Its resource inventory
-is regenerated from the same current-principal visibility query as the sidebar
-each time the checkpoint is applied or replayed. It contains fixed kind counts,
-not filenames, IDs, MIME values, content, or image bytes, so one viewer's private
-note inventory is never stored as shared work-stream prose.
+Compaction persists an LLM summary only in the row for the exact execution
+principal and authorized resource-inventory revision that produced it. Its
+resource inventory is regenerated through the sidebar's current-principal
+visibility predicate each time the checkpoint is applied or replayed. It
+contains fixed kind counts, not filenames, IDs, MIME values, content, or image
+bytes. A revision mismatch rejects the summary; the final insert is conditional
+on the revision still being current so revocation cannot win the last race.
+
+Historical protocol reconstruction does not trust a completed tool invocation
+merely because its JSON receipt still exists. Attachment read, search,
+summarize, and view results are identified from their persisted execution plan,
+then reauthorized against the current principal, current work-stream
+relationship, and current derivative dependency before any result is placed in
+the next model request. Missing authority omits that assistant/tool pair rather
+than replaying stale content.
 
 ### Logging and audit
 
@@ -445,6 +455,35 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-08-12 — Attachment history and checkpoints reauthorize at replay
+
+**What changed:** Raw compaction summaries now live in principal-scoped rows and
+are fenced by a monotonic authorized-inventory revision through the final D1
+write. Historical attachment tool results are recognized from the stored
+execution plan and reauthorized before transcript projection. Attachment-owned
+model objects, cleanup rows, and receipt dependencies also carry `workspace_id`
+through every mutation and lookup.
+
+**Why:** Review demonstrated that a private or detached attachment could remain
+inside a previously completed tool result even after compaction correctly
+invalidated, and that tenant-owned lifecycle tables without an explicit
+workspace key violated the regional tenancy invariant. A shared raw summary had
+the same cross-principal problem because model prose can retain private
+conclusions without a recognizable filename.
+
+**Considered and rejected:** Treating completed receipts or raw summaries as
+principal-neutral, redacting model prose after the fact, and relying on globally
+unique resource or invocation IDs as tenant scope. None proves current
+authorization.
+
+**Consequences:** Every attachment replay has a fail-closed current-authority
+check; principal changes use independent checkpoints; and new attachment
+lifecycle tables and queries must retain explicit workspace predicates even
+when another identifier is unique.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
 ### 2026-08-12 — Compaction resource awareness is current-principal data
 
 **What changed:** Authorized resource totals and natural-kind groups are appended
@@ -463,6 +502,10 @@ adds unnecessary sensitive metadata and unbounded context growth.
 **Consequences:** Replay now requires a fresh authorized visibility read.
 Failures at that boundary fail the run rather than reusing stale inventory, and
 the stored summary remains reusable across principals.
+
+Superseded by the principal-scoped replay boundary above. Shipped in
+[#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Attachment continuations name state without granting authority
 
@@ -487,8 +530,8 @@ after cursor verification. New recovery calls must be added to the strict
 discriminated union before they can reach a model, and cursor contents themselves
 remain excluded from logs.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — The unsigned-challenge boundary applies by protocol shape
 
