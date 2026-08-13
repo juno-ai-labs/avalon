@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -26,6 +26,7 @@ const FIXTURES = [
   },
 ];
 const IMAGE = `avalon-crash-symbolicator-integration:${process.pid}`;
+const PROCESS_PRESSURE_CONTAINER = `avalon-symbolicator-pressure-${process.pid}`;
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const BUILD_CONTEXT = resolve(SCRIPT_DIRECTORY, '../crash-symbolicator');
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'avalon-symbolicator-'));
@@ -53,7 +54,7 @@ async function downloadFixture(fixture) {
   assert.equal(createHash('sha256').update(bytes).digest('hex'), fixture.sha256);
   const destination = join(temporaryRoot, fixture.relativePath);
   mkdirSync(dirname(destination), { recursive: true });
-  writeFileSync(destination, bytes, { mode: 0o600 });
+  writeFileSync(destination, bytes, { mode: 0o644 });
 }
 
 function containerArguments(...command) {
@@ -99,62 +100,23 @@ function assertSanitized(value, key) {
   }
 }
 
-function diagnoseProcessorFailure() {
-  const probe = [
-    'import json',
-    'import resource',
-    'import subprocess',
-    'import sys',
-    'import tempfile',
-    "disabled = set(filter(None, sys.argv[1].split(',')))",
-    'def apply_limits():',
-    "    if 'address_space' not in disabled:",
-    '        resource.setrlimit(resource.RLIMIT_AS, (896 * 1024 * 1024, 896 * 1024 * 1024))',
-    "    if 'cpu' not in disabled:",
-    '        resource.setrlimit(resource.RLIMIT_CPU, (25, 25))',
-    "    if 'file_size' not in disabled:",
-    '        resource.setrlimit(resource.RLIMIT_FSIZE, (4 * 1024 * 1024, 4 * 1024 * 1024))',
-    "    if 'file_descriptors' not in disabled:",
-    '        resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))',
-    'environment = {',
-    "    'HOME': '/tmp/avalon-symbolicator',",
-    "    'LANG': 'C.UTF-8',",
-    "    'PATH': '/usr/local/bin:/usr/bin:/bin',",
-    "    'RUST_BACKTRACE': '0',",
-    '}',
-    'try:',
-    '    with tempfile.TemporaryFile() as output:',
-    '        completed = subprocess.run([',
-    "            '/usr/local/bin/minidump-stackwalk', '--json', '--symbols-path',",
-    "            '/fixtures/symbols', '/fixtures/test.dmp',",
-    '        ], check=False, cwd="/workspace", env=environment, stdin=subprocess.DEVNULL,',
-    '           stdout=output, stderr=subprocess.PIPE, timeout=30, preexec_fn=apply_limits)',
-    '        result = {',
-    "            'returncode': completed.returncode,",
-    "            'output_bytes': output.tell(),",
-    "            'stderr_tail': completed.stderr.decode('utf8', errors='replace')[-512:],",
-    '        }',
-    'except BaseException as error:',
-    "    result = {'exception': type(error).__name__, 'message': str(error)[-512:]}",
-    'print(json.dumps(result, separators=(",", ":")))',
-  ].join('\n');
-  const variants = {
-    all_limits: [],
-    no_address_space: ['address_space'],
-    no_cpu: ['cpu'],
-    no_file_size: ['file_size'],
-    no_file_descriptors: ['file_descriptors'],
-    no_limits: ['address_space', 'cpu', 'file_size', 'file_descriptors'],
-  };
-  return Object.fromEntries(Object.entries(variants).map(([name, disabled]) => [
-    name,
-    JSON.parse(runDocker(containerArguments('python3', '-c', probe, disabled.join(',')))),
-  ]));
+async function waitForProcessPressure() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const result = spawnSync('docker', ['logs', PROCESS_PRESSURE_CONTAINER], {
+      encoding: 'utf8',
+    });
+    if (result.status === 0 && result.stdout.includes('ready')) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  assert.fail('process-pressure container did not become ready');
 }
 
 try {
   for (const fixture of FIXTURES) await downloadFixture(fixture);
-  writeFileSync(join(temporaryRoot, 'malformed.dmp'), 'not a minidump', { mode: 0o600 });
+  writeFileSync(join(temporaryRoot, 'malformed.dmp'), 'not a minidump', { mode: 0o644 });
+  // Native Linux bind mounts retain host permissions. Let only the public,
+  // checksum-pinned fixture tree cross the test container's non-root boundary.
+  chmodSync(temporaryRoot, 0o755);
 
   runDocker(['build', '--quiet', '--tag', IMAGE, BUILD_CONTEXT]);
 
@@ -172,25 +134,33 @@ try {
   ].join('\n');
   runDocker(containerArguments('python3', '-c', noEgressProbe));
 
-  const processorSource = readFileSync(resolve(BUILD_CONTEXT, 'processor.py'), 'utf8');
-  assert.doesNotMatch(
-    processorSource,
-    /resource\.setrlimit\(resource\.RLIMIT_NPROC/u,
-    'processor limits must not depend on a host UID shared by sibling containers',
-  );
+  const processPressureProbe = [
+    'import subprocess',
+    'import time',
+    "children = [subprocess.Popen(['sleep', '300']) for _ in range(40)]",
+    "print('ready', flush=True)",
+    'time.sleep(300)',
+  ].join('\n');
+  runDocker([
+    'run',
+    '--detach',
+    '--rm',
+    '--network=none',
+    '--name',
+    PROCESS_PRESSURE_CONTAINER,
+    IMAGE,
+    'python3',
+    '-c',
+    processPressureProbe,
+  ]);
+  await waitForProcessPressure();
 
   const report = JSON.parse(runDocker(containerArguments(
     '/usr/local/bin/avalon-symbolicate',
     '/fixtures/test.dmp',
     '/fixtures/symbols',
   )));
-  assert.equal(
-    report.status,
-    'ok',
-    `valid fixture was rejected: ${JSON.stringify(report)}; probes=${JSON.stringify(
-      report.status === 'ok' ? {} : diagnoseProcessorFailure(),
-    )}`,
-  );
+  assert.equal(report.status, 'ok', `valid fixture was rejected: ${JSON.stringify(report)}`);
   assert.ok(Array.isArray(report.threads) && report.threads.length > 0, 'fixture produced no threads');
   assert.match(JSON.stringify(report), /test_app/u, 'matching symbols were not applied');
   assertSanitized(report);
@@ -204,6 +174,7 @@ try {
 
   console.log('Crash symbolicator container integration passed.');
 } finally {
+  spawnSync('docker', ['stop', PROCESS_PRESSURE_CONTAINER], { encoding: 'utf8' });
   spawnSync('docker', ['image', 'rm', '--force', IMAGE], { encoding: 'utf8' });
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
