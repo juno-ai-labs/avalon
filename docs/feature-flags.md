@@ -86,7 +86,7 @@ The first five names match the `AgentInferenceSource` values written to the
 inference ledger, so a ledger row and a flag key name the same agent. The rest
 are the standalone structured-output agents: message addressing uses the
 agent-harness classifier helper; work-stream naming, semantic activity
-triggering, contextual routing, the two halves of suggested work, and the
+triggering, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
 Admission and ranking get separate flags because admission turns connector
 activity into prompts while ranking orders them per user, and pinning one should

@@ -14,7 +14,6 @@ import {
   messagesWithTransientBlocks,
   mapParticipant,
   mapResource,
-  mapSuggestion,
   mapToolInvocation,
   mapViewer,
   mapWorkstreamDetail,
@@ -26,8 +25,6 @@ import {
   createElicitationMessage,
   createTextMessage,
   createToolEventMessage,
-  appendDismissedSuggestionId,
-  dismissedSuggestionIdsQueryKey,
   isSameLogicalMessage,
   removeTranscriptMessage,
   upsertTranscriptMessage,
@@ -548,11 +545,7 @@ export function useWorkstreamSocket(
           api.getMessages(workstreamId),
           api.getWorkstreams(),
         ]);
-        const canonicalMessages = messagesWithTransientBlocks(
-          canonicalMessagePage,
-          canonicalWorkstream,
-          queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
-        );
+        const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
         if (closedByEffect || generation !== canonicalReconcileGeneration) return;
         if (resumeState.lastSequence > sequenceAtStart) {
           queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
@@ -763,40 +756,6 @@ export function useWorkstreamSocket(
               ? current.resources.map((candidate) => candidate.id === resource.id ? resource : candidate)
               : [...current.resources, resource],
           };
-        });
-      } else if (event.type === 'activity_suggestion_created' || event.type === 'activity_suggestion_resolved') {
-        // The detail's pending suggestions are what a transcript rebuild draws
-        // its cards from, so a resolution that only reached the transcript
-        // would be undone by the next message fetch.
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
-          if (!current) return current;
-          const remaining = (current.suggestions ?? []).filter((suggestion) => suggestion.id !== event.suggestion.id);
-          return {
-            ...current,
-            // The server lists suggestions newest first, and position in this
-            // array decides position in the transcript, so a new one belongs at
-            // the head. Appending would make the card jump on the next fetch.
-            suggestions: event.suggestion.status === 'pending'
-              ? [mapSuggestion(event.suggestion), ...remaining]
-              : remaining,
-          };
-        });
-        if (event.suggestion.status === 'dismissed') {
-          queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId), (dismissed) =>
-            appendDismissedSuggestionId(dismissed, event.suggestion.id));
-        }
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
-          const messageId = `suggestion-${event.suggestion.id}`;
-          if (event.suggestion.status === 'dismissed') return removeTranscriptMessage(current, messageId);
-          return insertMessage(current, {
-            id: messageId,
-            workstreamId,
-            sequenceNumber: event.sequence,
-            authorType: 'system',
-            messageType: 'activity_suggestion',
-            createdAt: event.suggestion.createdAt,
-            activitySuggestion: mapSuggestion(event.suggestion),
-          });
         });
       } else if (event.type === 'hypersight_configuration_updated') {
         queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], event.hypersight);

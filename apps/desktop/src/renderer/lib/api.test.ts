@@ -2,7 +2,6 @@ import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
 import type { ApiError } from './api';
-import type { Message } from './types';
 import type { DesktopSession } from '../../common/desktop';
 
 const timestamp = '2026-07-31T20:00:00.000Z';
@@ -564,32 +563,32 @@ describe('Avalon API wire adapter', () => {
     )).toEqual([answeredResponse]);
   });
 
-  it('omits dismissed suggestions from a reconstructed message feed', () => {
-    const acceptedSuggestion: Message = {
-      id: `suggestion-${taskId}`,
+  it('omits activity suggestions from rebuilt transcripts while the surface is paused', () => {
+    const suggestion = {
+      id: taskId,
+      activityId: resourceId,
       workstreamId,
-      sequenceNumber: 5,
-      authorType: 'system',
-      messageType: 'activity_suggestion',
+      title: 'A noisy context suggestion',
+      summary: 'This should not be shown in the work stream.',
+      confidence: 0.95,
+      reason: 'The classifier guessed this belonged here.',
+      status: 'pending' as const,
       createdAt: timestamp,
-      activitySuggestion: {
-        id: taskId,
-        title: 'Review the launch plan',
-        source: 'Activity',
-        reason: 'It matches the work stream objective.',
-        status: 'accepted',
-      },
+      resolvedAt: null,
     };
-    const dismissedSuggestion: Message = {
-      ...acceptedSuggestion,
-      id: `suggestion-${noteId}`,
-      activitySuggestion: { ...acceptedSuggestion.activitySuggestion!, id: noteId, status: 'dismissed' },
-    };
+    const mappedDetail = mapWorkstreamDetail({ ...detail, suggestions: [suggestion] });
+    const legacySuggestion = mapMessage({
+      ...message,
+      id: taskId,
+      author: { type: 'system' as const },
+      messageType: 'suggestion' as const,
+      textContent: '',
+      structuredContent: { suggestion },
+      mentions: [],
+      sequenceNumber: 5,
+    });
 
-    expect(messagesWithTransientBlocks(
-      [dismissedSuggestion, acceptedSuggestion],
-      mapWorkstreamDetail(detail),
-    )).toEqual([acceptedSuggestion]);
+    expect(messagesWithTransientBlocks([legacySuggestion], mappedDetail)).toEqual([]);
   });
 
   it('maps background activity into the durable rail model', () => {

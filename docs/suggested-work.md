@@ -29,7 +29,7 @@ route them are in [`feature-flags.md`](feature-flags.md).
 
 ```
 connector activity / Avalon mention
-  → activity consumer: watches, automations, contextual routing
+  → activity consumer: watches and automations (contextual routing paused)
   → nothing claimed it? enqueueActivityOpportunity()
   → opportunity_batch_windows          (10-minute debounce, 60-minute cap)
   → cron: processDueOpportunityWindows()
@@ -42,19 +42,17 @@ connector activity / Avalon mention
 ### Admission
 
 An activity only becomes a candidate if nothing else claimed it — no resource
-watch, no matching automation, and no contextual routing suggestion. That gate is
-in the activity consumer, and it is deliberately exclusive: work that already has
-a home should not also be offered as new work.
+watch and no matching automation. Contextual routing is currently paused, so it
+does not claim activity before this gate. The deterministic gate remains
+exclusive: work explicitly routed to a home should not also be offered as new
+work.
 
-"No contextual routing suggestion" includes the case where contextual routing
-**suppressed** the event type rather than declining it, since both return the same
-answer. Admission's `route_existing` decision then writes an `activity_suggestions`
-row through the shared `createActivitySuggestion` — the same Suggested context card
-contextual routing produces — so this path can publish a card for an event type
-that module has stopped producing. The row is stamped `source = 'suggested_work'`
-so the two populations stay separable, and
-[`contextual-routing.md`](contextual-routing.md) requires every feedback read of
-that table to filter on it.
+Admission retains the `route_existing` decision so activity that plainly belongs
+to current work does not become a duplicate home-screen opportunity. While
+Suggested context is paused, that decision is terminal and creates no
+`activity_suggestions` row or work-stream card. If the surface is re-enabled,
+the row is stamped `source = 'suggested_work'` so its feedback remains separate
+from the per-activity router.
 
 Admission itself is a model decision (`work_opportunity_admission`) and is biased
 toward `ignore`. It resolves the people named in the evidence against verified
@@ -192,14 +190,15 @@ the stored set the home screen reads. It does not own:
 
 | For | Read |
 | --- | --- |
-| The Suggested context card and its confidence learning | [`contextual-routing.md`](contextual-routing.md) |
+| The paused Suggested context card and its retained confidence learning | [`contextual-routing.md`](contextual-routing.md) |
 | What happens after a suggestion is started | [`workstream-creation.md`](workstream-creation.md) |
 | The model contracts and structured-output rules | [`agent-harness.md`](agent-harness.md) |
 | Which model each of these prompts runs on | [`feature-flags.md`](feature-flags.md) |
 | The activity ingestion that feeds it | [`connectors.md`](connectors.md) |
 
 Whether contextual routing suppressing an event type should also silence this
-module is undecided; if it is ever decided yes, the gate belongs here.
+module remains undecided for a future re-enable; if it is ever decided yes, the
+gate belongs here.
 
 ## Failure modes and limits
 
@@ -300,9 +299,16 @@ value.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one). Much of the reasoning
-above is recorded inline because it came from production incidents, but it was not
-kept as dated entries and was not reconstructed into them. The next substantial
-change to admission, ranking, or its scheduling starts the record, and that entry is
-that change, written in full.
+### 2026-08-12 — Existing-work decisions stopped creating transcript cards
+
+**What changed:** Admission still recognizes `route_existing`, but while
+Suggested context is paused the decision creates no `activity_suggestions` row
+or work-stream event. Activity not claimed by a watch or automation now reaches
+admission without first running the per-activity contextual classifier.
+
+**Why:** Removing the noisy work-stream card should not turn the same evidence
+into duplicate proposed work on the home screen. Retaining `route_existing` as
+a terminal classification preserves that distinction, while guarding its write
+keeps the work-stream surface fully quiet. Removing the action from the model
+contract was rejected because it would conflate “already has a home” with
+“irrelevant” and make a future re-enable a schema migration.
