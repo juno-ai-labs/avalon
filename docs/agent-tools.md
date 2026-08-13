@@ -168,30 +168,39 @@ Two different jobs:
   distinction itself is the disclosure. [`security.md`](security.md) owns which
   boundaries these are.
 - **Be recoverable everywhere else.** Every other failure carries a
-  fixed-vocabulary error code **and its remediation inside `output`** — "narrow
-  the range", "the connection is no longer authorized, load it again", "pass the
-  repository as `owner/name`". A small model can branch on a stable code and a
-  hint; it cannot infer a recovery path from a 500 or a vague string.
+  fixed-vocabulary error code and a model-visible `error` sentence containing
+  the shortest safe next action — “narrow the range”, “reconnect before trying
+  again”, “pass the repository as `owner/name`”. Put contextual remediation in
+  the structured failure `data` as well. A small model can branch on a stable
+  code and follow a direct instruction; it cannot infer a recovery path from a
+  500, “stale revision”, or a vague noun phrase.
 
   **`summary` is not model-visible.** Only `output` is serialized into the tool
   message the model reads; `summary` travels on the host's `tool_completed`
-  event and drives human-facing display. So a hint that lives only in `summary`
-  reaches the person watching and never the model that has to recover. Put the
-  fix in `output` — as a `reason`, a list of what is available, or an explicit
-  `hint` field — and let `summary` be the human sentence. The skill loader shows
-  both halves of this: `skill_limit_reached` returns its `reason` and the
-  already-loaded list in `output`, while `skill_not_available` returns a bare
-  code and keeps the fix in its summary, which is the shape to avoid.
+  event and drives human-facing display. So a remediation that lives only in
+  `summary` reaches the person watching and never the model that has to recover.
+  Put the fix in `output` and let `summary` be the human sentence. For a typed
+  error that Bind projects into a failed tool result, the shared forwarding
+  allowlist is currently `reason`, `field`, `expected`, `available`,
+  `reconnectRequired`, and `retryAfterMs`; use `reason` for bounded next-step
+  prose. An adapter-only `hint`, path, or provider-detail field is silently
+  stripped unless the contracts, runtime, and tests add it to that shared
+  allowlist. The skill loader shows the same principle on successful tool
+  envelopes: `skill_limit_reached` returns its `reason` and the already-loaded
+  list in `output`, while `skill_not_available` returns a bare code and keeps the
+  fix in its summary, which is the shape to avoid.
 
 Opacity is a deliberate, scoped cost. Pay it only where disclosure is the risk.
 
 **Classify failures honestly, because the classification drives retries.** The
-host decides from a tool's result and its declared `idempotency` whether a
-failure may be replayed. Return a structured failure for anything a retry cannot
-fix; throw only for genuinely unexpected conditions, which are treated as
-transient and may be retried. A deterministic bad-input failure that throws gets
-retried pointlessly; a transient provider failure returned as a clean structured
-result gets dropped when a retry would have worked.
+host decides from the failure and declared `idempotency` whether replay is safe.
+Use the harness's structured failure path for anything a retry cannot fix: in
+the current Bind adapter that means a typed error with a stable `code` and only
+allowlisted `details`, which Bind projects into `{success: false}`. Reserve a
+bare, unclassified throw for genuinely unexpected conditions. A deterministic
+bad-input failure thrown as a generic `Error` loses both classification and
+remediation; a transient provider failure mislabeled as definitive gets dropped
+when a retry would have worked.
 
 When an executor throws a Zod error, the harness compares its normalized input
 with the same JSON Schema advertised to the model. If that input is invalid, it
@@ -259,7 +268,38 @@ hand-assembled in the handler, so every producer stays in sync. Building it is
 best-effort: if the address cannot be resolved, omit the field rather than
 failing the create.
 
-### 9. Do not leak internal jargon into anything the model sees
+### 9. Make compare-and-swap tokens copyable and sequenceable
+
+An `expectedRevision` guard is usable only when the model can tell where the
+value comes from and what to do after either outcome. Treat the read and write
+tools as one protocol:
+
+- the producer returns `revision`, and the consumer accepts the same type as
+  `expectedRevision`; the input property's description names the producing
+  tool and tells the model to copy the value exactly;
+- when create and replace share a tool, the create-only sentinel is explicit in
+  the schema description and a worked example — never make the model guess
+  whether omission, `null`, `0`, or an empty string means create;
+- every successful mutation returns its resulting `revision`, so a second
+  mutation can use that value without an unnecessary read when the model already
+  knows the resulting state;
+- a revision conflict returns a stable code and tells the model to read the
+  current state and rebuild the mutation in the model-visible `error` itself,
+  with path-specific context in allowlisted details. Do **not** return a fresh
+  revision as a shortcut: a model will often retry with that token without
+  observing the state it is about to overwrite, reducing compare-and-swap to a
+  box-checking exercise; and
+- a bulk mutation makes the path-to-revision relationship explicit and rejects
+  the whole operation on one conflict. Its error identifies the conflicting
+  paths without supplying replacement tokens.
+
+Also identify mutation paths that do not participate in the protocol. If a
+general shell can write the same files, say so and serialize it with typed
+mutations; do not claim that `expectedRevision` protects writes that bypass the
+guard. A short read → mutate → continue example belongs in the tool description
+when the sequence is not obvious from standard API conventions.
+
+### 10. Do not leak internal jargon into anything the model sees
 
 Tool names, descriptions, error strings, and system messages are all
 model-visible. Keep implementation detail out of them: no internal table names,
@@ -268,7 +308,7 @@ do not expose internal structure the model should not reason about. A tool that
 takes the id a person would recognize and resolves the internal layers itself is
 both safer and shorter than one that makes the model navigate them.
 
-### 10. Consistency across a tool family
+### 11. Consistency across a tool family
 
 A model that learns one tool in a family generalizes to the rest, so make the
 family uniform: the same parameter names, the same return-shape conventions, the
@@ -284,7 +324,7 @@ and
 fails the build when they drift. A tool that exists in one and not the other is
 either an unauthorized capability or an advertised one that cannot run.
 
-### 11. Validate the id family at the boundary, and hint the right one
+### 12. Validate the id family at the boundary, and hint the right one
 
 Where an argument must be a specific kind of identifier, validate that at the
 schema boundary rather than letting a wrong-family value produce a confusing
@@ -395,17 +435,20 @@ that remediation.
    error, never a guess.
 4. There is a discovery path for any id, type, or enum the tool requires.
 5. Errors are opaque only across a trust boundary; everywhere else a stable code
-   plus its remediation **inside `output`**, since `summary` never reaches the
-   model.
+   plus the shortest safe action in the model-visible `error`, with contextual
+   remediation inside structured `data`. `summary` never reaches the model.
 6. Limits are hard and predictable, with no role-dependent silent behavior;
    truncation is marked.
 7. `mode` and `idempotency` are correct for what the tool actually does, and the
    request is deterministic — no per-call randomness.
 8. The response returns the ids and values the model's next step needs, and the
    persisted ones on replay.
-9. No internal jargon in any model-visible string.
-10. Strict-id params validate the family and hint the expected one on mismatch.
-11. `capability` is covered by the connector manifest, the descriptor matches it
+9. Every `expectedRevision` names its producer and create semantics, successful
+   mutations return the next revision, and conflicts require a fresh read rather
+   than returning a replacement token.
+10. No internal jargon in any model-visible string.
+11. Strict-id params validate the family and hint the expected one on mismatch.
+12. `capability` is covered by the connector manifest, the descriptor matches it
     in provider type and tool order, the plugin system message is updated, and
     `pnpm lint`, `pnpm typecheck`, and `pnpm test` are green.
 

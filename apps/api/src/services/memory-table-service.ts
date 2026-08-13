@@ -146,6 +146,27 @@ const InvalidateSchema = z.object({
   reason: z.string().trim().min(1).max(2_000),
 }).strict();
 
+class MemoryTableToolError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly details: { reason: string },
+  ) {
+    super(message);
+    this.name = "MemoryTableToolError";
+  }
+}
+
+function memoryTableRevisionConflict(code = "memory_table_revision_conflict"): MemoryTableToolError {
+  return new MemoryTableToolError(
+    code,
+    "The durable table changed while the mutation was being applied. Query the affected rows again, copy their current revisions, and rebuild the mutation.",
+    {
+      reason: "Call table_query again for the affected rows, copy each current row revision, and rebuild the mutation. Do not retry with an old revision.",
+    },
+  );
+}
+
 const SearchSchema = z.object({ query: z.string().trim().min(1).max(2_000) }).strict();
 const DescribeSchema = z.object({ memoryTableId: z.string().min(1) }).strict();
 
@@ -1192,7 +1213,7 @@ async function insertRows(
       const batch = await env.DB.batch(statements);
       acquired = d1Changes(batch[0]) === 1;
     }
-    if (!acquired) throw new Error("memory_table_revision_conflict");
+    if (!acquired) throw memoryTableRevisionConflict();
   }
   const inserted = await env.DB.prepare(
     `SELECT memory_table_row_id, revision, data_json
@@ -1266,7 +1287,7 @@ async function updateRows(
     const current = currentRows.get(request.memoryTableRowId);
     if (!current || current.invalidated_at) throw new Error("memory_table_row_not_found");
     if (current.last_mutation_id !== mutationId && Number(current.revision) !== request.expectedRevision) {
-      throw new Error("memory_table_row_revision_conflict");
+      throw memoryTableRevisionConflict("memory_table_row_revision_conflict");
     }
     const patch = normalizeValues(request.values, table, { patch: true });
     if (Object.keys(patch).length === 0) throw new Error("memory_table_update_empty");
@@ -1327,10 +1348,13 @@ async function updateRows(
   }));
   try {
     const batch = await env.DB.batch(statements);
-    if (d1Changes(batch[0]) !== 1) throw new Error("memory_table_revision_conflict");
+    if (d1Changes(batch[0]) !== 1) throw memoryTableRevisionConflict();
   } catch (error) {
     const raced = await loadMutationReceipt(env, input, receiptId, "update_rows", inputHash);
     if (raced) return { output: raced, summary: `Updated ${Number(raced.updatedCount ?? 0)} durable rows`, providerOperationId: String(raced.memoryTableMutationId) };
+    if (error instanceof Error && error.message.includes("memory_table_row_revision_conflict")) {
+      throw memoryTableRevisionConflict("memory_table_row_revision_conflict");
+    }
     throw error;
   }
   return { output: result, summary: `Updated ${prepared.length} durable rows`, providerOperationId: mutationId };
@@ -1356,7 +1380,7 @@ async function invalidateRows(
     const current = currentRows.get(request.memoryTableRowId);
     if (!current || current.invalidated_at) throw new Error("memory_table_row_not_found");
     if (current.last_mutation_id !== mutationId && Number(current.revision) !== request.expectedRevision) {
-      throw new Error("memory_table_row_revision_conflict");
+      throw memoryTableRevisionConflict("memory_table_row_revision_conflict");
     }
   }
   const currentTable = await env.DB.prepare(
@@ -1401,10 +1425,13 @@ async function invalidateRows(
   }));
   try {
     const batch = await env.DB.batch(statements);
-    if (d1Changes(batch[0]) !== 1) throw new Error("memory_table_revision_conflict");
+    if (d1Changes(batch[0]) !== 1) throw memoryTableRevisionConflict();
   } catch (error) {
     const raced = await loadMutationReceipt(env, input, receiptId, "invalidate_rows", inputHash);
     if (raced) return { output: raced, summary: `Invalidated ${Number(raced.invalidatedCount ?? 0)} durable rows`, providerOperationId: String(raced.memoryTableMutationId) };
+    if (error instanceof Error && error.message.includes("memory_table_row_revision_conflict")) {
+      throw memoryTableRevisionConflict("memory_table_row_revision_conflict");
+    }
     throw error;
   }
   return { output: result, summary: `Invalidated ${args.rows.length} durable rows`, providerOperationId: mutationId };
@@ -1557,7 +1584,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "update_rows",
-        description: "Patch authorized rows with revision compare-and-swap. Natural-key columns are immutable.",
+        description: "Patch authorized rows. For each row, copy memoryTableRowId and expectedRevision from the latest table_query result; after a revision conflict, query that row again before rebuilding the patch. Natural-key columns are immutable.",
         capability: "table.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1565,7 +1592,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
           type: "object", additionalProperties: false,
           properties: {
             memoryTableId: { type: "string" },
-            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1 }, values: { type: "object" } }, required: ["memoryTableRowId", "expectedRevision", "values"] } },
+            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from the latest table_query result for this memoryTableRowId." }, values: { type: "object" } }, required: ["memoryTableRowId", "expectedRevision", "values"] } },
             rationale: { type: "string" },
           },
           required: ["memoryTableId", "rows", "rationale"],
@@ -1576,7 +1603,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "invalidate_rows",
-        description: "Reversibly invalidate authorized rows with revision compare-and-swap.",
+        description: "Reversibly invalidate authorized rows. For each row, copy memoryTableRowId and expectedRevision from the latest table_query result; after a revision conflict, query that row again before retrying.",
         capability: "table.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1584,7 +1611,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
           type: "object", additionalProperties: false,
           properties: {
             memoryTableId: { type: "string" },
-            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1 } }, required: ["memoryTableRowId", "expectedRevision"] } },
+            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from the latest table_query result for this memoryTableRowId." } }, required: ["memoryTableRowId", "expectedRevision"] } },
             reason: { type: "string" },
           },
           required: ["memoryTableId", "rows", "reason"],
