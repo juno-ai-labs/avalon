@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
+import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
+
+export * from "./attachment-contracts";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
@@ -2095,13 +2098,60 @@ const FORWARDED_FAILURE_DETAIL_KEYS = [
   "available",
   "reconnectRequired",
   "retryAfterMs",
+  "actualMimeType",
+  "attachmentKind",
+  "suggestedCall",
 ] as const;
 
-const MAXIMUM_FAILURE_DETAIL_BYTES = 2_000;
+const MAXIMUM_FAILURE_DETAIL_BYTES = 8_000;
+const MAXIMUM_FAILURE_REASON_LENGTH = 1_000;
+const MAXIMUM_FAILURE_VALUE_LENGTH = 160;
+const MAXIMUM_FAILURE_AVAILABLE_VALUES = 20;
 
 export interface StructuredFailureDetail {
   code: string;
   details?: Record<string, unknown>;
+}
+
+function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEYS[number], value: unknown): {
+  valid: boolean;
+  value?: unknown;
+} {
+  switch (key) {
+    case "reason":
+      return typeof value === "string" && value.length <= MAXIMUM_FAILURE_REASON_LENGTH
+        ? { valid: true, value }
+        : { valid: false };
+    case "field":
+    case "expected":
+      return typeof value === "string" && value.length <= MAXIMUM_FAILURE_VALUE_LENGTH
+        ? { valid: true, value }
+        : { valid: false };
+    case "available":
+      return Array.isArray(value)
+        && value.length <= MAXIMUM_FAILURE_AVAILABLE_VALUES
+        && value.every((entry) => typeof entry === "string" && entry.length <= MAXIMUM_FAILURE_VALUE_LENGTH)
+        ? { valid: true, value }
+        : { valid: false };
+    case "reconnectRequired":
+      return typeof value === "boolean" ? { valid: true, value } : { valid: false };
+    case "retryAfterMs":
+      return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 86_400_000
+        ? { valid: true, value }
+        : { valid: false };
+    case "actualMimeType":
+      return value === null || (typeof value === "string" && value.length <= MAXIMUM_FAILURE_VALUE_LENGTH)
+        ? { valid: true, value }
+        : { valid: false };
+    case "attachmentKind": {
+      const parsed = AttachmentKindSchema.safeParse(value);
+      return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
+    }
+    case "suggestedCall": {
+      const parsed = SuggestedAttachmentToolCallSchema.safeParse(value);
+      return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
+    }
+  }
 }
 
 export function readStructuredFailure(error: unknown): StructuredFailureDetail | null {
@@ -2116,7 +2166,9 @@ export function readStructuredFailure(error: unknown): StructuredFailureDetail |
     if (!Object.hasOwn(source, key)) continue;
     const value = source[key];
     if (value === undefined) continue;
-    details[key] = value;
+    const sanitized = sanitizeForwardedFailureDetail(key, value);
+    if (!sanitized.valid) return { code };
+    details[key] = sanitized.value;
   }
   if (Object.keys(details).length === 0) return { code };
   // A bound on the allowlisted values as well: `available` is a provider-shaped

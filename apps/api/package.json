@@ -37,6 +37,7 @@
     "hono": "latest",
     "jose": "latest",
     "rrule": "latest",
+    "unpdf": "1.8.0",
     "upng-js": "2.1.0",
     "utif2": "4.1.0",
     "zod": "catalog:"
