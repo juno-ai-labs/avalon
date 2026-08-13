@@ -40,7 +40,7 @@ function RegionOptions({ selected, onChange }: {
         <span className="region-icon"><Globe2 aria-hidden="true" size={18} /></span>
         <span className="region-option-copy">
           <strong>Global</strong>
-          <span>Global Cloudflare storage and routing</span>
+          <span>US-Jurisdiction storage</span>
         </span>
         {selected === 'global' && <Check aria-hidden="true" className="region-check" size={17} />}
       </label>
@@ -55,7 +55,7 @@ function RegionOptions({ selected, onChange }: {
         <span className="region-icon"><ShieldCheck aria-hidden="true" size={18} /></span>
         <span className="region-option-copy">
           <strong>European Union</strong>
-          <span>EU-jurisdiction storage and regional routing</span>
+          <span>EU-jurisdiction storage</span>
         </span>
         {selected === 'eu' && <Check aria-hidden="true" className="region-check" size={17} />}
       </label>
@@ -210,11 +210,18 @@ export function RegionOnboarding(): React.JSX.Element {
         <p className="region-question">Where should Avalon keep your data?</p>
         <RegionOptions selected={selected} onChange={setSelected} />
         <p className="region-note">
-          Your Avalon sign-in stays the same. This choice controls only where workspace data is stored and cannot be changed later.
+          This choice controls only where workspace data is stored and cannot be changed later.
         </p>
-        <p aria-live="polite" className="region-availability-note">
-          {selected === 'eu' ? 'Unavailable in the EU region: Terminal access for the Avalon agent.' : null}
-        </p>
+        <div aria-live="polite" className="region-availability-note">
+          {selected === 'eu' && (
+            <>
+              <p>Unavailable for EU region (at this time, subject to change based on providers)</p>
+              <ul>
+                <li>Avalon agent: Terminal access</li>
+              </ul>
+            </>
+          )}
+        </div>
         {error && <InlineError>{error}</InlineError>}
         <Button className="button-primary onboarding-continue" disabled={working || name.trim().length < 2} onClick={() => void continueSetup()}>
           {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}
