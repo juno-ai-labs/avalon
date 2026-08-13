@@ -56,7 +56,8 @@ import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
-import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
+import { AttachmentLightbox } from '../components/attachment-lightbox';
+import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
@@ -718,7 +719,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   // files into.
   useWindowFilePaste(attachmentDraft.addFiles);
   const loadAttachmentContent = useCallback(
-    (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
+    (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
   );
 

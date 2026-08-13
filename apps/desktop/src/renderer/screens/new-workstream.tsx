@@ -12,7 +12,8 @@ import { useWindowFilePaste } from '../lib/use-file-paste';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
-import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
+import { AttachmentLightbox } from '../components/attachment-lightbox';
+import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
 import { Avatar, AvatarStack, AvalonMark, Button, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
@@ -257,7 +258,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const homeLeaving = useHomeHandOff(launching !== null);
   const attachmentDraft = useFileAttachments(api, draftKey);
   const loadAttachmentContent = useCallback(
-    (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
+    (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
   );
   // The composer autofocuses here, but focus moves away the moment anything else

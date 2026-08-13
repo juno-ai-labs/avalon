@@ -222,6 +222,42 @@ describe("attachment derivative conversion", () => {
     await expect(result).resolves.toMatchObject({ status: "failed", errorCode: "conversion_aborted" });
   });
 
+  it("releases an aborted shared materialization claim without persisting a failure", async () => {
+    const controller = new AbortController();
+    const statements: string[] = [];
+    const database = createTestD1Database({
+      prepare(sql: string) {
+        statements.push(sql);
+        return { bind() { return { async run() { return { meta: { changes: 1 } }; } }; } };
+      },
+    });
+    const bytes = encoder.encode("%PDF-1.7\nfixture");
+    const bucket = createCloudflareTestBinding<R2Bucket>({
+      async get() {
+        return {
+          size: bytes.byteLength,
+          async arrayBuffer() { return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength); },
+        };
+      },
+    });
+    const resource: AuthorizedDerivativeResource = {
+      id: "aborted-resource", workspaceId: "workspace-1", fileName: "scan.pdf", mimeType: "application/pdf",
+      contentRef: "original", contentSha256: "a".repeat(64), modelContentRef: null, modelMimeType: null,
+      modelContentSha256: null, modelContentStatus: "pending", modelContentExtractorVersion: null,
+      modelContentCharacterCount: null, modelContentClaimedAt: null, modelContentClaimId: null,
+    };
+    const result = materializeAttachmentDerivative(database, bucket, resource, {
+      signal: controller.signal,
+      pdfExtractor: async () => new Promise(() => undefined),
+    });
+
+    controller.abort("lightbox_closed");
+
+    await expect(result).resolves.toEqual({ status: "processing", retryAfterMs: 250 });
+    expect(statements.some((sql) => sql.includes("SET model_content_status = 'pending'"))).toBe(true);
+    expect(statements.some((sql) => sql.includes("SET model_content_status = ?"))).toBe(false);
+  });
+
   it("allows one concurrent materialization claim and reuses the atomically selected version", async () => {
     const source = encoder.encode("# Current\n\nThe complete reusable derivative.");
     const state = { status: "pending", contentRef: null as string | null, mime: null as string | null, sha: null as string | null, count: null as number | null };

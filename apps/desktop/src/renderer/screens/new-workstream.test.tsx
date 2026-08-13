@@ -454,10 +454,10 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled());
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening work-stream message' }), { key: 'Enter' });
 
-    // The tile shows the extension and carries the file name as its accessible
-    // name, exactly as the sent turn will once the message is persisted.
+    // The tile shows the extension and exposes the same preview action as the
+    // sent turn will once the message is persisted.
     const turn = await screen.findByRole('article', { name: 'Message from Morgan Ellis' });
-    expect(within(turn).getByRole('button', { name: 'notes.txt' })).toBeInTheDocument();
+    expect(within(turn).getByRole('button', { name: 'Preview notes.txt' })).toBeInTheDocument();
   });
 
   it('takes back the optimistic work stream when creation fails', async () => {

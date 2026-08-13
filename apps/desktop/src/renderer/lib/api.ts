@@ -1470,6 +1470,15 @@ export class AvalonApi {
     return response.blob();
   }
 
+  async getResourcePreviewContent(id: string, signal?: AbortSignal): Promise<Blob> {
+    const response = await this.execute(`/resources/${encodeURIComponent(id)}/preview`, {
+      method: 'GET',
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.ok) return this.throwResponseError(response);
+    return response.blob();
+  }
+
   async listResources(input: {
     query?: string;
     cursor?: string;
