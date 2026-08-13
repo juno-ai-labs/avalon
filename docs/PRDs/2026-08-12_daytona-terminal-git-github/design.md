@@ -143,25 +143,26 @@ exact-match recovery, nonzero command exit, and publication repair.
 
 ## Snapshot contract and package behavior
 
-The immutable launch snapshot contains:
+The managed `daytona-small` snapshot plus Avalon's idempotent compatibility bootstrap contains:
 
 - Bash, POSIX `sh`, and standard Unix utilities;
-- one pinned Python 3 with `venv`, `pip`, and `uv`;
-- Node.js 22, `npm`, and `pnpm`;
-- pinned `typescript` and `tsx`;
+- Daytona's current Python 3 with `venv`, `pip`, and `uv`;
+- Daytona's current Node.js, `npm`, and `pnpm`;
+- `typescript` and `tsx`;
 - SQLite 3;
 - `git`, read-only `gh`, `rg`, and `jq`; and
-- the pinned `apt`/`dpkg` path and signed base-image sources.
+- the managed `apt`/`dpkg` path and signed base-image sources.
 
-The snapshot manifest records the exact runtime and manager versions, source
-image digest, compatible trusted-target manifest version, and smoke-fixture IDs.
-Snapshot publication runs one execute/revise/pass fixture for each language and
-one install fixture for each manager path. The snapshot and manifest advance
-together; production never refers to a mutable `latest` tag.
+The provider records and probes the effective runtime and manager versions,
+compatible trusted-target manifest version, and smoke-fixture IDs. First
+creation installs only missing SQLite/`gh`/pnpm/`tsx` capabilities, then runs one
+execute/revise/pass fixture for each language and one install fixture for each
+manager path. A breaking Daytona update fails closed instead of silently
+changing the advertised contract.
 
-Installs stay within the repository, virtual environment, task root, or current
-sandbox. The model cannot self-update a global manager or runtime. A narrow local
-elevation policy admits only the pinned system manager.
+Model-requested installs stay within the repository, virtual environment, task
+root, or current sandbox. The model cannot self-update a global manager or
+runtime. Passwordless sudo is available for the managed system package manager.
 
 There is no host-side manager resolver or tool activator. The model inspects the
 repository and uses a supported lockfile or JavaScript `packageManager`
@@ -234,31 +235,30 @@ adapter failure. It verifies that no descendant or listener remains before
 releasing the operation lock; failed verification stops the sandbox and returns
 `sandbox_unavailable` for later work.
 
-For a short command, the request can wait and return the final result. Otherwise:
+Bind persists its tool receipt and a stable `sandbox_tasks` row before provider
+submission. The Daytona adapter submits one asynchronous command in a session
+named from that receipt and observes it with bounded backoff until exit. The
+session is deliberately retained until the terminal D1 result is durable, then
+deleted. This closes the response-loss window between command exit and receipt
+persistence.
 
-1. Bind persists the pending tool call and suspends the workflow run on the stable
-   task ID.
-2. A regional `TerminalCommandWorkflow`, keyed by the stable task row, consumes
-   Daytona's WebSocket log stream, bounds and scrubs stdout/stderr, and observes
-   process exit.
-3. On exit it atomically stores the terminal state and emits one continuation
-   event for that task ID.
-4. Bind wakes, resolves the pending tool call with the final structured result,
-   and continues the same agent loop.
+If the Worker is interrupted, the regional harness Workflow retries the same
+Bind call. Bind makes two narrow exceptions to its normal incomplete-write rule.
+An exact, policy-matching Terminal `run_command` receipt re-enters the frozen
+tool executor: the runtime verifies the original command hash and sandbox
+generation, while the provider loads the named session and its sole command
+instead of submitting another. The convergent `publish_branch_and_pr` executor
+may also re-enter because its durable grant, repository/ref target, expected old
+SHA, publication row, and single PR identity are revalidated before a repeated
+provider action. A missing or mismatched identity remains
+`ambiguous_external_write`; it is never guessed safe.
 
-This is **workflow auto-resume**, not implicit sandbox auto-start. A stopped
-sandbox still starts only because a tool was called.
-
-Submission advances the D1 state machine `planned → submitting → running →
-terminal`. The host-derived Daytona session/task name is stable, so a retried
-Workflow step first reads provider state by that name and never resubmits merely
-because the original response was lost. The WebSocket is advisory acceleration.
-If it closes without a terminal event or the Workflow step restarts, the next
-durable step reconciles provider state, then waits with bounded backoff until exit
-or the recorded wall-clock deadline. This host control-plane reconciliation never
-exposes a poll tool or consumes a model turn. A unique continuation constraint on
-the task row suppresses duplicate exit events. Cancellation and timeout kill the
-provider task and resolve the same pending tool call once.
+This is **workflow auto-resume**, not implicit sandbox auto-start and not model
+polling. A stopped sandbox still starts only because a tool was called. The
+model receives one final result and no task identifier. A separate command
+Workflow, continuation table, and model-visible status protocol were rejected:
+the existing harness Workflow plus Daytona's named session already provide the
+durable retry boundary without a second orchestration subsystem.
 
 The adapter stores a bounded head and tail inline. The complete bounded result
 may live in the internal regional receipt object, which is not a user download.
@@ -415,7 +415,7 @@ access; approval policy decides when an attempted boundary crossing may proceed
 Codex cloud separates a networked setup phase from an offline-by-default agent
 phase. Agent internet access can be off, unrestricted, or constrained by domain
 and HTTP method, with a common-dependency preset. This separation is a direct
-precedent for Avalon's pinned snapshot plus workspace network policy
+precedent for Avalon's managed snapshot compatibility contract plus workspace network policy
 ([internet access](https://learn.chatgpt.com/docs/cloud/internet-access)).
 
 #### Avalon decision
@@ -976,30 +976,32 @@ Avalon does not set `networkAllowList`, `outboundProxyUrl`, or a combined custom
 gateway. Domain and CIDR lists are mutually exclusive in Daytona; CIDR is deferred
 instead of emulating their union.
 
-The immutable target manifest has four names in the primary UI and exact domain
-expansions in audit/download output: GitHub and Avalon, System packages, Python
-packages, and JavaScript packages. The manifest excludes management and
-publishing endpoints. A version change follows the same stop/apply/next-start
-flow as a workspace domain change.
+The immutable target manifest is an internal provider detail. Its names, target
+count, and exact expansion are absent from participant UI, model context, and
+workspace downloads. The manifest excludes management and publishing endpoints.
+A version change follows the same stop/apply/next-start flow as a workspace
+domain change.
 
 The policy compiler canonicalizes domains, rejects schemes/paths/credentials and
 public-suffix wildcards, de-duplicates baseline and custom values, and fails before
 the provider call if the expansion exceeds Daytona's current 20-entry maximum.
-Settings reports total, reserved, and remaining slots.
+Settings reports only the remaining capacity for workspace-approved domains.
 
 Daytona describes GitHub, npm, PyPI, and system repositories as essential
 services, but their exact interaction with `domainAllowList` is a provider release
-gate rather than an assumption hidden in code. Production probes cover baseline
-reachability, an unlisted domain, wildcard boundaries, direct IP, redirects,
-metadata and private destinations, and alternate-host secret substitution. A
-failure leaves Trusted-only unavailable; it does not route around Daytona.
+gate rather than an assumption hidden in code. The checked-in automated probe
+covers baseline reachability, package installation, an unlisted domain, direct
+IP, redirects, metadata, private destinations, lifecycle, and confirmed deletion.
+The activation record separately carries controlled provider evidence for DNS
+rebinding and alternate-host secret substitution. A failure in either set leaves
+Trusted-only unavailable; it does not route around Daytona.
 The compiler compares the provider-read effective policy with its requested
 manifest. A Daytona-required destination is allowed only when named in the
-reviewed immutable manifest and disclosed in Settings; an undocumented or
-non-suppressible extra target fails verification.
+reviewed immutable manifest; an undocumented or non-suppressible extra target
+fails verification without disclosing the manifest in Settings.
 
-The same release probe resolves an allowed controlled hostname repeatedly across
-TTL changes and redirects it to private and special-use address classes. Native
+Controlled release evidence resolves an allowed hostname repeatedly across TTL
+changes and redirects it to private and special-use address classes. Native
 enforcement must re-check the resolved address for every connection and redirect,
 not just the original hostname string. Failure disables Trusted only and custom
 domains for that provider version rather than introducing a launch proxy.

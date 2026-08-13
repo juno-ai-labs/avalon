@@ -5,11 +5,19 @@ import type {
   NoteSummary as ContractNoteSummary,
   NoteTranscriptSegment as ContractNoteTranscriptSegment,
   Scope as ContractScope,
+  TerminalWorkspaceSettings as ContractTerminalWorkspaceSettings,
+  TerminalNetworkPolicyPreview as ContractTerminalNetworkPolicyPreview,
+  TerminalRepositoryCatalog as ContractTerminalRepositoryCatalog,
+  TerminalWorkstreamState as ContractTerminalWorkstreamState,
 } from '@avalon/contracts';
 
 /** The OpenRouter model ids a composer may pin work to. Re-exported so the
  *  renderer keeps one import site for the shapes it speaks to the API in. */
 export type { AgentModelOverride };
+export type TerminalWorkspaceSettings = ContractTerminalWorkspaceSettings;
+export type TerminalNetworkPolicyPreview = ContractTerminalNetworkPolicyPreview;
+export type TerminalRepositoryCatalog = ContractTerminalRepositoryCatalog;
+export type TerminalWorkstreamState = ContractTerminalWorkstreamState;
 
 export type Region = 'global' | 'eu';
 /** How a connection or automation is owned, in the words the UI uses for it. */

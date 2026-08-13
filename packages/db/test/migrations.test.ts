@@ -2314,4 +2314,69 @@ describe("database migrations", () => {
     ).all()).toEqual([{ nonce_hash: secondHash }]);
     database.close();
   });
+
+  it("owns Terminal sandbox, policy, task, grant, and publication state inside a workspace", () => {
+    const database = migrateFreshDatabase();
+    const terminalTables = [
+      "workstream_sandboxes",
+      "workspace_sandbox_network_policies",
+      "workspace_sandbox_network_domains",
+      "workspace_sandbox_network_policy_mutations",
+      "sandbox_tasks",
+      "sandbox_imported_resources",
+      "terminal_publication_grants",
+      "workstream_terminal_repositories",
+      "repository_publications",
+    ];
+    expect(database.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%sandbox%'
+       OR type = 'table' AND name IN ('terminal_publication_grants', 'workstream_terminal_repositories', 'repository_publications')
+       ORDER BY name`,
+    ).all()).toEqual(terminalTables.slice().sort().map((name) => ({ name })));
+
+    for (const table of terminalTables) {
+      const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      expect(columns.map((column) => column.name), `${table} must carry workspace_id`).toContain("workspace_id");
+      const indexes = database.prepare(`PRAGMA index_list(${table})`).all() as Array<{ name: string }>;
+      const indexedColumns = indexes.flatMap((index) => (
+        database.prepare(`PRAGMA index_info(${index.name})`).all() as Array<{ name: string }>
+      ).map((column) => column.name));
+      expect(indexedColumns[0], `${table} must lead an index with workspace_id`).toBe("workspace_id");
+    }
+
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('terminal-owner', 'terminal-owner-subject', 'terminal@example.com', 'Terminal Owner', '2026-08-13', '2026-08-13');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('terminal-workspace', 'Terminal Workspace', 'terminal-workspace', 'global', 'terminal-owner', '2026-08-13', '2026-08-13');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('terminal-workstream', 'terminal-workspace', 'Terminal', 'Run code', 'ad_hoc',
+              'terminal-owner', 'idle', '2026-08-13', '2026-08-13', '2026-08-13');
+      INSERT INTO workspace_sandbox_network_policies
+        (workspace_id, mode, revision, verification_state, baseline_manifest_version,
+         effective_domains_json, created_at, updated_at)
+      VALUES ('terminal-workspace', 'trusted_only', 1, 'verified', 'terminal-network-v1', '[]',
+              '2026-08-13', '2026-08-13');
+      INSERT INTO workstream_sandboxes
+        (workspace_id, workstream_id, state, stable_name, generation,
+         authority_fingerprint, applied_network_revision, version, last_activity_at,
+         warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
+      VALUES ('terminal-workspace', 'terminal-workstream', 'absent', 'avalon-terminal-workstream', 1,
+              'authority-one', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12',
+              '2026-08-13', '2026-08-13');
+    `);
+    expect(() => database.exec(`
+      INSERT INTO workstream_sandboxes
+        (workspace_id, workstream_id, state, stable_name, generation,
+         authority_fingerprint, applied_network_revision, version, last_activity_at,
+         warm_stop_due_at, archive_due_at, expire_due_at, created_at, updated_at)
+      VALUES ('terminal-workspace', 'terminal-workstream', 'absent', 'duplicate', 2,
+              'authority-one', 1, 1, '2026-08-13', '2026-08-13', '2026-08-13', '2026-09-12',
+              '2026-08-13', '2026-08-13');
+    `)).toThrow(/UNIQUE constraint failed/u);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
 });
