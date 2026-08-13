@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AnonymousTelemetryBatchSchema,
   CrashIngestResponseSchema,
   LinkAnonymousTelemetryResponseSchema,
   TelemetryAcceptanceBatchResponseSchema,
@@ -172,10 +173,38 @@ describe("telemetry registry", () => {
       selectedRegion: "global",
       entrypoint: "first_run",
     });
-    expect(TelemetryBatchSchema.safeParse({ events: Array.from({ length: 50 }, () => candidate) }).success)
+    const installationId = candidate.context.deviceId;
+    expect(TelemetryBatchSchema.safeParse({
+      installationId,
+      events: Array.from({ length: 50 }, () => candidate),
+    }).success)
       .toBe(true);
-    expect(TelemetryBatchSchema.safeParse({ events: Array.from({ length: 51 }, () => candidate) }).success)
+    expect(TelemetryBatchSchema.safeParse({
+      installationId,
+      events: Array.from({ length: 51 }, () => candidate),
+    }).success)
       .toBe(false);
+  });
+
+  it("binds desktop device context to the batch installation identity at ingress", () => {
+    const candidate = envelope("onboarding_region_selected", {
+      selectedRegion: "global",
+      entrypoint: "first_run",
+    });
+    const installationId = candidate.context.deviceId;
+    expect(TelemetryBatchSchema.safeParse({ installationId, events: [candidate] }).success).toBe(true);
+    expect(TelemetryBatchSchema.safeParse({ events: [candidate] }).success).toBe(false);
+    expect(TelemetryBatchSchema.safeParse({ installationId: eventId, events: [candidate] }).success).toBe(false);
+    expect(AnonymousTelemetryBatchSchema.safeParse({
+      capability: "c".repeat(64),
+      installationId,
+      events: [candidate],
+    }).success).toBe(true);
+    expect(AnonymousTelemetryBatchSchema.safeParse({
+      capability: "c".repeat(64),
+      installationId: eventId,
+      events: [candidate],
+    }).success).toBe(false);
   });
 
   it("validates narrow telemetry responses without exposing destination identities", () => {

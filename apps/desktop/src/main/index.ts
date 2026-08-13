@@ -3027,7 +3027,9 @@ if (!singleInstanceLock) {
     // whenever creating it failed — either way, opening no window would start
     // Avalon with nothing on screen and nothing in the menu bar, reachable only
     // by hunting for it in the Dock.
-    if (!openedAtLogin || !menuBarController.present()) await createMainWindow();
+    const startsHidden = openedAtLogin && menuBarController.present();
+    if (startsHidden) applicationLifecycleTelemetry.observeFocused(false);
+    else await createMainWindow();
     await telemetryReporter?.applicationLifecycle('ready');
     await telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'ready' }).catch(() => undefined);
     if (telemetryLaunchId) {

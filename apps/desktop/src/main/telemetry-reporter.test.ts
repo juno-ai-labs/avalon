@@ -202,7 +202,10 @@ describe('TelemetryReporter', () => {
     await reporter.screenViewed('onboarding_region');
     await reporter.flush();
     expect(fetch.mock.calls[0]?.[0]).toBe('https://api.with-avalon.com/telemetry/anonymous');
-    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({ capability: 'c'.repeat(64) });
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      capability: 'c'.repeat(64),
+      installationId: identity.installationId,
+    });
   });
 
   it('routes pre-workspace EU onboarding intent immediately through its anonymous epoch', async () => {

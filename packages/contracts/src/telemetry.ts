@@ -567,10 +567,25 @@ export const TelemetryEnvelopeSchema = EnvelopeBaseSchema.superRefine((value, co
 
 export type TelemetryEnvelope = z.infer<typeof TelemetryEnvelopeSchema>;
 
+function validateBatchDeviceBinding(
+  value: { installationId?: string | undefined; events: TelemetryEnvelope[] },
+  context: z.RefinementCtx,
+): void {
+  value.events.forEach((event, index) => {
+    if (event.context.deviceId !== undefined && event.context.deviceId !== value.installationId) {
+      context.addIssue({
+        code: "custom",
+        message: "telemetry_device_binding_invalid",
+        path: ["events", index, "context", "deviceId"],
+      });
+    }
+  });
+}
+
 export const TelemetryBatchSchema = z.object({
   installationId: UuidV7Schema.optional(),
   events: z.array(TelemetryEnvelopeSchema).min(1).max(50),
-}).strict();
+}).strict().superRefine(validateBatchDeviceBinding);
 export type TelemetryBatch = z.infer<typeof TelemetryBatchSchema>;
 
 export const TELEMETRY_BATCH_MAX_BYTES = 256 * 1024;
@@ -593,7 +608,7 @@ export const AnonymousTelemetryBatchSchema = z.object({
   capability: z.string().min(32).max(2_048),
   installationId: UuidV7Schema.optional(),
   events: z.array(TelemetryEnvelopeSchema).min(1).max(50),
-}).strict();
+}).strict().superRefine(validateBatchDeviceBinding);
 export type AnonymousTelemetryBatch = z.infer<typeof AnonymousTelemetryBatchSchema>;
 
 export const LinkAnonymousTelemetrySchema = z.object({

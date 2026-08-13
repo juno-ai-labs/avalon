@@ -80,7 +80,10 @@ producers do not choose PostHog or EU routing themselves.
 SDK-style app, OS, device, display, viewport, session, and window fields belong
 in the closed envelope context and are derived by main from trusted Electron or
 installation state. Do not ask the renderer to provide them, copy them into each
-event's semantic property schema, or use a hostname as a device name.
+event's semantic property schema, or use a hostname as a device name. A desktop
+batch carrying `context.deviceId` must send the same random installation ID in
+the batch-level `installationId`; contract validation rejects mismatches before
+regional persistence.
 
 ### PostHog destination compatibility
 
