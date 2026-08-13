@@ -270,4 +270,41 @@ describe('InspectorRail details', () => {
     // button's hit area back over the whole row is checked in a real engine.
     expect(screen.getByRole('button', { name: /Linear issue create: AVA-9/ })).not.toContainElement(checkbox);
   });
+
+  it('shows Terminal retention state and selects an exact GitHub App repository', () => {
+    const onSelectTerminalRepository = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onSelectTerminalRepository={onSelectTerminalRepository}
+          terminalRepositoryCatalog={{
+            state: 'available',
+            connections: [{
+              connectionId: '00000000-0000-4000-8000-000000000001',
+              displayName: 'Avalon GitHub',
+              repositories: [{ id: 42, fullName: 'owner/repo', defaultBranch: 'main', private: true }],
+            }],
+          }}
+          terminalWorkspace={{
+            availability: 'supported', state: 'stopped',
+            lastActivityAt: '2026-08-13T12:00:00.000Z', expiresAt: '2026-09-12T12:00:00.000Z',
+            retentionWarning: null, localFilesRetained: true, finalDiffResourceId: null,
+            failureCode: null, repository: null,
+          }}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText('Terminal workspace')).toBeVisible();
+    expect(screen.getByText('Stopped')).toBeVisible();
+    expect(screen.getByText(/Local files remain in Daytona/u)).toBeVisible();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Terminal repository' }), {
+      target: { value: '00000000-0000-4000-8000-000000000001::owner/repo' },
+    });
+    expect(onSelectTerminalRepository).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      'owner/repo',
+    );
+  });
 });

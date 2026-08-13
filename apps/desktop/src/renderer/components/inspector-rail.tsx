@@ -10,6 +10,7 @@ import {
   FileText,
   Link2,
   Plus,
+  SquareTerminal,
   Trash2,
   UserPlus,
   X,
@@ -17,7 +18,13 @@ import {
 import { useEffect, useState } from 'react';
 import { formatDateTime, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
-import type { AutomationRunSummary, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type {
+  AutomationRunSummary,
+  TerminalRepositoryCatalog,
+  TerminalWorkstreamState,
+  WorkstreamDetail,
+  WorkstreamResource,
+} from '../lib/types';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, StatusDot } from './primitives';
@@ -32,6 +39,12 @@ interface InspectorRailProps {
   onDetachResource?: (resource: WorkstreamResource) => void;
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
   onOpenRun?: (run: AutomationRunSummary) => void;
+  terminalWorkspace?: TerminalWorkstreamState;
+  terminalRepositoryCatalog?: TerminalRepositoryCatalog;
+  onSelectTerminalRepository?: (connectionId: string, repositoryFullName: string) => void;
+  onReplaceTerminalRepository?: () => void;
+  terminalRepositorySelectionPending?: boolean;
+  onStartFreshTerminal?: () => void;
   /** True while the inspector is fading out under HyperSight taking the slot. */
   leaving?: boolean;
   dropTarget?: {
@@ -77,7 +90,24 @@ function ContextContent({
   onAddParticipant,
   onAddResource,
   onToggleWatch,
-}: Pick<InspectorRailProps, 'workstream' | 'onAddParticipant' | 'onAddResource' | 'onToggleWatch'>): React.JSX.Element {
+  terminalWorkspace,
+  terminalRepositoryCatalog,
+  onSelectTerminalRepository,
+  onReplaceTerminalRepository,
+  terminalRepositorySelectionPending,
+  onStartFreshTerminal,
+}: Pick<InspectorRailProps,
+  | 'workstream'
+  | 'onAddParticipant'
+  | 'onAddResource'
+  | 'onToggleWatch'
+  | 'terminalWorkspace'
+  | 'terminalRepositoryCatalog'
+  | 'onSelectTerminalRepository'
+  | 'onReplaceTerminalRepository'
+  | 'terminalRepositorySelectionPending'
+  | 'onStartFreshTerminal'
+>): React.JSX.Element {
   const inspect = useUiStore((state) => state.inspect);
   const debugEnabled = useDebugEnabled();
   const [emailCopyState, setEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -172,6 +202,109 @@ function ContextContent({
           </ul>
         )}
       </Section>
+
+      {terminalWorkspace && (
+        <Section title="Terminal workspace">
+          <div className="terminal-rail-summary">
+            <div className="terminal-rail-state">
+              <span className="rail-card-icon"><SquareTerminal aria-hidden="true" size={15} /></span>
+              <span>
+                <strong>{terminalWorkspace.state[0]!.toUpperCase() + terminalWorkspace.state.slice(1)}</strong>
+                <small>
+                  {terminalWorkspace.availability === 'unsupported'
+                    ? 'Daytona residency has not passed this region’s gate.'
+                    : terminalWorkspace.availability === 'emergency_disabled'
+                      ? 'Temporarily unavailable while the regional safety switch is active.'
+                      : terminalWorkspace.localFilesRetained
+                        ? 'Local files remain in Daytona until the expiry below.'
+                        : 'No retained local Terminal files.'}
+                </small>
+              </span>
+            </div>
+            {terminalWorkspace.repository ? (
+              <>
+                <dl className="detail-list terminal-rail-details">
+                  <div><dt>Repository</dt><dd>{terminalWorkspace.repository.fullName}</dd></div>
+                  <div><dt>Base</dt><dd>{terminalWorkspace.repository.baseRef}</dd></div>
+                  <div><dt>Branch</dt><dd>{terminalWorkspace.repository.headRef}</dd></div>
+                </dl>
+                {onReplaceTerminalRepository && <Button disabled={terminalRepositorySelectionPending} onClick={onReplaceTerminalRepository}>Refresh or replace repository</Button>}
+                {terminalRepositoryCatalog?.state === 'available' && onSelectTerminalRepository && (
+                  <label className="terminal-repository-select">
+                    <span>New repository</span>
+                    <select
+                      aria-label="Replacement Terminal repository"
+                      defaultValue=""
+                      disabled={terminalRepositorySelectionPending}
+                      onChange={(event) => {
+                        const [connectionId, repositoryFullName] = event.target.value.split('::', 2);
+                        if (connectionId && repositoryFullName) onSelectTerminalRepository(connectionId, repositoryFullName);
+                      }}
+                    >
+                      <option disabled value="">Choose one repository…</option>
+                      {terminalRepositoryCatalog.connections.flatMap((connection) => connection.repositories.map((repository) => (
+                        <option key={`${connection.connectionId}:${repository.id}`} value={`${connection.connectionId}::${repository.fullName}`}>
+                          {repository.fullName} · {connection.displayName}
+                        </option>
+                      )))}
+                    </select>
+                  </label>
+                )}
+              </>
+            ) : terminalRepositoryCatalog?.state === 'available' && onSelectTerminalRepository ? (
+              <label className="terminal-repository-select">
+                <span>Repository</span>
+                <select
+                  aria-label="Terminal repository"
+                  defaultValue=""
+                  disabled={terminalRepositorySelectionPending}
+                  onChange={(event) => {
+                    const [connectionId, repositoryFullName] = event.target.value.split('::', 2);
+                    if (connectionId && repositoryFullName) onSelectTerminalRepository(connectionId, repositoryFullName);
+                  }}
+                >
+                  <option disabled value="">Choose one repository…</option>
+                  {terminalRepositoryCatalog.connections.flatMap((connection) => connection.repositories.map((repository) => (
+                    <option key={`${connection.connectionId}:${repository.id}`} value={`${connection.connectionId}::${repository.fullName}`}>
+                      {repository.fullName} · {connection.displayName}
+                    </option>
+                  )))}
+                </select>
+              </label>
+            ) : terminalRepositoryCatalog?.state === 'disconnected' ? (
+              <p className="rail-empty-line">Connect the Avalon GitHub App in Workspace connections to choose a repository.</p>
+            ) : terminalRepositoryCatalog?.state === 'empty' ? (
+              <p className="rail-empty-line">The connected GitHub App has no accessible repositories.</p>
+            ) : null}
+            {(terminalWorkspace.lastActivityAt || terminalWorkspace.expiresAt) && (
+              <dl className="detail-list terminal-rail-details">
+                {terminalWorkspace.lastActivityAt && <div><dt>Last Terminal activity</dt><dd>{formatDateTime(terminalWorkspace.lastActivityAt)}</dd></div>}
+                {terminalWorkspace.expiresAt && <div><dt>Local files expire</dt><dd>{formatDateTime(terminalWorkspace.expiresAt)}</dd></div>}
+              </dl>
+            )}
+            {terminalWorkspace.retentionWarning && (
+              <p className="terminal-retention-warning" role="status">
+                <CircleAlert aria-hidden="true" size={13} />
+                {terminalWorkspace.retentionWarning === 'expires_within_24_hours'
+                  ? 'Unpublished local files expire within 24 hours.'
+                  : 'Unpublished local files expire within seven days.'}
+              </p>
+            )}
+            {terminalWorkspace.failureCode && (
+              <p className="terminal-retention-warning" role="alert">
+                <CircleAlert aria-hidden="true" size={13} />
+                Terminal stopped safely ({terminalWorkspace.failureCode}). Start fresh, or ask a workspace owner to verify network settings if the failure mentions policy.
+              </p>
+            )}
+            {terminalWorkspace.finalDiffResourceId && (
+              <Button onClick={() => inspect({ type: 'resource', id: terminalWorkspace.finalDiffResourceId! })}>Open final diff</Button>
+            )}
+            {(terminalWorkspace.state === 'expired' || terminalWorkspace.state === 'failed') && onStartFreshTerminal && (
+              <Button onClick={onStartFreshTerminal}>Start fresh</Button>
+            )}
+          </div>
+        </Section>
+      )}
 
       <Section title="Details">
         <dl className="detail-list">

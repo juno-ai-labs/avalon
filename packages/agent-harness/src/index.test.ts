@@ -2338,6 +2338,62 @@ describe("agent harness", () => {
     expect(onAmbiguousExternalWrite).not.toHaveBeenCalled();
   });
 
+  it("halts and preserves a Terminal command whose provider observation was lost", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "provider-command", "run_command")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const onAmbiguousExternalWrite = vi.fn();
+    const command: HarnessTool = {
+      definition: {
+        name: "run_command",
+        description: "Run a durable command",
+        inputSchema: { type: "object", additionalProperties: false },
+        capability: "terminal.command.run",
+        mode: "write",
+        idempotency: "record_before_execute",
+      },
+      execute: async () => {
+        throw Object.assign(new Error("Resume to reconcile the durable command."), {
+          code: "command_outcome_unknown",
+          details: { reason: "Resume this run so Avalon can reattach to the same durable command task." },
+        });
+      },
+    };
+    const terminalPlugin: HarnessPlugin = {
+      canonicalId: "avalon:terminal",
+      modelId: "avalon_terminal",
+      shortWireName: "terminal",
+      description: "Terminal",
+      preload: true,
+      explicit: false,
+      tools: [command],
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [terminalPlugin],
+      onAmbiguousExternalWrite,
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "ambiguous_external_write", code: "ambiguous_external_write" },
+    });
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      outcome: "ambiguous_external_write",
+      data: {
+        code: "command_outcome_unknown",
+        details: { reason: "Resume this run so Avalon can reattach to the same durable command task." },
+      },
+    });
+    expect(onAmbiguousExternalWrite).toHaveBeenCalledOnce();
+  });
+
   it("stops instead of retrying when a record-before-execute write response is invalid", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{

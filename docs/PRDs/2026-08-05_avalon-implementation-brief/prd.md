@@ -21,7 +21,11 @@ Avalon is an AI-native workplace communication and execution environment organiz
 - Every automation run owns exactly one work stream, including a scheduled run opened before its start time.
 - Automations are versioned templates plus scoped subscriptions. Active subscriptions share one sidebar list and carry `You` or `Workspace` badges.
 - Connected activities either trigger deterministic automation work, enrich an explicitly watched resource, or appear as an in-stream routing suggestion. Avalon has no global activity feed.
-- The agent uses typed, authorized tools. It never receives a shell, terminal, arbitrary code execution, or a user-authored workflow runtime.
+- The agent uses typed, authorized tools. An ordinary work-stream run may load
+  the Terminal plugin and execute bounded file/command operations inside one
+  isolated, authority-fenced, workspace-network-policy-governed sandbox when
+  code is useful. Avalon still exposes no user-visible terminal, host shell,
+  PTY, background service runtime, or user-authored workflow runtime.
 - Ordinary authorized external writes execute without a global approval gate, but every attempt is idempotent, visible, and audited.
 
 ## Required prototype outcomes

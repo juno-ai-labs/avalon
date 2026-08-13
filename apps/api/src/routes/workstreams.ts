@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -21,6 +21,9 @@ import {
   WorkstreamContextSchema,
   WorkstreamDetailSchema,
   WorkstreamSchema,
+  SelectTerminalRepositoryRequestSchema,
+  TerminalRepositoryCatalogSchema,
+  TerminalWorkstreamStateSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -29,6 +32,12 @@ import { getAuth } from "../middleware/auth";
 import { WorkstreamService } from "../services/workstream-service";
 import { HyperSightService } from "../services/hypersight-service";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
+import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
+import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
+import {
+  createGitHubTerminalCatalogGateway,
+  TerminalWorkstreamService,
+} from "../services/terminal/workstream-state";
 
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
@@ -96,6 +105,19 @@ const PinnedWorkstreamsSchema = z.object({ items: z.array(WorkstreamSchema) });
 const SocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string().min(1) });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
+
+function terminalWorkstreamService(c: Context<HonoAppEnv>): TerminalWorkstreamService {
+  const configuration = parseTerminalRegionConfiguration(c.env);
+  const provider = configuration.capability === "supported"
+    ? createDaytonaTerminalProvider(configuration)
+    : null;
+  return new TerminalWorkstreamService(
+    c.env,
+    getAuth(c),
+    createGitHubTerminalCatalogGateway(c.env),
+    provider,
+  );
+}
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
@@ -165,6 +187,33 @@ workstreamRoutes.put("/:id/hypersight", zValidator("param", idParam), zValidator
     c.req.valid("param").id,
     c.req.valid("json"),
   ))),
+);
+workstreamRoutes.get("/:id/terminal", zValidator("param", idParam), async (c) =>
+  c.json(TerminalWorkstreamStateSchema.parse(
+    await terminalWorkstreamService(c).get(c.req.valid("param").id),
+  )),
+);
+workstreamRoutes.get("/:id/terminal/repositories", zValidator("param", idParam), async (c) =>
+  c.json(TerminalRepositoryCatalogSchema.parse(
+    await terminalWorkstreamService(c).repositories(c.req.valid("param").id, c.req.raw.signal),
+  )),
+);
+workstreamRoutes.put(
+  "/:id/terminal/repository",
+  zValidator("param", idParam),
+  zValidator("json", SelectTerminalRepositoryRequestSchema),
+  async (c) => c.json(TerminalWorkstreamStateSchema.parse(
+    await terminalWorkstreamService(c).selectRepository(
+      c.req.valid("param").id,
+      c.req.valid("json"),
+      c.req.raw.signal,
+    ),
+  )),
+);
+workstreamRoutes.post("/:id/terminal/start-fresh", zValidator("param", idParam), async (c) =>
+  c.json(TerminalWorkstreamStateSchema.parse(
+    await terminalWorkstreamService(c).startFresh(c.req.valid("param").id),
+  )),
 );
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   const detail = await new WorkstreamService(c.env, getAuth(c)).get(c.req.valid("param").id);
