@@ -3,15 +3,18 @@ import { unzipSync } from "fflate";
 
 export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v1";
 
-const MAX_SOURCE_BYTES = 50 * 1_024 * 1_024;
-const MAX_EXPANDED_OFFICE_BYTES = 40 * 1_024 * 1_024;
-const MAX_OFFICE_XML_BYTES = 8 * 1_024 * 1_024;
-const MAX_DERIVATIVE_CHARACTERS = 20_000_000;
-const MAX_PDF_PAGES = 500;
+// Local conversion is an isolate-safe fast path. Provider-backed PDF OCR and
+// the document summarizer remain separate calls; no single conversion is
+// allowed to materialize the former 50 MiB/20M-character envelope in memory.
+const MAX_SOURCE_BYTES = 8 * 1_024 * 1_024;
+const MAX_EXPANDED_OFFICE_BYTES = 12 * 1_024 * 1_024;
+const MAX_OFFICE_XML_BYTES = 3 * 1_024 * 1_024;
+const MAX_DERIVATIVE_CHARACTERS = 2_000_000;
+const MAX_PDF_PAGES = 200;
 const CONVERTER_TIMEOUT_MS = 30_000;
 const PROCESSING_LEASE_MS = 5 * 60_000;
 const DEFAULT_INDEX_CHUNK_CHARACTERS = 4_000;
-const MAX_INDEX_CHUNKS = 5_000;
+const MAX_INDEX_CHUNKS = 500;
 
 export interface AttachmentPdfText {
   pageCount: number;
@@ -30,6 +33,8 @@ export interface BuildAttachmentDerivativeInput {
   pdfExtractor?: (bytes: Uint8Array) => Promise<AttachmentPdfText>;
   ocr?: (bytes: Uint8Array, pageCount: number) => Promise<AttachmentOcrText>;
   signal?: AbortSignal;
+  /** Test seam and emergency lower bound; production uses 30 seconds. */
+  timeoutMs?: number;
 }
 
 export interface DerivativeMetadata {
@@ -70,6 +75,7 @@ export interface DerivativeIndex {
 
 export interface AuthorizedDerivativeResource {
   id: string;
+  workspaceId: string;
   fileName: string;
   mimeType: string | null;
   contentRef: string | null;
@@ -129,7 +135,11 @@ export async function buildAttachmentDerivative(
   if (input.signal?.aborted) return { status: "failed", errorCode: "conversion_aborted" };
 
   try {
-    const converted = await withTimeout(convertAttachment(input), CONVERTER_TIMEOUT_MS, input.signal);
+    const converted = await withTimeout(
+      () => convertAttachment(input),
+      input.timeoutMs ?? CONVERTER_TIMEOUT_MS,
+      input.signal,
+    );
     if (!converted) return { status: "unsupported", errorCode: "resource_format_unsupported" };
     if (converted.text.length > MAX_DERIVATIVE_CHARACTERS) {
       return { status: "failed", errorCode: "derivative_too_large" };
@@ -183,13 +193,16 @@ export async function materializeAttachmentDerivative(
 
   const object = await payloads.get(resource.contentRef);
   if (!object) return updateTerminalState(database, resource, "failed", "source_unavailable", options);
+  if (object.size > MAX_SOURCE_BYTES) {
+    return updateTerminalState(database, resource, "failed", "source_too_large", options);
+  }
   const bytes = new Uint8Array(await object.arrayBuffer());
   const sourceSha256 = resource.contentSha256 ?? await sha256Hex(bytes);
   if (!resource.contentSha256) {
     const hashUpdate = await database.prepare(
       `UPDATE resources SET content_sha256 = ?, updated_at = ?
-       WHERE id = ? AND content_ref = ? AND content_sha256 IS NULL`,
-    ).bind(sourceSha256, at, resource.id, resource.contentRef).run();
+       WHERE workspace_id = ? AND id = ? AND content_ref = ? AND content_sha256 IS NULL`,
+    ).bind(sourceSha256, at, resource.workspaceId, resource.id, resource.contentRef).run();
     if ((hashUpdate.meta.changes ?? 0) === 0) return { status: "processing", retryAfterMs: 250 };
   }
 
@@ -198,14 +211,14 @@ export async function materializeAttachmentDerivative(
         SET model_content_status = 'processing', model_content_extractor_version = ?,
             model_content_claimed_at = ?, model_content_claim_id = ?,
             model_content_error_code = NULL, updated_at = ?
-      WHERE id = ? AND content_ref = ? AND content_sha256 = ?
+      WHERE workspace_id = ? AND id = ? AND content_ref = ? AND content_sha256 = ?
         AND (model_content_status IS NOT 'processing'
           OR model_content_extractor_version IS NOT ?
           OR model_content_claimed_at IS NULL
           OR model_content_claim_id IS NULL
           OR model_content_claimed_at <= ?)`,
   ).bind(
-    ATTACHMENT_TEXT_EXTRACTOR_VERSION, at, claimId, at, resource.id, resource.contentRef,
+    ATTACHMENT_TEXT_EXTRACTOR_VERSION, at, claimId, at, resource.workspaceId, resource.id, resource.contentRef,
     sourceSha256, ATTACHMENT_TEXT_EXTRACTOR_VERSION, staleBefore,
   ).run();
   if ((claim.meta.changes ?? 0) === 0) return { status: "processing", retryAfterMs: 1_000 };
@@ -235,6 +248,21 @@ export async function materializeAttachmentDerivative(
   const contentBytes = new TextEncoder().encode(converted.text);
   const indexBytes = new TextEncoder().encode(JSON.stringify(converted.index));
   const derivativeSha256 = await sha256Hex(contentBytes);
+  // Register both unique generation keys before the first R2 write. A failed
+  // write, stale publisher, or failed D1 publication remains recoverable by the
+  // regional cleanup worker; a successful active pointer cancels the outbox row.
+  await database.batch([
+    database.prepare(
+      `INSERT OR IGNORE INTO resource_object_deletion_outbox
+        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+       VALUES (?, ?, ?, 'derivative', ?, ?)`,
+    ).bind(contentRef, resource.workspaceId, resource.id, at, at),
+    database.prepare(
+      `INSERT OR IGNORE INTO resource_object_deletion_outbox
+        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+       VALUES (?, ?, ?, 'index', ?, ?)`,
+    ).bind(indexRef, resource.workspaceId, resource.id, at, at),
+  ]);
   await payloads.put(contentRef, exactArrayBuffer(contentBytes), {
     httpMetadata: { contentType: `${converted.modelMimeType}; charset=utf-8` },
     customMetadata: { originalResourceId: resource.id, sourceSha256, extractorVersion: converted.extractorVersion, sha256: derivativeSha256 },
@@ -257,13 +285,13 @@ export async function materializeAttachmentDerivative(
               model_content_extractor_version = ?, model_content_character_count = ?,
               model_content_extracted_at = ?, model_content_claimed_at = NULL,
               model_content_claim_id = NULL, model_content_error_code = NULL, updated_at = ?
-        WHERE id = ? AND content_ref = ? AND content_sha256 = ?
+        WHERE workspace_id = ? AND id = ? AND content_ref = ? AND content_sha256 = ?
           AND model_content_status = 'processing' AND model_content_extractor_version = ?
           AND model_content_claim_id = ?`,
     ).bind(
       contentRef, converted.modelMimeType, derivativeSha256,
       JSON.stringify(converted.metadata), indexRef, converted.extractorVersion,
-      converted.text.length, at, at, resource.id, resource.contentRef,
+      converted.text.length, at, at, resource.workspaceId, resource.id, resource.contentRef,
       sourceSha256, converted.extractorVersion, claimId,
     ).run();
     if ((result.meta.changes ?? 0) === 0) {
@@ -484,7 +512,10 @@ function convertXlsx(bytes: Uint8Array): ConvertedText {
 }
 
 async function convertPdf(input: BuildAttachmentDerivativeInput): Promise<ConvertedText> {
-  const extracted = await (input.pdfExtractor ?? defaultPdfExtractor)(input.bytes);
+  // PDF.js may transfer and detach the supplied ArrayBuffer. OCR needs the
+  // original bytes after text-layer detection, so extraction receives its own
+  // bounded copy rather than consuming the only source buffer.
+  const extracted = await (input.pdfExtractor ?? defaultPdfExtractor)(input.bytes.slice());
   assertPageCount(extracted.pageCount);
   if (extracted.pages.length !== extracted.pageCount) throw new ConversionFailure("pdf_page_count_mismatch");
   const visibleCharacters = extracted.pages.reduce((sum, page) => sum + page.replace(/\s/gu, "").length, 0);
@@ -496,7 +527,13 @@ async function convertPdf(input: BuildAttachmentDerivativeInput): Promise<Conver
     };
   }
   if (!input.ocr) throw new ConversionFailure("pdf_ocr_required");
-  const ocr = await input.ocr(input.bytes, extracted.pageCount);
+  let ocr: AttachmentOcrText;
+  try {
+    ocr = await input.ocr(input.bytes, extracted.pageCount);
+  } catch (error) {
+    if (error instanceof ConversionFailure) throw error;
+    throw new ConversionFailure("pdf_ocr_failed");
+  }
   if (ocr.pages.length !== extracted.pageCount || ocr.pages.every((page) => page.trim().length === 0)) {
     throw new ConversionFailure("pdf_ocr_incomplete");
   }
@@ -724,11 +761,11 @@ async function updateTerminalState(
         SET model_content_status = ?, model_content_extractor_version = ?,
             model_content_error_code = ?, model_content_extracted_at = ?,
             model_content_claimed_at = NULL, model_content_claim_id = NULL, updated_at = ?
-      WHERE id = ? AND content_ref IS ? ${claimPredicate}`,
+      WHERE workspace_id = ? AND id = ? AND content_ref IS ? ${claimPredicate}`,
   );
   await (claimId
-    ? statement.bind(status, ATTACHMENT_TEXT_EXTRACTOR_VERSION, boundedCode, at, at, resource.id, resource.contentRef, claimId)
-    : statement.bind(status, ATTACHMENT_TEXT_EXTRACTOR_VERSION, boundedCode, at, at, resource.id, resource.contentRef)
+    ? statement.bind(status, ATTACHMENT_TEXT_EXTRACTOR_VERSION, boundedCode, at, at, resource.workspaceId, resource.id, resource.contentRef, claimId)
+    : statement.bind(status, ATTACHMENT_TEXT_EXTRACTOR_VERSION, boundedCode, at, at, resource.workspaceId, resource.id, resource.contentRef)
   ).run();
   return { status, errorCode: boundedCode };
 }
@@ -742,7 +779,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: AbortSignal | undefined): Promise<T> {
+async function withTimeout<T>(factory: () => Promise<T>, timeoutMs: number, signal: AbortSignal | undefined): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let abortListener: (() => void) | undefined;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
@@ -753,7 +790,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
     }
   });
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    // Install abort/deadline handling before converter invocation. Provider
+    // parsers are asynchronous; local Office work is independently constrained
+    // by the small compressed/expanded/XML ceilings above.
+    return await Promise.race([Promise.resolve().then(factory), timeoutPromise]);
   } finally {
     if (timeout) clearTimeout(timeout);
     if (signal && abortListener) signal.removeEventListener("abort", abortListener);

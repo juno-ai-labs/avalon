@@ -18,6 +18,7 @@ import {
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
+import { extractText, getDocumentProxy } from "unpdf";
 import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } from "../lib/attachment-cursor";
 import {
@@ -26,7 +27,11 @@ import {
   type DerivativeIndex,
   type MaterializedAttachmentDerivative,
 } from "./attachment-derivative-service";
-import { loadModelImageForTool, modelImageDataUri } from "./attachment-model-content";
+import {
+  loadModelImageForTool,
+  MAX_TOTAL_MODEL_IMAGE_BYTES,
+  modelImageDataUri,
+} from "./attachment-model-content";
 import {
   createAttachmentSummaryRunner,
   type AttachmentSummaryDraft,
@@ -34,7 +39,9 @@ import {
 } from "./attachment-summary-service";
 import {
   executionPrincipalKey,
-  loadVisibleWorkstreamResources,
+  loadVisibleWorkstreamResourcePage,
+  loadVisibleWorkstreamResourcesByIds,
+  WorkstreamResourceInventoryChangedError,
   type VisibleWorkstreamResourceSet,
   type VisibleWorkstreamResourceRow,
 } from "./workstream-resource-visibility";
@@ -50,6 +57,8 @@ const DEFAULT_PASSAGE_CHARACTERS = 3_000;
 const MAXIMUM_SEARCH_RESULT_CHARACTERS = 20_000;
 const DEFAULT_IMAGE_MAX_DIMENSION = 1_536;
 const DEFAULT_SUMMARY_CHARACTERS = 12_000;
+const MAX_DERIVATIVE_OBJECT_BYTES = 8 * 1024 * 1024;
+const MAX_INDEX_OBJECT_BYTES = 2 * 1024 * 1024;
 
 export interface WorkstreamAttachmentToolOptions {
   summarizeDerivative?: AttachmentSummaryRunner;
@@ -60,13 +69,25 @@ export interface WorkstreamAttachmentToolOptions {
   capabilityPrefix?: string;
 }
 
-const ListCursorStateSchema = z.object({
-  fingerprint: z.string().min(1).max(100),
-  attachmentKind: z.enum(["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]).nullable(),
-  limit: z.number().int().min(1).max(50),
-  nextIndex: z.number().int().nonnegative(),
-  asOf: z.string().datetime({ offset: true }),
-}).strict();
+const ListCursorStateSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("database"),
+    fingerprint: z.string().min(1).max(100),
+    attachmentKind: z.enum(["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]).nullable(),
+    limit: z.number().int().min(1).max(50),
+    afterAttachedAt: z.string().datetime({ offset: true }),
+    afterResourceId: z.string().uuid(),
+    asOf: z.string().datetime({ offset: true }),
+  }).strict(),
+  z.object({
+    mode: z.literal("in_memory"),
+    fingerprint: z.string().min(1).max(100),
+    attachmentKind: z.enum(["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]).nullable(),
+    limit: z.number().int().min(1).max(50),
+    nextIndex: z.number().int().nonnegative(),
+    asOf: z.string().datetime({ offset: true }),
+  }).strict(),
+]);
 
 const ReadCursorStateSchema = z.object({
   resourceId: z.string().uuid(),
@@ -85,7 +106,7 @@ const DerivativeIndexSchema = z.object({
     end: z.number().int().nonnegative(),
     sectionLabel: z.string().nullable(),
     terms: z.array(z.string()).max(64),
-  }).strict()).max(5_000),
+  }).strict()).max(500),
 }).strict();
 
 class AttachmentOperationError extends Error {
@@ -118,44 +139,85 @@ export function createWorkstreamAttachmentTools(
       },
       execute: async (raw) => {
         const args = AttachmentListResourcesArgumentsSchema.parse(raw);
-        const visible = await loadScopedResources(env, input, options);
-        let attachmentKind: AttachmentKind | null;
-        let limit: number;
-        let start: number;
-        let asOf: string;
-        if ("cursor" in args) {
-          const state = await openCursorState(env, input, options, args.cursor, LIST_CURSOR_PURPOSE, ListCursorStateSchema);
-          if (state.fingerprint !== visible.fingerprint) {
+        const state = "cursor" in args
+          ? await openCursorState(env, input, options, args.cursor, LIST_CURSOR_PURPOSE, ListCursorStateSchema)
+          : null;
+        const attachmentKind = state?.attachmentKind ?? ("attachmentKind" in args ? args.attachmentKind ?? null : null);
+        const limit = state?.limit ?? ("limit" in args ? args.limit ?? DEFAULT_LIST_LIMIT : DEFAULT_LIST_LIMIT);
+        const asOf = state?.asOf ?? new Date().toISOString();
+        if (options.loadVisibleResources) {
+          if (state && state.mode !== "in_memory") {
+            throw attachmentError("invalid_cursor", "This resource cursor belongs to another resource scope");
+          }
+          const visible = await options.loadVisibleResources();
+          if (state && state.fingerprint !== visible.fingerprint) {
             throw attachmentError("invalid_cursor", "The resource inventory changed; restart the list from its first page");
           }
-          attachmentKind = state.attachmentKind;
-          limit = state.limit;
-          start = state.nextIndex;
-          asOf = state.asOf;
-        } else {
-          attachmentKind = args.attachmentKind ?? null;
-          limit = args.limit ?? DEFAULT_LIST_LIMIT;
-          start = 0;
-          asOf = new Date().toISOString();
+          const matching = visible.rows.filter((row) => !attachmentKind || rowKind(row) === attachmentKind);
+          const start = state?.nextIndex ?? 0;
+          const page = matching.slice(start, start + limit);
+          const nextIndex = start + page.length;
+          const nextCursor = nextIndex < matching.length
+            ? await sealCursorState(env, input, options, LIST_CURSOR_PURPOSE, {
+                mode: "in_memory", fingerprint: visible.fingerprint, attachmentKind, limit, nextIndex, asOf,
+              })
+            : null;
+          const output = WorkstreamListResourcesOutputSchema.parse({
+            workstreamId: input.workstreamId,
+            asOf,
+            totalVisibleResources: visible.rows.length,
+            totalMatchingResources: matching.length,
+            filters: { attachmentKind },
+            items: page.map(resourceListItem),
+            nextCursor,
+          });
+          return { output, summary: `Listed ${page.length} of ${matching.length} matching work-stream resources` };
         }
-        const matching = visible.rows.filter((row) => !attachmentKind || rowKind(row) === attachmentKind);
-        const page = matching.slice(start, start + limit);
-        const nextIndex = start + page.length;
-        const nextCursor = nextIndex < matching.length
+        if (state && state.mode !== "database") {
+          throw attachmentError("invalid_cursor", "This resource cursor belongs to another resource scope");
+        }
+        let result;
+        try {
+          result = await loadVisibleWorkstreamResourcePage(env.DB, {
+            workspaceId: input.workspaceId,
+            workstreamId: input.workstreamId,
+            principal: input.executionPrincipal,
+            attachmentKind,
+            limit,
+            ...(state ? { expectedFingerprint: state.fingerprint } : {}),
+            after: state ? { attachedAt: state.afterAttachedAt, resourceId: state.afterResourceId } : null,
+          });
+        } catch (error) {
+          if (error instanceof WorkstreamResourceInventoryChangedError) {
+            throw attachmentError("invalid_cursor", "The resource inventory changed; restart the list from its first page");
+          }
+          throw error;
+        }
+        const last = result.rows.at(-1);
+        const nextCursor = result.hasMore && last
           ? await sealCursorState(env, input, options, LIST_CURSOR_PURPOSE, {
-              fingerprint: visible.fingerprint, attachmentKind, limit, nextIndex, asOf,
+              mode: "database",
+              fingerprint: result.fingerprint,
+              attachmentKind,
+              limit,
+              afterAttachedAt: last.attached_at,
+              afterResourceId: last.id,
+              asOf,
             })
           : null;
         const output = WorkstreamListResourcesOutputSchema.parse({
           workstreamId: input.workstreamId,
           asOf,
-          totalVisibleResources: visible.rows.length,
-          totalMatchingResources: matching.length,
+          totalVisibleResources: result.totalVisibleResources,
+          totalMatchingResources: result.totalMatchingResources,
           filters: { attachmentKind },
-          items: page.map(resourceListItem),
+          items: result.rows.map(resourceListItem),
           nextCursor,
         });
-        return { output, summary: `Listed ${page.length} of ${matching.length} matching work-stream resources` };
+        return {
+          output,
+          summary: `Listed ${result.rows.length} of ${result.totalMatchingResources} matching work-stream resources`,
+        };
       },
     },
     {
@@ -195,12 +257,16 @@ export function createWorkstreamAttachmentTools(
         }
         const object = await env.PAYLOADS.get(ready.contentRef);
         if (!object) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
+        if (object.size > MAX_DERIVATIVE_OBJECT_BYTES) {
+          throw attachmentError("resource_conversion_failed", "The selected derivative exceeds the readable size limit");
+        }
         const text = await object.text();
         if (text.length !== ready.totalCharacters) {
           throw attachmentError("resource_version_changed", "The selected derivative length no longer matches its version");
         }
         if (start > text.length) throw attachmentError("invalid_cursor", "The requested character position is outside this resource");
-        const end = Math.min(text.length, start + pageSize);
+        start = safeUtf16Start(text, start);
+        const end = safeUtf16End(text, Math.min(text.length, start + pageSize));
         const version = { sha256: ready.sha256, extractorVersion: ready.extractorVersion };
         const previousStart = Math.max(0, start - pageSize);
         const previousCursor = start > 0
@@ -246,6 +312,9 @@ export function createWorkstreamAttachmentTools(
           env.PAYLOADS.get(ready.indexRef),
         ]);
         if (!contentObject || !indexObject) throw attachmentError("resource_conversion_failed", "The selected derivative or index is unavailable");
+        if (contentObject.size > MAX_DERIVATIVE_OBJECT_BYTES || indexObject.size > MAX_INDEX_OBJECT_BYTES) {
+          throw attachmentError("resource_conversion_failed", "The selected derivative or index exceeds its readable size limit");
+        }
         const [text, indexText] = await Promise.all([contentObject.text(), indexObject.text()]);
         let indexValue: unknown;
         try {
@@ -309,7 +378,7 @@ export function createWorkstreamAttachmentTools(
     {
       definition: {
         name: "view_resource",
-        description: "View one through eight visible image resources. The JSON result identifies ordered visual parts; readable text, Markdown, PDFs, documents, spreadsheets, and presentations self-heal with an exact workstream_read_resource suggestion.",
+        description: `View one through eight visible image resources. The JSON result identifies ordered visual parts; readable text, Markdown, PDFs, documents, spreadsheets, and presentations self-heal with an exact ${modelToolName("read_resource")} suggestion.`,
         capability: `${capabilityPrefix}.view`,
         mode: "read",
         idempotency: "safe",
@@ -317,12 +386,13 @@ export function createWorkstreamAttachmentTools(
       },
       execute: async (raw) => {
         const args = AttachmentViewResourceArgumentsSchema.parse(raw);
-        const visible = await loadScopedResources(env, input, options);
+        const visibleRows = await loadScopedResourceRows(env, input, options, args.resourceIds);
         const maxDimension = args.maxDimension ?? DEFAULT_IMAGE_MAX_DIMENSION;
         const contentParts: ModelMessageContentPart[] = [];
+        let deliveredImageBytes = 0;
         const items = [];
         for (const resourceId of args.resourceIds) {
-          const row = visible.rows.find((candidate) => candidate.id === resourceId);
+          const row = visibleRows.find((candidate) => candidate.id === resourceId);
           if (!row) {
             items.push(skippedViewItem(resourceId, "Unavailable", null, "resource_not_found", "The resource was not found"));
             continue;
@@ -347,18 +417,26 @@ export function createWorkstreamAttachmentTools(
           try {
             const image = await loadModelImageForTool(env.PAYLOADS, {
               id: row.id,
+              workspaceId: row.workspace_id,
               fileName: row.title,
               mimeType: row.mime_type ?? "image/*",
               contentRef: row.content_ref,
+              contentSha256: row.content_sha256,
               modelContentRef: row.model_content_ref,
               modelMimeType: row.model_mime_type,
               modelContentSha256: row.model_content_sha256,
               modelMetadataJson: row.model_metadata_json,
-            }, { database: env.DB, images: env.IMAGES, maxDimension });
+            }, {
+              database: env.DB,
+              images: env.IMAGES,
+              maxDimension,
+              maxBytes: MAX_TOTAL_MODEL_IMAGE_BYTES - deliveredImageBytes,
+            });
             if (!image) {
               items.push(skippedViewItem(row.id, row.title, row.mime_type, "resource_conversion_failed", "The image could not be safely converted"));
               continue;
             }
+            deliveredImageBytes += image.bytes.byteLength;
             const visualPartIndex = contentParts.length;
             contentParts.push({
               type: "image_url",
@@ -388,8 +466,8 @@ export function createWorkstreamAttachmentTools(
         if (contentParts.length === 0 && wrongKind && items.every((item) => item.reasonCode === "resource_tool_mismatch")) {
           throw attachmentError("resource_tool_mismatch", wrongKind.reason ?? "The resource needs a different content tool", {
             actualMimeType: wrongKind.sourceMimeType,
-            attachmentKind: visible.rows.find((row) => row.id === wrongKind.resourceId)
-              ? rowKind(visible.rows.find((row) => row.id === wrongKind.resourceId)!)
+            attachmentKind: visibleRows.find((row) => row.id === wrongKind.resourceId)
+              ? rowKind(visibleRows.find((row) => row.id === wrongKind.resourceId)!)
               : undefined,
             suggestedCall: wrongKind.suggestedCall,
           });
@@ -422,6 +500,9 @@ export function createWorkstreamAttachmentTools(
         const ready = await ensureReadyTextDerivative(env, row, context.signal);
         const object = await env.PAYLOADS.get(ready.contentRef);
         if (!object) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
+        if (object.size > MAX_DERIVATIVE_OBJECT_BYTES) {
+          throw attachmentError("resource_conversion_failed", "The selected derivative exceeds the readable size limit");
+        }
         const text = await object.text();
         if (text.length !== ready.totalCharacters) {
           throw attachmentError("resource_version_changed", "The selected derivative length no longer matches its version");
@@ -476,30 +557,34 @@ export function createWorkstreamAttachmentTools(
 /** Recreate only ephemeral visual parts from a JSON-only completed receipt. */
 export async function rehydrateWorkstreamViewReceipt(
   env: Env,
-  input: WorkstreamWorkflowInput,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "executionPrincipal">,
   rawInput: unknown,
   rawOutput: unknown,
 ): Promise<ModelMessageContentPart[]> {
   const parsedInput = AttachmentViewResourceArgumentsSchema.safeParse(rawInput);
   const parsedOutput = WorkstreamViewResourceOutputSchema.safeParse(rawOutput);
   if (!parsedInput.success || !parsedOutput.success || parsedOutput.data.returned === 0) return [];
-  const visible = await loadVisibleWorkstreamResources(env.DB, {
+  const visible = await loadVisibleWorkstreamResourcesByIds(env.DB, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     principal: input.executionPrincipal,
+    resourceIds: parsedInput.data.resourceIds,
   });
   const included = parsedOutput.data.items
     .filter((item) => item.status === "included")
     .sort((left, right) => (left.visualPartIndex ?? 0) - (right.visualPartIndex ?? 0));
   const parts: ModelMessageContentPart[] = [];
+  let deliveredImageBytes = 0;
   for (const item of included) {
-    const row = visible.rows.find((candidate) => candidate.id === item.resourceId);
+    const row = visible.find((candidate) => candidate.id === item.resourceId);
     if (!row || rowKind(row) !== "image" || !item.version) return [];
     const image = await loadModelImageForTool(env.PAYLOADS, {
       id: row.id,
+      workspaceId: row.workspace_id,
       fileName: row.title,
       mimeType: row.mime_type ?? "image/*",
       contentRef: row.content_ref,
+      contentSha256: row.content_sha256,
       modelContentRef: row.model_content_ref,
       modelMimeType: row.model_mime_type,
       modelContentSha256: row.model_content_sha256,
@@ -508,8 +593,10 @@ export async function rehydrateWorkstreamViewReceipt(
       database: env.DB,
       images: env.IMAGES,
       maxDimension: parsedInput.data.maxDimension ?? DEFAULT_IMAGE_MAX_DIMENSION,
+      maxBytes: MAX_TOTAL_MODEL_IMAGE_BYTES - deliveredImageBytes,
     });
     if (!image || image.sha256 !== item.version.sha256 || image.extractorVersion !== item.version.extractorVersion) return [];
+    deliveredImageBytes += image.bytes.byteLength;
     parts.push({ type: "image_url", image_url: { url: modelImageDataUri(image.bytes, image.mimeType), detail: "auto" } });
   }
   return parts.length === parsedOutput.data.returned ? parts : [];
@@ -578,8 +665,8 @@ async function requireVisibleResource(
   options: WorkstreamAttachmentToolOptions,
   resourceId: string,
 ): Promise<VisibleWorkstreamResourceRow> {
-  const visible = await loadScopedResources(env, input, options);
-  const row = visible.rows.find((candidate) => candidate.id === resourceId);
+  const rows = await loadScopedResourceRows(env, input, options, [resourceId]);
+  const row = rows.find((candidate) => candidate.id === resourceId);
   if (!row) throw attachmentError("resource_not_found", "The resource was not found");
   return row;
 }
@@ -609,7 +696,11 @@ async function ensureReadyTextDerivative(
   row: VisibleWorkstreamResourceRow,
   signal: AbortSignal,
 ): Promise<Extract<MaterializedAttachmentDerivative, { status: "ready" }>> {
-  const result = await materializeAttachmentDerivative(env.DB, env.PAYLOADS, authorizedDerivativeResource(row), { signal });
+  const result = await materializeAttachmentDerivative(env.DB, env.PAYLOADS, authorizedDerivativeResource(row), {
+    signal,
+    pdfExtractor: extractPdfText,
+    ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(env.AI, row.title, bytes, pageCount, signal),
+  });
   if (result.status === "ready") return result;
   if (result.status === "processing") {
     throw attachmentError("resource_processing", "The resource is still being converted", { retryAfterMs: result.retryAfterMs });
@@ -621,9 +712,50 @@ async function ensureReadyTextDerivative(
   );
 }
 
+async function ocrPdfWithWorkersAi(
+  ai: Ai,
+  title: string,
+  bytes: Uint8Array,
+  pageCount: number,
+  signal: AbortSignal,
+) {
+  if (signal.aborted) throw signal.reason;
+  const response = await ai.toMarkdown({
+    name: title.toLowerCase().endsWith(".pdf") ? title : `${title}.pdf`,
+    blob: new Blob([exactArrayBuffer(bytes)], { type: "application/pdf" }),
+  }, {
+    conversionOptions: {
+      output: { format: "text" },
+      pdf: { images: { convert: true, maxConvertedImages: Math.min(pageCount, 200) } },
+    },
+  });
+  if (signal.aborted) throw signal.reason;
+  if (response.format === "error" || response.data.trim().length === 0) {
+    throw new Error("pdf_ocr_failed");
+  }
+  // Workers AI returns one ordered document string. Preserve the known page
+  // cardinality while making unavailable exact OCR page boundaries explicit.
+  return {
+    pages: [response.data, ...Array.from({ length: Math.max(0, pageCount - 1) }, () => "")],
+    method: "provider_ocr" as const,
+  };
+}
+
+async function extractPdfText(bytes: Uint8Array) {
+  const pdf = await getDocumentProxy(bytes);
+  if (pdf.numPages > 200) return { pageCount: pdf.numPages, pages: [] };
+  const extracted = await extractText(pdf);
+  return { pageCount: extracted.totalPages, pages: Array.isArray(extracted.text) ? extracted.text : [extracted.text] };
+}
+
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): AuthorizedDerivativeResource {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     fileName: row.title,
     mimeType: row.mime_type,
     contentRef: row.content_ref,
@@ -728,18 +860,23 @@ async function sealReadCursor(
   return sealCursorState(env, input, options, READ_CURSOR_PURPOSE, { resourceId, ...version, start, pageSize });
 }
 
-async function loadScopedResources(
+async function loadScopedResourceRows(
   env: Env,
   input: WorkstreamWorkflowInput,
   options: WorkstreamAttachmentToolOptions,
-): Promise<VisibleWorkstreamResourceSet> {
-  return options.loadVisibleResources
-    ? options.loadVisibleResources()
-    : loadVisibleWorkstreamResources(env.DB, {
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        principal: input.executionPrincipal,
-      });
+  resourceIds: readonly string[],
+): Promise<VisibleWorkstreamResourceRow[]> {
+  if (options.loadVisibleResources) {
+    const visible = await options.loadVisibleResources();
+    const requested = new Set(resourceIds);
+    return visible.rows.filter((row) => requested.has(row.id));
+  }
+  return loadVisibleWorkstreamResourcesByIds(env.DB, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    principal: input.executionPrincipal,
+    resourceIds,
+  });
 }
 
 function scopedCursorPurpose(options: WorkstreamAttachmentToolOptions, purpose: string): string {
@@ -766,7 +903,31 @@ function passageRange(
   let end = Math.min(text.length, Math.max(chunkEnd, start + maximumLength));
   if (end - start > maximumLength) end = start + maximumLength;
   if (end - start < maximumLength) start = Math.max(0, end - maximumLength);
-  return { start, end };
+  return { start: safeUtf16Start(text, start), end: safeUtf16End(text, end) };
+}
+
+function safeUtf16Start(text: string, offset: number): number {
+  return offset > 0 && offset < text.length
+    && isLowSurrogate(text.charCodeAt(offset))
+    && isHighSurrogate(text.charCodeAt(offset - 1))
+    ? offset - 1
+    : offset;
+}
+
+function safeUtf16End(text: string, offset: number): number {
+  return offset > 0 && offset < text.length
+    && isHighSurrogate(text.charCodeAt(offset - 1))
+    && isLowSurrogate(text.charCodeAt(offset))
+    ? offset - 1
+    : offset;
+}
+
+function isHighSurrogate(value: number): boolean {
+  return value >= 0xd800 && value <= 0xdbff;
+}
+
+function isLowSurrogate(value: number): boolean {
+  return value >= 0xdc00 && value <= 0xdfff;
 }
 
 function attachmentError(code: string, message: string, details?: Record<string, unknown>): AttachmentOperationError {

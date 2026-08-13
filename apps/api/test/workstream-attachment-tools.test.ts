@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { createAutomationDraftAttachmentTools } from "../src/services/automation-draft-attachment-tools";
@@ -56,9 +56,10 @@ function sqliteD1(database: DatabaseSync): D1Database {
 
 class MemoryBucket {
   readonly objects = new Map<string, Uint8Array>();
-  async get(key: string): Promise<{ text: () => Promise<string>; arrayBuffer: () => Promise<ArrayBuffer> } | null> {
+  async get(key: string): Promise<{ size: number; text: () => Promise<string>; arrayBuffer: () => Promise<ArrayBuffer> } | null> {
     const bytes = this.objects.get(key);
     return bytes ? {
+      size: bytes.byteLength,
       text: async () => new TextDecoder().decode(bytes),
       arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
     } : null;
@@ -72,7 +73,7 @@ class MemoryBucket {
 const openDatabases: DatabaseSync[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
-function fixture(options: { images?: ImagesBinding } = {}) {
+function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
   const database = new DatabaseSync(":memory:");
   openDatabases.push(database);
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
@@ -94,9 +95,28 @@ function fixture(options: { images?: ImagesBinding } = {}) {
     env: createTestEnv({
       DB: sqliteD1(database), PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
       ...(options.images ? { IMAGES: options.images } : {}),
+      ...(options.ai ? { AI: options.ai } : {}),
       SESSION_SIGNING_KEY: "attachment-test-session-signing-key", AVALON_REGION: "global", APP_ENV: "test",
     }),
   };
+}
+
+function blankPdf(): Uint8Array {
+  const parts = [
+    "%PDF-1.4\n",
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n",
+  ];
+  const offsets: number[] = [];
+  let position = parts[0]!.length;
+  for (const part of parts.slice(1)) {
+    offsets.push(position);
+    position += part.length;
+  }
+  const body = `${parts.join("")}xref\n0 4\n0000000000 65535 f \n${offsets
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${position}\n%%EOF`;
+  return new TextEncoder().encode(body);
 }
 
 function imageTransformBinding(
@@ -138,6 +158,7 @@ function insertReadyResource(database: DatabaseSync, bucket: MemoryBucket, ordin
   const mime = options.mime ?? "text/markdown";
   const text = `# ${title}\n\nNeedle evidence ${ordinal}.\n\n${"bounded text ".repeat(1_500)}`;
   const contentRef = `original/${id}`;
+  const attachedAt = new Date(Date.UTC(2026, 7, 12, 0, ordinal)).toISOString();
   const modelRef = `model/${id}.md`;
   const indexRef = `model/${id}.json`;
   bucket.objects.set(contentRef, new TextEncoder().encode(text));
@@ -154,12 +175,12 @@ function insertReadyResource(database: DatabaseSync, bucket: MemoryBucket, ordin
        model_content_extractor_version, model_content_character_count, model_content_extracted_at)
     VALUES (?, ?, 'file', 'avalon_upload', ?, ?, ?, '{"size":123}', ?, ?, ?, ?, 'text/markdown', ?, '{}', ?, 'ready',
             'attachment-text-v1', ?, ?)
-  `).run(id, WORKSPACE_ID, title, mime, contentRef, `2026-08-12T00:${String(ordinal).padStart(2, "0")}:00.000Z`, `2026-08-12T00:${String(ordinal).padStart(2, "0")}:00.000Z`, SOURCE_HASH, modelRef, DERIVATIVE_HASH, indexRef, text.length, "2026-08-12T01:00:00.000Z");
+  `).run(id, WORKSPACE_ID, title, mime, contentRef, attachedAt, attachedAt, SOURCE_HASH, modelRef, DERIVATIVE_HASH, indexRef, text.length, "2026-08-12T01:00:00.000Z");
   database.prepare(`
     INSERT INTO workstream_resources
       (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
     VALUES (?, ?, ?, 0, 'context', ?)
-  `).run(WORKSTREAM_ID, id, USER_ID, `2026-08-12T00:${String(ordinal).padStart(2, "0")}:00.000Z`);
+  `).run(WORKSTREAM_ID, id, USER_ID, attachedAt);
   return id;
 }
 
@@ -189,6 +210,48 @@ function insertReadyImage(database: DatabaseSync, bucket: MemoryBucket, ordinal:
 }
 
 describe("work-stream attachment tools", () => {
+  it("uses the production OCR binding for a scanned PDF and persists the reusable derivative", async () => {
+    const toMarkdown = vi.fn(async () => ({
+      name: "scan.pdf",
+      mimeType: "application/pdf",
+      format: "text" as const,
+      data: "Recovered OCR evidence",
+      tokens: 4,
+    }));
+    const ai = createCloudflareTestBinding<Ai>({ toMarkdown });
+    const { database, bucket, env } = fixture({ ai });
+    const resourceId = "20000000-0000-4000-8000-000000000001";
+    const sourceRef = `original/${resourceId}.pdf`;
+    bucket.objects.set(sourceRef, blankPdf());
+    database.prepare(`
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         metadata_json, model_content_status, created_at, updated_at)
+      VALUES (?, ?, 'file', 'avalon_upload', 'scan.pdf', 'application/pdf', ?,
+              '{}', 'pending', '2026-08-12', '2026-08-12')
+    `).run(resourceId, WORKSPACE_ID, sourceRef);
+    database.prepare(`
+      INSERT INTO workstream_resources
+        (workstream_id, resource_id, attached_by_user_id, relationship_type, attached_at)
+      VALUES (?, ?, ?, 'explicit', '2026-08-12')
+    `).run(WORKSTREAM_ID, resourceId, USER_ID);
+    const read = __integrationTesting.createAvalonTools(env, input())
+      .find((tool) => tool.definition.name === "read_resource")!;
+
+    await expect(read.execute({ resourceId }, context())).resolves.toMatchObject({
+      output: {
+        resourceId,
+        modelMimeType: "text/markdown",
+        text: expect.stringContaining("Recovered OCR evidence"),
+        charactersAfter: 0,
+      },
+    });
+    expect(toMarkdown).toHaveBeenCalledOnce();
+    expect(database.prepare(
+      "SELECT model_content_status, model_content_error_code FROM resources WHERE id = ?",
+    ).get(resourceId)).toEqual({ model_content_status: "ready", model_content_error_code: null });
+  });
+
   it("reaches Markdown evidence beyond the retired 60,000-character projection boundary", async () => {
     const { database, bucket, env } = fixture();
     const resourceId = insertReadyResource(database, bucket, 50, { title: "Tuple transcript.md" });
@@ -262,8 +325,25 @@ describe("work-stream attachment tools", () => {
 
   it("lists more than fifty visible resources without duplicates and filters by every natural-language kind", async () => {
     const { database, bucket, env } = fixture();
-    for (let ordinal = 0; ordinal < 55; ordinal += 1) insertReadyResource(database, bucket, ordinal);
+    let genericMarkdownId = "";
+    for (let ordinal = 0; ordinal < 55; ordinal += 1) {
+      const resourceId = insertReadyResource(database, bucket, ordinal);
+      if (ordinal === 54) genericMarkdownId = resourceId;
+    }
+    database.prepare("UPDATE resources SET mime_type = 'application/octet-stream', title = 'Legacy.md' WHERE id = ?")
+      .run(genericMarkdownId);
     const imageId = insertReadyResource(database, bucket, 55, { mime: "image/png", title: "Diagram" });
+    const kindFixtures = {
+      pdf: insertReadyResource(database, bucket, 56, { mime: "application/pdf", title: "Report.pdf" }),
+      document: insertReadyResource(database, bucket, 57, { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", title: "Brief.docx" }),
+      spreadsheet: insertReadyResource(database, bucket, 58, { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", title: "Data.xlsx" }),
+      presentation: insertReadyResource(database, bucket, 59, { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", title: "Pitch.pptx" }),
+      text: insertReadyResource(database, bucket, 60, { mime: "text/plain", title: "Notes.txt" }),
+      other: insertReadyResource(database, bucket, 61, { mime: "application/octet-stream", title: "Archive.bin" }),
+    } as const;
+    database.prepare(
+      "UPDATE resources SET model_content_status = 'unsupported', model_mime_type = NULL WHERE id = ?",
+    ).run(kindFixtures.other);
     const tools = __integrationTesting.createAvalonTools(env, input());
     expect(tools.some((tool) => tool.definition.name === "read")).toBe(false);
     const list = tools.find((tool) => tool.definition.name === "list_resources")!;
@@ -273,19 +353,42 @@ describe("work-stream attachment tools", () => {
 
     const ids: string[] = [];
     let result = await list.execute({ limit: 17 }, context());
+    const inventoryCursor = (result.output as { nextCursor: string }).nextCursor;
     for (;;) {
       const output = result.output as { items: Array<{ resourceId: string }>; nextCursor: string | null; totalVisibleResources: number };
-      expect(output.totalVisibleResources).toBe(56);
+      expect(output.totalVisibleResources).toBe(62);
       ids.push(...output.items.map((item) => item.resourceId));
       if (!output.nextCursor) break;
       result = await list.execute({ cursor: output.nextCursor }, context());
     }
-    expect(ids).toHaveLength(56);
-    expect(new Set(ids).size).toBe(56);
+    expect(ids).toHaveLength(62);
+    expect(new Set(ids).size).toBe(62);
 
     await expect(list.execute({ attachmentKind: "image" }, context())).resolves.toMatchObject({
       output: { totalMatchingResources: 1, items: [{ resourceId: imageId, attachmentKind: "image", contentMode: "view" }], nextCursor: null },
     });
+    for (const [attachmentKind, resourceId] of Object.entries(kindFixtures)) {
+      await expect(list.execute({ attachmentKind }, context())).resolves.toMatchObject({
+        output: {
+          items: expect.arrayContaining([expect.objectContaining({
+            resourceId,
+            attachmentKind,
+            contentMode: attachmentKind === "other" ? "unsupported" : "read",
+          })]),
+        },
+      });
+    }
+    await expect(list.execute({ attachmentKind: "markdown" }, context())).resolves.toMatchObject({
+      output: {
+        totalMatchingResources: 55,
+        items: expect.arrayContaining([
+          expect.objectContaining({ resourceId: genericMarkdownId, attachmentKind: "markdown" }),
+        ]),
+      },
+    });
+
+    insertReadyResource(database, bucket, 62);
+    await expect(list.execute({ cursor: inventoryCursor }, context())).rejects.toMatchObject({ code: "invalid_cursor" });
   });
 
   it("returns exact two-sided character coverage and rejects a changed or tampered continuation", async () => {
@@ -306,6 +409,41 @@ describe("work-stream attachment tools", () => {
 
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?").run("c".repeat(64), resourceId);
     await expect(read.execute({ cursor: firstOutput.nextCursor }, context())).rejects.toMatchObject({ code: "resource_version_changed" });
+  });
+
+  it("rejects an oversized derivative object before hydrating it into Worker memory", async () => {
+    const { database, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, bucket, 70);
+    const row = database.prepare("SELECT model_content_ref FROM resources WHERE id = ?").get(resourceId) as { model_content_ref: string };
+    bucket.objects.set(row.model_content_ref, new Uint8Array(8 * 1024 * 1024 + 1));
+    const read = __integrationTesting.createAvalonTools(env, input())
+      .find((tool) => tool.definition.name === "read_resource")!;
+
+    await expect(read.execute({ resourceId }, context())).rejects.toMatchObject({
+      code: "resource_conversion_failed",
+      message: expect.stringContaining("exceeds the readable size limit"),
+    });
+  });
+
+  it("never returns a page that begins or ends inside a surrogate pair", async () => {
+    const { database, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, bucket, 71);
+    const row = database.prepare("SELECT model_content_ref FROM resources WHERE id = ?").get(resourceId) as { model_content_ref: string };
+    const text = `A😀${"x".repeat(11_997)}😀Z`;
+    await bucket.put(row.model_content_ref, text);
+    database.prepare(
+      "UPDATE resources SET model_content_character_count = ? WHERE id = ?",
+    ).run(text.length, resourceId);
+    const read = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
+
+    const result = await read.execute({ resourceId, startCharacter: 2 }, context());
+    const output = result.output as { range: { start: number; end: number }; text: string };
+    expect(output.range.start).toBe(1);
+    expect(output.text.charCodeAt(0)).toBeGreaterThanOrEqual(0xd800);
+    expect(output.text.charCodeAt(1)).toBeLessThanOrEqual(0xdfff);
+    expect(output.text).not.toContain("�");
+    expect(output.range.end).toBe(12_000);
+    expect(output.text.charCodeAt(output.text.length - 1)).not.toBeGreaterThanOrEqual(0xd800);
   });
 
   it("searches one authorized derivative, returns bounded ranked passages, and hides private notes from workspace principals", async () => {
@@ -402,9 +540,9 @@ describe("work-stream attachment tools", () => {
     );
     database.prepare(`
       INSERT INTO attachment_tool_receipts
-        (resource_id, tool_invocation_id, derivative_sha256, created_at)
-      VALUES (?, ?, ?, '2026-08-12')
-    `).run(imageId, invocationId, output.items[0]!.version!.sha256);
+        (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+      VALUES (?, ?, ?, ?, '2026-08-12')
+    `).run(WORKSPACE_ID, imageId, invocationId, output.items[0]!.version!.sha256);
     database.exec("PRAGMA foreign_keys = ON");
     await bucket.put(outputRef, __integrationTesting.serializeToolReplayOutput(result.output));
 

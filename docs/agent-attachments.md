@@ -23,7 +23,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives and bounded range indexes, then atomically selects their regional objects. |
 | `apps/api/src/services/attachment-summary-service.ts` | Runs the isolated, range-grounded hierarchical reader and reports honest complete or sampled coverage. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
-| `apps/api/src/services/workstream-resource-visibility.ts` | Applies the sidebar/list/read/search principal boundary and fingerprints the visible inventory. |
+| `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries. |
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
 | `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
@@ -32,8 +32,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects and current model image derivatives. |
-| `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, model-object catalog, deletion outbox, and checkpoint-template version. |
-| `packages/db/migrations/0074_attachment_tool_receipts.sql` | Binds reusable bounded receipts to exact derivative versions and queues their regional objects for deletion. |
+| `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
 ## How it works
@@ -48,7 +47,7 @@ a list request; it never supplies or guesses a MIME filter.
 
 The same registry renders the complete model-facing explanation and the Zod
 enum. Strict schemas cover list, read, search, view, and summarize arguments and
-their exact success results for both work-stream and future draft-scoped tools.
+their exact success results for both work-stream and draft-scoped tools.
 JSON Schema guides the provider, while the executor must parse the same strict
 Zod schema because the harness does not enforce provider-facing JSON Schema.
 
@@ -86,17 +85,20 @@ and `charactersAfter` rather than treating one page as the whole resource.
 
 ### Authorized work-stream discovery and text hydration
 
-The right sidebar, list tool, read tool, and search tool all call one visibility
-loader. It binds the work stream to its workspace and applies current note scope,
-ownership, and archive state for the execution principal. A workspace principal
-never inherits a user's private-note view. Knowledge of a resource ID or cursor
-does not bypass this query.
+The right sidebar and attachment tools compose one visibility SQL boundary. It
+binds the work stream to its workspace and applies current note scope, ownership,
+and archive state for the execution principal. The sidebar loads its displayed
+set, while model tools use bounded point, batch, aggregate, and keyset-page
+queries. A workspace principal never inherits a user's private-note view.
+Knowledge of a resource ID or cursor does not bypass this query.
 
 `workstream_list_resources` returns 25 rows by default and at most 50, optionally
 filtered by one of the eight natural-language kinds. Continuations bind the
-principal, work stream, filters, size, ordering position, and a fingerprint of
-the complete visible inventory. Any membership or visibility change invalidates
-the scan rather than mixing old and new pages.
+principal, work stream, filters, size, ordering key, and a monotonic work-stream
+inventory revision. D1 advances that revision for relationship, message-
+attachment, resource, and note mutations. A continuation compares it before and
+after its bounded queries, so any relevant change invalidates the scan rather
+than mixing old and new pages.
 
 `workstream_read_resource` targets 12,000 and never exceeds 24,000 UTF-16
 characters. Every result reports exact range, total, and character counts on
@@ -120,15 +122,16 @@ returns `partial` coverage.
 
 After the LLM produces its continuation summary, Avalon appends current visible
 resource and message-attachment totals plus non-empty groups for the same eight
-natural-language kinds used by the list tool. The aggregate comes from the
-shared sidebar visibility loader, not the summary. It contains no name, ID, MIME
+natural-language kinds used by the list tool. The aggregate comes from a grouped
+query using the shared sidebar visibility predicate, not the summary. It contains no name, ID, MIME
 type, or content, so its size is constant in the number of resources. Exact
 entries remain discoverable by paging `workstream_list_resources` until
 `nextCursor` is null.
 
 The stored checkpoint contains the raw LLM summary plus the execution-principal
-key and authorized resource fingerprint captured before summarization. Avalon
-verifies that fingerprint after the summary and before persistence. Replay uses
+key and authorized resource-inventory revision captured before summarization.
+Avalon verifies that revision after the summary and in the same conditional D1
+statement that persists the checkpoint. Replay uses
 the summary only for an exact scope match; attachment, detachment, deletion,
 revocation, private-note visibility, or principal changes invalidate it and fall
 back to durable transcript replay. Relevant resource IDs and consulted
@@ -190,7 +193,10 @@ normalized term hints. It never duplicates the complete derivative. Search
 scores the complete text inside each indexed range, so a term beyond the hint
 cap remains discoverable. Tool reads and searches load exact passages from the
 versioned derivative while checking offsets against the same hash and extractor
-version.
+version. At the two-million-character derivative ceiling, read, search, and
+summarize may hold one complete derivative while returning bounded model
+content; that proved Worker-memory ceiling replaces the former twenty-million-
+character envelope.
 
 ## Invariants
 
@@ -224,8 +230,9 @@ version.
   dependency set re-execute instead of becoming stale authorization snapshots.
 - Index offsets use JavaScript UTF-16 units and do not split surrogate pairs, so
   the later read contract and persisted index agree exactly.
-- The sidebar and agent inventory share one visibility function; adding a second
-  resource-visibility query is a contract change, not a local optimization.
+- The sidebar and agent inventory share one visibility predicate. Full sidebar,
+  point, keyset-page, and grouped queries may differ only in result shape and
+  bounds, never authorization semantics.
 - `nextCursor: null` is the only evidence that a filtered listing is exhausted,
   while zero characters on both sides is the only whole-resource read.
 
@@ -250,10 +257,10 @@ generic tool execution/receipt loop is owned by
 - Opaque cursors are at most 2,048 characters. Invalid scope, purpose, signature,
   encoding, or shape returns `invalid_cursor`; an elapsed expiry returns
   `cursor_expired`.
-- List calls accept 1–50 items, defaulting later to 25. View calls accept 1–8
+- List calls accept 1–50 items, defaulting to 25. View calls accept 1–8
   unique resource IDs and a long edge from 64–2,048 pixels.
 - Search accepts a 1–1,000-character query, at most five matches, and passages
-  from 500–4,000 characters. A complete result is later capped at 20,000 passage
+  from 500–4,000 characters. A complete result is capped at 20,000 passage
   characters.
 - Summarize accepts a 1–2,000-character prompt addition and a 2,000–20,000
   output-character budget.
@@ -264,18 +271,21 @@ generic tool execution/receipt loop is owned by
   manifest entry is emitted even when the source is missing or conversion fails.
 - Object cleanup reads at most 100 outbox rows per pass. Failures keep their row
   and store only a bounded machine error code.
-- Derivative conversion admits at most 50 MiB of source bytes, 40 MiB of expanded
-  Office data, 8 MiB per selected XML part, 500 PDF pages, 20 million output
-  characters, 5,000 index chunks, and 30 seconds of converter time. Image pixel,
-  source, derivative, and frame limits remain owned by the existing normalized
-  image path until projection is split at cutover.
+- Derivative conversion admits at most 8 MiB of source bytes, 12 MiB of selected
+  expanded Office XML, 3 MiB per selected XML part, 200 PDF pages, two million
+  UTF-16 output characters, and 500 index chunks. Async PDF/OCR work has a
+  30-second deadline. Local Office parsing is not timer-preemptible; its safety
+  boundary is the smaller source, selected-entry, and expansion ceilings checked
+  before rendering.
 - Invalid UTF-8, XML entity declarations, corrupt/oversized Office archives,
   encrypted OOXML containers, encrypted/oversized PDFs, missing OCR, incomplete
   OCR, timeouts, unsupported formats, and missing source objects have distinct
   bounded failure codes.
-- Image projection admits at most eight images, 20 MiB of source bytes, 40
-  million source pixels, 10 MiB of derivative bytes, and a 2,048-pixel native
-  long edge. Cloudflare Images scale-down is bounded to that same edge.
+- Image projection admits at most eight images, 20 MiB per source, 40 million
+  source pixels, 8 MiB per derivative, 12 MiB across all delivered derivatives,
+  and a 2,048-pixel native long edge. Cloudflare Images scale-down is bounded to
+  that edge. HEIF is accepted only through that isolated service; TIFF
+  dimensions are checked before pixels are decoded in the Worker.
 
 ## Testing
 
@@ -377,10 +387,40 @@ Kind classification is constant-time over bounded metadata. Cursor verification
 performs two HMAC operations and parses at most 2,048 characters. Conversion is
 lazy and reused by exact original hash plus extractor version; only scanned PDFs
 need the injected provider OCR path. Index storage grows with bounded chunks and
-terms rather than duplicating attachment text. Later phases must preserve those
+terms rather than duplicating attachment text. Future changes must preserve those
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Review closes replay, memory, and inventory race boundaries
+
+**What changed:** Historical attachment results now reauthorize before transcript
+projection; tenant-owned lifecycle tables carry workspace scope; MIME selection
+is verified from bytes; source, derivative, image, and transcript replay budgets
+are enforced before dangerous allocations. Resource tools use bounded point,
+keyset-page, and grouped queries fenced by a monotonic revision. Production
+scanned-PDF reads invoke the regional OCR binding, and compaction persistence is
+conditionally fenced against the same revision.
+
+**Why:** The implementation review found that a detached private result could
+still enter a later model transcript, nominally paginated discovery first loaded
+the entire inventory, synchronous converters and image decoders could cross
+Worker memory limits before checking them, and a visibility change could race
+between summary generation and checkpoint storage.
+
+**Considered and rejected:** Redacting replayed text, computing cursors from a
+full in-memory inventory, relying on best-effort R2 deletes, and treating a timer
+around synchronous ZIP parsing as cancellation. None establishes the required
+authorization, storage, or resource-consumption fence.
+
+**Consequences:** Attachment history and receipts are caches over current
+authority, never durable grants. A resource mutation invalidates outstanding
+list/checkpoint revisions. Local Office work remains byte-bounded rather than
+timer-preemptible, and readable derivatives deliberately stop at two million
+UTF-16 characters to keep whole-derivative operations inside the Worker budget.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Attachment publication and replay are fenced end to end
 
@@ -406,6 +446,9 @@ visibility, or visual bytes changed. Cleanup checks current pointers before R2
 deletion. Future converters and receipt consumers must use the same claim,
 publication-trigger, dependency, and replay-validation paths.
 
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
 ### 2026-08-12 — Encrypted OOXML fails as encryption, not corruption
 
 **What changed:** A compound-file encrypted DOCX, XLSX, or PPTX container now
@@ -425,6 +468,9 @@ without attempting to decrypt or exposing content.
 **Consequences:** Avalon still does not request or handle document passwords.
 Adding decryption would require a separate consent and secret-handling contract;
 it must not weaken archive expansion limits or log the password.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Message-attachment state is scoped and cursor-visible
 
@@ -446,6 +492,9 @@ itself; sharing that property across work streams loses the relationship boundar
 on the current work stream's message subset. Future output fields derived from a
 relationship must join through that work stream and participate in the cursor
 fingerprint when they can change between pages.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Compaction inventory stays synchronized with visible resources
 
@@ -469,6 +518,9 @@ grows without bound, and model prose cannot track current authorization.
 independent interpretations. Exact recovery always goes through the filtered,
 paginated resource tool.
 
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
 ### 2026-08-12 — Projection becomes manifest-only for non-images
 
 **What changed:** Work-stream and automation transcript projection no longer
@@ -491,8 +543,8 @@ tools unless its required visual is already inlined. A page with characters on
 either side is explicitly partial. Projection remains cheap and deterministic;
 complete content lives only in regional derivative storage and bounded results.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Automation drafts gain revocable attachment tools
 
@@ -516,8 +568,8 @@ not cursor purposes or authorization. The eager non-image compiler projection
 can now be removed together with the work-stream legacy projection in the next
 cutover commit.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Message history gains durable attachment identities
 
@@ -540,8 +592,8 @@ same-ID manifest entry, and manifest strings remain JSON-encoded untrusted data.
 The next rollout step must add frozen, draft-scoped automation tools before the
 remaining eager content can be deleted.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Images and large-document understanding become recoverable
 
@@ -566,8 +618,8 @@ absent from its receipt by design. Every new view kind therefore needs a
 reauthorizing rehydrator, and every summary provider must return ranges the host
 can verify before exposing them.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Sidebar-parity discovery and bounded text hydration ship
 
@@ -592,8 +644,8 @@ for complete inventory coverage and use the explicit before/after counts for
 complete document coverage. Later compaction aggregation must call the same
 visibility loader.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Complete derivatives replace trigger-specific conversion
 
@@ -618,8 +670,8 @@ derivative using UTF-16 ranges and must not read the source directly. A new
 extractor version creates new versioned objects and lets lifecycle cleanup reap
 the superseded pair.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Derivative state and cleanup follow the resource lifecycle
 
@@ -644,8 +696,8 @@ SHA-256 or let the first authorized derivative request calculate it. Derivative
 writers register objects and advance rows atomically; resource owners delete the
 row to end storage, while detachment only changes authorization.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Attachment contracts are centralized before runtime cutover
 
@@ -673,5 +725,5 @@ same commit. The repository temporarily carries inert replacement contracts
 beside legacy runtime behavior; that duplication is the deliberate price of an
 additive rollout and must disappear at the manifest-only cutover.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).

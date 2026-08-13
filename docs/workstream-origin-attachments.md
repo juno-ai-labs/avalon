@@ -375,8 +375,8 @@ would consume the opening context before the agent chooses relevant evidence.
 list, and every content read retains current principal authorization and exact
 coverage metadata.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Origin discovery uses the shared pageable resource boundary
 
@@ -398,6 +398,9 @@ between overlapping discovery tools.
 **Consequences:** Code and documentation that teach the agent where an origin
 appears must name `workstream_list_resources`. Origin creation remains unchanged
 and still precedes run launch; only authorized discovery and hydration moved.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — A work stream records the connector place it started from
 

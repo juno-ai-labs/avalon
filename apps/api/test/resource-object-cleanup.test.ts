@@ -9,22 +9,22 @@ describe("resource object cleanup", () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
       CREATE TABLE resources (
-        id TEXT PRIMARY KEY, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
       );
       CREATE TABLE resource_model_objects (
-        resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
+        workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
         lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
       );
       CREATE TABLE resource_object_deletion_outbox (
-        object_ref TEXT PRIMARY KEY, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
     `);
     const insert = database.prepare(`
       INSERT INTO resource_object_deletion_outbox
-        (object_ref, resource_id, object_kind, created_at, updated_at)
-      VALUES (?, ?, 'receipt', ?, ?)
+        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+      VALUES (?, 'workspace-one', ?, 'receipt', ?, ?)
     `);
     for (let index = 0; index < 101; index += 1) {
       const key = `regional/receipt-${String(index).padStart(3, "0")}`;
@@ -52,20 +52,20 @@ describe("resource object cleanup", () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
       CREATE TABLE resources (
-        id TEXT PRIMARY KEY, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
       );
       CREATE TABLE resource_model_objects (
-        resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
+        workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
         lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
       );
       CREATE TABLE resource_object_deletion_outbox (
-        object_ref TEXT PRIMARY KEY, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       INSERT INTO resource_object_deletion_outbox
-        (object_ref, resource_id, object_kind, created_at, updated_at)
-      VALUES ('regional/object', 'resource-one', 'derivative', '2026-08-12', '2026-08-12');
+        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+      VALUES ('regional/object', 'workspace-one', 'resource-one', 'derivative', '2026-08-12', '2026-08-12');
     `);
     let fail = true;
     const deleted: string[] = [];
@@ -105,24 +105,24 @@ describe("resource object cleanup", () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
       CREATE TABLE resources (
-        id TEXT PRIMARY KEY, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
       );
       CREATE TABLE resource_model_objects (
-        resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
+        workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
         lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
       );
       CREATE TABLE resource_object_deletion_outbox (
-        object_ref TEXT PRIMARY KEY, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
-      INSERT INTO resources (id, content_ref, model_content_ref, model_index_ref)
-      VALUES ('resource-current', 'original', 'regional/reactivated', NULL);
-      INSERT INTO resource_model_objects (resource_id, object_ref, lifecycle_status)
-      VALUES ('resource-current', 'regional/reactivated', 'active');
+      INSERT INTO resources (id, workspace_id, content_ref, model_content_ref, model_index_ref)
+      VALUES ('resource-current', 'workspace-one', 'original', 'regional/reactivated', NULL);
+      INSERT INTO resource_model_objects (workspace_id, resource_id, object_ref, lifecycle_status)
+      VALUES ('workspace-one', 'resource-current', 'regional/reactivated', 'active');
       INSERT INTO resource_object_deletion_outbox
-        (object_ref, resource_id, object_kind, created_at, updated_at)
-      VALUES ('regional/reactivated', 'resource-current', 'derivative', '2026-08-12', '2026-08-12');
+        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+      VALUES ('regional/reactivated', 'workspace-one', 'resource-current', 'derivative', '2026-08-12', '2026-08-12');
     `);
     const deleteObject = vi.fn(async () => undefined);
     const env = createTestEnv({

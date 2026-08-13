@@ -151,6 +151,7 @@ describe("attachment model content", () => {
 
     const parts = await buildAttachmentModelParts(bucket.binding, [{
       id: "resource-1",
+      workspaceId: "workspace-1",
       fileName: "large.png",
       mimeType: "image/png",
       contentRef: "original",
@@ -161,8 +162,8 @@ describe("attachment model content", () => {
     expect(bucket.puts).toHaveLength(1);
     expect(bucket.puts[0]?.key).toMatch(/^original\.model\.[0-9a-f-]+\.jpg$/u);
     expect(bucket.puts[0]?.bytes).toEqual(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
-    expect(updates[0]?.[0]).toBe(bucket.puts[0]?.key);
-    expect(updates[0]?.[1]).toBe("image/jpeg");
+    expect(updates.at(-1)?.[0]).toBe(bucket.puts[0]?.key);
+    expect(updates.at(-1)?.[1]).toBe("image/jpeg");
   });
 
   it.each([
@@ -195,6 +196,7 @@ describe("attachment model content", () => {
 
     const parts = await buildAttachmentModelParts(bucket.binding, [{
       id: "gif-resource",
+      workspaceId: "workspace-1",
       fileName: "status.gif",
       mimeType: "image/gif",
       contentRef: "original",
@@ -208,7 +210,7 @@ describe("attachment model content", () => {
     expect(parts[2]?.type === "image_url" ? parts[2].image_url.url : "").toMatch(/^data:image\/png;base64,/u);
     expect(bucket.puts[0]?.key).toMatch(/^original\.model\.[0-9a-f-]+\.png$/u);
     expect(bucket.objects.original).toEqual(animatedGif());
-    expect(updates[0]?.[3]).toBe(JSON.stringify({
+    expect(updates.at(-1)?.[3]).toBe(JSON.stringify({
       kind: "animated_gif",
       width: 4,
       height: 3,
@@ -282,9 +284,9 @@ describe("attachment model content", () => {
     const sourceAtLimit = pngHeader(32, 24, 20 * 1_024 * 1_024);
     const sourceOverLimit = pngHeader(32, 24, 20 * 1_024 * 1_024 + 1);
     const derivativeAtLimit = jpegHeader(32, 24);
-    const derivativeAtLimitPadded = new Uint8Array(10 * 1_024 * 1_024);
+    const derivativeAtLimitPadded = new Uint8Array(8 * 1_024 * 1_024);
     derivativeAtLimitPadded.set(derivativeAtLimit);
-    const derivativeOverLimit = new Uint8Array(10 * 1_024 * 1_024 + 1);
+    const derivativeOverLimit = new Uint8Array(8 * 1_024 * 1_024 + 1);
     derivativeOverLimit.set(derivativeAtLimit);
 
     const acceptedSource = await buildAttachmentModelParts(fakeBucket({ image: sourceAtLimit }), [

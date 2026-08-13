@@ -151,7 +151,15 @@ includes it. Knowing an object ID is never sufficient authorization.
   `attachment_tool_receipts` relates a versioned read, search, view, or summary
   receipt to every derivative it used. Replacing that version or deleting the
   resource invalidates the whole invocation and queues its JSON replay object;
-  the table never contains attachment content or ephemeral image data.
+  the table never contains attachment content or ephemeral image data. All
+  three tenant-owned attachment tables carry `workspace_id`, and every
+  dependency registration, invalidation, replay, and cleanup mutation supplies
+  it even though resource and invocation IDs are globally unique.
+  `workstream_resource_inventory_revisions` holds one monotonic revision per
+  work stream. D1 triggers advance it when resource membership, message
+  attachment relationships, resource classification state, or private-note
+  visibility can change the authorized inventory; it is a race fence, not an
+  attachment catalog.
   `workstream_resources` owns
   attachment/watch behavior; its `relationship_type` distinguishes an ordinary
   `attachment` from the `origin` a work stream was created from — see
@@ -212,10 +220,12 @@ includes it. Knowing an object ID is never sufficient authorization.
   early-open and alarm-driven scheduled-run creation.
 - `harness_runs` records each bounded model loop. `tool_invocations` is unique on
   `(harness_run_id, tool_call_id)` and stores input hashes plus side-effect state.
-- `workstream_context_compactions` stores the raw LLM continuation summary,
-  principal-neutral base message, sequence boundary, and deterministic template
-  version. Current authorized resource totals are regenerated on apply and replay
-  and are intentionally absent from this shared row.
+- `workstream_context_compactions` stores one latest raw LLM continuation
+  summary per `(workspace_id, workstream_id, execution_principal_key)`, with its
+  sequence boundary, resource-inventory revision, and deterministic template
+  version. Current authorized totals are regenerated on apply and replay and
+  are intentionally absent from the principal-scoped row. A final conditional
+  insert rejects a summary when the inventory revision changed after rendering.
 - `schedules` is canonical. One workspace Durable Object alarm reads due rows and
   advances them transactionally/idempotently. Exactly one of
   `automation_subscription_id`, `connector_connection_id`, and `digest_schedule_id`
@@ -428,6 +438,33 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-12 — Attachment state is tenant-scoped and revision fenced
+
+**What changed:** Attachment model-object, cleanup-outbox, and receipt dependency
+tables now carry `workspace_id` through their keys and repository operations.
+Compaction rows are keyed by work stream and execution principal, while a
+trigger-maintained work-stream inventory revision fences paging and checkpoint
+persistence without loading every resource row.
+
+**Why:** The tenancy contract requires an explicit workspace predicate even for
+globally unique IDs. Review also found that one shared checkpoint let principals
+evict each other and that compare-then-write authorization checks admitted a
+last-window revocation race.
+
+**Considered and rejected:** Treating UUIDs as tenant scope, keeping a single
+work-stream checkpoint, and hashing a fully materialized resource inventory at
+every boundary. Those choices respectively weaken defense in depth, discard a
+different principal's usable state, or make every point read scale with the
+entire sidebar.
+
+**Consequences:** New attachment-owned rows and queries must include
+`workspace_id`; resource relationships that affect visibility must advance the
+inventory revision; and checkpoint mutations remain scoped to the exact
+execution principal.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
 ### 2026-08-12 — Message-attachment projections retain their work-stream boundary
 
 **What changed:** The resource visibility projection now resolves
@@ -445,6 +482,9 @@ cannot represent a shared resource correctly.
 **Consequences:** Any future aggregate over message-introduced resources must
 join through `messages.workstream_id`; cursor snapshots must include every
 relationship-derived field they return.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Attachment receipts follow derivative identity
 
@@ -464,6 +504,9 @@ parsing arbitrary replay bodies from a trigger would make deletion brittle.
 **Consequences:** Attachment completion registers dependencies before the
 receipt becomes model-visible. A multi-resource view receipt is invalidated as
 one unit when any included derivative changes.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Attachment derivatives have explicit regional lifecycle state
 
@@ -490,8 +533,8 @@ row and catalog their objects, and new resource owners rely on row deletion—no
 relationship detachment—to initiate physical cleanup. Legacy rows remain valid
 and are classified lazily on first authorized use.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Notion scope migration follows credential dialect
 

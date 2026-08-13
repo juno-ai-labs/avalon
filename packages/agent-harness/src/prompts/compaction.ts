@@ -6,7 +6,7 @@ const COMPACTION_CHECKPOINT_PREAMBLE = [
   "where it leaves off.]",
 ].join(" ");
 
-/** Render the principal-neutral summary and an optional live deterministic appendix. */
+/** Render the principal-scoped summary and an optional live deterministic appendix. */
 export function renderCompactionCheckpointContent(
   summary: string,
   appendix?: string | null,
