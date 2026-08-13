@@ -26,6 +26,7 @@ import {
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
   renderWorkstreamSystemPrompt,
+  renderCompactionCheckpointContent,
   rejectToolModesBeforeCall,
   runHarness,
   type AddressingContextMessage,
@@ -83,6 +84,10 @@ import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
 import { ApiError } from "../lib/api-error";
+import {
+  CHECKPOINT_TEMPLATE_VERSION,
+  renderAuthorizedWorkstreamResourceInventory,
+} from "./workstream-resource-inventory";
 import {
   FIRECRAWL_CACHE_MAX_AGE_MS,
   FirecrawlClient,
@@ -511,17 +516,36 @@ async function loadWorkstreamContextCompaction(
   database: D1Database,
   workspaceId: string,
   workstreamId: string,
+  principal: ExecutionPrincipal,
+  asOf?: string,
 ): Promise<WorkstreamContextCompaction | null> {
   const row = await database.prepare(
-    `SELECT compacted_through_sequence, messages_json
+    `SELECT compacted_through_sequence, messages_json, summary, checkpoint_template_version
        FROM workstream_context_compactions
       WHERE workspace_id = ? AND workstream_id = ?`,
   ).bind(workspaceId, workstreamId).first<{
     compacted_through_sequence: number;
     messages_json: string;
+    summary: string;
+    checkpoint_template_version: number;
   }>();
   if (!row || !Number.isSafeInteger(row.compacted_through_sequence) || row.compacted_through_sequence < 0) {
     return null;
+  }
+  if (row.checkpoint_template_version === CHECKPOINT_TEMPLATE_VERSION) {
+    const appendix = await renderAuthorizedWorkstreamResourceInventory(database, {
+      workspaceId,
+      workstreamId,
+      principal,
+      ...(asOf ? { asOf } : {}),
+    });
+    return {
+      compactedThroughSequence: row.compacted_through_sequence,
+      messages: [{
+        role: "user",
+        content: renderCompactionCheckpointContent(row.summary, appendix),
+      }],
+    };
   }
   const parsed = PersistedCompactionMessagesSchema.safeParse(parseJson<unknown>(row.messages_json, null));
   if (!parsed.success) return null;
@@ -541,16 +565,17 @@ async function persistWorkstreamContextCompaction(
   await database.prepare(
     `INSERT INTO workstream_context_compactions
        (workstream_id, workspace_id, harness_run_id, compacted_through_sequence,
-        messages_json, summary, model, context_tokens_before_compaction,
+        messages_json, summary, checkpoint_template_version, model, context_tokens_before_compaction,
         context_window_tokens, input_tokens, output_tokens, cost_microusd,
         created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(workstream_id) DO UPDATE SET
        workspace_id = excluded.workspace_id,
        harness_run_id = excluded.harness_run_id,
        compacted_through_sequence = excluded.compacted_through_sequence,
        messages_json = excluded.messages_json,
        summary = excluded.summary,
+       checkpoint_template_version = excluded.checkpoint_template_version,
        model = excluded.model,
        context_tokens_before_compaction = excluded.context_tokens_before_compaction,
        context_window_tokens = excluded.context_window_tokens,
@@ -570,6 +595,7 @@ async function persistWorkstreamContextCompaction(
     compactedThroughSequence,
     JSON.stringify(checkpoint.messages),
     checkpoint.summary,
+    CHECKPOINT_TEMPLATE_VERSION,
     checkpoint.model,
     checkpoint.contextTokensBeforeCompaction,
     checkpoint.contextWindowTokens,
@@ -1647,6 +1673,7 @@ export async function runWorkstreamHarness(
     env.DB,
     input.workspaceId,
     input.workstreamId,
+    input.executionPrincipal,
   );
   const storedMessages = await loadTriggerFencedTranscriptMessages(
     env,
@@ -1913,6 +1940,15 @@ export async function runWorkstreamHarness(
       skills: [...BUILT_IN_SKILLS],
       ...(!hyperSightRun ? {
         compaction: {
+          renderAppendix: async () => {
+            await liveness.pulse("compaction_inventory", true);
+            await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+            return renderAuthorizedWorkstreamResourceInventory(env.DB, {
+              workspaceId: input.workspaceId,
+              workstreamId: input.workstreamId,
+              principal: input.executionPrincipal,
+            });
+          },
           persist: async (checkpoint) => {
             await liveness.pulse("compaction_persist", true);
             await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
@@ -6290,6 +6326,8 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  loadWorkstreamContextCompaction,
+  persistWorkstreamContextCompaction,
   loadAutomationCreatorPluginCatalog,
   assertRunAuthorityStillValid,
   assertSafePublicUrl,
