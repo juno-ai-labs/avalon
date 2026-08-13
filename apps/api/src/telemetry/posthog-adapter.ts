@@ -365,8 +365,6 @@ export async function sendPostHogCrashBatch(input: {
       client.captureException(nativeCrashError(row), row.analyticsSubjectId, {
         $geoip_disable: true,
         ...(row.workspaceAnalyticsId ? { $groups: { workspace: row.workspaceAnalyticsId } } : {}),
-        $lib: POSTHOG_LIBRARY,
-        $lib_version: POSTHOG_LIBRARY_VERSION,
         ...desktopApplicationContext({
           release: row.release,
           buildId: row.buildId,
@@ -419,8 +417,6 @@ export async function sendPostHogJavascriptExceptionBatch(input: {
       client.captureException(javascriptExceptionError(row), row.analyticsSubjectId, {
         $geoip_disable: true,
         ...(row.workspaceAnalyticsId ? { $groups: { workspace: row.workspaceAnalyticsId } } : {}),
-        $lib: POSTHOG_LIBRARY,
-        $lib_version: POSTHOG_LIBRARY_VERSION,
         ...desktopApplicationContext({
           release: row.envelope.context.release,
           buildId: row.envelope.context.buildId,

@@ -48,6 +48,12 @@ classification, priority, sample rate, retention, and destination. Incompatible
 changes require a new schema version. There is no generic `capture(name,
 properties)` API outside the reporter internals.
 
+Legacy envelopes have the frozen context v1 shape. Native desktop enrichment
+uses `contextSchemaVersion: 2`; the regional reader accepts both shapes, while
+API-generated events remain on v1. The regional reader must reach both regions
+before a desktop release emits v2, and a later API rollback must retain that v2
+reader until every released desktop producer has aged out.
+
 Automatic collection is limited to bounded application install/update and
 lifecycle/session/process/update, spool, API-operation, and crash-upload states.
 Main adds a closed native-desktop context: the random installation device ID,
@@ -444,7 +450,9 @@ installation identity with an identified person, matching SDK device
 attribution; the explicit anonymous merge still uses only the rotating login
 epoch. EU keeps the same typed context internally and receives no PostHog
 identity. New context fields must be main-derived and bounded, and browser-only
-metadata remains outside the Electron contract.
+metadata remains outside the Electron contract. Context v1 remains readable for
+old clients and stored replay, while new desktop producers declare context v2;
+an API rollback may not remove the v2 reader while those producers are live.
 
 Design: [regional telemetry PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
