@@ -124,6 +124,17 @@ describe("work-stream row contracts", () => {
     expect(row.next_pending_wakeup_at).toBeNull();
   });
 
+  it("re-validates the stored model pin on the way out", () => {
+    expect(toWorkstream(workstreamRow({ model_override: "deepseek/deepseek-v4-pro" })).modelOverride)
+      .toBe("deepseek/deepseek-v4-pro");
+    expect(toWorkstream(workstreamRow()).modelOverride).toBeNull();
+    // A model retired from AGENT_MODEL_OVERRIDES leaves rows still naming it.
+    // They read as unpinned here because that is what they now *run* as — the
+    // resolver drops the same value and returns them to the flag — and a
+    // response that failed instead would make those work streams unopenable.
+    expect(toWorkstream(workstreamRow({ model_override: "x-ai/grok-2" })).modelOverride).toBeNull();
+  });
+
   it("maps the next pending wake-up from the joined row", () => {
     const nextPendingWakeup = {
       dueAt: "2026-08-13T20:30:00.000Z",

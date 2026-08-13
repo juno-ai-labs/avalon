@@ -291,6 +291,18 @@ export function WorkstreamComposer({
           }
         }}
         mentionLabels={mentionLabels}
+        // The run first, the pin second. What a run recorded is what actually
+        // ran — the pin where it was pinned, the flag's served answer where it
+        // was not, and the only place that served variation is visible to a
+        // client at all. The pin is the fallback rather than the source because
+        // it answers for almost nobody, but it does answer for the one case the
+        // run cannot: a run that failed before its first token records no model,
+        // and a pinned work stream must never be described as following a flag
+        // it does not consult.
+        model={{
+          kind: 'settled',
+          model: workstream.latestHarnessRun?.model ?? workstream.modelOverride ?? null,
+        }}
         onMention={beginMention}
         onOpenAttachment={onOpenAttachment}
         onRemoveAttachment={onRemoveAttachment}

@@ -1,4 +1,4 @@
-import { AgentModelOverrideSchema } from "@avalon/contracts";
+import { AgentModelOverrideSchema, type AgentModelOverride } from "@avalon/contracts";
 import { z } from "zod";
 import { HYPERSIGHT_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
@@ -275,7 +275,7 @@ export async function scheduledWorkstreamModel(
  * model be retired from `AGENT_MODEL_OVERRIDES` without a migration: the work
  * streams pinned to it quietly return to the flag.
  */
-export function agentModelOverride(value: unknown): string | null {
+export function agentModelOverride(value: unknown): AgentModelOverride | null {
   const parsed = AgentModelOverrideSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }

@@ -489,6 +489,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     openElicitations: workstream.openElicitations.map(mapElicitation),
     suggestions: workstream.suggestions.map(mapSuggestion),
     automationRuns: [],
+    ...(workstream.modelOverride ? { modelOverride: workstream.modelOverride } : {}),
     ...(workstream.automationSubscriptionId ? { automationSubscriptionId: workstream.automationSubscriptionId } : {}),
     ...(workstream.automationRunId ? { automationRunId: workstream.automationRunId } : {}),
     ...(workstream.latestHarnessRunId ? { latestHarnessRunId: workstream.latestHarnessRunId } : {}),
