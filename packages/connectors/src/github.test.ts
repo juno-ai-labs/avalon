@@ -34,10 +34,22 @@ describe("GitHub connector", () => {
     });
     expect(new Set(adapter.manifest.tools.map((tool) => tool.name)).size).toBe(adapter.manifest.tools.length);
     expect(adapter.manifest.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "repositories.search", capability: GitHubCapabilities.metadataRead, mode: "read" }),
+      expect.objectContaining({ name: "contents.list", capability: GitHubCapabilities.contentsRead, mode: "read" }),
       expect.objectContaining({ name: "contents.get", capability: GitHubCapabilities.contentsRead, mode: "read" }),
       expect.objectContaining({ name: "issues.create", capability: GitHubCapabilities.issuesWrite, mode: "write" }),
       expect.objectContaining({ name: "pull_requests.create_review", capability: GitHubCapabilities.pullRequestsWrite }),
     ]));
+    expect(adapter.agentPlugin.systemMessage).toContain("ask the user which repository to use");
+    expect(adapter.agentPlugin.systemMessage).toContain("at least one code file was successfully returned");
+    expect(adapter.agentPlugin.systemMessage).toContain("_contents_get");
+    const contentsList = adapter.manifest.tools.find((candidate) => candidate.name === "contents.list");
+    expect(contentsList?.inputSchema).toMatchObject({
+      properties: {
+        offset: { type: "integer" },
+        limit: { type: "integer" },
+      },
+    });
 
     const install = await adapter.beginAuthorization!({
       state: "s".repeat(32),
@@ -207,6 +219,161 @@ describe("GitHub connector", () => {
       ...context,
       principal: { type: "user", userId: "user-2" },
     })).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("lists and searches authorized repositories with complete paging metadata and stable priority", async () => {
+    const repositories = [
+      {
+        id: 1,
+        name: "quiet",
+        full_name: "acme/quiet",
+        pushed_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        id: 2,
+        name: "web-api",
+        full_name: "acme/web-api",
+        pushed_at: "2026-08-12T12:00:00.000Z",
+      },
+      {
+        id: 3,
+        name: "admin-api",
+        full_name: "acme/admin-api",
+        updated_at: "2026-08-10T12:00:00.000Z",
+      },
+      {
+        id: 4,
+        name: "archive",
+        full_name: "acme/archive",
+        pushed_at: "2025-01-01T00:00:00.000Z",
+      },
+    ];
+    const fetcher: FetchLike = async (input, init) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/graphql") {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toMatchObject({ variables: { login: "acme" } });
+        return jsonResponse({
+          data: {
+            repositoryOwner: {
+              pinnedItems: { nodes: [{ nameWithOwner: "acme/quiet" }] },
+            },
+          },
+        });
+      }
+      expect(url.pathname).toBe("/user/installations/42/repositories");
+      expect(url.searchParams.get("per_page")).toBe("100");
+      expect(url.searchParams.get("page")).toBe("1");
+      return jsonResponse({ total_count: repositories.length, repositories });
+    };
+    const adapter = githubAdapter(fetcher);
+    const connection = personalConnection([GitHubCapabilities.metadataRead]);
+    connection.config.account = { login: "acme", type: "Organization" };
+    const context = {
+      connection,
+      principal: { type: "user" as const, userId: "user-1" },
+      signal: AbortSignal.timeout(1_000),
+    };
+
+    const listed = await adapter.executeTool("repositories.list", { page: 1, perPage: 2 }, context);
+    expect(listed.output).toMatchObject({
+      totalCount: 4,
+      page: 1,
+      perPage: 2,
+      hasMore: true,
+      truncated: false,
+      sort: "pinned_then_recent_activity",
+      pinnedSortAvailable: true,
+      repositories: [
+        { full_name: "acme/quiet", pinned: true },
+        { full_name: "acme/web-api", pinned: false },
+      ],
+    });
+
+    const searched = await adapter.executeTool("repositories.search", { query: "API", page: 1, perPage: 10 }, context);
+    expect(searched.output).toMatchObject({
+      query: "API",
+      accessibleTotalCount: 4,
+      totalCount: 2,
+      totalCountIsExact: true,
+      page: 1,
+      perPage: 10,
+      hasMore: false,
+      repositories: [
+        { full_name: "acme/web-api" },
+        { full_name: "acme/admin-api" },
+      ],
+    });
+  });
+
+  it("lists bounded directories and recursive trees before reading code", async () => {
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/repos/acme/widget/contents/src") {
+        return jsonResponse([
+          { type: "file", name: "a.ts", path: "src/a.ts", sha: "a", size: 10 },
+          { type: "file", name: "b.ts", path: "src/b.ts", sha: "b", size: 20 },
+          { type: "dir", name: "nested", path: "src/nested", sha: "c", size: 0 },
+        ]);
+      }
+      if (url.pathname === "/repos/acme/widget") {
+        return jsonResponse({ default_branch: "main" });
+      }
+      if (url.pathname === "/repos/acme/widget/git/trees/main") {
+        expect(url.searchParams.has("recursive")).toBe(false);
+        return jsonResponse({
+          sha: "root-sha",
+          tree: [{ type: "tree", path: "src", sha: "src-sha" }],
+        });
+      }
+      if (url.pathname === "/repos/acme/widget/git/trees/src-sha") {
+        expect(url.searchParams.get("recursive")).toBe("1");
+        return jsonResponse({
+          sha: "tree-sha",
+          truncated: false,
+          tree: [
+            { type: "blob", path: "a.ts", sha: "a", size: 10 },
+            { type: "blob", path: "nested/c.ts", sha: "c", size: 30 },
+          ],
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([GitHubCapabilities.contentsRead]),
+      principal: { type: "user" as const, userId: "user-1" },
+      signal: AbortSignal.timeout(1_000),
+    };
+
+    const directory = await adapter.executeTool("contents.list", {
+      owner: "acme", repo: "widget", path: "/src/", offset: 1, limit: 1,
+    }, context);
+    expect(directory.output).toMatchObject({
+      mode: "directory",
+      path: "src",
+      totalCount: 3,
+      offset: 1,
+      limit: 1,
+      hasMore: true,
+      entries: [{ path: "src/b.ts" }],
+    });
+
+    const tree = await adapter.executeTool("contents.list", {
+      owner: "acme", repo: "widget", path: "src", recursive: true, offset: 0, limit: 2,
+    }, context);
+    expect(tree.output).toMatchObject({
+      mode: "tree",
+      path: "src",
+      ref: "main",
+      sha: "tree-sha",
+      totalCount: 3,
+      totalCountIsExact: true,
+      hasMore: true,
+      truncated: false,
+      entries: [{ path: "src" }, { path: "src/a.ts" }],
+    });
   });
 
   it("rotates a personal token and retries exactly once after a 401", async () => {

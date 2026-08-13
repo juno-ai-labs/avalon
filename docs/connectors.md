@@ -193,7 +193,36 @@ The two records are isolated by Avalon capability checks, not by separate Google
 
 GitHub uses one public App with a signature-verifying smart ingress. One installation may be connected to Global workspaces, EU workspaces, or both; an indexed installation directory fans exact signed deliveries only to the applicable regional Workers. OAuth callbacks, credentials, raw payload storage, normalization, and activity processing remain regional. Workspace connections execute with short-lived installation tokens. Personal connections require an expiring user token and prove that the user can access the selected installation and repository.
 
-The agent can list repositories and commits, read files, inspect and create/update issues and comments, inspect and create/review pull requests, and read Actions and check runs. GitHub delivery signatures are verified against the exact raw body before installation-aware normalization and queueing. Webhooks also discover durable repository, commit, file, issue, pull-request, release, workflow-run, and check-run resources so people and agents can attach provider objects directly to work streams without copying their content into Avalon. Issue-dependency and sub-issue deliveries add both sides of the relationship, including cross-repository issues, while retaining one normalized activity per delivery.
+The agent can list and search repositories, list directories or bounded recursive
+trees, list commits, read files, inspect and create/update issues and comments,
+inspect and create/review pull requests, and read Actions and check runs.
+Repository listing stays inside the App installation instead of using GitHub's
+global search surface. It scans at most 1,000 authorized repositories, merges
+the installation owner's six profile pins when GraphQL makes them available,
+sorts pins first and then by the newer of `pushed_at` and `updated_at`, and
+returns `totalCount`, `page`, `perPage`, `hasMore`, and an honest `truncated` /
+`totalCountIsExact` signal. Search matches `name` and `full_name` locally over
+that same authorized set. A recursive tree with a path resolves that subtree
+segment by segment before requesting recursion, so narrowing the path also
+narrows the provider response rather than merely filtering a full-repository
+download. Directory/tree `offset` and `limit`, like every numeric tool field,
+inherit the exact numeric-string normalization in [`agent-tools.md`](agent-tools.md).
+
+The GitHub plugin prompt treats metadata and code evidence as different things.
+When more than one repository is plausible, the model asks the user to choose
+instead of selecting the first result. It may say that verification was
+incomplete without a readable code file, but it may not conclude that there are
+no discrepancies until `contents.get` has successfully returned at least one
+code file in that run. Repository, tree, commit, issue, and pull-request reads do
+not satisfy that evidence condition.
+
+GitHub delivery signatures are verified against the exact raw body before
+installation-aware normalization and queueing. Webhooks also discover durable
+repository, commit, file, issue, pull-request, release, workflow-run, and
+check-run resources so people and agents can attach provider objects directly
+to work streams without copying their content into Avalon. Issue-dependency and
+sub-issue deliveries add both sides of the relationship, including
+cross-repository issues, while retaining one normalized activity per delivery.
 
 ### Linear
 
@@ -536,6 +565,39 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-12 — GitHub repository choice and code conclusions require evidence
+
+**What changed:** GitHub repository listing now returns complete page metadata,
+orders installation-authorized repositories by profile pin and recent activity,
+and has a separate name search. The connector can list directories and narrowed
+recursive trees. Its plugin instructions require an explicit repository choice
+when results are ambiguous and prohibit a “no discrepancies” conclusion until a
+code file has actually been read. Numeric tree offsets inherit the shared
+harness normalization and validation recovery.
+
+**Why:** The previous list returned only the current page and its local count,
+offered no name search or tree discovery, and left provider order untouched. A
+model therefore had neither the information to know more repositories existed
+nor a bounded way to locate code before reading a filename it already knew. The
+prompt required a provider read before saying information was unavailable, but
+metadata alone satisfied that wording, so it did not prevent choosing the first
+plausible repository or reporting no discrepancy without inspecting code.
+
+**Considered and rejected:** GitHub's global repository search can return public
+repositories outside the App installation, so using it would widen the
+connection's authorized surface. Downloading one full recursive tree and then
+filtering a requested directory was also rejected because the narrower argument
+would not reduce provider cost or avoid GitHub's tree truncation. Per-tool
+numeric coercion was rejected because the harness already owns a stricter exact
+numeric-string rule across every tool.
+
+**Consequences:** Listing/search scan at most 1,000 installation repositories and
+say when that bound makes a search count incomplete. Profile pins are a ranking
+hint: failure to read them leaves repository listing available and sets
+`pinnedSortAvailable` false. A path-scoped recursive tree costs one non-recursive
+lookup per path segment before the bounded subtree read. Models must distinguish
+“I could not verify” from “there are no discrepancies.”
 
 ### 2026-08-12 — Speculative work-stream routing was paused
 

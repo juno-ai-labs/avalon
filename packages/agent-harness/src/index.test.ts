@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AutomationDraft } from "@avalon/contracts";
+import { z } from "zod";
 import {
   __testing,
   canonicalToolInputHash,
@@ -1939,6 +1940,134 @@ describe("agent harness", () => {
       { id: inferenceRequests[0]?.inferenceRequestId, inputTokens: 10, outputTokens: 2 },
       { id: inferenceRequests[1]?.inferenceRequestId, inputTokens: 5, outputTokens: 3 },
     ]);
+  });
+
+  it("normalizes schema-declared numeric strings before receipts and execution", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-read",
+            "read_page",
+            JSON.stringify({ startCharacter: "0", ratio: "1.25", pages: ["2", "3"] }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    let received: unknown;
+    const inputSchema = z.object({
+      startCharacter: z.number().int(),
+      ratio: z.number(),
+      pages: z.array(z.number().int()),
+    }).strict();
+    const tool: HarnessTool = {
+      definition: {
+        name: "read_page",
+        description: "Read one page",
+        capability: "pages.read",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: z.toJSONSchema(inputSchema) as Record<string, unknown>,
+      },
+      execute: async (input) => {
+        received = inputSchema.parse(input);
+        return { output: { ok: true }, summary: "Read page" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "done" });
+    expect(received).toEqual({ startCharacter: 0, ratio: 1.25, pages: [2, 3] });
+    expect(events.find((event) => event.type === "tool_started")).toMatchObject({
+      input: { startCharacter: 0, ratio: 1.25, pages: [2, 3] },
+    });
+    expect(requestBodies[1]?.messages.find((message) => message.role === "tool")?.content)
+      .toContain('"success":true');
+  });
+
+  it("returns concise model-visible validation guidance for strict executor failures", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-read",
+            "read_resource",
+            JSON.stringify({ resourceId: "resource-1", startCharacter: "not-a-number" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "I corrected the arguments." }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const inputSchema = z.union([
+      z.object({ resourceId: z.string(), startCharacter: z.number().int().optional() }).strict(),
+      z.object({ cursor: z.string() }).strict(),
+    ]);
+    const tool: HarnessTool = {
+      definition: {
+        name: "read_resource",
+        description: "Read a resource",
+        capability: "resources.read",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: z.toJSONSchema(inputSchema) as Record<string, unknown>,
+      },
+      execute: async (input) => {
+        inputSchema.parse(input);
+        return { output: { ok: true }, summary: "Read resource" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "I corrected the arguments." });
+    const toolMessage = requestBodies[1]?.messages.find((message) => message.role === "tool");
+    expect(toolMessage).toBeDefined();
+    const result = JSON.parse(String(toolMessage!.content)) as {
+      success: boolean;
+      kind: string;
+      error: string;
+    };
+    expect(result).toMatchObject({
+      success: false,
+      kind: "validation",
+      error: expect.stringContaining("startCharacter: expected number, received string"),
+    });
+    expect(result.error).not.toContain("invalid_union");
+    expect(result.error).not.toContain("cursor");
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      error: expect.stringContaining("startCharacter: expected number, received string"),
+      outcome: "definitive_failure",
+    });
   });
 
   it("keeps blocked write tools visible while rejecting them before durable or provider work", async () => {
