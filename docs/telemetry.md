@@ -328,6 +328,26 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-13 — The packaged Crashpad gate owns its bundler
+
+**What changed:** The desktop package now declares the exact `esbuild` version
+used by its packaged Crashpad lifecycle fixture, and the fixture resolves that
+binary through the desktop workspace package.
+
+**Why:** A developer install happened to expose another package's transitive
+binary, but pnpm correctly withheld it from the clean macOS release runner. The
+release therefore stopped before signing even though the fixture passed locally.
+
+**Considered and rejected:** Relying on the root's transitive dependency or
+removing the packaged gate. Neither makes the fixture reproducible on the runner
+that must prove the released native crash path.
+
+**Consequences:** Changes to the fixture's bundler version must update its direct
+desktop dependency and lockfile; release invariants enforce both ownership and
+package-scoped resolution.
+
+Shipped in the follow-up release reliability fix.
+
 ### 2026-08-13 — Telemetry seams preserve policy and metric correctness
 
 **What changed:** Server outcomes now use event-specific idempotency keys while

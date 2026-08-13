@@ -71,6 +71,28 @@ test('a real packaged Crashpad fixture gates every desktop release', async () =>
   assert.ok(fixture < packagedRelease, 'A failed Crashpad fixture must stop the release build');
 });
 
+test('the packaged Crashpad fixture owns its clean-runner bundler dependency', async () => {
+  const packageJson = JSON.parse(await readFile(
+    join(repositoryDirectory, 'apps/desktop/package.json'),
+    'utf8',
+  ));
+  const fixture = await readFile(
+    join(repositoryDirectory, 'apps/desktop/scripts/telemetry-crashpad-fixture.mjs'),
+    'utf8',
+  );
+
+  assert.equal(
+    packageJson.devDependencies.esbuild,
+    '0.25.12',
+    'The release-only fixture must not depend on a transitive esbuild binary',
+  );
+  assert.match(
+    fixture,
+    /await run\('pnpm', \[\n {4}'--filter',\n {4}'@avalon\/desktop',\n {4}'exec',\n {4}'esbuild',/u,
+    'The monorepo-root fixture must resolve esbuild from the desktop package',
+  );
+});
+
 test('private telemetry artifacts are published to both isolated regional telemetry buckets but excluded from the app', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const builder = await readFile(join(repositoryDirectory, 'apps/desktop/electron-builder.yml'), 'utf8');
