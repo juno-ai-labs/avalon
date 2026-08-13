@@ -75,6 +75,11 @@ and a shipped one reads:
 - [x] completed
 ```
 
+Approval is a review gate, not a fourth state. A PRD is approved when the pull
+request that introduces it has been reviewed and merged. It remains `planned`
+from creation through approval and until implementation starts. Write any
+`plan.md` in a later change, never in the pull request that writes the PRD.
+
 Advancing a PRD is therefore ticking a box, and nothing else moves. Do it in the
 commit that makes it true: `in progress` when the first implementing change
 lands, `completed` when the last one does.
@@ -130,7 +135,7 @@ contract, and it is edited whenever the contract itself changes.
 | --- | --- |
 | `prd.md` | **Required.** The PRD itself: the problem, the goals and non-goals, the proposed product behavior, and the decisions. This is the file other documents link to. |
 | `state.md` | **Required.** The three-line state checklist above, plus a supersession or standing-contract note where one applies. Nothing else. |
-| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Add it when the work is large enough that sequencing matters. |
+| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Write it only after the PRD is approved, and only when the work is large enough that sequencing matters. |
 | `design.md` | Architecture and rationale too detailed for the PRD body — schemas, protocols, migration strategy. |
 | `research.md` | Prior art, competitor behavior, or investigation that informed the PRD but is not itself a proposal. |
 | `README.md` | Only for a folder that has grown into a bundle: a short map saying which file is actionable and which are supporting provenance. |
@@ -150,13 +155,14 @@ prose:
 > Created 2026-08-10.
 >
 > A participant can silence a busy work stream for a fixed period without
-> leaving it. Companion plan: [`plan.md`](./plan.md). Standing contract:
+> leaving it. Standing contract:
 > [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 ```
 
 It carries the creation date, a one-line scope, and links to the companion files
 and to the documents a reader needs alongside it. Keep it to what orients a
-reader who arrived from a search result.
+reader who arrived from a search result. If an approved PRD later gains a
+`plan.md`, add its companion link here in the same change.
 
 **No state and no owner in the header.** State lives in `state.md` and nowhere
 else; an owner line in a document that outlives the assignment is stale the day
@@ -397,8 +403,8 @@ provenance rather than guidance.
    seven required ones in order, then whichever optional ones apply. Start with
    **Non-goals** if the scope is contested; the rest gets easier once the edges
    are fixed. **Decision log** starts as `None yet.`
-5. Split out `plan.md`, `design.md`, or `research.md` if the body is carrying
-   material that belongs in one of them.
+5. Split out `design.md` or `research.md` if the body is carrying material
+   that belongs in one of them.
 6. Tick `in progress` in the commit where implementation starts. From here the
    **Decision log** is the live part of the document: append an entry in the same
    change as each decision that moves the scope, the behavior, or the contract.
