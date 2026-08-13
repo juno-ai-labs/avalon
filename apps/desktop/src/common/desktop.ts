@@ -1,5 +1,6 @@
 import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
+import type { MessageExportRequest, MessageExportResult } from './message-export';
 
 export type AvalonRegion = 'global' | 'eu';
 
@@ -212,6 +213,12 @@ export interface AvalonDesktopBridge {
   hasStoredCredential: () => Promise<boolean>;
   logout: () => Promise<void>;
   copyText: (text: string) => Promise<void>;
+  /**
+   * Renders one of Avalon's messages as a picture or a PDF and offers to save
+   * it. Resolves with `saved: false` when the person dismissed the dialog, and
+   * rejects when the card could not be rendered or written.
+   */
+  exportMessage: (request: MessageExportRequest) => Promise<MessageExportResult>;
   openExternal: (url: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   openMeetingNotes: (noteId?: string) => Promise<void>;

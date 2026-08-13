@@ -2101,6 +2101,11 @@ pre {
 .agent-message:focus-within .agent-message-actions { opacity: 1; }
 .agent-message-actions button { align-items: center; background: transparent; color: var(--muted); display: flex; font-size: 10px; gap: 4px; padding: 2px; }
 .agent-message-actions button:hover { color: var(--ink); }
+/* A save in flight keeps the row visible and stops a second one starting; the
+   two export buttons are the only actions here that take longer than a click. */
+.agent-message-actions button:disabled { color: var(--muted-2); cursor: default; }
+.agent-message-actions button:disabled:hover { color: var(--muted-2); }
+.agent-message:has(.agent-message-actions button:disabled) .agent-message-actions { opacity: 1; }
 .streaming-caret { animation: active-pulse 0.9s infinite; background: var(--orange); display: inline-block; height: 13px; margin-left: 2px; vertical-align: text-bottom; width: 2px; }
 .transcript-event { margin: 0 0 16px; }
 .system-message { --system-message-lines: 5; align-items: flex-start; color: #77766f; display: flex; font-size: 10.5px; gap: 8px; line-height: 1.55; margin: 20px 0; }

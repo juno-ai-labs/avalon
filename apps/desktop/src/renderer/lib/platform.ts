@@ -359,6 +359,11 @@ const browserBridge: AvalonDesktopBridge = {
   async copyText(text) {
     await navigator.clipboard.writeText(text);
   },
+  async exportMessage() {
+    // Rendering a card and choosing where it goes are both main-process work.
+    // A browser has neither, and the buttons that call this are hidden there.
+    throw new Error('Saving a message needs the Avalon desktop application.');
+  },
   async openExternal(url) {
     window.open(url, '_blank', 'noopener,noreferrer');
   },
@@ -422,4 +427,13 @@ export function desktopBridge(): AvalonDesktopBridge {
   if (window.avalon) return window.avalon;
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') return browserBridge;
   throw new Error('Avalon desktop services did not load. Reopen the application.');
+}
+
+/**
+ * Whether the privileged bridge is actually there. Only for affordances that a
+ * browser cannot honour at all — saving a file to a chosen place is the one — so
+ * that they are absent rather than present and failing.
+ */
+export function desktopServicesAvailable(): boolean {
+  return Boolean(window.avalon);
 }
