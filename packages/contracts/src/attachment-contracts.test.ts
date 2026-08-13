@@ -63,11 +63,17 @@ describe("attachment contracts", () => {
 
     const view = ATTACHMENT_TOOL_ARGUMENT_SCHEMAS.viewResource;
     expect(view.safeParse({ resourceIds: [RESOURCE_ID], maxDimension: 2_048 }).success).toBe(true);
+    const eightResourceIds = Array.from({ length: 8 }, (_, index) => `00000000-0000-4000-8000-${String(index + 10).padStart(12, "0")}`);
+    expect(view.safeParse({ resourceIds: eightResourceIds, maxDimension: 64 }).success).toBe(true);
+    expect(view.safeParse({ resourceIds: [...eightResourceIds, "00000000-0000-4000-8000-000000000099"] }).success).toBe(false);
+    expect(view.safeParse({ resourceIds: [RESOURCE_ID], maxDimension: 63 }).success).toBe(false);
     expect(view.safeParse({ resourceIds: [RESOURCE_ID, RESOURCE_ID] }).success).toBe(false);
     expect(view.safeParse({ resourceIds: [] }).success).toBe(false);
 
     const summarize = ATTACHMENT_TOOL_ARGUMENT_SCHEMAS.summarizeResource;
     expect(summarize.safeParse({ resourceId: RESOURCE_ID, prompt: "Focus on risks" }).success).toBe(true);
+    expect(summarize.safeParse({ resourceId: RESOURCE_ID, maxOutputCharacters: 20_000 }).success).toBe(true);
+    expect(summarize.safeParse({ resourceId: RESOURCE_ID, maxOutputCharacters: 20_001 }).success).toBe(false);
     expect(summarize.safeParse({ resourceId: RESOURCE_ID, focus: "old field" }).success).toBe(false);
     expect(summarize.safeParse({ resourceId: RESOURCE_ID, maxOutputCharacters: 1_999 }).success).toBe(false);
   });

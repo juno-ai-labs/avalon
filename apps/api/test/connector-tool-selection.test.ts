@@ -523,6 +523,8 @@ describe("connector tools selected for harness runs", () => {
       "search",
       "fetch",
       "search_resource",
+      "view_resource",
+      "summarize_resource",
       "current_time",
     ]);
     expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
@@ -594,6 +596,8 @@ describe("connector tools selected for harness runs", () => {
       "list_resources",
       "read_resource",
       "search_resource",
+      "view_resource",
+      "summarize_resource",
       "current_time",
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");

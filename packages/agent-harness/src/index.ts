@@ -2059,6 +2059,12 @@ export interface HarnessToolContext {
 export interface HarnessToolResult {
   output: unknown;
   summary: string;
+  /**
+   * Current-turn model content that must never enter a durable receipt or
+   * transcript. The harness relays these parts after the JSON tool result and
+   * the host recreates them from authorized regional state on receipt replay.
+   */
+  contentParts?: ModelMessageContentPart[];
   providerOperationId?: string;
   halt?: "needs_input" | "completed";
   /** Bind control signal used only by Avalon's discovery plugin loader. */

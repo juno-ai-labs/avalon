@@ -145,6 +145,13 @@ Each tool call receives a stable Avalon receipt ID derived from the run, model t
 
 Completed receipts replay without another provider call. Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior write, or timed-out `record_before_execute` write becomes `ambiguous_external_write` and is never blindly repeated. Lifecycle events are append-only, and terminalization is idempotent and lease-fenced.
 
+An attachment view is the one result with two representations. Its durable
+receipt and `tool_completed` event contain only the bounded JSON inclusion
+summary. The in-memory tool message adds ordered image parts after that JSON for
+the next model turn. On receipt replay the regional host reauthorizes the
+resource and recreates those parts from the selected image derivative; no data
+URI enters D1, the replay object, or a persisted transcript row.
+
 ### Model routing and inference ledger
 
 Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, work stream, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`feature-flags.md`](feature-flags.md) owns the flag keys, the value shape, and how a model change is rolled out.
@@ -399,6 +406,14 @@ When OpenRouter refuses a call, the harness extracts the provider's own classifi
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, and WebP are normalized through Cloudflare Images; TIFF and HEIF/HEIC also have bounded local conversion fallbacks. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript.
 
+The same derivative backs `workstream_view_resource`, including after replay or
+compaction. A requested smaller long edge is an ephemeral scale-down and never
+replaces the reusable object. Text derivatives may instead use an isolated
+summary inference: filenames, focus text, and chunks stay in user-role data,
+citations are checked against exact UTF-16 ranges, and derivatives over the
+bounded reader budget report sampled partial coverage rather than claiming a
+whole-file read.
+
 Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded` when one of their explicit ceilings is reached. Those codes remain in the public failure contract so historical runs and bounded subsystems stay readable. A limit never silently reinterprets a write as successful.
 
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
@@ -437,6 +452,28 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-12 — Multimodal tool results separate live content from receipts
+
+**What changed:** Bind can relay a JSON tool result followed by ephemeral model
+content while emitting and persisting only the JSON-safe `HarnessToolResult`.
+Work-stream image viewing uses that path and receipt replay rebuilds images from
+reauthorized regional derivatives. The isolated attachment reader adds bounded,
+verified summaries with complete or sampled-partial coverage.
+
+**Why:** Persisting image data in a receipt makes replay and compaction unsafe,
+while returning only a filename leaves a later model unable to see the image.
+Large documents need a similarly bounded route that does not refill the main
+conversation with every page.
+
+**Considered and rejected:** Base64 inside JSON receipts, raw originals on
+replay, and presenting sampled summaries as complete. Each trades a recoverable
+reference for either unbounded durable context, a normalization bypass, or a
+false coverage claim.
+
+**Consequences:** Any future multimodal tool must keep its live `contentParts`
+reconstructable from authorized regional state. Receipt consumers cannot assume
+the durable JSON contains every byte the next model turn saw.
 
 This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a

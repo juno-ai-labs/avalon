@@ -1,9 +1,14 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
+import {
+  createWorkstreamAttachmentTools,
+  rehydrateWorkstreamViewReceipt,
+} from "../src/services/workstream-attachment-tools";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
@@ -65,7 +70,7 @@ class MemoryBucket {
 const openDatabases: DatabaseSync[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
-function fixture() {
+function fixture(options: { images?: ImagesBinding } = {}) {
   const database = new DatabaseSync(":memory:");
   openDatabases.push(database);
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
@@ -86,9 +91,29 @@ function fixture() {
     bucket,
     env: createTestEnv({
       DB: sqliteD1(database), PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
+      ...(options.images ? { IMAGES: options.images } : {}),
       SESSION_SIGNING_KEY: "attachment-test-session-signing-key", AVALON_REGION: "global", APP_ENV: "test",
     }),
   };
+}
+
+function imageTransformBinding(
+  transforms: Array<{ width?: number; height?: number }>,
+  failure = false,
+): ImagesBinding {
+  return createCloudflareTestBinding<ImagesBinding>({
+    input() {
+      const transformer = {
+        transform(value: { width?: number; height?: number }) { transforms.push(value); return transformer; },
+        async output() {
+          if (failure) throw new Error("normalization failed");
+          const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+          return { image: () => new Blob([bytes]).stream() };
+        },
+      };
+      return transformer;
+    },
+  });
 }
 
 function input(principal: WorkstreamWorkflowInput["executionPrincipal"] = { type: "user", userId: USER_ID }): WorkstreamWorkflowInput {
@@ -133,6 +158,31 @@ function insertReadyResource(database: DatabaseSync, bucket: MemoryBucket, ordin
       (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
     VALUES (?, ?, ?, 0, 'context', ?)
   `).run(WORKSTREAM_ID, id, USER_ID, `2026-08-12T00:${String(ordinal).padStart(2, "0")}:00.000Z`);
+  return id;
+}
+
+function insertReadyImage(database: DatabaseSync, bucket: MemoryBucket, ordinal: number): string {
+  const id = `30000000-0000-4000-8000-${ordinal.toString().padStart(12, "0")}`;
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const contentRef = `original/${id}.png`;
+  const modelRef = `model/${id}.png`;
+  const imageHash = createHash("sha256").update(bytes).digest("hex");
+  bucket.objects.set(contentRef, bytes);
+  bucket.objects.set(modelRef, bytes);
+  database.prepare(`
+    INSERT INTO resources
+      (id, workspace_id, resource_type, provider, title, mime_type, content_ref, metadata_json,
+       created_at, updated_at, content_sha256, model_content_ref, model_mime_type,
+       model_content_sha256, model_metadata_json, model_index_ref, model_content_status,
+       model_content_extractor_version, model_content_character_count, model_content_extracted_at)
+    VALUES (?, ?, 'file', 'avalon_upload', 'Diagram', 'image/png', ?, '{"size":8}', ?, ?, ?, ?, 'image/png', ?, NULL, NULL, 'ready',
+            'image-v1', NULL, ?)
+  `).run(id, WORKSPACE_ID, contentRef, "2026-08-12T02:00:00.000Z", "2026-08-12T02:00:00.000Z", SOURCE_HASH, modelRef, imageHash, "2026-08-12T02:00:00.000Z");
+  database.prepare(`
+    INSERT INTO workstream_resources
+      (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+    VALUES (?, ?, ?, 0, 'context', ?)
+  `).run(WORKSTREAM_ID, id, USER_ID, "2026-08-12T02:00:00.000Z");
   return id;
 }
 
@@ -206,5 +256,159 @@ describe("work-stream attachment tools", () => {
     const search = workspaceTools.find((tool) => tool.definition.name === "search_resource")!;
     await expect(search.execute({ resourceId: privateResourceId, query: "private" }, context(workspacePrincipal)))
       .rejects.toMatchObject({ code: "resource_not_found" });
+  });
+
+  it("views ordered image batches with ephemeral parts and self-heals mixed wrong kinds", async () => {
+    const { database, bucket, env } = fixture();
+    const firstImageId = insertReadyImage(database, bucket, 1);
+    const textId = insertReadyResource(database, bucket, 4);
+    const secondImageId = insertReadyImage(database, bucket, 2);
+    const tools = __integrationTesting.createAvalonTools(env, input());
+    const view = tools.find((tool) => tool.definition.name === "view_resource")!;
+
+    const result = await view.execute({ resourceIds: [firstImageId, textId, secondImageId], maxDimension: 2_048 }, context());
+    expect(result.output).toMatchObject({
+      requested: 3,
+      returned: 2,
+      items: [
+        { resourceId: firstImageId, status: "included", visualPartIndex: 0 },
+        {
+          resourceId: textId,
+          status: "skipped",
+          reasonCode: "resource_tool_mismatch",
+          suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } },
+        },
+        { resourceId: secondImageId, status: "included", visualPartIndex: 1 },
+      ],
+    });
+    expect(result.contentParts).toHaveLength(2);
+    expect(result.contentParts?.every((part) => part.type === "image_url" && part.image_url.url.startsWith("data:image/png;base64,"))).toBe(true);
+    expect(JSON.stringify(result.output)).not.toContain("data:image/");
+
+    bucket.objects.delete(`original/${firstImageId}.png`);
+    await expect(rehydrateWorkstreamViewReceipt(
+      env,
+      input(),
+      { resourceIds: [firstImageId], maxDimension: 2_048 },
+      {
+        requested: 1,
+        returned: 1,
+        items: [(result.output as { items: unknown[] }).items[0]],
+      },
+    )).resolves.toMatchObject([{ type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/png;base64,/u) } }]);
+
+    await expect(view.execute({ resourceIds: [textId] }, context())).rejects.toMatchObject({
+      code: "resource_tool_mismatch",
+      details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } } },
+    });
+  });
+
+  it("runs a focused isolated summary and verifies every returned citation range", async () => {
+    const { database, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, bucket, 7);
+    const summarizeDerivative = async (request: { text: string; prompt: string | null; maxOutputCharacters: number }) => ({
+      outline: [{ heading: "Resource 7", range: { start: 0, end: 40 } }],
+      summary: `Focused: ${request.prompt}; ${request.text.slice(0, 20)}`,
+      citations: [{ label: "Needle evidence", range: { start: 0, end: 40 } }],
+      coverage: {
+        status: "complete" as const,
+        consideredCharacters: request.text.length,
+        limitations: [],
+      },
+    });
+    const tools = createWorkstreamAttachmentTools(env, input(), { summarizeDerivative });
+    const summarize = tools.find((tool) => tool.definition.name === "summarize_resource")!;
+
+    const result = await summarize.execute({
+      resourceId,
+      prompt: "Focus on the evidence",
+      maxOutputCharacters: 4_000,
+    }, context());
+    expect(result.output).toMatchObject({
+      resourceId,
+      prompt: "Focus on the evidence",
+      summary: expect.stringContaining("Focused: Focus on the evidence"),
+      citations: [{ label: "Needle evidence", range: { start: 0, end: 40 }, readCursor: expect.any(String) }],
+      coverage: { status: "complete", totalCharacters: 19_534, consideredCharacters: 19_534, limitations: [] },
+    });
+
+    const invalidTools = createWorkstreamAttachmentTools(env, input(), {
+      summarizeDerivative: async () => ({
+        outline: [], summary: "Invalid", citations: [{ label: "Outside", range: { start: 0, end: 99_999 } }],
+        coverage: { status: "partial" as const, consideredCharacters: 1, limitations: ["test"] },
+      }),
+    });
+    const invalid = invalidTools.find((tool) => tool.definition.name === "summarize_resource")!;
+    await expect(invalid.execute({ resourceId }, context())).rejects.toMatchObject({ code: "resource_conversion_failed" });
+
+    const imageId = insertReadyImage(database, bucket, 8);
+    await expect(summarize.execute({ resourceId: imageId }, context())).rejects.toMatchObject({
+      code: "resource_tool_mismatch",
+      details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
+    });
+  });
+
+  it("enforces current-turn image dimensions and contains normalization failures to one batch item", async () => {
+    const transforms: Array<{ width?: number; height?: number }> = [];
+    const { database, bucket, env } = fixture({ images: imageTransformBinding(transforms) });
+    const imageId = insertReadyImage(database, bucket, 9);
+    const view = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "view_resource")!;
+
+    await expect(view.execute({ resourceIds: [imageId], maxDimension: 64 }, context())).resolves.toMatchObject({
+      output: { requested: 1, returned: 1, items: [{ status: "included", modelMimeType: "image/jpeg" }] },
+    });
+    expect(transforms).toEqual([expect.objectContaining({ width: 64, height: 64 })]);
+
+    const failed = fixture({ images: imageTransformBinding([], true) });
+    const failedImageId = insertReadyImage(failed.database, failed.bucket, 10);
+    const failedView = __integrationTesting.createAvalonTools(failed.env, input()).find((tool) => tool.definition.name === "view_resource")!;
+    await expect(failedView.execute({ resourceIds: [failedImageId], maxDimension: 64 }, context())).resolves.toMatchObject({
+      output: {
+        requested: 1,
+        returned: 0,
+        items: [{ status: "skipped", reasonCode: "resource_conversion_failed", suggestedCall: null }],
+      },
+    });
+  });
+
+  it("provides exact self-healing calls for every authorized natural-language kind without leaking unsupported or missing resources", async () => {
+    const { database, bucket, env } = fixture();
+    const imageId = insertReadyImage(database, bucket, 11);
+    const readable = ([
+      ["text/markdown", "brief.md"],
+      ["application/pdf", "brief.pdf"],
+      ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "brief.docx"],
+      ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "brief.xlsx"],
+      ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "brief.pptx"],
+      ["text/plain", "brief.txt"],
+    ] as const).map(([mime, title], index) => insertReadyResource(database, bucket, 20 + index, { mime, title }));
+    const unsupportedId = insertReadyResource(database, bucket, 30, { mime: "application/zip", title: "archive.zip" });
+    database.prepare("UPDATE resources SET model_content_status = 'unsupported', model_mime_type = NULL WHERE id = ?").run(unsupportedId);
+    const tools = __integrationTesting.createAvalonTools(env, input());
+    const read = tools.find((tool) => tool.definition.name === "read_resource")!;
+    const search = tools.find((tool) => tool.definition.name === "search_resource")!;
+    const summarize = tools.find((tool) => tool.definition.name === "summarize_resource")!;
+    const view = tools.find((tool) => tool.definition.name === "view_resource")!;
+
+    for (const tool of [read, search, summarize]) {
+      const args = tool === search ? { resourceId: imageId, query: "diagram" } : { resourceId: imageId };
+      await expect(tool.execute(args, context())).rejects.toMatchObject({
+        code: "resource_tool_mismatch",
+        details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
+      });
+    }
+    for (const resourceId of readable) {
+      await expect(view.execute({ resourceIds: [resourceId] }, context())).rejects.toMatchObject({
+        code: "resource_tool_mismatch",
+        details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId } } },
+      });
+    }
+    await expect(view.execute({ resourceIds: [unsupportedId] }, context())).resolves.toMatchObject({
+      output: { returned: 0, items: [{ reasonCode: "resource_format_unsupported", suggestedCall: null }] },
+    });
+    const missingId = "90000000-0000-4000-8000-000000000099";
+    await expect(view.execute({ resourceIds: [missingId] }, context())).resolves.toMatchObject({
+      output: { returned: 0, items: [{ reasonCode: "resource_not_found", suggestedCall: null }] },
+    });
   });
 });

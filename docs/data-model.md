@@ -144,6 +144,10 @@ includes it. Knowing an object ID is never sufficient authorization.
   objects. Deleting a resource copies the original and every registered model
   reference into `resource_object_deletion_outbox` before cascade cleanup, while
   detaching one relationship leaves shared resource objects intact.
+  `attachment_tool_receipts` relates a versioned read, search, view, or summary
+  receipt to every derivative it used. Replacing that version or deleting the
+  resource invalidates the whole invocation and queues its JSON replay object;
+  the table never contains attachment content or ephemeral image data.
   `workstream_resources` owns
   attachment/watch behavior; its `relationship_type` distinguishes an ordinary
   `attachment` from the `origin` a work stream was created from — see
@@ -415,6 +419,25 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-12 — Attachment receipts follow derivative identity
+
+**What changed:** `attachment_tool_receipts` records which exact derivative
+hashes a completed attachment invocation used. Resource replacement or deletion
+deletes dependent invocations and moves their regional JSON replay objects into
+the existing cleanup outbox.
+
+**Why:** Replaying a range, citation, or visual inclusion summary after its
+derivative changed silently combines old evidence with new bytes. Leaving the
+R2 receipt after invalidation also defeats the resource lifecycle guarantee.
+
+**Considered and rejected:** Embedding resource dependencies inside opaque
+receipt JSON. D1 cannot invalidate or clean a relationship it cannot query, and
+parsing arbitrary replay bodies from a trigger would make deletion brittle.
+
+**Consequences:** Attachment completion registers dependencies before the
+receipt becomes model-visible. A multi-resource view receipt is invalidated as
+one unit when any included derivative changes.
 
 ### 2026-08-12 — Attachment derivatives have explicit regional lifecycle state
 

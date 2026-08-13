@@ -1,12 +1,16 @@
-import type { HarnessTool } from "@avalon/agent-harness";
+import type { HarnessTool, ModelMessageContentPart } from "@avalon/agent-harness";
 import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
   AttachmentListResourcesArgumentsSchema,
   AttachmentReadResourceArgumentsSchema,
   AttachmentSearchResourceArgumentsSchema,
+  AttachmentSummarizeResourceArgumentsSchema,
+  AttachmentViewResourceArgumentsSchema,
   WorkstreamListResourcesOutputSchema,
   WorkstreamReadResourceOutputSchema,
   WorkstreamSearchResourceOutputSchema,
+  WorkstreamSummarizeResourceOutputSchema,
+  WorkstreamViewResourceOutputSchema,
   classifyAttachmentKind,
   type AttachmentKind,
   type ContentMode,
@@ -21,6 +25,12 @@ import {
   type DerivativeIndex,
   type MaterializedAttachmentDerivative,
 } from "./attachment-derivative-service";
+import { loadModelImageForTool, modelImageDataUri } from "./attachment-model-content";
+import {
+  createAttachmentSummaryRunner,
+  type AttachmentSummaryDraft,
+  type AttachmentSummaryRunner,
+} from "./attachment-summary-service";
 import {
   executionPrincipalKey,
   loadVisibleWorkstreamResources,
@@ -36,6 +46,12 @@ const MAXIMUM_READ_CHARACTERS = 24_000;
 const DEFAULT_SEARCH_LIMIT = 5;
 const DEFAULT_PASSAGE_CHARACTERS = 3_000;
 const MAXIMUM_SEARCH_RESULT_CHARACTERS = 20_000;
+const DEFAULT_IMAGE_MAX_DIMENSION = 1_536;
+const DEFAULT_SUMMARY_CHARACTERS = 12_000;
+
+export interface WorkstreamAttachmentToolOptions {
+  summarizeDerivative?: AttachmentSummaryRunner;
+}
 
 const ListCursorStateSchema = z.object({
   fingerprint: z.string().min(1).max(100),
@@ -72,7 +88,12 @@ class AttachmentOperationError extends Error {
   }
 }
 
-export function createWorkstreamAttachmentTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
+export function createWorkstreamAttachmentTools(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  options: WorkstreamAttachmentToolOptions = {},
+): HarnessTool[] {
+  const summarizeDerivative = options.summarizeDerivative ?? createAttachmentSummaryRunner(env);
   return [
     {
       definition: {
@@ -274,7 +295,269 @@ export function createWorkstreamAttachmentTools(env: Env, input: WorkstreamWorkf
         return { output, summary: `Found ${ranked.length} matching passages in ${row.title}` };
       },
     },
+    {
+      definition: {
+        name: "view_resource",
+        description: "View one through eight visible image resources. The JSON result identifies ordered visual parts; readable text, Markdown, PDFs, documents, spreadsheets, and presentations self-heal with an exact workstream_read_resource suggestion.",
+        capability: "workstream.resources.view",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: z.toJSONSchema(AttachmentViewResourceArgumentsSchema) as Record<string, unknown>,
+      },
+      execute: async (raw) => {
+        const args = AttachmentViewResourceArgumentsSchema.parse(raw);
+        const visible = await loadVisibleWorkstreamResources(env.DB, {
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          principal: input.executionPrincipal,
+        });
+        const maxDimension = args.maxDimension ?? DEFAULT_IMAGE_MAX_DIMENSION;
+        const contentParts: ModelMessageContentPart[] = [];
+        const items = [];
+        for (const resourceId of args.resourceIds) {
+          const row = visible.rows.find((candidate) => candidate.id === resourceId);
+          if (!row) {
+            items.push(skippedViewItem(resourceId, "Unavailable", null, "resource_not_found", "The resource was not found"));
+            continue;
+          }
+          const kind = rowKind(row);
+          if (kind !== "image") {
+            if (contentMode(row, kind) === "unsupported") {
+              items.push(skippedViewItem(row.id, row.title, row.mime_type, "resource_format_unsupported", "This resource format is unsupported"));
+              continue;
+            }
+            const suggestedCall = readSuggestion(row.id);
+            items.push(skippedViewItem(
+              row.id,
+              row.title,
+              row.mime_type,
+              "resource_tool_mismatch",
+              `workstream_view_resource cannot handle ${row.mime_type ?? kind} resources; call workstream_read_resource with the supplied arguments instead.`,
+              suggestedCall,
+            ));
+            continue;
+          }
+          try {
+            const image = await loadModelImageForTool(env.PAYLOADS, {
+              id: row.id,
+              fileName: row.title,
+              mimeType: row.mime_type ?? "image/*",
+              contentRef: row.content_ref,
+              modelContentRef: row.model_content_ref,
+              modelMimeType: row.model_mime_type,
+              modelContentSha256: row.model_content_sha256,
+              modelMetadataJson: row.model_metadata_json,
+            }, { database: env.DB, images: env.IMAGES, maxDimension });
+            if (!image) {
+              items.push(skippedViewItem(row.id, row.title, row.mime_type, "resource_conversion_failed", "The image could not be safely converted"));
+              continue;
+            }
+            const visualPartIndex = contentParts.length;
+            contentParts.push({
+              type: "image_url",
+              image_url: { url: modelImageDataUri(image.bytes, image.mimeType), detail: "auto" },
+            });
+            items.push({
+              resourceId: row.id,
+              title: row.title,
+              sourceMimeType: row.mime_type,
+              modelMimeType: image.mimeType,
+              version: { sha256: image.sha256, extractorVersion: image.extractorVersion },
+              sourceBytes: metadataSize(row.metadata_json),
+              derivativeBytes: image.bytes.byteLength,
+              width: image.width,
+              height: image.height,
+              status: "included" as const,
+              reasonCode: null,
+              reason: null,
+              suggestedCall: null,
+              visualPartIndex,
+            });
+          } catch {
+            items.push(skippedViewItem(row.id, row.title, row.mime_type, "resource_conversion_failed", "The image could not be safely converted"));
+          }
+        }
+        const wrongKind = items.find((item) => item.reasonCode === "resource_tool_mismatch");
+        if (contentParts.length === 0 && wrongKind && items.every((item) => item.reasonCode === "resource_tool_mismatch")) {
+          throw attachmentError("resource_tool_mismatch", wrongKind.reason ?? "The resource needs a different content tool", {
+            actualMimeType: wrongKind.sourceMimeType,
+            attachmentKind: visible.rows.find((row) => row.id === wrongKind.resourceId)
+              ? rowKind(visible.rows.find((row) => row.id === wrongKind.resourceId)!)
+              : undefined,
+            suggestedCall: wrongKind.suggestedCall,
+          });
+        }
+        const output = WorkstreamViewResourceOutputSchema.parse({
+          requested: args.resourceIds.length,
+          returned: contentParts.length,
+          items,
+        });
+        return {
+          output,
+          summary: `Viewed ${contentParts.length} of ${args.resourceIds.length} requested images`,
+          ...(contentParts.length > 0 ? { contentParts } : {}),
+        };
+      },
+    },
+    {
+      definition: {
+        name: "summarize_resource",
+        description: "Run an isolated, bounded summary over one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Use optional prompt as an untrusted focus. The result reports complete or partial coverage and range-grounded read cursors.",
+        capability: "workstream.resources.summarize",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: z.toJSONSchema(AttachmentSummarizeResourceArgumentsSchema) as Record<string, unknown>,
+      },
+      execute: async (raw, context) => {
+        const args = AttachmentSummarizeResourceArgumentsSchema.parse(raw);
+        const row = await requireVisibleResource(env, input, args.resourceId);
+        assertReadableKind(row, "workstream_summarize_resource");
+        const ready = await ensureReadyTextDerivative(env, row, context.signal);
+        const object = await env.PAYLOADS.get(ready.contentRef);
+        if (!object) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
+        const text = await object.text();
+        if (text.length !== ready.totalCharacters) {
+          throw attachmentError("resource_version_changed", "The selected derivative length no longer matches its version");
+        }
+        const maxOutputCharacters = args.maxOutputCharacters ?? DEFAULT_SUMMARY_CHARACTERS;
+        let draft;
+        try {
+          draft = await summarizeDerivative({
+            workspaceId: input.workspaceId,
+            workstreamId: input.workstreamId,
+            userId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
+            resourceId: row.id,
+            title: row.title,
+            text,
+            prompt: args.prompt ?? null,
+            maxOutputCharacters,
+            signal: context.signal,
+          });
+        } catch (error) {
+          if (error instanceof AttachmentOperationError) throw error;
+          throw attachmentError("resource_conversion_failed", "The isolated attachment summary failed");
+        }
+        if (!validSummaryDraft(draft, text.length, maxOutputCharacters)) {
+          throw attachmentError("resource_conversion_failed", "The isolated attachment summary returned invalid coverage");
+        }
+        const version = { sha256: ready.sha256, extractorVersion: ready.extractorVersion };
+        const citations = await Promise.all(draft.citations.map(async (citation) => ({
+          ...citation,
+          readCursor: await sealReadCursor(env, input, row.id, version, citation.range.start, DEFAULT_READ_CHARACTERS),
+        })));
+        const output = WorkstreamSummarizeResourceOutputSchema.parse({
+          resourceId: row.id,
+          title: row.title,
+          sourceMimeType: row.mime_type,
+          modelMimeType: ready.modelMimeType,
+          version,
+          prompt: args.prompt ?? null,
+          outline: draft.outline,
+          summary: draft.summary,
+          citations,
+          coverage: {
+            ...draft.coverage,
+            totalCharacters: text.length,
+          },
+        });
+        return { output, summary: `Summarized ${draft.coverage.consideredCharacters} characters from ${row.title}` };
+      },
+    },
   ];
+}
+
+/** Recreate only ephemeral visual parts from a JSON-only completed receipt. */
+export async function rehydrateWorkstreamViewReceipt(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  rawInput: unknown,
+  rawOutput: unknown,
+): Promise<ModelMessageContentPart[]> {
+  const parsedInput = AttachmentViewResourceArgumentsSchema.safeParse(rawInput);
+  const parsedOutput = WorkstreamViewResourceOutputSchema.safeParse(rawOutput);
+  if (!parsedInput.success || !parsedOutput.success || parsedOutput.data.returned === 0) return [];
+  const visible = await loadVisibleWorkstreamResources(env.DB, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    principal: input.executionPrincipal,
+  });
+  const included = parsedOutput.data.items
+    .filter((item) => item.status === "included")
+    .sort((left, right) => (left.visualPartIndex ?? 0) - (right.visualPartIndex ?? 0));
+  const parts: ModelMessageContentPart[] = [];
+  for (const item of included) {
+    const row = visible.rows.find((candidate) => candidate.id === item.resourceId);
+    if (!row || rowKind(row) !== "image" || !item.version) return [];
+    const image = await loadModelImageForTool(env.PAYLOADS, {
+      id: row.id,
+      fileName: row.title,
+      mimeType: row.mime_type ?? "image/*",
+      contentRef: row.content_ref,
+      modelContentRef: row.model_content_ref,
+      modelMimeType: row.model_mime_type,
+      modelContentSha256: row.model_content_sha256,
+      modelMetadataJson: row.model_metadata_json,
+    }, {
+      database: env.DB,
+      images: env.IMAGES,
+      maxDimension: parsedInput.data.maxDimension ?? DEFAULT_IMAGE_MAX_DIMENSION,
+    });
+    if (!image || image.sha256 !== item.version.sha256 || image.extractorVersion !== item.version.extractorVersion) return [];
+    parts.push({ type: "image_url", image_url: { url: modelImageDataUri(image.bytes, image.mimeType), detail: "auto" } });
+  }
+  return parts.length === parsedOutput.data.returned ? parts : [];
+}
+
+function readSuggestion(resourceId: string) {
+  return { tool: "workstream_read_resource" as const, arguments: { resourceId } };
+}
+
+function skippedViewItem(
+  resourceId: string,
+  title: string,
+  sourceMimeType: string | null,
+  reasonCode: "resource_not_found" | "resource_processing" | "resource_conversion_failed" | "resource_format_unsupported" | "resource_tool_mismatch",
+  reason: string,
+  suggestedCall: ReturnType<typeof readSuggestion> | null = null,
+) {
+  return {
+    resourceId,
+    title,
+    sourceMimeType,
+    modelMimeType: null,
+    version: null,
+    sourceBytes: 0,
+    derivativeBytes: null,
+    width: null,
+    height: null,
+    status: "skipped" as const,
+    reasonCode,
+    reason,
+    suggestedCall,
+    visualPartIndex: null,
+  };
+}
+
+function validSummaryDraft(
+  draft: AttachmentSummaryDraft,
+  totalCharacters: number,
+  maxOutputCharacters: number,
+): boolean {
+  const ranges = [
+    ...draft.outline.map((item) => item.range),
+    ...draft.citations.map((item) => item.range),
+  ];
+  const authoredCharacters = draft.summary.length
+    + draft.outline.reduce((total, item) => total + item.heading.length, 0)
+    + draft.citations.reduce((total, item) => total + item.label.length, 0)
+    + draft.coverage.limitations.reduce((total, item) => total + item.length, 0);
+  return draft.outline.length <= 50
+    && draft.citations.length <= 50
+    && draft.coverage.limitations.length <= 20
+    && draft.coverage.consideredCharacters <= totalCharacters
+    && (draft.coverage.status === "complete") === (draft.coverage.consideredCharacters === totalCharacters)
+    && ranges.every((range) => range.start >= 0 && range.end >= range.start && range.end <= totalCharacters)
+    && authoredCharacters <= maxOutputCharacters;
 }
 
 async function requireVisibleResource(
