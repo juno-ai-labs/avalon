@@ -365,6 +365,12 @@ IDs never become destination identities. Verified email/name and workspace name
 appear only in eligible Global profile/group jobs so approved staff can identify
 and contact users; they are not copied onto events or crashes.
 
+The batch installation ID is authoritative for desktop device attribution. If
+an envelope supplies `context.deviceId`, both authenticated and capability ingest
+require it to equal that batch value before persistence; the desktop includes the
+installation ID on anonymous product batches as well as installation-health
+batches. A client cannot attach one person's event to another device profile.
+
 A minidump may contain customer content. It receives owner-only local permissions,
 header-authenticated upload, a dedicated regional bucket, a 90-day absolute
 deadline, no-egress processing, and audited restricted lookup. The symbolicator
@@ -414,7 +420,11 @@ uses PostHog's reserved native-app properties and emits canonical installation
 and update lifecycle events. A durable local marker retains a stable pending
 event ID until the spool enqueue succeeds, then acknowledges the current
 version; it also treats an existing installation's first upgraded launch as a
-baseline rather than a new install.
+baseline rather than a new install. Cold opens, installs, and updates include
+the current unprefixed `version`/`build` fields used by PostHog's Android
+lifecycle integration in addition to common `$app_*` context. Hidden login
+launches seed the focus observer as backgrounded so opening the first window
+emits the real foreground transition.
 
 **Why:** Navigation events alone made PostHog paths work, but built-in breakdowns
 and session/application views remained poorer than data captured by PostHog's

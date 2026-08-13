@@ -75,8 +75,10 @@ use a customer dump for this acceptance run.
    On a fresh disposable installation, confirm exactly one
    `Application Installed`; on the next release, confirm one
    `Application Updated` with the
-   previous version/build. Upgrading a profile created before this instrumentation
-   must establish a baseline without emitting `Application Installed`.
+   current and previous version/build. A cold `Application Opened` must include
+   its current version/build. Upgrading a profile created before this
+   instrumentation must establish a baseline without emitting
+   `Application Installed`.
 3. Open **Settings → Application → Privacy & diagnostics**. Confirm **Product
    analytics** is on and its disclosure says Global may include verified name and
    email, EU stays in Avalon's EU platform, and essential content-free reliability

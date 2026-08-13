@@ -386,7 +386,7 @@ export class TelemetryReporter {
         body: JSON.stringify(capabilityDelivery
           ? {
               capability: anonymousSession!.capability,
-              ...(row.event.identityScope === 'installation' ? { installationId: row.installationId } : {}),
+              installationId: row.installationId,
               events: [row.event],
             }
           : { installationId: row.installationId, events: [row.event] }),
