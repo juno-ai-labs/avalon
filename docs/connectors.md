@@ -454,6 +454,14 @@ Each installed credential has two deliberately separate plugin identities. The o
 
 The model sees only these stable IDs in plugin catalogs, active-plugin instructions, and `load_plugin` arguments. Avalon resolves them back to canonical IDs before scope checks or persistence. Model-facing IDs are presentation and routing aliases, never security principals. Connector tool definitions use prefix-free names local to their plugin; the runtime adds the connection's stable short name when rendering model-facing tools. For example, canonical `drive.search` becomes `google_drive_search`, or `google_2_drive_search` for a second Google credential.
 
+A static connector tool whose Zod input schema has `.refine()` or
+`.superRefine()` implements `ConnectorAdapter.validateToolInput` with that same
+schema. The provider-facing JSON Schema cannot represent callbacks; this pure
+classifier lets the harness preserve their actionable messages when an executor
+throws, without moving enforcement out of `executeTool`. Dynamic hosted-MCP
+tools do not use a static connector validator because their live provider schema
+is the only input contract Avalon owns.
+
 ## Boundary
 
 This document owns the connector registry and the contract every adapter meets:
@@ -570,6 +578,31 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-12 — Code-only tool refinements remain argument errors
+
+**What changed:** `ConnectorAdapter` can expose a pure `validateToolInput`
+classifier. Every current static connector tool with a Zod refinement supplies
+its owning schema, and the host carries that classifier onto the `HarnessTool`
+wrapper without attaching it to dynamic hosted-MCP definitions.
+
+**Why:** JSON Schema cannot represent arbitrary Zod refinement callbacks. An
+identity-only GitHub issue update therefore satisfied the model-visible
+structural schema, then its correct “at least one field” rejection was labelled
+as downstream data validation. For a non-idempotent write, the same
+misclassification also made it impossible to distinguish a pre-provider input
+rejection from an invalid response after the provider may have committed.
+
+**Considered and rejected:** Treating every custom Zod issue as input. Provider
+responses can have their own refinements, so that heuristic would blame the
+model for malformed external data. Static validators also stay off dynamic MCP
+tools because applying a code-authored snapshot to a live provider surface would
+reintroduce the schema drift that dynamic discovery avoids.
+
+**Consequences:** A connector adding a refined tool input must register the same
+schema with `validateToolInput`; execution still parses independently as its
+trust boundary. Valid input followed by response-validation failure on a
+`record_before_execute` write is conservatively ambiguous and cannot be retried.
 
 ### 2026-08-12 — GitHub repository choice and code conclusions require evidence
 

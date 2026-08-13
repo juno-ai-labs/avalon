@@ -2130,6 +2130,73 @@ describe("agent harness", () => {
     expect(result.error).not.toContain("content");
   });
 
+  it("preserves model-actionable errors from code-only input refinements", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-write",
+            "update_resource",
+            JSON.stringify({ resourceId: "resource-1" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "I supplied the missing update." }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const inputSchema = z.object({
+      resourceId: z.string(),
+      title: z.string().optional(),
+    }).strict().refine((input) => input.title !== undefined, {
+      message: "At least one resource field must be updated",
+    });
+    const tool: HarnessTool = {
+      definition: {
+        name: "update_resource",
+        description: "Update a resource",
+        capability: "resources.write",
+        mode: "write",
+        idempotency: "record_before_execute",
+        inputSchema: z.toJSONSchema(inputSchema) as Record<string, unknown>,
+      },
+      validateInput: (input) => {
+        const result = inputSchema.safeParse(input);
+        return result.success ? null : result.error;
+      },
+      execute: async (input) => {
+        inputSchema.parse(input);
+        return { output: { ok: true }, summary: "Updated resource" };
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([tool])],
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "I supplied the missing update." });
+    const toolMessage = requestBodies[1]?.messages.find((message) => message.role === "tool");
+    const result = JSON.parse(String(toolMessage?.content)) as {
+      success: boolean;
+      kind: string;
+      error: string;
+    };
+    expect(result).toMatchObject({
+      success: false,
+      kind: "validation",
+      error: expect.stringContaining("at least one resource field must be updated"),
+    });
+    expect(result.error).not.toContain("after accepting its arguments");
+  });
+
   it("keeps blocked write tools visible while rejecting them before durable or provider work", async () => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: string }>;
@@ -2269,6 +2336,38 @@ describe("agent harness", () => {
       outcome: "definitive_failure",
     });
     expect(onAmbiguousExternalWrite).not.toHaveBeenCalled();
+  });
+
+  it("stops instead of retrying when a record-before-execute write response is invalid", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const onAmbiguousExternalWrite = vi.fn();
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([recordBeforeExecuteTool("create_record", async () => {
+        z.object({ id: z.string() }).parse({ id: 42 });
+        throw new Error("unreachable");
+      })])],
+      onAmbiguousExternalWrite,
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "ambiguous_external_write", code: "ambiguous_external_write" },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      error: expect.stringContaining("stopped without retrying"),
+      phase: "execution",
+      outcome: "ambiguous_external_write",
+    });
+    expect(onAmbiguousExternalWrite).toHaveBeenCalledTimes(1);
   });
 
   it("marks a timed-out record-before-execute write as ambiguous", async () => {

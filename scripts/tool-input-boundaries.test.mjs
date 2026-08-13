@@ -34,9 +34,9 @@ test("rejects permissive Zod number coercion in a tool module", () => {
 
 test("rejects an aliased direct Zod coerce import", () => {
   const messages = lint(`
-    import { coerce as convert } from "zod";
+    import { z, coerce as convert } from "zod";
     const Args = convert.number();
-    const tool = { inputSchema: { type: "number" } };
+    const tool = { inputSchema: z.toJSONSchema(Args) };
   `);
   assert.equal(messages.length, 1);
   assert.match(messages[0].message, /ambiguous values/u);
@@ -46,6 +46,16 @@ test("does not govern non-tool request parsing", () => {
   assert.deepEqual(lint(`
     import { z } from "zod";
     const Query = z.object({ page: z.coerce.number().int().positive() });
+    router.get("/items", (request) => Query.parse(request.query));
+  `), []);
+});
+
+test("does not govern unrelated request parsing in a tool module", () => {
+  assert.deepEqual(lint(`
+    import { z } from "zod";
+    const Query = z.object({ page: z.coerce.number().int().positive() });
+    const Args = z.object({ resourceId: z.string() });
+    const tool = { inputSchema: z.toJSONSchema(Args) };
     router.get("/items", (request) => Query.parse(request.query));
   `), []);
 });
