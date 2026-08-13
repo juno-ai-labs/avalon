@@ -1,4 +1,4 @@
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import type { StructuredFailureDetail, WorkstreamWorkflowInput } from "@avalon/contracts";
 
 const TERMINAL_STATUSES = new Set(["completed", "needs_input", "failed", "stopped"]);
 
@@ -150,7 +150,7 @@ export interface ToolInvocationFailure {
   invocationId: string;
   status: "failed" | "ambiguous";
   phase: string;
-  error: { code: string; message: string };
+  error: { code: string; message: string; data?: StructuredFailureDetail };
   memberSafePayload?: Record<string, unknown>;
 }
 
@@ -1740,7 +1740,11 @@ export async function finalizeToolInvocationFailure(
   const phase = input.phase.slice(0, 120);
   const code = input.error.code.slice(0, 120);
   const message = input.error.message.slice(0, 500);
-  const errorJson = JSON.stringify({ code, message });
+  const errorJson = JSON.stringify({
+    code,
+    message,
+    ...(input.error.data ? { data: input.error.data } : {}),
+  });
   const mutableStatuses = input.status === "ambiguous"
     ? "('pending', 'started', 'failed')"
     : "('pending', 'started')";

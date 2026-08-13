@@ -162,6 +162,51 @@ function streamResponse(content: string): Response {
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("reconstructs sanitized failed-tool recovery data after a resume", async () => {
+    const invocationId = "00000000-0000-4000-8000-000000000050";
+    const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([{
+        message_id: invocationId,
+        harness_run_id: PRIOR_RUN_ID,
+        tool_call_id: call,
+        tool_name: "memory_update",
+        input_json: '{"memoryItemId":"00000000-0000-4000-8000-000000000051"}',
+        output_ref: null,
+        output_summary: null,
+        status: "failed",
+        error_json: JSON.stringify({
+          code: "tool_failed",
+          message: "The memory changed. Read it again by ID.",
+          data: {
+            code: "memory_revision_conflict",
+            details: { reason: "Call memory_search with memoryItemId before retrying." },
+          },
+        }),
+      }], {}),
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      [
+        message("00000000-0000-4000-8000-000000000052", 1, { author: "human", textContent: "Update it" }),
+        message(invocationId, 2, { author: "agent", messageType: "tool", structuredContent: { invocation: {} } }),
+        message("00000000-0000-4000-8000-000000000053", 3, { author: "agent", textContent: "I need to reread it." }),
+      ],
+    );
+
+    expect(projection.messages.find((entry) => entry.role === "tool")).toEqual({
+      role: "tool",
+      tool_call_id: call,
+      content: JSON.stringify({
+        success: false,
+        kind: "external",
+        error: "The memory changed. Read it again by ID.",
+        data: {
+          code: "memory_revision_conflict",
+          details: { reason: "Call memory_search with memoryItemId before retrying." },
+        },
+      }),
+    });
+  });
+
   it("projects the triggering image with a same-ID durable manifest entry", async () => {
     const resourceId = "00000000-0000-4000-8000-000000000041";
     const triggerId = "00000000-0000-4000-8000-000000000042";

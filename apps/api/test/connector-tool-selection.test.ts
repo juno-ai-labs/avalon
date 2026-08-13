@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import { createMemoryTableTools } from "../src/services/memory-table-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -670,6 +671,12 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.modeByTool.get("google_drive_search")).toBe("read");
     expect(selected.modeByTool.get("google_docs_create_document")).toBe("write");
     expect(selected.modeByTool.get("google_sheets_update_values")).toBe("write");
+    const tables = __integrationTesting.createWorkstreamCorePlugins(
+      createMemoryTableTools(env(database), workflowInput()),
+    ).find((plugin) => plugin.canonicalId === "avalon:tables");
+    expect(tables?.systemMessage).toContain("query those exact row IDs again");
+    expect(tables?.systemMessage).toContain("table_insert_rows");
+    expect(tables?.systemMessage).not.toMatch(/\binsert_rows\b(?!\s+can)/u);
   });
 
   it("exposes a personal connection only to its owning user", async () => {
