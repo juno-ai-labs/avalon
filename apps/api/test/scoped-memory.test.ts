@@ -392,7 +392,11 @@ describe("scoped agent memory", () => {
     await expect(update.execute(
       { memoryItemId, expectedRevision: 1, text: "Favorite color is green", rationale: "Stale writer" },
       toolContext(runInput, "receipt-stale-update"),
-    )).rejects.toThrow("memory_revision_conflict");
+    )).rejects.toMatchObject({
+      code: "memory_revision_conflict",
+      message: "The durable memory changed after it was read. Search for it again, inspect the current text and revision, and rebuild the mutation.",
+      details: { reason: expect.stringContaining("memory_search") },
+    });
 
     const invalidated = await memoryTool(env, runInput, "invalidate").execute(
       { memoryItemId, expectedRevision: 2, reason: "Preference is no longer valid" },
@@ -589,7 +593,11 @@ describe("scoped agent memory", () => {
         values: { reported: false },
       }],
       rationale: "Stale update",
-    }, toolContext(secondRun, "stale-update"))).rejects.toThrow("memory_table_row_revision_conflict");
+    }, toolContext(secondRun, "stale-update"))).rejects.toMatchObject({
+      code: "memory_table_row_revision_conflict",
+      message: "The durable table changed while the mutation was being applied. Query the affected rows again, copy their current revisions, and rebuild the mutation.",
+      details: { reason: expect.stringContaining("table_query") },
+    });
 
     const updated = await tableTool(env, firstRun, "query").execute({
       memoryTableId,
