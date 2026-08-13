@@ -410,13 +410,16 @@ describe('WorkstreamComposer model readout', () => {
     expect(readout).toHaveTextContent('Grok 4.5');
   });
 
-  it('offers no menu, because the model cannot change mid-work-stream', async () => {
+  it('is the launch composer’s dropdown with its trigger disabled', async () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderComposer(undefined, false, undefined, ranOn('x-ai/grok-4.5'));
 
     const readout = await screen.findByRole('button', { name: /^Model: x-ai\/grok-4\.5/u });
-    expect(readout).toHaveAttribute('aria-disabled', 'true');
+    expect(readout).toBeDisabled();
 
+    // The same gesture that opens it on the launch screen. A work stream's model
+    // is decided at creation, so a menu here would offer a change no later run
+    // would honour.
     fireEvent.pointerDown(readout, { button: 0, ctrlKey: false });
     fireEvent.click(readout);
 

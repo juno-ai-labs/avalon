@@ -199,13 +199,21 @@ about flags.
 
 #### Reading it back inside the work stream
 
-The composer of a work stream that already exists shows the same pill in the same
-place, behind the same **Debug enabled** preference, with the menu removed: it is
-marked `aria-disabled`, wears a lock rather than a chevron, and its tooltip says a
-work stream keeps the model it started on. That is the honest shape of the
-control here — the pin is read once, when the work stream is created, and every
-run resolves from that row, so a menu would offer a change the next run would not
-honour.
+The composer of a work stream that already exists shows the same control in the
+same place, behind the same **Debug enabled** preference — the identical
+dropdown, trigger and pill and chevron, with the trigger `disabled`. That is what
+stops it opening, and its menu is left unrendered because a disabled trigger can
+never reach one. Disabled rather than merely quiet is the honest shape here: the
+pin is read once, when the work stream is created, and every run resolves from
+that row, so a menu would offer a change the next run would not honour.
+
+The accessible name and the tooltip both carry the full model id and say a work
+stream keeps the model it started on. The tooltip survives the disable — checked
+in a real window rather than assumed, because the reverse is the intuitive guess:
+a disabled button swallows the click that would open the menu, but Radix's
+tooltip is driven by pointer movement that still reaches it. What the disable
+does cost is keyboard focus, since Tab skips a disabled button, which is why the
+id has to be in the accessible name and not only in the tooltip.
 
 What it names is **`latestHarnessRun.model` first, and the pin only as a
 fallback**. The pin alone would answer for almost nobody: an unpinned work
@@ -908,11 +916,10 @@ here — the Flagship console is the audit record for who was rolled out to and 
 ### 2026-08-13 — A work stream shows the model it is running on, read off its latest run
 
 **What changed:** The composer inside an existing work stream now shows the model
-pill too, behind the same **Debug enabled** preference as the launch composers,
-locked rather than removed: `aria-disabled`, a lock in place of the chevron, and
-a tooltip saying a work stream keeps the model it started on. It names
-`latestHarnessRun.model`, falling back to the pin — newly on `WorkstreamDetail`
-as `modelOverride` — when a run recorded none.
+control too, behind the same **Debug enabled** preference as the launch
+composers: the same dropdown, with its trigger `disabled` and its menu
+unrendered. It names `latestHarnessRun.model`, falling back to the pin — newly on
+`WorkstreamDetail` as `modelOverride` — when a run recorded none.
 
 **Why:** The selector existed only where a model could still be *chosen*, so the
 moment a work stream started, the answer to "which model wrote this?" left the
@@ -931,9 +938,17 @@ direction: showing only the run, and leaving `WorkstreamDetail` alone. A run tha
 fails before its first token settles with `model` null, and a pinned work stream
 described as following the flag is not an incomplete answer but a false one —
 which is what the pin fallback exists to prevent, and why it is worth a field on
-the wire. Also rejected: a real `disabled` button. A disabled button emits no
-pointer events, and the tooltip is where the full id and the reason it does not
-open are written.
+the wire.
+
+This first shipped as a distinct read-only pill — `aria-disabled`, a lock icon,
+no dropdown around it — and was rejected in review for the plainer thing: the
+launch composer's own dropdown with `disabled` set. Two renderings of one control
+drift, and `aria-disabled` is a control that only claims to be off. The argument
+for the first shape was that a disabled button cannot fire a tooltip, and that
+turned out to be false here — it does — so the cost was keyboard focus alone.
+`.model-selector-trigger.is-settled:disabled` lifts the global `.48` dim to
+`.74`, because a 10.5px model name at `.48` cannot be read and being read is the
+entire point of showing it.
 
 **Consequences:** The pill can now show an id that is not in
 `AGENT_MODEL_OVERRIDES`, because a flag variation may serve any OpenRouter model
