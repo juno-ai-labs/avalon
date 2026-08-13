@@ -376,7 +376,9 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 **What changed:** Removed the processor's `RLIMIT_NPROC` setting while retaining
 its address-space, CPU, output-size, file-descriptor, timeout, read-only
-filesystem, and no-network controls.
+filesystem, and no-network controls. The container gate directly prevents the
+host-UID limit from returning while its real dump fixture remains independent of
+artificial sibling processes.
 
 **Why:** Linux accounts `RLIMIT_NPROC` across every process with the same host
 UID. A sibling container using the symbolicator's non-root UID could therefore
@@ -386,12 +388,16 @@ added denial-of-service coupling without containing an available behavior.
 
 **Considered and rejected:** Raising the process limit. Any fixed per-UID value
 would preserve the same cross-container coupling and merely move the failure
-threshold.
+threshold. Keeping a sibling pressure container in the integration fixture was
+also rejected: a runner-level process cap can make that fixture recreate the
+same cross-container failure even after the production wrapper correctly stops
+setting it, so it tests host policy rather than the shipped boundary.
 
 **Consequences:** Parser isolation continues to rely on the dedicated container,
 fixed executable, and the remaining explicit resource limits. Future parser
 changes that add child processes must introduce a container-scoped process bound
-instead of restoring a host-UID `RLIMIT_NPROC`.
+instead of restoring a host-UID `RLIMIT_NPROC`. The source invariant and real
+container execution are both required; neither substitutes for the other.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
