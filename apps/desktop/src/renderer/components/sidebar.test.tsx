@@ -1221,27 +1221,50 @@ describe('pinned work streams', () => {
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
   });
 
-  it('reveals Command shortcuts for the first nine pins only while Command is held', () => {
-    renderWith([
-      ...Array.from({ length: 10 }, (_value, index) =>
-        pinned(workstream(`ws-${index + 1}`, `Pinned ${index + 1}`, 'completed'), index)),
-      workstream('ws-recent', 'Recent work', 'completed'),
-    ]);
+  it('continues Command shortcuts from pinned rows through recent rows while Command is held', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[note('note-recent', 'Recent note', '2026-07-31T19:59:00.000Z')]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[
+              pinned(workstream('ws-a', 'Pinned 1', 'completed'), 0),
+              pinned(workstream('ws-b', 'Pinned 2', 'completed'), 1),
+              pinned(workstream('ws-c', 'Pinned 3', 'completed'), 2),
+              ...Array.from({ length: 6 }, (_value, index) =>
+                workstream(
+                  `ws-recent-${index + 1}`,
+                  `Recent ${index + 1}`,
+                  'completed',
+                  'ad_hoc',
+                  `2026-07-31T19:${String(58 - index).padStart(2, '0')}:00.000Z`,
+                )),
+            ]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
 
     const section = screen.getByRole('region', { name: 'Pinned' });
     const links = within(section).getAllByRole('link');
-    expect(section.querySelectorAll('.pinned-shortcut-pill')).toHaveLength(0);
-    expect(links.slice(0, 9).map((link) => link.getAttribute('aria-keyshortcuts')))
-      .toEqual(Array.from({ length: 9 }, (_value, index) => `Meta+${index + 1}`));
-    expect(links[9]).not.toHaveAttribute('aria-keyshortcuts');
-    expect(screen.getByRole('link', { name: /Recent work/u })).not.toHaveAttribute('aria-keyshortcuts');
+    expect(document.querySelectorAll('.command-shortcut-pill')).toHaveLength(0);
+    expect(links.map((link) => link.getAttribute('aria-keyshortcuts')))
+      .toEqual(['Meta+1', 'Meta+2', 'Meta+3']);
+    expect(screen.getByRole('link', { name: /Recent note/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+4');
+    expect(screen.getByRole('link', { name: /Recent 1$/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+5');
+    expect(screen.getByRole('link', { name: /Recent 5$/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+9');
+    expect(screen.getByRole('link', { name: /Recent 6$/u })).not.toHaveAttribute('aria-keyshortcuts');
 
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
-    expect([...section.querySelectorAll('.pinned-shortcut-pill')].map((pill) => pill.textContent))
+    expect([...document.querySelectorAll('.command-shortcut-pill')].map((pill) => pill.textContent))
       .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
 
     fireEvent.keyUp(window, { key: 'Meta' });
-    expect(section.querySelectorAll('.pinned-shortcut-pill')).toHaveLength(0);
+    expect(document.querySelectorAll('.command-shortcut-pill')).toHaveLength(0);
   });
 
   it('opens the correspondingly ordered pin from the physical number row', () => {
@@ -1265,6 +1288,22 @@ describe('pinned work streams', () => {
     fireEvent.keyDown(window, { code: 'Digit3', key: '"', metaKey: true, repeat: true });
     expect(bravo).toHaveClass('is-active');
     expect(screen.getByRole('link', { name: /Charlie/u })).not.toHaveClass('is-active');
+  });
+
+  it('opens the recent row immediately after the last pin', () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
+      workstream('ws-digest', 'Digest · 12 Aug · 5:00 PM', 'completed'),
+    ]);
+
+    const digest = screen.getByRole('link', { name: /Digest/u });
+    expect(digest).toHaveAttribute('aria-keyshortcuts', 'Meta+4');
+
+    fireEvent.keyDown(window, { code: 'Digit4', key: '4', metaKey: true });
+
+    expect(digest).toHaveClass('is-active');
   });
 
   it('does not navigate behind an open modal dialog', async () => {
