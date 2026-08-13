@@ -1017,11 +1017,12 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    const installedHeading = await screen.findByRole('heading', { level: 2, name: 'Installed connections' });
+    const rotateButton = await screen.findByRole('button', { name: 'Rotate secret for Inbound webhook' });
+    const installedHeading = screen.getByRole('heading', { level: 2, name: 'Installed connections' });
     const headingGroup = installedHeading.closest<HTMLElement>('.settings-pane-heading');
     expect(within(headingGroup!).getByText('1')).toBeVisible();
     expect(screen.getAllByText('Inbound webhook')).toHaveLength(2);
-    expect(screen.getByRole('button', { name: 'Rotate secret for Inbound webhook' })).toBeVisible();
+    expect(rotateButton).toBeVisible();
   });
 
   it('shows the immutable EU region and lets an owner create, copy, and revoke an invite', async () => {
