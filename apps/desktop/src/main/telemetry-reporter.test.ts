@@ -105,6 +105,7 @@ describe('TelemetryReporter', () => {
     await reporter.screenViewed('private/workspace/42' as never);
     const [row] = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(row?.event).toMatchObject({
+      contextSchemaVersion: 2,
       name: 'screen_viewed', source: 'desktop-renderer', category: 'product',
       identityScope: 'anonymous-epoch',
       context: {

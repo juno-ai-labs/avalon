@@ -501,23 +501,14 @@ export const TelemetryBreadcrumbSidecarSchema = z.object({
   }
 });
 export type TelemetryBreadcrumbSidecar = z.infer<typeof TelemetryBreadcrumbSidecarSchema>;
-const TelemetryContextSchema = z.object({
+const telemetryContextCommon = {
   environment: z.enum(["development", "staging", "production"]),
   region: z.enum(["global", "eu"]).optional(),
   release: SafeReleaseSchema,
   buildId: SafeReleaseSchema,
-  deviceId: UuidV7Schema.optional(),
   platform: z.enum(["darwin", "win32", "linux"]).optional(),
   arch: z.enum(["arm64", "x64"]).optional(),
   channel: z.enum(["development", "alpha", "beta", "stable"]).optional(),
-  osVersion: SafeReleaseSchema.optional(),
-  locale: z.string().min(2).max(35).regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/u).optional(),
-  timezone: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_+-]+(?:\/[a-zA-Z0-9_+-]+)*$/u).optional(),
-  screenWidth: z.number().int().positive().max(100_000).optional(),
-  screenHeight: z.number().int().positive().max(100_000).optional(),
-  viewportWidth: z.number().int().positive().max(100_000).optional(),
-  viewportHeight: z.number().int().positive().max(100_000).optional(),
-  windowId: UuidV7Schema.optional(),
   launchId: UuidV7Schema.optional(),
   sessionId: UuidV7Schema.optional(),
   onboardingJourneyId: UuidV7Schema.optional(),
@@ -525,9 +516,39 @@ const TelemetryContextSchema = z.object({
   requestId: UuidV7Schema.optional(),
   traceId: z.string().regex(/^[a-f0-9]{32}$/u).optional(),
   spanId: z.string().regex(/^[a-f0-9]{16}$/u).optional(),
+};
+
+const telemetryNativeDesktopContext = {
+  deviceId: UuidV7Schema.optional(),
+  osVersion: z.string().trim().min(1).max(128).regex(/^\P{Cc}+$/u).optional(),
+  locale: z.string().min(2).max(35).regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/u).optional(),
+  timezone: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_+-]+(?:\/[a-zA-Z0-9_+-]+)*$/u).optional(),
+  screenWidth: z.number().int().positive().max(100_000).optional(),
+  screenHeight: z.number().int().positive().max(100_000).optional(),
+  viewportWidth: z.number().int().positive().max(100_000).optional(),
+  viewportHeight: z.number().int().positive().max(100_000).optional(),
+  windowId: UuidV7Schema.optional(),
+};
+
+const TelemetryContextV1Schema = z.object({
+  ...telemetryContextCommon,
+  deviceId: z.never().optional(),
+  osVersion: z.never().optional(),
+  locale: z.never().optional(),
+  timezone: z.never().optional(),
+  screenWidth: z.never().optional(),
+  screenHeight: z.never().optional(),
+  viewportWidth: z.never().optional(),
+  viewportHeight: z.never().optional(),
+  windowId: z.never().optional(),
 }).strict();
 
-const EnvelopeBaseSchema = z.object({
+const TelemetryContextV2Schema = z.object({
+  ...telemetryContextCommon,
+  ...telemetryNativeDesktopContext,
+}).strict();
+
+const envelopeCommon = {
   schema: z.literal("com.avalon.telemetry.event"),
   schemaVersion: z.literal(1),
   eventId: UuidV7Schema,
@@ -537,9 +558,17 @@ const EnvelopeBaseSchema = z.object({
   identityScope: z.enum(TELEMETRY_IDENTITY_SCOPES),
   originalTimestamp: z.string().datetime({ offset: true }),
   sentAt: z.string().datetime({ offset: true }),
-  context: TelemetryContextSchema,
   properties: z.record(z.string(), z.unknown()),
-}).strict();
+};
+
+const EnvelopeBaseSchema = z.union([
+  z.object({ ...envelopeCommon, context: TelemetryContextV1Schema }).strict(),
+  z.object({
+    ...envelopeCommon,
+    contextSchemaVersion: z.literal(2),
+    context: TelemetryContextV2Schema,
+  }).strict(),
+]);
 
 export const TelemetryEnvelopeSchema = EnvelopeBaseSchema.superRefine((value, context) => {
   const entry = TELEMETRY_EVENTS[value.name as TelemetryEventName];

@@ -78,9 +78,11 @@ existing route, preference, anonymous-epoch, and regional-destination decisions;
 producers do not choose PostHog or EU routing themselves.
 
 SDK-style app, OS, device, display, viewport, session, and window fields belong
-in the closed envelope context and are derived by main from trusted Electron or
-installation state. Do not ask the renderer to provide them, copy them into each
-event's semantic property schema, or use a hostname as a device name. A desktop
+in the closed context-v2 envelope and are derived by main from trusted Electron
+or installation state. Context v1 is frozen for old clients and replay; adding
+another context field requires a new reader version deployed before its producer.
+Do not ask the renderer to provide context, copy it into each event's semantic
+property schema, or use a hostname as a device name. A desktop
 batch carrying `context.deviceId` must send the same random installation ID in
 the batch-level `installationId`; contract validation rejects mismatches before
 regional persistence.
