@@ -81,9 +81,11 @@ count exists.
 ### Persisting and replaying
 
 Before the summary call, Avalon captures the current execution-principal key and
-monotonic authorized resource-inventory revision. It verifies the same revision
-after the summary and includes it in a conditional persistence statement, so an
-attachment revocation or visibility change cannot race with checkpoint creation.
+monotonic authorized resource-inventory revision with an O(1) lookup. After the
+summary it runs one grouped inventory query under that expected revision to
+render the appendix, then includes the revision in a conditional persistence
+statement. An attachment revocation or visibility change therefore cannot race
+with checkpoint creation without repeating the grouped aggregation.
 
 The base checkpoint is persisted without its system message or authorized
 appendix, keyed by work stream and execution principal, in
@@ -232,6 +234,27 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-08-12 — Compaction fences one aggregate instead of repeating it
+
+**What changed:** Preparation now reads only the monotonic inventory revision.
+Appendix rendering performs the sole grouped inventory query under that expected
+revision, and persistence uses the captured revision directly in its conditional
+upsert. A zero-row write checks only the current revision.
+
+**Why:** The earlier race fence was correct but performed the same grouped count
+at preparation, rendering, and persistence even though only rendering consumed
+the groups.
+
+**Considered and rejected:** Removing the before/after fence or trusting a
+render-time comparison through persistence. Revision-only checks keep both race
+windows closed without repeated aggregation.
+
+**Consequences:** Compaction still fails closed on any relevant inventory change,
+but a normal checkpoint performs one grouped resource query instead of three.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Checkpoints are principal-scoped and inventory-race fenced
 

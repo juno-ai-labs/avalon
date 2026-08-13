@@ -20,8 +20,8 @@ source of truth for retry, replay, and compaction recovery.
 | `packages/contracts/src/index.ts` | Sanitizes bounded structured recovery data before Bind puts it in a model-visible failed tool result. |
 | `apps/api/src/lib/attachment-cursor.ts` | Signs, verifies, scopes, expires, and bounds opaque attachment continuations. |
 | `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
-| `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives and bounded range indexes, then atomically selects their regional objects. |
-| `apps/api/src/services/attachment-summary-service.ts` | Runs the isolated, range-grounded hierarchical reader and reports honest complete or sampled coverage. |
+| `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives, then atomically selects their regional objects. |
+| `apps/api/src/services/attachment-summary-service.ts` | Runs one isolated bounded reader over server-identified source ranges and reports honest complete or sampled coverage. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries. |
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
@@ -47,7 +47,9 @@ a list request; it never supplies or guesses a MIME filter.
 
 The same registry renders the complete model-facing explanation and the Zod
 enum. Strict schemas cover list, read, search, view, and summarize arguments and
-their exact success results for both work-stream and draft-scoped tools.
+their exact success results. Work streams expose all five operations; the
+automation architect receives the four content operations because its complete
+set of at most ten resources is already present in the current-turn manifest.
 JSON Schema guides the provider, while the executor must parse the same strict
 Zod schema because the harness does not enforce provider-facing JSON Schema.
 
@@ -96,14 +98,16 @@ Knowledge of a resource ID or cursor does not bypass this query.
 filtered by one of the eight natural-language kinds. Continuations bind the
 principal, work stream, filters, size, ordering key, and a monotonic work-stream
 inventory revision. D1 advances that revision for relationship, message-
-attachment, resource, and note mutations. A continuation compares it before and
-after its bounded queries, so any relevant change invalidates the scan rather
-than mixing old and new pages.
+attachment, classification/content identity, and note-visibility mutations, but
+not hydration timestamps or derivative processing bookkeeping. A continuation
+compares it before and after its bounded queries, so a relevant change
+invalidates the scan rather than mixing old and new pages.
 
 `workstream_read_resource` targets 12,000 and never exceeds 24,000 UTF-16
 characters. Every result reports exact range, total, and character counts on
 both sides, with independently usable previous and next cursors.
-`workstream_search_resource` ranks the bounded term index deterministically,
+`workstream_search_resource` scans deterministic in-memory ranges from the
+already bounded derivative, centers passages on actual phrase or term matches,
 returns no more than five passages or 20,000 passage characters, and gives every
 passage a read cursor against the same derivative version.
 
@@ -113,10 +117,11 @@ ephemeral image parts. The JSON is the only durable receipt. A replay
 reauthorizes every dependency, verifies the exact derivative hashes, and
 rebuilds those parts from the selected regional derivative. Missing visual bytes
 invalidate the receipt and re-execute the safe read; they never degrade to stale
-JSON without pixels. `workstream_summarize_resource` sends bounded chunks to an isolated
-reader, verifies every returned range, and caps all model-authored strings. A
-derivative beyond the reader budget is sampled across its length and explicitly
-returns `partial` coverage.
+JSON without pixels. `workstream_summarize_resource` makes one isolated inference
+over at most 80,000 characters sampled across the derivative. The model selects
+Avalon-generated source IDs, which the server maps to exact ranges rather than
+trusting model-authored offsets. All model-authored strings are capped, and a
+derivative beyond the reader budget explicitly returns `partial` coverage.
 
 ### Compaction rediscovery
 
@@ -129,8 +134,9 @@ entries remain discoverable by paging `workstream_list_resources` until
 `nextCursor` is null.
 
 The stored checkpoint contains the raw LLM summary plus the execution-principal
-key and authorized resource-inventory revision captured before summarization.
-Avalon verifies that revision after the summary and in the same conditional D1
+key and authorized resource-inventory revision captured by an O(1) read before
+summarization. Avalon runs the grouped inventory query once when rendering the
+appendix, verifies the revision there, and includes it in the conditional D1
 statement that persists the checkpoint. Replay uses
 the summary only for an exact scope match; attachment, detachment, deletion,
 revocation, private-note visibility, or principal changes invalidate it and fall
@@ -143,12 +149,14 @@ the aggregate supplements that working set rather than replacing it.
 When a compiler request includes attachments, Avalon freezes the unique resource
 IDs after verifying that every row is a draft upload owned by the requesting
 user in the current workspace. The preloaded automation architect receives the
-same list, read, search, view, and summarize definitions under `automation_*`
-wire names. Their natural-kind list description names all eight supported kinds.
+complete manifest plus read, search, view, and summarize definitions under
+`automation_*` wire names. It has no paginated list tool because the frozen set
+is already visible and cannot exceed ten resources.
 
 The frozen set is only an upper bound, never cached authority. Every operation
 queries those IDs again and requires the same workspace, owner, upload provider,
-and `attachment_status = 'draft'`. Deletion, ownership change, or promotion to
+and `attachment_status = 'draft'`. One bounded query reloads the entire frozen
+set. Deletion, ownership change, or promotion to
 an attached resource therefore returns the same `resource_not_found` result as a
 guessed ID. Automation cursors use a separate purpose namespace, so a work-stream
 continuation cannot be replayed into the compiler. Conversion, paging, image
@@ -163,19 +171,21 @@ with a valid model-native image remains ready; another historical row with
 original bytes becomes pending on first authorized use, while a missing original
 is failed rather than an empty success.
 
-`resource_model_objects` records active and superseded derivatives and indexes.
-Deleting a resource—not merely detaching one relationship—copies every known
-object reference into `resource_object_deletion_outbox` before cascading the
-catalog. Scheduled cleanup reaps at most 100 references per pass. A failed R2
-deletion increments bounded retry metadata and remains queued.
+Writers pre-register each generation-unique object in
+`resource_object_deletion_outbox` before its R2 write. A successful pointer
+compare-and-swap cancels the new object's pending deletion and enqueues the former
+pointer. Deleting a resource—not merely detaching one relationship—enqueues its
+current original and derivative. Scheduled cleanup reaps at most 100 references
+per pass; a failed R2 deletion increments bounded retry metadata and remains
+queued.
 
 ### Reusable derivatives
 
 The derivative service accepts a resource that its caller has already
 authorized. It reads the exact original R2 object, claims conversion through a
-fenced, time-bounded conditional D1 update, writes generation-unique content and
-index objects, then advances the current resource pointer only when both objects
-are complete and the same claim still owns publication. A concurrent caller sees
+fenced, time-bounded conditional D1 update, writes one generation-unique content
+object, then advances the current resource pointer only when that object is
+complete and the same claim still owns publication. A concurrent caller sees
 `processing`; an abandoned claim becomes reclaimable after five minutes. An
 unchanged source hash and extractor version reuses the selected objects without
 reading or converting the original again.
@@ -188,12 +198,10 @@ references, display values, and formulas. PDFs are page-delimited; a bounded OCR
 adapter is required when the text layer is materially empty, and incomplete OCR
 is a failure rather than empty success.
 
-The companion index stores only UTF-16 ranges, section labels, and bounded
-normalized term hints. It never duplicates the complete derivative. Search
-scores the complete text inside each indexed range, so a term beyond the hint
-cap remains discoverable. Tool reads and searches load exact passages from the
-versioned derivative while checking offsets against the same hash and extractor
-version. At the two-million-character derivative ceiling, read, search, and
+Search derives UTF-16-safe ranges and section labels directly from the bounded
+versioned derivative, so it needs no second R2 object or lifecycle. Tool reads
+and searches check offsets against the same hash and extractor version. At the
+two-million-character derivative ceiling, read, search, and
 summarize may hold one complete derivative while returning bounded model
 content; that proved Worker-memory ceiling replaces the former twenty-million-
 character envelope.
@@ -222,14 +230,14 @@ character envelope.
   lifecycle.
 - Original content identity describes the exact selected R2 bytes, so a cursor or
   derivative version cannot silently cross into newly hydrated content.
-- A model derivative becomes current only after its content and bounded index
-  objects are complete; losing a fenced claim cannot publish either object or
+- A model derivative becomes current only after its content object is complete;
+  losing a fenced claim cannot publish that object or
   overwrite the newer claim's terminal state.
 - Every completed attachment receipt rechecks current resource visibility and
   derivative hashes before replay. List results and receipts without a complete
   dependency set re-execute instead of becoming stale authorization snapshots.
-- Index offsets use JavaScript UTF-16 units and do not split surrogate pairs, so
-  the later read contract and persisted index agree exactly.
+- Search and read offsets use JavaScript UTF-16 units and do not split surrogate
+  pairs.
 - The sidebar and agent inventory share one visibility predicate. Full sidebar,
   point, keyset-page, and grouped queries may differ only in result shape and
   bounds, never authorization semantics.
@@ -273,7 +281,7 @@ generic tool execution/receipt loop is owned by
   and store only a bounded machine error code.
 - Derivative conversion admits at most 8 MiB of source bytes, 12 MiB of selected
   expanded Office XML, 3 MiB per selected XML part, 200 PDF pages, two million
-  UTF-16 output characters, and 500 index chunks. Async PDF/OCR work has a
+  UTF-16 output characters. Async PDF/OCR work has a
   30-second deadline. Local Office parsing is not timer-preemptible; its safety
   boundary is the smaller source, selected-entry, and expansion ceilings checked
   before rendering.
@@ -302,7 +310,7 @@ generic tool execution/receipt loop is owned by
   exact source-byte, pixel, derivative-byte, count, and edge boundaries.
 - `apps/api/test/attachment-derivative-service.test.ts` covers complete long
   Markdown, semantic Office structures, page/OCR extraction, malformed and
-  unsupported inputs, exact UTF-16 indexing, MIME precedence, fenced lease
+  unsupported inputs, MIME precedence, fenced lease
   recovery, atomic selection, and ready-version reuse against `unpdf` 1.8.0.
 - `apps/api/test/workstream-attachment-tools.test.ts` covers more-than-fifty
   pagination, natural-language filtering, exact two-sided read arithmetic,
@@ -313,8 +321,8 @@ generic tool execution/receipt loop is owned by
 - `apps/api/test/attachment-tool-receipts.test.ts` proves dependency registration
   is conditional on the current hash and every replay rechecks visibility,
   version identity, and durable output cleanup.
-- `apps/api/test/attachment-summary-service.test.ts` covers complete
-  hierarchical and sampled-partial summaries, prompt trust placement, citation
+- `apps/api/test/attachment-summary-service.test.ts` covers single-call complete
+  and sampled-partial summaries, prompt trust placement, source-ID citation
   validation, output budgets, and provider failure. The harness suite proves
   ephemeral image parts reach only the next model request and never its durable
   completion event. `apps/api/test/workstream-read-state.test.ts` proves the
@@ -334,10 +342,9 @@ tests use an explicit clock value; do not replace it with sleeps or retries.
 
 `resources` owns original and current model refs plus original SHA-256,
 derivative status, extractor version, readable-character count, extraction time,
-bounded error code, fenced claim ID/time, and current index ref.
-`resource_model_objects` catalogs
-active or superseded model objects, while `resource_object_deletion_outbox`
-survives resource deletion long enough to remove R2 objects.
+bounded error code, and fenced claim ID/time.
+`resource_object_deletion_outbox` owns failed, superseded, and deleted regional
+objects until bounded cleanup succeeds.
 `attachment_tool_receipts` maps completed read, search, view, and summary
 receipts to the exact derivative hashes they used. A replacement or deletion
 invalidates the complete invocation and queues its JSON replay object. Receipt
@@ -391,6 +398,33 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Attachment hydration drops speculative indexes and fan-out summaries
+
+**What changed:** Search now derives UTF-16-safe chunks directly from the bounded
+derivative and centers results on actual matches. The persisted index object and
+model-object catalog are removed. Summaries use one inference over deterministic
+server-owned source ranges, automation drafts expose only content tools for their
+already-visible ten-item manifest, and resource revisions ignore processing-only
+updates. Compaction performs one grouped inventory aggregation.
+
+**Why:** An adversarial complexity review found that the stored index was never
+used to select candidates, the catalog duplicated current pointers while retaining
+superseded rows, summary fan-out could not reliably fit the tool deadline, and
+processing state could invalidate a model's unrelated list cursor.
+
+**Considered and rejected:** Keeping dormant index hints for future performance,
+parallelizing nine summary calls, and retaining pagination solely for symmetry
+with work streams. Each preserves lifecycle or model-facing complexity without a
+current product need.
+
+**Consequences:** A text derivative has one regional model object. Search spends
+CPU proportional to the bounded derivative, summary coverage above 80,000
+characters is explicitly partial, and future persisted indexing requires measured
+need plus a candidate lookup that avoids the full scan.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Review closes replay, memory, and inventory race boundaries
 

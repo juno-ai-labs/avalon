@@ -288,12 +288,13 @@ The work-stream runtime now exposes five bounded operations. The old
 language kind and whose cursor-only continuations can exhaust more than fifty
 resources. `workstream_read_resource` returns 12,000 characters by default and
 at most 24,000, with exact characters before and after plus previous/next cursors.
-`workstream_search_resource` searches one derivative index and returns at most
-five passages and 20,000 characters. `workstream_view_resource` returns a
+`workstream_search_resource` derives bounded ranges from one versioned
+derivative in memory and returns at most five passages and 20,000 characters.
+`workstream_view_resource` returns a
 JSON-only inclusion summary plus as many as eight ephemeral visual parts, and
-`workstream_summarize_resource` runs a range-grounded isolated reader with an
-optional untrusted prompt. Every cursor is reauthorized and bound to the current
-inventory or derivative version.
+`workstream_summarize_resource` runs one isolated reader over deterministic,
+server-identified ranges with an optional untrusted prompt. Every cursor is
+reauthorized and bound to the current inventory or derivative version.
 
 All five operations use the same visibility loader as the right sidebar.
 Nonexistent, foreign, detached, archived, revoked, and principal-invisible note
