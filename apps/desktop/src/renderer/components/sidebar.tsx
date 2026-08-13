@@ -29,7 +29,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import { formatDateTime, formatRelative, groupActivityItems } from '../lib/format';
@@ -758,10 +758,19 @@ export function Sidebar({
   // one the server last confirmed, and the one the pointer is building on top
   // of it. Comparing a finished drag against the second would compare it with
   // itself and conclude nothing moved.
-  const storedPinnedWorkstreams = orderPinnedWorkstreams(workstreams, null);
-  const pinnedWorkstreams = orderPinnedWorkstreams(workstreams, dragOrder);
-  const unpinnedWorkstreams = workstreams.filter((workstream) => workstream.pinPosition === null);
-  const groups = groupActivityItems<RecentSidebarItem>([
+  const storedPinnedWorkstreams = useMemo(
+    () => orderPinnedWorkstreams(workstreams, null),
+    [workstreams],
+  );
+  const pinnedWorkstreams = useMemo(
+    () => orderPinnedWorkstreams(workstreams, dragOrder),
+    [dragOrder, workstreams],
+  );
+  const unpinnedWorkstreams = useMemo(
+    () => workstreams.filter((workstream) => workstream.pinPosition === null),
+    [workstreams],
+  );
+  const groups = useMemo(() => groupActivityItems<RecentSidebarItem>([
     ...unpinnedWorkstreams.map((workstream) => ({
       type: 'workstream' as const,
       id: `workstream:${workstream.id}`,
@@ -774,14 +783,14 @@ export function Sidebar({
       lastActivityAt: note.lastActivityAt,
       note,
     })),
-  ]);
+  ]), [notes, unpinnedWorkstreams]);
 
   // The visible destination order is one run: the reader's manually arranged
   // pins first, then recent work streams and notes in exactly the order the
   // recency groups render below. Automations and primary actions are outside
   // this run, so changing either section cannot shift a familiar destination.
-  const recentItems = groups.flatMap((group) => group.streams);
-  const commandShortcutTargets = [
+  const recentItems = useMemo(() => groups.flatMap((group) => group.streams), [groups]);
+  const commandShortcutTargets = useMemo(() => [
     ...pinnedWorkstreams.map((workstream) => ({
       id: `workstream:${workstream.id}`,
       path: `/workstreams/${workstream.id}`,
@@ -792,9 +801,10 @@ export function Sidebar({
         ? `/notes/${item.note.id}`
         : `/workstreams/${item.workstream.id}`,
     })),
-  ].slice(0, COMMAND_SHORTCUT_LIMIT);
-  const commandShortcutById = new Map(
-    commandShortcutTargets.map((target, index) => [target.id, index + 1]),
+  ].slice(0, COMMAND_SHORTCUT_LIMIT), [pinnedWorkstreams, recentItems]);
+  const commandShortcutById = useMemo(
+    () => new Map(commandShortcutTargets.map((target, index) => [target.id, index + 1])),
+    [commandShortcutTargets],
   );
 
   // Command is both the reveal and the modifier: its keydown paints the first

@@ -277,7 +277,10 @@ changed and would no longer preserve Pinned as the stable start of the run.
 **Consequences:** Pinning, unpinning, or reordering changes the number assigned
 to recent rows because pins always lead. Recent notes participate exactly where
 they appear among work streams, so the visual order and keyboard order cannot
-diverge. The nine-key ceiling remains unchanged and `0` remains unused.
+diverge. The nine-key ceiling remains unchanged and `0` remains unused. The
+derived pinned, recent, target, and lookup collections are memoized together so
+unrelated sidebar state does not tear down and re-register the global shortcut
+listeners.
 
 ### 2026-08-12 — Command reveals the first nine pins as direct destinations
 
