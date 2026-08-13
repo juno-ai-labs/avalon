@@ -37,7 +37,7 @@ The two GPT-5.6 deployments run as separate jobs rather than one, for the same
 reason the other three do: a reviewer's value is an independent read of the
 diff, and one job posts one review.
 
-Each job validates the Azure endpoint, installs and authenticates Cline 3.0.47,
+Each job validates the Azure endpoint, installs and authenticates Cline 3.0.54,
 then checks out the PR head under `$GITHUB_WORKSPACE/pr-head`. Installation
 happens before checkout. Cline runs from the parent workspace with
 `--auto-approve true` and receives its complete review request as one
@@ -60,7 +60,7 @@ updated head is ready.
   owners, members, or collaborators.
 - Cline receives the prompt as the positional `"$PROMPT"` argument. JSON mode,
   prompt-file stdin redirection, and prompt piping are not part of this harness.
-- `npm install -g cline@3.0.47` and authentication happen before the PR is
+- `npm install -g cline@3.0.54` and authentication happen before the PR is
   checked out. No installer, build, or test command follows the checkout.
 - The PR checkout stays at `pr-head/`, one level below the
   `$GITHUB_WORKSPACE` directory passed to `cline --cwd`. The clear step
