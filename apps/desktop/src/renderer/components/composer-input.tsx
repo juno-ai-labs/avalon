@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { ArrowUp, AtSign, Check, ChevronDown, LoaderCircle, Lock, Mic, Paperclip } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, LoaderCircle, Mic, Paperclip } from 'lucide-react';
 import {
   forwardRef,
   Fragment,
@@ -64,13 +64,14 @@ interface ComposerInputProps {
    * as **Default** rather than as a model name: which model it resolves to is
    * the flag's answer, and this process cannot see the served variation.
    *
-   * `settled` shows the model already in force and does not open. The pin is
-   * read once, when the work stream is created, and every run of it resolves
-   * from that same row — so there is no decision left to offer, and offering one
-   * would promise a change the next run would not honour. The pill stays anyway
-   * because the question it answers survives the decision: a developer reading a
-   * transcript wants to know which model wrote it, and until this existed the
-   * only way to find out was the database.
+   * `settled` is the same control with its trigger disabled: it shows the model
+   * already in force and does not open. The pin is read once, when the work
+   * stream is created, and every run of it resolves from that same row — so
+   * there is no decision left to offer, and offering one would promise a change
+   * the next run would not honour. The control stays anyway because the question
+   * it answers survives the decision: a developer reading a transcript wants to
+   * know which model wrote it, and until this existed the only way to find out
+   * was the database.
    */
   model?:
     | {
@@ -169,6 +170,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   // no way to clear it. A settled pill holds no choice to release.
   const releaseModelOverride = model?.kind === 'choice' ? model.onChange : undefined;
   const modelOverrideValue = model?.kind === 'choice' ? model.value : null;
+  // What the pill is naming, whichever shape it is in — only `null` is quiet.
+  const selectedModel = model?.kind === 'settled' ? model.model : modelOverrideValue;
   useEffect(() => {
     if (!debugEnabled && modelOverrideValue !== null) releaseModelOverride?.(null);
   }, [debugEnabled, modelOverrideValue, releaseModelOverride]);
@@ -384,66 +387,67 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
             </div>
-            {model?.kind === 'settled' && debugEnabled && (
-              /* The composer's own pill, minus the menu. `aria-disabled` rather
-                 than `disabled`: the tooltip is the only place the model's full
-                 id and the reason this does not open are written, and a disabled
-                 button emits no pointer events to open one with. Nothing is
-                 bound to a click, so it is inert either way. */
-              <IconButton
-                aria-disabled="true"
-                className={clsx('model-selector-trigger', 'is-settled', !model.model && 'is-unpinned')}
-                label={agentModelInUseTriggerLabel(model.model)}
-              >
-                <span>{agentModelInUseLabel(model.model)}</span>
-                <Lock aria-hidden="true" size={11} />
-              </IconButton>
-            )}
-            {model?.kind === 'choice' && debugEnabled && (
+            {model && debugEnabled && (
+              /* One control in both shapes. A settled work stream gets the same
+                 dropdown — same trigger, same pill, same chevron — with the
+                 trigger `disabled`, which is what stops it opening; its menu is
+                 left unrendered because a disabled trigger can never reach it.
+                 The tooltip carrying the full model id survives the disable and
+                 was checked in a real window, so the id is reachable by hover
+                 and not only as the accessible name — Tab skips a disabled
+                 button, which is the one route it does lose. */
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton
-                    className={clsx('model-selector-trigger', !model.value && 'is-unpinned')}
-                    disabled={submitting}
-                    label={agentModelTriggerLabel(model.value)}
+                    className={clsx(
+                      'model-selector-trigger',
+                      model.kind === 'settled' && 'is-settled',
+                      !selectedModel && 'is-unpinned',
+                    )}
+                    disabled={model.kind === 'settled' || submitting}
+                    label={model.kind === 'settled'
+                      ? agentModelInUseTriggerLabel(model.model)
+                      : agentModelTriggerLabel(model.value)}
                   >
-                    <span>{agentModelLabel(model.value)}</span>
+                    <span>{model.kind === 'settled' ? agentModelInUseLabel(model.model) : agentModelLabel(model.value)}</span>
                     <ChevronDown aria-hidden="true" size={13} />
                   </IconButton>
                 </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content align="start" className="menu-content model-selector-menu" sideOffset={8}>
-                    <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
-                    {/* Unpinned is its own value rather than the first model:
-                        the flag decides which model it resolves to, and naming
-                        one here would be a claim the renderer cannot make. */}
-                    <DropdownMenu.RadioGroup
-                      onValueChange={(chosen) =>
-                        model.onChange(chosen === UNPINNED_AGENT_MODEL ? null : chosen as AgentModelOverride)}
-                      value={model.value ?? UNPINNED_AGENT_MODEL}
-                    >
-                      <DropdownMenu.RadioItem className="menu-item model-selector-item" value={UNPINNED_AGENT_MODEL}>
-                        <span>{UNPINNED_AGENT_MODEL_LABEL}</span>
-                        <DropdownMenu.ItemIndicator asChild>
-                          <Check aria-hidden="true" size={15} />
-                        </DropdownMenu.ItemIndicator>
-                      </DropdownMenu.RadioItem>
-                      {AGENT_MODEL_GROUPS.map((group) => (
-                        <Fragment key={group.provider}>
-                          <DropdownMenu.Label className="menu-label model-selector-provider">{group.provider}</DropdownMenu.Label>
-                          {group.models.map((choice) => (
-                            <DropdownMenu.RadioItem className="menu-item model-selector-item" key={choice.id} value={choice.id}>
-                              <span>{choice.label}</span>
-                              <DropdownMenu.ItemIndicator asChild>
-                                <Check aria-hidden="true" size={15} />
-                              </DropdownMenu.ItemIndicator>
-                            </DropdownMenu.RadioItem>
-                          ))}
-                        </Fragment>
-                      ))}
-                    </DropdownMenu.RadioGroup>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
+                {model.kind === 'choice' && (
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content align="start" className="menu-content model-selector-menu" sideOffset={8}>
+                      <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
+                      {/* Unpinned is its own value rather than the first model:
+                          the flag decides which model it resolves to, and naming
+                          one here would be a claim the renderer cannot make. */}
+                      <DropdownMenu.RadioGroup
+                        onValueChange={(chosen) =>
+                          model.onChange(chosen === UNPINNED_AGENT_MODEL ? null : chosen as AgentModelOverride)}
+                        value={model.value ?? UNPINNED_AGENT_MODEL}
+                      >
+                        <DropdownMenu.RadioItem className="menu-item model-selector-item" value={UNPINNED_AGENT_MODEL}>
+                          <span>{UNPINNED_AGENT_MODEL_LABEL}</span>
+                          <DropdownMenu.ItemIndicator asChild>
+                            <Check aria-hidden="true" size={15} />
+                          </DropdownMenu.ItemIndicator>
+                        </DropdownMenu.RadioItem>
+                        {AGENT_MODEL_GROUPS.map((group) => (
+                          <Fragment key={group.provider}>
+                            <DropdownMenu.Label className="menu-label model-selector-provider">{group.provider}</DropdownMenu.Label>
+                            {group.models.map((choice) => (
+                              <DropdownMenu.RadioItem className="menu-item model-selector-item" key={choice.id} value={choice.id}>
+                                <span>{choice.label}</span>
+                                <DropdownMenu.ItemIndicator asChild>
+                                  <Check aria-hidden="true" size={15} />
+                                </DropdownMenu.ItemIndicator>
+                              </DropdownMenu.RadioItem>
+                            ))}
+                          </Fragment>
+                        ))}
+                      </DropdownMenu.RadioGroup>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                )}
               </DropdownMenu.Root>
             )}
           </div>

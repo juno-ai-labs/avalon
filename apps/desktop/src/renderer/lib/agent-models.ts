@@ -114,10 +114,17 @@ export function agentModelInUseLabel(model: string | null): string {
 }
 
 /**
- * The accessible name and tooltip for that same read-only pill. It carries the
- * exact id rather than the shortened name — the pill is a glance, the tooltip
- * is the answer — and says why the control does not open, because a control
- * that looks like the composer's and does nothing has to explain itself.
+ * The accessible name and tooltip for that same pill once its trigger is
+ * disabled. It carries the exact id rather than the shortened name — the pill
+ * is a glance, this is the answer — and says why the control does not open,
+ * because a control that looks like the composer's and does nothing has to
+ * explain itself.
+ *
+ * The tooltip still fires on the disabled trigger. That is worth knowing rather
+ * than assuming: a disabled button swallows clicks, which is what keeps the menu
+ * shut, but Radix's tooltip is driven by pointer movement that still reaches it.
+ * Keyboard focus is the route that does go — Tab skips a disabled button — so
+ * this string has to stand on its own as the accessible name too.
  */
 export function agentModelInUseTriggerLabel(model: string | null): string {
   const subject = model === null
