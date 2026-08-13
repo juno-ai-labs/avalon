@@ -3,6 +3,7 @@ import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 
 import type { Env } from "../../env";
 import { logStructuredEvent } from "../../observability/logger";
+import { recordTerminalPlatformObservation } from "../../observability/terminal-platform-observability";
 import {
   createTerminalPlugin,
   parseTerminalRegionConfiguration,
@@ -39,7 +40,9 @@ export async function createAvalonTerminalPlugin(
     executionPrincipal: input.executionPrincipal,
   });
 
-  const provider = createDaytonaTerminalProvider(configuration);
+  const provider = createDaytonaTerminalProvider(configuration, undefined, {
+    observe: (measurement) => recordTerminalPlatformObservation(env, measurement),
+  });
   const coordinator = new TerminalSandboxCoordinator(
     env.DB,
     provider,

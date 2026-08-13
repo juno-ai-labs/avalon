@@ -125,7 +125,10 @@ The automated probe creates one private Trusted-only sandbox, verifies the exact
 effective allowlist, every promised runtime/manager, allowed and denied domains,
 direct-IP, redirect, private-DNS, and metadata denial. It then checks
 stop/restart, archive/restore, deletion, and observed absence; cleanup failure is
-a failed probe and success is printed only afterward. The automated result is
+a failed probe and success is printed only afterward. It also prints create,
+policy-read-back, compatibility-install, manifest-verification, and start phase
+timings from that disposable sandbox. These are acceptance evidence, not the
+production distribution used for the image decision. The automated result is
 not sufficient by itself: the activation record must also contain controlled
 evidence for TTL-changing public-to-private DNS rebinding and host-scoped secret
 substitution against an alternate host. Preserve those results with the provider
@@ -134,6 +137,18 @@ preserve configuration values, canary secret values, or endpoint credentials.
 Only after the complete record exists should the Wrangler region be changed to
 `supported`, the three non-secret values be configured, the API key be set, and
 that region deployed.
+
+Once enabled, query the durable aggregate measurements with:
+
+```text
+pnpm terminal:analytics -- --days 7
+pnpm terminal:analytics -- --days 30 --region eu --snapshot daytona-small
+```
+
+The command uses `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` restricted
+to **Account Analytics: Read**. Its start/end line is the actual first and last
+Analytics Engine observation in the requested window, not merely the requested
+date boundary.
 
 Use the structured events `terminal_tool_finished`,
 `terminal_sandbox_lifecycle_transition`, and
@@ -567,6 +582,7 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Broken response contracts | `event = request_failed` and `error_name = ZodError` |
 | Harness run outcomes | `event = harness_run_finished` |
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
+| Slow Terminal bootstrap | `event = terminal_daytona_operation_finished`, `operation = sandbox_bootstrap`, and `install_duration_ms > 10000` |
 
 Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
 
@@ -671,6 +687,63 @@ started yet, so re-check the product page before treating that as a budget.
 Every `writeDataPoint` is one billable write regardless of how many fields it
 contains, which is another reason to record one terminal summary rather than
 every churn.
+
+### Terminal platform analytics
+
+Both API Workers bind `TERMINAL_ANALYTICS` to the account-level
+`avalon_terminal_operations` dataset. This dataset has one point per Daytona
+platform operation and is intentionally separate from `avalon_agent_runs`: a
+provider create/bootstrap/start is a different grain from a completed model
+run. Writes are non-blocking and advisory. A failed analytics write cannot
+change sandbox state.
+
+The fixed `terminal_platform_v1` positions are:
+
+| Column | Meaning |
+| --- | --- |
+| `index1` | `terminal:<region>` sampling cohort; snapshot remains a grouped blob |
+| `blob1` | schema version |
+| `blob2` | `sandbox_create`, `sandbox_bootstrap`, or `sandbox_start` |
+| `blob3` | `completed`, `failed`, or `policy_mismatch` |
+| `blob4` | Avalon region |
+| `blob5` | configured Daytona snapshot |
+| `blob6` | source lifecycle state (`absent`, `stopped`, `archived`, and so on) |
+| `blob7` | failed phase, or `none` |
+| `blob8` | sorted compatibility capabilities installed, or `none` |
+| `blob9` | Avalon app version |
+| `blob10` | build SHA |
+| `double1` | total operation milliseconds |
+| `double2` | provider create milliseconds |
+| `double3` | provider policy read-back milliseconds |
+| `double4` | workspace/package compatibility-install milliseconds |
+| `double5` | full capability-manifest verification milliseconds |
+| `double6` | number of compatibility capabilities installed |
+
+No point contains a workspace, work stream, run, user, sandbox, repository,
+resource, command, path, output, or credential identifier. The dataset therefore
+answers fleet/image questions, not exact-work-stream diagnosis. Exact state
+continues to come from regional D1 and structured Workers Logs.
+
+`pnpm terminal:analytics` sends sampling-aware SQL to Cloudflare's documented
+[Analytics Engine SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/).
+It reports the actual observed start/end, estimated operation counts, and
+average/p50/p95/max total latency. Create is decomposed into allocation and
+policy read-back; bootstrap into read-back, compatibility installation, and
+verification; start is labeled as stopped-sandbox warming or archived restore.
+It also expands the fixed installed-capability set into human-readable counts.
+Use `--days 1..90`, `--region global|eu|all`, and an optional safe snapshot name.
+Analytics Engine retains these points for three months.
+
+The report intentionally refuses to recommend an owned image before 100
+successful bootstraps in the selected cohort. At or beyond that sample, a
+compatibility-install p95 above ten seconds triggers a prebuilt-snapshot
+benchmark—not an automatic switch. Run paired disposable creates in the same
+Daytona target and retain manifest verification in both variants. Adopt an owned
+snapshot only when its first-ready improvement is material after including
+provider create/read-back, warming, archived restore, failure rate, image build
+and activation work, and the cost of following managed Daytona updates. A custom
+image cannot claim savings from verification, because Avalon keeps that phase
+for either image.
 
 Automatic tracing is enabled on both API Workers and on the retention Worker at
 a `traces` head sampling rate of 1. It is a separate switch from logs: the

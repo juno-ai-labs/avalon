@@ -125,6 +125,15 @@ export const SAVED_QUERY_DEFINITIONS = Object.freeze([
       filter("duration_ms", "gt", "number", 60_000),
     ],
   ),
+  savedQuery(
+    "Avalon · Slow Terminal bootstrap",
+    "Managed Daytona compatibility installations slower than ten seconds.",
+    [
+      filter("event", "eq", "string", "terminal_daytona_operation_finished"),
+      filter("operation", "eq", "string", "sandbox_bootstrap"),
+      filter("install_duration_ms", "gt", "number", 10_000),
+    ],
+  ),
 ]);
 
 function sortObject(value) {

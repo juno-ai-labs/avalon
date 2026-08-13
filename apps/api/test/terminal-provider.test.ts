@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createDaytonaTerminalProvider } from "../src/services/terminal/daytona-provider";
+import {
+  createDaytonaTerminalProvider,
+  type TerminalProviderOperationMeasurement,
+} from "../src/services/terminal/daytona-provider";
 
 describe("Daytona Terminal provider", () => {
   it("creates a private managed sandbox with native policy and lifecycle backstops", async () => {
-    const executeCommand = vi.fn(async () => ({ exitCode: 0 }));
+    const executeCommand = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, result: "AVALON_BOOTSTRAP_INSTALLED=sqlite3,gh,pnpm,tsx\n" })
+      .mockResolvedValueOnce({ exitCode: 0, result: "bash:ok\n" });
     const created = {
       id: "sandbox-1",
       name: "avalon-ws-stream",
@@ -32,7 +37,7 @@ describe("Daytona Terminal provider", () => {
       apiKey: "secret",
       apiUrl: "https://app.daytona.io/api",
       target: "us",
-      snapshot: "avalon-terminal-2026-08-13",
+      snapshot: "daytona-small",
       emergencyDisabled: false,
     }, clientFactory);
 
@@ -55,7 +60,7 @@ describe("Daytona Terminal provider", () => {
     expect(create).toHaveBeenCalledWith({
       name: "avalon-ws-stream",
       language: "typescript",
-      snapshot: "avalon-terminal-2026-08-13",
+      snapshot: "daytona-small",
       public: false,
       autoStopInterval: 15,
       autoArchiveInterval: 60,
@@ -77,12 +82,107 @@ describe("Daytona Terminal provider", () => {
     });
     expect(get).toHaveBeenCalledWith("sandbox-1");
     expect(observed.refreshData).toHaveBeenCalledTimes(2);
-    expect(executeCommand).toHaveBeenCalledWith(
-      expect.stringMatching(/bash -lc .*sudo -n install.*sqlite3.*pnpm@11\.13\.0.*tsx@4\.20\.6.*gh --version/su),
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(/bash -lc .*sudo -n install.*sqlite3.*pnpm@11\.13\.0.*tsx@4\.20\.6.*AVALON_BOOTSTRAP_INSTALLED=/su),
       undefined,
       undefined,
       120,
     );
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/bash -lc .*python3 -c.*gh --version/su),
+      undefined,
+      undefined,
+      120,
+    );
+  });
+
+  it("measures provisioning, compatibility installation, verification, and warming separately", async () => {
+    const measurements: TerminalProviderOperationMeasurement[] = [];
+    const times = [0, 100, 300, 400, 450, 2_450, 2_750, 3_000, 4_200];
+    const now = vi.fn(() => times.shift()!);
+    const executeCommand = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, result: "AVALON_BOOTSTRAP_INSTALLED=sqlite3,gh,pnpm\n" })
+      .mockResolvedValueOnce({ exitCode: 0, result: "bash:ok\n" });
+    const sandbox = {
+      id: "sandbox-measured",
+      name: "avalon-measured",
+      state: "started",
+      domainAllowList: "github.com",
+      refreshData: vi.fn(async () => undefined),
+      start: vi.fn(async () => undefined),
+      process: {
+        executeCommand,
+        createSession: vi.fn(async () => undefined),
+        executeSessionCommand: vi.fn(async () => ({})),
+        deleteSession: vi.fn(async () => undefined),
+      },
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "daytona-small", emergencyDisabled: false,
+    }, () => ({
+      create: vi.fn(async () => sandbox),
+      get: vi.fn(async () => sandbox),
+    }), { now, observe: (measurement) => measurements.push(measurement) });
+
+    const created = await provider.createSandbox({
+      stableName: sandbox.name, workspaceId: "workspace-1", workstreamId: "stream-1",
+      generation: 1, domainAllowList: ["github.com"], environment: {},
+    });
+    await provider.prepareSandbox!(created.id, ["github.com"]);
+    sandbox.state = "stopped";
+    await provider.startSandbox(created.id);
+
+    expect(measurements).toEqual([
+      {
+        operation: "sandbox_create", outcome: "completed", snapshot: "daytona-small",
+        sourceState: "absent", failurePhase: "none", durationMs: 300,
+        providerCreateMs: 100, policyReadbackMs: 200, installMs: 0, verifyMs: 0,
+        installedCapabilities: [],
+      },
+      {
+        operation: "sandbox_bootstrap", outcome: "completed", snapshot: "daytona-small",
+        sourceState: "running", failurePhase: "none", durationMs: 2_350,
+        providerCreateMs: 0, policyReadbackMs: 50, installMs: 2_000, verifyMs: 300,
+        installedCapabilities: ["sqlite3", "gh", "pnpm"],
+      },
+      {
+        operation: "sandbox_start", outcome: "completed", snapshot: "daytona-small",
+        sourceState: "stopped", failurePhase: "none", durationMs: 1_200,
+        providerCreateMs: 0, policyReadbackMs: 0, installMs: 0, verifyMs: 0,
+        installedCapabilities: [],
+      },
+    ]);
+    expect(now).toHaveBeenCalledTimes(9);
+  });
+
+  it("measures failed provider creation without exposing the provider error", async () => {
+    const measurements: TerminalProviderOperationMeasurement[] = [];
+    const times = [1_000, 1_750];
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "daytona-small", emergencyDisabled: false,
+    }, () => ({
+      create: vi.fn(async () => { throw new Error("provider detail must not enter analytics"); }),
+      get: vi.fn(),
+    }), {
+      now: () => times.shift()!,
+      observe: (measurement) => measurements.push(measurement),
+    });
+
+    await expect(provider.createSandbox({
+      stableName: "avalon-failed", workspaceId: "workspace-1", workstreamId: "stream-1",
+      generation: 1, domainAllowList: [], environment: {},
+    })).rejects.toThrow("provider detail must not enter analytics");
+    expect(measurements).toEqual([{
+      operation: "sandbox_create", outcome: "failed", snapshot: "daytona-small",
+      sourceState: "absent", failurePhase: "provider_create", durationMs: 750,
+      providerCreateMs: 750, policyReadbackMs: 0, installMs: 0, verifyMs: 0,
+      installedCapabilities: [],
+    }]);
+    expect(JSON.stringify(measurements)).not.toContain("provider detail");
   });
 
   it("reports only the provider-observed create policy", async () => {

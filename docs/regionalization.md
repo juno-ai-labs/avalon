@@ -295,14 +295,16 @@ commitments, and establishing contractual processing terms.
 
 Workers Analytics Engine is also an account-level observability service for
 which this repository configures no regional jurisdiction. Both API Workers
-write root-run summaries to the same `avalon_agent_runs` dataset. To keep that
-additional boundary operational-only, its datapoints contain source, outcome,
-model/release metadata, and numeric run totals but no workspace, work-stream,
-run, user, prompt, transcript, tool payload, connector content, or credential
+write root-run summaries to `avalon_agent_runs` and content-free Daytona phase
+measurements to `avalon_terminal_operations`. To keep that additional boundary
+operational-only, datapoints contain operational enums, region, configured
+snapshot/model/release metadata, and numeric totals but no workspace,
+work-stream, run, user, provider-sandbox, prompt, transcript, tool payload,
+command, path, repository, resource, connector content, or credential
 identifier. Exact correlated records remain in the existing D1, Workers
 Logs/Traces, and region-specific R2 Logpush paths. A future requirement for
 jurisdiction-pinned custom analytics must replace or contractually validate
-this shared dataset rather than assuming the EU Worker binding makes it EU
+these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
@@ -355,6 +357,31 @@ must provision their dedicated telemetry resources before rollout.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Daytona fleet timing stays aggregate and account-level
+
+**What changed:** Both regional Workers now write provider create, managed-image
+bootstrap, verification, and lifecycle-start phase measurements to the shared
+`avalon_terminal_operations` Analytics Engine dataset. The sampling cohort is
+the fixed Terminal source plus region, while configured snapshot remains a
+groupable blob; no tenant or operation identifier is stored.
+
+**Why:** Deciding whether to replace Daytona's common managed image requires a
+cross-sandbox latency distribution, while exact regional identifiers add no
+value to that fleet-level question and Analytics Engine has no configured EU
+jurisdiction guarantee.
+
+**Considered and rejected:** Adding Daytona timings to the root-run dataset,
+indexing by workspace/sandbox, and naming a separate EU table as if its name
+established residency. They respectively mix incompatible event grains, expose
+unneeded correlation in a sampled store, or claim a boundary Cloudflare does
+not document.
+
+**Consequences:** EU and Global phase data can be filtered by the explicit
+region blob but shares the same account-level Analytics Engine boundary and
+three-month retention. Regional D1 and R2 Logpush remain the exact sources; a
+future jurisdiction requirement must replace or contractually validate this
+aggregate path.
 
 ### 2026-08-13 — Terminal availability is a regional provider gate
 
