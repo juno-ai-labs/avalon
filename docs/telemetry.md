@@ -346,7 +346,7 @@ that must prove the released native crash path.
 desktop dependency and lockfile; release invariants enforce both ownership and
 package-scoped resolution.
 
-Shipped in the follow-up release reliability fix.
+Shipped in the pull request for this change.
 
 ### 2026-08-13 — Telemetry seams preserve policy and metric correctness
 
