@@ -39,7 +39,6 @@ function resource(
     model_mime_type: null,
     model_content_sha256: null,
     model_metadata_json: null,
-    model_index_ref: null,
     model_content_status: null,
     model_content_extractor_version: null,
     model_content_character_count: null,
@@ -241,6 +240,7 @@ describe("work-stream compaction resource inventory", () => {
       } as WorkstreamWorkflowInput,
       42,
       checkpoint,
+      "inventory:0",
     );
 
     expect(sql).toContain("checkpoint_template_version");

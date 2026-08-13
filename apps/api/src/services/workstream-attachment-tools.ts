@@ -24,7 +24,6 @@ import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } fro
 import {
   materializeAttachmentDerivative,
   type AuthorizedDerivativeResource,
-  type DerivativeIndex,
   type MaterializedAttachmentDerivative,
 } from "./attachment-derivative-service";
 import {
@@ -58,7 +57,7 @@ const MAXIMUM_SEARCH_RESULT_CHARACTERS = 20_000;
 const DEFAULT_IMAGE_MAX_DIMENSION = 1_536;
 const DEFAULT_SUMMARY_CHARACTERS = 12_000;
 const MAX_DERIVATIVE_OBJECT_BYTES = 8 * 1024 * 1024;
-const MAX_INDEX_OBJECT_BYTES = 2 * 1024 * 1024;
+const SEARCH_CHUNK_CHARACTERS = 4_000;
 
 export interface WorkstreamAttachmentToolOptions {
   summarizeDerivative?: AttachmentSummaryRunner;
@@ -95,18 +94,6 @@ const ReadCursorStateSchema = z.object({
   extractorVersion: z.string().min(1).max(160),
   start: z.number().int().nonnegative(),
   pageSize: z.number().int().min(1).max(MAXIMUM_READ_CHARACTERS),
-}).strict();
-
-const DerivativeIndexSchema = z.object({
-  offsetUnit: z.literal("utf16"),
-  totalCharacters: z.number().int().nonnegative(),
-  chunks: z.array(z.object({
-    ordinal: z.number().int().nonnegative(),
-    start: z.number().int().nonnegative(),
-    end: z.number().int().nonnegative(),
-    sectionLabel: z.string().nullable(),
-    terms: z.array(z.string()).max(64),
-  }).strict()).max(500),
 }).strict();
 
 class AttachmentOperationError extends Error {
@@ -307,35 +294,28 @@ export function createWorkstreamAttachmentTools(
         const row = await requireVisibleResource(env, input, options, args.resourceId);
         assertReadableKind(row, modelToolName("search_resource"), modelToolPrefix);
         const ready = await ensureReadyTextDerivative(env, row, context.signal);
-        const [contentObject, indexObject] = await Promise.all([
-          env.PAYLOADS.get(ready.contentRef),
-          env.PAYLOADS.get(ready.indexRef),
-        ]);
-        if (!contentObject || !indexObject) throw attachmentError("resource_conversion_failed", "The selected derivative or index is unavailable");
-        if (contentObject.size > MAX_DERIVATIVE_OBJECT_BYTES || indexObject.size > MAX_INDEX_OBJECT_BYTES) {
-          throw attachmentError("resource_conversion_failed", "The selected derivative or index exceeds its readable size limit");
+        const contentObject = await env.PAYLOADS.get(ready.contentRef);
+        if (!contentObject) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
+        if (contentObject.size > MAX_DERIVATIVE_OBJECT_BYTES) {
+          throw attachmentError("resource_conversion_failed", "The selected derivative exceeds its readable size limit");
         }
-        const [text, indexText] = await Promise.all([contentObject.text(), indexObject.text()]);
-        let indexValue: unknown;
-        try {
-          indexValue = JSON.parse(indexText);
-        } catch {
-          throw attachmentError("resource_conversion_failed", "The selected derivative index is invalid");
-        }
-        const parsedIndex = DerivativeIndexSchema.safeParse(indexValue);
-        if (!parsedIndex.success) {
-          throw attachmentError("resource_conversion_failed", "The selected derivative index is invalid");
-        }
-        const index = parsedIndex.data as DerivativeIndex;
-        if (index.totalCharacters !== text.length || index.totalCharacters !== ready.totalCharacters) {
-          throw attachmentError("resource_version_changed", "The selected derivative and index no longer match");
+        const text = await contentObject.text();
+        if (text.length !== ready.totalCharacters) {
+          throw attachmentError("resource_version_changed", "The selected derivative length no longer matches its version");
         }
         const queryTerms = normalizedTerms(args.query);
-        const ranked = index.chunks.map((chunk) => {
+        const normalizedQuery = args.query.trim().toLocaleLowerCase("en-US");
+        const ranked = derivativeSearchChunks(text).map((chunk) => {
           const chunkText = text.slice(chunk.start, chunk.end).toLocaleLowerCase("en-US");
+          const exactMatch = normalizedQuery ? chunkText.indexOf(normalizedQuery) : -1;
+          const termMatches = queryTerms.flatMap((term) => {
+            const offset = chunkText.indexOf(term);
+            return offset >= 0 ? [offset] : [];
+          });
           return {
             chunk,
-            score: queryTerms.reduce((score, term) => score + (chunkText.includes(term) ? 1 : 0), 0),
+            score: exactMatch >= 0 ? queryTerms.length + 1 : termMatches.length,
+            matchStart: chunk.start + (exactMatch >= 0 ? exactMatch : Math.min(...termMatches)),
           };
         }).filter((candidate) => candidate.score > 0)
           .sort((left, right) => right.score - left.score || left.chunk.start - right.chunk.start);
@@ -349,7 +329,7 @@ export function createWorkstreamAttachmentTools(
           const remaining = MAXIMUM_SEARCH_RESULT_CHARACTERS - returnedCharacters;
           if (remaining <= 0) break;
           const passageLength = Math.min(maxPassageCharacters, remaining);
-          const range = passageRange(text, candidate.chunk.start, candidate.chunk.end, passageLength, args.query);
+          const range = passageRange(text, candidate.chunk.start, candidate.chunk.end, passageLength, candidate.matchStart);
           const passageText = text.slice(range.start, range.end);
           passages.push({
             rank: passages.length + 1,
@@ -763,7 +743,6 @@ function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): Author
     modelContentRef: row.model_content_ref,
     modelMimeType: row.model_mime_type,
     modelContentSha256: row.model_content_sha256,
-    modelIndexRef: row.model_index_ref,
     modelContentStatus: row.model_content_status,
     modelContentExtractorVersion: row.model_content_extractor_version,
     modelContentCharacterCount: row.model_content_character_count,
@@ -777,7 +756,6 @@ function resourceListItem(row: VisibleWorkstreamResourceRow) {
   return {
     resourceId: row.id,
     title: row.title,
-    fileName: row.title,
     resourceType: row.resource_type,
     provider: row.provider,
     mimeType: row.mime_type,
@@ -886,7 +864,7 @@ function scopedCursorPurpose(options: WorkstreamAttachmentToolOptions, purpose: 
 }
 
 function normalizedTerms(value: string): string[] {
-  return [...new Set(value.toLocaleLowerCase("en-US").match(/[\p{L}\p{N}_-]{2,}/gu) ?? [])];
+  return [...new Set(value.toLocaleLowerCase("en-US").match(/[\p{L}\p{N}_-]+/gu) ?? [])];
 }
 
 function passageRange(
@@ -894,16 +872,36 @@ function passageRange(
   chunkStart: number,
   chunkEnd: number,
   maximumLength: number,
-  query: string,
+  matchStart: number,
 ): { start: number; end: number } {
-  const chunkText = text.slice(chunkStart, chunkEnd);
-  const match = chunkText.toLocaleLowerCase("en-US").indexOf(query.toLocaleLowerCase("en-US"));
-  const center = match >= 0 ? chunkStart + match : chunkStart;
-  let start = Math.max(chunkStart, center - Math.floor(maximumLength / 3));
-  let end = Math.min(text.length, Math.max(chunkEnd, start + maximumLength));
-  if (end - start > maximumLength) end = start + maximumLength;
+  let start = Math.max(chunkStart, matchStart - Math.floor(maximumLength / 3));
+  const end = Math.min(chunkEnd, start + maximumLength);
   if (end - start < maximumLength) start = Math.max(0, end - maximumLength);
   return { start: safeUtf16Start(text, start), end: safeUtf16End(text, end) };
+}
+
+function derivativeSearchChunks(text: string): Array<{
+  start: number;
+  end: number;
+  sectionLabel: string | null;
+}> {
+  const chunks = [];
+  let sectionLabel: string | null = null;
+  for (let start = 0; start < text.length;) {
+    const hardEnd = Math.min(text.length, start + SEARCH_CHUNK_CHARACTERS);
+    const candidate = text.slice(start, hardEnd);
+    const headings = [...candidate.matchAll(/^#{1,6}\s+(.+)$/gmu)];
+    if (headings.length > 0) sectionLabel = headings.at(-1)?.[1]?.trim() || sectionLabel;
+    let end = hardEnd;
+    if (hardEnd < text.length) {
+      const boundary = Math.max(candidate.lastIndexOf("\n\n"), candidate.lastIndexOf("\n"));
+      if (boundary >= Math.floor(SEARCH_CHUNK_CHARACTERS / 2)) end = start + boundary + 1;
+      end = safeUtf16End(text, end);
+    }
+    chunks.push({ start, end, sectionLabel });
+    start = end;
+  }
+  return chunks;
 }
 
 function safeUtf16Start(text: string, offset: number): number {

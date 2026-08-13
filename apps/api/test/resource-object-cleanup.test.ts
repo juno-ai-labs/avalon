@@ -9,11 +9,7 @@ describe("resource object cleanup", () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
       CREATE TABLE resources (
-        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
-      );
-      CREATE TABLE resource_model_objects (
-        workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
-        lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
       );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
@@ -52,11 +48,7 @@ describe("resource object cleanup", () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
       CREATE TABLE resources (
-        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
-      );
-      CREATE TABLE resource_model_objects (
-        workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
-        lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
       );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
@@ -105,21 +97,15 @@ describe("resource object cleanup", () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
       CREATE TABLE resources (
-        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT, model_index_ref TEXT
-      );
-      CREATE TABLE resource_model_objects (
-        workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
-        lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
       );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
-      INSERT INTO resources (id, workspace_id, content_ref, model_content_ref, model_index_ref)
-      VALUES ('resource-current', 'workspace-one', 'original', 'regional/reactivated', NULL);
-      INSERT INTO resource_model_objects (workspace_id, resource_id, object_ref, lifecycle_status)
-      VALUES ('workspace-one', 'resource-current', 'regional/reactivated', 'active');
+      INSERT INTO resources (id, workspace_id, content_ref, model_content_ref)
+      VALUES ('resource-current', 'workspace-one', 'original', 'regional/reactivated');
       INSERT INTO resource_object_deletion_outbox
         (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
       VALUES ('regional/reactivated', 'workspace-one', 'resource-current', 'derivative', '2026-08-12', '2026-08-12');
