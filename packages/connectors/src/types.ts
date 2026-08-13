@@ -656,6 +656,34 @@ export interface ConnectorAgentPluginDescriptor {
 }
 
 /**
+ * A connection-specific agent tool surface discovered from a provider at
+ * plugin activation time.
+ *
+ * Hosted MCP servers are the motivating case: `tools/list` is the authority on
+ * what exists, so copying one observed response into a static connector
+ * manifest guarantees drift. The provider adapter still owns the trusted
+ * catalog prose, safety policy, and credential lifecycle; only tool names,
+ * descriptions, and input schemas cross this dynamic boundary. Provider
+ * annotations remain untrusted transport metadata and cannot select mode or
+ * idempotency.
+ */
+export interface ConnectorDynamicAgentTools {
+  /** Capabilities which may authorize discovery for an existing connection. */
+  readonly capabilities: readonly string[];
+  /** Connection scopes on which this dynamic surface replaces static tools. */
+  readonly connectionScopes: readonly Scope[];
+  /**
+   * Discover one frozen activation's tool definitions. The host validates the
+   * returned definitions, grants, and model-facing wire-name uniqueness before
+   * exposing them.
+   */
+  discover(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+  ): Promise<readonly ToolDefinition[]>;
+}
+
+/**
  * Freeze a code-authored connector plugin descriptor at its trust boundary.
  * This helper deliberately accepts no connection context.
  */
@@ -671,6 +699,8 @@ export function defineConnectorAgentPlugin(
 export interface ConnectorAdapter {
   manifest: ConnectorManifestInput;
   agentPlugin: ConnectorAgentPluginDescriptor;
+  /** Live provider-authored tools, resolved only when this plugin activates. */
+  dynamicAgentTools?: ConnectorDynamicAgentTools;
   /**
    * Optional per-capability narrowing of the connector-wide supported scopes.
    * Omitted capabilities inherit `manifest.supportedScopes`.

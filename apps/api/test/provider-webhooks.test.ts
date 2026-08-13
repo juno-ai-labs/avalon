@@ -224,7 +224,7 @@ class FakeDatabase {
       if (connection.status === "disabled") return false;
       if (sql.includes("connector_type = 'notion'")) {
         return connection.connector_type === "notion"
-          && connection.scope === "personal"
+          && connection.scope === "workspace"
           && values.includes(connection.provider_account_id);
       }
       if (sql.includes("json_extract(config_json, '$.githubUserId')")) {
@@ -1320,8 +1320,7 @@ describe("provider-wide webhook ingestion", () => {
         workspaceId: WORKSPACE_ONE,
         provider: "notion",
         providerAccountId: NOTION_BOT,
-        scope: "personal",
-        ownerUserId: USER_ONE,
+        scope: "workspace",
         credentials: {
           notionWorkspaceId: NOTION_WORKSPACE,
           botId: NOTION_BOT,
@@ -1333,8 +1332,7 @@ describe("provider-wide webhook ingestion", () => {
         workspaceId: WORKSPACE_TWO,
         provider: "notion",
         providerAccountId: NOTION_BOT,
-        scope: "personal",
-        ownerUserId: USER_TWO,
+        scope: "workspace",
         credentials: {
           notionWorkspaceId: NOTION_WORKSPACE,
           botId: NOTION_BOT,
@@ -1346,8 +1344,7 @@ describe("provider-wide webhook ingestion", () => {
         workspaceId: WORKSPACE_ONE,
         provider: "notion",
         providerAccountId: NOTION_OTHER_BOT,
-        scope: "personal",
-        ownerUserId: USER_TWO,
+        scope: "workspace",
         credentials: {
           notionWorkspaceId: NOTION_WORKSPACE,
           botId: NOTION_OTHER_BOT,
@@ -1359,8 +1356,7 @@ describe("provider-wide webhook ingestion", () => {
         workspaceId: WORKSPACE_TWO,
         provider: "notion",
         providerAccountId: NOTION_BOT,
-        scope: "personal",
-        ownerUserId: USER_TWO,
+        scope: "workspace",
         credentials: {
           notionWorkspaceId: NOTION_OTHER_WORKSPACE,
           botId: NOTION_BOT,
@@ -1413,6 +1409,8 @@ describe("provider-wide webhook ingestion", () => {
     expect(database.activities[0]).toMatchObject({
       workspaceId: WORKSPACE_ONE,
       connectionId: CONNECTION_ONE,
+      connectionScope: "workspace",
+      connectionOwnerUserId: null,
       eventType: "notion.page.content_updated",
     });
     expect(queue.messages).toHaveLength(1);

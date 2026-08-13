@@ -2280,6 +2280,12 @@ export interface HarnessPlugin {
   description: string;
   systemMessage?: string;
   tools: HarnessTool[];
+  /**
+   * Resolve a provider-authored tool surface when this deferred plugin is
+   * activated. The catalog remains static and trusted; only the active tool
+   * definitions are replaced. Results are cached for the lifetime of one run.
+   */
+  loadTools?: () => Promise<HarnessTool[]>;
   /** For deferred plugins, requests persistence before an activation hint; ignored for core plugins. */
   preload: boolean;
   explicit?: boolean;
