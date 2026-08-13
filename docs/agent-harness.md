@@ -9,6 +9,8 @@ Each run is one server-side, tool-using loop inherent to a work stream. It is no
 | Path | Responsibility |
 | --- | --- |
 | `packages/agent-harness/src/bind-runtime.ts` | The Bind 11 adapter itself — registry construction, the tool loop's hooks, streaming. |
+| `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization and bounded model-visible argument errors. |
+| `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
 | `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
@@ -130,7 +132,7 @@ The prompt sections are a pure render of run state. Bodies are rebuilt from the 
 2. Register the applicable stable core plugins plus the frozen connection catalog; restore only reauthorized hints.
 3. Reauthorize active plugins, render the stable prompt/tool surface, and ask OpenRouter through Bind's deterministic route plan.
 4. Stream text through the epoch-aware protocol; reasoning fields are ignored.
-5. Validate tools and recheck authority. Bind runs writes sequentially and may overlap independent reads, while returning results in the model's original call order.
+5. Normalize unambiguous schema-declared numeric strings, validate tools, and recheck authority. Bind runs writes sequentially and may overlap independent reads, while returning results in the model's original call order.
 6. Persist each immutable execution plan before execution and make a successful bounded result durable before returning it to Bind.
 7. Persist the complete assistant message, then let the lease-owning Workflow append the terminal lifecycle event.
 8. Stop on completion, elicitation, durable cancellation, ambiguous write, limit, lease loss, or failure.
@@ -144,6 +146,16 @@ The canonical `request_elicitation` tool belongs to `avalon:core` and is rendere
 ### Durable receipts and terminal state
 
 Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before execution, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to D1 before Bind can observe it.
+
+Before the input hash or any host hook sees arguments, the harness walks the
+tool's provider-facing JSON Schema and normalizes a string only where the field
+is exclusively numeric and the complete string is a finite JSON number. Unsafe
+integers and ambiguous string-or-number fields remain strings and fail or parse
+under the executor's normal contract. This makes a medium model's `"0"` and the
+preferred `0` one canonical receipt identity without turning numeric-looking
+resource ids or free text into numbers. Executors remain the enforcement point;
+a Zod rejection becomes a bounded `kind: "validation"` tool result selecting the
+closest union branch rather than exposing the raw issue tree.
 
 Completed receipts replay without another provider call only while their owning
 subsystem's authorization and dependency checks still pass. Attachment list
@@ -433,6 +445,14 @@ Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceede
 
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
+A Zod error thrown by a strict tool-argument parser is handled separately. The
+model sees `kind: "validation"`, at most five actionable issues from the closest
+union branch, and no raw `invalid_union` tree. The message is capped at 1,200
+characters and never echoes submitted values. The durable execution plan may
+already exist because executor parsing is the final enforcement boundary, but a
+validation rejection performs no provider operation and remains a definitive
+failure the model may correct with a new call.
+
 The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
 Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
@@ -467,6 +487,36 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-12 — Numeric tool strings normalize before receipts and validation errors become actionable
+
+**What changed:** Every Bind tool call now normalizes an exact finite JSON-number
+string only when its declared field is exclusively numeric, before hashing,
+planning, or execution. Strict executor Zod failures reach the model as bounded
+validation guidance from the closest union branch instead of raw external-error
+trees.
+
+**Why:** A production work-stream model sent `"0"` for an integer attachment
+offset. The executor returned the complete two-branch Zod union diagnostic as an
+external failure, the model repeated the identical call, and then substituted a
+partial summary for the requested complete read. The schema contained enough
+information both to accept the unambiguous representation and to avoid burying the
+one correctable field.
+
+**Considered and rejected:** Coercing every numeric-looking string would corrupt
+ids, phone numbers, ZIP codes, and free text. Adding string alternatives to every
+tool schema would teach models the less precise form and duplicate policy across
+tool families. Catching and rewriting errors in each executor would drift and
+would miss hosted or future tools.
+
+**Consequences:** Numeric normalization is schema-guided and centralized;
+string-or-number unions preserve strings, malformed and unsafe values still fail,
+and `1` and `"1"` share one receipt identity. Executors must continue strict
+parsing and must let Zod errors reach the harness formatter. ESLint rejects
+per-tool `z.coerce.number()` and raw number-or-string compatibility types so new
+tools keep the provider schema precise and inherit the same boundary behavior.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-12 — Historical attachment results reauthorize before projection
 
