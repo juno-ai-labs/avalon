@@ -74,7 +74,7 @@ describe("Terminal HTTP route contracts", () => {
     const state = await app.request(`/workstreams/${S}/terminal`, undefined, env);
     expect(state.status).toBe(200);
     expect(TerminalWorkstreamStateSchema.parse(await state.json())).toMatchObject({
-      availability: "unsupported", state: "absent", repository: null,
+      availability: "unsupported", state: "absent", repository: null, repositoryRequest: null,
     });
   });
 

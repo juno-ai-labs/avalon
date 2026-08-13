@@ -96,6 +96,11 @@ const pathProperty = (description: string) => ({
   description,
 });
 
+// Tool deadlines include lazy sandbox allocation and compatibility setup. The
+// command envelope keeps 30 seconds beyond the model-facing 15-minute maximum
+// for durable provider observation; keep that sum within the schema ceiling.
+const TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS = 120_000;
+
 const definitions: Record<TerminalToolName, ToolDefinition> = {
   read_file: {
     name: "read_file",
@@ -103,7 +108,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.file.read",
     mode: "read",
     idempotency: "safe",
-    timeoutMs: 30_000,
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 30_000,
     inputSchema: objectSchema({
       filePath: pathProperty("Relative UTF-8 text-file path using / separators."),
       offset: { type: "integer", minimum: 1, description: "One-based starting line. Defaults to 1." },
@@ -116,7 +121,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.file.write",
     mode: "write",
     idempotency: "record_before_execute",
-    timeoutMs: 60_000,
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 60_000,
     inputSchema: objectSchema({
       filePath: pathProperty("Relative existing UTF-8 text-file path using / separators."),
       oldString: { type: "string", maxLength: 1_048_576, description: "Exact current text to replace." },
@@ -130,7 +135,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.file.write",
     mode: "write",
     idempotency: "record_before_execute",
-    timeoutMs: 60_000,
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 60_000,
     inputSchema: objectSchema({
       filePath: pathProperty("Relative UTF-8 text-file path using / separators."),
       content: { type: "string", maxLength: 10 * 1_048_576, description: "Complete new file content; the resulting file may not exceed 10 MiB." },
@@ -142,7 +147,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.file.write",
     mode: "write",
     idempotency: "record_before_execute",
-    timeoutMs: 60_000,
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 60_000,
     inputSchema: objectSchema({
       patch: { type: "string", minLength: 1, maxLength: 2 * 1_048_576, description: "Unified patch text for at most 100 files." },
     }, ["patch"]),
@@ -153,7 +158,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.command.run",
     mode: "write",
     idempotency: "record_before_execute",
-    timeoutMs: 930_000,
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 930_000,
     inputSchema: objectSchema({
       command: { type: "string", minLength: 1, maxLength: 32 * 1_024, description: "One non-interactive Bash script fragment." },
       cwd: pathProperty("Optional workspace-relative working directory."),
@@ -167,7 +172,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.resource.import",
     mode: "write",
     idempotency: "record_before_execute",
-    timeoutMs: 120_000,
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 120_000,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -189,7 +194,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.resource.publish",
     mode: "write",
     idempotency: "provider_key",
-    timeoutMs: 120_000,
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 120_000,
     inputSchema: objectSchema({
       filePath: pathProperty("Path relative to AVALON_RESOURCE_DIR."),
       displayName: { type: "string", minLength: 1, maxLength: 300, description: "Optional participant-visible resource title." },
@@ -202,7 +207,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.repository.publish",
     mode: "write",
     idempotency: "record_before_execute",
-    timeoutMs: 180_000,
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 180_000,
     inputSchema: objectSchema({
       title: { type: "string", minLength: 1, maxLength: 256, description: "Pull request title." },
       body: { type: "string", maxLength: 65_536, description: "Pull request body describing why and what changed." },

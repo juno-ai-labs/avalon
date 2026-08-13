@@ -33,6 +33,9 @@ const workspaceId = "00000000-0000-7000-8000-000000000001";
 const authorId = "00000000-0000-7000-8000-000000000002";
 const personId = "00000000-0000-7000-8000-000000000003";
 const workstreamId = "00000000-0000-7000-8000-000000000004";
+const terminalRequestRunId = "00000000-0000-7000-8000-000000000081";
+const terminalRequestInvocationId = "00000000-0000-7000-8000-000000000082";
+const terminalContinuationMessageId = "00000000-0000-7000-8000-000000000083";
 const at = "2026-08-02T20:00:00.000Z";
 const databases: DatabaseSync[] = [];
 
@@ -195,6 +198,102 @@ describe("work-stream addressing", () => {
       error_name: "Error",
       error_message: diagnostic,
     }));
+  });
+});
+
+describe("Terminal repository continuation", () => {
+  it("persists and launches one server-owned continuation", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    seedTerminalRepositoryRequest(database);
+    const service = new WorkstreamService(environment(database), auth());
+    const input = {
+      repositoryRequestId: terminalRequestInvocationId,
+      harnessRunId: terminalRequestRunId,
+      repositoryFullName: "owner/repo",
+    };
+
+    const first = await service.continueTerminalRepositoryRequest(workstreamId, input);
+    const replay = await service.continueTerminalRepositoryRequest(workstreamId, input);
+
+    expect(first.harnessRunId).toEqual(expect.any(String));
+    expect(replay.harnessRunId).toBe(first.harnessRunId);
+    expect(startWorkstreamWorkflow).toHaveBeenCalledOnce();
+    expect(database.prepare(
+      "SELECT origin, parent_harness_run_id FROM harness_runs WHERE id = ?",
+    ).get(first.harnessRunId!)).toEqual({
+      origin: "terminal_repository_answer",
+      parent_harness_run_id: terminalRequestRunId,
+    });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE client_message_id = ?",
+    ).get(terminalRequestInvocationId)).toEqual({ count: 1 });
+  });
+
+  it("recovers a durable continuation message and launches exactly one continuation run", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    seedTerminalRepositoryRequest(database);
+    database.prepare(
+      `INSERT INTO messages
+       (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+        message_type, text_content, sequence_number, created_at)
+       VALUES (?, ?, ?, ?, 'human', ?, 'text', ?, 1, ?)`,
+    ).run(
+      terminalContinuationMessageId,
+      terminalRequestInvocationId,
+      workspaceId,
+      workstreamId,
+      authorId,
+      "Continue the requested repository work using owner/repo.",
+      "2026-08-13T12:00:03.000Z",
+    );
+    const service = new WorkstreamService(environment(database), auth());
+
+    const first = await service.continueTerminalRepositoryRequest(workstreamId, {
+      repositoryRequestId: terminalRequestInvocationId,
+      harnessRunId: terminalRequestRunId,
+      repositoryFullName: "owner/repo",
+    });
+
+    expect(first.harnessRunId).toEqual(expect.any(String));
+    expect(startWorkstreamWorkflow).toHaveBeenCalledOnce();
+    expect(database.prepare(
+      "SELECT origin, parent_harness_run_id FROM harness_runs WHERE id = ?",
+    ).get(first.harnessRunId!)).toEqual({
+      origin: "terminal_repository_answer",
+      parent_harness_run_id: terminalRequestRunId,
+    });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE client_message_id = ?",
+    ).get(terminalRequestInvocationId)).toEqual({ count: 1 });
+  });
+
+  it("does not persist or launch a continuation after a newer ordinary run", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    seedTerminalRepositoryRequest(database);
+    database.exec(`
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES
+        ('00000000-0000-7000-8000-000000000084', '${workspaceId}', '${workstreamId}',
+         'human_message', '{"type":"user","userId":"${authorId}"}', 'completed', '2026-08-13T12:01:00.000Z');
+    `);
+    const service = new WorkstreamService(environment(database), auth());
+
+    await expect(service.continueTerminalRepositoryRequest(workstreamId, {
+      repositoryRequestId: terminalRequestInvocationId,
+      harnessRunId: terminalRequestRunId,
+      repositoryFullName: "owner/repo",
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "terminal_repository_request_stale",
+    });
+    expect(startWorkstreamWorkflow).not.toHaveBeenCalled();
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE client_message_id = ?",
+    ).get(terminalRequestInvocationId)).toEqual({ count: 0 });
   });
 });
 
@@ -394,6 +493,39 @@ function environment(database: DatabaseSync): Env {
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   });
+}
+
+function seedTerminalRepositoryRequest(database: DatabaseSync): void {
+  database.prepare(
+    `INSERT INTO harness_runs
+     (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+     VALUES (?, ?, ?, 'human_message', ?, 'needs_input', ?)`,
+  ).run(
+    terminalRequestRunId,
+    workspaceId,
+    workstreamId,
+    JSON.stringify({ type: "user", userId: authorId }),
+    "2026-08-13T12:00:00.000Z",
+  );
+  database.prepare(
+    `INSERT INTO tool_invocations
+     (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+      input_hash, input_json, status, error_json, started_at, completed_at)
+     VALUES (?, ?, ?, ?, 'terminal-repository-call', 'terminal_publish_branch_and_pr',
+             'hash', '{}', 'failed', ?, ?, ?)`,
+  ).run(
+    terminalRequestInvocationId,
+    workspaceId,
+    workstreamId,
+    terminalRequestRunId,
+    JSON.stringify({
+      code: "tool_failed",
+      message: "Choose a repository",
+      data: { code: "repository_not_configured" },
+    }),
+    "2026-08-13T12:00:01.000Z",
+    "2026-08-13T12:00:02.000Z",
+  );
 }
 
 function migratedDatabase(): DatabaseSync {

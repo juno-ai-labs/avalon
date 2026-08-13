@@ -99,6 +99,21 @@ try {
   sandboxId = created.id;
   if (created.domainAllowList.length !== 0) throw new Error("Daytona did not report Full-internet create state");
   await provider.prepareSandbox?.(sandboxId, []);
+  await run("printf 'session-ok\\n'", "zero", "command-session");
+
+  const roundTripPath = "/workspace/.avalon/tmp/provider-interface-round-trip.bin";
+  const roundTripBytes = new Uint8Array([0, 1, 2, 10, 13, 127, 128, 254, 255]);
+  await provider.writeFile(sandboxId, roundTripPath, roundTripBytes, new AbortController().signal);
+  const downloadedBytes = await provider.readFile(sandboxId, roundTripPath);
+  if (downloadedBytes.length !== roundTripBytes.length
+    || downloadedBytes.some((value, index) => value !== roundTripBytes[index])) {
+    throw new Error("Daytona filesystem upload/download changed the provider probe bytes");
+  }
+  await run(
+    `expected=${shellQuote(roundTripPath)}; if [ ! -f "$expected" ]; then find /workspace -name provider-interface-round-trip.bin -print >&2; exit 44; fi; actual=$(stat -c %s "$expected"); if [ "$actual" -ne ${roundTripBytes.byteLength} ]; then printf 'size=%s\\n' "$actual" >&2; exit 45; fi`,
+    "zero",
+    "filesystem-round-trip",
+  );
 
   await run(terminalSnapshotProbeCommand(), "zero", "snapshot");
   await run("curl --fail --silent --show-error --max-time 15 https://example.com/ >/dev/null", "zero", "full-internet-public-control");

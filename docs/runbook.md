@@ -131,7 +131,19 @@ or manager is not supported merely because it happens to exist in one image;
 add its functional probe and update the Terminal prompt in the same change.
 
 Before enabling a region, place the candidate configuration only in the local
-operator environment. Also provide two controlled HTTPS endpoints:
+operator environment. The current configuration can be checked immediately:
+
+```text
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/api terminal:verify-provider-interface
+```
+
+The interface probe needs only the six normal Terminal/Daytona variables and is
+appropriate for local credential, snapshot, filesystem, command-session,
+lifecycle, policy-update, and cleanup verification. It is destructive only to
+the private disposable sandbox it creates. It does not replace the full network
+acceptance gate or controlled DNS-rebinding evidence.
+
+For the full activation gate, also provide two controlled HTTPS endpoints:
 `TERMINAL_PROBE_REDIRECT_URL` must be an allowed public host that redirects to a
 blocked host, and `TERMINAL_PROBE_PRIVATE_DNS_URL` must be an allowed public name
 that resolves to a private/special-use address. Then run:
@@ -140,11 +152,12 @@ that resolves to a private/special-use address. Then run:
 pnpm dotenv -e .env.local -- pnpm --filter @avalon/api terminal:verify-provider
 ```
 
-The automated probe creates one private Trusted-only sandbox, verifies the exact
-effective allowlist, every promised runtime/manager, allowed and denied domains,
-direct-IP, redirect, private-DNS, and metadata denial. It then checks
-stop/restart, archive/restore, deletion, and observed absence; cleanup failure is
-a failed probe and success is printed only afterward. It also prints create,
+The automated acceptance probe creates one private Trusted-only sandbox,
+verifies the exact effective allowlist, a binary upload/download round-trip,
+every promised runtime/manager, allowed and denied domains, direct-IP, redirect,
+private-DNS, and metadata denial. It then checks stop/restart, archive/restore,
+deletion, and observed absence; cleanup failure is a failed probe and success is
+printed only afterward. It also prints create,
 policy-read-back, compatibility-install, manifest-verification, and start phase
 timings from that disposable sandbox. These are acceptance evidence, not the
 production distribution used for the image decision. The automated result is
