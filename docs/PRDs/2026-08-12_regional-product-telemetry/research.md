@@ -1,6 +1,6 @@
 # Research: regional product telemetry and crash reporting
 
-> Researched: 2026-08-12
+> Researched 2026-08-12.
 >
 > Method: official product documentation, standards, and vendor-controlled repositories; secondary comparison articles were not used as architectural evidence
 >
@@ -193,16 +193,16 @@ The PRD keeps the architecture custom because Avalon already has a strong region
 
 ## Research-driven requirements checklist
 
-- [ ] Canonical envelope includes unique ID and four timestamps.
-- [ ] Tracking plan is versioned, generated, reviewed, and CI-enforced.
-- [ ] Invalid-event metadata is visible without retaining invalid raw payloads.
-- [ ] Direct and derived identities are minimized, scoped, rotatable, and deletable.
-- [ ] Automatic capture is limited by mechanism, not merely convention.
-- [ ] Detailed diagnostics fail closed when policy is unknown.
-- [ ] Native dumps never rely on graceful in-process delivery.
-- [ ] Release artifacts are private, immutable, matched by debug/build identity, and uploaded before release.
-- [ ] Crash-free measures disclose loss, sampling, and rate limiting.
-- [ ] Destination acknowledgement cannot extend or restart an Avalon-controlled retention clock.
-- [ ] EU/Global applies to the full lifecycle, not just the ingest URL.
-- [ ] Destination mappings and replays preserve event identity and adapter version.
-- [ ] Public-site collection remains separately gated from desktop/API collection.
+- Canonical envelope includes unique ID and four timestamps.
+- Tracking plan is versioned, generated, reviewed, and CI-enforced.
+- Invalid-event metadata is visible without retaining invalid raw payloads.
+- Direct and derived identities are minimized, scoped, rotatable, and deletable.
+- Automatic capture is limited by mechanism, not merely convention.
+- Detailed diagnostics fail closed when policy is unknown.
+- Native dumps never rely on graceful in-process delivery.
+- Release artifacts are private, immutable, matched by debug/build identity, and uploaded before release.
+- Crash-free measures disclose loss, sampling, and rate limiting.
+- Destination acknowledgement cannot extend or restart an Avalon-controlled retention clock.
+- EU/Global applies to the full lifecycle, not just the ingest URL.
+- Destination mappings and replays preserve event identity and adapter version.
+- Public-site collection remains separately gated from desktop/API collection.
