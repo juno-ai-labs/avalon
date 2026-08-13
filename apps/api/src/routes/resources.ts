@@ -61,6 +61,9 @@ resourceRoutes.get("/:id", zValidator("param", idParam), async (c) =>
 resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
   new ResourceService(c.env, getAuth(c)).content(c.req.valid("param").id),
 );
+resourceRoutes.get("/:id/preview", zValidator("param", idParam), async (c) =>
+  new ResourceService(c.env, getAuth(c)).preview(c.req.valid("param").id, c.req.raw.signal),
+);
 resourceRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ResourceService(c.env, getAuth(c)).deleteDraft(c.req.valid("param").id);
   return c.body(null, 204);

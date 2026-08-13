@@ -269,6 +269,39 @@ export async function materializeAttachmentDerivative(
   };
 }
 
+/**
+ * Bounded scanned-PDF fallback shared by model tools and person-facing previews.
+ * Workers AI returns one ordered Markdown document rather than page boundaries,
+ * so the known page cardinality is preserved while the unavailable boundaries
+ * remain explicit empty entries.
+ */
+export async function ocrPdfWithWorkersAi(
+  ai: Ai,
+  title: string,
+  bytes: Uint8Array,
+  pageCount: number,
+  signal: AbortSignal,
+): Promise<AttachmentOcrText> {
+  if (signal.aborted) throw signal.reason;
+  const response = await ai.toMarkdown({
+    name: title.toLowerCase().endsWith(".pdf") ? title : `${title}.pdf`,
+    blob: new Blob([exactArrayBuffer(bytes)], { type: "application/pdf" }),
+  }, {
+    conversionOptions: {
+      output: { format: "text" },
+      pdf: { images: { convert: true, maxConvertedImages: Math.min(pageCount, MAX_PDF_PAGES) } },
+    },
+  });
+  if (signal.aborted) throw signal.reason;
+  if (response.format === "error" || response.data.trim().length === 0) {
+    throw new Error("pdf_ocr_failed");
+  }
+  return {
+    pages: [response.data, ...Array.from({ length: Math.max(0, pageCount - 1) }, () => "")],
+    method: "provider_ocr",
+  };
+}
+
 export function derivativeObjectPrefix(resourceId: string, sourceSha256: string, extractorVersion: string, generation = "current"): string {
   const safeVersion = extractorVersion.replace(/[^a-zA-Z0-9._-]/gu, "_").slice(0, 100);
   const safeGeneration = generation.replace(/[^a-zA-Z0-9._-]/gu, "_").slice(0, 100);
