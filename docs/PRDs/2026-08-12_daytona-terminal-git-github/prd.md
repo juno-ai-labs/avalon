@@ -869,11 +869,15 @@ becomes:
 > The agent uses typed, authorized tools. A sandbox-capable run may execute
 > bounded commands through typed command and file tools inside an isolated,
 > workspace-network-policy-governed environment when the Terminal plugin is
-> enabled. The agent never receives host access, a
+> selected. The agent never receives host access, a
 > user-visible terminal, or a user-authored workflow runtime.
 
 The implementation brief changes only in the shipping change. Its regional,
 bounded-run, visible-action, and external-write requirements remain unchanged.
+
+## Decision log
+
+None yet.
 
 ## Key design decisions
 
@@ -1023,7 +1027,7 @@ instead of silently substituting another environment.
    Installations that have not approved the upgrade can still use every Terminal
    tool, but publication returns a reconnect/permission error.
 2. Provision one least-privilege Daytona principal and secret namespace per
-   enabled region, on a tier supporting archive, native domain allow-lists, and
+   supported region, on a tier supporting archive, native domain allow-lists, and
    Full internet.
 3. Publish an immutable snapshot containing the five language capabilities,
    supported managers, `git`, read-only `gh`, `rg`, and `jq`, and verify versions
