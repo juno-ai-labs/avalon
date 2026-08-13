@@ -42,6 +42,13 @@ One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags
 
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
 
+Wrangler validates an R2 binding without proving its named bucket exists. Run
+`pnpm cloudflare:resources:check` after provisioning or changing either regional
+Wrangler file; the API deployment runs the same read-only check before any
+remote migration or Worker deploy and logs every required region, binding,
+bucket, and jurisdiction. A missing bucket is an infrastructure failure even if
+the Wrangler dry build and Worker binding are otherwise deployable.
+
 `avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](feature-flags.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
 
 Set these shared Worker secrets separately in each regional deployment:
@@ -846,6 +853,11 @@ curl -sS -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCO
 curl -sS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/<bucket>/objects/<object-key>" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 ```
+
+Add `-H "cf-r2-jurisdiction: eu"` to every REST object request for
+`avalon-eu-payloads` or `avalon-eu-telemetry`; omit it only for Global buckets.
+Without that header Cloudflare addresses the default jurisdiction and a real EU
+object appears to be missing.
 
 A retrieved payload contains the prompt, the connector data pulled into it, and
 whatever the person wrote. Treat it as production user content: read it from a
