@@ -93,7 +93,7 @@ const LOAD_MORE_DISTANCE = 400;
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
 
 /** The number row gives us nine visible shortcuts without borrowing `0`. */
-const PINNED_SHORTCUT_LIMIT = 9;
+const COMMAND_SHORTCUT_LIMIT = 9;
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -314,6 +314,24 @@ interface PinnedRowDrag {
   position: string;
 }
 
+function CommandShortcutHint({
+  shortcut,
+  visible,
+}: {
+  shortcut?: number;
+  visible?: boolean;
+}): React.JSX.Element | null {
+  if (!visible || shortcut === undefined) return null;
+  return (
+    <span aria-hidden="true" className="command-shortcut-scrim">
+      <span className="command-shortcut-pill">
+        <Command size={12} strokeWidth={1.8} />
+        <span>{shortcut}</span>
+      </span>
+    </span>
+  );
+}
+
 function WorkstreamRow({
   commandShortcut,
   commandShortcutsVisible,
@@ -469,14 +487,7 @@ function WorkstreamRow({
               </Tooltip.Root>
             )}
             {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
-            {commandShortcutsVisible && commandShortcut !== undefined && (
-              <span aria-hidden="true" className="pinned-shortcut-scrim">
-                <span className="pinned-shortcut-pill">
-                  <Command size={12} strokeWidth={1.8} />
-                  <span>{commandShortcut}</span>
-                </span>
-              </span>
-            )}
+            <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -540,6 +551,8 @@ function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
 }
 
 function NoteRow({
+  commandShortcut,
+  commandShortcutsVisible,
   debugEnabled,
   note,
   ownedByViewer,
@@ -547,6 +560,8 @@ function NoteRow({
   onArchive,
   onChangeScope,
 }: {
+  commandShortcut?: number;
+  commandShortcutsVisible?: boolean;
   debugEnabled: boolean;
   note: NoteSummary;
   ownedByViewer: boolean;
@@ -560,6 +575,7 @@ function NoteRow({
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
           <NavLink
+            aria-keyshortcuts={commandShortcut === undefined ? undefined : `Meta+${commandShortcut}`}
             className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
             to={`/notes/${note.id}`}
           >
@@ -572,6 +588,7 @@ function NoteRow({
               <span className="sidebar-row-title">{note.title}</span>
             </span>
             {note.scope === 'personal' && <PrivacyMarker label="Private note" />}
+            <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -759,10 +776,32 @@ export function Sidebar({
     })),
   ]);
 
+  // The visible destination order is one run: the reader's manually arranged
+  // pins first, then recent work streams and notes in exactly the order the
+  // recency groups render below. Automations and primary actions are outside
+  // this run, so changing either section cannot shift a familiar destination.
+  const recentItems = groups.flatMap((group) => group.streams);
+  const commandShortcutTargets = [
+    ...pinnedWorkstreams.map((workstream) => ({
+      id: `workstream:${workstream.id}`,
+      path: `/workstreams/${workstream.id}`,
+    })),
+    ...recentItems.map((item) => ({
+      id: item.id,
+      path: item.type === 'note'
+        ? `/notes/${item.note.id}`
+        : `/workstreams/${item.workstream.id}`,
+    })),
+  ].slice(0, COMMAND_SHORTCUT_LIMIT);
+  const commandShortcutById = new Map(
+    commandShortcutTargets.map((target, index) => [target.id, index + 1]),
+  );
+
   // Command is both the reveal and the modifier: its keydown paints the first
-  // nine hints, and a number pressed before it is released opens the pin at
-  // that visible position. Window blur clears the reveal because Command+Tab
-  // takes focus away before this window can observe Command being released.
+  // nine hints, and a number pressed before it is released opens that row in
+  // the pinned-then-recent run. Window blur clears the reveal because
+  // Command+Tab takes focus away before this window can observe Command being
+  // released.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Meta') {
@@ -782,10 +821,10 @@ export function Sidebar({
         || digit === undefined
         || document.querySelector('[role="dialog"]')
       ) return;
-      const target = pinnedWorkstreams[Number(digit) - 1];
+      const target = commandShortcutTargets[Number(digit) - 1];
       if (!target) return;
       event.preventDefault();
-      navigate(`/workstreams/${target.id}`);
+      navigate(target.path);
       setSidebarOpen(false);
     };
     const onKeyUp = (event: KeyboardEvent): void => {
@@ -800,7 +839,7 @@ export function Sidebar({
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', hide);
     };
-  }, [navigate, pinnedWorkstreams, setSidebarOpen]);
+  }, [commandShortcutTargets, navigate, setSidebarOpen]);
 
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
@@ -1192,7 +1231,7 @@ export function Sidebar({
               <div className="sidebar-list">
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
-                    commandShortcut={index < PINNED_SHORTCUT_LIMIT ? index + 1 : undefined}
+                    commandShortcut={commandShortcutById.get(`workstream:${pinned.id}`)}
                     commandShortcutsVisible={commandShortcutsVisible}
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
@@ -1225,6 +1264,8 @@ export function Sidebar({
                   <div className="sidebar-list">
                     {group.streams.map((item) => item.type === 'note' ? (
                       <NoteRow
+                        commandShortcut={commandShortcutById.get(item.id)}
+                        commandShortcutsVisible={commandShortcutsVisible}
                         debugEnabled={debugEnabled}
                         key={item.id}
                         note={item.note}
@@ -1235,6 +1276,8 @@ export function Sidebar({
                       />
                     ) : (
                       <WorkstreamRow
+                        commandShortcut={commandShortcutById.get(item.id)}
+                        commandShortcutsVisible={commandShortcutsVisible}
                         debugEnabled={debugEnabled}
                         key={item.id}
                         onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}

@@ -78,18 +78,20 @@ the two agree. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row moves
 it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
 
-Holding Command overlays `⌘1` through `⌘9` on the first nine pinned rows, and
-pressing one of those physical number-row keys while Command remains down opens
-the pin at that visible position. Reading the physical key keeps the mapping
-true on symbol-first layouts such as AZERTY. Automations, primary actions,
-recent work streams, and a tenth or later pin are not numbered. An auto-repeated
-keydown is ignored so one press creates one history entry, and shortcuts pause
-while a modal dialog is open rather than changing the route underneath it. The
-hint is absolutely positioned over the row, with a short gradient into the
-row's current normal, hover, or selected background; long copy disappears
-underneath it instead of shrinking the row or touching the pill. Each numbered
-link also declares its `Meta+<number>` shortcut to assistive technology when the
-visual hint is hidden.
+Holding Command overlays `⌘1` through `⌘9` on one continuous row order: pinned
+work streams first in their manual order, followed by recent work streams and
+notes in the recency order already rendered below them. Pressing one of those
+physical number-row keys while Command remains down opens the row at that
+visible position. Reading the physical key keeps the mapping true on
+symbol-first layouts such as AZERTY. Automations and primary actions are not
+numbered, and any pinned-or-recent destination after the ninth is left without
+a shortcut. An auto-repeated keydown is ignored so one press creates one history
+entry, and shortcuts pause while a modal dialog is open rather than changing
+the route underneath it. The hint is absolutely positioned over the row, with
+a short gradient into the row's current normal, hover, or selected background;
+long copy disappears underneath it instead of shrinking the row or touching the
+pill. Each numbered link also declares its `Meta+<number>` shortcut to assistive
+technology when the visual hint is hidden.
 
 A drag is committed only when something accepted the drop. `dragend` fires
 whatever ended the drag, so the handler reads `dataTransfer.dropEffect`: `none`
@@ -218,16 +220,18 @@ It deliberately does not:
   quick succession overlap; the local order is cleared only if it is still the
   one that call set, so the first response cannot snap the list back to an order
   the reader has already moved past.
-- **Only the first nine pins have Command shortcuts.** Numbering begins at one
-  and never wraps to zero; a tenth or later pin remains reachable by the list,
-  search, and ordinary navigation but has no numbered shortcut.
+- **Only the first nine pinned-then-recent rows have Command shortcuts.**
+  Numbering begins at one and never wraps to zero; after the pinned rows consume
+  their numbers, recent work streams and notes use the remainder in displayed
+  order. A later row remains reachable by the list, search, and ordinary
+  navigation but has no numbered shortcut.
 
 ## Testing
 
 | Suite | What it covers |
 | --- | --- |
 | `apps/api/test/workstream-pinning.test.ts` | Append-on-pin, per-person isolation, dense rewrite on unpin, tolerant reorder, the first-page backfill, and that an unreadable work stream cannot be pinned but a stale pin can be removed. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, held-Command hints and number navigation for only the first nine pins, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, held-Command hints and continuous number navigation from pins into recent work streams and notes for the first nine rows, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
 
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
@@ -250,6 +254,30 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-12 — Command numbering continues into recent work
+
+**What changed:** The `⌘1` through `⌘9` sequence now starts with the manually
+ordered pinned rows and uses any numbers left over for recent work streams and
+notes in their displayed recency order. With three pins, the first recent row is
+therefore `⌘4`. The recent links expose the same mapping through
+`aria-keyshortcuts`, and their held-Command pills use the existing row overlay.
+
+**Why:** Ending the sequence at the Pinned heading made the keyboard order stop
+while the visual list continued. A reader with fewer than nine pins saw unused
+number keys beside immediately adjacent destinations, including digest rows,
+and had to switch back to pointer or focus navigation at that arbitrary section
+boundary.
+
+**Considered and rejected:** Restarting recent rows at `⌘1` would make the same
+shortcut name two visible destinations. Numbering Automations and primary
+actions too would shift every work-stream shortcut when unrelated content
+changed and would no longer preserve Pinned as the stable start of the run.
+
+**Consequences:** Pinning, unpinning, or reordering changes the number assigned
+to recent rows because pins always lead. Recent notes participate exactly where
+they appear among work streams, so the visual order and keyboard order cannot
+diverge. The nine-key ceiling remains unchanged and `0` remains unused.
 
 ### 2026-08-12 — Command reveals the first nine pins as direct destinations
 
