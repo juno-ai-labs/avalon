@@ -211,6 +211,10 @@ export async function materializeAttachmentDerivative(
     ...(options.signal ? { signal: options.signal } : {}),
   });
   if (converted.status !== "ready") {
+    if (converted.status === "failed" && converted.errorCode === "conversion_aborted") {
+      await releaseDerivativeClaim(database, resource, options, claimId);
+      return { status: "processing", retryAfterMs: 250 };
+    }
     return updateTerminalState(
       database,
       { ...resource, contentSha256: sourceSha256 },
@@ -266,6 +270,55 @@ export async function materializeAttachmentDerivative(
     status: "ready", contentRef, modelMimeType: converted.modelMimeType,
     sha256: derivativeSha256, extractorVersion: converted.extractorVersion,
     totalCharacters: converted.text.length,
+  };
+}
+
+async function releaseDerivativeClaim(
+  database: D1Database,
+  resource: AuthorizedDerivativeResource,
+  options: MaterializeAttachmentDerivativeOptions,
+  claimId: string,
+): Promise<void> {
+  const at = (options.now ?? (() => new Date()))().toISOString();
+  await database.prepare(
+    `UPDATE resources
+        SET model_content_status = 'pending', model_content_claimed_at = NULL,
+            model_content_claim_id = NULL, model_content_error_code = NULL, updated_at = ?
+      WHERE workspace_id = ? AND id = ? AND content_ref IS ?
+        AND model_content_status = 'processing' AND model_content_claim_id = ?`,
+  ).bind(at, resource.workspaceId, resource.id, resource.contentRef, claimId).run();
+}
+
+/**
+ * Bounded scanned-PDF fallback shared by model tools and person-facing previews.
+ * Workers AI returns one ordered Markdown document rather than page boundaries,
+ * so the known page cardinality is preserved while the unavailable boundaries
+ * remain explicit empty entries.
+ */
+export async function ocrPdfWithWorkersAi(
+  ai: Ai,
+  title: string,
+  bytes: Uint8Array,
+  pageCount: number,
+  signal: AbortSignal,
+): Promise<AttachmentOcrText> {
+  if (signal.aborted) throw signal.reason;
+  const response = await ai.toMarkdown({
+    name: title.toLowerCase().endsWith(".pdf") ? title : `${title}.pdf`,
+    blob: new Blob([exactArrayBuffer(bytes)], { type: "application/pdf" }),
+  }, {
+    conversionOptions: {
+      output: { format: "text" },
+      pdf: { images: { convert: true, maxConvertedImages: Math.min(pageCount, MAX_PDF_PAGES) } },
+    },
+  });
+  if (signal.aborted) throw signal.reason;
+  if (response.format === "error" || response.data.trim().length === 0) {
+    throw new Error("pdf_ocr_failed");
+  }
+  return {
+    pages: [response.data, ...Array.from({ length: Math.max(0, pageCount - 1) }, () => "")],
+    method: "provider_ocr",
   };
 }
 

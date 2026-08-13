@@ -1,5 +1,5 @@
 import { ConnectorError, type ConnectorConnectionContext } from "@avalon/connectors";
-import type { ConnectorManifest } from "@avalon/contracts";
+import { classifyAttachmentKind, type ConnectorManifest } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
@@ -11,6 +11,11 @@ import { decryptVersionedConnectorCredentials } from "./connector-credential-env
 import { encryptString, sha256Hex } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
+import {
+  materializeAttachmentDerivative,
+  ocrPdfWithWorkersAi,
+  type AuthorizedDerivativeResource,
+} from "./attachment-derivative-service";
 
 export interface ResolveResourceInput {
   connectionId: string;
@@ -189,7 +194,7 @@ export class ResourceService {
     // against a newly uploaded resource with the same UUID.
     const key = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/${contentSha256}/${crypto.randomUUID()}`;
     await this.env.PAYLOADS.put(key, bytes, {
-      httpMetadata: { contentType: verifiedMimeType, contentDisposition: `attachment; filename="${safeFilename(file.name)}"` },
+      httpMetadata: { contentType: verifiedMimeType, contentDisposition: contentDisposition("attachment", file.name) },
       customMetadata: { originalName: file.name, uploadedBy: this.auth.userId },
     });
     const at = nowIso();
@@ -280,11 +285,48 @@ export class ResourceService {
     if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
     const object = await this.env.PAYLOADS.get(resource.content_ref);
     if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set("etag", object.httpEtag);
-    headers.set("cache-control", "private, max-age=0, no-store");
-    return new Response(object.body, { headers });
+    return resourceObjectResponse(object);
+  }
+
+  async preview(id: string, signal: AbortSignal): Promise<Response> {
+    const resource = await this.loadResource(id);
+    if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
+    const fileName = String(resource.title);
+    const mimeType = resource.mime_type == null ? null : String(resource.mime_type);
+    const kind = classifyAttachmentKind({ fileName, mimeType });
+    const normalizedMimeType = mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+
+    if (kind === "image" || kind === "markdown" || kind === "text" || normalizedMimeType.startsWith("text/")) {
+      const object = await this.env.PAYLOADS.get(resource.content_ref);
+      if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
+      return resourceObjectResponse(object, fileName);
+    }
+
+    const derivative = await materializeAttachmentDerivative(
+      this.env.DB,
+      this.env.PAYLOADS,
+      authorizedDerivativeResource(resource),
+      {
+        signal,
+        ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(this.env.AI, fileName, bytes, pageCount, signal),
+      },
+    );
+    if (derivative.status === "processing") {
+      throw new ApiError(409, "resource_processing", "The attachment preview is still being prepared", {
+        retryAfterMs: derivative.retryAfterMs,
+      });
+    }
+    if (derivative.status !== "ready") {
+      if (derivative.status === "unsupported") {
+        throw new ApiError(422, "resource_preview_unsupported", "This attachment format cannot be previewed");
+      }
+      throw new ApiError(422, "resource_preview_failed", "Avalon could not prepare this attachment preview", {
+        reason: derivative.errorCode,
+      });
+    }
+    const object = await this.env.PAYLOADS.get(derivative.contentRef);
+    if (!object) throw new ApiError(404, "resource_preview_unavailable", "The prepared attachment preview was not found");
+    return resourceObjectResponse(object, fileName);
   }
 
   async hydrate(id: string) {
@@ -526,6 +568,41 @@ function toResource(row: Record<string, unknown>) {
   };
 }
 
+function authorizedDerivativeResource(row: Record<string, unknown>): AuthorizedDerivativeResource {
+  const status = row.model_content_status;
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    fileName: String(row.title),
+    mimeType: nullableString(row.mime_type),
+    contentRef: nullableString(row.content_ref),
+    contentSha256: nullableString(row.content_sha256),
+    modelContentRef: nullableString(row.model_content_ref),
+    modelMimeType: nullableString(row.model_mime_type),
+    modelContentSha256: nullableString(row.model_content_sha256),
+    modelContentStatus: status === "pending" || status === "processing" || status === "ready"
+      || status === "failed" || status === "unsupported" ? status : null,
+    modelContentExtractorVersion: nullableString(row.model_content_extractor_version),
+    modelContentCharacterCount: typeof row.model_content_character_count === "number"
+      ? row.model_content_character_count : null,
+    modelContentClaimedAt: nullableString(row.model_content_claimed_at),
+    modelContentClaimId: nullableString(row.model_content_claim_id),
+  };
+}
+
+function nullableString(value: unknown): string | null {
+  return value == null ? null : String(value);
+}
+
+function resourceObjectResponse(object: R2ObjectBody, inlineFileName?: string): Response {
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  headers.set("cache-control", "private, max-age=0, no-store");
+  if (inlineFileName) headers.set("content-disposition", contentDisposition("inline", inlineFileName));
+  return new Response(object.body, { headers });
+}
+
 function resourceWatchMode(
   manifest: Pick<ConnectorManifest, "supportsWatches" | "supportsPolling">,
   now: string,
@@ -574,6 +651,14 @@ function parseJson<T>(value: unknown, fallback: T): T {
 }
 function safeFilename(value: string): string {
   return value.replace(/[\r\n"\\]/gu, "_").slice(0, 180) || "attachment";
+}
+
+function contentDisposition(disposition: "attachment" | "inline", fileName: string): string {
+  const safe = safeFilename(fileName);
+  const asciiFallback = safe.replace(/[^\x20-\x7e]/gu, "_");
+  const encoded = encodeURIComponent(safe)
+    .replace(/[!'()*]/gu, (character) => `%${character.codePointAt(0)!.toString(16).toUpperCase()}`);
+  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
 }
 
 export const __resourceServiceTesting = {

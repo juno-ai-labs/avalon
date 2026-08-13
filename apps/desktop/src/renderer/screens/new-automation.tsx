@@ -19,7 +19,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
-import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
+import { AttachmentLightbox } from '../components/attachment-lightbox';
+import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
 import { AvalonMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
@@ -715,7 +716,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     [connections.data],
   );
   const loadAttachmentContent = useCallback(
-    (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
+    (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
   );
 

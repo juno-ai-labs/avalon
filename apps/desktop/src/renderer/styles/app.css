@@ -2102,9 +2102,18 @@ pre {
 .attachment-progress small { color: #f1f0eb; font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
 .sent-attachment { height: 86px; width: 86px; }
 .human-message .message-attachments { justify-content: flex-end; }
-.attachment-lightbox { align-items: center; background: rgba(5, 6, 4, .88); display: flex; inset: 0; justify-content: center; padding: 54px; position: fixed; z-index: 1000; }
-.attachment-lightbox > img { border-radius: 8px; box-shadow: 0 18px 80px rgba(0, 0, 0, .56); max-height: calc(100vh - 108px); max-width: calc(100vw - 108px); object-fit: contain; }
-.attachment-lightbox-close { align-items: center; background: #272823; border: 1px solid #4b4c45; border-radius: 999px; color: #f0efea; display: flex; height: 34px; justify-content: center; position: absolute; right: 24px; top: 24px; width: 34px; }
+.attachment-lightbox-overlay { background: rgba(10, 11, 8, .98); inset: 0; position: fixed; z-index: 1000; }
+.attachment-lightbox { background: rgba(10, 11, 8, .98); display: grid; grid-template-rows: 58px minmax(0, 1fr); inset: 0; position: fixed; z-index: 1001; }
+.attachment-lightbox-header { align-items: center; border-bottom: 1px solid #33342f; display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 0 16px 0 22px; }
+.attachment-lightbox-header h2 { color: #deddd8; font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-lightbox-content { min-height: 0; overflow: auto; }
+.attachment-lightbox-content.is-image { align-items: center; display: flex; justify-content: center; overflow: hidden; padding: 32px; }
+.attachment-lightbox-content.is-image img { border-radius: 6px; box-shadow: 0 18px 80px rgba(0, 0, 0, .56); height: auto; max-height: 100%; max-width: 100%; object-fit: contain; width: auto; }
+.attachment-lightbox-close { align-items: center; background: #272823; border: 1px solid #4b4c45; border-radius: 999px; color: #f0efea; display: flex; height: 34px; justify-content: center; width: 34px; }
+.attachment-lightbox-document { margin: 0 auto; max-width: 960px; min-height: 100%; padding: 44px 36px 96px; }
+.attachment-lightbox-text { color: #dfded9; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.65; margin: 0 auto; max-width: 1100px; min-height: 100%; overflow-wrap: anywhere; padding: 44px 36px 96px; white-space: pre-wrap; }
+.attachment-lightbox-status { align-items: center; color: #aaa9a3; display: flex; gap: 9px; justify-content: center; min-height: 100%; padding: 32px; }
+.attachment-lightbox-status.is-error { color: #d9a29d; }
 .workstream-composer textarea { background: transparent; border: 0; display: block; min-height: 51px; outline: 0; resize: none; width: 100%; }
 .workstream-composer textarea::placeholder { color: #72726b; }
 .composer-input-shell { position: relative; }

@@ -23,6 +23,7 @@ import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } from "../lib/attachment-cursor";
 import {
   materializeAttachmentDerivative,
+  ocrPdfWithWorkersAi,
   type AuthorizedDerivativeResource,
   type MaterializedAttachmentDerivative,
 } from "./attachment-derivative-service";
@@ -692,44 +693,11 @@ async function ensureReadyTextDerivative(
   );
 }
 
-async function ocrPdfWithWorkersAi(
-  ai: Ai,
-  title: string,
-  bytes: Uint8Array,
-  pageCount: number,
-  signal: AbortSignal,
-) {
-  if (signal.aborted) throw signal.reason;
-  const response = await ai.toMarkdown({
-    name: title.toLowerCase().endsWith(".pdf") ? title : `${title}.pdf`,
-    blob: new Blob([exactArrayBuffer(bytes)], { type: "application/pdf" }),
-  }, {
-    conversionOptions: {
-      output: { format: "text" },
-      pdf: { images: { convert: true, maxConvertedImages: Math.min(pageCount, 200) } },
-    },
-  });
-  if (signal.aborted) throw signal.reason;
-  if (response.format === "error" || response.data.trim().length === 0) {
-    throw new Error("pdf_ocr_failed");
-  }
-  // Workers AI returns one ordered document string. Preserve the known page
-  // cardinality while making unavailable exact OCR page boundaries explicit.
-  return {
-    pages: [response.data, ...Array.from({ length: Math.max(0, pageCount - 1) }, () => "")],
-    method: "provider_ocr" as const,
-  };
-}
-
 async function extractPdfText(bytes: Uint8Array) {
   const pdf = await getDocumentProxy(bytes);
   if (pdf.numPages > 200) return { pageCount: pdf.numPages, pages: [] };
   const extracted = await extractText(pdf);
   return { pageCount: extracted.totalPages, pages: Array.isArray(extracted.text) ? extracted.text : [extracted.text] };
-}
-
-function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): AuthorizedDerivativeResource {
