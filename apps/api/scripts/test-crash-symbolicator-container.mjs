@@ -99,6 +99,59 @@ function assertSanitized(value, key) {
   }
 }
 
+function diagnoseProcessorFailure() {
+  const probe = [
+    'import json',
+    'import resource',
+    'import subprocess',
+    'import sys',
+    'import tempfile',
+    "disabled = set(filter(None, sys.argv[1].split(',')))",
+    'def apply_limits():',
+    "    if 'address_space' not in disabled:",
+    '        resource.setrlimit(resource.RLIMIT_AS, (896 * 1024 * 1024, 896 * 1024 * 1024))',
+    "    if 'cpu' not in disabled:",
+    '        resource.setrlimit(resource.RLIMIT_CPU, (25, 25))',
+    "    if 'file_size' not in disabled:",
+    '        resource.setrlimit(resource.RLIMIT_FSIZE, (4 * 1024 * 1024, 4 * 1024 * 1024))',
+    "    if 'file_descriptors' not in disabled:",
+    '        resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))',
+    'environment = {',
+    "    'HOME': '/tmp/avalon-symbolicator',",
+    "    'LANG': 'C.UTF-8',",
+    "    'PATH': '/usr/local/bin:/usr/bin:/bin',",
+    "    'RUST_BACKTRACE': '0',",
+    '}',
+    'try:',
+    '    with tempfile.TemporaryFile() as output:',
+    '        completed = subprocess.run([',
+    "            '/usr/local/bin/minidump-stackwalk', '--json', '--symbols-path',",
+    "            '/fixtures/symbols', '/fixtures/test.dmp',",
+    '        ], check=False, cwd="/workspace", env=environment, stdin=subprocess.DEVNULL,',
+    '           stdout=output, stderr=subprocess.PIPE, timeout=30, preexec_fn=apply_limits)',
+    '        result = {',
+    "            'returncode': completed.returncode,",
+    "            'output_bytes': output.tell(),",
+    "            'stderr_tail': completed.stderr.decode('utf8', errors='replace')[-512:],",
+    '        }',
+    'except BaseException as error:',
+    "    result = {'exception': type(error).__name__, 'message': str(error)[-512:]}",
+    'print(json.dumps(result, separators=(",", ":")))',
+  ].join('\n');
+  const variants = {
+    all_limits: [],
+    no_address_space: ['address_space'],
+    no_cpu: ['cpu'],
+    no_file_size: ['file_size'],
+    no_file_descriptors: ['file_descriptors'],
+    no_limits: ['address_space', 'cpu', 'file_size', 'file_descriptors'],
+  };
+  return Object.fromEntries(Object.entries(variants).map(([name, disabled]) => [
+    name,
+    JSON.parse(runDocker(containerArguments('python3', '-c', probe, disabled.join(',')))),
+  ]));
+}
+
 try {
   for (const fixture of FIXTURES) await downloadFixture(fixture);
   writeFileSync(join(temporaryRoot, 'malformed.dmp'), 'not a minidump', { mode: 0o600 });
@@ -131,7 +184,13 @@ try {
     '/fixtures/test.dmp',
     '/fixtures/symbols',
   )));
-  assert.equal(report.status, 'ok', `valid fixture was rejected: ${JSON.stringify(report)}`);
+  assert.equal(
+    report.status,
+    'ok',
+    `valid fixture was rejected: ${JSON.stringify(report)}; probes=${JSON.stringify(
+      report.status === 'ok' ? {} : diagnoseProcessorFailure(),
+    )}`,
+  );
   assert.ok(Array.isArray(report.threads) && report.threads.length > 0, 'fixture produced no threads');
   assert.match(JSON.stringify(report), /test_app/u, 'matching symbols were not applied');
   assertSanitized(report);
