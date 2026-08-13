@@ -105,6 +105,27 @@ const InvalidateInputSchema = z.object({
   reason: z.string().trim().min(1).max(2_000),
 }).strict();
 
+class MemoryToolError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly details: { reason: string },
+  ) {
+    super(message);
+    this.name = "MemoryToolError";
+  }
+}
+
+function memoryRevisionConflict(): MemoryToolError {
+  return new MemoryToolError(
+    "memory_revision_conflict",
+    "The durable memory changed after it was read. Search for it again, inspect the current text and revision, and rebuild the mutation.",
+    {
+      reason: "Call memory_search again for this item, inspect its current text and revision, and rebuild the update or invalidation. Do not retry with the old revision.",
+    },
+  );
+}
+
 function d1Changes(result: D1Result<unknown>): number {
   return Number((result.meta as { changes?: unknown } | undefined)?.changes ?? 0);
 }
@@ -749,7 +770,7 @@ async function updateMemory(
   if (replay) return mutationToolResult(replay, "Updated durable memory");
   const { row, scope } = await loadWritableItem(env, input, args.memoryItemId);
   if (row.invalidated_at) throw new Error("memory_item_invalidated");
-  if (Number(row.revision) !== args.expectedRevision) throw new Error("memory_revision_conflict");
+  if (Number(row.revision) !== args.expectedRevision) throw memoryRevisionConflict();
   const nextRevision = args.expectedRevision + 1;
   const memoryMutationId = newId();
   const at = nowIso();
@@ -826,7 +847,7 @@ async function updateMemory(
     if (d1Changes(batch[0]!) === 0) {
       const raced = await loadReceipt(env, input, receiptId, "update", inputHash);
       if (raced) return mutationToolResult(raced, "Updated durable memory");
-      throw new Error("memory_revision_conflict");
+      throw memoryRevisionConflict();
     }
   } catch (error) {
     const raced = await loadReceipt(env, input, receiptId, "update", inputHash);
@@ -849,7 +870,7 @@ async function invalidateMemory(
   if (replay) return mutationToolResult(replay, "Invalidated durable memory");
   const { row, scope } = await loadWritableItem(env, input, args.memoryItemId);
   if (row.invalidated_at) throw new Error("memory_item_invalidated");
-  if (Number(row.revision) !== args.expectedRevision) throw new Error("memory_revision_conflict");
+  if (Number(row.revision) !== args.expectedRevision) throw memoryRevisionConflict();
   const nextRevision = args.expectedRevision + 1;
   const memoryMutationId = newId();
   const at = nowIso();
@@ -928,7 +949,7 @@ async function invalidateMemory(
     if (d1Changes(batch[0]!) === 0) {
       const raced = await loadReceipt(env, input, receiptId, "invalidate", inputHash);
       if (raced) return mutationToolResult(raced, "Invalidated durable memory");
-      throw new Error("memory_revision_conflict");
+      throw memoryRevisionConflict();
     }
   } catch (error) {
     const raced = await loadReceipt(env, input, receiptId, "invalidate", inputHash);
@@ -987,7 +1008,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     {
       definition: {
         name: "update",
-        description: "Replace an authorized durable memory when its current revision matches.",
+        description: "Replace an authorized durable memory. Copy memoryItemId and expectedRevision from the latest memory_search result for that item; after a revision conflict, search again before rebuilding the update.",
         capability: "memory.write",
         mode: "write",
         idempotency: "provider_key",
@@ -996,7 +1017,11 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           additionalProperties: false,
           properties: {
             memoryItemId: { type: "string", format: "uuid" },
-            expectedRevision: { type: "integer", minimum: 1 },
+            expectedRevision: {
+              type: "integer",
+              minimum: 1,
+              description: "Copy revision exactly from the latest memory_search result for this memoryItemId.",
+            },
             text: { type: "string", minLength: 1, maxLength: 16_000 },
             expiresAt: { type: "string", format: "date-time" },
             rationale: { type: "string", minLength: 1, maxLength: 2_000 },
@@ -1009,7 +1034,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     {
       definition: {
         name: "invalidate",
-        description: "Reversibly invalidate an authorized durable memory when its current revision matches.",
+        description: "Reversibly invalidate an authorized durable memory. Copy memoryItemId and expectedRevision from the latest memory_search result for that item; after a revision conflict, search again before retrying.",
         capability: "memory.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1018,7 +1043,11 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           additionalProperties: false,
           properties: {
             memoryItemId: { type: "string", format: "uuid" },
-            expectedRevision: { type: "integer", minimum: 1 },
+            expectedRevision: {
+              type: "integer",
+              minimum: 1,
+              description: "Copy revision exactly from the latest memory_search result for this memoryItemId.",
+            },
             reason: { type: "string", minLength: 1, maxLength: 2_000 },
           },
           required: ["memoryItemId", "expectedRevision", "reason"],
