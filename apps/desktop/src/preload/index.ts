@@ -73,6 +73,12 @@ const bridge: AvalonDesktopBridge = {
     ipcRenderer.invoke('application-settings:set-menu-bar-enabled', enabled) as Promise<DesktopApplicationSettings>,
   setLaunchAtLogin: (enabled) =>
     ipcRenderer.invoke('application-settings:set-launch-at-login', enabled) as Promise<DesktopApplicationSettings>,
+  setProductAnalyticsEnabled: (enabled) =>
+    ipcRenderer.invoke('application-settings:set-product-analytics', enabled) as Promise<DesktopApplicationSettings>,
+  reportTelemetryScreen: (screen) => ipcRenderer.invoke('telemetry:screen', screen) as Promise<void>,
+  reportTelemetryProductIntent: (intent) => ipcRenderer.invoke('telemetry:product-intent', intent) as Promise<void>,
+  getTelemetryInspector: () => ipcRenderer.invoke('telemetry:inspector'),
+  reportJavascriptError: (candidate) => ipcRenderer.invoke('telemetry:javascript-error', candidate) as Promise<void>,
   onApplicationSettingsChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, settings: DesktopApplicationSettings): void => listener(settings);
     ipcRenderer.on('application-settings:changed', handler);

@@ -53,6 +53,74 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 10. For each OAuth connector, confirm the provider returns to `/auth/desktop/`, the page reports success or cancellation and offers **Open Avalon**, and Settings reaches the same terminal result when automatic app opening is blocked. Close Avalon before a successful callback, reopen it, and confirm the persisted connection appears without repeating authorization.
 11. Accept the emailed invitation with the matching Google identity, confirm it cannot be reused, then create another invitation and revoke it before opening the email. Confirm the revoked link fails and a non-admin cannot create or revoke invitations. Sign out from Settings and confirm both application surfaces return to onboarding.
 
+## Regional telemetry acceptance
+
+Use disposable Global and EU accounts plus a private test PostHog project. Never
+use a customer dump for this acceptance run.
+
+1. Start from a fresh profile with product analytics on by default. Confirm
+   onboarding has no analytics choice. Complete a few onboarding screens, sign in,
+   and create or activate a Global workspace. In PostHog, confirm the anonymous
+   epoch's funnel events join automatically to the stable person using `$identify`,
+   that the profile has the verified name and email, and that the workspace group
+   has its current name. Confirm the installation identity never joins the person.
+2. Exercise workspace creation, work-stream creation and a run, and connector
+   setup. Confirm the semantic client request and authoritative API outcome share
+   `operation_id`, and desktop events use `$session_id`. Reload and repeat an
+   accepted upload; confirm `$insert_id` prevents duplicate counts.
+3. Open **Settings → Application → Privacy & diagnostics**. Confirm **Product
+   analytics** is on and its disclosure says Global may include verified name and
+   email, EU stays in Avalon's EU platform, and essential content-free reliability
+   continues when off. Turn it off while offline, exercise product actions, and
+   restart before reconnecting. Confirm no product event, detailed JavaScript
+   exception, profile update, or native dump from that interval is delivered;
+   essential lifecycle/reliability may still be accepted. Turn it back on and
+   confirm collection starts only after the regional preference write succeeds.
+4. Disable analytics while Crashpad is active. Confirm Settings immediately says
+   crash upload stopped and restart is required to remove local dumps. Restart and
+   confirm the invalidated generation is purged before a new Crashpad handler can
+   start. A failure to write the local preference must leave the toggle disabled
+   and must not resume upload.
+5. With the staff-only Developer section enabled, open **Telemetry inspector**.
+   Generate accepted, sampled, disabled, and schema-rejected decisions. Confirm it
+   displays only contract decisions and fixed reason codes: no property values,
+   event/person/workspace identifiers, paths, URLs, email, names, or stack text.
+   Turn the developer flag off and confirm the inspector disappears without
+   changing telemetry policy.
+6. For a fresh pre-workspace session, test Cloudflare country inputs at the
+   bootstrap boundary. An affirmative EU country must route the anonymous epoch
+   immediately to EU and create no native crash generation. A non-EU, absent,
+   malformed, failed, or timed-out country signal must route immediately to
+   Global. Confirm neither IP nor country is retained and no pending holding row
+   exists. Select a different workspace region later and confirm prior events do
+   not move or relabel.
+7. Repeat the semantic flow in an explicit EU workspace. Confirm the events are
+   queryable from the EU internal projection with release/platform/channel and
+   operation/session correlation, but no event, profile, exception, dump, or
+   aggregate appears in PostHog or Analytics Engine. Confirm the raw dump,
+   artifacts, and processor remain in the EU-jurisdiction telemetry bucket and
+   EU-pinned compute.
+8. Run `pnpm --filter @avalon/desktop test:crashpad` on the supported macOS-arm64
+   release host. It must package the pinned Electron version, produce two real
+   renderer Crashpad reports, and prove that the first inactive database survives
+   whole-directory rotation before the second handler starts. Then exercise the
+   packaged Avalon release separately: confirm its production generation
+   controller rotates only on the following launch, authenticates upload to the
+   fixed route, and requests the private artifact identity published by the
+   release workflow. In Global, confirm PostHog receives the full sanitized structured exception with the same
+   `$session_id`, release, build, platform, architecture, process, channel, and
+   fingerprint, while raw bytes, absolute paths, memory fragments, and source
+   excerpts stay internal. In EU, confirm the occurrence and independently
+   expiring fingerprint contribution are internal-only.
+9. Configure disposable, different `support` and `security` operator tokens in
+   each region. Confirm unauthenticated and wrong-token requests to
+   `/internal/telemetry/status` fail, while each regional token sees only its own
+   fixed snapshot. Verify support can retrieve one synthetic dump only with
+   `customer_support`, security can retrieve it only with `incident_response`, and
+   each attempt creates the fixed regional audit row. Confirm only security can
+   replay a terminal Global event, and that the EU-only issue/crash-free paths are
+   `404` in Global. Remove the disposable tokens after the run.
+
 ## Desktop menu bar acceptance
 
 macOS only, and best done from a packaged build — a development run deliberately

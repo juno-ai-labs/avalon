@@ -36,6 +36,8 @@ const setLockdownMode = vi.hoisted(() => vi.fn());
 const setDebugEnabled = vi.hoisted(() => vi.fn());
 const setMenuBarEnabled = vi.hoisted(() => vi.fn());
 const setLaunchAtLogin = vi.hoisted(() => vi.fn());
+const setProductAnalyticsEnabled = vi.hoisted(() => vi.fn());
+const getTelemetryInspector = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 const settingsSectionRequest = vi.hoisted(() => ({
@@ -64,6 +66,8 @@ vi.mock('../lib/platform', () => ({
     setDebugEnabled,
     setMenuBarEnabled,
     setLaunchAtLogin,
+    setProductAnalyticsEnabled,
+    getTelemetryInspector,
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettingsListeners.add(listener);
       return () => applicationSettingsListeners.delete(listener);
@@ -207,6 +211,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     setLockdownMode.mockImplementation(async (lockdownMode: boolean) => ({
       lockdownMode,
@@ -218,6 +226,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     }));
     setDebugEnabled.mockImplementation(async (debugEnabled: boolean) => ({
       lockdownMode: false,
@@ -229,6 +241,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     }));
     setMenuBarEnabled.mockImplementation(async (menuBarEnabled: boolean) => ({
       lockdownMode: false,
@@ -252,6 +268,25 @@ describe('Workspace settings', () => {
       launchAtLogin,
       launchAtLoginAvailable: true,
     }));
+    setProductAnalyticsEnabled.mockImplementation(async (productAnalyticsEnabled: boolean) => ({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+      productAnalyticsEnabled,
+      productAnalyticsEffective: productAnalyticsEnabled,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: !productAnalyticsEnabled,
+    }));
+    getTelemetryInspector.mockResolvedValue([{
+      name: 'screen_viewed', schemaVersion: 1, policyClass: 'product',
+      propertyNames: ['screen'], route: 'eu', validation: 'accepted', queueState: 'queued',
+    }]);
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
       isAutomatic: false,
@@ -419,7 +454,10 @@ describe('Workspace settings', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Re-connect' }));
 
     expect(await screen.findByText('Notion authorization was cancelled.')).toBeVisible();
-    expect(api.reconnectConnection).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000010');
+    expect(api.reconnectConnection).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000010',
+      'google',
+    );
     expect(api.getConnectorOAuthAttempt).toHaveBeenNthCalledWith(1, 'b'.repeat(43));
   });
 
@@ -439,7 +477,10 @@ describe('Workspace settings', () => {
     const dialog = screen.getByRole('dialog', { name: 'Do you want to re-connect Google · adam@example.com?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Re-connect' }));
 
-    await waitFor(() => expect(api.reconnectConnection).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000010'));
+    await waitFor(() => expect(api.reconnectConnection).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000010',
+      'google',
+    ));
     expect(openExternal).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
   });
 
@@ -997,6 +1038,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1019,6 +1064,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1066,6 +1115,79 @@ describe('Workspace settings', () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalledWith(true));
     expect(toggle).toBeChecked();
+  });
+
+  it('controls product analytics and explains regional crash behavior', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Product analytics' });
+    expect(toggle).toBeChecked();
+    expect(screen.getByText(/EU telemetry stays in Avalon’s EU platform/u)).toBeVisible();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setProductAnalyticsEnabled).toHaveBeenCalledWith(false));
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/Restart Avalon to remove local native crash dumps and apply the current setting/u)).toBeVisible();
+  });
+
+  it('shows a read-only redacted telemetry inspector only in Developer settings', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+    expect(await screen.findByRole('heading', { name: 'Telemetry inspector' })).toBeVisible();
+    expect(await screen.findByText('screen_viewed')).toBeVisible();
+    expect(screen.getByText('screen')).toBeVisible();
+    expect(screen.getByText(/EU · accepted · queued/u)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /replay|emit/u })).toBeNull();
+  });
+
+  it('shows telemetry inspector failures and lets the developer retry', async () => {
+    getTelemetryInspector
+      .mockRejectedValueOnce(new Error('Telemetry decisions could not be read.'))
+      .mockResolvedValueOnce([{
+        name: 'screen_viewed', schemaVersion: 1, policyClass: 'product',
+        propertyNames: ['screen'], route: 'eu', validation: 'accepted', queueState: 'queued',
+      }]);
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByText('Telemetry decisions could not be read.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry inspector' }));
+    expect(await screen.findByText('screen_viewed')).toBeVisible();
+    expect(screen.queryByText('Telemetry decisions could not be read.')).toBeNull();
+  });
+
+  it('finds Privacy and diagnostics from telemetry-related settings searches', async () => {
+    renderSettings();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), {
+      target: { value: 'crash' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Application' }));
+    expect(await screen.findByRole('heading', { name: 'Privacy & diagnostics' })).toBeVisible();
+  });
+
+  it('disables the account preference on a browser bridge that cannot persist it', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: false,
+      debugEnabled: false,
+      developerSettingsAvailable: false,
+      menuBarEnabled: true,
+      menuBarAvailable: false,
+      menuBarPresent: false,
+      launchAtLogin: false,
+      launchAtLoginAvailable: false,
+      productAnalyticsEnabled: true,
+      productAnalyticsAvailable: false,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByRole('switch', { name: 'Product analytics' })).toBeDisabled();
+    expect(screen.getByText('Product analytics is managed in the Avalon desktop app.')).toBeVisible();
   });
 
   it('reports what macOS holds rather than what was asked for', async () => {
@@ -1124,6 +1246,10 @@ describe('Workspace settings', () => {
       menuBarPresent: false,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1276,6 +1402,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     expect(screen.getByRole('switch', { name: 'Debug enabled' })).toBeChecked();
 
@@ -1291,6 +1421,10 @@ describe('Workspace settings', () => {
       menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
+      productAnalyticsEnabled: true,
+      productAnalyticsEffective: true,
+      productAnalyticsPreferencePending: false,
+      nativeCrashRestartRequired: false,
     });
     expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
   });

@@ -1,0 +1,110 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TelemetryBootstrapService } from '../src/telemetry/bootstrap';
+import { linkAnonymousTelemetry } from '../src/telemetry/identity-link';
+import { processProfileOutbox } from '../src/telemetry/profile-delivery';
+import { createTestEnv } from './helpers/cloudflare-test';
+import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+
+describe('PostHog profile job delivery', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-12T20:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('delivers the non-supersedable epoch transition exactly once before later person work', async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO users
+      (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
+      VALUES ('user-1', 'google-1', 'ada@example.com', 'Ada', ?, ?, 1)`)
+      .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: 'global', SESSION_SIGNING_KEY: 'test-key',
+      POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+    });
+    const capability = (await new TelemetryBootstrapService(env).bootstrap(
+      '018f22f2-4c22-7abc-8def-0123456789ab', 'US',
+    )).capability;
+    await linkAnonymousTelemetry(env, { userId: 'user-1', workspaceId: null, region: 'global' }, capability);
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(processProfileOutbox(env)).resolves.toEqual({ selected: 1, delivered: 1, retried: 0, terminal: 0, suppressed: 0 });
+    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
+    expect(body.batch[0]).toMatchObject({
+      event: '$identify',
+      properties: {
+        $anon_distinct_id: '018f22f2-4c22-7abc-8def-0123456789ab',
+        $set: { email: 'ada@example.com', name: 'Ada' },
+      },
+    });
+    expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get()).toEqual({ state: 'acknowledged' });
+    await processProfileOutbox(env);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    database.close();
+  });
+
+  it('suppresses pending identifiable profile work after opt-out', async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO users
+      (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled, analytics_person_id)
+      VALUES ('user-1', 'google-1', 'ada@example.com', 'Ada', ?, ?, 0, 'person-1')`)
+      .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+    database.prepare(`INSERT INTO telemetry_profile_jobs
+      (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
+       properties_json, version, state, created_at, delete_at)
+      VALUES ('job-1', 'user-1', 'person_profile', 'person-1', NULL, '{}', 1, 'pending', ?, ?)`)
+      .run('2026-08-12T20:00:00.000Z', '2026-11-10T20:00:00.000Z');
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: 'global',
+      POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+    });
+    vi.stubGlobal('fetch', vi.fn());
+    await expect(processProfileOutbox(env)).resolves.toMatchObject({ suppressed: 1 });
+    expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get()).toEqual({ state: 'suppressed' });
+    database.close();
+  });
+
+  it('marks malformed or empty profile jobs terminal without blocking later valid work', async () => {
+    const database = migratedSqliteDatabase();
+    const insert = database.prepare(`INSERT INTO telemetry_profile_jobs
+      (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
+       properties_json, version, state, created_at, delete_at)
+      VALUES (?, NULL, 'person_profile', ?, NULL, ?, 1, 'pending', ?, ?)`);
+    const deleteAt = '2026-11-10T20:00:00.000Z';
+    insert.run('job-malformed', 'person-malformed', '{', '2026-08-12T19:00:00.000Z', deleteAt);
+    insert.run('job-empty', 'person-empty', '{}', '2026-08-12T19:01:00.000Z', deleteAt);
+    insert.run(
+      'job-valid',
+      'person-valid',
+      JSON.stringify({ name: 'Valid user' }),
+      '2026-08-12T19:02:00.000Z',
+      deleteAt,
+    );
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: 'global',
+      POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(processProfileOutbox(env)).resolves.toEqual({
+      selected: 3, delivered: 1, retried: 0, terminal: 2, suppressed: 0,
+    });
+    expect(database.prepare('SELECT id, state, attempt_count FROM telemetry_profile_jobs ORDER BY id').all())
+      .toEqual([
+        { id: 'job-empty', state: 'terminal', attempt_count: 1 },
+        { id: 'job-malformed', state: 'terminal', attempt_count: 1 },
+        { id: 'job-valid', state: 'acknowledged', attempt_count: 1 },
+      ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).batch[0]).toMatchObject({
+      event: '$set',
+      properties: { distinct_id: 'person-valid', $set: { name: 'Valid user' } },
+    });
+    database.close();
+  });
+});

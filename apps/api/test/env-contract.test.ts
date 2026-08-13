@@ -9,8 +9,9 @@ function binding(): never {
 
 function productionEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
-    DB: binding(), PAYLOADS: binding(), IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
-    RUN_ANALYTICS: binding(),
+    DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
+    IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
+    RUN_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
     WORKSTREAM_ROOMS: binding(), WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
     WORKSTREAM_LOOP_WORKFLOW: binding(), CONNECTOR_POLL_WORKFLOW: binding(),
     APP_ENV: "production",
@@ -30,6 +31,14 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
     OAUTH_STATE_ENCRYPTION_KEY: "oauth-secret",
     CONNECTOR_CREDENTIALS_KEY: "credentials-secret",
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    TELEMETRY_CAPABILITY_SIGNING_KEY: "telemetry-capability-secret",
+    TELEMETRY_OPERATORS_JSON: JSON.stringify({
+      "operator-token-at-least-thirty-two-characters": {
+        operatorId: "0198a229-ef99-7000-8000-000000000001",
+        role: "security",
+      },
+    }),
+    POSTHOG_PROJECT_TOKEN: "phc_test",
     GOOGLE_OAUTH_CLIENT_ID: "google-client",
     GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
     TOOL_DEFAULT_TIMEOUT_MS: "30000",
@@ -62,6 +71,13 @@ describe("environment contract", () => {
     for (const secret of ["sk-or-secret", "session-secret", "oauth-secret", "credentials-secret", "google-secret"]) {
       expect(message).not.toContain(secret);
     }
+  });
+
+  it("requires the isolated telemetry object store in production", () => {
+    const env = productionEnv();
+    delete (env as Partial<Env>).TELEMETRY_PAYLOADS;
+
+    expect(() => assertEnvContract(env)).toThrow(/TELEMETRY_PAYLOADS is missing/u);
   });
 
   it("rejects a numeric deadline that would silently fall back to its default", () => {

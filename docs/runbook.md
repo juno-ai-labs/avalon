@@ -32,8 +32,11 @@ Create independent resource sets for `global` and `eu`:
 
 - A D1 database
 - An R2 payload bucket
+- A dedicated telemetry R2 bucket (`avalon-global-telemetry` or the
+  EU-jurisdiction `avalon-eu-telemetry`), separate from workspace payloads
 - An activity Queue and dead-letter Queue
-- The Worker, Durable Object namespaces, and Workflows declared in the regional Wrangler file
+- The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
+  Container declared in the regional Wrangler file
 
 One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data. Both regions do send it an evaluation context carrying workspace, work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email domains — bounded by the rules in [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
@@ -56,6 +59,18 @@ Set these shared Worker secrets separately in each regional deployment:
 - `OAUTH_STATE_ENCRYPTION_KEY`
 - `CONNECTOR_CREDENTIALS_KEY`
 - `CONNECTOR_CREDENTIALS_KEYS_JSON` during credential-key rotation; a JSON object mapping old numeric versions to their regional keys
+- `TELEMETRY_OPERATORS_JSON`; a JSON map from opaque bearer token to the fixed
+  principal accepted by that region's restricted telemetry operator surface
+
+Set `POSTHOG_PROJECT_TOKEN` only on the Global Worker. The checked-in Global
+configuration fixes `POSTHOG_HOST` to the approved US ingest origin; EU must have
+neither value. Set `TELEMETRY_CAPABILITY_SIGNING_KEY` only on Global; EU sends
+the capability to the narrow `GLOBAL_TELEMETRY_CONTROL` RPC for verification and
+receives only a route/epoch control projection. The desktop release workflow also
+requires repository variables
+`AVALON_GLOBAL_TELEMETRY_R2_BUCKET` and `AVALON_EU_TELEMETRY_R2_BUCKET` so it can
+publish source maps and native symbols to both private regional buckets before
+distribution.
 
 Generate independent signing/encryption material per region. Cloudflare administration credentials belong only in the local deployment environment; they must never become Worker variables.
 
@@ -675,6 +690,152 @@ scratch directory, keep it out of logs, tickets, and commits, and delete it when
 the investigation is done. What the feature stores and why is
 [`agent-harness.md`](agent-harness.md#failure-modes-and-limits); this section is
 only how to read it back.
+
+## Regional telemetry
+
+The five-minute scheduled Worker pass is the normal telemetry operator. In each
+region it reaps expired rows and raw objects, suppresses opted-out attributable
+work, repairs stale crash-processing claims, processes crash and event/profile
+outboxes, and emits one content-free `telemetry_operations_snapshot`. The fixed
+fields are pending and terminal counts for accepted events, crashes, and profiles;
+rejection and open-circuit counts; and the age of each oldest pending queue. No
+event properties, person details, dump bytes, object keys, or stack report may be
+added to this log.
+
+Alert when any destination circuit is open, a terminal count is nonzero, a
+backlog remains older than 15 minutes, processing failures persist, matching
+symbols are unavailable for a current release, or a deletion pass leaves expired
+rows or objects. Always inspect Global and EU independently. EU has no PostHog or
+Analytics Engine telemetry destination, so a Global delivery graph says nothing
+about EU health.
+
+### Operator access
+
+Each regional Worker receives its own `TELEMETRY_OPERATORS_JSON` secret. It is a
+JSON object with at most 25 entries; each key is a distinct 32–256 character
+bearer token and each value is a fixed principal:
+
+```json
+{
+  "<opaque-token>": {
+    "operatorId": "<operator-uuid>",
+    "role": "support"
+  }
+}
+```
+
+The other role is `security`. Use independent tokens in Global and EU, add a new
+token before removing its predecessor during rotation, and never put a token in a
+URL, log, ticket, or shell history. Requests use `Authorization: Bearer <token>`
+against the owning regional API under `/internal/telemetry`:
+
+- `GET /status` returns the fixed regional operational snapshot to either role.
+- `POST /replay` accepts `{ "eventId", "reason" }` only from a `security`
+  principal. Replay is Global-only; `reason` is `destination_recovery` or
+  `incident_response`.
+- `GET /crashes/<crash-id>/raw?reason=customer_support` is for `support`;
+  `reason=incident_response` is for `security`. It streams one regional dump and
+  records the principal, reason, and fixed result code in
+  `telemetry_crash_access_audit`.
+- EU additionally exposes `GET /eu/crash-issues?limit=<1-100>` and
+  `POST /eu/crash-free-launches` with canonical `{ "from", "to" }` timestamps.
+  The same paths return `404` from Global.
+
+Start with `/status` in both regions. Use replay only for a known terminal Global
+event, and request raw bytes only when the reason genuinely requires them; neither
+operation is an exploratory listing surface.
+
+### Destination outage or open circuit
+
+1. Confirm product requests are healthy; telemetry failure must not fail or retry
+   the observed product action.
+2. Inspect the fixed destination state and oldest Global backlog age. Do not log or
+   export accepted envelopes while diagnosing transport.
+3. Verify the configured PostHog origin and secret presence without printing the
+   token. Ordinary event/profile batches preserve HTTP status: a 408, 429, 5xx, or
+   network error retries within the original deadline, while another 4xx is
+   terminal. SDK-backed JavaScript/native exception delivery exposes only flush
+   success/failure to Avalon, so any flush failure retries within the original
+   deadline. Investigate a persistent exception retry as a provider or contract
+   incident rather than replaying it blindly.
+4. Let the five-minute circuit cool down after restoring the destination. Confirm
+   pending age falls and the next snapshot reports no open circuit.
+5. If a bounded replay is required, call Global
+   `POST /internal/telemetry/replay` with the `security` operator credential and a
+   `destination_recovery` or `incident_response` reason.
+   It preserves event ID, payload hash, route, and deletion deadline. Never replay
+   an expired, suppressed, wrong-region, or opt-out row.
+
+### Backlog, rejection, or abuse
+
+Compare accepted, crash, and profile backlogs before changing a limit. A growing
+accepted/profile queue points at destination delivery; a growing crash queue may
+instead be symbolication or artifact access. Rejection buckets contain only fixed
+violation codes, registered event names or `unregistered`, and counts. A crash
+upload subject is one-way hashed and limited to ten newly accepted reports per
+hour; duplicates do not consume the limit. Do not raise the 50-event/256-KiB batch,
+20-MiB dump, or per-subject limit during an incident without a reviewed contract
+and cost change.
+
+### Missing source maps or native symbols
+
+Confirm the private artifact exists under the affected region, release, build,
+platform, and architecture in `TELEMETRY_PAYLOADS`. The release workflow publishes
+to both regional buckets using the two `AVALON_*_TELEMETRY_R2_BUCKET` variables;
+the application bundle must not contain source maps or native symbol archives.
+Republish the exact immutable artifact for that build rather than substituting a
+new build under the old key. An unavailable artifact yields an unsymbolicated
+report and remains bounded by the original 90-day occurrence deadline.
+
+### Prohibited data or raw-crash access
+
+Disable the affected registered producer first; do not broaden logger redaction as
+a substitute for stopping collection. Preserve the route and original deadline
+while identifying affected event IDs through fixed metadata. Delete prohibited
+internal rows and objects in their owning region, confirm the next lifecycle pass
+finds no survivors, and follow the separate incident/legal process for any data
+already delivered to PostHog.
+
+Raw dumps are accessed only through regional
+`GET /internal/telemetry/crashes/<crash-id>/raw` by opaque crash ID,
+authenticated operator, and `customer_support` or `incident_response` reason.
+Every attempt writes `telemetry_crash_access_audit`; logs and audit rows never
+contain the R2 key or dump contents. Do not download a dump merely to inspect
+whether it exists.
+
+### Cross-region route failure
+
+Check the route stored on the event or crash generation and the routing basis. A
+workspace binding is authoritative; an onboarding route is the immediate coarse
+classification made when the epoch began. Never rewrite the route, copy the row,
+or fall EU telemetry back to Global. Restore the named `EU_TELEMETRY_BRIDGE`,
+regional D1/R2, or processor and allow the existing regional retry to continue
+within its original deadline. If an affirmative-EU pre-workspace dump was saved,
+treat that as prohibited-data handling, not as a delivery problem.
+
+### Preference inconsistency
+
+A disabled account must have nonessential local reporting and upload stopped,
+the current Crashpad generation invalidated, attributable undelivered regional
+event/profile/crash work suppressed or deleted, and no later profile delivery.
+The desktop enables only after the canonical compare-and-set succeeds and reads
+the preference fail-closed on each authenticated startup. Reconcile the canonical
+Global preference and opaque EU projection by version; never enable from a stale
+local `true`. Essential content-free reliability remains eligible.
+
+### Retention or deletion failure
+
+Deadlines are absolute: local material is eligible for at most 14 days; regional
+accepted/outbox/receipt/profile/audit/full-crash state and raw dumps for at most 90
+days; EU semantic and minimized crash contributions for at most 13 months. Retry
+the regional lifecycle job in bounded batches and verify both D1 and the dedicated
+telemetry bucket. Do not extend `delete_at`, renew a contribution from issue
+recurrence, or keep an object after its index is deleted. A dormant desktop
+physically purges expired Crashpad generations on its next launch before upload or
+starting the next generation.
+
+[`telemetry.md`](telemetry.md) owns the mechanisms and limits behind these
+procedures.
 
 ## Incident response
 

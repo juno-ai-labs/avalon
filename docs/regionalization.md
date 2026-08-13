@@ -22,6 +22,8 @@ bridges, or any code that selects a Durable Object namespace.
 | `apps/api/src/linear-regional-bridge.ts`, `linear-routing-bridge.ts` | The same pair for Linear. |
 | `apps/api/src/workstream-email-routing-bridge.ts` | The one Global reservation registry for friendly work-stream addresses. |
 | `apps/api/src/inbound-email-regional-bridge.ts` | One verified Resend event handed to the owning data plane. |
+| `apps/api/src/telemetry-regional-bridge.ts`, `telemetry-control-bridge.ts` | Validated Global-to-EU onboarding/outcome projections and narrow EU-to-Global capability/preference control commands. They are not general event-forwarding bridges. |
+| `apps/api/src/routes/telemetry.ts`, `apps/api/src/telemetry/` | Immediate route bootstrap, regional acceptance, EU internal sink, and Global PostHog delivery. |
 | `apps/api/src/lib/rpc-contracts.ts` | The schema every bridge argument is parsed against at the hop. |
 | `apps/api/src/lib/durable-object-namespace.ts` | The shared helper that selects a namespace, pinning EU with `jurisdiction("eu")`. |
 | `apps/api/src/lib/region-routed-state.ts` | Region-prefixed provider state, so a callback knows where it started. |
@@ -59,6 +61,7 @@ The same Worker source is deployed twice:
 | D1 | global database | EU-jurisdiction database |
 | Agent memory vectors | `avalon-global-memory` Vectorize index | `avalon-eu-memory` Vectorize index |
 | R2 | global bucket | EU-jurisdiction bucket |
+| Telemetry R2 | dedicated `avalon-global-telemetry` bucket | dedicated `avalon-eu-telemetry` bucket with EU jurisdiction |
 | Durable Objects | global namespace calls | namespace calls pinned with `jurisdiction("eu")` |
 | Secrets | global key set | independent EU key set |
 | Identity onboarding | canonical platform identity and opaque workspace binding | regional membership/invitation operations exposed only by named Worker RPC |
@@ -111,6 +114,30 @@ Work-stream email *names* have one Global reservation registry for all regions:
 Global reserves locally, and every non-Global Worker calls the named Global
 router. See [`workstream-email-addresses.md`](workstream-email-addresses.md).
 
+### Telemetry before and after workspace selection
+
+Telemetry is routed immediately; there is no region-pending holding area. Once a
+workspace exists, its immutable binding is authoritative. During onboarding,
+before a user has selected a workspace region, the Global bootstrap endpoint uses
+Cloudflare's country signal only to classify the anonymous login epoch as EU or
+Global. An affirmative EU country routes EU-eligible semantic events through the
+named `EU_TELEMETRY_BRIDGE` and prevents Crashpad from saving a pre-region dump.
+Non-EU, missing, malformed, failed, and timed-out signals route to Global. Neither
+the country nor IP address is retained.
+
+The route is attached to an event when it is created. A later explicit selection
+affects future events and crash generations only: nothing is moved, replayed, or
+relabelled across regions. Global can retain and deliver its approved product and
+diagnostic records to the US PostHog project. EU retains its semantic projection,
+raw crashes, sanitized reports, symbols, and source maps in EU regional D1,
+dedicated EU R2, and EU-pinned processing; it has no PostHog token or Analytics
+Engine telemetry dataset. The account preference crosses by an opaque handle so
+Global can remain the canonical identity plane without receiving an EU database
+identifier. Capability verification and journey closure also use that narrow
+control RPC: the signing key stays in Global, and EU receives only the fixed
+route/epoch control result. [`telemetry.md`](telemetry.md) owns the complete
+mechanism.
+
 ## Invariants
 
 - **Global reaches EU only through named Worker RPC service bindings.** The EU
@@ -152,6 +179,16 @@ router. See [`workstream-email-addresses.md`](workstream-email-addresses.md).
 - **Logs include the region without copying content.**
 - **Deployment configuration must fail when `AVALON_REGION` and the selected
   Wrangler environment disagree.**
+- **Telemetry never changes an accepted row's region.** Login linking, workspace
+  selection, retries, support access, and replay preserve the route fixed at event
+  or crash-generation creation.
+- **EU telemetry has no Global destination fallback.** An unavailable EU bridge,
+  bucket, database, or processor fails the telemetry operation; it never moves the
+  payload to Global or PostHog.
+- **Telemetry has exactly two directional RPC surfaces.** Global-to-EU carries a
+  validated event projection. EU-to-Global carries only opaque preference
+  mutation or capability authorization/closure commands; it never carries an EU
+  event, dump, regional analytics identity, or destination credential.
 
 ## Boundary
 
@@ -167,6 +204,7 @@ to cross it.
 | The Notion single-ingress design in full | [`notion-ingress.md`](notion-ingress.md) |
 | The Global address registry and its tombstones | [`workstream-email-addresses.md`](workstream-email-addresses.md) |
 | Provider app registrations and their callbacks | [`provider-apps.md`](provider-apps.md) |
+| Telemetry routing, opt-out, identities, and lifecycle | [`telemetry.md`](telemetry.md) |
 | Deploying and verifying both regions | [`runbook.md`](runbook.md) |
 
 A module document that touches identity, the Global registry, a cross-region
@@ -215,12 +253,16 @@ Under `apps/api`, run with `pnpm --filter @avalon/api exec vitest run <path>`
 | `test/health-env-contract.test.ts` | That `/health` blocks on the contract and reports the offending keys. |
 | `test/organization-region-bindings.test.ts` | Activation, creation, acceptance, and the single-active-binding rule. |
 | `test/platform-onboarding.test.ts` | Bootstrap-session limits and cross-region discovery. |
+| `test/telemetry-bootstrap.test.ts` | Cloudflare-country classification, immediate routing, capability binding, and the EU crash-saving decision. |
+| `test/telemetry-preference.test.ts`, `test/telemetry-identity-link.test.ts` | Opaque cross-region preference projection and same-region anonymous linking. |
+| `test/crash-symbolicator-config.test.ts`, `test/env-contract.test.ts` | Dedicated per-region telemetry buckets, EU jurisdiction, Container bindings, and Global-only PostHog configuration. |
 | `test/notion-routing.test.ts` | The region-prefixed OAuth state and the unrouted-delivery refusal. |
 | `test/workstream-email-address.test.ts` | The Global reservation registry and its fail-closed behavior. |
 
-Both Wrangler dry-run builds run in CI and are what catch a binding that exists in
-one deployment's configuration and not the other — no Vitest suite reads
-`wrangler.global.jsonc` or `wrangler.eu.jsonc`. Locally, `pnpm dev:api:local` starts both regions and
+Both Wrangler dry-run builds run in CI and are what catch whether Cloudflare can
+build each complete deployment. Focused config tests also read both regional files
+to enforce the security-sensitive telemetry differences, but they do not replace a
+Wrangler build. Locally, `pnpm dev:api:local` starts both regions and
 `pnpm health:regions` checks the hosted ones; see
 [`dev-environment.md`](dev-environment.md) and [`runbook.md`](runbook.md).
 
@@ -255,6 +297,55 @@ this shared dataset rather than assuming the EU Worker binding makes it EU
 resident.
 
 ## Changelog
+
+### 2026-08-13 — EU telemetry control is narrow and keyless
+
+**What changed:** The EU Worker uses `GLOBAL_TELEMETRY_CONTROL` for three strict
+commands: opaque preference mutation, onboarding-journey authorization, and
+journey closure. The capability-signing key remains Global-only, while the
+separate Global-to-EU bridge carries validated event projections.
+
+**Why:** EU must link its locally minted analytics person to a journey routed by
+Global without copying a Global signing key or exporting the EU person identity.
+Preference also remains canonical in the one identity control plane.
+
+**Considered and rejected:** Sharing the key, reading Global journey rows from EU,
+or extending the event projection bridge into a bidirectional payload channel.
+Those alternatives collapse independent regional authority or widen the one
+allowed event crossing.
+
+**Consequences:** Cross-region telemetry has two directional bindings with
+different negative-space contracts. New control commands must remain payload-free,
+and new event projections may move only Global-to-EU after route validation.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-12 — Onboarding telemetry resolves a region immediately
+
+**What changed:** Global classifies a pre-workspace anonymous epoch from
+Cloudflare's coarse country signal, sends affirmative-EU onboarding projections
+through a narrow named RPC, and otherwise routes to Global. Explicit workspace
+bindings take over for future events. Global and EU now have separate telemetry
+D1 state, R2 buckets, processing, and destination configuration.
+
+**Why:** Onboarding funnels begin before workspace selection, while an EU user
+must not have a crash dump saved or an event sent to the US PostHog project merely
+because the region is not known yet. The user chose immediate coarse routing and
+explicitly rejected a pending holding area.
+
+**Considered and rejected:** Queueing unresolved records in Global, later moving
+them when a workspace is selected, recording the detected country, or falling EU
+telemetry back to Global during an outage. Each weakens residency or makes one
+event's region mutable.
+
+**Consequences:** A failed or unavailable geolocation signal takes the documented
+Global fallback, but an affirmative EU result is sticky for that event. Future
+workspace selection never migrates historical telemetry, and both deployments
+must provision their dedicated telemetry resources before rollout.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-12 — Root-run aggregate telemetry excludes regional identifiers
 

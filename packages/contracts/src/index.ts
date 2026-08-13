@@ -7,6 +7,43 @@ export * from "./attachment-contracts";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
+  TELEMETRY_BATCH_MAX_BYTES,
+  TELEMETRY_CATEGORIES,
+  TELEMETRY_EVENTS,
+  TELEMETRY_IDENTITY_SCOPES,
+  TELEMETRY_SOURCES,
+  AnonymousTelemetryBatchSchema,
+  CrashIngestResponseSchema,
+  LinkAnonymousTelemetryResponseSchema,
+  TelemetryAcceptanceBatchResponseSchema,
+  TelemetryAcceptanceResultSchema,
+  TelemetryBootstrapRequestSchema,
+  TelemetryBootstrapResponseSchema,
+  ProductAnalyticsPreferenceSchema,
+  UpdateProductAnalyticsPreferenceSchema,
+  TelemetryBatchSchema,
+  TelemetryBreadcrumbSchema,
+  TelemetryBreadcrumbSidecarSchema,
+  TelemetryEnvelopeSchema,
+  telemetryEventNames,
+  type TelemetryBatch,
+  type TelemetryBreadcrumb,
+  type TelemetryBreadcrumbSidecar,
+  type AnonymousTelemetryBatch,
+  type CrashIngestResponse,
+  type LinkAnonymousTelemetryResponse,
+  type TelemetryAcceptanceBatchResponse,
+  type TelemetryAcceptanceResult,
+  type TelemetryBootstrapRequest,
+  type TelemetryBootstrapResponse,
+  type ProductAnalyticsPreference,
+  type TelemetryCategory,
+  type TelemetryEnvelope,
+  type TelemetryEventName,
+  type TelemetryIdentityScope,
+  type TelemetrySource,
+} from "./telemetry";
+export {
   WORKSTREAM_LINK_PATH_PREFIX,
   isWorkstreamId,
   parseWorkstreamLink,
@@ -1592,6 +1629,10 @@ export const WorkstreamWorkflowInputSchema = z.object({
    */
   digestDeliveryId: IdSchema.optional(),
   executionPrincipal: ExecutionPrincipalSchema,
+  /** Server-injected correlation for a user-started semantic run journey. */
+  telemetryOperationId: IdSchema.optional(),
+  /** Regional user record that owns the correlated run; never accepted from the client body. */
+  telemetrySubjectUserId: IdSchema.optional(),
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   reason: z.string().min(1).max(500)
