@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  callGranolaMcp,
   createGranolaConnector,
   createGranolaWebhookEndpoint,
   GranolaCapabilities,
@@ -13,6 +12,16 @@ import {
 } from "./types";
 
 describe("Granola connector", () => {
+  it("uses the live MCP tool surface only for personal connections", () => {
+    const adapter = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+    });
+    expect(adapter.dynamicAgentTools).toMatchObject({
+      capabilities: [GranolaCapabilities.personalRead],
+      connectionScopes: ["personal"],
+    });
+  });
+
   it("uses the documented workspace API endpoints and exact query parameters", async () => {
     const requested: URL[] = [];
     const adapter = createGranolaConnector({
@@ -167,67 +176,12 @@ describe("Granola connector", () => {
     })).rejects.toThrow(/identity does not match/u);
   });
 
-  it("discovers Granola MCP tools, adapts camelCase arguments, and accepts SSE responses", async () => {
-    const requests: Array<Record<string, unknown>> = [];
-    const fetcher: FetchLike = async (_input, init) => {
-      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer personal-token");
-      if (init?.method === "DELETE") return new Response(null, { status: 204 });
-      const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      requests.push(request);
-      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
-      const id = request.id as string;
-      if (request.method === "initialize") {
-        return sseResponse({
-          jsonrpc: "2.0",
-          id,
-          result: {
-            protocolVersion: "2025-06-18",
-            capabilities: {},
-            serverInfo: { name: "Granola", version: "1" },
-          },
-        }, { "mcp-session-id": "session-1" });
-      }
-      if (request.method === "tools/list") {
-        return jsonResponse({
-          jsonrpc: "2.0",
-          id,
-          result: {
-            tools: [{
-              name: "get_meetings",
-              inputSchema: {
-                type: "object",
-                properties: { meeting_ids: { type: "array" } },
-                required: ["meeting_ids"],
-                additionalProperties: false,
-              },
-            }],
-          },
-        });
-      }
-      return sseResponse({
-        jsonrpc: "2.0",
-        id,
-        result: { content: [{ type: "text", text: "meeting content" }], isError: false },
-      });
-    };
-    await expect(callGranolaMcp(
-      "personal-token",
-      "get_meetings",
-      { meetingIds: ["meeting-1"] },
-      AbortSignal.timeout(1_000),
-      fetcher,
-    )).resolves.toMatchObject({ content: [{ text: "meeting content" }] });
-    expect(requests.find((request) => request.method === "tools/call")).toMatchObject({
-      params: { name: "get_meetings", arguments: { meeting_ids: ["meeting-1"] } },
-    });
-  });
-
   it("uses protected-resource discovery, DCR, PKCE, and encrypted callback state for personal OAuth", async () => {
     const calls: URL[] = [];
     const fetcher: FetchLike = async (input, init) => {
       const url = requestUrl(input);
       calls.push(url);
-      if (url.pathname === "/.well-known/oauth-protected-resource") {
+      if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
         return jsonResponse({
           resource: "https://mcp.granola.ai/mcp",
           authorization_servers: ["https://mcp-auth.granola.ai"],
@@ -284,7 +238,7 @@ describe("Granola connector", () => {
       tokenEndpointAuthMethod: "client_secret_post",
     });
     expect(calls.map((call) => call.pathname)).toEqual([
-      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/mcp",
       "/.well-known/oauth-authorization-server",
       "/oauth2/register",
     ]);
@@ -474,13 +428,6 @@ function jsonResponse(value: unknown, status = 200, headers: HeadersInit = {}): 
   return new Response(JSON.stringify(value), {
     status,
     headers: { "content-type": "application/json", ...Object.fromEntries(new Headers(headers)) },
-  });
-}
-
-function sseResponse(value: unknown, headers: HeadersInit = {}): Response {
-  return new Response(`event: message\ndata: ${JSON.stringify(value)}\n\n`, {
-    status: 200,
-    headers: { "content-type": "text/event-stream", ...Object.fromEntries(new Headers(headers)) },
   });
 }
 

@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import { formatDateTime } from '../lib/format';
 import { useUiStore } from '../lib/ui-store';
 import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
@@ -87,6 +88,7 @@ function workstream(
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     pinPosition: null,
     lastActivityAt,
   };
@@ -249,6 +251,41 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
+  });
+
+  it('shows the next active timer and its brief prompt in a tooltip', async () => {
+    const dueAt = '2026-08-13T20:30:00.000Z';
+    const waiting = {
+      ...workstream('waiting', 'Wait for the deploy', 'completed'),
+      nextPendingWakeup: {
+        dueAt,
+        promptPreview: 'Check whether production deploy completed…',
+      },
+    };
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[waiting, workstream('finished', 'Deploy finished', 'completed')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const accessibleTimerLabel = `Active timer. Next: ${formatDateTime(dueAt)}. Check whether production deploy completed…`;
+    const marker = within(screen.getByRole('link', { name: /Wait for the deploy/u }))
+      .getByRole('img', { name: accessibleTimerLabel });
+    expect(marker).toHaveClass('sidebar-workstream-timer');
+    expect(within(screen.getByRole('link', { name: /Deploy finished/u }))
+      .queryByRole('img', { name: /Active timer/u })).not.toBeInTheDocument();
+
+    fireEvent.pointerMove(marker, { pointerType: 'mouse' });
+    expect(await screen.findByText(`Next: ${formatDateTime(dueAt)}`)).toBeVisible();
+    expect(screen.getByText('Check whether production deploy completed…')).toBeVisible();
   });
 
   it('waits for a name rather than showing the request a work stream was created from', () => {
@@ -1182,6 +1219,107 @@ describe('pinned work streams', () => {
     ]);
 
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+  });
+
+  it('continues Command shortcuts from pinned rows through recent rows while Command is held', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[note('note-recent', 'Recent note', '2026-07-31T19:59:00.000Z')]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[
+              pinned(workstream('ws-a', 'Pinned 1', 'completed'), 0),
+              pinned(workstream('ws-b', 'Pinned 2', 'completed'), 1),
+              pinned(workstream('ws-c', 'Pinned 3', 'completed'), 2),
+              ...Array.from({ length: 6 }, (_value, index) =>
+                workstream(
+                  `ws-recent-${index + 1}`,
+                  `Recent ${index + 1}`,
+                  'completed',
+                  'ad_hoc',
+                  `2026-07-31T19:${String(58 - index).padStart(2, '0')}:00.000Z`,
+                )),
+            ]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    const links = within(section).getAllByRole('link');
+    expect(document.querySelectorAll('.command-shortcut-pill')).toHaveLength(0);
+    expect(links.map((link) => link.getAttribute('aria-keyshortcuts')))
+      .toEqual(['Meta+1', 'Meta+2', 'Meta+3']);
+    expect(screen.getByRole('link', { name: /Recent note/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+4');
+    expect(screen.getByRole('link', { name: /Recent 1$/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+5');
+    expect(screen.getByRole('link', { name: /Recent 5$/u })).toHaveAttribute('aria-keyshortcuts', 'Meta+9');
+    expect(screen.getByRole('link', { name: /Recent 6$/u })).not.toHaveAttribute('aria-keyshortcuts');
+
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+    expect([...document.querySelectorAll('.command-shortcut-pill')].map((pill) => pill.textContent))
+      .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+
+    fireEvent.keyUp(window, { key: 'Meta' });
+    expect(document.querySelectorAll('.command-shortcut-pill')).toHaveLength(0);
+  });
+
+  it('opens the correspondingly ordered pin from the physical number row', () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
+    ]);
+
+    const bravo = screen.getByRole('link', { name: /Bravo/u });
+    expect(bravo).not.toHaveClass('is-active');
+
+    // Symbol-first layouts such as French AZERTY do not report `key: '2'` for
+    // this physical key, but it is still the second key in the advertised row.
+    fireEvent.keyDown(window, { code: 'Digit2', key: 'é', metaKey: true });
+
+    expect(bravo).toHaveClass('is-active');
+
+    // Holding the key produces repeated keydowns. A repeat for any digit is
+    // ignored rather than pushing another route onto history.
+    fireEvent.keyDown(window, { code: 'Digit3', key: '"', metaKey: true, repeat: true });
+    expect(bravo).toHaveClass('is-active');
+    expect(screen.getByRole('link', { name: /Charlie/u })).not.toHaveClass('is-active');
+  });
+
+  it('opens the recent row immediately after the last pin', () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
+      workstream('ws-digest', 'Digest · 12 Aug · 5:00 PM', 'completed'),
+    ]);
+
+    const digest = screen.getByRole('link', { name: /Digest/u });
+    expect(digest).toHaveAttribute('aria-keyshortcuts', 'Meta+4');
+
+    fireEvent.keyDown(window, { code: 'Digit4', key: '4', metaKey: true });
+
+    expect(digest).toHaveClass('is-active');
+  });
+
+  it('does not navigate behind an open modal dialog', async () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+    ]);
+
+    const bravo = screen.getByRole('link', { name: /Bravo/u });
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Alpha/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    expect(screen.getByRole('dialog', { name: 'Rename work stream' })).toBeVisible();
+
+    fireEvent.keyDown(window, { code: 'Digit2', key: '2', metaKey: true });
+
+    expect(bravo).not.toHaveClass('is-active');
   });
 
   it('offers Pin on a recent row and Unpin on a pinned one', async () => {

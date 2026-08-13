@@ -1,8 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AvalonDesktopBridge, DesktopSession } from '../../common/desktop';
+import type { DesktopSession } from '../../common/desktop';
 import type { PendingWorkspaceInvitation } from '../lib/types';
-import { InvitationOnboarding, RegionOnboarding, SignInScreen } from './onboarding';
+import {
+  InvitationOnboarding,
+  RegionOnboarding,
+  SignInScreen,
+  type SignInDesktopBridge,
+} from './onboarding';
 
 const api = vi.hoisted(() => ({
   beginGoogleLogin: vi.fn(),
@@ -11,7 +16,7 @@ const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
   openExternal: vi.fn(),
-}));
+}) satisfies SignInDesktopBridge);
 const sessionState = vi.hoisted(() => ({
   acceptInvitation: vi.fn(),
   api,
@@ -42,7 +47,7 @@ const sessionState = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => sessionState }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => bridge as unknown as AvalonDesktopBridge }));
+vi.mock('../lib/platform', () => ({ desktopBridge: () => bridge }));
 
 const invitation: PendingWorkspaceInvitation = {
   id: '00000000-0000-7000-8000-000000000009',

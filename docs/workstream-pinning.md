@@ -22,7 +22,8 @@ the different question of who a work stream is *for*.
 | `apps/api/src/services/workstream-service.ts` | `pin`, `unpin`, `reorderPins`, and the position rewrite behind them. `list` excludes pins from the recency order and attaches them to the first page. |
 | `apps/api/src/routes/workstreams.ts` | `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The **Pinned** section, the right-click **Pin** / **Unpin** item, and the drag-and-keyboard reorder. `orderPinnedWorkstreams` decides what the section renders. |
-| `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` writes a pin response into the cached work-stream list. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
+| `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
 
 ## How it works
 
@@ -76,6 +77,21 @@ than shown in both places — which is the same thing `GET /workstreams` does, s
 the two agree. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row moves
 it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
+
+Holding Command overlays `⌘1` through `⌘9` on one continuous row order: pinned
+work streams first in their manual order, followed by recent work streams and
+notes in the recency order already rendered below them. Pressing one of those
+physical number-row keys while Command remains down opens the row at that
+visible position. Reading the physical key keeps the mapping true on
+symbol-first layouts such as AZERTY. Automations and primary actions are not
+numbered, and any pinned-or-recent destination after the ninth is left without
+a shortcut. An auto-repeated keydown is ignored so one press creates one history
+entry, and shortcuts pause while a modal dialog is open rather than changing
+the route underneath it. The hint is absolutely positioned over the row, with
+a short gradient into the row's current normal, hover, or selected background;
+long copy disappears underneath it instead of shrinking the row or touching the
+pill. Each numbered link also declares its `Meta+<number>` shortcut to assistive
+technology when the visual hint is hidden.
 
 A drag is committed only when something accepted the drop. `dragend` fires
 whatever ended the drag, so the handler reads `dataTransfer.dropEffect`: `none`
@@ -204,13 +220,18 @@ It deliberately does not:
   quick succession overlap; the local order is cleared only if it is still the
   one that call set, so the first response cannot snap the list back to an order
   the reader has already moved past.
+- **Only the first nine pinned-then-recent rows have Command shortcuts.**
+  Numbering begins at one and never wraps to zero; after the pinned rows consume
+  their numbers, recent work streams and notes use the remainder in displayed
+  order. A later row remains reachable by the list, search, and ordinary
+  navigation but has no numbered shortcut.
 
 ## Testing
 
 | Suite | What it covers |
 | --- | --- |
 | `apps/api/test/workstream-pinning.test.ts` | Append-on-pin, per-person isolation, dense rewrite on unpin, tolerant reorder, the first-page backfill, and that an unreadable work stream cannot be pinned but a stale pin can be removed. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, held-Command hints and continuous number navigation from pins into recent work streams and notes for the first nine rows, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
 
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
@@ -233,6 +254,97 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-12 — Command numbering continues into recent work
+
+**What changed:** The `⌘1` through `⌘9` sequence now starts with the manually
+ordered pinned rows and uses any numbers left over for recent work streams and
+notes in their displayed recency order. With three pins, the first recent row is
+therefore `⌘4`. The recent links expose the same mapping through
+`aria-keyshortcuts`, and their held-Command pills use the existing row overlay.
+
+**Why:** Ending the sequence at the Pinned heading made the keyboard order stop
+while the visual list continued. A reader with fewer than nine pins saw unused
+number keys beside immediately adjacent destinations, including digest rows,
+and had to switch back to pointer or focus navigation at that arbitrary section
+boundary.
+
+**Considered and rejected:** Restarting recent rows at `⌘1` would make the same
+shortcut name two visible destinations. Numbering Automations and primary
+actions too would shift every work-stream shortcut when unrelated content
+changed and would no longer preserve Pinned as the stable start of the run.
+
+**Consequences:** Pinning, unpinning, or reordering changes the number assigned
+to recent rows because pins always lead. Recent notes participate exactly where
+they appear among work streams, so the visual order and keyboard order cannot
+diverge. The nine-key ceiling remains unchanged and `0` remains unused. The
+derived pinned, recent, target, and lookup collections are memoized together so
+unrelated sidebar state does not tear down and re-register the global shortcut
+listeners.
+
+### 2026-08-12 — Command reveals the first nine pins as direct destinations
+
+**What changed:** Holding Command overlays `⌘1` through `⌘9` on the first nine
+rows of the Pinned section. Pressing the corresponding number while Command is
+held opens that work stream; the links expose the same mapping through
+`aria-keyshortcuts` even while the visual hints are absent.
+
+**Why:** Pinning already turns the sidebar into the reader's deliberately
+ordered short list, but reaching an item still required moving to and clicking
+the sidebar. The requested held-modifier treatment makes that existing order
+temporarily legible as a set of keyboard destinations without adding permanent
+visual weight to every row.
+
+**Considered and rejected:** Numbering the primary commands and Automations
+before Pinned, and using `0` for a tenth destination. Both would make the pin
+numbers depend on unrelated sections and contradict the requested one-through-
+nine mapping. Permanently reserving space for the pills was also rejected: the
+hints are transient, and shortening every title when they are absent would make
+the ordinary sidebar pay for a state it is not showing.
+
+**Consequences:** Reordering pins reassigns shortcuts immediately because the
+mapping follows rendered order. Pins after the ninth stay unnumbered. The pills
+overlay row content behind a gradient matched to the row's normal, hover, or
+selected background, so future row backgrounds must keep that gradient in step.
+The handler follows physical `Digit1`–`Digit9` codes, ignores repeated keydowns,
+and yields whenever a modal dialog owns interaction.
+
+### 2026-08-12 — A page cannot become the list by sharing its cache key
+
+**What changed:** Every write to the renderer's `workstreams` query now goes
+through `setCachedWorkstreams`, which binds the key to `WorkstreamSummary[]` and
+asserts the array category again at runtime. Socket reconciliation writes the
+`items` from `getWorkstreams`, not the page that contains them. ESLint forbids a
+direct `setQueryData` or `setQueriesData` write to that key outside the helper,
+and also forbids desktop tests from casting a partial double to `AvalonApi`.
+Those consumers now declare the smaller API capability they actually use, and
+their mocks prove it with `satisfies`.
+
+**Why:** The pagination change below widened `getWorkstreams` from an array to
+`{ items, nextCursor }` and updated the list query, but missed two direct calls
+in socket reconciliation. React Query inferred the page object as a perfectly
+valid generic cache value because its query key carries no value type; the
+sidebar independently read the same key as an array and crashed on `.filter`.
+The socket tests returned the obsolete array shape behind `as unknown as
+AvalonApi`, so the API signature change could not break them.
+
+**Considered and rejected:** Parsing every internal cache update with a full
+Zod schema. The server response had already passed its page schema; the defect
+was choosing the page instead of its valid `items`. Re-validating every mapped
+field would duplicate the external boundary without restoring the missing
+key/value relationship. The helper therefore uses TypeScript for the full
+shape and a cheap runtime array assertion for the category error that caused
+the crash.
+
+**Consequences:** A new producer cannot write this cache directly without
+failing lint, and a renamed API return shape now fails every contract-checked
+socket mock. The runtime assertion is a backstop for type escapes, not a second
+wire parser: external HTTP, socket, IPC, and storage boundaries continue to use
+Zod. Canonical socket refreshes merge their first page over the flat cache
+rather than replacing it, so already-loaded later pages and debug-only system
+rows remain visible until the paginated invalidation completes. Any future
+change from a flat list to a page must change the helper and all of its readers
+deliberately rather than arriving through one caller.
 
 ### 2026-08-12 — The sidebar follows the cursor it was throwing away
 

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const { loadRunPromptContext, projectModelProtocolTranscript } = __integrationTesting;
 
@@ -31,12 +32,12 @@ afterEach(() => {
 });
 
 function envFor(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-  } as unknown as Env;
+  });
 }
 
 /**

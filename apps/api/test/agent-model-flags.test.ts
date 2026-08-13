@@ -16,6 +16,7 @@ import type * as FlagTargetingModule from "../src/services/flag-targeting-attrib
 import type { FlagTargetingAttributes } from "../src/services/flag-targeting-attributes";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * Lets one case serve attributes the real loader would never produce — a key
@@ -34,7 +35,7 @@ vi.mock("../src/services/flag-targeting-attributes", async (importOriginal) => {
 
 // APP_ENV production so the unreachable-binding path warns rather than staying
 // quiet the way it does in development.
-const baseEnv = {
+const baseEnv = createTestEnv({
   AVALON_REGION: "global",
   APP_ENV: "production",
   LOG_LEVEL: "error",
@@ -43,7 +44,7 @@ const baseEnv = {
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_AUTOMATION_MODEL: "x-ai/grok-4.5",
-} as unknown as Env;
+});
 
 type DetailsStub = (
   flagKey: string,
@@ -53,7 +54,7 @@ type DetailsStub = (
 
 /** Binds a `getObjectDetails` stub, the only Flagship method the resolver calls. */
 function envWithFlags(getObjectDetails: DetailsStub): Env {
-  return { ...baseEnv, FLAGS: { getObjectDetails } as unknown as Flagship };
+  return { ...baseEnv, FLAGS: createCloudflareTestBinding<Flagship>({ getObjectDetails }) };
 }
 
 /** A stub that serves `value` the way a provisioned, matching flag would. */
@@ -273,10 +274,10 @@ describe("agent model flags", () => {
     const debug = vi.spyOn(console, "debug").mockImplementation((entry: unknown) => {
       debugged.push(JSON.stringify(entry));
     });
-    const env = seededEnv({
+    const env = seededEnv(createTestEnv({
       ...envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] })),
       LOG_LEVEL: "debug",
-    } as Env);
+    }));
 
     await resolveAgentModelRouting(env, "workstream", { workspaceId: "ws-1" });
 
@@ -351,13 +352,13 @@ describe("agent model flags", () => {
       warnings.push(JSON.stringify(entry));
     });
     // The shared fixture pins LOG_LEVEL to error to keep other cases silent.
-    const env = { ...envWithFlags(async (flagKey, defaultValue) => ({
+    const env = createTestEnv({ ...envWithFlags(async (flagKey, defaultValue) => ({
       flagKey,
       value: defaultValue,
       reason: "ERROR",
       errorCode: "FLAG_NOT_FOUND",
       errorMessage: `flag ${flagKey} does not exist`,
-    })), LOG_LEVEL: "warn" } as Env;
+    })), LOG_LEVEL: "warn" });
 
     await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: "ws-1" })).resolves.toEqual(
       defaultAgentModelRouting(baseEnv, "workstream"),

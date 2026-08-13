@@ -2,9 +2,11 @@ import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
+  backgroundRealtimeWorkstreamIds,
   openWorkstreamId,
   showsAutomation,
   staleHarnessStatusWorkstreamId,
@@ -26,6 +28,7 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstr
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     pinPosition: null,
     lastActivityAt: '2026-08-11T10:00:00.000Z',
   };
@@ -56,12 +59,25 @@ describe('openWorkstreamId', () => {
   });
 });
 
+describe('backgroundRealtimeWorkstreamIds', () => {
+  it('keeps other running work streams live without opening sockets for scheduled or foreground work', () => {
+    const running = summary('running');
+    const scheduled = summary('scheduled', '00000000-0000-7000-8000-000000000002');
+    const completed = summary('completed', '00000000-0000-7000-8000-000000000003');
+
+    expect(backgroundRealtimeWorkstreamIds(running.id, [running, scheduled, completed]))
+      .toEqual([]);
+    expect(backgroundRealtimeWorkstreamIds(null, [running, scheduled, completed]))
+      .toEqual([running.id]);
+  });
+});
+
 describe('applyPinnedWorkstreams', () => {
   const other = '00000000-0000-7000-8000-000000000002';
 
   function cacheWith(items: WorkstreamSummary[]): QueryClient {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, items);
+    setCachedWorkstreams(queryClient, items);
     return queryClient;
   }
 

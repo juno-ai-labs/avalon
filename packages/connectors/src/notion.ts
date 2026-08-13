@@ -1,5 +1,6 @@
 import type { NormalizedActivity, ToolDefinition } from "@avalon/contracts";
 import { z } from "zod";
+import { createHostedMcpPassthrough } from "./hosted-mcp";
 import {
   base64,
   isRecord,
@@ -22,6 +23,7 @@ import {
   connectorCapabilityRefused,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
+  zodToolInputValidationError,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
@@ -31,14 +33,16 @@ const NOTION_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token";
 const NOTION_REVOKE_URL = "https://api.notion.com/v1/oauth/revoke";
 const NOTION_INTROSPECT_URL = "https://api.notion.com/v1/oauth/introspect";
+const NOTION_MCP_URL = "https://mcp.notion.com/mcp";
 const DEFAULT_NOTION_VERSION = "2026-03-11";
 const NOTION_RESPONSE_BYTES = 1_000_000;
 const NOTION_TEXT_CHARS = 80_000;
 const NOTION_WEBHOOK_BYTES = 1_000_000;
 
 export interface NotionConnectorConfig {
-  clientId: string;
-  clientSecret: string;
+  /** Public-integration credentials required only for workspace bot installs. */
+  clientId?: string;
+  clientSecret?: string;
   redirectUri: string;
   integrationId?: string;
   notionVersion?: string;
@@ -46,6 +50,7 @@ export interface NotionConnectorConfig {
 }
 
 export const NotionCapabilities = {
+  personalMcp: "notion.personal.mcp",
   read: "notion.read",
   insert: "notion.insert",
   update: "notion.update",
@@ -273,14 +278,83 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
   assertConfig(config);
   const fetcher = config.fetch ?? globalThis.fetch;
   const notionVersion = config.notionVersion ?? DEFAULT_NOTION_VERSION;
-  const integrationId = config.integrationId ?? config.clientId;
-  const basicAuthorization = `Basic ${base64(`${config.clientId}:${config.clientSecret}`)}`;
+  const workspaceOAuth = config.clientId && config.clientSecret
+    ? {
+        clientId: config.clientId,
+        integrationId: config.integrationId ?? config.clientId,
+        basicAuthorization: `Basic ${base64(`${config.clientId}:${config.clientSecret}`)}`,
+      }
+    : null;
+  const requireWorkspaceOAuth = () => {
+    if (!workspaceOAuth) {
+      throw new ConnectorError(
+        "invalid_configuration",
+        "Notion workspace connections require a public integration client ID and secret",
+      );
+    }
+    return workspaceOAuth;
+  };
+
+  const personalMcp = createHostedMcpPassthrough({
+    providerName: "Notion",
+    serverUrl: NOTION_MCP_URL,
+    capabilities: [NotionCapabilities.personalMcp],
+    connectionScopes: ["personal"],
+    capabilityForConnection: () => NotionCapabilities.personalMcp,
+    withAccessToken: (connection, signal, operation) => withAccess(connection, signal, operation),
+    oauth: {
+      redirectUri: config.redirectUri,
+      allowedAuthorizationOrigins: ["https://mcp.notion.com"],
+    },
+    fetch: fetcher,
+    maxResponseBytes: NOTION_RESPONSE_BYTES,
+  });
+  const hostedAuthorization = personalMcp.authorization;
 
   const refresh = async (
     connection: ConnectorConnectionContext,
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> => {
     const refreshToken = credentialString(connection, "refreshToken");
+    if (connection.scope === "personal") {
+      const authorizationState = hostedAuthorization.parseState({
+        resource: connection.credentials.resource,
+        authorizationEndpoint: connection.credentials.authorizationEndpoint,
+        tokenEndpoint: connection.credentials.tokenEndpoint,
+        clientId: connection.credentials.clientId,
+        clientSecret: connection.credentials.clientSecret,
+        tokenEndpointAuthMethod: connection.credentials.tokenEndpointAuthMethod,
+        scope: connection.credentials.tokenScope ?? "default",
+      });
+      try {
+        const token = await hostedAuthorization.refresh(
+          authorizationState,
+          refreshToken,
+          signal,
+        );
+        if (!token.refresh_token) {
+          throw new ConnectorError("provider_error", "Notion MCP did not rotate its refresh token");
+        }
+        return {
+          ...connection.credentials,
+          accessToken: token.access_token,
+          refreshToken: token.refresh_token,
+          tokenType: token.token_type,
+          tokenScope: token.scope ?? connection.credentials.tokenScope,
+          expiresAt: tokenExpiry(token.expires_in),
+        };
+      } catch (error) {
+        if (isRefreshRejected(error)) {
+          throw new ConnectorError("unauthorized", "The Notion MCP authorization is no longer valid", {
+            status: isRecord(error.details) ? error.details.status : 401,
+            reconnectRequired: true,
+            reason: "refresh_rejected",
+          });
+        }
+        throw error;
+      }
+    }
+    const { basicAuthorization } = requireWorkspaceOAuth();
     try {
       const payload = await providerJson(fetcher, NOTION_TOKEN_URL, {
         method: "POST",
@@ -306,11 +380,11 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     }
   };
 
-  const withAccess = async <T>(
+  async function withAccess<T>(
     connection: ConnectorConnectionContext,
     signal: AbortSignal,
     operation: (token: string) => Promise<T>,
-  ): Promise<T> => {
+  ): Promise<T> {
     // Through the shared helper rather than a private retry: it prefers the
     // host's lease-serialized rotation, so two calls refused at once cannot
     // each redeem the same rotating refresh token.
@@ -319,7 +393,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       { refresh, isRejection: isProviderUnauthorized, signal },
       () => operation(credentialString(connection, "accessToken")),
     );
-  };
+  }
 
   const request = async (
     connection: ConnectorConnectionContext,
@@ -387,6 +461,15 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
 
   return {
     agentPlugin: NotionAgentPluginDescriptor,
+    dynamicAgentTools: personalMcp.dynamicAgentTools,
+    capabilityConnectionScopes: {
+      [NotionCapabilities.personalMcp]: ["personal"],
+      [NotionCapabilities.read]: ["workspace"],
+      [NotionCapabilities.insert]: ["workspace"],
+      [NotionCapabilities.update]: ["workspace"],
+      [NotionCapabilities.commentRead]: ["workspace"],
+      [NotionCapabilities.commentInsert]: ["workspace"],
+    },
     webhookActivity: {
       async verify(input) {
         if (!input.verificationSecret) {
@@ -421,8 +504,12 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     manifest: {
       type: "notion",
       displayName: "Notion",
-      supportedScopes: ["personal"],
+      supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
+      capabilities: Object.values(NotionCapabilities).map((capability) => ({
+        id: capability,
+        kind: "tool" as const,
+      })),
       // A page appearing or a comment arriving is somebody writing something.
       // Notion fires `content_updated` on every save, so a page being written
       // over an afternoon is one piece of news and dozens of events; the digest
@@ -471,13 +558,28 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         codeChallenge: z.string().min(20),
         scopes: z.array(z.string().min(1)).min(1),
       }).parse(input);
+      if (input.connectionScope === "personal") {
+        if (!parsed.scopes.includes(NotionCapabilities.personalMcp)) {
+          throw new ConnectorError("unsupported_capability", "Notion personal MCP access was not requested");
+        }
+        const authorization = await hostedAuthorization.begin(parsed);
+        return { url: authorization.url, state: { ...authorization.state } };
+      }
+      if (input.connectionScope !== "workspace") {
+        throw new ConnectorError("invalid_configuration", "Notion authorization scope is required");
+      }
+      const { clientId } = requireWorkspaceOAuth();
       if (parsed.scopes.some((scope) => !supportedAuthorizationCapabilities.has(scope))) {
         throw new ConnectorError("unsupported_capability", "The requested Notion capability is not configured by this connector");
       }
       const url = new URL(NOTION_AUTHORIZE_URL);
-      url.searchParams.set("client_id", config.clientId);
+      url.searchParams.set("client_id", clientId);
       url.searchParams.set("redirect_uri", config.redirectUri);
       url.searchParams.set("response_type", "code");
+      // Notion's public OAuth flow is authorized by a user even though the
+      // installed integration acts as its bot. Avalon deliberately stores that
+      // bot grant as a workspace connection; this provider parameter does not
+      // define Avalon's connection scope.
       url.searchParams.set("owner", "user");
       url.searchParams.set("state", parsed.state);
       return {
@@ -491,6 +593,39 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         code: z.string().min(1),
         codeVerifier: z.string().min(20),
       }).parse(input);
+      if (input.connectionScope === "personal") {
+        const authorizationState = hostedAuthorization.parseState(input.authorizationState);
+        const token = await hostedAuthorization.exchangeCode(
+          authorizationState,
+          parsed,
+        );
+        if (!token.refresh_token || !token.user_id || !token.workspace_id) {
+          throw new ConnectorError("provider_error", "Notion MCP did not return its user, workspace, and rotating refresh credential");
+        }
+        return {
+          connectionMode: "hosted_mcp",
+          providerAccountId: `${token.workspace_id}:${token.user_id}`,
+          providerAccountName: token.email_domain ?? token.workspace_id,
+          notionWorkspaceId: token.workspace_id,
+          notionUserId: token.user_id,
+          notionEmailDomain: token.email_domain ?? null,
+          accessToken: token.access_token,
+          refreshToken: token.refresh_token,
+          tokenType: token.token_type,
+          tokenScope: token.scope ?? authorizationState.scope,
+          expiresAt: tokenExpiry(token.expires_in),
+          resource: authorizationState.resource,
+          authorizationEndpoint: authorizationState.authorizationEndpoint,
+          tokenEndpoint: authorizationState.tokenEndpoint,
+          clientId: authorizationState.clientId,
+          clientSecret: authorizationState.clientSecret ?? null,
+          tokenEndpointAuthMethod: authorizationState.tokenEndpointAuthMethod,
+        };
+      }
+      if (input.connectionScope !== "workspace") {
+        throw new ConnectorError("invalid_configuration", "Notion OAuth callback scope is required");
+      }
+      const { basicAuthorization, integrationId } = requireWorkspaceOAuth();
       const payload = await providerJson(fetcher, NOTION_TOKEN_URL, {
         method: "POST",
         headers: {
@@ -509,7 +644,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       const owner = recordValue(payload, "owner");
       const ownerUser = owner ? recordValue(owner, "user") : null;
       if (stringValue(owner ?? {}, "type") !== "user" || !ownerUser || !stringValue(ownerUser, "id")) {
-        throw new ConnectorError("provider_error", "Notion did not return the authorizing user for this personal connection");
+        throw new ConnectorError("provider_error", "Notion did not return the user authorizing this workspace connection");
       }
       const botId = requiredString(credentials, "botId", "Notion did not return an installed bot ID");
       const workspaceId = requiredString(credentials, "notionWorkspaceId", "Notion did not return a workspace ID");
@@ -527,6 +662,8 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     async revoke(connection, signal) {
       const token = stringValue(connection.credentials, "accessToken");
       if (!token) return;
+      if (connection.scope === "personal") return;
+      const { basicAuthorization } = requireWorkspaceOAuth();
       await providerJson(fetcher, NOTION_REVOKE_URL, {
         method: "POST",
         headers: {
@@ -541,7 +678,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     },
 
     async hydrateResource(connection, resource, signal) {
-      assertPersonalConnection(connection);
+      assertWorkspaceConnection(connection);
       const resourceId = idSchema.parse(resource.provider_resource_id);
       const resourceType = z.string().parse(resource.resource_type);
       const requiredCapability = resourceType === "notion_comment"
@@ -574,9 +711,21 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       throw new ConnectorError("unsupported_capability", `Notion cannot hydrate resource type ${resourceType} from its resource ID alone`);
     },
 
+    validateToolInput(name, rawArgs) {
+      const schema = name === "create_page"
+        ? createPageSchema
+        : name === "create_comment"
+          ? createCommentSchema
+          : undefined;
+      return zodToolInputValidationError(schema, rawArgs);
+    },
+
     async executeTool(name, rawArgs, context) {
-      assertPersonalConnection(context.connection);
       assertPrincipalAccess(context.connection, context.principal);
+      if (context.connection.scope === "personal") {
+        return personalMcp.execute(context.connection, name, rawArgs, context.signal);
+      }
+      assertWorkspaceConnection(context.connection);
       const definition = notionTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
         throw connectorCapabilityRefused("Notion", definition?.capability ?? name, notionTools, context.connection.grantedScopes);
@@ -672,8 +821,23 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     },
 
     async healthCheck(connection, callerSignal) {
-      if (!connection) return { ok: true, message: "Notion OAuth is configured" };
-      assertPersonalConnection(connection);
+      if (!connection) {
+        return {
+          ok: true,
+          message: workspaceOAuth
+            ? "Notion personal MCP and workspace OAuth are configured"
+            : "Notion personal MCP is configured; workspace OAuth is unavailable",
+        };
+      }
+      if (connection.scope === "personal") {
+        const tools = await personalMcp.dynamicAgentTools.discover(
+          connection,
+          callerSignal ?? AbortSignal.timeout(15_000),
+        );
+        return { ok: tools.length > 0, message: "Notion personal MCP authorization is healthy" };
+      }
+      assertWorkspaceConnection(connection);
+      const { basicAuthorization } = requireWorkspaceOAuth();
       const token = credentialString(connection, "accessToken");
       const payload = await providerJson(fetcher, NOTION_INTROSPECT_URL, {
         method: "POST",
@@ -776,7 +940,7 @@ export function normalizeNotionWebhook(
   verified: VerifiedNotionWebhook,
   payloadRef: string | null = null,
 ): Omit<NormalizedActivity, "id"> {
-  assertPersonalConnection(connection);
+  assertWorkspaceConnection(connection);
   const connectedWorkspaceId = stringValue(connection.credentials, "notionWorkspaceId") ?? stringValue(connection.config, "notionWorkspaceId");
   if (connectedWorkspaceId && connectedWorkspaceId !== verified.workspaceId) {
     throw new ConnectorError("unauthorized", "The Notion webhook does not belong to this installed workspace");
@@ -787,7 +951,7 @@ export function normalizeNotionWebhook(
   }
   const botId = stringValue(connection.credentials, "botId");
   if (!botId || !verified.accessibleBotIds.includes(botId)) {
-    throw new ConnectorError("unauthorized", "This personal Notion connection cannot access the webhook entity");
+    throw new ConnectorError("unauthorized", "This Notion workspace connection cannot access the webhook entity");
   }
   const event = verified.event;
   const entity = recordValue(event, "entity") ?? {};
@@ -829,11 +993,11 @@ export function normalizeNotionWebhook(
     textSnippet: "",
     payloadRef,
     visibility: {
-      scope: "personal",
+      scope: "workspace",
       notionWorkspaceId: verified.workspaceId,
       accessibleBotIds: verified.accessibleBotIds,
     },
-    targetUserIds: connection.ownerUserId ? [connection.ownerUserId] : [],
+    targetUserIds: [],
     entityKeys,
     dedupeKey: verified.eventId,
     rawContentHash: verified.bodyHash,
@@ -910,13 +1074,24 @@ function boundNotionValue(value: unknown, depth = 0): unknown {
 }
 
 const supportedAuthorizationCapabilities = new Set<string>([
-  ...Object.values(NotionCapabilities),
+  NotionCapabilities.read,
+  NotionCapabilities.insert,
+  NotionCapabilities.update,
+  NotionCapabilities.commentRead,
+  NotionCapabilities.commentInsert,
   ...Object.values(NotionCapabilitySettings).flatMap((settings) => [...settings]),
 ]);
 
+function tokenExpiry(expiresIn: number | undefined): string {
+  return new Date(Date.now() + (expiresIn ?? 8 * 60 * 60) * 1_000).toISOString();
+}
+
 function assertConfig(config: NotionConnectorConfig): void {
-  if (!config.clientId || !config.clientSecret || !config.redirectUri) {
-    throw new ConnectorError("invalid_configuration", "Notion public integration client ID, secret, and redirect URI are required");
+  if (!config.redirectUri) {
+    throw new ConnectorError("invalid_configuration", "Notion OAuth redirect URI is required");
+  }
+  if (Boolean(config.clientId) !== Boolean(config.clientSecret)) {
+    throw new ConnectorError("invalid_configuration", "Notion public integration client ID and secret must be configured together");
   }
   if ((config.notionVersion ?? DEFAULT_NOTION_VERSION) !== DEFAULT_NOTION_VERSION) {
     throw new ConnectorError("invalid_configuration", `This connector requires Notion-Version ${DEFAULT_NOTION_VERSION}`);
@@ -929,9 +1104,9 @@ function assertConfig(config: NotionConnectorConfig): void {
   }
 }
 
-function assertPersonalConnection(connection: ConnectorConnectionContext): void {
-  if (connection.scope !== "personal" || !connection.ownerUserId) {
-    throw new ConnectorError("unauthorized", "Notion public connections must be owned by one Avalon user");
+function assertWorkspaceConnection(connection: ConnectorConnectionContext): void {
+  if (connection.scope !== "workspace" || connection.ownerUserId !== null) {
+    throw new ConnectorError("unauthorized", "Notion connections must belong to one Avalon workspace");
   }
 }
 

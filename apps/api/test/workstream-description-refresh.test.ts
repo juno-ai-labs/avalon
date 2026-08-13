@@ -17,6 +17,7 @@ import {
 } from "../src/services/workstream-description-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const USER_ID = "00000000-0000-4000-8000-000000000000";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -27,6 +28,7 @@ const openDatabases: DatabaseSync[] = [];
 
 afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -92,7 +94,7 @@ function fixture(options: {
   };
   vi.stubGlobal("fetch", fetcher);
 
-  const env = {
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
@@ -101,7 +103,7 @@ function fixture(options: {
     OPENROUTER_STRUCTURED_MODEL: "test/structured",
     OPENROUTER_FALLBACK_MODELS: "",
     PUBLIC_API_BASE_URL: "https://api.example.com",
-  } as unknown as Env;
+  });
   return { database, env, prompts };
 }
 
@@ -241,6 +243,8 @@ describe("who wrote the description", () => {
   });
 
   it("never shortens a rest the work stream had already earned", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
     const { database, env } = fixture();
     addQualifyingConversation(database);
     await refreshWorkstreamDescription(env, {
@@ -249,7 +253,7 @@ describe("who wrote the description", () => {
       now: NOW,
     });
     // Stand in for a long-settled description that has earned the ceiling.
-    const earned = new Date(NOW.getTime() + 48 * 60 * 60 * 1_000).toISOString();
+    const earned = new Date(Date.now() + 48 * 60 * 60 * 1_000).toISOString();
     database.prepare(
       "UPDATE workstream_description_refreshes SET rest_until = ?, consecutive_keeps = 4 WHERE workstream_id = ?",
     ).run(earned, WORKSTREAM_ID);

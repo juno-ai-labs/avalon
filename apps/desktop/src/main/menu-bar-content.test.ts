@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MenuBarContentStore } from './menu-bar-content';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { MenuBarContentStore, type MenuBarContentDependencies } from './menu-bar-content';
 import type { MenuBarContent } from './menu-bar-menu';
+
+type RequestJsonMock = Mock<MenuBarContentDependencies['requestJson']>;
 
 interface Harness {
   store: MenuBarContentStore;
-  requestJson: ReturnType<typeof vi.fn>;
+  requestJson: RequestJsonMock;
   onChange: ReturnType<typeof vi.fn>;
   logWarning: ReturnType<typeof vi.fn>;
   advance: (milliseconds: number) => void;
@@ -28,11 +30,11 @@ function workstreamPage(
 
 function harness(): Harness {
   let now = 1_000_000;
-  const requestJson = vi.fn();
+  const requestJson = vi.fn<MenuBarContentDependencies['requestJson']>();
   const onChange = vi.fn();
   const logWarning = vi.fn();
   const store = new MenuBarContentStore({
-    requestJson: requestJson as unknown as (path: string) => Promise<unknown>,
+    requestJson,
     onChange,
     logWarning,
     now: () => now,
@@ -48,7 +50,7 @@ function harness(): Harness {
   };
 }
 
-function respond(requestJson: ReturnType<typeof vi.fn>, responses: Record<string, unknown>): void {
+function respond(requestJson: RequestJsonMock, responses: Record<string, unknown>): void {
   requestJson.mockImplementation((path: string) => {
     const match = Object.entries(responses).find(([prefix]) => path.startsWith(prefix));
     if (!match) return Promise.reject(new Error(`Unexpected request: ${path}`));

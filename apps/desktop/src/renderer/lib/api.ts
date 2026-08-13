@@ -52,7 +52,7 @@ import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
-import { createElicitationMessage, upsertTranscriptMessage } from './transcript';
+import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
 import type {
   ActivitySuggestionData,
   AgentModelOverride,
@@ -359,6 +359,9 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
+    nextPendingWakeup: workstream.nextPendingWakeup
+      ? { ...workstream.nextPendingWakeup }
+      : null,
     pinPosition: workstream.pinPosition,
     preview: workstream.objective,
   };
@@ -493,7 +496,10 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
   };
 }
 
-export function messagesWithTransientBlocks(mapped: Message[], detail: WorkstreamDetail): Message[] {
+export function messagesWithTransientBlocks(
+  mapped: Message[],
+  detail: WorkstreamDetail,
+): Message[] {
   // Both the question and its durable human response remain separate rows in
   // the model transcript. mapMessage intentionally gives those rows one UI
   // identity, so collapse the canonical page before React and the virtualizer
@@ -515,16 +521,7 @@ export function messagesWithTransientBlocks(mapped: Message[], detail: Workstrea
     createdAt: elicitation.createdAt ?? detail.lastActivityAt,
     elicitation,
   }));
-  const suggestionMessages = (detail.suggestions ?? []).map<Message>((suggestion) => ({
-    id: `suggestion-${suggestion.id}`,
-    workstreamId: detail.id,
-    sequenceNumber: ++sequence,
-    authorType: 'system',
-    messageType: 'activity_suggestion',
-    createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
-    activitySuggestion: suggestion,
-  }));
-  return [...canonicalMessages, ...elicitationMessages, ...suggestionMessages];
+  return visibleTranscriptMessages([...canonicalMessages, ...elicitationMessages]);
 }
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
@@ -966,6 +963,7 @@ export class AvalonApi {
       manualUnreadGeneration: 0,
       hasUnread: false,
       firstUnreadSequenceNumber: null,
+      nextPendingWakeup: null,
       pinPosition: null,
     };
   }
@@ -1319,7 +1317,11 @@ export class AvalonApi {
       schema: wireMessagePageSchema,
       ...(options.signal ? { signal: options.signal } : {}),
     });
-    return { items: page.items.map(mapMessage), nextCursor: page.nextCursor, newerCursor: page.newerCursor };
+    return {
+      items: visibleTranscriptMessages(page.items.map(mapMessage)),
+      nextCursor: page.nextCursor,
+      newerCursor: page.newerCursor,
+    };
   }
 
   async getMessages(id: string, signal?: AbortSignal): Promise<Message[]> {
@@ -1470,6 +1472,15 @@ export class AvalonApi {
     return response.blob();
   }
 
+  async getResourcePreviewContent(id: string, signal?: AbortSignal): Promise<Blob> {
+    const response = await this.execute(`/resources/${encodeURIComponent(id)}/preview`, {
+      method: 'GET',
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.ok) return this.throwResponseError(response);
+    return response.blob();
+  }
+
   async listResources(input: {
     query?: string;
     cursor?: string;
@@ -1533,13 +1544,6 @@ export class AvalonApi {
         ? { skipped: true }
         : { answer, ...(customResponse ? { customResponse } : {}) },
       schema: z.object({ elicitation: WireElicitationSchema.optional(), harnessRunId: z.string().nullable() }),
-    });
-  }
-
-  async resolveActivitySuggestion(id: string, suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> {
-    await this.request(`/workstreams/${encodeURIComponent(id)}/activities/${encodeURIComponent(suggestionId)}/${action}`, {
-      method: 'POST',
-      schema: z.object({ suggestion: WireActivitySuggestionSchema.optional(), resourceId: z.string().nullable() }),
     });
   }
 

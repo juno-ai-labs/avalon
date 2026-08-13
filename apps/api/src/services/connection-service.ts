@@ -107,6 +107,7 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   },
   linear: LinearCapabilityScopes,
   notion: {
+    "notion.personal.mcp": ["default"],
     "notion.read": ["notion.read"],
     "notion.insert": ["notion.insert"],
     "notion.update": ["notion.update"],
@@ -669,6 +670,9 @@ export class ConnectionService {
     if (stateData.provider !== provider) throw new ApiError(401, "invalid_oauth_state", "The connector provider does not match this authorization");
     await this.assertOAuthStatePrincipalAllowed(row, stateData.scope);
     const adapter = this.registry().get(provider);
+    if (!adapter.manifest.supportedScopes.includes(stateData.scope)) {
+      throw new ApiError(422, "invalid_connector_scope", `${adapter.manifest.displayName} no longer supports ${stateData.scope} connections`);
+    }
     if (provider === "linear") {
       assertLinearScopeCapabilities(stateData.scope, stateData.capabilities);
       assertLinearNativeAgentCapabilityEnabled(
@@ -853,7 +857,7 @@ export class ConnectionService {
         throw error;
       }
     }
-    if (provider === "notion") {
+    if (provider === "notion" && stateData.scope === "workspace") {
       // Routed on the Notion workspace rather than on `providerAccountId`: that
       // is the installed bot, and a delivery names the workspace it happened in.
       try {
@@ -1138,7 +1142,7 @@ export class ConnectionService {
         }
       }
     }
-    if (result.ok && connection.connector_type === "notion") {
+    if (result.ok && connection.connector_type === "notion" && connection.scope === "workspace") {
       const notionWorkspaceId = notionWorkspaceIdFromConfig(connection.config_json);
       if (!notionWorkspaceId) {
         result = { ok: false, message: "The Notion workspace identity is missing", reconnectRequired: true };
@@ -1295,7 +1299,7 @@ export class ConnectionService {
           });
         }
       }
-      if (connection.connector_type === "notion") {
+      if (connection.connector_type === "notion" && connection.scope === "workspace") {
         const notionWorkspaceId = notionWorkspaceIdFromConfig(connection.config_json);
         if (notionWorkspaceId) {
           try {

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
@@ -11,6 +12,7 @@ const USER_ID = "00000000-0000-4000-8000-000000000003";
 const PRIOR_RUN_ID = "00000000-0000-4000-8000-000000000004";
 
 type ToolRow = {
+  invocation_id?: string;
   message_id: string;
   harness_run_id: string;
   tool_call_id: string;
@@ -20,6 +22,7 @@ type ToolRow = {
   output_summary: string | null;
   status: "pending" | "started" | "completed" | "failed" | "ambiguous";
   error_json: string | null;
+  execution_plan_json?: string | null;
 };
 
 class ProjectionStatement {
@@ -39,10 +42,10 @@ class ProjectionStatement {
     expect(this.sql).toContain("JOIN tool_invocations ti ON ti.id = m.id");
     expect(this.values.slice(0, 2)).toEqual([WORKSPACE_ID, WORKSTREAM_ID]);
     const requested = new Set(this.values.slice(2).map(String));
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.rows.filter((row) => requested.has(row.message_id)) as T[],
-    } as D1Result<T>;
+    });
   }
 }
 
@@ -51,11 +54,11 @@ function projectionEnv(
   outputs: Record<string, unknown>,
   stalledReplayStage?: "get" | "body",
 ): Env {
-  return {
-    DB: {
-      prepare: (sql: string) => new ProjectionStatement(sql, rows) as unknown as D1PreparedStatement,
-    } as D1Database,
-    PAYLOADS: {
+  return createTestEnv({
+    DB: createTestD1Database({
+      prepare: (sql: string) => createTestD1PreparedStatement(new ProjectionStatement(sql, rows)),
+    }),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>({
       get: vi.fn(async (key: string) => {
         if (stalledReplayStage === "get") return new Promise<R2ObjectBody | null>(() => {});
         if (!(key in outputs)) return null;
@@ -67,14 +70,41 @@ function projectionEnv(
             : async () => body,
         } as R2ObjectBody;
       }),
-    } as unknown as R2Bucket,
-  } as Env;
+    }),
+  });
+}
+
+function attachmentProjectionEnv(resources: Array<Record<string, unknown>>, objects: Record<string, Uint8Array>): Env {
+  return createTestEnv({
+    DB: createTestD1Database({
+      prepare: (sql: string) => createTestD1PreparedStatement({
+        bind() { return this; },
+        async run() { return createTestD1Result({ success: true }); },
+        async all<T>() {
+          return createTestD1Result<T>({
+            success: true,
+            results: (sql.includes("FROM resources") ? resources : []) as T[],
+          });
+        },
+      }),
+    }),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>({
+      async get(key: string) {
+        const bytes = objects[key];
+        return bytes ? {
+          async arrayBuffer() {
+            return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+          },
+        } as R2ObjectBody : null;
+      },
+    }),
+  });
 }
 
 function message(
   id: string,
   sequenceNumber: number,
-  input: Partial<Pick<Message, "messageType" | "textContent" | "structuredContent">> & {
+  input: Partial<Pick<Message, "messageType" | "textContent" | "structuredContent" | "attachments">> & {
     author: "human" | "external" | "agent" | "system";
   },
 ): Message {
@@ -111,7 +141,7 @@ function message(
     textContent: input.textContent ?? "",
     structuredContent: input.structuredContent ?? null,
     mentions: [],
-    attachments: [],
+    attachments: input.attachments ?? [],
     sequenceNumber,
     createdAt: `2026-08-01T00:00:0${sequenceNumber}.000Z`,
     editedAt: null,
@@ -132,6 +162,202 @@ function streamResponse(content: string): Response {
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("reconstructs sanitized failed-tool recovery data after a resume", async () => {
+    const invocationId = "00000000-0000-4000-8000-000000000050";
+    const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([{
+        message_id: invocationId,
+        harness_run_id: PRIOR_RUN_ID,
+        tool_call_id: call,
+        tool_name: "memory_update",
+        input_json: '{"memoryItemId":"00000000-0000-4000-8000-000000000051"}',
+        output_ref: null,
+        output_summary: null,
+        status: "failed",
+        error_json: JSON.stringify({
+          code: "tool_failed",
+          message: "The memory changed. Read it again by ID.",
+          data: {
+            code: "memory_revision_conflict",
+            details: { reason: "Call memory_search with memoryItemId before retrying." },
+          },
+        }),
+      }], {}),
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      [
+        message("00000000-0000-4000-8000-000000000052", 1, { author: "human", textContent: "Update it" }),
+        message(invocationId, 2, { author: "agent", messageType: "tool", structuredContent: { invocation: {} } }),
+        message("00000000-0000-4000-8000-000000000053", 3, { author: "agent", textContent: "I need to reread it." }),
+      ],
+    );
+
+    expect(projection.messages.find((entry) => entry.role === "tool")).toEqual({
+      role: "tool",
+      tool_call_id: call,
+      content: JSON.stringify({
+        success: false,
+        kind: "external",
+        error: "The memory changed. Read it again by ID.",
+        data: {
+          code: "memory_revision_conflict",
+          details: { reason: "Call memory_search with memoryItemId before retrying." },
+        },
+      }),
+    });
+  });
+
+  it("projects the triggering image with a same-ID durable manifest entry", async () => {
+    const resourceId = "00000000-0000-4000-8000-000000000041";
+    const triggerId = "00000000-0000-4000-8000-000000000042";
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      attachmentProjectionEnv([{
+        id: resourceId,
+        title: "diagram.png",
+        mime_type: "image/png",
+        content_ref: "images/diagram.png",
+        metadata_json: '{"size":8}',
+        model_content_ref: "images/diagram.png",
+        model_mime_type: "image/png",
+        model_content_sha256: null,
+        model_metadata_json: null,
+        model_content_status: "ready",
+        model_content_error_code: null,
+      }], { "images/diagram.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }),
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: triggerId },
+      [message(triggerId, 1, {
+        author: "human",
+        attachments: [{
+          id: resourceId,
+          fileName: "diagram.png",
+          mimeType: "image/png",
+          sizeBytes: 8,
+          contentAvailable: true,
+          createdAt: "2026-08-01T00:00:01.000Z",
+        }],
+      })],
+    );
+
+    const content = projection.messages[0]?.content;
+    expect(Array.isArray(content)).toBe(true);
+    const manifest = (content as Array<{ type: string; text?: string }>)[0]?.text ?? "";
+    expect(manifest).toContain(`"resourceId":"${resourceId}"`);
+    expect(manifest).toContain('"inlined":true');
+    expect((content as Array<{ type: string }>).filter((part) => part.type === "image_url")).toHaveLength(1);
+  });
+
+  it("keeps historical attachment identities without replaying their bytes", async () => {
+    const resourceId = "00000000-0000-4000-8000-000000000043";
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      attachmentProjectionEnv([{
+        id: resourceId,
+        title: "notes.md",
+        mime_type: "text/markdown",
+        content_ref: "notes.md",
+        metadata_json: '{"size":123}',
+        model_content_ref: "notes.model.md",
+        model_mime_type: "text/markdown",
+        model_content_sha256: "a".repeat(64),
+        model_metadata_json: null,
+        model_content_status: "ready",
+        model_content_error_code: null,
+      }], { "notes.md": new TextEncoder().encode("historical secret bytes") }),
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      [message("00000000-0000-4000-8000-000000000044", 1, {
+        author: "human",
+        textContent: "Earlier context",
+        attachments: [{
+          id: resourceId,
+          fileName: "notes.md",
+          mimeType: "text/markdown",
+          sizeBytes: 123,
+          contentAvailable: true,
+          createdAt: "2026-08-01T00:00:01.000Z",
+        }],
+      })],
+    );
+
+    const serialized = JSON.stringify(projection.messages);
+    expect(serialized).toContain(resourceId);
+    expect(serialized).toContain(String.raw`\"attachmentKind\":\"markdown\"`);
+    expect(serialized).not.toContain("historical secret bytes");
+    expect(serialized).not.toContain("Binary content is not replayed");
+  });
+
+  it("omits historical attachment tool output after current visibility is revoked", async () => {
+    const invocationId = "00000000-0000-4000-8000-000000000045";
+    const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
+    const get = vi.fn(async () => ({
+      async text() {
+        return JSON.stringify({ replayVersion: 1, output: { text: "private note contents" } });
+      },
+    } as R2ObjectBody));
+    const prepare = vi.fn((sql: string) => {
+      let values: unknown[] = [];
+      return createTestD1PreparedStatement({
+        bind(...bound: unknown[]) {
+          values = bound;
+          return this;
+        },
+        async all<T>() {
+          if (sql.includes("JOIN tool_invocations ti")) {
+            return createTestD1Result<T>({
+              success: true,
+              results: [{
+                invocation_id: invocationId,
+                message_id: invocationId,
+                harness_run_id: PRIOR_RUN_ID,
+                tool_call_id: call,
+                tool_name: "workstream_read_resource",
+                input_json: JSON.stringify({ resourceId: "00000000-0000-4000-8000-000000000046" }),
+                output_ref: "results/private-note.json",
+                output_summary: "Read private note",
+                status: "completed",
+                error_json: null,
+                execution_plan_json: JSON.stringify({
+                  canonicalToolName: "read_resource",
+                  capability: "workstream.resources.read",
+                }),
+              }] as T[],
+            });
+          }
+          expect(values).toBeDefined();
+          return createTestD1Result<T>({ success: true, results: [] });
+        },
+        async run() {
+          return createTestD1Result({ success: true, meta: { changes: 1 } });
+        },
+      });
+    });
+    const database = createTestD1Database({
+      prepare,
+      async batch(statements: D1PreparedStatement[]) {
+        return Promise.all(statements.map((statement) => statement.run()));
+      },
+    });
+    const env = createTestEnv({
+      DB: database,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ get }),
+    });
+
+    const projection = await __integrationTesting.projectModelProtocolTranscript(env, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      triggerMessageId: null,
+      executionPrincipal: { type: "user", userId: USER_ID },
+    }, [message(invocationId, 1, {
+      author: "agent",
+      messageType: "tool",
+      structuredContent: { invocation: {} },
+    })]);
+
+    expect(projection.messages).toEqual([]);
+    expect(projection.issues).toContainEqual({
+      kind: "unauthorized_attachment_tool_omitted",
+      healed: true,
+    });
+    expect(get).not.toHaveBeenCalled();
+  });
   it("launches a selected expanded suggested-work brief as the executable user turn", async () => {
     const messageId = "00000000-0000-4000-8000-000000000030";
     const projection = await __integrationTesting.projectModelProtocolTranscript(
@@ -283,7 +509,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => allMessages.filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: { prepare } as unknown as D1Database },
+      { DB: createTestD1Database({ prepare }) },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -330,7 +556,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => allMessages.filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: { prepare } as unknown as D1Database },
+      { DB: createTestD1Database({ prepare }) },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -372,7 +598,7 @@ describe("durable UI-to-model transcript projection", () => {
     ) => [earlier, trigger].filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: { prepare } as unknown as D1Database },
+      { DB: createTestD1Database({ prepare }) },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -391,7 +617,7 @@ describe("durable UI-to-model transcript projection", () => {
     const listMessages = vi.fn(async () => [] as Message[]);
 
     await expect(__integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: { prepare: vi.fn(() => ({ bind })) } as unknown as D1Database },
+      { DB: createTestD1Database({ prepare: vi.fn(() => ({ bind })) }) },
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
@@ -418,7 +644,7 @@ describe("durable UI-to-model transcript projection", () => {
       .slice(-limit));
 
     const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
-      { DB: {} as D1Database },
+      { DB: createTestD1Database({}) },
       { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
       listMessages,
     );
@@ -427,6 +653,19 @@ describe("durable UI-to-model transcript projection", () => {
     expect(stored[0]?.sequenceNumber).toBe(1);
     expect(stored.at(-1)?.sequenceNumber).toBe(300);
     expect(listMessages).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails before provider projection when an uncompacted transcript exceeds the replay byte ceiling", async () => {
+    const oversized = message("00000000-0000-4000-8000-000000000098", 1, {
+      author: "human",
+      textContent: "x".repeat(4 * 1_024 * 1_024 + 1),
+    });
+
+    await expect(__integrationTesting.loadTriggerFencedTranscriptMessages(
+      { DB: createTestD1Database({}) },
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      async () => [oversized],
+    )).rejects.toMatchObject({ code: "context_limit_exceeded" });
   });
 
   it.each(["get", "body"] as const)(

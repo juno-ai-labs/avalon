@@ -1,6 +1,6 @@
 ---
 name: ship-pr
-description: Use this skill whenever the user wants to open a pull request for a change in this repo, or says things like "ship this", "create a PR", "put this up for review", "merge this once it's green", or "follow the usual process" for landing code.
+description: Use this skill whenever the user wants to open a pull request for a change in this repo, or says things like "ship this", "create a PR", "put this up for review", etc.
 user-invocable: true
 ---
 
@@ -8,24 +8,15 @@ user-invocable: true
 
 ## 1. Before you start
 
-Read [`docs/pull-requests.md`](../../../docs/pull-requests.md) if you haven't already
-this session — it's the actual spec this skill implements, and it can change
-independently of this file. Also skim [`docs/README.md`](../../../docs/README.md) to
-find which other docs the change you're shipping should update in the same PR.
+Read `docs/pull-requests.md` if you haven't already this session — it's the actual spec this skill implements, and it can change independently of this file. Also skim `docs/README.md` to find which other docs the change you're shipping should update in the same PR.
 
-Trust CI to run the tests, linting, and type checks. It will run faster than you can.
-Don't waste time running them locally before opening a PR unless you have a specific
-reason to do so.
+Trust CI to run the tests, linting, and type checks. It will run faster there than you can run locally. Don't waste time running them locally before opening a PR unless you have a specific reason to do so.
 
 ## 2. Write the PR
 
-Never rely on the GitHub "create PR" button's autofill — write the description
-yourself against [`docs/pull-requests.md`](../../../docs/pull-requests.md)'s spec.
+Write the description yourself against `docs/pull-requests.md`'s spec.
 
-**Never open it as a draft** (`docs/pull-requests.md`, "Never open a draft pull
-request") — no `--draft` flag, no `draft: true` through the API. An open PR in
-this repo means "this wants a review", and a draft silently opts out of the
-review queue this skill exists to move the change through.
+**Never open it as a draft** as that would not follow `docs/pull-requests.md`.
 
 ## 3. Check for human and bot reviewer comments
 
@@ -37,7 +28,4 @@ If you have a new migration, before merging check if a new migration has been me
 
 ## 5. Validate publishing — don't stop at "the merge succeeded"
 
-A merge landing and a deploy succeeding are different facts, and this repo
-auto-deploys to production on every merge to `main` that touches `apps/api` or
-`packages` (`docs/runbook.md`: "a merge to `main` is a production release").
-Confirm the deploy, not just the merge:
+A merge landing and a deploy succeeding are different facts, and this repo auto-deploys to production on every merge to `main`, after merge understand expected deployment and then confirm the deploy, not just the merge.

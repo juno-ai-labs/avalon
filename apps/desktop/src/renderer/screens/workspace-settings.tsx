@@ -196,9 +196,10 @@ const connectorProviders = [
     id: 'notion' as const,
     provider: 'notion' as const,
     name: 'Notion',
-    description: 'Selected pages, data sources, comments, and change notifications.',
+    description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Avalon workspace.',
     icon: FileText,
-    scopes: ['you'] as const,
+    scopes: ['you', 'workspace'] as const,
+    personalCapabilities: ['notion.personal.mcp'],
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
   },
   {
@@ -986,7 +987,7 @@ export function WorkspaceSettingsScreen({
                     </div>
                     <span>{healthyConnections.length} connected</span>
                   </div>
-                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member and workspace automation.</p>
+                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member; workspace automations use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
                     {visibleProviders.map((provider) => {
                       const Icon = provider.icon;

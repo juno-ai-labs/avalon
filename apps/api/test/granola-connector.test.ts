@@ -1,8 +1,9 @@
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { decryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000002";
@@ -21,7 +22,7 @@ class SqliteD1Statement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -29,11 +30,11 @@ class SqliteD1Statement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: {},
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
@@ -253,12 +254,12 @@ function fixture() {
     );
     INSERT INTO users (id, name) VALUES ('${USER_ID}', 'Granola Admin');
   `);
-  const binding = {
-    prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+  const binding = createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
     batch: (statements: D1PreparedStatement[]) => Promise.all(
       statements.map((statement) => (statement as unknown as SqliteD1Statement).run()),
     ),
-  } as unknown as D1Database;
+  });
   const payloadPut = vi.fn(async () => null);
   const queueSend = vi.fn(async () => undefined);
   const auth: AuthContext = {
@@ -272,16 +273,16 @@ function fixture() {
     database,
     payloadPut,
     queueSend,
-    env: {
+    env: createTestEnv({
       DB: binding,
-      PAYLOADS: { put: payloadPut } as unknown as R2Bucket,
-      ACTIVITY_QUEUE: { send: queueSend } as unknown as Queue,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
+      ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send: queueSend }),
       AVALON_REGION: "global",
       PUBLIC_API_BASE_URL: "https://api.example.test",
       DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
       CONNECTOR_CREDENTIALS_KEY: CREDENTIAL_KEY,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
-    } as Env,
+    }),
     auth,
   };
 }

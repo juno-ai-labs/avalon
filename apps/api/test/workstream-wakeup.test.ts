@@ -3,18 +3,23 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import {
+  WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
+  type WorkstreamWorkflowInput,
+} from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { fireWorkstreamWakeup } from "../src/services/workstream-service";
+import { fireWorkstreamWakeup, WorkstreamService } from "../src/services/workstream-service";
 import {
   MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM,
   MINIMUM_WAKEUP_DELAY_SECONDS,
   WakeupInputError,
+  WorkstreamWakeupRowSchema,
   parseWakeupDelay,
   resolveWakeupInstant,
   type WorkstreamWakeupRow,
 } from "../src/services/workstream-wakeup-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = "00000000-0000-4000-8000-000000000000";
@@ -34,7 +39,7 @@ class SqliteD1Statement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -42,17 +47,17 @@ class SqliteD1Statement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: { changes: 0 },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
-  return {
-    prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+  return createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
     batch: async (statements: D1PreparedStatement[]) => {
       const results: D1Result<unknown>[] = [];
       database.exec("BEGIN");
@@ -67,7 +72,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
         throw error;
       }
     },
-  } as unknown as D1Database;
+  });
 }
 
 const openDatabases: DatabaseSync[] = [];
@@ -105,9 +110,10 @@ function fixture(): Fixture {
     VALUES ('${WORKSPACE_ID}', '${USER_ID}', 'owner', 'active', '2026-01-01');
     INSERT INTO workstreams
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
-       harness_status, last_activity_at, created_at, updated_at)
+       harness_status, email_address, email_route_status, last_activity_at, created_at, updated_at)
     VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Wake Up', 'Wake Up', 'ad_hoc', '${USER_ID}',
-            'running', '2026-01-01', '2026-01-01', '2026-01-01');
+            'running', 'wake-up@automation.with-avalon.com', 'active',
+            '2026-01-01', '2026-01-01', '2026-01-01');
     INSERT INTO harness_runs
       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
     VALUES ('${HARNESS_RUN_ID}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'test',
@@ -116,21 +122,21 @@ function fixture(): Fixture {
 
   const schedulerRefreshes: string[] = [];
   const workflowCreations: Array<{ id: string; params: WorkstreamWorkflowInput }> = [];
-  const env = {
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
-      idFromName: (name: string) => name,
-      get: (name: string) => ({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: (id: DurableObjectId) => ({
         fetch: async (_url: string, init: { body: string }) => {
-          schedulerRefreshes.push(`${name}:${init.body}`);
+          schedulerRefreshes.push(`${id.toString()}:${init.body}`);
           return new Response("{}", { status: 200 });
         },
       }),
     },
     WORKSTREAM_ROOMS: {
-      idFromName: (name: string) => name,
+      idFromName: (name: string) => createTestDurableObjectId(name),
       get: () => ({ fetch: async () => new Response("{}", { status: 200 }) }),
     },
     WORKSTREAM_LOOP_WORKFLOW: {
@@ -138,7 +144,7 @@ function fixture(): Fixture {
         workflowCreations.push(options);
       },
     },
-  } as unknown as Env;
+  });
   return { database, env, schedulerRefreshes, workflowCreations };
 }
 
@@ -178,11 +184,12 @@ function wakeupTools(env: Env) {
 }
 
 function pendingRow(database: DatabaseSync, wakeupId: string): WorkstreamWakeupRow {
-  return database.prepare(
+  const row = database.prepare(
     `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
             due_at, status, version, created_at
        FROM workstream_wakeups WHERE id = ?`,
-  ).get(wakeupId) as unknown as WorkstreamWakeupRow;
+  ).get(wakeupId);
+  return WorkstreamWakeupRowSchema.parse(row);
 }
 
 describe("wake-up delay grammar", () => {
@@ -418,6 +425,49 @@ describe("wake-up instant resolution", () => {
 });
 
 describe("wake-up tools", () => {
+  it("summarizes the earliest pending wake-up for a work-stream marker", async () => {
+    const { env } = fixture();
+    const service = new WorkstreamService(env, {
+      sessionId: "test",
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "owner",
+    });
+    const { schedule, cancel } = wakeupTools(env);
+
+    expect((await service.list(10)).items[0]?.nextPendingWakeup).toBeNull();
+
+    const later = await schedule.execute(
+      { prompt: "Send the final deployment recap", delay: "3 hours" },
+      context("later-sidebar-marker"),
+    );
+    const earlierPrompt = "Check whether the production deployment finished successfully";
+    const earlier = await schedule.execute(
+      { prompt: earlierPrompt, delay: "2 hours" },
+      context("earlier-sidebar-marker"),
+    );
+    expect((await service.list(10)).items[0]?.nextPendingWakeup).toEqual({
+      dueAt: (earlier.output as { dueAt: string }).dueAt,
+      promptPreview: `${earlierPrompt.slice(0, WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH).trimEnd()}…`,
+    });
+
+    await cancel.execute(
+      { wakeupId: (earlier.output as { wakeupId: string }).wakeupId },
+      context("cancel-earlier-sidebar-marker"),
+    );
+    expect((await service.list(10)).items[0]?.nextPendingWakeup).toEqual({
+      dueAt: (later.output as { dueAt: string }).dueAt,
+      promptPreview: "Send the final deployment recap",
+    });
+
+    await cancel.execute(
+      { wakeupId: (later.output as { wakeupId: string }).wakeupId },
+      context("cancel-later-sidebar-marker"),
+    );
+    expect((await service.list(10)).items[0]?.nextPendingWakeup).toBeNull();
+  });
+
   it("schedules a wake-up and refreshes the workspace alarm", async () => {
     const { database, env, schedulerRefreshes } = fixture();
     const { schedule } = wakeupTools(env);
@@ -461,7 +511,7 @@ describe("wake-up tools", () => {
   it("leaves no pending wake-up behind when the alarm cannot be armed", async () => {
     const { database, env } = fixture();
     (env as unknown as { WORKSPACE_SCHEDULERS: unknown }).WORKSPACE_SCHEDULERS = {
-      idFromName: (name: string) => name,
+      idFromName: (name: string) => createTestDurableObjectId(name),
       get: () => ({ fetch: async () => new Response("nope", { status: 500 }) }),
     };
     const { schedule } = wakeupTools(env);

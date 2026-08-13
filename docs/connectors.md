@@ -9,6 +9,7 @@ Connectors are typed adapters behind a registry. A manifest declares OAuth needs
 | `packages/connectors/src/index.ts` | The registry, and the cross-validation that runs at its construction. |
 | `packages/connectors/src/types.ts` | The manifest and descriptor types, and the unexported symbol that brands `AuthorizedConnectorConnection`. |
 | `packages/connectors/src/provider-utils.ts` | `withProviderReauthorization` — the shared mid-call recovery every adapter routes through. |
+| `packages/connectors/src/hosted-mcp.ts` | The reusable hosted-MCP OAuth, live discovery, and exact call-forwarding abstraction described in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md). |
 | `packages/connectors/src/<provider>.ts` | One adapter per provider. |
 | `apps/api/src/services/connector-connection-access.ts` | `withAuthorizedConnection` — the one door that mints the brand. |
 | `apps/api/src/services/connector-credential-refresh.ts` | The refresh coordinator and its D1 lease. |
@@ -28,6 +29,15 @@ Connectors are typed adapters behind a registry. A manifest declares OAuth needs
 - A work-stream participant does not expose their personal connections by joining.
 - Tools require both a manifest capability and a capability recorded on the connection.
 - Credentials are decrypted only for the duration of a backend operation.
+
+Hosted MCP personal connections add one more layer without weakening those
+rules. Their static connector descriptor supplies trusted catalog prose and
+policy, while the provider supplies the active tool names, descriptions, input
+schemas, and informational annotations through `tools/list` after `load_plugin`
+reauthorizes the connection. Annotations never downgrade Avalon tool policy,
+and Avalon never copies that response into source. The shared
+mechanism and provider recipe are in
+[`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
 ### Credential freshness
 
@@ -183,7 +193,41 @@ The two records are isolated by Avalon capability checks, not by separate Google
 
 GitHub uses one public App with a signature-verifying smart ingress. One installation may be connected to Global workspaces, EU workspaces, or both; an indexed installation directory fans exact signed deliveries only to the applicable regional Workers. OAuth callbacks, credentials, raw payload storage, normalization, and activity processing remain regional. Workspace connections execute with short-lived installation tokens. Personal connections require an expiring user token and prove that the user can access the selected installation and repository.
 
-The agent can list repositories and commits, read files, inspect and create/update issues and comments, inspect and create/review pull requests, and read Actions and check runs. GitHub delivery signatures are verified against the exact raw body before installation-aware normalization and queueing. Webhooks also discover durable repository, commit, file, issue, pull-request, release, workflow-run, and check-run resources so people and agents can attach provider objects directly to work streams without copying their content into Avalon. Issue-dependency and sub-issue deliveries add both sides of the relationship, including cross-repository issues, while retaining one normalized activity per delivery.
+The agent can list and search repositories, list directories or bounded recursive
+trees, list commits, read files, inspect and create/update issues and comments,
+inspect and create/review pull requests, and read Actions and check runs.
+Repository listing stays inside the App installation instead of using GitHub's
+global search surface. It scans at most 1,000 authorized repositories, merges
+the installation owner's six profile pins when GraphQL makes them available,
+sorts pins first and then by the newer of `pushed_at` and `updated_at`, and
+returns `totalCount`, `page`, `perPage`, `hasMore`, and an honest `truncated` /
+`totalCountIsExact` signal. Search matches `name` and `full_name` locally over
+that same authorized set. `hasMore` means another page can be returned from the
+bounded local result; `truncated` separately says that GitHub has additional
+entries outside that bound. A recursive tree with a path resolves that subtree
+segment by segment before requesting recursion, so narrowing the path also
+narrows the provider response rather than merely filtering a full-repository
+download. The Contents API has no truncation flag, so a directory response at
+GitHub's 1,000-entry ceiling is conservatively marked truncated and inexact and
+the model can switch to tree mode. Directory/tree `offset` and `limit`, like
+every numeric tool field, inherit the exact numeric-string normalization in
+[`agent-tools.md`](agent-tools.md).
+
+The GitHub plugin prompt treats metadata and code evidence as different things.
+When more than one repository is plausible, the model asks the user to choose
+instead of selecting the first result. It may say that verification was
+incomplete without a readable code file, but it may not conclude that there are
+no discrepancies until `contents.get` has successfully returned at least one
+code file in that run. Repository, tree, commit, issue, and pull-request reads do
+not satisfy that evidence condition.
+
+GitHub delivery signatures are verified against the exact raw body before
+installation-aware normalization and queueing. Webhooks also discover durable
+repository, commit, file, issue, pull-request, release, workflow-run, and
+check-run resources so people and agents can attach provider objects directly
+to work streams without copying their content into Avalon. Issue-dependency and
+sub-issue deliveries add both sides of the relationship, including
+cross-repository issues, while retaining one normalized activity per delivery.
 
 ### Linear
 
@@ -199,7 +243,23 @@ Native sessions are additionally matched by organization, granted `linear.agent`
 
 ### Notion
 
-Notion uses public connections with an `Any workspace` installation scope and the provider's page picker. The agent can search and retrieve pages/data sources, query data sources, create pages, update or append Markdown, and read/create comments. Only pages explicitly shared during installation are visible.
+Notion has two intentionally different Avalon connection modes. A personal
+connection authorizes the official hosted Notion MCP server with OAuth discovery,
+dynamic client registration, and PKCE. It is owned by one Avalon member, acts
+with that member's Notion authorization, and exposes whatever tools Notion
+returns from live `tools/list` when the plugin activates.
+
+A workspace connection remains the public integration path. An Avalon owner or administrator starts the public OAuth flow and chooses the pages to share in Notion's page picker. Notion still requires `owner=user` on that public OAuth request: that identifies the human approving the installation, not Avalon's execution principal. Avalon stores the returned authorization as a workspace connection with no Avalon user owner, and stores the authorizing Notion user only inside the encrypted credential metadata. The installed integration bot is the provider identity used for API calls, so edits and comments are attributed to Avalon in Notion rather than to the person who approved the connection.
+
+Every member's ad-hoc work stream can use the granted Notion tools through the workspace principal; workspace automations still require an explicit binding. The agent can search and retrieve pages/data sources, query data sources, create pages, update or append Markdown, and read/create comments. Only pages explicitly shared during installation are visible. Notion webhook activity is normalized at workspace scope with no target user, because the event belongs to the shared bot grant rather than to its authorizer.
+
+Migration `0072_notion_connection_scope_split.sql` converts legacy personal
+Notion rows from the former public-integration shape into workspace connections
+and clears their Avalon user owner. It identifies that credential dialect by
+the absence of `notion.personal.mcp`; new hosted-MCP rows retain personal scope.
+Historical workspace-bot routes were already registered when those grants were
+created, so the migration changes authorization semantics without rebuilding
+provider credentials or sending content across regions.
 
 Notion's search matches **titles only** — a provider limitation, not a gap Avalon can close from this side. That makes an empty result the most misleading thing this connector can return, so the plugin message states the limit and names the two ways past it: query the data source that would hold the record, or retrieve a page found by title and read its content. Compare Drive and Linear, where searching contents was possible and is now the default.
 
@@ -207,7 +267,7 @@ Notion's one-time webhook verification token is accepted through a guarded setup
 
 ### Granola
 
-Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes Granola's six read tools for querying meetings, listing folders and meetings, reading meeting details and transcripts, and inspecting the connected account. A personal connection remains available only to its Avalon owner.
+Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes the server's live tool surface rather than a code-authored snapshot. A personal connection remains available only to its Avalon owner.
 
 A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Avalon creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Avalon hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting the connection removes the remote endpoint when Granola accepts the request.
 
@@ -250,6 +310,47 @@ The request body must be a JSON object no larger than the regional provider-webh
 
 Avalon verifies the HMAC over the exact received bytes before UTF-8 decoding or JSON parsing. Invalid signatures return `401`, malformed or schema-invalid bodies return `400`, disallowed events or non-member targets return `422`, identity/dedupe collisions return `409`, oversized bodies return `413`, and new deliveries return `202` (`200` when the same delivery is already known). Senders should retry network failures and `5xx` responses with exponential backoff using the same identity and exact body; they must not reuse an identity or dedupe key with changed content.
 
+### Unsigned webhook subscription handshakes
+
+Use Notion's setup flow as the reference pattern when a provider sends an
+**unsigned setup challenge whose plaintext becomes the secret for later webhook
+verification**, especially when the provider's dashboard requires an operator to
+paste that plaintext back. This is narrower than ordinary webhook verification:
+GitHub and Linear start with developer-configured signing secrets, Slack starts
+with its app signing secret, Granola returns a Standard Webhooks signing secret
+while Avalon creates the endpoint, and generic webhooks are created by Avalon.
+Those connectors do not need this handshake.
+
+For a provider that does match the pattern:
+
+1. Generate a cryptographically random, short-lived setup nonce and put it in the
+   one setup URL. Store only its hash and expiry. Never put a reusable setup
+   credential in the query string: edge and platform observability may capture the
+   complete URL before application logging or redaction runs.
+2. Consume the nonce atomically with the first challenge, binding it to a hash of
+   the delivered verification secret. Make the encrypted active-secret write
+   conditional on that setup generation still being current, closing the race
+   between claiming and storage. A retry of the same pair is idempotent; a
+   different secret, an expired or already consumed nonce, and an older pair
+   superseded by a newer setup are rejected.
+3. Encrypt the delivered secret immediately and never log it or return it from a
+   public API. If an operator must paste it into the provider UI, supply a local
+   command that reads the ciphertext through authenticated infrastructure
+   administration access,
+   decrypts with the region's existing connector key and version, and writes the
+   plaintext directly to the clipboard without printing or persisting it.
+4. In a multi-region single-ingress design, authorize and capture the challenge at
+   the public ingress, then forward the plaintext only over the authenticated
+   internal regional binding so every region can encrypt its own copy. Do not ask
+   the provider to repeat a one-time challenge to each region.
+
+The setup runbook must preserve that order: prepare the one-time URL, create or
+rotate the provider subscription, retrieve the captured secret locally if the UI
+requires it, then verify delivery. Keep provider-specific storage and commands in
+the provider's module document; extract shared code only when a second connector
+actually needs the pattern. Notion's implementation, retry rules, regional fan-out,
+and operator commands are documented in [`notion-ingress.md`](notion-ingress.md).
+
 ### Activity ingestion
 
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
@@ -270,7 +371,7 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
-`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. One surface reads the declaration without being the digest: [contextual routing](contextual-routing.md) starts an operational type at a higher confidence bar before offering it as Suggested context, as a prior a workspace's own acceptances overrule. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. The paused [contextual routing](contextual-routing.md) implementation retains the declaration as a prior for a future re-enable: an operational type starts at a higher confidence bar before it can become Suggested context, and a workspace's own acceptances can overrule that prior. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
@@ -284,18 +385,17 @@ Manifests and facets are cross-validated at registry construction: a connector t
 4. Enqueue only region, workspace ID, and activity ID.
 5. Evaluate explicit resource watches and deterministic automation triggers.
 6. Run semantic trigger matching only after deterministic prefilters.
-7. Create automation work idempotently or produce an in-stream contextual suggestion.
-8. Persist accepted/dismissed routing feedback, which decides what step 7 offers next.
+7. Create automation work idempotently; unclaimed activity proceeds to suggested-work batching while contextual routing is paused.
+8. When contextual routing is re-enabled, persist accepted/dismissed feedback that decides what step 7 offers next.
 
 Steps 1 through 6 are deterministic and are what this document owns. **Step 7's
-speculative half — which unclaimed activity becomes a Suggested context card, the
-four gates it passes first, and what an accept or a dismiss is then worth — has
-grown into its own subsystem and moved to
-[`contextual-routing.md`](contextual-routing.md).** It consumes the digestibility
-declaration described above and nothing else from here; change what becomes a
-card there, not in this document.
+speculative half is paused.** Its retained classifier, feedback gates, and the
+single switch that must guard every producer and reader live in
+[`contextual-routing.md`](contextual-routing.md). It consumes the digestibility
+declaration described above and nothing else from here; change or re-enable it
+there, not in this document.
 
-Routing feedback is idempotent in the direction it was given. A suggestion card is rendered from the work stream detail's pending suggestions and is rebuilt whenever the transcript is refetched, so a card can outlive the resolution it belongs to — a detail snapshot read before the accept restores it, buttons and all. Repeating the same accept or dismissal therefore reports the state the suggestion already reached (the accepted resource attachment is an upsert, so the same resource ID comes back); only a resolution that contradicts the recorded one is refused, with `409 suggestion_already_resolved`. A suggestion that does not exist in the work stream is still `404 suggestion_not_found`. Clients drop a resolved suggestion from the cached detail — both when they resolve it and when `activity_suggestion_resolved` arrives — so the card cannot regress to pending.
+The dormant routing feedback endpoint remains idempotent in the direction it was given so a rolling-deploy client can settle a card it already held. Work-stream reads return no pending suggestions and current clients ignore suggestion events, so no new resolution control is exposed while the surface is paused. Repeating the same accept or dismissal reports the state the suggestion already reached; only a contradictory resolution is refused with `409 suggestion_already_resolved`.
 
 Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2, while D1 stores an idempotent delivery receipt and normalized metadata.
 
@@ -309,7 +409,7 @@ Admission failures are retried through new batch windows only while an event's a
 
 A connector's normalized `title`/`summary` is not independently bounded to the API contract's suggestion and resource limits (`ActivitySuggestionSchema`/`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`WorkstreamRoom` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
 
-Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
+Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Avalon's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
 
 ## Invariants
@@ -321,6 +421,14 @@ Every rule below was learned from a defect in production or in review, and each 
 **Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
 
 **A health check must not write.** Provider state that needs restoring goes in `repair`, which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
+
+**An unsigned setup challenge is not a logging channel.** When the delivered
+plaintext will verify future webhooks, authorize the challenge with an expiring,
+single-use, token-bound nonce, encrypt the plaintext immediately, and retrieve it
+only through a local operator handoff. *Notion required its delivered
+`verification_token` to be pasted back into its dashboard, but Cloudflare records
+full request URLs before Worker redaction, making either a reusable query secret
+or a log-based handoff a persistent credential in observability.*
 
 **A health check answers reachability and authorization, never capacity.** Do not read balances, quotas, or credit counts to predict whether a later call will succeed; the provider decides that per call and will say so. *X read `recharge_credits` alone and reported an account holding ~10,000 spendable bonus credits as having none, failing every `plugin_x` load in the workspace.*
 
@@ -346,6 +454,14 @@ Each installed credential has two deliberately separate plugin identities. The o
 
 The model sees only these stable IDs in plugin catalogs, active-plugin instructions, and `load_plugin` arguments. Avalon resolves them back to canonical IDs before scope checks or persistence. Model-facing IDs are presentation and routing aliases, never security principals. Connector tool definitions use prefix-free names local to their plugin; the runtime adds the connection's stable short name when rendering model-facing tools. For example, canonical `drive.search` becomes `google_drive_search`, or `google_2_drive_search` for a second Google credential.
 
+A static connector tool whose Zod input schema has `.refine()` or
+`.superRefine()` implements `ConnectorAdapter.validateToolInput` with that same
+schema. The provider-facing JSON Schema cannot represent callbacks; this pure
+classifier lets the harness preserve their actionable messages when an executor
+throws, without moving enforcement out of `executeTool`. Dynamic hosted-MCP
+tools do not use a static connector validator because their live provider schema
+is the only input contract Avalon owns.
+
 ## Boundary
 
 This document owns the connector registry and the contract every adapter meets:
@@ -358,7 +474,7 @@ It does not own:
 
 | For | Read |
 | --- | --- |
-| Which unclaimed activity becomes a Suggested context card, and what an accept or a dismiss is worth | [`contextual-routing.md`](contextual-routing.md) |
+| The paused Suggested context surface and its retained accept/dismiss model | [`contextual-routing.md`](contextual-routing.md) |
 | Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
 | What happens to `digestible` after the log is written | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
@@ -462,6 +578,192 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-12 — Code-only tool refinements remain argument errors
+
+**What changed:** `ConnectorAdapter` can expose a pure `validateToolInput`
+classifier. Every current static connector tool with a Zod refinement supplies
+its owning schema, and the host carries that classifier onto the `HarnessTool`
+wrapper without attaching it to dynamic hosted-MCP definitions.
+
+**Why:** JSON Schema cannot represent arbitrary Zod refinement callbacks. An
+identity-only GitHub issue update therefore satisfied the model-visible
+structural schema, then its correct “at least one field” rejection was labelled
+as downstream data validation. For a non-idempotent write, the same
+misclassification also made it impossible to distinguish a pre-provider input
+rejection from an invalid response after the provider may have committed.
+
+**Considered and rejected:** Treating every custom Zod issue as input. Provider
+responses can have their own refinements, so that heuristic would blame the
+model for malformed external data. Static validators also stay off dynamic MCP
+tools because applying a code-authored snapshot to a live provider surface would
+reintroduce the schema drift that dynamic discovery avoids.
+
+**Consequences:** A connector adding a refined tool input must register the same
+schema with `validateToolInput`; execution still parses independently as its
+trust boundary. Valid input followed by response-validation failure on a
+`record_before_execute` write is conservatively ambiguous and cannot be retried.
+
+### 2026-08-12 — GitHub repository choice and code conclusions require evidence
+
+**What changed:** GitHub repository listing now returns complete page metadata,
+orders installation-authorized repositories by profile pin and recent activity,
+and has a separate name search. The connector can list directories and narrowed
+recursive trees. Its plugin instructions require an explicit repository choice
+when results are ambiguous and prohibit a “no discrepancies” conclusion until a
+code file has actually been read. Numeric tree offsets inherit the shared
+harness normalization and validation recovery.
+
+**Why:** The previous list returned only the current page and its local count,
+offered no name search or tree discovery, and left provider order untouched. A
+model therefore had neither the information to know more repositories existed
+nor a bounded way to locate code before reading a filename it already knew. The
+prompt required a provider read before saying information was unavailable, but
+metadata alone satisfied that wording, so it did not prevent choosing the first
+plausible repository or reporting no discrepancy without inspecting code.
+
+**Considered and rejected:** GitHub's global repository search can return public
+repositories outside the App installation, so using it would widen the
+connection's authorized surface. Downloading one full recursive tree and then
+filtering a requested directory was also rejected because the narrower argument
+would not reduce provider cost or avoid GitHub's tree truncation. Per-tool
+numeric coercion was rejected because the harness already owns a stricter exact
+numeric-string rule across every tool.
+
+**Consequences:** Listing/search scan at most 1,000 installation repositories and
+say when that bound makes a search count incomplete. `hasMore` never promises an
+empty page beyond that scan; provider truncation is a separate signal. Profile
+pins are a ranking hint: failure to read them leaves repository listing
+available and sets `pinnedSortAvailable` false. Directory responses at GitHub's
+1,000-entry cap are conservatively inexact. A path-scoped recursive tree costs
+one non-recursive lookup per path segment before the bounded subtree read.
+Models must distinguish “I could not verify” from “there are no discrepancies.”
+
+### 2026-08-12 — Speculative work-stream routing was paused
+
+**What changed:** Activity ingestion now skips contextual routing and sends
+unclaimed connector activity directly to suggested-work batching. Watches,
+automation triggers, activity projection, and the connector digestibility
+contract are unchanged. The retained routing module owns the shared pause switch
+and its re-enable requirements.
+
+**Why:** Suggested context was too noisy and not tuned well enough to interrupt
+an active work stream. Dropping unclaimed activity was rejected because the home
+screen remains a less intrusive place to propose work; deleting digestibility or
+routing history was rejected because both remain useful to a later tuning pass.
+
+### 2026-08-12 — Historical Notion bot grants move with their real identity
+
+**What changed:** Migration `0072_notion_connection_scope_split.sql` converts
+pre-MCP Notion personal rows to workspace scope while leaving rows granted
+`notion.personal.mcp` personal. The Notion adapter is always registered for the
+personal flow; public-integration credentials are optional configuration needed
+only when workspace authorization or bot-token operations run.
+
+**Why:** Existing rows hold public-integration bot credentials, not hosted-MCP
+OAuth metadata. Routing every `scope = personal` row through MCP made them fail
+refresh and disappear from the tool surface, while their stale owner also
+blocked a real personal connection. The capability dialect is deterministic
+evidence of which identity each row contains.
+
+**Considered and rejected:** Disabling the old rows or requiring every member to
+reconnect. That would discard a valid shared bot grant and leave its already
+registered webhook route orphaned. Keeping the public client secret mandatory
+for the whole adapter was also rejected because personal DCR does not use it.
+
+**Consequences:** The migration deliberately broadens legacy rows to the
+workspace semantics their provider bot always had. Operators can offer personal
+Notion MCP without configuring a public integration, although workspace connect
+attempts then fail with an explicit configuration error.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Personal MCP tools are discovered, not guessed
+
+**What changed:** Personal Granola and Slack plugins now pass through their
+servers' live tool surfaces, and Notion gained a personal connection through its
+official hosted MCP server. The shared abstraction is documented in
+[`hosted-mcp-connectors.md`](hosted-mcp-connectors.md). Notion's existing public
+integration remains the workspace bot path.
+
+**Why:** The static Granola and Slack definitions represented one response at
+one point in time, not a contract the MCP server was required to preserve. They
+could drift in either direction and made adding Notion an invitation to repeat
+provider-specific transport and OAuth code.
+
+**Considered and rejected:** Keeping Notion workspace-only after establishing
+that its public integration acts as a bot. That correctly describes the public
+API connection but leaves no member-attributed path; the official hosted MCP
+server is that separate path and should not be conflated with the bot install.
+Keeping static tool allowlists as a safety boundary was also rejected because
+Avalon's capability grant, principal checks, confirmation policy, and receipts
+already provide that boundary without inventing a provider catalog.
+
+**Consequences:** The workspace-only Notion decision immediately below still
+governs the public-integration mode, but no longer the connector as a whole.
+Historical public-integration rows are migrated to that workspace mode.
+Future MCP providers must use live discovery and preserve a static trusted
+catalog/policy boundary; they must not paste a current `tools/list` response
+into `agentPlugin.tools`.
+
+Shipped in the pull request for this change.
+
+### 2026-08-12 — Notion becomes a bot-owned workspace capability
+
+**What changed:** Notion now declares only workspace scope. Its OAuth callback
+still records the Notion user who approved the install, but the Avalon connection
+has no user owner, tools require the workspace execution principal, and webhook
+activity is workspace-scoped with no target user. The administrator gate protects
+both the workspace start and callback, while the same card separately offers
+personal MCP. Legacy public-integration rows are promoted by a capability-aware
+migration rather than interpreted as personal MCP credentials.
+
+**Why:** The provider grant installs an Avalon bot into a selected part of a
+Notion workspace, and Notion attributes the resulting edits and comments to that
+bot. Treating the human who clicked Allow as the runtime owner made an
+organization capability appear personal, hid it from teammates, and sent shared
+change activity only to that person. Reusing Notion's `owner=user` parameter as
+Avalon's scope signal was rejected because it describes who approves public OAuth,
+not who the installed bot acts as. Leaving old rows personal was rejected because
+the credential is an installed bot regardless of the Avalon label; treating that
+label as privacy would both misstate provider authority and break the row once
+personal scope acquired the distinct hosted-MCP credential dialect.
+
+### 2026-08-12 — Unsigned webhook setup is a connector pattern, not a Notion exception
+
+**What changed:** The connector contract now names the narrow class of provider
+handshakes in which an unsigned challenge delivers the secret that will sign
+future webhooks. Such a connector uses a short-lived nonce stored only as a hash,
+atomically binds its first challenge to that nonce, encrypts the delivered secret,
+and gives an operator the plaintext only through a local no-output handoff when a
+provider UI requires it. Notion is the reference implementation. Existing GitHub,
+Linear, Slack, Granola, and generic-webhook connectors are explicitly outside the
+pattern because their signing secrets are configured, returned during authenticated
+endpoint creation, or generated by Avalon rather than arriving in an unsigned
+operator-mediated challenge.
+
+**Why:** Treating the Notion fix as an isolated runbook detail would leave the next
+provider with the same handshake free to repeat both failed designs: a reusable
+query credential that the edge records before application code runs, or logging the
+future signing secret so an operator can recover it. The security property belongs
+to the connector architecture because it is determined by the provider protocol,
+not by Notion's product name.
+
+**Considered and rejected:** Requiring the nonce-and-local-copy workflow for every
+webhook connector. That would add state and ceremony where a provider already has
+a safe configured or authenticated secret exchange, without reducing risk. Also
+rejected: introducing a generic setup-challenge table and adapter facet now. One
+provider uses the flow today; keeping its schema and commands provider-specific
+avoids freezing an abstraction before a second protocol reveals what is actually
+shared.
+
+**Consequences:** A future connector author must classify the provider's webhook
+setup before implementation. If an unsigned delivered value becomes the signing
+secret, the one-time token-bound flow is mandatory and logging is forbidden. If
+the provider supplies or accepts a secret through an authenticated configuration
+path, its existing setup remains sufficient. A second matching provider is the
+point to evaluate a shared adapter facet and storage model, while retaining the
+same observability and plaintext-handoff boundaries.
 
 ### 2026-08-12 — A connector says where the things it produces live
 

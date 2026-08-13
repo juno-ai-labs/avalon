@@ -4,7 +4,6 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlit
 import { runHarness, type HarnessTool } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Env } from "../src/env";
 import {
   type ImmutableRunScope,
   admitInlineChildAttempt,
@@ -31,6 +30,7 @@ import {
   terminalizeHarnessAttempt,
 } from "../src/runtime/harness-run-runtime";
 import { __integrationTesting } from "../src/services/integrations";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -50,7 +50,7 @@ class SqliteD1Statement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -58,11 +58,11 @@ class SqliteD1Statement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: { changes: 0 },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
@@ -71,8 +71,8 @@ class SqliteD1Database {
   private batchTail: Promise<void> = Promise.resolve();
 
   constructor(readonly database: DatabaseSync) {
-    this.binding = {
-      prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+    this.binding = createTestD1Database({
+      prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
       batch: (statements: D1PreparedStatement[]) => {
         const batch = this.batchTail.then(async () => {
           const results: D1Result<unknown>[] = [];
@@ -91,7 +91,7 @@ class SqliteD1Database {
         this.batchTail = batch.then(() => undefined, () => undefined);
         return batch;
       },
-    } as unknown as D1Database;
+    });
   }
 }
 
@@ -1102,7 +1102,14 @@ describe("durable harness attempt runtime", () => {
       invocationId: "invocation-definitive-failure",
       status: "failed",
       phase: "execution_failed",
-      error: { code: "tool_failed", message: "The provider rejected the request" },
+      error: {
+        code: "tool_failed",
+        message: "The provider rejected the request",
+        data: {
+          code: "revision_conflict",
+          details: { reason: "Read the item again by ID before retrying." },
+        },
+      },
     })).toBe("persisted");
 
     await persistToolExecutionPlan(sqlite.binding, claim.lease, {
@@ -1130,7 +1137,7 @@ describe("durable harness attempt runtime", () => {
       {
         id: "invocation-definitive-failure",
         status: "failed",
-        error_json: '{"code":"tool_failed","message":"The provider rejected the request"}',
+        error_json: '{"code":"tool_failed","message":"The provider rejected the request","data":{"code":"revision_conflict","details":{"reason":"Read the item again by ID before retrying."}}}',
       },
       {
         id: "invocation-plan-conflict",
@@ -1190,7 +1197,7 @@ describe("durable harness attempt runtime", () => {
     let uploaded = false;
     let uploadedKey = "";
     let intercepted = false;
-    const racingBinding = {
+    const racingBinding = createTestD1Database({
       prepare: sqlite.binding.prepare.bind(sqlite.binding),
       batch: async (statements: D1PreparedStatement[]) => {
         if (!intercepted) {
@@ -1206,18 +1213,18 @@ describe("durable harness attempt runtime", () => {
         }
         return sqlite.binding.batch(statements);
       },
-    } as unknown as D1Database;
-    const env = {
+    });
+    const env = createTestEnv({
       AVALON_REGION: "global",
       DB: racingBinding,
-      PAYLOADS: {
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({
         put: async (key: string) => {
           uploaded = true;
           uploadedKey = key;
           return {} as R2Object;
         },
-      } as unknown as R2Bucket,
-    } as Env;
+      }),
+    });
 
     await expect(__integrationTesting.persistSuccessfulToolResult(env, input(RUN_ONE), claim.lease, {
       invocationId: "invocation-upload-race",
@@ -1332,7 +1339,7 @@ describe("durable harness attempt runtime", () => {
         });
 
         let intercepted = false;
-        const racingBinding = {
+        const racingBinding = createTestD1Database({
           prepare: sqlite.binding.prepare.bind(sqlite.binding),
           batch: async (statements: D1PreparedStatement[]) => {
             if (!intercepted) {
@@ -1341,7 +1348,7 @@ describe("durable harness attempt runtime", () => {
             }
             return sqlite.binding.batch(statements);
           },
-        } as unknown as D1Database;
+        });
         await expect(finalizeToolInvocationFailure(racingBinding, claim.lease, {
           harnessRunId: RUN_ONE,
           invocationId,
@@ -1476,7 +1483,7 @@ describe("durable harness attempt runtime", () => {
     ).run(RUN_ONE);
 
     let intercepted = false;
-    const racingBinding = {
+    const racingBinding = createTestD1Database({
       prepare: sqlite.binding.prepare.bind(sqlite.binding),
       batch: async (statements: D1PreparedStatement[]) => {
         if (!intercepted) {
@@ -1487,7 +1494,7 @@ describe("durable harness attempt runtime", () => {
         }
         return sqlite.binding.batch(statements);
       },
-    } as unknown as D1Database;
+    });
 
     expect(await reapStaleHarnessRuns(racingBinding, {
       workspaceId: WORKSPACE_ID,
@@ -2374,7 +2381,7 @@ describe("inline child-run durability", () => {
     ).run(RUN_ONE);
 
     let intercepted = false;
-    const racingBinding = {
+    const racingBinding = createTestD1Database({
       prepare: sqlite.binding.prepare.bind(sqlite.binding),
       batch: async (statements: D1PreparedStatement[]) => {
         if (!intercepted) {
@@ -2385,7 +2392,7 @@ describe("inline child-run durability", () => {
         }
         return sqlite.binding.batch(statements);
       },
-    } as unknown as D1Database;
+    });
 
     expect(await reapStaleHarnessRuns(racingBinding, {
       workspaceId: WORKSPACE_ID,

@@ -31,23 +31,33 @@ import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
-import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
+import { messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
-import { createTextMessage } from '../lib/transcript';
+import {
+  createTextMessage,
+  visibleTranscriptMessages,
+} from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
-import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
+import {
+  insertMessage,
+  nextTranscriptSequence,
+  reconcileCanonicalTranscript,
+  useWorkstreamSocket,
+} from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
+import { setCachedWorkstreams } from '../lib/workstreams-cache';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
-import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
+import { AttachmentLightbox } from '../components/attachment-lightbox';
+import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
@@ -709,7 +719,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   // files into.
   useWindowFilePaste(attachmentDraft.addFiles);
   const loadAttachmentContent = useCallback(
-    (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
+    (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
   );
 
@@ -788,7 +798,8 @@ export function WorkstreamScreen(): React.JSX.Element {
         queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
       }
       queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
-      return mergeCanonicalTranscript(previous, messagesWithTransientBlocks(page.items, detail));
+      const canonicalMessages = messagesWithTransientBlocks(page.items, detail);
+      return reconcileCanonicalTranscript(previous, canonicalMessages, detail.harnessStatus);
     },
     enabled: Boolean(api && id),
     staleTime: 2_000,
@@ -875,8 +886,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       const page = await api.getMessagePage(id, { before });
       if (activeWorkstreamIdRef.current !== id) return;
       if (page.nextCursor === before) throw new Error('Avalon received a repeated transcript cursor.');
+      const visibleItems = visibleTranscriptMessages(page.items);
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+        visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
       queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
       window.requestAnimationFrame(() => {
         const element = transcriptRef.current;
@@ -900,8 +912,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       const page = await api.getMessagePage(id, { after });
       if (activeWorkstreamIdRef.current !== id) return;
       if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
+      const visibleItems = visibleTranscriptMessages(page.items);
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+        visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
       queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
     } catch (error) {
       setOlderMessagesError(error instanceof Error ? error.message : 'Newer messages could not be loaded.');
@@ -920,8 +933,9 @@ export function WorkstreamScreen(): React.JSX.Element {
         const page = await api.getMessagePage(id, { after });
         if (activeWorkstreamIdRef.current !== id) return;
         if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
+        const visibleItems = visibleTranscriptMessages(page.items);
         queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-          page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+          visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
         after = page.newerCursor;
         queryClient.setQueryData(['messages-newer-cursor', id], after);
       }
@@ -953,7 +967,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
         current ? { ...current, title: updated.title } : current,
       );
-      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+      setCachedWorkstreams(queryClient, (current) =>
         current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
       );
     },
@@ -1200,41 +1214,6 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
   };
 
-  const resolveSuggestion = async (suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> => {
-    // The transcript's suggestion cards are rebuilt from the detail's pending
-    // suggestions every time the message page is fetched, and that fetch reads
-    // the detail through the cache. Dropping the suggestion before the request
-    // rather than after also covers a rebuild that lands while the request is
-    // still in flight, which would otherwise restore the card to its pending
-    // state and offer buttons whose request can only fail.
-    const pending = queryClient.getQueryData<WorkstreamDetail>(['workstream', id])
-      ?.suggestions?.find((suggestion) => suggestion.id === suggestionId);
-    queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
-      ? { ...current, suggestions: (current.suggestions ?? []).filter((suggestion) => suggestion.id !== suggestionId) }
-      : current);
-    try {
-      await api!.resolveActivitySuggestion(id, suggestionId, action);
-    } catch (error) {
-      // 404 and 409 both mean the server no longer holds this suggestion open,
-      // so its card must not return offering buttons over a decision already
-      // made — the very thing this is here to stop. Every other failure left
-      // the suggestion pending, and its card has to come back to carry the
-      // error. Restore only this suggestion, so a detail update that landed
-      // while the request was in flight survives.
-      const status = error instanceof ApiError ? error.status : 0;
-      if (pending && status !== 404 && status !== 409) {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
-          && !(current.suggestions ?? []).some((suggestion) => suggestion.id === suggestionId)
-          ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
-          : current);
-      } else {
-        void workstream.refetch();
-      }
-      throw error;
-    }
-    await Promise.all([messages.refetch(), workstream.refetch()]);
-  };
-
   useEffect(() => {
     if (!workstream.data || messages.isLoading || initialPositionedWorkstreamRef.current === id) return;
     initialPositionedWorkstreamRef.current = id;
@@ -1283,7 +1262,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (activeWorkstreamIdRef.current !== id) return;
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
         current ? { ...current, ...updated } : current);
-      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+      setCachedWorkstreams(queryClient, (current) =>
         current?.map((item) => item.id === id ? { ...item, ...updated } : item));
     }).catch(() => {
       void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
@@ -1464,7 +1443,6 @@ export function WorkstreamScreen(): React.JSX.Element {
                       message={message}
                       onAnswerElicitation={answerElicitation}
                       onOpenAttachment={setAttachmentPreview}
-                      onResolveSuggestion={resolveSuggestion}
                       systemRowDisclosure={systemRowDisclosure}
                     />
                   </div>

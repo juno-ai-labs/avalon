@@ -9,8 +9,12 @@ import {
 } from "@avalon/agent-harness";
 import type { HarnessPlugin } from "@avalon/agent-harness";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import {
+  workstreamRunLimits,
+  workstreamWorkflowStepTimeout,
+} from "../src/services/workstream-run-policy";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 /**
  * A HyperSight block used to be whatever assistant text the run trailed off
@@ -51,12 +55,19 @@ function frozenSurface(corePlugins: HarnessPlugin[]) {
 }
 
 function coreSurface(extra: HarnessPlugin[] = []) {
-  const tools = createAvalonTools({} as Env, workflowInput());
+  const tools = createAvalonTools(createTestEnv({}), workflowInput());
   return frozenSurface([...createWorkstreamCorePlugins(tools), ...extra]);
 }
 
 const submission = (state: { markdown: string | null }) =>
   hyperSightSubmissionPlugin(state, async () => {});
+
+describe("root-run limits", () => {
+  it("uses the expanded root policy for ordinary and HyperSight runs", () => {
+    expect(workstreamRunLimits()).toEqual({ maxIterations: 1_000 });
+    expect(workstreamWorkflowStepTimeout()).toBe("1 year");
+  });
+});
 
 describe("what the frozen surface will authorize", () => {
   /**

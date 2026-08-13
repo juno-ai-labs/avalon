@@ -8,6 +8,7 @@ import {
 } from "../src/lib/firecrawl";
 import type { FirecrawlError } from "../src/lib/firecrawl";
 import { __integrationTesting } from "../src/services/integrations";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
@@ -25,12 +26,12 @@ function envWithFirecrawl(
   apiKey: string | undefined,
   overrides: Partial<Env> = {},
 ): Env {
-  return {
+  return createTestEnv({
     FIRECRAWL_API_KEY: apiKey,
     WEB_SEARCH_MAX_RESULTS: "8",
     WEB_FETCH_MAX_BYTES: "2000000",
     ...overrides,
-  } as Env;
+  });
 }
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
@@ -218,8 +219,9 @@ describe("Avalon Firecrawl harness tools", () => {
 
     expect(tools).not.toContain("search");
     expect(tools).not.toContain("fetch");
-    expect(tools).toContain("read");
+    expect(tools).toContain("list_resources");
     expect(tools).toContain("read_resource");
+    expect(tools).toContain("search_resource");
   });
 
   it("returns link-only search output without exposing Firecrawl credit telemetry", async () => {

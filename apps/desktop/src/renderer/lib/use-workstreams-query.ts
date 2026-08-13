@@ -2,6 +2,7 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppSession } from './app-session';
 import { useDebugEnabled } from './use-debug-enabled';
+import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import type { WorkstreamSummary } from './types';
 
 /**
@@ -14,7 +15,7 @@ import type { WorkstreamSummary } from './types';
  * stale unread counts and titles until the next poll. Options change what the
  * fetcher asks for, never where the answer is stored.
  */
-export const WORKSTREAMS_QUERY_KEY = ['workstreams'] as const;
+export { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 /**
  * The query result every existing caller already reads, widened with paging.
@@ -107,7 +108,7 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
         pagesLoaded.current += 1;
         nextCursor.current = page.nextCursor;
         setHasMore(page.nextCursor !== null);
-        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        setCachedWorkstreams(queryClient, (current) =>
           mergeWorkstreams(current ?? [], page.items));
       })
       // The cursor is deliberately left where it was, so scrolling to the

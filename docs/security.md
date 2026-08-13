@@ -224,6 +224,22 @@ Granola webhooks are verified using the Standard Webhooks `webhook-id`,
 body. Verification and size checks happen before JSON parsing, R2 persistence,
 receipt creation, or queueing.
 
+Notion's initial subscription challenge is unsigned and its dashboard requires
+an operator to paste the delivered `verification_token` back into the setup
+form. Avalon authorizes that one request with a 30-minute nonce stored only as a
+SHA-256 hash and atomically bound to the first token it receives. Cloudflare
+captures the full webhook URL independently of application redaction, so the
+nonce is single-use and a later setup supersedes it; a reusable query secret
+would remain a credential in the 90-day observability stores. The verification
+token is AES-GCM encrypted in regional D1 and is never logged or returned by an
+API. `pnpm notion:webhook:copy-token` decrypts it on the operator's machine and
+pipes it directly to the clipboard, which is the only plaintext operator
+handoff. Future connectors whose unsigned setup challenge becomes their later
+webhook signing secret must follow the same boundary; connectors with a
+developer-configured or authenticated secret exchange do not. The classification
+and implementation checklist live in
+[`connectors.md`](connectors.md#unsigned-webhook-subscription-handshakes).
+
 ### Model boundary
 
 OpenRouter credentials and model context are server-only. The harness receives
@@ -231,6 +247,32 @@ only context authorized for the execution principal. Tool calls are proposals:
 Avalon validates the name, schema, principal, capability, limits, and idempotency
 state before execution. Reasoning fields are ignored; private chain-of-thought is
 neither persisted nor broadcast.
+
+Attachment filenames, MIME declarations, extracted text, converter output, and
+errors are untrusted model data. Server-verified MIME determines attachment kind;
+a sanitized filename extension is consulted only for an absent or generic MIME
+and cannot override a specific type. Attachment continuations are signed with a
+purpose-separated key and bind operation, execution principal, and owning scope,
+but they grant no access: every call repeats the current resource relationship
+and visibility checks. Failed tools forward only bounded, schema-validated
+recovery fields; arbitrary provider, converter, credential, and file-authored
+objects are discarded before entering the transcript.
+
+Compaction persists an LLM summary only in the row for the exact execution
+principal and authorized resource-inventory revision that produced it. Its
+resource inventory is regenerated through the sidebar's current-principal
+visibility predicate each time the checkpoint is applied or replayed. It
+contains fixed kind counts, not filenames, IDs, MIME values, content, or image
+bytes. A revision mismatch rejects the summary; the final insert is conditional
+on the revision still being current so revocation cannot win the last race.
+
+Historical protocol reconstruction does not trust a completed tool invocation
+merely because its JSON receipt still exists. Attachment read, search,
+summarize, and view results are identified from their persisted execution plan,
+then reauthorized against the current principal, current work-stream
+relationship, and current derivative dependency before any result is placed in
+the next model request. Missing authority omits that assistant/tool pair rather
+than replaying stale content.
 
 ### Logging and audit
 
@@ -419,7 +461,107 @@ incident response that may prompt it.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
+### 2026-08-12 — Attachment history and checkpoints reauthorize at replay
+
+**What changed:** Raw compaction summaries now live in principal-scoped rows and
+are fenced by a monotonic authorized-inventory revision through the final D1
+write. Historical attachment tool results are recognized from the stored
+execution plan and reauthorized before transcript projection. Attachment-owned
+model objects, cleanup rows, and receipt dependencies also carry `workspace_id`
+through every mutation and lookup.
+
+**Why:** Review demonstrated that a private or detached attachment could remain
+inside a previously completed tool result even after compaction correctly
+invalidated, and that tenant-owned lifecycle tables without an explicit
+workspace key violated the regional tenancy invariant. A shared raw summary had
+the same cross-principal problem because model prose can retain private
+conclusions without a recognizable filename.
+
+**Considered and rejected:** Treating completed receipts or raw summaries as
+principal-neutral, redacting model prose after the fact, and relying on globally
+unique resource or invocation IDs as tenant scope. None proves current
+authorization.
+
+**Consequences:** Every attachment replay has a fail-closed current-authority
+check; principal changes use independent checkpoints; and new attachment
+lifecycle tables and queries must retain explicit workspace predicates even
+when another identifier is unique.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Compaction resource awareness is current-principal data
+
+**What changed:** Authorized resource totals and natural-kind groups are appended
+only to live and replayed checkpoints. The shared compaction row retains the raw
+summary and a principal-neutral base message without the inventory.
+
+**Why:** Persisting a user's current visible-resource projection would both go
+stale after revocation and risk replaying private-note metadata to a different
+execution principal. Asking the LLM for counts is also not an authorization
+check.
+
+**Considered and rejected:** Persisting the rendered appendix and listing exact
+resource metadata. The former freezes authority at compaction time; the latter
+adds unnecessary sensitive metadata and unbounded context growth.
+
+**Consequences:** Replay now requires a fresh authorized visibility read.
+Failures at that boundary fail the run rather than reusing stale inventory, and
+the stored summary remains reusable across principals.
+
+Superseded by the principal-scoped replay boundary above. Shipped in
+[#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Attachment continuations name state without granting authority
+
+**What changed:** Attachment cursors are authenticated, purpose-separated, and
+bound to their execution principal and owning scope. The model-facing failure
+sanitizer accepts only bounded attachment kinds, MIME metadata, and exact read or
+view remediation shapes alongside the existing fixed recovery fields.
+
+**Why:** Lazy attachment reads need resumable state, but a mutable or replayable
+cursor can become a cross-workspace read primitive if a later handler mistakes it
+for authorization. Wrong-tool self-healing creates a second injection surface:
+converter or file-authored error JSON cannot be allowed to manufacture an
+arbitrary follow-up call.
+
+**Considered and rejected:** Plain base64 cursor payloads and forwarding a
+converter's whole structured error. Both are convenient representations of
+untrusted state, not validation; signing the first and strictly parsing the
+second preserves recoverability without widening authority.
+
+**Consequences:** Every attachment handler still reauthorizes database state
+after cursor verification. New recovery calls must be added to the strict
+discriminated union before they can reach a model, and cursor contents themselves
+remain excluded from logs.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — The unsigned-challenge boundary applies by protocol shape
+
+**What changed:** The Notion webhook setup boundary now points to the connector
+architecture rule for future providers with the same unsigned, operator-mediated
+secret handoff. It also states that configured or authenticated signing-secret
+exchanges do not need the one-time setup flow.
+
+**Why:** Naming only Notion made a reusable trust boundary look product-specific.
+The risk comes from the protocol shape: the value delivered by an unsigned request
+becomes authority over every later webhook, while edge observability can record the
+request before application redaction.
+
+**Considered and rejected:** Applying the workflow to every webhook connector.
+That adds no protection when the signing secret is already configured or exchanged
+over an authenticated control plane, and would obscure the exact condition that
+makes the nonce necessary.
+
+**Consequences:** Security review for a new webhook connector must classify its
+subscription handshake before choosing storage or operator tooling. A matching
+provider cannot use query-string reuse, logging, or a public reveal endpoint as its
+plaintext handoff.
+
+Earlier entries do not exist. This document predates the changelog rule in
 [`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
 the boundaries above — beyond the reasons already written inline — was not recorded
 here and was not reconstructed. `git log` and the PRDs under `docs/PRDs/` are what

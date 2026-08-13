@@ -118,6 +118,8 @@ export interface WorkstreamSummary {
    * this decides whether it is listed, that decides who may read it.
    */
   systemKind?: 'digest';
+  /** The first one-shot wake-up still waiting to fire for this work stream. */
+  nextPendingWakeup: { dueAt: string; promptPreview: string } | null;
   /**
    * Where this work stream sits in *this viewer's* pinned list, or `null` when
    * they have not pinned it. Per-person like the read-state fields above: the

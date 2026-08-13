@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const authorId = "00000000-0000-7000-8000-000000000002";
@@ -18,69 +19,16 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-describe("work-stream suggestions with oversized source fields", () => {
-  it("truncates an activity title that exceeds the suggestion schema before returning it", async () => {
+describe("paused work-stream suggestions", () => {
+  it("does not return a pending suggestion", async () => {
     const database = migratedDatabase();
     seed(database);
-    // GitHub's push webhook can carry a full multi-line commit message as the
-    // activity title, truncated only to the connector's own 500-character
-    // cap — well past ActivitySuggestionSchema's 300-character max.
-    const oversizedTitle = "juno-ai-labs/avalon: push — ".padEnd(408, "x");
-    seedSuggestion(database, { activityTitle: oversizedTitle });
+    seedSuggestion(database, { activityTitle: "A context suggestion" });
     const service = new WorkstreamService(environment(database), auth());
 
     const detail = await service.get(workstreamId);
 
-    expect(detail.suggestions).toHaveLength(1);
-    const [suggestion] = detail.suggestions;
-    expect(suggestion?.title.length).toBeLessThanOrEqual(300);
-    expect(suggestion?.title).toBe(oversizedTitle.slice(0, 300));
-  });
-
-  it("truncates a title with an emoji straddling the boundary without leaving a lone surrogate", async () => {
-    const database = migratedDatabase();
-    seed(database);
-    // Commit messages routinely carry emoji. Place a surrogate pair (😀,
-    // two UTF-16 code units) exactly across the 300-character cut so a
-    // naive `.slice(0, 300)` would split it and leave a lone surrogate.
-    const oversizedTitle = `${"x".repeat(299)}\u{1F600}${"y".repeat(200)}`;
-    seedSuggestion(database, { activityTitle: oversizedTitle });
-    const service = new WorkstreamService(environment(database), auth());
-
-    const detail = await service.get(workstreamId);
-
-    const [suggestion] = detail.suggestions;
-    expect(suggestion?.title.length).toBeLessThanOrEqual(300);
-    const lastCode = suggestion?.title.charCodeAt((suggestion.title.length) - 1) ?? 0;
-    expect(lastCode >= 0xd800 && lastCode <= 0xdbff).toBe(false);
-  });
-
-  it("truncates a suggestion summary that exceeds the schema before returning it", async () => {
-    const database = migratedDatabase();
-    seed(database);
-    const oversizedSummary = "x".repeat(2_500);
-    seedSuggestion(database, { activityTitle: "Normal-length title", activitySummary: oversizedSummary });
-    const service = new WorkstreamService(environment(database), auth());
-
-    const detail = await service.get(workstreamId);
-
-    const [suggestion] = detail.suggestions;
-    expect(suggestion?.summary.length).toBeLessThanOrEqual(2_000);
-    expect(suggestion?.summary).toBe(oversizedSummary.slice(0, 2_000));
-  });
-
-  it("does not shorten a title, summary, or reason that already fit the schema", async () => {
-    const database = migratedDatabase();
-    seed(database);
-    seedSuggestion(database, { activityTitle: "Normal-length title", activitySummary: "Normal-length summary" });
-    const service = new WorkstreamService(environment(database), auth());
-
-    const detail = await service.get(workstreamId);
-
-    const [suggestion] = detail.suggestions;
-    expect(suggestion?.title).toBe("Normal-length title");
-    expect(suggestion?.summary).toBe("Normal-length summary");
-    expect(suggestion?.reason).toBe("Matches the workstream objective");
+    expect(detail.suggestions).toEqual([]);
   });
 
   it("truncates an oversized activity title before it is stored as an accepted resource", async () => {
@@ -118,11 +66,11 @@ function auth(): AuthContext {
 }
 
 function environment(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
-  } as unknown as Env;
+  });
 }
 
 function migratedDatabase(): DatabaseSync {
@@ -217,29 +165,29 @@ function sqliteD1(database: DatabaseSync): D1Database {
         return (database.prepare(sql).get(...values as never[]) ?? null) as T | null;
       },
       async all<T>() {
-        return {
+        return createTestD1Result<T>({
           results: database.prepare(sql).all(...values as never[]) as T[],
           success: true,
           meta: {},
-        } as unknown as D1Result<T>;
+        });
       },
       async run<T>() {
         const result = database.prepare(sql).run(...values as never[]);
-        return {
+        return createTestD1Result<T>({
           results: [],
           success: true,
           meta: { changes: Number(result.changes) },
-        } as unknown as D1Result<T>;
+        });
       },
     };
-    return statement as unknown as D1PreparedStatement;
+    return createTestD1PreparedStatement(statement);
   };
-  return {
+  return createTestD1Database({
     prepare,
     async batch<T>(statements: D1PreparedStatement[]) {
       const results: D1Result<T>[] = [];
       for (const statement of statements) results.push(await statement.run<T>());
       return results;
     },
-  } as unknown as D1Database;
+  });
 }

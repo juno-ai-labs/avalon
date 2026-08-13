@@ -6,6 +6,7 @@ import type {
   ConnectorActivityTriggerDescriptor,
   ExecutionPrincipal,
   HarnessFailureCode,
+  StructuredFailureDetail,
   ToolDefinition
 } from "@avalon/contracts";
 import {
@@ -77,7 +78,7 @@ export interface OpenRouterInferencePayload {
   messages: ModelMessage[];
   stream: true;
   stream_options: { include_usage: true };
-  tools?: Array<Record<string, unknown>>;
+  tools?: ModelRequestTool[];
   tool_choice?: "auto";
   plugins?: Array<Record<string, unknown>>;
   reasoning?: { effort: "low" | "medium" | "high" };
@@ -132,9 +133,26 @@ export type ModelMessageContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
   | { type: "file"; file: { filename: string; file_data: string } }
-  | { type: "input_audio"; input_audio: { data: string; format: string } };
+  | { type: "input_audio"; input_audio: { data: string; format: "wav" | "mp3" } };
 
 export type ModelMessageContent = string | ModelMessageContentPart[] | null;
+
+/** OpenRouter/OpenAI-compatible wire tool definition used by the shared client. */
+export interface ModelToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+    strict?: boolean;
+  };
+}
+
+export type ModelRequestTool = ModelToolDefinition | {
+  type: "openrouter:web_search";
+  search_context_size: "medium";
+  max_total_results: number;
+};
 
 export type StructuredModelDiagnostic = {
   stage: "model_request" | "model_response" | "normalize" | "validate" | "repair" | "complete";
@@ -181,7 +199,7 @@ interface StreamChunk {
 
 interface ChatRequest {
   messages: ModelMessage[];
-  tools?: Array<Record<string, unknown>>;
+  tools?: ModelRequestTool[];
   toolChoice?: "auto" | "none";
   includeWebSearch?: boolean | undefined;
   maxWebResults?: number | undefined;
@@ -1180,6 +1198,22 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
     started: "Loading the selected plugin…",
     completed: "Plugin guidance and tools are ready",
   },
+  automation_read_resource: {
+    started: "Reading an attached automation resource…",
+    completed: "Attached resource is ready",
+  },
+  automation_search_resource: {
+    started: "Searching an attached automation resource…",
+    completed: "Attachment search completed",
+  },
+  automation_view_resource: {
+    started: "Viewing an attached automation image…",
+    completed: "Attached image is ready",
+  },
+  automation_summarize_resource: {
+    started: "Summarizing an attached automation resource…",
+    completed: "Attachment summary is ready",
+  },
 };
 
 /**
@@ -1303,6 +1337,8 @@ export async function compileAutomation(input: {
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
   /** Avalon-owned plugins available through the same progressive-disclosure catalog. */
   additionalPlugins?: HarnessPlugin[];
+  /** Request-scoped tools owned by the preloaded automation architect. */
+  architectTools?: HarnessTool[];
   maxResearchIterations?: number;
   maxWebResults?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
@@ -1515,6 +1551,10 @@ export async function compileAutomation(input: {
   const timeTool = automationCurrentTimeTool(input.defaultTimezones);
   const requestElicitationTool: HarnessTool = {
     definition: AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+    validateInput: (raw) => {
+      const result = RequestElicitationInputSchema.safeParse(raw);
+      return result.success ? null : result.error;
+    },
     execute: async (raw) => {
       const args = RequestElicitationInputSchema.parse(raw);
       if (!draftState.submitted) {
@@ -1556,8 +1596,8 @@ export async function compileAutomation(input: {
       canonicalId: AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID,
       modelId: "avalon_automation_architect",
       shortWireName: "automation",
-      description: "Research authorized plugins and submit automation drafts.",
-      tools: creatorTools,
+      description: "Research authorized plugins, inspect frozen draft attachments, and submit automation drafts.",
+      tools: [...creatorTools, ...(input.architectTools ?? [])],
       preload: true,
       explicit: true,
     },
@@ -2042,6 +2082,12 @@ export interface HarnessToolContext {
 export interface HarnessToolResult {
   output: unknown;
   summary: string;
+  /**
+   * Current-turn model content that must never enter a durable receipt or
+   * transcript. The harness relays these parts after the JSON tool result and
+   * the host recreates them from authorized regional state on receipt replay.
+   */
+  contentParts?: ModelMessageContentPart[];
   providerOperationId?: string;
   halt?: "needs_input" | "completed";
   /** Bind control signal used only by Avalon's discovery plugin loader. */
@@ -2245,6 +2291,12 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
 export interface HarnessTool {
   definition: ToolDefinition;
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
+  /**
+   * Re-run code-authored input refinements when a Zod failure escapes the
+   * executor. JSON Schema cannot represent every refinement, so this keeps a
+   * correctable argument error distinct from downstream response validation.
+   */
+  validateInput?: (input: unknown) => z.ZodError | null;
   /** Execute in model-declared order before concurrent tools in the same batch. */
   serial?: boolean;
 }
@@ -2263,6 +2315,12 @@ export interface HarnessPlugin {
   description: string;
   systemMessage?: string;
   tools: HarnessTool[];
+  /**
+   * Resolve a provider-authored tool surface when this deferred plugin is
+   * activated. The catalog remains static and trusted; only the active tool
+   * definitions are replaced. Results are cached for the lifetime of one run.
+   */
+  loadTools?: () => Promise<HarnessTool[]>;
   /** For deferred plugins, requests persistence before an activation hint; ignored for core plugins. */
   preload: boolean;
   explicit?: boolean;
@@ -2302,6 +2360,8 @@ export type HarnessEvent =
       pluginId: string;
       policy: HarnessToolPolicyIdentity;
       error: string;
+      /** Sanitized model-facing recovery data, when the thrown error declares it. */
+      data?: StructuredFailureDetail;
       phase: "validation" | "execution";
       outcome: "definitive_failure" | "timed_out" | "aborted" | "ambiguous_external_write";
     }
@@ -2323,8 +2383,12 @@ export interface HarnessCompactionCheckpoint {
 export interface HarnessCompactionConfig {
   /** Optional catalog snapshot, primarily for deterministic hosts/tests. */
   contextWindowTokensByModel?: Readonly<Record<string, number | null | undefined>>;
+  /** Capture host authorization state before the summary sees the transcript. */
+  prepare?: () => void | Promise<void>;
   /** Persist the compacted continuation context after Bind swaps it in. */
   persist?: (checkpoint: HarnessCompactionCheckpoint) => void | Promise<void>;
+  /** Render fresh, authorized deterministic context for the live checkpoint only. */
+  renderAppendix?: () => string | Promise<string>;
 }
 
 /**
@@ -2359,11 +2423,15 @@ export type PluginAuthorizationOccasion = "activation" | "continuation";
 
 export interface RunHarnessInput {
   config: OpenRouterConfig & {
-    maxIterations: number;
-    maxToolCalls: number;
-    maxWallClockMs: number;
+    /** Optional iteration ceiling; callers that intend an unlimited loop omit it. */
+    maxIterations?: number;
+    /** Optional ceiling for deliberately bounded callers. Ordinary work-stream runs omit it. */
+    maxToolCalls?: number;
+    /** Optional ceiling for deliberately bounded callers. Ordinary work-stream runs omit it. */
+    maxWallClockMs?: number;
     toolTimeoutMs: number;
     maxWebResults: number;
+    /** Optional ceiling for deliberately bounded callers. Ordinary work-stream runs omit it. */
     maxCostCents?: number;
     /**
      * Budget for one catalog, applied **per catalog** rather than across them:
@@ -2565,5 +2633,6 @@ export const __testing = {
   executeAutomationCreatorDiscoveryTool,
   addressingJsonSchema,
   automationJsonSchema: automationDraftSubmissionJsonSchema,
-  normalizeAutomationDraft
+  normalizeAutomationDraft,
+  automationResearchToolPresentation: AUTOMATION_RESEARCH_TOOL_PRESENTATION,
 };

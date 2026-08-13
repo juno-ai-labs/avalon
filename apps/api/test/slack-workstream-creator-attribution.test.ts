@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Env } from "../src/env";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
   WorkstreamEmailRoutingService: class {
@@ -51,7 +51,7 @@ describe("Slack work stream creator attribution", () => {
 
   it("credits the mapped Avalon member who started the task from Slack", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
 
     const created = await new SlackWorkspaceWorkstreamService(env, "workspace-slack").create({
       actor,
@@ -86,7 +86,7 @@ describe("Slack work stream creator attribution", () => {
 
   it("leaves the task ownerless when Slack cannot map the member to Avalon", async () => {
     const database = seededDatabase();
-    const env = { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env;
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
 
     const created = await new SlackWorkspaceWorkstreamService(env, "workspace-slack").create({
       actor,

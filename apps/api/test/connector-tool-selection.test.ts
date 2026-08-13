@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import { createMemoryTableTools } from "../src/services/memory-table-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
@@ -81,9 +83,9 @@ class ToolSelectionDatabase {
       row.model_plugin_id ??= count === 1 ? base : `${base}_${count}`;
       return row;
     });
-    this.binding = {
-      prepare: (sql: string) => new ToolSelectionStatement(this, sql) as unknown as D1PreparedStatement,
-    } as unknown as D1Database;
+    this.binding = createTestD1Database({
+      prepare: (sql: string) => createTestD1PreparedStatement(new ToolSelectionStatement(this, sql)),
+    });
   }
 }
 
@@ -123,7 +125,7 @@ class ToolSelectionStatement {
     } else {
       throw new Error(`Unexpected tool-selection query: ${sql}`);
     }
-    return { success: true, results } as unknown as D1Result<T>;
+    return createTestD1Result<T>({ success: true, results });
   }
 
   async first<T>(): Promise<T | null> {
@@ -189,14 +191,14 @@ afterEach(() => {
 });
 
 function env(database: ToolSelectionDatabase): Env {
-  return {
+  return createTestEnv({
     DB: database.binding,
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-connector-client",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-connector-secret",
     CONNECTOR_CREDENTIALS_KEY: "must-not-be-used-after-revocation",
     AVALON_REGION: "global",
-  } as Env;
+  });
 }
 
 function workflowInput(automationSubscriptionId: string | null = null): WorkstreamWorkflowInput {
@@ -287,10 +289,10 @@ describe("connector tools selected for harness runs", () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools({
+    const selected = await __integrationTesting.loadHarnessTools(createTestEnv({
       ...env(database),
       FIRECRAWL_API_KEY: "firecrawl-test-key",
-    } as Env, workflowInput());
+    }), workflowInput());
 
     const listPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
       pluginId: "avalon:discovery",
@@ -315,8 +317,8 @@ describe("connector tools selected for harness runs", () => {
     }, selected);
     const workstreamPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
       pluginId: "avalon:workstream",
-      canonicalToolName: "read",
-      capability: "workstream.read",
+      canonicalToolName: "list_resources",
+      capability: "workstream.resources.list",
       mode: "read",
       idempotency: "safe",
     }, selected);
@@ -343,7 +345,7 @@ describe("connector tools selected for harness runs", () => {
       pluginId: "avalon:workstream",
       connectionId: null,
       toolSurfaceHash: expect.any(String),
-      definition: { name: "read", mode: "read", idempotency: "safe" },
+      definition: { name: "list_resources", mode: "read", idempotency: "safe" },
     });
     expect(webPolicy).toMatchObject({
       pluginId: "avalon:web",
@@ -462,8 +464,9 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.plugins.find((plugin) =>
       plugin.canonicalId === "avalon:workstream"
     )?.tools.map(({ definition }) => definition.name)).toEqual(expect.arrayContaining([
-      "read",
+      "list_resources",
       "read_resource",
+      "search_resource",
       "run_subagent",
     ]));
     expect(selected.tools.filter(({ definition }) =>
@@ -479,10 +482,10 @@ describe("connector tools selected for harness runs", () => {
       connection(OWNER_CONNECTION_ID, "personal", USER_ID),
     ]);
     const parentInput = workflowInput();
-    const runtimeEnv = {
+    const runtimeEnv = createTestEnv({
       ...env(database),
       FIRECRAWL_API_KEY: "firecrawl-test-key",
-    } as Env;
+    });
     const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
     expect(parentTools.plugins).toHaveLength(4);
     expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
@@ -516,11 +519,14 @@ describe("connector tools selected for harness runs", () => {
       "sheets.read_values",
     ]);
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
-      "current_time",
-      "read",
+      "list_resources",
+      "read_resource",
       "search",
       "fetch",
-      "read_resource",
+      "search_resource",
+      "view_resource",
+      "summarize_resource",
+      "current_time",
     ]);
     expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
       .toBe(false);
@@ -539,14 +545,43 @@ describe("connector tools selected for harness runs", () => {
     });
   });
 
+  it("inherits tools committed into a deferred parent plugin after activation", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+    ]);
+    const parentInput = workflowInput();
+    const runtimeEnv = env(database);
+    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
+    const pluginId = `connection:${WORKSPACE_CONNECTION_ID}`;
+    const parentPlugin = parentTools.plugins.find((plugin) => plugin.canonicalId === pluginId);
+    if (!parentPlugin) throw new Error("expected workspace plugin");
+    const discoveredReadTool = parentPlugin.tools.find((tool) => tool.definition.name === "drive.search");
+    if (!discoveredReadTool) throw new Error("expected a read tool fixture");
+    const hostArray = parentPlugin.tools;
+    hostArray.splice(0);
+
+    expect(__integrationTesting.installDynamicPluginTools(hostArray, [discoveredReadTool])).toBe(hostArray);
+    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
+      env: runtimeEnv,
+      parentInput,
+      childInput: childWorkflowInput(parentInput),
+      parentHarnessTools: parentTools,
+      selectedPluginIds: [pluginId],
+      assertChildOwned: async () => undefined,
+    });
+
+    expect(childTools.plugins.find((plugin) => plugin.canonicalId === pluginId)
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["drive.search"]);
+  });
+
   it("does not give an inbound-email child an outbound Firecrawl channel", async () => {
     const database = new ToolSelectionDatabase([]);
     const parentInput = workflowInput();
     parentInput.reason = "inbound_email";
-    const runtimeEnv = {
+    const runtimeEnv = createTestEnv({
       ...env(database),
       FIRECRAWL_API_KEY: "firecrawl-test-key",
-    } as Env;
+    });
     const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
 
     const childTools = await __integrationTesting.createInlineChildHarnessSurface({
@@ -559,9 +594,12 @@ describe("connector tools selected for harness runs", () => {
     });
 
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
-      "current_time",
-      "read",
+      "list_resources",
       "read_resource",
+      "search_resource",
+      "view_resource",
+      "summarize_resource",
+      "current_time",
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("fetch");
@@ -633,6 +671,12 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.modeByTool.get("google_drive_search")).toBe("read");
     expect(selected.modeByTool.get("google_docs_create_document")).toBe("write");
     expect(selected.modeByTool.get("google_sheets_update_values")).toBe("write");
+    const tables = __integrationTesting.createWorkstreamCorePlugins(
+      createMemoryTableTools(env(database), workflowInput()),
+    ).find((plugin) => plugin.canonicalId === "avalon:tables");
+    expect(tables?.systemMessage).toContain("query those exact row IDs again");
+    expect(tables?.systemMessage).toContain("table_insert_rows");
+    expect(tables?.systemMessage).not.toMatch(/\binsert_rows\b(?!\s+can)/u);
   });
 
   it("exposes a personal connection only to its owning user", async () => {
@@ -725,6 +769,9 @@ describe("connector tools selected for harness runs", () => {
       "calendar.create_event",
       "calendar.update_event",
     ]);
+    const updateEvent = mail?.tools.find((tool) => tool.definition.name === "calendar.update_event");
+    expect(updateEvent?.validateInput?.({ eventId: "event-1" })).toBeInstanceOf(Error);
+    expect(updateEvent?.validateInput?.({ eventId: "event-1", summary: "Updated" })).toBeNull();
 
     // The files plugin's examples are checked against its schemas too, so an
     // example cannot outlive the parameter it demonstrates.

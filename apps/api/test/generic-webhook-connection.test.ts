@@ -1,8 +1,9 @@
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { decryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000002";
@@ -20,7 +21,7 @@ class SqliteStatement {
 
   async run<T>(): Promise<D1Result<T>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, results: [], meta: { changes: Number(result.changes) } } as unknown as D1Result<T>;
+    return createTestD1Result<T>({ success: true, results: [], meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -28,11 +29,11 @@ class SqliteStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: {},
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
@@ -126,9 +127,9 @@ function fixture() {
     );
     INSERT INTO users (id, name) VALUES ('${USER_ID}', 'Webhook Admin');
   `);
-  const binding = {
-    prepare: (sql: string) => new SqliteStatement(database.prepare(sql)) as unknown as D1PreparedStatement,
-  } as unknown as D1Database;
+  const binding = createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteStatement(database.prepare(sql))),
+  });
   const auth: AuthContext = {
     sessionId: "session",
     userId: USER_ID,
@@ -139,12 +140,12 @@ function fixture() {
   return {
     database,
     auth,
-    env: {
+    env: createTestEnv({
       DB: binding,
       AVALON_REGION: "global",
       PUBLIC_API_BASE_URL: "https://api.example.test",
       CONNECTOR_CREDENTIALS_KEY: CREDENTIAL_KEY,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
-    } as Env,
+    }),
   };
 }

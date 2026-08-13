@@ -242,11 +242,47 @@ Durable Objects, and its Logpush destination bucket are — applying applicable
 Regional Services and metadata controls, confirming LLM and connector provider
 commitments, and establishing contractual processing terms.
 
+Workers Analytics Engine is also an account-level observability service for
+which this repository configures no regional jurisdiction. Both API Workers
+write root-run summaries to the same `avalon_agent_runs` dataset. To keep that
+additional boundary operational-only, its datapoints contain source, outcome,
+model/release metadata, and numeric run totals but no workspace, work-stream,
+run, user, prompt, transcript, tool payload, connector content, or credential
+identifier. Exact correlated records remain in the existing D1, Workers
+Logs/Traces, and region-specific R2 Logpush paths. A future requirement for
+jurisdiction-pinned custom analytics must replace or contractually validate
+this shared dataset rather than assuming the EU Worker binding makes it EU
+resident.
+
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
+### 2026-08-12 — Root-run aggregate telemetry excludes regional identifiers
+
+**What changed:** Both regional API Workers now bind the account-level
+`avalon_agent_runs` Workers Analytics Engine dataset. The fixed datapoint schema
+contains only operational dimensions and numeric run totals; correlation IDs
+and all member content are excluded.
+
+**Why:** Operators need aggregate latency, tool-use, token, cost, and outcome
+distributions before setting unattended run ceilings. Cloudflare documents
+Analytics Engine as a sampled account-level analytics product and exposes no
+dataset-jurisdiction option equivalent to the EU R2 bucket configuration.
+
+**Considered and rejected:** Indexing Analytics Engine by workspace or run ID
+was rejected because those identifiers are unnecessary for policy tuning,
+unique row indexes are an Analytics Engine anti-pattern, and the shared dataset
+is not the canonical regional ledger. Separate region-named datasets were also
+rejected for now: a different name does not establish a documented storage
+jurisdiction and would make account-wide product analysis harder.
+
+**Consequences:** Analytics Engine may be used only for content-free aggregate
+telemetry unless Cloudflare's regional guarantees are separately established.
+Regional D1 remains canonical, the two R2 Logpush buckets retain their existing
+jurisdictions, and exact per-run investigation uses those records rather than
+Analytics Engine.
+
+This document predates the changelog rule in
 [`module-documents.md`](module-documents.md#starting-one), and the reasoning behind
-the boundary described above — beyond the reasons already written inline — was not
+the older boundary described above — beyond the reasons already written inline — was not
 recorded here and was not reconstructed. `git log` and the PRDs under `docs/PRDs/`
-are what exist. The next substantial change to the region boundary starts the
-record, and that entry is that change, written in full.
+are what exist. The entry above begins the running record.

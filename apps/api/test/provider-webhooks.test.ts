@@ -2,7 +2,7 @@ import type { ConnectorConnectionContext, ConnectorError } from "@avalon/connect
 import type { Scope } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { decryptString, encryptString } from "../src/lib/crypto";
+import { decryptString, encryptString, sha256 } from "../src/lib/crypto";
 import { webhookIngestionRoutes } from "../src/routes/connections";
 import {
   __providerWebhookTesting,
@@ -10,13 +10,14 @@ import {
   type ProviderWebhookRawBody,
   type ProviderWebhookServiceOptions,
 } from "../src/services/provider-webhook-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const NOW = Date.parse("2026-08-01T18:00:00.000Z");
 const ENCRYPTION_KEY = "provider-webhook-test-encryption-key";
 const GITHUB_SECRET = "github-webhook-secret";
 const LINEAR_SECRET = "linear-webhook-secret";
 const NOTION_SECRET = "notion-verification-token";
-const NOTION_SETUP_TOKEN = "notion-setup-guard-token";
+const NOTION_SETUP_NONCE = "notion-one-time-setup-nonce";
 
 const WORKSPACE_ONE = "00000000-0000-7000-8000-000000000001";
 const WORKSPACE_TWO = "00000000-0000-7000-8000-000000000002";
@@ -92,7 +93,18 @@ interface StoredResource {
 interface StoredChallenge {
   encrypted_token: string;
   token_iv: string;
+  credential_key_version: number;
+  setup_nonce_hash: string | null;
+  setup_generation: number | null;
   consumed_at: string | null;
+}
+
+interface StoredSetupNonce {
+  verificationTokenHash: string | null;
+  expiresAt: string;
+  consumedAt: string | null;
+  isCurrent: boolean;
+  generation: number;
 }
 
 class FakeStatement {
@@ -113,11 +125,11 @@ class FakeStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return this.database.all(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.all(this.sql, this.values));
   }
 
   async run<T>(): Promise<D1Result<T>> {
-    return this.database.run(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.run(this.sql, this.values));
   }
 }
 
@@ -126,6 +138,7 @@ class FakeDatabase {
   readonly receipts = new Map<string, Receipt>();
   readonly activities: StoredActivity[] = [];
   readonly resources: StoredResource[] = [];
+  readonly setupNonces = new Map<string, StoredSetupNonce>();
   challenge: StoredChallenge | null = null;
 
   prepare(sql: string): FakeStatement {
@@ -141,11 +154,35 @@ class FakeDatabase {
   }
 
   first(sql: string, values: unknown[]): Record<string, unknown> | null {
+    if (sql.includes("SELECT nonce.rowid AS setup_generation")) {
+      const [region, verificationTokenHash] = values.map(String);
+      if (region !== "global" || !this.challenge?.setup_nonce_hash) return null;
+      const nonce = this.setupNonces.get(this.challenge.setup_nonce_hash);
+      return nonce?.isCurrent
+        && nonce.consumedAt !== null
+        && nonce.verificationTokenHash === verificationTokenHash
+        && this.challenge.setup_generation === nonce.generation
+        ? { setup_generation: nonce.generation }
+        : null;
+    }
+    if (sql.includes("FROM notion_webhook_setup_nonces")) {
+      const nonce = this.setupNonces.get(String(values[0]));
+      return nonce
+          ? {
+            verification_token_hash: nonce.verificationTokenHash,
+            consumed_at: nonce.consumedAt,
+            is_current: nonce.isCurrent ? 1 : 0,
+          }
+        : null;
+    }
     if (sql.includes("FROM provider_webhook_challenges")) {
       return this.challenge
         ? {
             encrypted_token: this.challenge.encrypted_token,
             token_iv: this.challenge.token_iv,
+            credential_key_version: this.challenge.credential_key_version,
+            setup_nonce_hash: this.challenge.setup_nonce_hash,
+            setup_generation: this.challenge.setup_generation,
             consumed_at: this.challenge.consumed_at,
           }
         : null;
@@ -187,7 +224,7 @@ class FakeDatabase {
       if (connection.status === "disabled") return false;
       if (sql.includes("connector_type = 'notion'")) {
         return connection.connector_type === "notion"
-          && connection.scope === "personal"
+          && connection.scope === "workspace"
           && values.includes(connection.provider_account_id);
       }
       if (sql.includes("json_extract(config_json, '$.githubUserId')")) {
@@ -204,6 +241,22 @@ class FakeDatabase {
   }
 
   run(sql: string, values: unknown[]): D1Result {
+    if (sql.includes("UPDATE notion_webhook_setup_nonces")) {
+      const verificationTokenHash = String(values[0]);
+      const consumedAt = String(values[1]);
+      const nonceHash = String(values[2]);
+      const expiresAfter = String(values[3]);
+      const nonce = this.setupNonces.get(nonceHash);
+      if (
+        !nonce
+        || !nonce.isCurrent
+        || nonce.consumedAt !== null
+        || nonce.expiresAt <= expiresAfter
+      ) return result(0);
+      nonce.verificationTokenHash = verificationTokenHash;
+      nonce.consumedAt = consumedAt;
+      return result(1);
+    }
     if (sql.includes("INSERT INTO provider_webhook_receipts")) {
       const provider = String(values[0]);
       const deliveryId = String(values[1]);
@@ -339,12 +392,33 @@ class FakeDatabase {
       return result(1);
     }
     if (sql.includes("INSERT INTO provider_webhook_challenges")) {
-      if (this.challenge) return result(0);
-      this.challenge = {
+      let setupGeneration = values[5] == null ? null : Number(values[5]);
+      if (sql.includes("FROM notion_webhook_setup_nonces")) {
+        const nonceHash = String(values[6]);
+        const verificationTokenHash = String(values[7]);
+        const nonce = this.setupNonces.get(nonceHash);
+        if (
+          !nonce?.isCurrent
+          || nonce.consumedAt === null
+          || nonce.verificationTokenHash !== verificationTokenHash
+        ) return result(0);
+        setupGeneration = nonce.generation;
+      } else if (
+        this.challenge?.setup_generation != null
+        && setupGeneration != null
+        && setupGeneration < this.challenge.setup_generation
+      ) {
+        return result(0);
+      }
+      const replacement = {
         encrypted_token: String(values[1]),
         token_iv: String(values[2]),
+        credential_key_version: Number(values[3]),
+        setup_nonce_hash: values[4] == null ? null : String(values[4]),
+        setup_generation: setupGeneration,
         consumed_at: null,
       };
+      this.challenge = replacement;
       return result(1);
     }
     if (sql.includes("UPDATE provider_webhook_challenges")) {
@@ -352,6 +426,7 @@ class FakeDatabase {
       if (sql.includes("SET encrypted_token = ?")) {
         this.challenge.encrypted_token = String(values[0]);
         this.challenge.token_iv = String(values[1]);
+        this.challenge.credential_key_version = Number(values[2]);
         this.challenge.consumed_at = null;
         return result(1);
       }
@@ -1051,10 +1126,10 @@ describe("provider-wide webhook ingestion", () => {
         },
         body: rawBody,
       },
-      {
-        DB: database as unknown as D1Database,
-        PAYLOADS: new FakeBucket() as unknown as R2Bucket,
-        ACTIVITY_QUEUE: new FakeQueue() as unknown as Queue,
+      createTestEnv({
+        DB: createTestD1Database(database),
+        PAYLOADS: createCloudflareTestBinding<R2Bucket>(new FakeBucket()),
+        ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>(new FakeQueue()),
         AVALON_REGION: "global",
         PUBLIC_API_BASE_URL: "https://api.avalon.example",
         LINEAR_INGRESS_BASE_URL: "https://linear.with-avalon.com",
@@ -1063,7 +1138,7 @@ describe("provider-wide webhook ingestion", () => {
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
         WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
         PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
-      } as Env,
+      }),
     );
 
     expect(response.status).toBe(200);
@@ -1122,21 +1197,22 @@ describe("provider-wide webhook ingestion", () => {
     expect(database.receipts.get(`linear:${LINEAR_DELIVERY}`)?.processedAt).not.toBeNull();
   });
 
-  it("guards and encrypts the one-time Notion verification challenge", async () => {
+  it("claims a one-time nonce and encrypts the Notion verification challenge", async () => {
     const database = new FakeDatabase();
     const bucket = new FakeBucket();
     const queue = new FakeQueue();
     const service = serviceFor(database, bucket, queue);
     const rawBody = JSON.stringify({ verification_token: NOTION_SECRET });
+    await seedNotionSetupNonce(database, NOTION_SETUP_NONCE);
 
-    await expect(service.ingestNotion(rawBody, new Headers(), "wrong-token"))
+    await expect(service.ingestNotion(rawBody, new Headers(), "wrong-nonce"))
       .rejects.toMatchObject({
         name: "ConnectorError",
         code: "unauthorized",
       } satisfies Partial<ConnectorError>);
     expect(database.challenge).toBeNull();
 
-    await expect(service.ingestNotion(rawBody, new Headers(), NOTION_SETUP_TOKEN))
+    await expect(service.ingestNotion(rawBody, new Headers(), NOTION_SETUP_NONCE))
       .resolves.toEqual({ accepted: true, duplicate: false, activityCount: 0 });
     expect(database.challenge?.encrypted_token).not.toContain(NOTION_SECRET);
     await expect(decryptString(
@@ -1147,13 +1223,21 @@ describe("provider-wide webhook ingestion", () => {
     )).resolves.toBe(NOTION_SECRET);
     expect(bucket.puts).toHaveLength(0);
 
-    await expect(service.ingestNotion(rawBody, new Headers(), NOTION_SETUP_TOKEN))
+    await expect(service.ingestNotion(rawBody, new Headers(), NOTION_SETUP_NONCE))
       .resolves.toEqual({ accepted: true, duplicate: true, activityCount: 0 });
 
     await expect(service.ingestNotion(
       JSON.stringify({ verification_token: "replacement-secret" }),
       new Headers(),
-      NOTION_SETUP_TOKEN,
+      NOTION_SETUP_NONCE,
+    )).rejects.toMatchObject({ code: "unauthorized" });
+
+    const replacementNonce = "notion-replacement-setup-nonce";
+    await seedNotionSetupNonce(database, replacementNonce);
+    await expect(service.ingestNotion(
+      JSON.stringify({ verification_token: "replacement-secret" }),
+      new Headers(),
+      replacementNonce,
     )).resolves.toEqual({ accepted: true, duplicate: false, activityCount: 0 });
     await expect(decryptString(
       database.challenge!.encrypted_token,
@@ -1161,6 +1245,71 @@ describe("provider-wide webhook ingestion", () => {
       ENCRYPTION_KEY,
       "provider-webhook:notion:global",
     )).resolves.toBe("replacement-secret");
+
+    // Once a later nonce installs a token, replaying the earlier valid pair can
+    // no longer restore the superseded signing secret.
+    await expect(service.ingestNotion(rawBody, new Headers(), NOTION_SETUP_NONCE))
+      .rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("rejects an expired Notion setup nonce", async () => {
+    const database = new FakeDatabase();
+    const service = serviceFor(database, new FakeBucket(), new FakeQueue());
+    await seedNotionSetupNonce(database, NOTION_SETUP_NONCE, NOW - 1);
+
+    await expect(service.ingestNotion(
+      JSON.stringify({ verification_token: NOTION_SECRET }),
+      new Headers(),
+      NOTION_SETUP_NONCE,
+    )).rejects.toMatchObject({ code: "unauthorized" });
+    expect(database.challenge).toBeNull();
+  });
+
+  it("prevents an older claimed challenge from winning after a newer setup", async () => {
+    const database = new FakeDatabase();
+    const service = serviceFor(database, new FakeBucket(), new FakeQueue());
+    const oldNonce = "older-overlapping-setup-nonce";
+    const newNonce = "newer-overlapping-setup-nonce";
+    const oldToken = "older-overlapping-verification-token";
+    const newToken = "newer-overlapping-verification-token";
+    await seedNotionSetupNonce(database, oldNonce);
+    await claimNotionSetupNonce(database, oldNonce, oldToken);
+    await seedNotionSetupNonce(database, newNonce);
+    await claimNotionSetupNonce(database, newNonce, newToken);
+
+    await service.storeNotionChallengeToken(newToken, await sha256(newNonce));
+    await expect(service.notionSetupGenerationForToken(newToken)).resolves.toBe(2);
+    await expect(service.storeNotionChallengeToken(oldToken, await sha256(oldNonce)))
+      .rejects.toMatchObject({ code: "unauthorized" });
+
+    await expect(decryptString(
+      database.challenge!.encrypted_token,
+      database.challenge!.token_iv,
+      ENCRYPTION_KEY,
+      "provider-webhook:notion:global",
+    )).resolves.toBe(newToken);
+    expect(database.challenge?.setup_nonce_hash).toBe(await sha256(newNonce));
+  });
+
+  it("prevents older challenge replication from overwriting a newer EU generation", async () => {
+    const database = new FakeDatabase();
+    const service = serviceFor(
+      database,
+      new FakeBucket(),
+      new FakeQueue(),
+      { AVALON_REGION: "eu" },
+    );
+
+    await service.storeNotionChallengeToken("newer-eu-token", null, 2);
+    await expect(service.storeNotionChallengeToken("older-eu-token", null, 1))
+      .rejects.toMatchObject({ code: "unauthorized" });
+    await expect(decryptString(
+      database.challenge!.encrypted_token,
+      database.challenge!.token_iv,
+      ENCRYPTION_KEY,
+      "provider-webhook:notion:eu",
+    )).resolves.toBe("newer-eu-token");
+    expect(database.challenge?.setup_generation).toBe(2);
   });
 
   it("verifies Notion events and fans out only to matching accessible bots", async () => {
@@ -1171,8 +1320,7 @@ describe("provider-wide webhook ingestion", () => {
         workspaceId: WORKSPACE_ONE,
         provider: "notion",
         providerAccountId: NOTION_BOT,
-        scope: "personal",
-        ownerUserId: USER_ONE,
+        scope: "workspace",
         credentials: {
           notionWorkspaceId: NOTION_WORKSPACE,
           botId: NOTION_BOT,
@@ -1184,8 +1332,7 @@ describe("provider-wide webhook ingestion", () => {
         workspaceId: WORKSPACE_TWO,
         provider: "notion",
         providerAccountId: NOTION_BOT,
-        scope: "personal",
-        ownerUserId: USER_TWO,
+        scope: "workspace",
         credentials: {
           notionWorkspaceId: NOTION_WORKSPACE,
           botId: NOTION_BOT,
@@ -1197,8 +1344,7 @@ describe("provider-wide webhook ingestion", () => {
         workspaceId: WORKSPACE_ONE,
         provider: "notion",
         providerAccountId: NOTION_OTHER_BOT,
-        scope: "personal",
-        ownerUserId: USER_TWO,
+        scope: "workspace",
         credentials: {
           notionWorkspaceId: NOTION_WORKSPACE,
           botId: NOTION_OTHER_BOT,
@@ -1210,8 +1356,7 @@ describe("provider-wide webhook ingestion", () => {
         workspaceId: WORKSPACE_TWO,
         provider: "notion",
         providerAccountId: NOTION_BOT,
-        scope: "personal",
-        ownerUserId: USER_TWO,
+        scope: "workspace",
         credentials: {
           notionWorkspaceId: NOTION_OTHER_WORKSPACE,
           botId: NOTION_BOT,
@@ -1230,10 +1375,11 @@ describe("provider-wide webhook ingestion", () => {
     const bucket = new FakeBucket();
     const queue = new FakeQueue();
     const service = serviceFor(database, bucket, queue);
+    await seedNotionSetupNonce(database, NOTION_SETUP_NONCE);
     await service.ingestNotion(
       JSON.stringify({ verification_token: NOTION_SECRET }),
       new Headers(),
-      NOTION_SETUP_TOKEN,
+      NOTION_SETUP_NONCE,
     );
     const rawBody = JSON.stringify({
       id: NOTION_EVENT,
@@ -1263,6 +1409,8 @@ describe("provider-wide webhook ingestion", () => {
     expect(database.activities[0]).toMatchObject({
       workspaceId: WORKSPACE_ONE,
       connectionId: CONNECTION_ONE,
+      connectionScope: "workspace",
+      connectionOwnerUserId: null,
       eventType: "notion.page.content_updated",
     });
     expect(queue.messages).toHaveLength(1);
@@ -1309,23 +1457,48 @@ function serviceFor(
   overrides: Partial<Env> = {},
   options: ProviderWebhookServiceOptions = {},
 ): ProviderWebhookService {
-  const env = {
-    DB: database as unknown as D1Database,
-    PAYLOADS: bucket as unknown as R2Bucket,
-    ACTIVITY_QUEUE: queue as unknown as Queue,
+  const env = createTestEnv({
+    DB: createTestD1Database(database),
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
+    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>(queue),
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.avalon.example",
     GITHUB_WEBHOOK_SECRET: GITHUB_SECRET,
     LINEAR_WEBHOOK_SECRET: LINEAR_SECRET,
     NOTION_OAUTH_CLIENT_ID: NOTION_INTEGRATION,
-    NOTION_WEBHOOK_SETUP_TOKEN: NOTION_SETUP_TOKEN,
     CONNECTOR_CREDENTIALS_KEY: ENCRYPTION_KEY,
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
     WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
     PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
     ...overrides,
-  } as Env;
+  });
   return new ProviderWebhookService(env, { now: () => NOW, ...options });
+}
+
+async function seedNotionSetupNonce(
+  database: FakeDatabase,
+  nonce: string,
+  expiresAt = NOW + 30 * 60 * 1_000,
+): Promise<void> {
+  for (const stored of database.setupNonces.values()) stored.isCurrent = false;
+  database.setupNonces.set(await sha256(nonce), {
+    verificationTokenHash: null,
+    expiresAt: new Date(expiresAt).toISOString(),
+    consumedAt: null,
+    isCurrent: true,
+    generation: database.setupNonces.size + 1,
+  });
+}
+
+async function claimNotionSetupNonce(
+  database: FakeDatabase,
+  nonce: string,
+  verificationToken: string,
+): Promise<void> {
+  const stored = database.setupNonces.get(await sha256(nonce));
+  if (!stored) throw new Error("The test setup nonce is missing");
+  stored.verificationTokenHash = await sha256(verificationToken);
+  stored.consumedAt = new Date(NOW).toISOString();
 }
 
 function receiptKey(provider: string, deliveryId: string): string {

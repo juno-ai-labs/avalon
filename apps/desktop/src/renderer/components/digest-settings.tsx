@@ -28,6 +28,9 @@ const DAY_PRESETS = [
 
 const MAX_TIMES = 12;
 
+/** The settings surface depends on this pair, not the entire renderer client. */
+export type DigestSettingsApi = Pick<AvalonApi, 'getDigestSchedule' | 'updateDigestSchedule'>;
+
 export function minutesToLabel(minuteOfDay: number): string {
   const hour = Math.floor(minuteOfDay / 60);
   const minute = minuteOfDay % 60;
@@ -119,7 +122,7 @@ export function DigestSettings({
   connections,
   onEditTimezone,
 }: {
-  api: AvalonApi;
+  api: DigestSettingsApi;
   connections: WorkstreamConnection[];
   /** Takes the reader to the one place the timezone is actually set. */
   onEditTimezone: () => void;

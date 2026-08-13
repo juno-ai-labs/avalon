@@ -247,11 +247,25 @@ ordering and cache-purge safeguards.
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](desktop-icons.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
 
-Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0065_automation_draft_conversation.sql` are live in both D1 databases — confirmed against both remote databases with `pnpm db:migrate:remote:list` and its EU counterpart — and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/provider-apps.md`: one public connection, whose callback and webhook both terminate at the `notion.with-avalon.com` custom domain on the Global Worker, which must be created before registration. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
+Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0065_automation_draft_conversation.sql` are live in both D1 databases — confirmed against both remote databases with `pnpm db:migrate:remote:list` and its EU counterpart — and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. The public Notion connection and regional OAuth secrets exist; its webhook subscription remains to be created after migration `0071_notion_webhook_setup_nonces.sql` and the matching Worker release land, using the two clipboard commands in `docs/provider-apps.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
 
 Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
 
-The release that first ships the shared Notion ingress is the second such rollout, and it is staged for the same reason: Global adds `EU_NOTION_BRIDGE` bound to `NotionRegionalBridge`, which the deployed EU Worker does not export yet, while EU adds `GLOBAL_NOTION_ROUTER` bound to `NotionRoutingBridge`, which the deployed Global Worker does not export yet. Neither region can be deployed with its full configuration first. Deploy a bootstrap Global Worker carrying the new `NotionRoutingBridge` export and the `notion.with-avalon.com` custom domain but **without** the `EU_NOTION_BRIDGE` binding, then the full EU Worker, then the full Global Worker. Apply `0066_shared_notion_connection_routing.sql` to both databases first. Until the third stage lands, an EU authorization returns `notion_region_unavailable` rather than completing — the shared callback is live but has nowhere to hand an EU attempt — so set the Notion Worker secrets only after the rollout finishes, which keeps the connector out of the catalog and the connect button disabled in the meantime.
+The release that first ships the shared Notion ingress is the second such rollout, and it is staged for the same reason: Global adds `EU_NOTION_BRIDGE` bound to `NotionRegionalBridge`, which the deployed EU Worker does not export yet, while EU adds `GLOBAL_NOTION_ROUTER` bound to `NotionRoutingBridge`, which the deployed Global Worker does not export yet. Neither region can be deployed with its full configuration first. Deploy a bootstrap Global Worker carrying the new `NotionRoutingBridge` export and the `notion.with-avalon.com` custom domain but **without** the `EU_NOTION_BRIDGE` binding, then the full EU Worker, then the full Global Worker. Apply `0066_shared_notion_connection_routing.sql` and `0071_notion_webhook_setup_nonces.sql` to both databases first. Until the third stage lands, an EU authorization returns `notion_region_unavailable` rather than completing — the shared callback is live but has nowhere to hand an EU attempt — so set the Notion Worker secrets only after the rollout finishes, which keeps the connector out of the catalog and the connect button disabled in the meantime.
+
+After the migration and Worker release are live, finish the Notion subscription
+without putting either setup material or its signing secret into logs:
+
+1. Run `pnpm notion:webhook:prepare`; it copies a URL carrying a 30-minute,
+   single-use nonce. Paste that URL into Notion's Webhooks tab and create the
+   subscription immediately.
+2. Run `pnpm notion:webhook:copy-token` after Notion posts the challenge. Paste
+   the copied value into **Verify subscription**. The command prints only the
+   capture timestamp, not the token, and refuses until the stored ciphertext is
+   proven to belong to the current consumed setup generation.
+3. If the nonce expires or setup must be restarted, run the prepare command
+   again. The new command invalidates any earlier unconsumed URL; never recover a
+   nonce or verification token from Workers Logs or Logpush.
 
 For ordinary releases after both entrypoints exist:
 
@@ -276,8 +290,8 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
-- `.github/workflows/ci.yml` runs on every pull request and on `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. CI cannot gate the deployment workflows — they start on the same push, so CI is a race, not a barrier — which is why each deployment verifies the workspace itself before touching production. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place; nothing in the repository can enforce that on its own.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref. It does not create resources, confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It does not create resources, confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 
 #### Releasing the desktop app
@@ -383,7 +397,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 ## Realtime operations and cost controls
 
 - Use one deterministic WorkstreamRoom per work stream, scoped by region and workspace. Do not allocate a room per socket or user.
-- Keep REST/D1 canonical. The room's bounded replay buffer is an optimization and must not be persisted per token; `resync_required` deliberately falls back to REST after hibernation or a replay gap.
+- Keep REST/D1 canonical. The room's bounded replay buffer is an in-memory optimization and must not be persisted. The separate active-stream checkpoint is one logical value with bounded text chunks, updated per batched delta, removed at terminal state, and carried by `history_unavailable` while the client refreshes every canonical REST surface. Do not collapse it back into one unbounded Durable Object value: an oversized write would also roll back the room sequence and stop later live chunks.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The client heartbeat is jittered across 45–55 seconds, waits 15 seconds for `pong`, and reconnects with equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not perform application work.
 - Batch model `stream_delta` broadcasts. Avoid Durable Object timers, per-connection alarms, and periodic room health polling; each can wake an otherwise idle room and add duration or request cost.
@@ -392,7 +406,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 - Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Avalon ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
 - The renderer captures mono PCM16 in a 24 kHz `AudioWorklet`, sends bounded chunks, and explicitly commits when the user stops. Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.
 
-Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required`.
+Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
 
 ## Timezones
 
@@ -455,8 +469,112 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Degraded connector workflows | `event = connector_poll_timeout` or `event = connector_poll_failed` |
 | Rejected model calls | `event = agent_inference_attempt_failed` or `event = structured_inference`, and `provider_error_code` exists |
 | Broken response contracts | `event = request_failed` and `error_name = ZodError` |
+| Harness run outcomes | `event = harness_run_finished` |
+| Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
 
 Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
+
+### Root-run analytics
+
+Both API Workers bind `RUN_ANALYTICS` to the account-level Workers Analytics
+Engine dataset `avalon_agent_runs`. A root ordinary work-stream or HyperSight
+execution writes exactly one datapoint after the harness has produced its final
+result, the Workflow has rechecked durable cancellation, and D1 has committed
+the effective terminal status. It also emits the correlated
+`harness_run_finished` Workers Log carrying workspace, work-stream, and run IDs.
+
+The Analytics Engine point is deliberately a **terminal summary**, not one row
+per model turn or loop event. Bind has already computed duration, routed
+attempts, tool calls, tokens, and cost; normal result paths also carry exact
+turn and model/tool timing totals. Reconstructing those
+totals from churn would be both more expensive and incorrect for this store:
+Analytics Engine samples at write and query time, does not guarantee retrieval
+of an individual point, cannot reconstruct exact event sequences, and supports
+neither joins nor unions. D1 is the run ledger. Workers Logs and Workers Traces
+are the exact correlated diagnostic path. If a future investigation needs
+latency by tool name, give completed tool executions a separate fixed-schema
+dataset; do not mix a second event grain into `avalon_agent_runs`.
+
+`writeDataPoint` accepts ordered arrays, so position is the schema. Never reorder
+or repurpose a populated slot. Add a new version and unused trailing slots when
+the schema grows:
+
+| Column | Meaning |
+| --- | --- |
+| `index1` | `<source>:<region>` sampling cohort, for example `hypersight:eu`; never a unique run ID |
+| `blob1` | schema version (`harness_run_v1`) |
+| `blob2` | source (`workstream` or `hypersight`) |
+| `blob3` | terminal status |
+| `blob4` | final model ID |
+| `blob5` | terminal failure code or `none` |
+| `blob6` | region |
+| `blob7` | app version |
+| `blob8` | build SHA |
+| `double1` | end-to-end harness duration in milliseconds |
+| `double2` | successfully completed model turns, or zero when `double11 = 0` |
+| `double3` | tool calls requested by completed turns, including cached calls |
+| `double4` | cumulative model routing/retry/generation time in milliseconds, or zero when `double11 = 0` |
+| `double5` | sum of individual tool durations in milliseconds, or zero when `double11 = 0`; this may exceed wall time when tools overlap |
+| `double6` | input tokens |
+| `double7` | output tokens |
+| `double8` | cost in cents |
+| `double9` | routed model attempts (the count governed by the 1,000-iteration policy) |
+| `double10` | output tokens per second, or zero when unavailable |
+| `double11` | detailed timing availability: 1 means `double2`, `double4`, `double5`, and `double10` are measured; 0 means their zeros are placeholders |
+
+No Analytics Engine point contains workspace, work-stream, run, user, prompt,
+transcript, tool-argument, tool-result, connector-content, or credential data.
+The sampling index follows the primary operator query—caller source by
+region—and stays far below the 96-byte index limit. One point uses eight of the
+20 blob slots and eleven of the 20 double slots, stays below the 16 KiB aggregate
+blob limit, and is one of at most 250 writes allowed per Worker invocation.
+Writes are non-blocking and must never be awaited or allowed to change a run's
+durable outcome.
+
+Queries must weight every aggregate by `_sample_interval`. This seven-day view
+is the starting point for deciding whether a run ceiling is warranted:
+
+```sql
+SELECT
+  blob2 AS source,
+  blob3 AS status,
+  count() AS sampled_rows,
+  SUM(_sample_interval) AS estimated_runs,
+  SUM(_sample_interval * double1) / SUM(_sample_interval) AS avg_duration_ms,
+  quantileExactWeighted(0.50)(double1, _sample_interval) AS p50_duration_ms,
+  quantileExactWeighted(0.95)(double1, _sample_interval) AS p95_duration_ms,
+  quantileExactWeighted(0.95)(double3, _sample_interval) AS p95_tool_calls,
+  quantileExactWeighted(0.95)(double8, _sample_interval) AS p95_cost_cents,
+  max(double9) AS max_routed_attempts
+FROM avalon_agent_runs
+WHERE blob1 = 'harness_run_v1'
+  AND timestamp > NOW() - INTERVAL '7' DAY
+GROUP BY source, status
+ORDER BY source, status
+```
+
+For a dashboard, group the same weighted measures with
+`toStartOfInterval(timestamp, INTERVAL '1' HOUR)`. Use `count()` as a sample-size
+quality signal, not as the run count; `SUM(_sample_interval)` estimates events,
+and `quantileExactWeighted(..., _sample_interval)` is the supported percentile
+form. Filter on `index1 = 'hypersight:eu'` or
+`index1 = 'hypersight:global'` for the highest-resolution regional HyperSight
+view. Do not use this dataset for exact billing, deduplication, run lookup, or
+crash recovery. End-to-end `double1`, calls, tokens, cost, and routed attempts
+remain usable on failed rows. Bind currently cannot return its detailed
+runToolLoop timing object after a thrown failed/stopped path, so filter
+`double11 = 1` before aggregating turns, model/tool time, or output rate; never
+interpret the placeholder zeros as measured time.
+
+Query the SQL API with a token restricted to **Account Analytics: Read**, or
+connect Grafana through the documented ClickHouse datasource. Analytics Engine
+retains data for three months. Its published limits currently include 10
+million writes and one million SQL reads per month on Workers Paid before
+usage-based charges; Cloudflare's April 2026 pricing page says billing has not
+started yet, so re-check the product page before treating that as a budget.
+Every `writeDataPoint` is one billable write regardless of how many fields it
+contains, which is another reason to record one terminal summary rather than
+every churn.
 
 Automatic tracing is enabled on both API Workers and on the retention Worker at
 a `traces` head sampling rate of 1. It is a separate switch from logs: the
@@ -562,7 +680,14 @@ only how to read it back.
 
 ### OpenRouter unavailable
 
-The harness tries configured fallback models within its wall-clock and iteration limits. If all fail, the run becomes `failed` and the work stream retains its persisted context. Check redacted structured logs by request, workspace, work-stream, and harness-run IDs; never add prompt bodies or credentials to logs.
+The harness tries configured fallback models within its per-request and stream
+watchdogs plus the caller's run policy. Root ordinary work-stream and HyperSight
+runs allow 1,000 routed model attempts and have a one-year Workflow deadline;
+inline children and bounded one-shot callers retain their smaller wall-time and
+iteration ceilings. If all models fail, the run becomes `failed`
+and the work stream retains its persisted context. Check redacted structured
+logs by request, workspace, work-stream, and harness-run IDs; never add prompt
+bodies or credentials to logs.
 
 ### Ambiguous external write
 

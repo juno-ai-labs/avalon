@@ -9,6 +9,7 @@ import { processPendingNotePrivacyNotifications } from "../src/services/note-pri
 import { NoteService } from "../src/services/note-service";
 import { reapDeletedNoteObjects } from "../src/services/note-resource-cleanup";
 import { ResourceService } from "../src/services/resource-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const userId = "00000000-0000-4000-8000-000000000201";
@@ -28,7 +29,7 @@ class SqliteD1Statement {
 
   async run<T>(): Promise<D1Result<T>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, results: [], meta: { changes: Number(result.changes) } } as unknown as D1Result<T>;
+    return createTestD1Result<T>({ success: true, results: [], meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -36,17 +37,17 @@ class SqliteD1Statement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.statement.all(...this.values as SQLInputValue[]) as T[],
       meta: { changes: 0 },
-    } as unknown as D1Result<T>;
+    });
   }
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
-  return {
-    prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+  return createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
     batch: async (statements: D1PreparedStatement[]) => {
       const results: D1Result<unknown>[] = [];
       database.exec("BEGIN");
@@ -61,7 +62,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
         throw error;
       }
     },
-  } as unknown as D1Database;
+  });
 }
 
 class MemoryBucket {
@@ -107,11 +108,11 @@ function fixture(): { auth: AuthContext; bucket: MemoryBucket; database: Databas
   return {
     database,
     bucket,
-    env: {
+    env: createTestEnv({
       DB: sqliteD1(database),
-      PAYLOADS: bucket as unknown as R2Bucket,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
       AVALON_REGION: "global",
-    } as Env,
+    }),
     auth: {
       sessionId: "note-session",
       userId,

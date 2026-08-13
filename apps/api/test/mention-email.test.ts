@@ -5,6 +5,7 @@ import {
   sendWorkstreamMentionEmail,
   type WorkstreamMentionEmail,
 } from "../src/services/mention-email-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const input: WorkstreamMentionEmail = {
   messageId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0",
@@ -21,7 +22,7 @@ const input: WorkstreamMentionEmail = {
 };
 
 function environment(overrides: Partial<Env> = {}): Env {
-  return {
+  return createTestEnv({
     APP_ENV: "production",
     AVALON_REGION: "global",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
@@ -29,7 +30,7 @@ function environment(overrides: Partial<Env> = {}): Env {
     RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
     RESEND_NOTIFICATION_FROM_EMAIL: "Avalon <notifications@with-avalon.com>",
     ...overrides,
-  } as unknown as Env;
+  });
 }
 
 function successfulResend() {

@@ -6,6 +6,7 @@ import {
   advanceOwningPollTarget,
   commitConnectorCursor,
 } from "../src/services/integrations";
+import { createTestD1Database } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const connectionId = "00000000-0000-7000-8000-000000000002";
@@ -44,7 +45,7 @@ describe("connector poll reliability", () => {
   it("recovers the canonical pending activity after an injected lost insert response", async () => {
     let canonicalId: string | null = null;
     let loseFirstInsertResponse = true;
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         let values: unknown[] = [];
         const statement = {
@@ -74,7 +75,7 @@ describe("connector poll reliability", () => {
         };
         return statement;
       },
-    } as unknown as D1Database;
+    });
 
     await expect(
       __integrationTesting.persistPolledActivity(database, activity()),
@@ -86,7 +87,7 @@ describe("connector poll reliability", () => {
 
   it("does not let a stale concurrent poll overwrite a newer cursor", async () => {
     const currentCursor = JSON.stringify({ gmail: { historyId: "newer" } });
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         const statement = {
           bind() { return statement; },
@@ -100,7 +101,7 @@ describe("connector poll reliability", () => {
         };
         return statement;
       },
-    } as unknown as D1Database;
+    });
 
     await expect(commitConnectorCursor(
       database,
@@ -115,7 +116,7 @@ describe("connector poll reliability", () => {
 
   it("advances the owning schedule or resource watch instead of the unused connection timestamp", async () => {
     const statements: Array<{ sql: string; values: unknown[] }> = [];
-    const database = {
+    const database = createTestD1Database({
       prepare(sql: string) {
         const recorded = { sql, values: [] as unknown[] };
         statements.push(recorded);
@@ -132,7 +133,7 @@ describe("connector poll reliability", () => {
           { success: true, meta: { changes: 0 } },
         ];
       },
-    } as unknown as D1Database;
+    });
 
     await expect(advanceOwningPollTarget(
       database,

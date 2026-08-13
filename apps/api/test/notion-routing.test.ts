@@ -16,8 +16,9 @@ import {
   createRegionRoutedState,
   regionFromRoutedState,
 } from "../src/lib/region-routed-state";
-import { notionConnectorConfig } from "../src/lib/connector-registry";
+import { connectorRegistryForEnv, notionConnectorConfig } from "../src/lib/connector-registry";
 import { createApp } from "../src/app";
+import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const NOW = Date.parse("2026-08-11T18:00:00.000Z");
 const SECRET = "notion-verification-token";
@@ -47,11 +48,11 @@ class FakeStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return this.database.all(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.all(this.sql, this.values));
   }
 
   async run<T>(): Promise<D1Result<T>> {
-    return this.database.run(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.run(this.sql, this.values));
   }
 }
 
@@ -118,11 +119,11 @@ describe("shared Notion connection routing", () => {
   });
 
   it("separates local regional Workers that share a hostname but not a port", () => {
-    const env = {
+    const env = createTestEnv({
       ...environment(new FakeDatabase()),
       PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
       NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787",
-    } as Env;
+    });
     expect(isSharedNotionIngress(env, "http://127.0.0.1:8787/connections/notion/callback")).toBe(true);
     expect(isSharedNotionIngress(env, "http://127.0.0.1:8788/connections/notion/callback")).toBe(false);
   });
@@ -130,11 +131,11 @@ describe("shared Notion connection routing", () => {
   it("never treats the Worker's own regional API as the shared ingress", () => {
     // Development points the ingress at the Worker itself. Were that the shared
     // host, the three-route gate would apply to the whole local API.
-    const env = {
+    const env = createTestEnv({
       ...environment(new FakeDatabase()),
       PUBLIC_API_BASE_URL: "http://127.0.0.1:8787",
       NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787",
-    } as Env;
+    });
     expect(isSharedNotionIngress(env, "http://127.0.0.1:8787/connections/notion/callback")).toBe(false);
     expect(isSharedNotionIngress(env, "http://127.0.0.1:8787/workspace")).toBe(false);
   });
@@ -154,16 +155,28 @@ describe("shared Notion connection routing", () => {
   it("gives both regions the one redirect URI the connection was registered with", () => {
     const shared = "https://notion.with-avalon.com/connections/notion/callback";
     for (const region of ["global", "eu"] as const) {
-      const env = {
+      const env = createTestEnv({
         AVALON_REGION: region,
         PUBLIC_API_BASE_URL: region === "eu" ? "https://eu.api.with-avalon.com" : "https://api.with-avalon.com",
         NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
         NOTION_OAUTH_CLIENT_ID: "client",
         NOTION_OAUTH_CLIENT_SECRET: "secret",
-      } as Env;
+      });
       expect(notionCallbackUrl(env)).toBe(shared);
       expect(notionConnectorConfig(env)?.redirectUri).toBe(shared);
     }
+  });
+
+  it("registers personal Notion MCP without public-integration credentials", () => {
+    const env = createTestEnv({
+      AVALON_REGION: "global",
+      PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+      NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
+    });
+    expect(notionConnectorConfig(env)).toEqual({
+      redirectUri: "https://notion.with-avalon.com/connections/notion/callback",
+    });
+    expect(connectorRegistryForEnv(env).list().map((manifest) => manifest.type)).toContain("notion");
   });
 
   it("routes a callback to the region its state names", async () => {
@@ -274,15 +287,16 @@ describe("shared Notion connection routing", () => {
   });
 
   it("replicates the one-time verification token to the region that never receives it", async () => {
-    const replicated: Array<{ region: Region; token: string }> = [];
+    const replicated: Array<{ region: Region; token: string; setupGeneration: number }> = [];
     const captured: Array<string | null> = [];
     const service = new NotionRoutingService(environment(new FakeDatabase()), {
       now: () => NOW,
-      storeChallengeInRegion: async (region, token) => {
-        replicated.push({ region, token });
+      storeChallengeInRegion: async (region, token, setupGeneration) => {
+        replicated.push({ region, token, setupGeneration });
       },
-      captureChallenge: async (token, setupToken) => {
-        captured.push(setupToken);
+      setupGenerationForToken: async () => 17,
+      captureChallenge: async (token, setupNonce) => {
+        captured.push(setupNonce);
         expect(token).toBe(SECRET);
         return { accepted: true, duplicate: false, activityCount: 0 };
       },
@@ -295,12 +309,12 @@ describe("shared Notion connection routing", () => {
       activityCount: 0,
     });
     expect(captured).toEqual(["setup-token"]);
-    expect(replicated).toEqual([{ region: "eu", token: SECRET }]);
+    expect(replicated).toEqual([{ region: "eu", token: SECRET, setupGeneration: 17 }]);
   });
 
   it("keeps the ingress in the Global control plane", async () => {
     const service = new NotionRoutingService(
-      { ...environment(new FakeDatabase()), AVALON_REGION: "eu" } as Env,
+      createTestEnv({ ...environment(new FakeDatabase()), AVALON_REGION: "eu" }),
       { now: () => NOW },
     );
     await expect(service.completeNotion("code", createRegionRoutedState("eu", ENTROPY)))
@@ -373,15 +387,15 @@ describe("shared Notion connection routing", () => {
 });
 
 function developmentEnv(): Env {
-  return {
+  return createTestEnv({
     ...ingressEnv(),
     PUBLIC_API_BASE_URL: "http://127.0.0.1:8787",
     NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787",
-  } as Env;
+  });
 }
 
 function ingressEnv(): Env {
-  return {
+  return createTestEnv({
     ALLOWED_ORIGINS: "app://avalon",
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
@@ -389,7 +403,7 @@ function ingressEnv(): Env {
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
     LOG_LEVEL: "error",
-  } as Env;
+  });
 }
 
 function route(region: Region, workspaceId: string, connectionId: string) {
@@ -397,15 +411,14 @@ function route(region: Region, workspaceId: string, connectionId: string) {
 }
 
 function environment(database: FakeDatabase): Env {
-  return {
-    DB: database as unknown as D1Database,
+  return createTestEnv({
+    DB: createTestD1Database(database),
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
     NOTION_INTEGRATION_ID: INTEGRATION_ID,
-    NOTION_WEBHOOK_SETUP_TOKEN: "setup-token",
     PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
-  } as Env;
+  });
 }
 
 async function signedDelivery(overrides: { integrationId?: string } = {}) {
@@ -449,9 +462,9 @@ function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 function result<T>(changes: number, results: T[] = []): D1Result<T> {
-  return {
+  return createTestD1Result<T>({
     success: true,
     results,
     meta: { changes } as D1Result["meta"],
-  } as D1Result<T>;
+  });
 }
