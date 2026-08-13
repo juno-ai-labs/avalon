@@ -15,6 +15,7 @@ import {
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   pollCheckpointedActivityStreams,
+  zodToolInputValidationError,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
   type ConnectorPollingActivitySource,
@@ -1993,6 +1994,19 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
 
       throw new ConnectorError("unsupported_capability", `Unsupported Google resource type: ${resourceType}`);
+    },
+
+    validateToolInput(name, rawArgs) {
+      const schema = name === "gmail.create_draft" || name === "gmail.send"
+        ? EmailArgsSchema
+        : name === "calendar.create_event"
+          ? CalendarEventCreateArgsSchema
+          : name === "calendar.update_event"
+            ? CalendarEventUpdateArgsSchema
+            : name === "sheets.update_values" || name === "sheets.append_values"
+              ? SheetValuesWriteArgsSchema
+              : undefined;
+      return zodToolInputValidationError(schema, rawArgs);
     },
 
     async executeTool(name, rawArgs, context) {

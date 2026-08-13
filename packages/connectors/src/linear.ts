@@ -24,6 +24,7 @@ import {
   connectorCapabilityRefused,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
+  zodToolInputValidationError,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
@@ -715,6 +716,13 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         return boundLinearValue(requiredRecord(data, "user", "Linear did not return the requested user"));
       }
       throw new ConnectorError("unsupported_capability", `Linear cannot hydrate resource type ${resourceType}`);
+    },
+
+    validateToolInput(name, rawArgs) {
+      return zodToolInputValidationError(
+        name === "update_issue" ? updateIssueSchema : undefined,
+        rawArgs,
+      );
     },
 
     async executeTool(name, rawArgs, context) {

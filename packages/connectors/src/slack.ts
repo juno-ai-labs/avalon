@@ -21,6 +21,7 @@ import {
   connectorCapabilityRefused,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
+  zodToolInputValidationError,
   type ConnectorActivityTypePartition,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
@@ -2103,6 +2104,13 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       if (failures.length === 1) throw failures[0];
       if (failures.length > 1) throw new AggregateError(failures, "Slack credentials could not all be revoked");
     },
+    validateToolInput(name, rawArgs) {
+      return zodToolInputValidationError(
+        name === "create_conversation" ? SlackDirectInputSchemas.create_conversation : undefined,
+        rawArgs,
+      );
+    },
+
     async executeTool(name, rawArgs, context) {
       assertPrincipalAccess(context.connection, context.principal);
       if (context.connection.scope === "personal"

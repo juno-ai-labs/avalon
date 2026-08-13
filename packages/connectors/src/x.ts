@@ -16,6 +16,7 @@ import {
   connectorCapabilityRefused,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
+  zodToolInputValidationError,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
@@ -202,6 +203,13 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       supportsWatches: false,
       supportsPolling: false,
       supportsWebhooks: false,
+    },
+
+    validateToolInput(name, rawArgs) {
+      return zodToolInputValidationError(
+        name === "get_user_timeline" ? userTimelineSchema : undefined,
+        rawArgs,
+      );
     },
 
     async executeTool(name, rawArgs, context) {

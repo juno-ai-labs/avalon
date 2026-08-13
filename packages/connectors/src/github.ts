@@ -23,6 +23,7 @@ import {
   connectorCapabilityRefused,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
+  zodToolInputValidationError,
   type ConnectorAdapter,
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
@@ -280,6 +281,8 @@ const checksListSchema = repoIdentitySchema.extend({
   page: z.number().int().min(1).max(1_000).default(1),
 }).strict();
 
+const githubToolInputSchemas = new Map<string, z.ZodType>();
+
 export const githubTools: ToolDefinition[] = [
   tool("repositories.list", "List installation-authorized repositories, ordered by pinned status and then recent activity. Returns totalCount, page, perPage, and hasMore.", GitHubCapabilities.metadataRead, "read", repositoriesListSchema),
   tool("repositories.search", "Search installation-authorized repositories by case-insensitive repository name or owner/name. Results are ordered by pinned status and then recent activity.", GitHubCapabilities.metadataRead, "read", repositoriesSearchSchema),
@@ -326,6 +329,7 @@ function tool(
   mode: "read" | "write",
   schema: z.ZodType,
 ): ToolDefinition {
+  githubToolInputSchemas.set(name, schema);
   return {
     name,
     description,
@@ -1048,6 +1052,10 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
         throw new ConnectorError("unsupported_capability", `GitHub cannot hydrate resource type ${type}`);
       }
       return boundGitHubValue(value);
+    },
+
+    validateToolInput(name, rawArgs) {
+      return zodToolInputValidationError(githubToolInputSchemas.get(name), rawArgs);
     },
 
     async executeTool(name, rawArgs, context) {
