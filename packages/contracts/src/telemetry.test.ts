@@ -66,10 +66,10 @@ describe("telemetry registry", () => {
   });
 
   it("accepts only bounded bundle-relative generated frames for JavaScript diagnostics", () => {
-    const candidate = {
+    const candidate = (errorCode: "react_boundary" | "network_error") => ({
       ...envelope("javascript_exception", {
         process: "renderer",
-        errorCode: "network_error",
+        errorCode,
         breadcrumbStatus: "available",
         fingerprint: "a".repeat(64),
         generatedFrames: ["index-CX8Z.js:120:4", "vendor.js:88:2"],
@@ -77,10 +77,11 @@ describe("telemetry registry", () => {
       source: "desktop-main",
       category: "diagnostic",
       identityScope: "platform-user",
-    };
-    expect(TelemetryEnvelopeSchema.safeParse(candidate).success).toBe(true);
+    });
+    expect(TelemetryEnvelopeSchema.safeParse(candidate("react_boundary")).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse(candidate("network_error")).success).toBe(true);
     expect(TelemetryEnvelopeSchema.safeParse({
-      ...candidate,
+      ...candidate("react_boundary"),
       properties: {
         process: "renderer",
         errorCode: "react_boundary",

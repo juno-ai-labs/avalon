@@ -5,10 +5,14 @@ import type {
 } from '../../common/desktop';
 import { desktopBridge } from './platform';
 
-const reportedJavascriptErrors = new WeakSet<Error>();
+const reportedJavascriptErrorPriorities = new WeakMap<Error, number>();
 const recentNetworkErrorSignatures = new Map<string, number>();
 const networkErrorReportIntervalMs = 5 * 60 * 1_000;
 const maximumNetworkErrorSignatures = 100;
+
+function javascriptErrorPriority(errorCode: DesktopJavascriptErrorCandidate['errorCode']): number {
+  return errorCode === 'network_error' ? 0 : 1;
+}
 
 function shouldReportNetworkError(candidate: DesktopJavascriptErrorCandidate): boolean {
   if (candidate.errorCode !== 'network_error') return true;
@@ -71,11 +75,14 @@ export function reportJavascriptError(
   error: unknown,
   errorCode: DesktopJavascriptErrorCandidate['errorCode'],
 ): void {
-  if (error instanceof Error && reportedJavascriptErrors.has(error)) return;
+  if (!(error instanceof Error)) return;
+  const priority = javascriptErrorPriority(errorCode);
+  const reportedPriority = reportedJavascriptErrorPriorities.get(error);
+  if (reportedPriority !== undefined && reportedPriority >= priority) return;
   const candidate = javascriptErrorCandidate(error, errorCode);
   if (!candidate) return;
-  reportedJavascriptErrors.add(error as Error);
   if (!shouldReportNetworkError(candidate)) return;
+  reportedJavascriptErrorPriorities.set(error, priority);
   fireAndForget(() => desktopBridge().reportJavascriptError(candidate));
 }
 
