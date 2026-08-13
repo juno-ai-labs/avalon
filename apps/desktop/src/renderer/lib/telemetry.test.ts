@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   javascriptErrorCandidate,
   reportJavascriptError,
@@ -10,6 +10,8 @@ import {
 
 const desktopBridge = vi.hoisted(() => vi.fn());
 vi.mock('./platform', () => ({ desktopBridge }));
+
+afterEach(() => vi.useRealTimers());
 
 describe('renderer semantic telemetry helpers', () => {
   it('maps only planned router destinations to stable screen enums', () => {
@@ -61,6 +63,26 @@ describe('renderer semantic telemetry helpers', () => {
       errorCode: 'network_error',
       frames: ['index.js:10:2'],
     });
+  });
+
+  it('coalesces repeated network failures with the same sanitized fingerprint', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-13T20:00:00.000Z'));
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportJavascriptError: report });
+    const errorAtSameFrame = (): Error => {
+      const error = new Error('private transport detail');
+      error.stack = 'Error: private transport detail\n at send (app://avalon/assets/throttle.js:20:2)';
+      return error;
+    };
+
+    reportJavascriptError(errorAtSameFrame(), 'network_error');
+    reportJavascriptError(errorAtSameFrame(), 'network_error');
+    expect(report).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(5 * 60 * 1_000);
+    reportJavascriptError(errorAtSameFrame(), 'network_error');
+    expect(report).toHaveBeenCalledTimes(2);
   });
 
   it('keeps telemetry observational when preload lookup or invocation throws synchronously', () => {

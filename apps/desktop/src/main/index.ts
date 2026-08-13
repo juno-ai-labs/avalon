@@ -78,7 +78,10 @@ import { applicationMenuTemplate } from './application-menu';
 import { DebugSettingsController } from './debug-settings';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
 import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
-import { normalizeJavascriptErrorCandidate } from './javascript-error-candidate';
+import {
+  javascriptErrorProcessHealthState,
+  normalizeJavascriptErrorCandidate,
+} from './javascript-error-candidate';
 import { LockdownModeController } from './lockdown-mode';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
 import { MenuBarContentStore } from './menu-bar-content';
@@ -355,20 +358,22 @@ const nativeSystemAudioController = new NativeSystemAudioController(() => {
 async function reportJavascriptErrorCandidate(value: unknown): Promise<void> {
   const normalized = await normalizeJavascriptErrorCandidate(value);
   if (!telemetryReporter) return;
-  await Promise.all([
-    telemetryReporter.processHealth(
+  const reports = [telemetryReporter.javascriptException(
+    normalized.process,
+    normalized.errorCode,
+    normalized.fingerprint,
+    telemetryBreadcrumbs?.status() ?? 'unavailable',
+    normalized.generatedFrames,
+  )];
+  const processHealthState = javascriptErrorProcessHealthState(normalized.errorCode);
+  if (processHealthState) {
+    reports.push(telemetryReporter.processHealth(
       normalized.process,
-      normalized.errorCode === 'unhandled_rejection' ? 'rejection' : 'exception',
+      processHealthState,
       'unknown',
-    ),
-    telemetryReporter.javascriptException(
-      normalized.process,
-      normalized.errorCode,
-      normalized.fingerprint,
-      telemetryBreadcrumbs?.status() ?? 'unavailable',
-      normalized.generatedFrames,
-    ),
-  ]);
+    ));
+  }
+  await Promise.all(reports);
 }
 
 function avalonWindows(): BrowserWindow[] {
