@@ -4,6 +4,12 @@ import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTr
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
+const reportJavascriptError = vi.hoisted(() => vi.fn());
+vi.mock('./telemetry', async (importOriginal) => ({
+  ...await importOriginal(),
+  reportJavascriptError,
+}));
+
 const timestamp = '2026-07-31T20:00:00.000Z';
 const workspaceId = '00000000-0000-7000-8000-000000000001';
 const userId = '00000000-0000-7000-8000-000000000002';
@@ -154,7 +160,10 @@ function sse(events: unknown[], splitAt?: number): Response {
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  reportJavascriptError.mockReset();
+});
 
 describe('Avalon API wire adapter', () => {
   it('streams automation assistant tokens and returns the final typed draft', async () => {
@@ -774,6 +783,11 @@ describe('Avalon API wire adapter', () => {
     const api = new AvalonApi('https://api.avalon.test', session);
 
     await expect(api.runAutomation('automation-1')).rejects.toMatchObject({ code: 'network_error' });
+    expect(reportJavascriptError).toHaveBeenCalledOnce();
+    expect(reportJavascriptError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'network_error', status: 0 }),
+      'network_error',
+    );
     await expect(api.runAutomation('automation-1')).resolves.toMatchObject({ id: workstreamId });
 
     const firstHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
@@ -1319,5 +1333,51 @@ describe('expired access-token recovery', () => {
     await expect(api.uploadResource(new File(['body'], 'note.txt'), 'draft-1'))
       .resolves.toMatchObject({ id: resourceId });
     expect(StubUpload.instances).toHaveLength(2);
+  });
+
+  it('reports a caught upload transport failure through exception telemetry', async () => {
+    class FailedUpload {
+      readonly upload = { addEventListener: (): void => undefined };
+      private readonly listeners = new Map<string, () => void>();
+      responseType = '';
+      open(): void { /* Test transport does not open a real connection. */ }
+      setRequestHeader(): void { /* Headers are irrelevant to the failure. */ }
+      addEventListener(name: string, listener: () => void): void { this.listeners.set(name, listener); }
+      send(): void { queueMicrotask(() => this.listeners.get('error')?.()); }
+    }
+    vi.stubGlobal('XMLHttpRequest', FailedUpload);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.uploadResource(new File(['body'], 'note.txt'), 'draft-1'))
+      .rejects.toMatchObject({ status: 0, code: 'network_error' });
+    expect(reportJavascriptError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'network_error', status: 0 }),
+      'network_error',
+    );
+  });
+
+  it('does not report a late upload error after cancellation', async () => {
+    class CancelledUpload {
+      readonly upload = { addEventListener: (): void => undefined };
+      private readonly listeners = new Map<string, () => void>();
+      responseType = '';
+      open(): void { /* Test transport does not open a real connection. */ }
+      setRequestHeader(): void { /* Headers are irrelevant to cancellation. */ }
+      addEventListener(name: string, listener: () => void): void { this.listeners.set(name, listener); }
+      send(): void { /* Cancellation drives the events. */ }
+      abort(): void {
+        this.listeners.get('abort')?.();
+        this.listeners.get('error')?.();
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', CancelledUpload);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    const controller = new AbortController();
+    const upload = api.uploadResource(new File(['body'], 'note.txt'), 'draft-1', undefined, controller.signal);
+
+    controller.abort();
+
+    await expect(upload).rejects.toMatchObject({ name: 'AbortError' });
+    expect(reportJavascriptError).not.toHaveBeenCalled();
   });
 });

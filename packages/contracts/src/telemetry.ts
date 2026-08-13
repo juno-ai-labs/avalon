@@ -386,7 +386,7 @@ export const TELEMETRY_EVENTS = {
     identityScopes: ["platform-user", "workspace-user"],
     properties: z.object({
       process: z.enum(["main", "preload", "renderer"]),
-      errorCode: z.enum(["type_error", "range_error", "unhandled_rejection", "react_boundary", "unknown"]),
+      errorCode: z.enum(["type_error", "range_error", "unhandled_rejection", "react_boundary", "network_error", "unknown"]),
       breadcrumbStatus: z.enum(["available", "stale", "unavailable"]),
       fingerprint: z.string().regex(/^[a-f0-9]{32,64}$/u),
       generatedFrames: z.array(generatedJavascriptFrame).min(1).max(20),
