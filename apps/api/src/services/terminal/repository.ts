@@ -196,6 +196,7 @@ export async function bootstrapTerminalRepository(
     `printf '%s\\n' ${shellQuote(`export GH_REPO=${selection.repositoryFullName}`)} > /workspace/.avalon/session.env`,
     "chmod 600 /workspace/.avalon/session.env",
     "if [ ! -d /workspace/.git ]; then",
+    "  rm -rf -- /workspace/repository.tmp",
     `  git -c ${shellQuote(canonicalHeader)}="Authorization: Basic $GITHUB_READ_BASIC" clone --no-checkout ${shellQuote(repositoryUrl)} /workspace/repository.tmp`,
     "  cp -a /workspace/repository.tmp/.git /workspace/.git",
     "  rm -rf /workspace/repository.tmp",
@@ -206,7 +207,7 @@ export async function bootstrapTerminalRepository(
       `test "$(git rev-parse ${shellQuote(`origin/${selection.baseRef}`)})" = ${shellQuote(selection.baseSha)}`,
       `git checkout -B ${shellQuote(selection.headRef)} ${shellQuote(selection.baseSha)}`,
     ]),
-    "printf '.avalon/\\n' >> .git/info/exclude",
+    "grep -qxF '.avalon/' .git/info/exclude || printf '.avalon/\\n' >> .git/info/exclude",
   ].join("\n");
   const result = await provider.runCommand(sandbox.providerSandboxId, {
     taskName: `avalon-bootstrap-${sandbox.generation}`,
@@ -485,16 +486,19 @@ export function createTerminalRepositoryPublisher(
           RETURNING id`,
       ).bind(invocation.id, timestamp, context.workspaceId, grant.id, invocation.id, timestamp).first<{ id: string }>();
       if (!consumed) throw new TerminalToolError("publication_not_authorized", "The publication authorization was already used or expired. Stop and ask a participant to explicitly request the pull request again.");
-      const publicationId = newId();
+      const existingPublication = await env.DB.prepare(
+        `SELECT id FROM repository_publications
+          WHERE workspace_id = ? AND tool_invocation_id = ?`,
+      ).bind(context.workspaceId, invocation.id).first<{ id: string }>();
+      const publicationId = existingPublication?.id ?? newId();
       await env.DB.prepare(
         `INSERT INTO repository_publications
          (id, workspace_id, workstream_id, tool_invocation_id, grant_id,
           repository_full_name, base_ref, head_ref, expected_old_sha, requested_commit_sha,
           state, title, body, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publishing', ?, ?, ?, ?)
-         ON CONFLICT(workspace_id, workstream_id, repository_full_name, base_ref, head_ref)
-         DO UPDATE SET tool_invocation_id = excluded.tool_invocation_id,
-                       grant_id = excluded.grant_id,
+         ON CONFLICT(workspace_id, tool_invocation_id)
+         DO UPDATE SET grant_id = excluded.grant_id,
                        expected_old_sha = excluded.expected_old_sha,
                        requested_commit_sha = excluded.requested_commit_sha,
                        state = 'publishing', title = excluded.title, body = excluded.body,

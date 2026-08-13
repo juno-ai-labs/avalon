@@ -18,7 +18,7 @@ const ROOT = "/workspace";
 const RESOURCE_ROOT = ".avalon/resources";
 const OUTPUT_ROOT = ".avalon-output";
 const MAX_PROVIDER_CAPTURE_BYTES = 128 * 1_024;
-const MAX_COMMAND_LOG_BYTES = 25_000_000;
+const MAX_COMMAND_LOG_BYTES = 5_000_000;
 const OUTPUT_LIMIT_MARKER_RESERVE_BYTES = 256;
 
 type ImportInput = Parameters<TerminalRuntime["importResource"]>[1];

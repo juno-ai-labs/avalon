@@ -391,7 +391,7 @@ Launch constants are equally normative:
 | `run_command.command` | — | 32 KiB |
 | `run_command.timeoutMs` | 120,000 ms | 900,000 ms |
 | inline `stdout` and `stderr` | — | 128 KiB each, preserving a head and tail |
-| complete command output retained as a generated log | — | 10 MiB |
+| complete command output retained as a generated log | — | 5 MB |
 | imported or published resource | — | 25,000,000 bytes, the existing `MAX_ATTACHMENT_BYTES` ceiling |
 | imports or published resources per Terminal run | — | 20 each and 100 MiB total source bytes |
 
@@ -598,7 +598,8 @@ overwriting it or silently choosing another path. An explicit destination that
 already exists also returns `destination_exists` unless `overwrite: true`.
 
 Stable failures include `resource_not_found`, `resource_not_importable`,
-`resource_limit_exceeded`, and `destination_exists`. Import is a sandbox write
+`resource_limit_exceeded`, `destination_exists`, and
+`destination_not_regular`. Import is a sandbox write
 with `record_before_execute` receipt policy; the host reconciles destination
 content hash, resource identity, and source hash before any retry.
 
@@ -747,6 +748,7 @@ File mutation and import failures:
 | `import_resource` | `resource_not_importable` | “The original bytes cannot be imported. Use an available resource read or view tool instead.” | `available` names `workstream_read_resource` or `workstream_view_resource`; reason explains which one to call with the same ID. |
 | `import_resource`, `publish_resource` | `resource_limit_exceeded` | “The resource exceeds the allowed size or count. Select, split, resize, or compress it before trying a new invocation.” | `field` and `expected`. |
 | `import_resource` | `destination_exists` | “The destination already contains different bytes. Choose another path, or use a new explicit import with `overwrite: true` only when replacement is intended.” | Bounded `reason` identifies whether the collision was at the automatic or explicit destination. |
+| `import_resource` | `destination_not_regular` | “The destination is not a regular file Avalon can safely replace. Choose another path.” | Reason requires an absent path or regular file beneath the workspace; links, directories, and devices are never overwritten. |
 
 An accepted command returns `RunCommandOutput`, even when the program does
 not finish successfully. The loop branches on this result rather than treating

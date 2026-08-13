@@ -186,8 +186,7 @@ CREATE TABLE repository_publications (
   completed_at TEXT,
   PRIMARY KEY (workspace_id, id),
   FOREIGN KEY (workspace_id, grant_id) REFERENCES terminal_publication_grants(workspace_id, id) ON DELETE RESTRICT,
-  UNIQUE (workspace_id, tool_invocation_id),
-  UNIQUE (workspace_id, workstream_id, repository_full_name, base_ref, head_ref)
+  UNIQUE (workspace_id, tool_invocation_id)
 );
 
 CREATE INDEX idx_workspace_sandbox_network_policies_verification

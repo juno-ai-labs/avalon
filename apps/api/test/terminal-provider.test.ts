@@ -335,7 +335,7 @@ describe("Daytona Terminal provider", () => {
     expect(uploadFileStream).toHaveBeenCalledWith(expect.any(Uint8Array), "workspace/hello.txt", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(downloadFile).toHaveBeenCalledWith("workspace/hello.txt", 120);
     expect(executeSessionCommand).toHaveBeenCalledWith("avalon-task-1", {
-      command: expect.stringMatching(/timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf ok'/u),
+      command: expect.stringMatching(/^cd -- 'workspace' \|\| exit \$\?;.*timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf ok'/u),
       runAsync: true,
       suppressInputEcho: true,
     }, 130);
@@ -378,9 +378,10 @@ describe("Daytona Terminal provider", () => {
   });
 
   it("reattaches to the one command in a stable provider session after a lost Worker response", async () => {
+    const expectedEnvelope = "cd -- '/workspace' || exit $?; if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s 120s bash -lc 'printf recovered'; avalon_status=$?; if [ \"$avalon_status\" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit \"$avalon_status\"";
     const sessionCommand = {
       id: "cmd-existing",
-      command: "cd -- '/workspace' && existing-envelope",
+      command: expectedEnvelope,
     };
     const getSession = vi.fn(async () => ({ sessionId: "avalon-task-1", commands: [sessionCommand] }));
     const getSessionCommand = vi.fn(async () => ({ ...sessionCommand, exitCode: 0 }));
@@ -419,6 +420,45 @@ describe("Daytona Terminal provider", () => {
     expect(deleteSession).not.toHaveBeenCalled();
     await provider.cleanupCommand?.("sandbox-1", "avalon-task-1");
     expect(deleteSession).toHaveBeenCalledWith("avalon-task-1");
+  });
+
+  it("replaces a stable provider session whose stored command differs", async () => {
+    const createSession = vi.fn(async () => undefined);
+    const deleteSession = vi.fn(async () => undefined);
+    const executeSessionCommand = vi.fn(async () => ({ cmdId: "cmd-fresh", exitCode: 0 }));
+    const getSessionCommandLogs = vi.fn(async () => ({ stdout: "fresh\n", stderr: "" }));
+    const sandbox = {
+      id: "sandbox-1", name: "sandbox", state: "started",
+      process: {
+        createSession,
+        getSession: vi.fn(async () => ({
+          sessionId: "avalon-task-1",
+          commands: [{ id: "cmd-stale", command: "stale envelope", exitCode: 0 }],
+        })),
+        getSessionCommand: vi.fn(),
+        getSessionCommandLogs,
+        executeSessionCommand,
+        deleteSession,
+      },
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }));
+
+    await expect(provider.runCommand("sandbox-1", {
+      taskName: "avalon-task-1", command: "printf fresh", cwd: "/workspace", timeoutMs: 120_000,
+      retainSessionForRecovery: true,
+    })).resolves.toEqual({ exitCode: 0, stdout: "fresh\n", stderr: "" });
+
+    expect(deleteSession).toHaveBeenCalledOnce();
+    expect(deleteSession).toHaveBeenCalledWith("avalon-task-1");
+    expect(createSession).toHaveBeenCalledWith("avalon-task-1");
+    expect(executeSessionCommand).toHaveBeenCalledWith(
+      "avalon-task-1",
+      expect.objectContaining({ command: expect.stringContaining("bash -lc 'printf fresh'") }),
+      130,
+    );
   });
 
   it("publishes a verified bundle from a fresh ephemeral sandbox with a host-scoped secret", async () => {

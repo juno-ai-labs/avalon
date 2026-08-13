@@ -102,6 +102,46 @@ describe("Terminal workspace settings", () => {
     ).get(W, lateWorkstream)).toEqual({ state: "stopped", applied_network_revision: 1 });
   });
 
+  it("does not mutate a replacement generation created while the old sandbox stops", async () => {
+    const { database, provider, service } = fixture();
+    vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => {
+      database.prepare(
+        `UPDATE workstream_sandboxes
+            SET generation = 2, provider_sandbox_id = 'provider-replacement', state = 'running', version = version + 1
+          WHERE workspace_id = ? AND workstream_id = ?`,
+      ).run(W, S);
+    });
+    const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
+
+    await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
+      .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
+    expect(database.prepare(
+      "SELECT generation, provider_sandbox_id, state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
+    ).get(W, S)).toEqual({
+      generation: 2,
+      provider_sandbox_id: "provider-replacement",
+      state: "running",
+      applied_network_revision: 1,
+    });
+  });
+
+  it("keeps failed sandboxes out of both preview and apply", async () => {
+    const { database, provider, service } = fixture();
+    database.prepare(
+      "UPDATE workstream_sandboxes SET state = 'failed' WHERE workspace_id = ? AND workstream_id = ?",
+    ).run(W, S);
+    const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
+    expect(preview.affectedWorkstreamIds).toEqual([]);
+
+    await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
+      .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(provider.updateNetworkPolicy).not.toHaveBeenCalled();
+    expect(database.prepare(
+      "SELECT state, applied_network_revision FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
+    ).get(W, S)).toEqual({ state: "failed", applied_network_revision: 1 });
+  });
+
   it("rejects members and stale revisions with recovery guidance", async () => {
     await expect(fixture("member").service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] }))
       .rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });

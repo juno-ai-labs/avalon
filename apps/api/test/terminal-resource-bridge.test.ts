@@ -121,6 +121,38 @@ describe("Terminal resource bridge", () => {
     });
   });
 
+  it("refuses to write through a non-regular explicit destination", async () => {
+    const { database, objects, provider, bridge } = fixture();
+    const bytes = new TextEncoder().encode("attached data\n");
+    const digest = "8a6c44a03adda8a5af9627533116a8ab735dac8085f998c6f41cc13aef707169";
+    objects.set("global/source", bytes);
+    database.prepare(
+      `INSERT INTO resources
+       (id, workspace_id, resource_type, provider, title, mime_type, content_ref, content_sha256,
+        metadata_json, attachment_status, created_at, updated_at)
+       VALUES (?, ?, 'uploaded_file', 'avalon_upload', 'Input data.csv', 'text/csv', 'global/source', ?, '{}', 'attached', '2026-08-13', '2026-08-13')`,
+    ).run(RESOURCE, W, digest);
+    database.prepare(
+      "INSERT INTO workstream_resources (workstream_id, resource_id, attached_by_user_id, relationship_type, attached_at) VALUES (?, ?, ?, 'attachment', '2026-08-13')",
+    ).run(S, RESOURCE, U);
+    vi.mocked(provider.runCommand).mockImplementation(async (_id, input) => input.taskName.startsWith("avalon-import-check")
+      ? { exitCode: 45, stdout: "", stderr: "" }
+      : { exitCode: 0, stdout: "", stderr: "" });
+
+    await expect(bridge.importResource(
+      context,
+      { resourceId: RESOURCE, destinationPath: "linked-input.csv", overwrite: true },
+      "linked-input.csv",
+      1,
+      "sandbox",
+      provider,
+    )).rejects.toMatchObject({
+      code: "destination_not_regular",
+      message: expect.stringContaining("not a regular file"),
+    });
+    expect(provider.writeFile).not.toHaveBeenCalled();
+  });
+
   it("publishes a supported regular file as an attached resource with durable cleanup ownership", async () => {
     const { database, objects, put, bridge } = fixture();
     const bytes = new TextEncoder().encode("# Report\n");
