@@ -600,7 +600,7 @@ pre {
 /* Command-number hints are an overlay, not another column in the row. The
    scrim softly restores the row's own background before the pill, so a long
    title or preview disappears underneath instead of colliding with it. */
-.pinned-shortcut-scrim {
+.command-shortcut-scrim {
   align-items: center;
   background: linear-gradient(90deg, transparent, var(--sidebar-row-background) 18px);
   bottom: 0;
@@ -613,7 +613,7 @@ pre {
   z-index: 2;
 }
 
-.pinned-shortcut-pill {
+.command-shortcut-pill {
   align-items: center;
   animation: fade-in 80ms ease-out;
   background: #3b3c37;
@@ -633,7 +633,7 @@ pre {
   padding: 0 7px;
 }
 
-.pinned-shortcut-pill svg { flex: 0 0 auto; }
+.command-shortcut-pill svg { flex: 0 0 auto; }
 
 .sidebar-row-icon {
   align-items: center;
