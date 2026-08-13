@@ -328,6 +328,33 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-13 — Telemetry dependencies can be staged safely
+
+**What changed:** Production now accepts a healthy collector before PostHog
+delivery, a dedicated capability signer, or internal operator access is
+provisioned. The provider adapter remains idle without its token, onboarding
+capabilities use the existing Global session signer when no dedicated signer is
+present, and an absent operator map keeps only the restricted operator routes
+unavailable.
+
+**Why:** The first regional deployment had healthy D1, R2, RPC, queue, and
+workflow bindings but the environment contract made all API routes return 503
+because those three optional downstream controls had not been configured. This
+also contradicted the implementation's deliberate no-op, fallback, and fail-
+closed behavior and prevented collecting internal evidence before the PostHog
+project exists.
+
+**Considered and rejected:** Reusing a made-up PostHog token, granting an
+operator credential just to satisfy health, or rolling back a Worker after its
+migration. Those either corrupt provider data, create unnecessary access, or
+violate the forward-only deployment rule.
+
+**Consequences:** Health proves the regional collection plane, not that optional
+delivery or operator access is active. Operations must verify those surfaces
+separately when they are intentionally enabled.
+
+Shipped in the pull request for this change.
+
 ### 2026-08-13 — The packaged Crashpad gate owns its bundler
 
 **What changed:** The desktop package now declares the exact `esbuild` version

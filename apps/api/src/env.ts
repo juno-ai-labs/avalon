@@ -311,6 +311,14 @@ const EnvContractSchema = z.object({
  * both regions, `/health` included, so the one endpoint whose job is to report
  * which key is missing was the one endpoint that could not answer.
  *
+ * Telemetry's provider token, dedicated capability signer, and operator map
+ * are intentionally absent too. Collection is useful before PostHog delivery
+ * is enabled, capability signing has the existing Global session key as its
+ * rollout fallback, and an absent operator map makes only the restricted
+ * operator surface return 503. Treating any of those staged states as a Worker-
+ * wide fault takes both product regions offline while their D1/R2 bindings and
+ * collector are healthy.
+ *
  * In production and staging it is a fault, and since `/health` began asserting
  * this contract the probe answers 503 there rather than `openRouter: not
  * configured`. That is the intended difference between a sandbox missing a key
@@ -321,9 +329,6 @@ const productionOnlySecrets = [
   { key: "GOOGLE_OAUTH_CLIENT_ID", regions: ["global"] },
   { key: "GOOGLE_OAUTH_CLIENT_SECRET", regions: ["global"] },
   { key: "OPENROUTER_API_KEY", regions: ["global", "eu"] },
-  { key: "POSTHOG_PROJECT_TOKEN", regions: ["global"] },
-  { key: "TELEMETRY_CAPABILITY_SIGNING_KEY", regions: ["global"] },
-  { key: "TELEMETRY_OPERATORS_JSON", regions: ["global", "eu"] },
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**
