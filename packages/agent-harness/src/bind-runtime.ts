@@ -69,6 +69,10 @@ import {
   createSkillRuntime,
   type SkillRuntime,
 } from "./skills";
+import {
+  formatToolArgumentValidationError,
+  normalizeToolArguments,
+} from "./tool-arguments";
 
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
 const DEFAULT_CATALOG_TOKENS = 2_500;
@@ -625,6 +629,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             }),
           };
         }
+        // Models sometimes serialize schema-declared numbers as JSON strings.
+        // Normalize that one unambiguous representation before hashing or durable
+        // planning so `1` and `"1"` are the same request everywhere downstream.
+        args = normalizeToolArguments(args, dispatched.tool.definition.inputSchema);
         const inputHash = await canonicalToolInputHash(args);
         const position = toolCallPositions.get(toolCall.id);
         const receiptId = position
@@ -727,7 +735,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             signal: toolSignal,
           }), toolSignal);
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Tool execution failed";
+          // Executors remain the strict enforcement boundary. Condense their
+          // Zod issue tree for the model: raw union diagnostics routinely bury
+          // one correctable field under errors for every branch it did not use.
+          const argumentValidationError = error instanceof z.ZodError;
+          const message = argumentValidationError
+            ? formatToolArgumentValidationError(error)
+            : error instanceof Error
+              ? error.message
+              : "Tool execution failed";
           const interrupted = toolSignal.aborted;
           const ambiguousExternalWrite = interrupted
             && dispatched.tool.definition.mode === "write"
@@ -782,9 +798,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           return {
             toolMessage: toolResultMessage(toolCall.id, {
               success: false,
-              kind: "external",
+              kind: argumentValidationError ? "validation" : "external",
               error: message,
-              ...(structured ? { data: structured } : {}),
+              ...(!argumentValidationError && structured ? { data: structured } : {}),
             }),
           };
         } finally {
