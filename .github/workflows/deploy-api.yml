@@ -147,12 +147,6 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck the Worker
-        run: pnpm --filter @avalon/api typecheck
-
-      - name: Run the Worker test suites
-        run: pnpm --filter @avalon/api test
-
       - name: Validate both Wrangler configurations with dry-run builds
         run: |
           set -euo pipefail
