@@ -21,6 +21,7 @@ const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
 const SAFE_PART = /^[0-9A-Za-z][0-9A-Za-z._-]{0,159}$/u;
 const REQUEST_TIMEOUT_MS = 5 * 60_000;
+const INVENTORY_TIMESTAMP_TOLERANCE_MS = 1_000;
 // These must not exceed the matching limits enforced by the regional API
 // consumers in javascript-symbolication.ts and crash-processing.ts.
 const MAX_SOURCE_MAP_BYTES = 16 * 1024 * 1024;
@@ -118,7 +119,9 @@ async function uploadAndVerify(
   if (sourceBytes.byteLength === 0 || sourceBytes.byteLength > maximumBytes) {
     throw new Error(`Artifact for r2://${target} is outside its allowed size`);
   }
-  const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+  // R2 includes MD5 by default for non-multipart objects. This endpoint is a
+  // single PUT, so its upload ETag is an integrity assertion over these bytes.
+  const sourceEtag = createHash('md5').update(sourceBytes).digest('hex');
   const put = await fetchImpl(url, {
     method: 'PUT',
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -144,43 +147,54 @@ async function uploadAndVerify(
       `Could not upload r2://${target}: Cloudflare returned HTTP ${put.status} (${detail}${codeDetail})`,
     );
   }
-  const get = await fetchImpl(url, {
+  const uploaded = putBody.result;
+  if (uploaded?.key !== key
+    || uploaded?.etag !== sourceEtag
+    || uploaded?.size !== String(sourceBytes.byteLength)
+    || typeof uploaded?.version !== 'string'
+    || uploaded.version.length === 0
+    || typeof uploaded?.uploaded !== 'string'
+    || Number.isNaN(Date.parse(uploaded.uploaded))) {
+    throw new Error(`Cloudflare returned invalid upload metadata for r2://${target}`);
+  }
+
+  const inventoryUrl = new URL(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}`
+      + `/r2/buckets/${encodeURIComponent(bucket.name)}/objects`,
+  );
+  inventoryUrl.searchParams.set('prefix', key);
+  inventoryUrl.searchParams.set('per_page', '2');
+  const inventory = await fetchImpl(inventoryUrl, {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: {
       Authorization: authorization,
+      'Cache-Control': 'no-cache',
       ...jurisdictionHeaders,
     },
   });
-  if (!get.ok) {
-    await get.body?.cancel();
-    throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${get.status}`);
+  if (!inventory.ok) {
+    await inventory.body?.cancel();
+    throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`);
   }
-  const contentLength = get.headers.get('content-length');
-  if (contentLength !== null
-    && (!/^\d+$/u.test(contentLength) || Number(contentLength) > sourceBytes.byteLength)) {
-    await get.body?.cancel();
-    throw new Error(`Verification response for r2://${target} exceeds the uploaded artifact size`);
+  if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {
+    await inventory.body?.cancel();
+    throw new Error(`Could not verify r2://${target}: Cloudflare returned a non-dynamic inventory`);
   }
-  if (!get.body) throw new Error(`Could not verify r2://${target}: Cloudflare returned no body`);
-  const verified = createHash('sha256');
-  const reader = get.body.getReader();
-  let verifiedBytes = 0;
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      verifiedBytes += chunk.value.byteLength;
-      if (verifiedBytes > sourceBytes.byteLength) {
-        await reader.cancel();
-        throw new Error(`Verification response for r2://${target} exceeds the uploaded artifact size`);
-      }
-      verified.update(chunk.value);
-    }
-  } finally {
-    reader.releaseLock();
+  const inventoryBody = await inventory.json().catch(() => null);
+  if (inventoryBody?.success !== true || !Array.isArray(inventoryBody.result)) {
+    throw new Error(`Cloudflare returned invalid inventory metadata for r2://${target}`);
   }
-  const verifiedHash = verified.digest('hex');
-  if (sourceHash !== verifiedHash) throw new Error(`Checksum mismatch for r2://${target}`);
+  const stored = inventoryBody.result.find((object) => object?.key === key);
+  const storedAt = Date.parse(stored?.last_modified);
+  const uploadedAt = Date.parse(uploaded.uploaded);
+  if (stored?.etag !== uploaded.etag
+    || stored?.size !== sourceBytes.byteLength
+    || !Number.isFinite(storedAt)
+    // Cloudflare may serialize these two representations at different time
+    // precision; tolerate only sub-second truncation, not an older object.
+    || storedAt < uploadedAt - INVENTORY_TIMESTAMP_TOLERANCE_MS) {
+    throw new Error(`Stored metadata mismatch for r2://${target}`);
+  }
 }
 
 async function validateArtifactSize(artifact) {
