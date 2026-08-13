@@ -31,6 +31,13 @@ async function packageScripts(packageDirectory) {
   return JSON.parse(source).scripts;
 }
 
+test('CI runs for pull requests only', async () => {
+  const workflow = await readWorkflow();
+
+  assert.match(workflow, /^ {2}pull_request:$/mu);
+  assert.doesNotMatch(workflow, /^ {2}push:$/mu);
+});
+
 test('CI distributes the expensive verification work across independent lanes', async () => {
   const workflow = await readWorkflow();
 
