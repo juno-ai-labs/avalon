@@ -71,6 +71,33 @@ test('a real packaged Crashpad fixture gates every desktop release', async () =>
   assert.ok(fixture < packagedRelease, 'A failed Crashpad fixture must stop the release build');
 });
 
+test('the packaged Crashpad fixture owns its clean-runner bundler dependency', async () => {
+  const packageJson = JSON.parse(await readFile(
+    join(repositoryDirectory, 'apps/desktop/package.json'),
+    'utf8',
+  ));
+  const fixture = await readFile(
+    join(repositoryDirectory, 'apps/desktop/scripts/telemetry-crashpad-fixture.mjs'),
+    'utf8',
+  );
+
+  assert.equal(
+    packageJson.devDependencies.esbuild,
+    '0.25.12',
+    'The desktop package must own the exact release esbuild version',
+  );
+  assert.match(
+    fixture,
+    /await run\('pnpm',\s*\[\s*'--filter',\s*'@avalon\/desktop',\s*'exec',\s*'esbuild',/u,
+    'The fixture must resolve esbuild from the desktop package',
+  );
+  assert.match(
+    fixture,
+    /if \(\(await stat\(bundledControllerPath\)\)\.size === 0\) throw new Error/u,
+    'A missing pnpm filter match must fail immediately instead of packaging without a controller',
+  );
+});
+
 test('private telemetry artifacts are published to both isolated regional telemetry buckets but excluded from the app', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const builder = await readFile(join(repositoryDirectory, 'apps/desktop/electron-builder.yml'), 'utf8');

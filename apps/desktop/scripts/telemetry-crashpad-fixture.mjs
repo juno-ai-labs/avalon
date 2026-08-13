@@ -60,20 +60,24 @@ try {
   }
   const outputDirectory = join(scratchDirectory, 'build');
   const packagedFixtureDirectory = join(scratchDirectory, 'fixture');
+  const bundledControllerPath = join(packagedFixtureDirectory, 'production-controller.cjs');
   await mkdir(packagedFixtureDirectory, { recursive: true, mode: 0o700 });
   await Promise.all([
     copyFile(join(fixtureDirectory, 'main.cjs'), join(packagedFixtureDirectory, 'main.cjs')),
     copyFile(join(fixtureDirectory, 'package.json'), join(packagedFixtureDirectory, 'package.json')),
   ]);
   await run('pnpm', [
+    '--filter',
+    '@avalon/desktop',
     'exec',
     'esbuild',
     join(fixtureDirectory, 'production-controller.mjs'),
     '--bundle',
     '--platform=node',
     '--format=cjs',
-    `--outfile=${join(packagedFixtureDirectory, 'production-controller.cjs')}`,
+    `--outfile=${bundledControllerPath}`,
   ], { cwd: join(currentDirectory, '..', '..', '..') });
+  if ((await stat(bundledControllerPath)).size === 0) throw new Error('Crashpad fixture controller bundle is empty');
   await build({
     projectDir: packagedFixtureDirectory,
     targets: Platform.MAC.createTarget('dir', Arch.arm64),
@@ -158,10 +162,7 @@ try {
   if (rotatedDumpSize !== dumpSize) {
     throw new Error('Rotating the inactive database changed the first minidump bytes');
   }
-  const { uploadFixtureGeneration } = require(join(
-    packagedFixtureDirectory,
-    'production-controller.cjs',
-  ));
+  const { uploadFixtureGeneration } = require(bundledControllerPath);
   const requests = await uploadFixtureGeneration({
     rootDirectory: scratchDirectory,
     route: 'global',
