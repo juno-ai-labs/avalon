@@ -15,6 +15,7 @@ import {
   terminalPackageManagerAcceptanceCommand,
   terminalSnapshotProbeCommand,
 } from "../src/services/terminal/snapshot-manifest";
+import { verifyTerminalRestartAndRestore } from "./terminal-provider-lifecycle";
 
 function requiredUrl(name: string): URL {
   const raw = process.env[name]?.trim();
@@ -118,12 +119,9 @@ try {
   await run(`curl --fail --silent --show-error --location --max-redirs 3 --max-time 15 ${shellQuote(redirectUrl.href)} >/dev/null`, "nonzero", "redirect-escape");
   await run("curl --fail --silent --show-error --max-time 5 http://169.254.169.254/latest/meta-data/ >/dev/null", "nonzero", "metadata-address");
 
-  await provider.stopSandbox(sandboxId);
-  await provider.startSandbox(sandboxId);
-  await run("test -d /workspace", "zero", "restart");
-  await provider.archiveSandbox(sandboxId);
-  await provider.startSandbox(sandboxId);
-  await run("test -d /workspace", "zero", "restore");
+  await verifyTerminalRestartAndRestore(provider, sandboxId, async (phase) => {
+    await run("test -d /workspace", "zero", phase);
+  });
 } catch (error) {
   probeError = error;
 }
