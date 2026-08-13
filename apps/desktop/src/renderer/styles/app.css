@@ -843,6 +843,8 @@ pre {
 .region-note { color: #77766f; font-size: 10.5px; line-height: 1.45; }
 .region-availability-note { color: #8a887f; font-size: 10px; line-height: 1.45; margin: 8px 0 0; }
 .region-availability-note:empty { display: none; }
+.region-availability-note p { margin: 0; }
+.region-availability-note ul { margin: 4px 0 0; padding-left: 16px; }
 .onboarding-continue { margin-top: 20px; width: 100%; }
 
 .signin-card { text-align: center; width: min(400px, 100%); }

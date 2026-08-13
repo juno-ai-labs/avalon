@@ -114,13 +114,19 @@ describe('identity-first onboarding screens', () => {
   it('shows Terminal as unavailable only while the European Union region is selected', () => {
     render(<RegionOnboarding />);
 
-    expect(screen.queryByText('Unavailable in the EU region: Terminal access for the Avalon agent.')).not.toBeInTheDocument();
+    expect(screen.getByText('US-Jurisdiction storage')).toBeVisible();
+    expect(screen.getByText('EU-jurisdiction storage')).toBeVisible();
+    expect(screen.getByText('This choice controls only where workspace data is stored and cannot be changed later.')).toBeVisible();
+    expect(screen.queryByText(/Cloudflare storage|regional routing|Your Avalon sign-in stays the same/u)).not.toBeInTheDocument();
+    expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
-    expect(screen.getByText('Unavailable in the EU region: Terminal access for the Avalon agent.')).toBeVisible();
+    expect(screen.getByText('Unavailable for EU region (at this time, subject to change based on providers)')).toBeVisible();
+    expect(screen.getByRole('list')).toHaveTextContent('Avalon agent: Terminal access');
 
     fireEvent.click(screen.getByRole('radio', { name: /Global/u }));
-    expect(screen.queryByText('Unavailable in the EU region: Terminal access for the Avalon agent.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
   });
 
   it('accepts a pending invitation through its own region without another login prompt', async () => {
