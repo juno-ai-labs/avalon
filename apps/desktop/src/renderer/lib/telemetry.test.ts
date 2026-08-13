@@ -48,19 +48,27 @@ describe('renderer semantic telemetry helpers', () => {
     expect(javascriptErrorCandidate(error, 'unknown')).toBeNull();
   });
 
-  it('reports a caught network error only once when global handlers see the same error', () => {
+  it('suppresses a duplicate network classification but allows a later crash classification', () => {
     const report = vi.fn(async () => undefined);
     desktopBridge.mockReturnValue({ reportJavascriptError: report });
     const error = new Error('private transport detail');
     error.stack = 'Error: private transport detail\n at send (app://avalon/assets/index.js:10:2)';
 
     reportJavascriptError(error, 'network_error');
+    reportJavascriptError(error, 'network_error');
+    expect(report).toHaveBeenCalledOnce();
+
     reportJavascriptError(error, 'unhandled_rejection');
 
-    expect(report).toHaveBeenCalledOnce();
-    expect(report).toHaveBeenCalledWith({
+    expect(report).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenNthCalledWith(1, {
       process: 'renderer',
       errorCode: 'network_error',
+      frames: ['index.js:10:2'],
+    });
+    expect(report).toHaveBeenNthCalledWith(2, {
+      process: 'renderer',
+      errorCode: 'unhandled_rejection',
       frames: ['index.js:10:2'],
     });
   });
@@ -83,6 +91,30 @@ describe('renderer semantic telemetry helpers', () => {
     vi.advanceTimersByTime(5 * 60 * 1_000);
     reportJavascriptError(errorAtSameFrame(), 'network_error');
     expect(report).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let a coalesced network report suppress a later crash classification', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportJavascriptError: report });
+    const errorAtSameFrame = (): Error => {
+      const error = new Error('private transport detail');
+      error.stack = 'Error: private transport detail\n at send (app://avalon/assets/upgrade.js:20:2)';
+      return error;
+    };
+    const laterCrash = errorAtSameFrame();
+
+    reportJavascriptError(errorAtSameFrame(), 'network_error');
+    reportJavascriptError(laterCrash, 'network_error');
+    expect(report).toHaveBeenCalledOnce();
+
+    reportJavascriptError(laterCrash, 'unhandled_rejection');
+
+    expect(report).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenLastCalledWith({
+      process: 'renderer',
+      errorCode: 'unhandled_rejection',
+      frames: ['upgrade.js:20:2'],
+    });
   });
 
   it('keeps telemetry observational when preload lookup or invocation throws synchronously', () => {

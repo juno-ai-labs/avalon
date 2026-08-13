@@ -58,12 +58,14 @@ those rejections and the global `error` and `unhandledrejection` listeners will
 not observe them. The report still crosses the same narrow error-candidate IPC as
 other JavaScript diagnostics: only bounded bundle-relative generated frames and
 the stable error code survive. The failing URL, request headers and body, error
-message, and underlying transport detail do not. Reporting the same `Error` object
-again is suppressed, so a later global handler cannot double-count it. Fresh
-network errors with the same sanitized frame signature are coalesced to one report
-per five minutes through a 100-entry in-memory table. A handled network failure is
-diagnostic only: unlike a real JavaScript exception or rejection, it does not emit
-an essential `process_health` transition.
+message, and underlying transport detail do not. Repeating the same classification
+for an `Error` object is suppressed. A later crash classification for an object
+first seen as `network_error` is still reported so it can produce the essential
+process-health signal; a coalesced network report does not mark that object as
+reported. Fresh network errors with the same sanitized frame signature are
+coalesced to one report per five minutes through a 100-entry in-memory table. A
+handled network failure is diagnostic only: unlike a real JavaScript exception or
+rejection, it does not emit an essential `process_health` transition.
 
 ### Route and identity
 
@@ -350,11 +352,13 @@ signals, never by weakening policy or deadline tests.
 
 **What changed:** The shared renderer HTTP boundary now sends caught, non-abort
 transport failures through the existing sanitized JavaScript-exception route as
-`network_error`, with same-object duplicate suppression and five-minute
-same-signature coalescing. Handled network failures do not emit essential process
-health transitions, and upload settlement prevents a late error event after abort
-from producing a false diagnostic. The API CORS policy and its production-shaped
-preflight test now admit the desktop's `X-Avalon-Operation-Id` mutation header.
+`network_error`, with classification-aware same-object suppression and five-minute
+same-signature coalescing. A later crash classification supersedes a handled
+network classification so essential process health is not lost. Handled network
+failures do not themselves emit essential process health transitions, and upload
+settlement prevents a late error event after abort from producing a false
+diagnostic. The API CORS policy and its production-shaped preflight test now admit
+the desktop's `X-Avalon-Operation-Id` mutation header.
 
 **Why:** Production desktop requests carried that header, but the Worker omitted
 it from `Access-Control-Allow-Headers`. Chromium rejected new-work-stream and
