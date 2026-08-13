@@ -4,7 +4,6 @@ import {
   type AttachmentManifestEntry,
   type DerivativeStatus,
 } from "@avalon/contracts";
-import decodeHeic from "heic-decode";
 import UPNG from "upng-js";
 import * as UTIF from "utif2";
 import {
@@ -15,7 +14,8 @@ import {
 } from "./gif-storyboard";
 
 const MAX_INLINE_IMAGES = 8;
-const MAX_MODEL_IMAGE_BYTES = 10 * 1_024 * 1_024;
+const MAX_MODEL_IMAGE_BYTES = 8 * 1_024 * 1_024;
+export const MAX_TOTAL_MODEL_IMAGE_BYTES = 12 * 1_024 * 1_024;
 const MAX_IMAGE_SOURCE_BYTES = 20 * 1_024 * 1_024;
 const MAX_IMAGE_PIXELS = 40_000_000;
 const MODEL_IMAGE_MAX_EDGE = 2_048;
@@ -42,14 +42,17 @@ export interface LoadedModelImage {
 export interface AttachmentModelContentOptions {
   database?: D1Database;
   images?: ImagesBinding;
+  maxBytes?: number;
 }
 
 export interface ModelAttachmentSource {
   id: string;
+  workspaceId?: string;
   fileName: string;
   mimeType: string;
   sizeBytes?: number;
   contentRef: string | null;
+  contentSha256?: string | null;
   modelContentRef?: string | null;
   modelMimeType?: string | null;
   modelContentSha256?: string | null;
@@ -112,6 +115,7 @@ export async function buildAttachmentModelParts(
   const manifestOverrides = new Map<string, ManifestOverride>();
 
   let inlinedImages = 0;
+  let inlinedImageBytes = 0;
   for (const attachment of attachments) {
     const attachmentKind = classifyAttachmentKind({
       mimeType: attachment.mimeType,
@@ -132,7 +136,11 @@ export async function buildAttachmentModelParts(
       }
 
       const persisted = await loadPersistedModelImage(payloads, attachment);
-      const normalized = persisted ?? await loadAndCreateModelImage(payloads, attachment, options);
+      const remainingBytes = MAX_TOTAL_MODEL_IMAGE_BYTES - inlinedImageBytes;
+      const normalized = persisted ?? await loadAndCreateModelImage(payloads, attachment, {
+        ...options,
+        maxBytes: remainingBytes,
+      });
       if (!normalized) {
         manifestOverrides.set(attachment.id, {
           derivativeStatus: "failed",
@@ -140,7 +148,12 @@ export async function buildAttachmentModelParts(
         });
         continue;
       }
+      if (normalized.bytes.byteLength > remainingBytes) {
+        manifestOverrides.set(attachment.id, { errorCode: "image_aggregate_limit" });
+        continue;
+      }
       inlinedImages += 1;
+      inlinedImageBytes += normalized.bytes.byteLength;
       manifestOverrides.set(attachment.id, {
         inlined: true,
         derivativeStatus: "ready",
@@ -184,6 +197,7 @@ export async function loadModelImageForTool(
       : null
     : durable;
   if (!delivered) return null;
+  if (delivered.bytes.byteLength > (options.maxBytes ?? MAX_TOTAL_MODEL_IMAGE_BYTES)) return null;
   const dimensions = modelImageDimensions(delivered.bytes, delivered.mimeType, delivered.metadata);
   if (dimensions && Math.max(dimensions.width, dimensions.height) > options.maxDimension) return null;
   return {
@@ -211,6 +225,7 @@ async function loadPersistedModelImage(
   if (attachment.modelContentRef && persistedMime) {
     const persisted = await payloads.get(attachment.modelContentRef);
     if (persisted) {
+      if (persisted.size > MAX_MODEL_IMAGE_BYTES) return null;
       const bytes = new Uint8Array(await persisted.arrayBuffer());
       if (bytes.byteLength > 0 && bytes.byteLength <= MAX_MODEL_IMAGE_BYTES) {
         return { bytes, mimeType: persistedMime, ...(metadata ? { metadata } : {}) };
@@ -228,6 +243,7 @@ async function loadAndCreateModelImage(
   if (!attachment.contentRef) return null;
   const object = await payloads.get(attachment.contentRef);
   if (!object) return null;
+  if (object.size > MAX_IMAGE_SOURCE_BYTES) return null;
   const originalBytes = new Uint8Array(await object.arrayBuffer());
 
   if (originalBytes.byteLength > MAX_IMAGE_SOURCE_BYTES) return null;
@@ -235,6 +251,7 @@ async function loadAndCreateModelImage(
   if (!detected) return null;
   const normalized = await normalizeImage(originalBytes, detected, options.images);
   if (!normalized || normalized.bytes.byteLength === 0 || normalized.bytes.byteLength > MAX_MODEL_IMAGE_BYTES) return null;
+  if (normalized.bytes.byteLength > (options.maxBytes ?? MAX_TOTAL_MODEL_IMAGE_BYTES)) return null;
 
   if (options.database && attachment.contentRef) {
     await persistModelImage(payloads, options.database, attachment, normalized);
@@ -253,6 +270,13 @@ async function persistModelImage(
       : normalized.mimeType === "image/webp" ? "webp" : "gif";
   const contentRef = `${attachment.contentRef}.model.${crypto.randomUUID()}.${extension}`;
   const sha256 = await sha256Hex(normalized.bytes);
+  if (!attachment.workspaceId) throw new Error("attachment_workspace_required");
+  const at = new Date().toISOString();
+  await database.prepare(
+    `INSERT OR IGNORE INTO resource_object_deletion_outbox
+      (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+     VALUES (?, ?, ?, 'derivative', ?, ?)`,
+  ).bind(contentRef, attachment.workspaceId, attachment.id, at, at).run();
   await payloads.put(contentRef, exactArrayBuffer(normalized.bytes), {
     httpMetadata: {
       contentType: normalized.mimeType,
@@ -265,7 +289,6 @@ async function persistModelImage(
     },
   });
   try {
-    const at = new Date().toISOString();
     const result = await database.prepare(
       `UPDATE resources
           SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?,
@@ -274,7 +297,7 @@ async function persistModelImage(
               model_content_character_count = NULL, model_content_extracted_at = ?,
               model_content_claimed_at = NULL, model_content_claim_id = NULL,
               model_content_error_code = NULL, updated_at = ?
-        WHERE id = ? AND content_ref = ?`,
+        WHERE workspace_id = ? AND id = ? AND content_ref = ? AND content_sha256 IS ?`,
     ).bind(
       contentRef,
       normalized.mimeType,
@@ -282,8 +305,10 @@ async function persistModelImage(
       normalized.metadata ? JSON.stringify(normalized.metadata) : null,
       at,
       at,
+      attachment.workspaceId,
       attachment.id,
       attachment.contentRef,
+      attachment.contentSha256 ?? null,
     ).run();
     if ((result.meta.changes ?? 0) === 0) await payloads.delete(contentRef);
   } catch (error) {
@@ -313,7 +338,10 @@ async function normalizeImage(
   }
 
   if (format === "tiff") return decodeTiffToPng(bytes);
-  if (format === "heif") return decodeHeifToPng(bytes);
+  // HEIF decoding is admitted only through the bounded Images service. The
+  // prior in-isolate fallback allocated the full decoded pixel buffer before
+  // dimensions could be checked.
+  if (format === "heif") return null;
   if (!sourceDimensions || Math.max(sourceDimensions.width, sourceDimensions.height) > MODEL_IMAGE_MAX_EDGE) return null;
   const mimeType = format === "jpeg" ? "image/jpeg"
     : format === "png" ? "image/png"
@@ -407,19 +435,18 @@ function decodeTiffToPng(bytes: Uint8Array): NormalizedImage | null {
   const buffer = exactArrayBuffer(bytes);
   const ifd = UTIF.decode(buffer)[0];
   if (!ifd) return null;
+  const width = tiffTagNumber(ifd.width, ifd.t256);
+  const height = tiffTagNumber(ifd.height, ifd.t257);
+  assertSafePixelCount(width, height);
   UTIF.decodeImage(buffer, ifd);
-  assertSafePixelCount(ifd.width, ifd.height);
   const rgba = UTIF.toRGBA8(ifd);
-  return { bytes: new Uint8Array(UPNG.encode([exactArrayBuffer(rgba)], ifd.width, ifd.height, 0)), mimeType: "image/png" };
+  return { bytes: new Uint8Array(UPNG.encode([exactArrayBuffer(rgba)], width, height, 0)), mimeType: "image/png" };
 }
 
-async function decodeHeifToPng(bytes: Uint8Array): Promise<NormalizedImage | null> {
-  const decoded = await decodeHeic({ buffer: exactArrayBuffer(bytes) });
-  assertSafePixelCount(decoded.width, decoded.height);
-  return {
-    bytes: new Uint8Array(UPNG.encode([exactArrayBuffer(decoded.data)], decoded.width, decoded.height, 0)),
-    mimeType: "image/png",
-  };
+function tiffTagNumber(decoded: number, tag: unknown): number {
+  if (Number.isSafeInteger(decoded) && decoded > 0) return decoded;
+  if (Array.isArray(tag) && typeof tag[0] === "number") return tag[0];
+  return Number.NaN;
 }
 
 function detectImageFormat(bytes: Uint8Array): DetectedImageFormat | null {

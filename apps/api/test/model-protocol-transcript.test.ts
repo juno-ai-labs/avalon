@@ -12,6 +12,7 @@ const USER_ID = "00000000-0000-4000-8000-000000000003";
 const PRIOR_RUN_ID = "00000000-0000-4000-8000-000000000004";
 
 type ToolRow = {
+  invocation_id?: string;
   message_id: string;
   harness_run_id: string;
   tool_call_id: string;
@@ -21,6 +22,7 @@ type ToolRow = {
   output_summary: string | null;
   status: "pending" | "started" | "completed" | "failed" | "ambiguous";
   error_json: string | null;
+  execution_plan_json?: string | null;
 };
 
 class ProjectionStatement {
@@ -235,6 +237,81 @@ describe("durable UI-to-model transcript projection", () => {
     expect(serialized).toContain(String.raw`\"attachmentKind\":\"markdown\"`);
     expect(serialized).not.toContain("historical secret bytes");
     expect(serialized).not.toContain("Binary content is not replayed");
+  });
+
+  it("omits historical attachment tool output after current visibility is revoked", async () => {
+    const invocationId = "00000000-0000-4000-8000-000000000045";
+    const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
+    const get = vi.fn(async () => ({
+      async text() {
+        return JSON.stringify({ replayVersion: 1, output: { text: "private note contents" } });
+      },
+    } as R2ObjectBody));
+    const prepare = vi.fn((sql: string) => {
+      let values: unknown[] = [];
+      return createTestD1PreparedStatement({
+        bind(...bound: unknown[]) {
+          values = bound;
+          return this;
+        },
+        async all<T>() {
+          if (sql.includes("JOIN tool_invocations ti")) {
+            return createTestD1Result<T>({
+              success: true,
+              results: [{
+                invocation_id: invocationId,
+                message_id: invocationId,
+                harness_run_id: PRIOR_RUN_ID,
+                tool_call_id: call,
+                tool_name: "workstream_read_resource",
+                input_json: JSON.stringify({ resourceId: "00000000-0000-4000-8000-000000000046" }),
+                output_ref: "results/private-note.json",
+                output_summary: "Read private note",
+                status: "completed",
+                error_json: null,
+                execution_plan_json: JSON.stringify({
+                  canonicalToolName: "read_resource",
+                  capability: "workstream.resources.read",
+                }),
+              }] as T[],
+            });
+          }
+          expect(values).toBeDefined();
+          return createTestD1Result<T>({ success: true, results: [] });
+        },
+        async run() {
+          return createTestD1Result({ success: true, meta: { changes: 1 } });
+        },
+      });
+    });
+    const database = createTestD1Database({
+      prepare,
+      async batch(statements: D1PreparedStatement[]) {
+        return Promise.all(statements.map((statement) => statement.run()));
+      },
+    });
+    const env = createTestEnv({
+      DB: database,
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ get }),
+    });
+
+    const projection = await __integrationTesting.projectModelProtocolTranscript(env, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      triggerMessageId: null,
+      executionPrincipal: { type: "user", userId: USER_ID },
+    }, [message(invocationId, 1, {
+      author: "agent",
+      messageType: "tool",
+      structuredContent: { invocation: {} },
+    })]);
+
+    expect(projection.messages).toEqual([]);
+    expect(projection.issues).toContainEqual({
+      kind: "unauthorized_attachment_tool_omitted",
+      healed: true,
+    });
+    expect(get).not.toHaveBeenCalled();
   });
   it("launches a selected expanded suggested-work brief as the executable user turn", async () => {
     const messageId = "00000000-0000-4000-8000-000000000030";
@@ -531,6 +608,19 @@ describe("durable UI-to-model transcript projection", () => {
     expect(stored[0]?.sequenceNumber).toBe(1);
     expect(stored.at(-1)?.sequenceNumber).toBe(300);
     expect(listMessages).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails before provider projection when an uncompacted transcript exceeds the replay byte ceiling", async () => {
+    const oversized = message("00000000-0000-4000-8000-000000000098", 1, {
+      author: "human",
+      textContent: "x".repeat(4 * 1_024 * 1_024 + 1),
+    });
+
+    await expect(__integrationTesting.loadTriggerFencedTranscriptMessages(
+      { DB: createTestD1Database({}) },
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      async () => [oversized],
+    )).rejects.toMatchObject({ code: "context_limit_exceeded" });
   });
 
   it.each(["get", "body"] as const)(

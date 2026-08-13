@@ -143,6 +143,87 @@ describe("attachment derivative conversion", () => {
     expect(unsupported).toMatchObject({ status: "unsupported", errorCode: "resource_format_unsupported" });
   });
 
+  it("rejects Office entity expansion and compressed-archive size bombs before rendering", async () => {
+    const entityDocument = zipSync({
+      "word/document.xml": strToU8('<!DOCTYPE w:document [<!ENTITY leak "blocked">]><w:document><w:body><w:p><w:r><w:t>&leak;</w:t></w:r></w:p></w:body></w:document>'),
+    });
+    const oversizedXml = zipSync({
+      "word/document.xml": strToU8(`<w:document><w:body><w:p><w:r><w:t>${"x".repeat(3 * 1_024 * 1_024)}</w:t></w:r></w:p></w:body></w:document>`),
+    });
+    const expandedArchive = zipSync(Object.fromEntries([
+      ["word/document.xml", "Document"],
+      ["word/header1.xml", "One"],
+      ["word/header2.xml", "Two"],
+      ["word/header3.xml", "Three"],
+      ["word/header4.xml", "Four"],
+    ].map(([name, label]) => [
+      name,
+      strToU8(`<w:document><w:body><w:p><w:r><w:t>${label}${"x".repeat(2_600_000)}</w:t></w:r></w:p></w:body></w:document>`),
+    ])));
+
+    const [entity, xmlLimit, archiveLimit] = await Promise.all([
+      buildAttachmentDerivative({ bytes: entityDocument, fileName: "entity.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+      buildAttachmentDerivative({ bytes: oversizedXml, fileName: "xml-limit.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+      buildAttachmentDerivative({ bytes: expandedArchive, fileName: "archive-limit.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+    ]);
+
+    expect(entity).toMatchObject({ status: "failed", errorCode: "office_xml_entities_forbidden" });
+    expect(xmlLimit).toMatchObject({ status: "failed", errorCode: "office_xml_too_large" });
+    expect(archiveLimit).toMatchObject({ status: "failed", errorCode: "office_archive_too_large" });
+  });
+
+  it("rejects partial OCR and an index that would exceed its bounded chunk catalog", async () => {
+    const partialOcr = await buildAttachmentDerivative({
+      bytes: encoder.encode("%PDF scanned"),
+      fileName: "partial.pdf",
+      mimeType: "application/pdf",
+      pdfExtractor: async () => ({ pageCount: 2, pages: ["", ""] }),
+      ocr: async () => ({ pages: ["one page only"], method: "provider_ocr" }),
+    });
+
+    expect(partialOcr).toMatchObject({ status: "failed", errorCode: "pdf_ocr_incomplete" });
+    expect(() => buildDerivativeIndex("x".repeat(2_000_000), 3_999)).toThrow("index_too_large");
+  });
+
+  it("fails at bounded source, derivative, PDF, and deadline limits", async () => {
+    const [empty, sourceTooLarge, derivativeTooLarge, pageLimit, timedOut] = await Promise.all([
+      buildAttachmentDerivative({ bytes: new Uint8Array(), fileName: "empty.txt", mimeType: "text/plain" }),
+      buildAttachmentDerivative({ bytes: new Uint8Array(8 * 1_024 * 1_024 + 1), fileName: "large.txt", mimeType: "text/plain" }),
+      buildAttachmentDerivative({ bytes: encoder.encode("x".repeat(2_000_001)), fileName: "large.txt", mimeType: "text/plain" }),
+      buildAttachmentDerivative({
+        bytes: encoder.encode("%PDF-1.7"),
+        fileName: "many-pages.pdf",
+        mimeType: "application/pdf",
+        pdfExtractor: async () => ({ pageCount: 201, pages: [] }),
+      }),
+      buildAttachmentDerivative({
+        bytes: encoder.encode("%PDF-1.7"),
+        fileName: "stuck.pdf",
+        mimeType: "application/pdf",
+        pdfExtractor: async () => new Promise(() => undefined),
+        timeoutMs: 5,
+      }),
+    ]);
+    expect(empty).toMatchObject({ status: "failed", errorCode: "empty_source" });
+    expect(sourceTooLarge).toMatchObject({ status: "failed", errorCode: "source_too_large" });
+    expect(derivativeTooLarge).toMatchObject({ status: "failed", errorCode: "derivative_too_large" });
+    expect(pageLimit).toMatchObject({ status: "failed", errorCode: "pdf_page_limit_exceeded" });
+    expect(timedOut).toMatchObject({ status: "failed", errorCode: "conversion_timeout" });
+  });
+
+  it("aborts an in-flight asynchronous converter", async () => {
+    const controller = new AbortController();
+    const result = buildAttachmentDerivative({
+      bytes: encoder.encode("%PDF-1.7"),
+      fileName: "scan.pdf",
+      mimeType: "application/pdf",
+      pdfExtractor: async () => new Promise(() => undefined),
+      signal: controller.signal,
+    });
+    controller.abort("test_abort");
+    await expect(result).resolves.toMatchObject({ status: "failed", errorCode: "conversion_aborted" });
+  });
+
   it("creates a bounded deterministic index against exact UTF-16 offsets", () => {
     const text = "# Alpha\n\n😀 one two three\n\n## Beta\n\nfour five six";
     const first = buildDerivativeIndex(text, 18);
@@ -211,7 +292,7 @@ describe("attachment derivative conversion", () => {
       async delete(key: string) { delete objects[key]; },
     });
     const resource: AuthorizedDerivativeResource = {
-      id: "resource-1", fileName: "brief.md", mimeType: "text/markdown", contentRef: "original",
+      id: "resource-1", workspaceId: "workspace-1", fileName: "brief.md", mimeType: "text/markdown", contentRef: "original",
       contentSha256: "0d79b05d5f5a26ef53e9a4e3443ad6555391cc60aecfcb7b6282e7aa864eb1ed",
       modelContentRef: null, modelMimeType: null, modelContentSha256: null, modelIndexRef: null,
       modelContentStatus: "pending", modelContentExtractorVersion: null, modelContentCharacterCount: null,
@@ -257,6 +338,9 @@ describe("attachment derivative conversion", () => {
           },
         };
       },
+      async batch(batch: D1PreparedStatement[]) {
+        return Promise.all(batch.map((statement) => statement.run()));
+      },
     });
     const gets = vi.fn(async () => ({
       async arrayBuffer() {
@@ -270,6 +354,7 @@ describe("attachment derivative conversion", () => {
     });
     const common: AuthorizedDerivativeResource = {
       id: "resource-lease",
+      workspaceId: "workspace-1",
       fileName: "lease.md",
       mimeType: "text/markdown",
       contentRef: "original",
@@ -297,5 +382,112 @@ describe("attachment derivative conversion", () => {
     expect(gets).toHaveBeenCalledOnce();
     expect(sql.some((statement) => statement.includes("model_content_claimed_at <= ?"))).toBe(true);
     expect(sql.some((statement) => statement.includes("AND model_content_claim_id = ?"))).toBe(true);
+  });
+
+  it("prevents an expired publisher from replacing or deleting the reclaimed generation", async () => {
+    const source = encoder.encode("%PDF-1.7\nfixture");
+    const state = {
+      status: "pending",
+      claimId: null as string | null,
+      claimedAt: null as string | null,
+      contentRef: null as string | null,
+      indexRef: null as string | null,
+    };
+    const outbox = new Set<string>();
+    const database = createTestD1Database({
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            return {
+              async run() {
+                if (sql.includes("SET model_content_status = 'processing'")) {
+                  const staleBefore = String(values[9]);
+                  if (state.status === "processing" && state.claimedAt && state.claimedAt > staleBefore) {
+                    return { meta: { changes: 0 } };
+                  }
+                  state.status = "processing";
+                  state.claimedAt = String(values[1]);
+                  state.claimId = String(values[2]);
+                  return { meta: { changes: 1 } };
+                }
+                if (sql.includes("INSERT OR IGNORE INTO resource_object_deletion_outbox")) {
+                  outbox.add(String(values[0]));
+                  return { meta: { changes: 1 } };
+                }
+                if (sql.includes("SET model_content_ref = ?")) {
+                  if (state.status !== "processing" || state.claimId !== values[14]) return { meta: { changes: 0 } };
+                  state.status = "ready";
+                  state.contentRef = String(values[0]);
+                  state.indexRef = String(values[4]);
+                  return { meta: { changes: 1 } };
+                }
+                return { meta: { changes: 1 } };
+              },
+            };
+          },
+        };
+      },
+      async batch(batch: D1PreparedStatement[]) {
+        return Promise.all(batch.map((statement) => statement.run()));
+      },
+    });
+    const objects = new Map<string, Uint8Array>([["original", source]]);
+    const deleted: string[] = [];
+    const bucket = createCloudflareTestBinding<R2Bucket>({
+      async get(key: string) {
+        const value = objects.get(key);
+        return value ? {
+          size: value.byteLength,
+          async arrayBuffer() { return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength); },
+        } : null;
+      },
+      async put(key: string, value: ArrayBuffer) { objects.set(key, new Uint8Array(value)); },
+      async delete(key: string) { deleted.push(key); objects.delete(key); },
+    });
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstStarted!: () => void;
+    const firstEntered = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const resource: AuthorizedDerivativeResource = {
+      id: "race-resource",
+      workspaceId: "race-workspace",
+      fileName: "scan.pdf",
+      mimeType: "application/pdf",
+      contentRef: "original",
+      contentSha256: "c".repeat(64),
+      modelContentRef: null,
+      modelMimeType: null,
+      modelContentSha256: null,
+      modelIndexRef: null,
+      modelContentStatus: "pending",
+      modelContentExtractorVersion: null,
+      modelContentCharacterCount: null,
+      modelContentClaimedAt: null,
+      modelContentClaimId: null,
+    };
+
+    const publisherA = materializeAttachmentDerivative(database, bucket, resource, {
+      now: () => new Date("2026-08-12T10:00:00.000Z"),
+      pdfExtractor: async () => {
+        firstStarted();
+        await firstBlocked;
+        return { pageCount: 1, pages: ["generation A"] };
+      },
+    });
+    await firstEntered;
+    const publisherB = await materializeAttachmentDerivative(database, bucket, resource, {
+      now: () => new Date("2026-08-12T10:06:00.000Z"),
+      pdfExtractor: async () => ({ pageCount: 1, pages: ["generation B"] }),
+    });
+    expect(publisherB.status).toBe("ready");
+    const winningRefs = [state.contentRef, state.indexRef] as const;
+
+    releaseFirst();
+    await expect(publisherA).resolves.toEqual({ status: "processing", retryAfterMs: 250 });
+    expect([state.contentRef, state.indexRef]).toEqual(winningRefs);
+    expect(winningRefs.every((key) => key !== null && objects.has(key))).toBe(true);
+    expect(deleted).toHaveLength(2);
+    expect(deleted.every((key) => !winningRefs.includes(key))).toBe(true);
+    expect(deleted.every((key) => outbox.has(key))).toBe(true);
   });
 });

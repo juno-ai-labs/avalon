@@ -149,6 +149,10 @@ Completed receipts replay without another provider call only while their owning
 subsystem's authorization and dependency checks still pass. Attachment list
 results always re-execute; attachment content results require every resource to
 remain visible at the exact derivative hash recorded before completion.
+Historical protocol reconstruction applies that same rule before it replays a
+completed attachment tool pair from an earlier run; the persisted execution
+plan identifies attachment operations, and a failed current-authority check
+omits their assistant/tool messages rather than trusting the R2 result.
 Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior
 write, or timed-out `record_before_execute` write becomes
 `ambiguous_external_write` and is never blindly repeated. Lifecycle events are
@@ -409,13 +413,13 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store a principal-and-resource-visibility-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`runbook.md`](runbook.md).
 
 When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is available in memory for the immediate control decision and is never logged: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose.
 
-Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, and WebP are normalized through Cloudflare Images; TIFF and HEIF/HEIC also have bounded local conversion fallbacks. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
+Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
 The same derivative backs `workstream_view_resource`, including after replay or
 compaction. A requested smaller long edge is an ephemeral scale-down and never
@@ -464,6 +468,33 @@ pass locally and fail `pnpm lint`.
 
 ## Changelog
 
+### 2026-08-12 — Historical attachment results reauthorize before projection
+
+**What changed:** Protocol transcript reconstruction now parses each completed
+tool's persisted execution plan, recognizes attachment operations, and applies
+the same current-principal receipt/dependency validation used by ordinary replay
+before adding the assistant/tool pair. Compaction scopes use the monotonic
+inventory revision, stale generated appendices are excluded from successive
+summaries, and invalidated no-checkpoint replay has explicit pre-provider bounds.
+
+**Why:** A revoked private attachment remained readable through a historical R2
+tool result even though its compaction checkpoint correctly failed closed. The
+same review found that one shared checkpoint, stale appendix copying, and
+unbounded fallback each defeated a different part of the intended context-safe
+boundary.
+
+**Considered and rejected:** Trusting `status = completed`, attempting to scrub
+arbitrary result JSON, and relying on the next compaction to repair stale
+context. Authorization must happen before bytes enter the provider request.
+
+**Consequences:** Hosts that project durable tool history must preserve the
+execution plan and supply the current execution principal. Attachment list
+results still re-execute, while content results replay only with exact current
+visibility and derivative dependencies.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
 ### 2026-08-12 — Compaction summaries fail closed across authorization changes
 
 **What changed:** The harness exposes a required host preparation boundary before
@@ -481,6 +512,9 @@ cannot establish authorization.
 **Consequences:** A changed resource view invalidates the checkpoint rather than
 reusing it. Hosts adding compaction authorization state must capture it before
 the summary sees the transcript and must fail the compaction if it changes.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Compaction separates durable summary from live authorized context
 
@@ -501,6 +535,9 @@ state depend on lossy model prose.
 **Consequences:** `renderAppendix` is a required-port failure boundary when a
 host provides it. It must return bounded trusted host data; persistence remains
 responsible for storing only the base checkpoint it receives.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Attachment inspection replaces eager prompt content
 
@@ -523,8 +560,8 @@ KB to 10 KB for the shared attachment policy. Future prompt growth must retain
 the golden hashes and explicit byte ceiling rather than deleting coverage rules
 to fit the older bound.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — The automation architect accepts request-scoped attachment tools
 
@@ -543,8 +580,8 @@ make request-local resources look durable or workspace-wide.
 **Consequences:** The host must provide already narrowed tools and reauthorize
 inside every executor. The harness must not cache them beyond the compile call.
 
-Pull request: pending. Design:
-`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Multimodal tool results separate live content from receipts
 
@@ -567,6 +604,9 @@ false coverage claim.
 **Consequences:** Any future multimodal tool must keep its live `contentParts`
 reconstructable from authorized regional state. Receipt consumers cannot assume
 the durable JSON contains every byte the next model turn saw.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a

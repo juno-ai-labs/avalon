@@ -24,6 +24,21 @@ import {
 } from "./index";
 
 describe("agent harness", () => {
+  it("presents every automation attachment tool as visible compiler activity", () => {
+    for (const toolName of [
+      "automation_list_resources",
+      "automation_read_resource",
+      "automation_search_resource",
+      "automation_view_resource",
+      "automation_summarize_resource",
+    ]) {
+      expect(__testing.automationResearchToolPresentation[toolName]).toMatchObject({
+        started: expect.stringMatching(/…$/u),
+        completed: expect.any(String),
+      });
+    }
+  });
+
   it("keeps explicit connector requests agent-directed", () => {
     expect(
       classifyAddressingHeuristically({
@@ -1595,6 +1610,7 @@ describe("agent harness", () => {
     expect(compactionInstruction).toContain("derivative version");
     expect(compactionInstruction).toContain("ranges you consulted");
     expect(compactionInstruction).toContain("Do not reproduce a complete attachment catalog");
+    expect(compactionInstruction).toContain("Never copy, summarize, or carry it forward");
     // And it runs at the run's own reasoning effort: this call writes the only
     // record the rest of the run gets, so it is not the one to economize on.
     expect(requestBodies[1]?.reasoning).toEqual({ effort: "high" });
@@ -1643,6 +1659,9 @@ describe("agent harness", () => {
       return responses.shift()!;
     }) as typeof fetch;
     const persist = vi.fn();
+    const renderAppendix = vi.fn()
+      .mockResolvedValueOnce("# Authoritative work-stream resource inventory\nVisible resources: 1")
+      .mockResolvedValueOnce("# Authoritative work-stream resource inventory\nVisible resources: 2");
 
     await expect(runHarness({
       ...runInput(fetcher),
@@ -1650,10 +1669,12 @@ describe("agent harness", () => {
       compaction: {
         contextWindowTokensByModel: { "test/model": 100 },
         persist,
+        renderAppendix,
       },
     })).resolves.toMatchObject({ status: "completed", content: "done" });
 
     expect(persist).toHaveBeenCalledTimes(2);
+    expect(renderAppendix).toHaveBeenCalledTimes(2);
     expect(persist.mock.calls[1]?.[0]).toMatchObject({
       summary: "Second summary of the work.",
       messages: [expect.objectContaining({
@@ -1668,6 +1689,11 @@ describe("agent harness", () => {
     expect(finalTurn?.messages.map((message) => message.role)).toEqual(["system", "user"]);
     expect(JSON.stringify(finalTurn?.messages)).toContain("Second summary of the work.");
     expect(JSON.stringify(finalTurn?.messages)).not.toContain("First summary of the work.");
+    expect(JSON.stringify(finalTurn?.messages)).toContain("Visible resources: 2");
+    expect(JSON.stringify(finalTurn?.messages)).not.toContain("Visible resources: 1");
+    const secondCompactionInstruction = String(requestBodies[3]?.messages.at(-1)?.content ?? "");
+    expect(JSON.stringify(requestBodies[3]?.messages)).toContain("Visible resources: 1");
+    expect(secondCompactionInstruction).toContain("Never copy, summarize, or carry it forward");
   });
 
   it("retries a summary that hit the output cap and never checkpoints the truncated one", async () => {

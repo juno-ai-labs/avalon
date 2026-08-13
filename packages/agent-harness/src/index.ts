@@ -1197,6 +1197,26 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
     started: "Loading the selected plugin…",
     completed: "Plugin guidance and tools are ready",
   },
+  automation_list_resources: {
+    started: "Checking the attached automation resources…",
+    completed: "Attached resources are ready",
+  },
+  automation_read_resource: {
+    started: "Reading an attached automation resource…",
+    completed: "Attached resource is ready",
+  },
+  automation_search_resource: {
+    started: "Searching an attached automation resource…",
+    completed: "Attachment search completed",
+  },
+  automation_view_resource: {
+    started: "Viewing an attached automation image…",
+    completed: "Attached image is ready",
+  },
+  automation_summarize_resource: {
+    started: "Summarizing an attached automation resource…",
+    completed: "Attachment summary is ready",
+  },
 };
 
 /**
@@ -2604,5 +2624,6 @@ export const __testing = {
   executeAutomationCreatorDiscoveryTool,
   addressingJsonSchema,
   automationJsonSchema: automationDraftSubmissionJsonSchema,
-  normalizeAutomationDraft
+  normalizeAutomationDraft,
+  automationResearchToolPresentation: AUTOMATION_RESEARCH_TOOL_PRESENTATION,
 };

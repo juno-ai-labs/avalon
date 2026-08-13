@@ -269,7 +269,8 @@ unrelated composer work into this draft; the second defeats revocation.
 Future resume behavior must re-admit attachments rather than treating IDs saved
 in conversation JSON as durable authority.
 
-Shipped in: pending.
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — A navigation the address bar cannot show, and the sentence it stranded
 

@@ -86,11 +86,12 @@ import { createChildDeadline, withDeadline } from "../lib/deadline";
 import { ApiError } from "../lib/api-error";
 import {
   CHECKPOINT_TEMPLATE_VERSION,
-  renderWorkstreamResourceInventory,
+  renderWorkstreamResourceInventoryAggregate,
 } from "./workstream-resource-inventory";
 import {
   executionPrincipalKey,
-  loadVisibleWorkstreamResources,
+  loadVisibleWorkstreamResourceInventory,
+  WorkstreamResourceInventoryChangedError,
 } from "./workstream-resource-visibility";
 import {
   FIRECRAWL_CACHE_MAX_AGE_MS,
@@ -179,6 +180,8 @@ const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
 const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
 const TOOL_TRANSCRIPT_REPLAY_BUDGET_MS = 5_000;
+const MAX_REPLAYED_TRANSCRIPT_MESSAGES = 2_000;
+const MAX_REPLAYED_TRANSCRIPT_BYTES = 4 * 1_024 * 1_024;
 const INLINE_CHILD_SYSTEM_PROMPT = [
   "You are a focused read-only Avalon sub-agent.",
   "Complete exactly the delegated objective and return a concise result with evidence.",
@@ -490,11 +493,13 @@ type ModelTranscriptProjectionIssue = {
     | "dangling_tool_invocation"
     | "unlinked_tool_invocation"
     | "invalid_tool_arguments"
+    | "unauthorized_attachment_tool_omitted"
     | "empty_ui_message_omitted";
   healed: true;
 };
 
 type ModelProtocolToolRow = {
+  invocation_id: string;
   message_id: string;
   harness_run_id: string;
   tool_call_id: string;
@@ -504,6 +509,7 @@ type ModelProtocolToolRow = {
   output_summary: string | null;
   status: "pending" | "started" | "completed" | "failed" | "ambiguous";
   error_json: string | null;
+  execution_plan_json: string | null;
 };
 
 type ProjectedProtocolTool = {
@@ -530,20 +536,20 @@ async function loadWorkstreamContextCompaction(
   const row = await database.prepare(
     `SELECT compacted_through_sequence, messages_json, summary, checkpoint_template_version,
             execution_principal_key, resource_visibility_fingerprint
-       FROM workstream_context_compactions
-      WHERE workspace_id = ? AND workstream_id = ?`,
-  ).bind(workspaceId, workstreamId).first<{
+      FROM workstream_context_compactions
+      WHERE workspace_id = ? AND workstream_id = ? AND execution_principal_key = ?`,
+  ).bind(workspaceId, workstreamId, executionPrincipalKey(principal)).first<{
     compacted_through_sequence: number;
     messages_json: string;
     summary: string;
     checkpoint_template_version: number;
-    execution_principal_key: string | null;
-    resource_visibility_fingerprint: string | null;
+    execution_principal_key: string;
+    resource_visibility_fingerprint: string;
   }>();
   if (!row || !Number.isSafeInteger(row.compacted_through_sequence) || row.compacted_through_sequence < 0) {
     return null;
   }
-  const visible = await loadVisibleWorkstreamResources(database, {
+  const visible = await loadVisibleWorkstreamResourceInventory(database, {
     workspaceId,
     workstreamId,
     principal,
@@ -553,9 +559,9 @@ async function loadWorkstreamContextCompaction(
     return null;
   }
   if (row.checkpoint_template_version === CHECKPOINT_TEMPLATE_VERSION) {
-    const appendix = renderWorkstreamResourceInventory({
+    const appendix = renderWorkstreamResourceInventoryAggregate({
       asOf: asOf ?? new Date().toISOString(),
-      rows: visible.rows,
+      inventory: visible,
     });
     return {
       compactedThroughSequence: row.compacted_through_sequence,
@@ -581,23 +587,35 @@ async function persistWorkstreamContextCompaction(
   expectedVisibilityFingerprint?: string,
 ): Promise<void> {
   const at = nowIso();
-  const visible = await loadVisibleWorkstreamResources(database, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    principal: input.executionPrincipal,
-  });
-  if (expectedVisibilityFingerprint && visible.fingerprint !== expectedVisibilityFingerprint) {
-    throw new Error("compaction_resource_visibility_changed");
+  let visible;
+  try {
+    visible = await loadVisibleWorkstreamResourceInventory(database, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      principal: input.executionPrincipal,
+      ...(expectedVisibilityFingerprint ? { expectedFingerprint: expectedVisibilityFingerprint } : {}),
+    });
+  } catch (error) {
+    if (error instanceof WorkstreamResourceInventoryChangedError) {
+      throw new Error("compaction_resource_visibility_changed", { cause: error });
+    }
+    throw error;
   }
-  await database.prepare(
+  const revision = Number.parseInt(visible.fingerprint.replace(/^inventory:/u, ""), 10);
+  if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("invalid_resource_inventory_revision");
+  const persisted = await database.prepare(
     `INSERT INTO workstream_context_compactions
        (workstream_id, workspace_id, harness_run_id, compacted_through_sequence,
         messages_json, summary, checkpoint_template_version, execution_principal_key,
         resource_visibility_fingerprint, model, context_tokens_before_compaction,
         context_window_tokens, input_tokens, output_tokens, cost_microusd,
         created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(workstream_id) DO UPDATE SET
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE COALESCE((
+        SELECT revision FROM workstream_resource_inventory_revisions
+         WHERE workspace_id = ? AND workstream_id = ?
+      ), 0) = ?
+     ON CONFLICT(workstream_id, execution_principal_key) DO UPDATE SET
        workspace_id = excluded.workspace_id,
        harness_run_id = excluded.harness_run_id,
        compacted_through_sequence = excluded.compacted_through_sequence,
@@ -617,6 +635,7 @@ async function persistWorkstreamContextCompaction(
        AND (
          excluded.compacted_through_sequence > workstream_context_compactions.compacted_through_sequence
          OR excluded.harness_run_id = workstream_context_compactions.harness_run_id
+         OR excluded.resource_visibility_fingerprint != workstream_context_compactions.resource_visibility_fingerprint
        )`,
   ).bind(
     input.workstreamId,
@@ -636,7 +655,20 @@ async function persistWorkstreamContextCompaction(
     Math.max(0, Math.round(checkpoint.costCents * 10_000)),
     at,
     at,
+    input.workspaceId,
+    input.workstreamId,
+    revision,
   ).run();
+  if ((persisted.meta.changes ?? 0) === 0) {
+    const current = await loadVisibleWorkstreamResourceInventory(database, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      principal: input.executionPrincipal,
+    });
+    if (current.fingerprint !== visible.fingerprint) {
+      throw new Error("compaction_resource_visibility_changed");
+    }
+  }
 }
 
 /**
@@ -696,6 +728,7 @@ async function loadTriggerFencedTranscriptMessages(
   }
 
   const messages: Message[] = [];
+  let replayBytes = 0;
   let cursor = beforeSequence;
   while (true) {
     const page = await listMessages(
@@ -705,6 +738,13 @@ async function loadTriggerFencedTranscriptMessages(
       cursor,
     );
     const newerThanCheckpoint = page.filter((message) => message.sequenceNumber > afterSequence);
+    replayBytes += new TextEncoder().encode(JSON.stringify(newerThanCheckpoint)).byteLength;
+    if (messages.length + newerThanCheckpoint.length > MAX_REPLAYED_TRANSCRIPT_MESSAGES
+      || replayBytes > MAX_REPLAYED_TRANSCRIPT_BYTES) {
+      throw Object.assign(new Error("The uncompacted transcript exceeds the bounded replay preflight"), {
+        code: "context_limit_exceeded",
+      });
+    }
     messages.unshift(...newerThanCheckpoint);
     const oldestSequence = page[0]?.sequenceNumber;
     if (
@@ -739,7 +779,8 @@ async function loadTriggerFencedTranscriptMessages(
  */
 async function projectModelProtocolTranscript(
   env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
+    & Partial<Pick<WorkstreamWorkflowInput, "executionPrincipal">>,
   storedMessages: Message[],
 ): Promise<{ messages: ModelMessage[]; issues: ModelTranscriptProjectionIssue[] }> {
   const attachmentSources = await loadModelAttachmentSources(env, input.workspaceId, storedMessages);
@@ -755,8 +796,9 @@ async function projectModelProtocolTranscript(
     for (const idBatch of arrayBatches(toolMessageIds, 80)) {
       const placeholders = idBatch.map(() => "?").join(", ");
       const rows = await env.DB.prepare(
-        `SELECT m.id AS message_id, ti.harness_run_id, ti.tool_call_id, ti.tool_name,
-                ti.input_json, ti.output_ref, ti.output_summary, ti.status, ti.error_json
+        `SELECT m.id AS message_id, ti.id AS invocation_id, ti.harness_run_id,
+                ti.tool_call_id, ti.tool_name, ti.input_json, ti.output_ref,
+                ti.output_summary, ti.status, ti.error_json, ti.execution_plan_json
            FROM messages m
            JOIN tool_invocations ti ON ti.id = m.id
           WHERE m.workspace_id = ? AND m.workstream_id = ?
@@ -794,9 +836,41 @@ async function projectModelProtocolTranscript(
       const order = Number(stablePosition[2]);
       let resultContent: unknown;
       if (row.status === "completed") {
-        const exactOutput = row.output_ref
-          ? await loadToolReplayOutput(env, row.output_ref, replayDeadline)
+        const executionPlan = parseJson<Record<string, unknown> | null>(row.execution_plan_json, null);
+        const capability = typeof executionPlan?.capability === "string" ? executionPlan.capability : null;
+        const canonicalToolName = typeof executionPlan?.canonicalToolName === "string"
+          ? executionPlan.canonicalToolName
           : null;
+        const attachmentTool = capability?.startsWith("workstream.resources.") === true
+          || /^workstream_(?:list|read|search|view|summarize)_resources?$/u.test(row.tool_name);
+        let exactOutput: unknown | null;
+        if (attachmentTool) {
+          if (!capability || !canonicalToolName || !input.executionPrincipal) {
+            intentionallyOmittedToolMessageIds.add(row.message_id);
+            issues.push({ kind: "unauthorized_attachment_tool_omitted", healed: true });
+            continue;
+          }
+          const replay = await loadAuthorizedAttachmentReplay(env, {
+            ...input,
+            executionPrincipal: input.executionPrincipal,
+          }, {
+            invocationId: row.invocation_id,
+            capability,
+            canonicalToolName,
+            rawInput: parseJson(row.input_json, {}),
+            outputRef: row.output_ref,
+          });
+          if (!replay) {
+            intentionallyOmittedToolMessageIds.add(row.message_id);
+            issues.push({ kind: "unauthorized_attachment_tool_omitted", healed: true });
+            continue;
+          }
+          exactOutput = replay.output;
+        } else {
+          exactOutput = row.output_ref
+            ? await loadToolReplayOutput(env, row.output_ref, replayDeadline)
+            : null;
+        }
         resultContent = {
           success: true,
           data: exactOutput ?? {
@@ -984,6 +1058,7 @@ async function loadModelAttachmentSources(
     title: string;
     mime_type: string | null;
     content_ref: string | null;
+    content_sha256: string | null;
     metadata_json: string | null;
     model_content_ref: string | null;
     model_mime_type: string | null;
@@ -996,7 +1071,7 @@ async function loadModelAttachmentSources(
   for (const idBatch of arrayBatches(ids, 90)) {
     const placeholders = idBatch.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
-      `SELECT id, title, mime_type, content_ref, metadata_json, model_content_ref, model_mime_type,
+      `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json, model_content_ref, model_mime_type,
               model_content_sha256, model_metadata_json, model_content_status, model_content_error_code
          FROM resources
         WHERE workspace_id = ? AND id IN (${placeholders})`,
@@ -1005,10 +1080,12 @@ async function loadModelAttachmentSources(
   }
   return new Map(attachmentRows.map((row) => [row.id, {
     id: row.id,
+    workspaceId,
     fileName: row.title,
     mimeType: row.mime_type ?? "application/octet-stream",
     sizeBytes: attachmentMetadataSize(row.metadata_json),
     contentRef: row.content_ref,
+    contentSha256: row.content_sha256,
     modelContentRef: row.model_content_ref,
     modelMimeType: row.model_mime_type,
     modelContentSha256: row.model_content_sha256,
@@ -1102,7 +1179,7 @@ async function loadAutomationDraftAttachmentParts(
   if (ids.length === 0) return { parts: [], frozenResourceIds: [] };
   const placeholders = ids.map(() => "?").join(", ");
   const rows = await env.DB.prepare(
-    `SELECT id, title, mime_type, content_ref, metadata_json, model_content_ref, model_mime_type,
+    `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json, model_content_ref, model_mime_type,
             model_content_sha256, model_metadata_json, model_content_status, model_content_error_code
        FROM resources
       WHERE id IN (${placeholders}) AND workspace_id = ? AND provider = 'avalon_upload'
@@ -1112,6 +1189,7 @@ async function loadAutomationDraftAttachmentParts(
     title: string;
     mime_type: string | null;
     content_ref: string | null;
+    content_sha256: string | null;
     model_content_ref: string | null;
     model_mime_type: string | null;
     model_content_sha256: string | null;
@@ -1122,10 +1200,12 @@ async function loadAutomationDraftAttachmentParts(
   }>();
   const sources = new Map((rows.results ?? []).map((row) => [row.id, {
     id: row.id,
+    workspaceId,
     fileName: row.title,
     mimeType: row.mime_type ?? "application/octet-stream",
     sizeBytes: attachmentMetadataSize(row.metadata_json),
     contentRef: row.content_ref,
+    contentSha256: row.content_sha256,
     modelContentRef: row.model_content_ref,
     modelMimeType: row.model_mime_type,
     modelContentSha256: row.model_content_sha256,
@@ -1937,7 +2017,7 @@ export async function runWorkstreamHarness(
     source: hyperSightRun ? "hypersight" : "workstream",
     workstreamId: input.workstreamId,
   });
-  let preparedCompactionVisibility: Awaited<ReturnType<typeof loadVisibleWorkstreamResources>> | null = null;
+  let preparedCompactionVisibility: Awaited<ReturnType<typeof loadVisibleWorkstreamResourceInventory>> | null = null;
   let outcome: Awaited<ReturnType<typeof runHarness>>;
   try {
     outcome = await runHarness({
@@ -1976,7 +2056,7 @@ export async function runWorkstreamHarness(
           prepare: async () => {
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
-            preparedCompactionVisibility = await loadVisibleWorkstreamResources(env.DB, {
+            preparedCompactionVisibility = await loadVisibleWorkstreamResourceInventory(env.DB, {
               workspaceId: input.workspaceId,
               workstreamId: input.workstreamId,
               principal: input.executionPrincipal,
@@ -1985,18 +2065,26 @@ export async function runWorkstreamHarness(
           renderAppendix: async () => {
             await liveness.pulse("compaction_inventory", true);
             await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
-            const current = await loadVisibleWorkstreamResources(env.DB, {
-              workspaceId: input.workspaceId,
-              workstreamId: input.workstreamId,
-              principal: input.executionPrincipal,
-            });
-            if (!preparedCompactionVisibility
-              || current.fingerprint !== preparedCompactionVisibility.fingerprint) {
+            if (!preparedCompactionVisibility) {
               throw new Error("compaction_resource_visibility_changed");
             }
-            return renderWorkstreamResourceInventory({
+            let current;
+            try {
+              current = await loadVisibleWorkstreamResourceInventory(env.DB, {
+                workspaceId: input.workspaceId,
+                workstreamId: input.workstreamId,
+                principal: input.executionPrincipal,
+                expectedFingerprint: preparedCompactionVisibility.fingerprint,
+              });
+            } catch (error) {
+              if (error instanceof WorkstreamResourceInventoryChangedError) {
+                throw new Error("compaction_resource_visibility_changed", { cause: error });
+              }
+              throw error;
+            }
+            return renderWorkstreamResourceInventoryAggregate({
               asOf: new Date().toISOString(),
-              rows: current.rows,
+              inventory: current,
             });
           },
           persist: async (checkpoint) => {
@@ -2361,6 +2449,7 @@ export async function runWorkstreamHarness(
           const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
           await registerAttachmentToolReceipt(env.DB, {
+            workspaceId: input.workspaceId,
             invocationId: plannedInvocation.id,
             canonicalToolName: receiptPolicy.definition.name,
             output: event.result.output,
@@ -3342,6 +3431,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 );
                 if (!invocation) throw new Error("tool_execution_plan_missing");
                 await registerAttachmentToolReceipt(options.env.DB, {
+                  workspaceId: childInput.workspaceId,
                   invocationId: invocation.id,
                   canonicalToolName: receiptPolicy.definition.name,
                   output: event.result.output,
@@ -3919,7 +4009,7 @@ async function loadToolReplayOutput(
 
 async function loadAuthorizedAttachmentReplay(
   env: Env,
-  input: WorkstreamWorkflowInput,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "executionPrincipal">,
   receipt: {
     invocationId: string;
     capability: string;
@@ -3932,23 +4022,20 @@ async function loadAuthorizedAttachmentReplay(
   contentParts: Awaited<ReturnType<typeof rehydrateWorkstreamViewReceipt>>;
 } | null | undefined> {
   if (!receipt.capability.startsWith("workstream.resources.")) return undefined;
-  const visible = await loadVisibleWorkstreamResources(env.DB, {
+  const validation = await validateAttachmentToolReceiptReplay(env.DB, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     principal: input.executionPrincipal,
-  });
-  const validation = await validateAttachmentToolReceiptReplay(env.DB, {
     invocationId: receipt.invocationId,
     capability: receipt.capability,
-    visibleResourceIds: new Set(visible.rows.map((resource) => resource.id)),
   });
   if (validation !== "valid" || !receipt.outputRef) {
-    await invalidateAttachmentToolReplay(env.DB, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env.DB, input.workspaceId, receipt.invocationId);
     return null;
   }
   const output = await loadToolReplayOutput(env, receipt.outputRef);
   if (output === null) {
-    await invalidateAttachmentToolReplay(env.DB, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env.DB, input.workspaceId, receipt.invocationId);
     return null;
   }
   let contentParts: Awaited<ReturnType<typeof rehydrateWorkstreamViewReceipt>>;
@@ -3957,11 +4044,11 @@ async function loadAuthorizedAttachmentReplay(
       ? await rehydrateWorkstreamViewReceipt(env, input, receipt.rawInput, output)
       : [];
   } catch {
-    await invalidateAttachmentToolReplay(env.DB, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env.DB, input.workspaceId, receipt.invocationId);
     return null;
   }
   if (receipt.canonicalToolName === "view_resource" && contentParts.length === 0) {
-    await invalidateAttachmentToolReplay(env.DB, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env.DB, input.workspaceId, receipt.invocationId);
     return null;
   }
   return { output, contentParts };

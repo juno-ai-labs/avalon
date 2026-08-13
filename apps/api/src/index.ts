@@ -28,21 +28,21 @@ async function reapExpiredHarnessAttempts(env: Env): Promise<void> {
 async function reapExpiredDraftAttachments(env: Env): Promise<void> {
   const cutoff = new Date(Date.now() - DRAFT_ATTACHMENT_TTL_HOURS * 60 * 60 * 1_000).toISOString();
   const stale = await env.DB.prepare(
-    `SELECT id, content_ref, model_content_ref, model_index_ref FROM resources
+    `SELECT id FROM resources
      WHERE provider = 'avalon_upload' AND attachment_status = 'draft' AND created_at < ?
        AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
        AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)
      LIMIT 100`,
-  ).bind(cutoff).all<{ id: string; content_ref: string | null; model_content_ref: string | null; model_index_ref: string | null }>();
+  ).bind(cutoff).all<{ id: string }>();
   if (stale.results.length === 0) return;
   await env.DB.batch(stale.results.map((resource) => env.DB.prepare(
-    `DELETE FROM resources WHERE id = ? AND provider = 'avalon_upload' AND attachment_status = 'draft'`,
-  ).bind(resource.id)));
-  await Promise.all(stale.results.flatMap((resource) => [
-    ...(resource.content_ref ? [env.PAYLOADS.delete(resource.content_ref)] : []),
-    ...(resource.model_content_ref ? [env.PAYLOADS.delete(resource.model_content_ref)] : []),
-    ...(resource.model_index_ref ? [env.PAYLOADS.delete(resource.model_index_ref)] : []),
-  ]));
+    `DELETE FROM resources
+      WHERE id = ? AND provider = 'avalon_upload' AND attachment_status = 'draft' AND created_at < ?
+        AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
+        AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)`,
+  ).bind(resource.id, cutoff)));
+  // The delete trigger owns R2 cleanup. A draft that was attached after the
+  // stale scan loses the conditional delete and its objects are never touched.
 }
 
 export { WorkstreamRoom } from "./durable-objects/workstream-room";

@@ -1,4 +1,7 @@
-import type { VisibleWorkstreamResourceRow } from "../src/services/workstream-resource-visibility";
+import {
+  loadVisibleWorkstreamResourceInventory,
+  type VisibleWorkstreamResourceRow,
+} from "../src/services/workstream-resource-visibility";
 import type { HarnessCompactionCheckpoint } from "@avalon/agent-harness";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import {
@@ -7,7 +10,6 @@ import {
 } from "../src/services/workstream-resource-inventory";
 import { describe, expect, it } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
-import { sha256 } from "../src/lib/crypto";
 import {
   createTestD1Database,
   createTestD1PreparedStatement,
@@ -15,18 +17,6 @@ import {
 } from "./helpers/cloudflare-test";
 
 const AS_OF = "2026-08-12T18:30:00.000Z";
-
-async function visibilityFingerprint(rows: VisibleWorkstreamResourceRow[]): Promise<string> {
-  const value = JSON.stringify(rows.map((row) => [
-    row.id,
-    row.attached_at,
-    row.updated_at,
-    row.visibility_version,
-    row.relationship_type,
-    row.message_attachment,
-  ]));
-  return sha256(value);
-}
 
 function resource(
   id: string,
@@ -119,13 +109,14 @@ describe("work-stream compaction resource inventory", () => {
 
   it("rebuilds a stored current-version checkpoint from its raw summary and current principal visibility", async () => {
     let currentRows = [resource("current-id", "current-private.png", "image/png", true)];
-    const storedFingerprint = await visibilityFingerprint(currentRows);
+    let revision = 1;
+    const storedFingerprint = "inventory:1";
     const database = createTestD1Database({
       prepare(sql: string) {
         return createTestD1PreparedStatement({
           bind() { return this; },
           async first<T>() {
-            if (!sql.includes("FROM workstream_context_compactions")) return null;
+            if (!sql.includes("FROM workstream_context_compactions")) return { revision } as T;
             return {
               compacted_through_sequence: 42,
               messages_json: JSON.stringify([{ role: "user", content: "stale principal inventory" }]),
@@ -136,7 +127,10 @@ describe("work-stream compaction resource inventory", () => {
             } as T;
           },
           async all<T>() {
-            return createTestD1Result<T>({ success: true, results: currentRows as T[] });
+            const results = currentRows.length > 0
+              ? [{ attachment_kind: "image", count: 1, message_attachments: 1 }]
+              : [];
+            return createTestD1Result<T>({ success: true, results: results as T[] });
           },
         });
       },
@@ -160,6 +154,7 @@ describe("work-stream compaction resource inventory", () => {
     expect(replay).not.toMatch(/current-id|current-private|image\/png/u);
 
     currentRows = [];
+    revision = 2;
     const replayAfterRemoval = await __integrationTesting.loadWorkstreamContextCompaction(
       database,
       "workspace",
@@ -171,23 +166,27 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("never replays a raw attachment summary for a different execution principal", async () => {
-    const currentRows = [resource("private-id", "private-note.md", "text/markdown", true)];
     const database = createTestD1Database({
       prepare(sql: string) {
         return createTestD1PreparedStatement({
           bind() { return this; },
           async first<T>() {
-            if (!sql.includes("FROM workstream_context_compactions")) return null;
+            if (!sql.includes("FROM workstream_context_compactions")) return { revision: 1 } as T;
             return {
               compacted_through_sequence: 42,
               messages_json: "[]",
               summary: "Consulted private-id and found a confidential decision.",
               checkpoint_template_version: 1,
               execution_principal_key: "user:original-viewer",
-              resource_visibility_fingerprint: await visibilityFingerprint(currentRows),
+              resource_visibility_fingerprint: "inventory:1",
             } as T;
           },
-          async all<T>() { return createTestD1Result<T>({ success: true, results: currentRows as T[] }); },
+          async all<T>() {
+            return createTestD1Result<T>({
+              success: true,
+              results: [{ attachment_kind: "markdown", count: 1, message_attachments: 1 }] as T[],
+            });
+          },
         });
       },
     });
@@ -214,7 +213,8 @@ describe("work-stream compaction resource inventory", () => {
             }
             return this;
           },
-          async run() { return createTestD1Result({ success: true }); },
+          async first<T>() { return { revision: 0 } as T; },
+          async run() { return createTestD1Result({ success: true, meta: { changes: 1 } }); },
           async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
         });
       },
@@ -247,26 +247,95 @@ describe("work-stream compaction resource inventory", () => {
     expect(bindings[5]).toBe(checkpoint.summary);
     expect(bindings[6]).toBe(CHECKPOINT_TEMPLATE_VERSION);
     expect(bindings[7]).toBe("user:viewer");
-    expect(bindings[8]).toBe(await visibilityFingerprint([]));
+    expect(bindings[8]).toBe("inventory:0");
     expect(String(bindings[4])).toContain("# Request");
     expect(String(bindings[4])).not.toContain("Authoritative work-stream resource inventory");
   });
 
-  it("keeps an unknown checkpoint template readable from its persisted base message", async () => {
-    const emptyFingerprint = await visibilityFingerprint([]);
+  it("rejects a visibility change between inventory preparation and appendix rendering", async () => {
+    let revisionReads = 0;
     const database = createTestD1Database({
       prepare(sql: string) {
         return createTestD1PreparedStatement({
           bind() { return this; },
           async first<T>() {
-            if (!sql.includes("FROM workstream_context_compactions")) return null;
+            if (!sql.includes("workstream_resource_inventory_revisions")) return null;
+            revisionReads += 1;
+            return { revision: revisionReads } as T;
+          },
+          async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
+        });
+      },
+    });
+
+    await expect(loadVisibleWorkstreamResourceInventory(database, {
+      workspaceId: "workspace",
+      workstreamId: "workstream",
+      principal: { type: "user", userId: "viewer" },
+      expectedFingerprint: "inventory:1",
+    })).rejects.toThrow("resource inventory changed");
+  });
+
+  it("does not persist a summary when visibility changes at the final fenced insert", async () => {
+    let revision = 1;
+    const insertChanges = 0;
+    const database = createTestD1Database({
+      prepare(sql: string) {
+        return createTestD1PreparedStatement({
+          bind() { return this; },
+          async first<T>() { return { revision } as T; },
+          async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
+          async run() {
+            if (sql.includes("INSERT INTO workstream_context_compactions")) {
+              revision = 2;
+              return createTestD1Result({ success: true, meta: { changes: insertChanges } });
+            }
+            return createTestD1Result({ success: true });
+          },
+        });
+      },
+    });
+    const checkpoint: HarnessCompactionCheckpoint = {
+      trigger: "auto",
+      summary: "confidential summary",
+      messages: [{ role: "user", content: "checkpoint" }],
+      model: "test/model",
+      contextTokensBeforeCompaction: 81,
+      contextWindowTokens: 100,
+      inputTokens: 82,
+      outputTokens: 5,
+      costCents: 0.25,
+    };
+
+    await expect(__integrationTesting.persistWorkstreamContextCompaction(
+      database,
+      {
+        workspaceId: "workspace",
+        workstreamId: "workstream",
+        harnessRunId: "run",
+        executionPrincipal: { type: "user", userId: "viewer" },
+      } as WorkstreamWorkflowInput,
+      42,
+      checkpoint,
+      "inventory:1",
+    )).rejects.toThrow("compaction_resource_visibility_changed");
+    expect(insertChanges).toBe(0);
+  });
+
+  it("keeps an unknown checkpoint template readable from its persisted base message", async () => {
+    const database = createTestD1Database({
+      prepare(sql: string) {
+        return createTestD1PreparedStatement({
+          bind() { return this; },
+          async first<T>() {
+            if (!sql.includes("FROM workstream_context_compactions")) return { revision: 0 } as T;
             return {
               compacted_through_sequence: 7,
               messages_json: JSON.stringify([{ role: "user", content: "future-version base checkpoint" }]),
               summary: "raw future summary",
               checkpoint_template_version: 99,
               execution_principal_key: "workspace:workspace",
-              resource_visibility_fingerprint: emptyFingerprint,
+              resource_visibility_fingerprint: "inventory:0",
             } as T;
           },
           async all<T>() { return createTestD1Result<T>({ success: true, results: [] }); },
