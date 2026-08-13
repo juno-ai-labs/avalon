@@ -28,7 +28,8 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
 | `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
 | `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives. |
-| `apps/api/src/services/integrations.ts` | Current message projection and work-stream resource-tool registration. |
+| `apps/api/src/services/attachment-tool-receipts.ts` | Atomically binds completed attachment results to current derivative hashes and revalidates replay dependencies. |
+| `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects and current model image derivatives. |
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, model-object catalog, deletion outbox, and checkpoint-template version. |
@@ -79,9 +80,9 @@ Triggering messages call `buildAttachmentModelParts`, but that name now means a
 manifest plus successfully normalized image parts only. Text, Office, PDF, and
 other source objects are not fetched during projection; all extraction happens
 after current authorization through read, search, or summarize. The platform
-prompt requires both the work-stream agent and automation architect to inspect a
-referenced attachment before answering and to use `charactersBefore` and
-`charactersAfter` rather than treating one page as the whole resource.
+prompt requires the active agent—work-stream agent or automation architect—to
+inspect a referenced attachment before answering and to use `charactersBefore`
+and `charactersAfter` rather than treating one page as the whole resource.
 
 ### Authorized work-stream discovery and text hydration
 
@@ -107,8 +108,10 @@ passage a read cursor against the same derivative version.
 `workstream_view_resource` accepts up to eight unique image IDs, keeps valid
 members in request order, and returns a JSON inclusion summary followed by
 ephemeral image parts. The JSON is the only durable receipt. A replay
-reauthorizes the resource and rebuilds those parts from the selected regional
-derivative. `workstream_summarize_resource` sends bounded chunks to an isolated
+reauthorizes every dependency, verifies the exact derivative hashes, and
+rebuilds those parts from the selected regional derivative. Missing visual bytes
+invalidate the receipt and re-execute the safe read; they never degrade to stale
+JSON without pixels. `workstream_summarize_resource` sends bounded chunks to an isolated
 reader, verifies every returned range, and caps all model-authored strings. A
 derivative beyond the reader budget is sampled across its length and explicitly
 returns `partial` coverage.
@@ -123,12 +126,14 @@ type, or content, so its size is constant in the number of resources. Exact
 entries remain discoverable by paging `workstream_list_resources` until
 `nextCursor` is null.
 
-The stored checkpoint contains the raw LLM summary and a principal-neutral base
-message only. Replay rerenders its appendix for the active principal, so resource
-attachment, detachment, deletion, revocation, and private-note visibility are
-reflected without rewriting remembered conclusions. Relevant resource IDs and
-consulted derivative ranges still belong in the summary when unfinished work
-needs them; the aggregate supplements that working set rather than replacing it.
+The stored checkpoint contains the raw LLM summary plus the execution-principal
+key and authorized resource fingerprint captured before summarization. Avalon
+verifies that fingerprint after the summary and before persistence. Replay uses
+the summary only for an exact scope match; attachment, detachment, deletion,
+revocation, private-note visibility, or principal changes invalidate it and fall
+back to durable transcript replay. Relevant resource IDs and consulted
+derivative ranges still belong in the summary when unfinished work needs them;
+the aggregate supplements that working set rather than replacing it.
 
 ### Automation-draft hydration
 
@@ -165,10 +170,12 @@ deletion increments bounded retry metadata and remains queued.
 
 The derivative service accepts a resource that its caller has already
 authorized. It reads the exact original R2 object, claims conversion through a
-conditional D1 update, writes versioned content and index objects, then advances
-the current resource pointer only when both objects are complete. A concurrent
-caller sees `processing`; an unchanged source hash and extractor version reuses
-the selected objects without reading or converting the original again.
+fenced, time-bounded conditional D1 update, writes generation-unique content and
+index objects, then advances the current resource pointer only when both objects
+are complete and the same claim still owns publication. A concurrent caller sees
+`processing`; an abandoned claim becomes reclaimable after five minutes. An
+unchanged source hash and extractor version reuses the selected objects without
+reading or converting the original again.
 
 UTF-8 text retains its full ordering and is rejected rather than replacement-
 decoded when invalid. DOCX becomes semantic Markdown with headings, lists,
@@ -179,9 +186,11 @@ adapter is required when the text layer is materially empty, and incomplete OCR
 is a failure rather than empty success.
 
 The companion index stores only UTF-16 ranges, section labels, and bounded
-normalized terms. It never duplicates the complete derivative. Tool reads and
-searches can therefore load exact passages from the versioned derivative while
-checking offsets against the same hash and extractor version.
+normalized term hints. It never duplicates the complete derivative. Search
+scores the complete text inside each indexed range, so a term beyond the hint
+cap remains discoverable. Tool reads and searches load exact passages from the
+versioned derivative while checking offsets against the same hash and extractor
+version.
 
 ## Invariants
 
@@ -208,7 +217,11 @@ checking offsets against the same hash and extractor version.
 - Original content identity describes the exact selected R2 bytes, so a cursor or
   derivative version cannot silently cross into newly hydrated content.
 - A model derivative becomes current only after its content and bounded index
-  objects are complete; losing a concurrent claim cannot expose either object.
+  objects are complete; losing a fenced claim cannot publish either object or
+  overwrite the newer claim's terminal state.
+- Every completed attachment receipt rechecks current resource visibility and
+  derivative hashes before replay. List results and receipts without a complete
+  dependency set re-execute instead of becoming stale authorization snapshots.
 - Index offsets use JavaScript UTF-16 units and do not split surrogate pairs, so
   the later read contract and persisted index agree exactly.
 - The sidebar and agent inventory share one visibility function; adding a second
@@ -279,13 +292,17 @@ generic tool execution/receipt loop is owned by
   exact source-byte, pixel, derivative-byte, count, and edge boundaries.
 - `apps/api/test/attachment-derivative-service.test.ts` covers complete long
   Markdown, semantic Office structures, page/OCR extraction, malformed and
-  unsupported inputs, exact UTF-16 indexing, concurrent claims, atomic
-  selection, and ready-version reuse.
+  unsupported inputs, exact UTF-16 indexing, MIME precedence, fenced lease
+  recovery, atomic selection, and ready-version reuse against `unpdf` 1.8.0.
 - `apps/api/test/workstream-attachment-tools.test.ts` covers more-than-fifty
   pagination, natural-language filtering, exact two-sided read arithmetic,
   tampering/version invalidation, bounded search, ordered image batches,
   normalization failure, wrong-kind recovery, focused summaries, receipt
-  rehydration, and workspace/private-note equivalence.
+  reauthorization and visual rehydration, complete-range search, and
+  workspace/private-note equivalence.
+- `apps/api/test/attachment-tool-receipts.test.ts` proves dependency registration
+  is conditional on the current hash and every replay rechecks visibility,
+  version identity, and durable output cleanup.
 - `apps/api/test/attachment-summary-service.test.ts` covers complete
   hierarchical and sampled-partial summaries, prompt trust placement, citation
   validation, output budgets, and provider failure. The harness suite proves
@@ -307,13 +324,16 @@ tests use an explicit clock value; do not replace it with sleeps or retries.
 
 `resources` owns original and current model refs plus original SHA-256,
 derivative status, extractor version, readable-character count, extraction time,
-bounded error code, and current index ref. `resource_model_objects` catalogs
+bounded error code, fenced claim ID/time, and current index ref.
+`resource_model_objects` catalogs
 active or superseded model objects, while `resource_object_deletion_outbox`
 survives resource deletion long enough to remove R2 objects.
 `attachment_tool_receipts` maps completed read, search, view, and summary
 receipts to the exact derivative hashes they used. A replacement or deletion
-invalidates the complete invocation and queues its JSON replay object; the map
-stores no excerpts, prompts, image parts, or data URIs.
+invalidates the complete invocation and queues its JSON replay object. Receipt
+registration itself is conditional on those hashes still being current, and
+replay additionally rechecks current principal visibility; the map stores no
+excerpts, prompts, image parts, or data URIs.
 `message_attachments` and `workstream_resources` remain relationship and
 visibility authorities. [`data-model.md`](data-model.md) and migrations are
 authoritative.
@@ -362,6 +382,30 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-08-12 — Attachment publication and replay are fenced end to end
+
+**What changed:** Derivative claims now carry reclaimable lease times and unique
+fencing IDs; every generated object key includes a unique generation, and D1
+triggers catalog only a successful current-pointer update. Receipt registration
+is conditional on current derivative hashes, and every replay rechecks current
+visibility, hashes, and required image parts. Compaction summaries are scoped to
+the principal and resource fingerprint captured before summarization.
+
+**Why:** Review found four variants of the same stale-authority race: an
+abandoned converter could block forever, an older converter could publish after
+reclaim, cleanup could delete a reactivated key, and a completed receipt or raw
+summary could outlive the authority that produced it.
+
+**Considered and rejected:** Timestamp-only claims, deterministic generation
+keys, replaying safe-read JSON without reauthorization, swallowing image
+rehydration errors, and redacting summaries after the fact. None supplies a
+fence across the relevant storage and authorization boundary.
+
+**Consequences:** Safe attachment reads may re-execute when dependencies,
+visibility, or visual bytes changed. Cleanup checks current pointers before R2
+deletion. Future converters and receipt consumers must use the same claim,
+publication-trigger, dependency, and replay-validation paths.
+
 ### 2026-08-12 — Encrypted OOXML fails as encryption, not corruption
 
 **What changed:** A compound-file encrypted DOCX, XLSX, or PPTX container now
@@ -408,7 +452,8 @@ fingerprint when they can change between pages.
 **What changed:** Live and replayed checkpoints now include fixed-order totals
 for visible resources, message attachments, and non-empty natural attachment
 kinds. The appendix is rebuilt from the same current-principal visibility loader
-as the sidebar; only the principal-neutral LLM summary is persisted.
+as the sidebar; the LLM summary is persisted only with its captured principal
+and resource-visibility fingerprint.
 
 **Why:** Images and documents remain durable resources after their prompt bytes
 leave context, but a selective summary is not a complete or current catalog.

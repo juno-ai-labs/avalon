@@ -117,7 +117,8 @@ depends on it.
 
 - Add migration tests for original content identity, derivative status,
   extractor version, readable-character count, extraction time, bounded error
-  code, and compaction checkpoint-template version.
+  code, fenced processing claim, and compaction checkpoint-template version and
+  authorization-scope fields.
 - Add resource lifecycle tests proving that deleting, expiring, orphaning, or
   replacing an original removes the active derivative and chunk index, and
   schedules bounded retry state if R2 cleanup fails. Separate detachment tests
@@ -260,8 +261,8 @@ contents.
 ### Implementation
 
 - Extract one authorized work-stream resource visibility query/predicate used by
-  both sidebar loading and agent inventory operations, preventing two catalogs
-  from drifting.
+  sidebar loading, attachment tools, and compaction inventory, preventing those
+  three consumers from drifting.
 - Replace the legacy hard-capped `workstream_read` model tool with
   `workstream_list_resources`. Support optional `attachmentKind` and `limit` on
   the first page and cursor-only continuation. Compute and bind a deterministic
@@ -474,12 +475,12 @@ remember an unbounded or stale inventory.
 - Add compaction tests proving the LLM continuation summary is unchanged and the
   authoritative appendix follows it, with no filenames, resource IDs, MIME
   values, contents, or binary parts.
-- Add persistence/replay tests proving the raw summary and template version are
-  stored while the principal-specific appendix is not, and that replay rebuilds
-  the appendix from current authorized state.
-- Add change tests for a resource added, removed, detached, revoked, or hidden by
-  note visibility between compaction and replay. Compare totals and groups with
-  the right-sidebar visibility set for user and workspace principals.
+- Add persistence/replay tests proving the raw summary, template version,
+  execution-principal key, and visibility fingerprint are stored while the
+  appendix is not. Replay rebuilds the appendix only when the scope matches.
+- Add fail-closed tests for a resource added, removed, detached, revoked, or
+  hidden by note visibility during summarization, before persistence, or before
+  replay. No mismatched principal may receive the raw summary.
 - Add compaction prompt tests requiring exact IDs, derivative versions, material
   ranges, conclusions, and unresolved needs only for attachments relevant to
   ongoing work, never the complete catalog.
@@ -490,27 +491,29 @@ remember an unbounded or stale inventory.
   authorized aggregate from the same visibility boundary as the sidebar and
   list tool; its output contains timestamp, total visible resources, total
   visible message attachments, and fixed-order non-empty kind counts.
-- Extend the harness compaction host contract with a deterministic appendix
-  callback. Persist the base checkpoint containing the fixed preamble and raw
-  LLM summary, then append the freshly rendered inventory only to the live
-  checkpoint used for the current principal.
-- Store and validate `checkpoint_template_version`. When a checkpoint is loaded,
-  rebuild one synthetic message from the stored raw summary plus a new
-  authorized inventory; do not reuse principal-specific prose from
-  `messages_json`.
+- Extend the harness compaction host contract with a before-summary scope
+  preparation callback and deterministic appendix callback. Capture the
+  principal and resource fingerprint before the summary, verify it after the
+  model returns and before persistence, and append the inventory only to the
+  live checkpoint.
+- Store and validate `checkpoint_template_version`, `execution_principal_key`,
+  and `resource_visibility_fingerprint`. Rebuild one synthetic message from the
+  stored raw summary plus a new authorized inventory only for an exact scope
+  match; otherwise replay durable messages without the checkpoint.
 - Update the summary prompt to preserve only the durable working set: relevant
   IDs, derivative versions, consulted ranges, material conclusions, and
   unresolved needs. It must not copy file contents, image bytes, or the entire
   inventory.
-- Keep legacy checkpoint rows readable under their existing template semantics,
-  while all new compactions use the current version.
+- Treat legacy rows without authorization scope as invalid checkpoints while all
+  new compactions use the current scoped version.
 - Update `docs/agent-harness.md`, `docs/context-compaction.md`, and the attachment
   module body and changelog in this commit.
 
 ### Acceptance gate
 
-- Forced compaction and later replay both show an inventory that matches the
-  right sidebar for the active principal at that moment.
+- Forced compaction and an exact-scope replay both show an inventory that matches
+  the right sidebar. A principal or visibility change invalidates the checkpoint
+  without exposing its summary.
 - Stored checkpoints contain no principal-specific inventory, data URI,
   attachment contents, or unbounded ID/name list.
 - A post-compaction model can exhaust any kind through

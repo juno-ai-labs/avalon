@@ -65,9 +65,15 @@ describe("database migrations", () => {
       "model_content_extracted_at",
       "model_content_error_code",
       "model_index_ref",
+      "model_content_claimed_at",
+      "model_content_claim_id",
     ]));
     const compactionColumns = database.prepare("PRAGMA table_info(workstream_context_compactions)").all() as Array<{ name: string }>;
-    expect(compactionColumns.map((column) => column.name)).toContain("checkpoint_template_version");
+    expect(compactionColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "checkpoint_template_version",
+      "execution_principal_key",
+      "resource_visibility_fingerprint",
+    ]));
 
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -90,6 +96,29 @@ describe("database migrations", () => {
         ('attachment-resource', 'active-model-ref', 'derivative', 'active', '2026-08-12'),
         ('attachment-resource', 'active-index-ref', 'index', 'active', '2026-08-12'),
         ('attachment-resource', 'old-model-ref', 'derivative', 'superseded', '2026-08-12');
+      UPDATE resources
+         SET model_content_ref = 'next-model-ref', model_index_ref = 'next-index-ref'
+       WHERE id = 'attachment-resource';
+      UPDATE resources
+         SET model_content_ref = 'orphan-model-ref', model_index_ref = 'orphan-index-ref'
+       WHERE id = 'missing-resource';
+    `);
+
+    expect(database.prepare(
+      `SELECT object_ref, object_kind, lifecycle_status FROM resource_model_objects
+        WHERE resource_id = 'attachment-resource' ORDER BY object_ref`,
+    ).all()).toEqual([
+      { object_ref: "active-index-ref", object_kind: "index", lifecycle_status: "superseded" },
+      { object_ref: "active-model-ref", object_kind: "derivative", lifecycle_status: "superseded" },
+      { object_ref: "next-index-ref", object_kind: "index", lifecycle_status: "active" },
+      { object_ref: "next-model-ref", object_kind: "derivative", lifecycle_status: "active" },
+      { object_ref: "old-model-ref", object_kind: "derivative", lifecycle_status: "superseded" },
+    ]);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM resource_model_objects WHERE object_ref LIKE 'orphan-%'",
+    ).get()).toEqual({ count: 0 });
+
+    database.exec(`
       DELETE FROM resources WHERE id = 'attachment-resource';
     `);
 
@@ -99,6 +128,8 @@ describe("database migrations", () => {
     ).all()).toEqual([
       { object_ref: "active-index-ref", object_kind: "index" },
       { object_ref: "active-model-ref", object_kind: "derivative" },
+      { object_ref: "next-index-ref", object_kind: "index" },
+      { object_ref: "next-model-ref", object_kind: "derivative" },
       { object_ref: "old-model-ref", object_kind: "derivative" },
       { object_ref: "original-ref", object_kind: "original" },
     ]);

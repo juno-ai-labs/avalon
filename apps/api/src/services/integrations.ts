@@ -86,8 +86,12 @@ import { createChildDeadline, withDeadline } from "../lib/deadline";
 import { ApiError } from "../lib/api-error";
 import {
   CHECKPOINT_TEMPLATE_VERSION,
-  renderAuthorizedWorkstreamResourceInventory,
+  renderWorkstreamResourceInventory,
 } from "./workstream-resource-inventory";
+import {
+  executionPrincipalKey,
+  loadVisibleWorkstreamResources,
+} from "./workstream-resource-visibility";
 import {
   FIRECRAWL_CACHE_MAX_AGE_MS,
   FirecrawlClient,
@@ -115,7 +119,11 @@ import {
   createWorkstreamAttachmentTools,
   rehydrateWorkstreamViewReceipt,
 } from "./workstream-attachment-tools";
-import { registerAttachmentToolReceipt } from "./attachment-tool-receipts";
+import {
+  invalidateAttachmentToolReplay,
+  registerAttachmentToolReceipt,
+  validateAttachmentToolReceiptReplay,
+} from "./attachment-tool-receipts";
 import {
   ACCEPTED_DELAY_UNITS_HINT,
   ACCEPTED_TIMESTAMP_HINT,
@@ -520,7 +528,8 @@ async function loadWorkstreamContextCompaction(
   asOf?: string,
 ): Promise<WorkstreamContextCompaction | null> {
   const row = await database.prepare(
-    `SELECT compacted_through_sequence, messages_json, summary, checkpoint_template_version
+    `SELECT compacted_through_sequence, messages_json, summary, checkpoint_template_version,
+            execution_principal_key, resource_visibility_fingerprint
        FROM workstream_context_compactions
       WHERE workspace_id = ? AND workstream_id = ?`,
   ).bind(workspaceId, workstreamId).first<{
@@ -528,16 +537,25 @@ async function loadWorkstreamContextCompaction(
     messages_json: string;
     summary: string;
     checkpoint_template_version: number;
+    execution_principal_key: string | null;
+    resource_visibility_fingerprint: string | null;
   }>();
   if (!row || !Number.isSafeInteger(row.compacted_through_sequence) || row.compacted_through_sequence < 0) {
     return null;
   }
+  const visible = await loadVisibleWorkstreamResources(database, {
+    workspaceId,
+    workstreamId,
+    principal,
+  });
+  if (row.execution_principal_key !== executionPrincipalKey(principal)
+    || row.resource_visibility_fingerprint !== visible.fingerprint) {
+    return null;
+  }
   if (row.checkpoint_template_version === CHECKPOINT_TEMPLATE_VERSION) {
-    const appendix = await renderAuthorizedWorkstreamResourceInventory(database, {
-      workspaceId,
-      workstreamId,
-      principal,
-      ...(asOf ? { asOf } : {}),
+    const appendix = renderWorkstreamResourceInventory({
+      asOf: asOf ?? new Date().toISOString(),
+      rows: visible.rows,
     });
     return {
       compactedThroughSequence: row.compacted_through_sequence,
@@ -560,15 +578,25 @@ async function persistWorkstreamContextCompaction(
   input: WorkstreamWorkflowInput,
   compactedThroughSequence: number,
   checkpoint: HarnessCompactionCheckpoint,
+  expectedVisibilityFingerprint?: string,
 ): Promise<void> {
   const at = nowIso();
+  const visible = await loadVisibleWorkstreamResources(database, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    principal: input.executionPrincipal,
+  });
+  if (expectedVisibilityFingerprint && visible.fingerprint !== expectedVisibilityFingerprint) {
+    throw new Error("compaction_resource_visibility_changed");
+  }
   await database.prepare(
     `INSERT INTO workstream_context_compactions
        (workstream_id, workspace_id, harness_run_id, compacted_through_sequence,
-        messages_json, summary, checkpoint_template_version, model, context_tokens_before_compaction,
+        messages_json, summary, checkpoint_template_version, execution_principal_key,
+        resource_visibility_fingerprint, model, context_tokens_before_compaction,
         context_window_tokens, input_tokens, output_tokens, cost_microusd,
         created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(workstream_id) DO UPDATE SET
        workspace_id = excluded.workspace_id,
        harness_run_id = excluded.harness_run_id,
@@ -576,6 +604,8 @@ async function persistWorkstreamContextCompaction(
        messages_json = excluded.messages_json,
        summary = excluded.summary,
        checkpoint_template_version = excluded.checkpoint_template_version,
+       execution_principal_key = excluded.execution_principal_key,
+       resource_visibility_fingerprint = excluded.resource_visibility_fingerprint,
        model = excluded.model,
        context_tokens_before_compaction = excluded.context_tokens_before_compaction,
        context_window_tokens = excluded.context_window_tokens,
@@ -596,6 +626,8 @@ async function persistWorkstreamContextCompaction(
     JSON.stringify(checkpoint.messages),
     checkpoint.summary,
     CHECKPOINT_TEMPLATE_VERSION,
+    executionPrincipalKey(input.executionPrincipal),
+    visible.fingerprint,
     checkpoint.model,
     checkpoint.contextTokensBeforeCompaction,
     checkpoint.contextWindowTokens,
@@ -1905,6 +1937,7 @@ export async function runWorkstreamHarness(
     source: hyperSightRun ? "hypersight" : "workstream",
     workstreamId: input.workstreamId,
   });
+  let preparedCompactionVisibility: Awaited<ReturnType<typeof loadVisibleWorkstreamResources>> | null = null;
   let outcome: Awaited<ReturnType<typeof runHarness>>;
   try {
     outcome = await runHarness({
@@ -1940,13 +1973,30 @@ export async function runWorkstreamHarness(
       skills: [...BUILT_IN_SKILLS],
       ...(!hyperSightRun ? {
         compaction: {
-          renderAppendix: async () => {
-            await liveness.pulse("compaction_inventory", true);
+          prepare: async () => {
+            await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
-            return renderAuthorizedWorkstreamResourceInventory(env.DB, {
+            preparedCompactionVisibility = await loadVisibleWorkstreamResources(env.DB, {
               workspaceId: input.workspaceId,
               workstreamId: input.workstreamId,
               principal: input.executionPrincipal,
+            });
+          },
+          renderAppendix: async () => {
+            await liveness.pulse("compaction_inventory", true);
+            await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+            const current = await loadVisibleWorkstreamResources(env.DB, {
+              workspaceId: input.workspaceId,
+              workstreamId: input.workstreamId,
+              principal: input.executionPrincipal,
+            });
+            if (!preparedCompactionVisibility
+              || current.fingerprint !== preparedCompactionVisibility.fingerprint) {
+              throw new Error("compaction_resource_visibility_changed");
+            }
+            return renderWorkstreamResourceInventory({
+              asOf: new Date().toISOString(),
+              rows: current.rows,
             });
           },
           persist: async (checkpoint) => {
@@ -1957,7 +2007,9 @@ export async function runWorkstreamHarness(
               input,
               compactedThroughSequence,
               checkpoint,
+              preparedCompactionVisibility?.fingerprint,
             );
+            preparedCompactionVisibility = null;
           },
         },
       } : {}),
@@ -2137,18 +2189,23 @@ export async function runWorkstreamHarness(
       if (!row) return null;
       const policyMatches = storedToolPolicyMatches(row.execution_plan_json, expectedPolicy);
       if (row.status === "completed" && row.input_hash === inputHash && policyMatches) {
+        const attachmentReplay = await loadAuthorizedAttachmentReplay(env, input, {
+          invocationId: row.id,
+          capability: expectedPolicy.definition.capability,
+          canonicalToolName: expectedPolicy.definition.name,
+          rawInput: parseJson(row.input_json, {}),
+          outputRef: row.output_ref,
+        });
+        if (attachmentReplay === null) return null;
         const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
         if (invocation) {
           if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
           await emit({ type: "tool_completed", invocation });
         }
-        const replayedOutput = row.output_ref
+        const replayedOutput = attachmentReplay?.output ?? (row.output_ref
           ? await loadToolReplayOutput(env, row.output_ref)
-          : null;
-        const contentParts = expectedPolicy.definition.name === "view_resource" && replayedOutput
-          ? await rehydrateWorkstreamViewReceipt(env, input, parseJson(row.input_json, {}), replayedOutput)
-              .catch(() => [])
-          : [];
+          : null);
+        const contentParts = attachmentReplay?.contentParts ?? [];
         return {
           output: replayedOutput ?? { summary: row.output_summary },
           summary: row.output_summary ?? "Completed",
@@ -3126,10 +3183,11 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               throw new ConnectorError("unauthorized", "Sub-agents may only replay read-only receipts");
             }
             const row = await options.env.DB.prepare(
-              `SELECT input_hash, input_json, status, output_ref, output_summary, execution_plan_json
+              `SELECT id, input_hash, input_json, status, output_ref, output_summary, execution_plan_json
                  FROM tool_invocations
                 WHERE harness_run_id = ? AND tool_call_id = ?`,
             ).bind(childInput.harnessRunId, toolCallId).first<{
+              id: string;
               input_hash: string;
               input_json: string;
               status: string;
@@ -3143,17 +3201,18 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               throw new Error("tool_receipt_execution_plan_mismatch");
             }
             if (row.status !== "completed") return null;
-            const replay = row.output_ref
+            const attachmentReplay = await loadAuthorizedAttachmentReplay(options.env, childInput, {
+              invocationId: row.id,
+              capability: expectedPolicy.definition.capability,
+              canonicalToolName: expectedPolicy.definition.name,
+              rawInput: parseJson(row.input_json, {}),
+              outputRef: row.output_ref,
+            });
+            if (attachmentReplay === null) return null;
+            const replay = attachmentReplay?.output ?? (row.output_ref
               ? await loadToolReplayOutput(options.env, row.output_ref)
-              : null;
-            const contentParts = expectedPolicy.definition.name === "view_resource" && replay
-              ? await rehydrateWorkstreamViewReceipt(
-                  options.env,
-                  childInput,
-                  parseJson(row.input_json, {}),
-                  replay,
-                ).catch(() => [])
-              : [];
+              : null);
+            const contentParts = attachmentReplay?.contentParts ?? [];
             return {
               output: replay ?? { summary: row.output_summary },
               summary: row.output_summary ?? "Completed",
@@ -3856,6 +3915,56 @@ async function loadToolReplayOutput(
     // The D1 summary is a safe fallback when a payload is missing, damaged, or stalls.
     return null;
   }
+}
+
+async function loadAuthorizedAttachmentReplay(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  receipt: {
+    invocationId: string;
+    capability: string;
+    canonicalToolName: string;
+    rawInput: unknown;
+    outputRef: string | null;
+  },
+): Promise<{
+  output: unknown;
+  contentParts: Awaited<ReturnType<typeof rehydrateWorkstreamViewReceipt>>;
+} | null | undefined> {
+  if (!receipt.capability.startsWith("workstream.resources.")) return undefined;
+  const visible = await loadVisibleWorkstreamResources(env.DB, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    principal: input.executionPrincipal,
+  });
+  const validation = await validateAttachmentToolReceiptReplay(env.DB, {
+    invocationId: receipt.invocationId,
+    capability: receipt.capability,
+    visibleResourceIds: new Set(visible.rows.map((resource) => resource.id)),
+  });
+  if (validation !== "valid" || !receipt.outputRef) {
+    await invalidateAttachmentToolReplay(env.DB, receipt.invocationId);
+    return null;
+  }
+  const output = await loadToolReplayOutput(env, receipt.outputRef);
+  if (output === null) {
+    await invalidateAttachmentToolReplay(env.DB, receipt.invocationId);
+    return null;
+  }
+  let contentParts: Awaited<ReturnType<typeof rehydrateWorkstreamViewReceipt>>;
+  try {
+    contentParts = receipt.canonicalToolName === "view_resource"
+      ? await rehydrateWorkstreamViewReceipt(env, input, receipt.rawInput, output)
+      : [];
+  } catch {
+    await invalidateAttachmentToolReplay(env.DB, receipt.invocationId);
+    return null;
+  }
+  if (receipt.canonicalToolName === "view_resource" && contentParts.length === 0) {
+    await invalidateAttachmentToolReplay(env.DB, receipt.invocationId);
+    return null;
+  }
+  return { output, contentParts };
 }
 
 async function loadHarnessTools(
@@ -6353,6 +6462,7 @@ export const __integrationTesting = {
   renderElicitationResponseMessage,
   serializeToolReplayOutput,
   durableToolReplayOutput,
+  loadAuthorizedAttachmentReplay,
   toolReplayOutputKey,
   persistSuccessfulToolResult,
   persistToolTranscriptMessage,

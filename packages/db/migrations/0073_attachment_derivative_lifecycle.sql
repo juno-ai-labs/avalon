@@ -1,3 +1,7 @@
+-- Forward-only regional D1 migration. The migration runner applies each
+-- filename once. If a rebase claims this sequence, renumber this migration and
+-- its dependents instead of rerunning these ALTER TABLE statements.
+
 ALTER TABLE resources ADD COLUMN content_sha256 TEXT;
 ALTER TABLE resources ADD COLUMN model_content_status TEXT
   CHECK (model_content_status IN ('pending', 'processing', 'ready', 'failed', 'unsupported'));
@@ -7,10 +11,14 @@ ALTER TABLE resources ADD COLUMN model_content_character_count INTEGER
 ALTER TABLE resources ADD COLUMN model_content_extracted_at TEXT;
 ALTER TABLE resources ADD COLUMN model_content_error_code TEXT;
 ALTER TABLE resources ADD COLUMN model_index_ref TEXT;
+ALTER TABLE resources ADD COLUMN model_content_claimed_at TEXT;
+ALTER TABLE resources ADD COLUMN model_content_claim_id TEXT;
 
 ALTER TABLE workstream_context_compactions
   ADD COLUMN checkpoint_template_version INTEGER NOT NULL DEFAULT 1
   CHECK (checkpoint_template_version >= 1);
+ALTER TABLE workstream_context_compactions ADD COLUMN execution_principal_key TEXT;
+ALTER TABLE workstream_context_compactions ADD COLUMN resource_visibility_fingerprint TEXT;
 
 -- Every current or superseded model object is registered here. The row is
 -- derived state: deleting the resource deletes this catalog after the trigger
@@ -39,6 +47,41 @@ CREATE TABLE resource_object_deletion_outbox (
 
 CREATE INDEX idx_resource_object_deletion_outbox_created
   ON resource_object_deletion_outbox(created_at, object_ref);
+
+-- Publication side effects belong to the successful pointer update itself.
+-- A failed compare-and-swap therefore cannot catalog or enqueue an object, and
+-- every writer (text, image, note, or future converter) gets the same lifecycle.
+CREATE TRIGGER resources_track_model_objects_after_update
+AFTER UPDATE OF model_content_ref, model_index_ref ON resources
+BEGIN
+  INSERT INTO resource_model_objects
+    (resource_id, object_ref, object_kind, lifecycle_status, created_at)
+    SELECT NEW.id, NEW.model_content_ref, 'derivative', 'active', datetime('now')
+    WHERE NEW.model_content_ref IS NOT NULL
+    ON CONFLICT(resource_id, object_ref) DO UPDATE SET lifecycle_status = 'active';
+
+  INSERT INTO resource_model_objects
+    (resource_id, object_ref, object_kind, lifecycle_status, created_at)
+    SELECT NEW.id, NEW.model_index_ref, 'index', 'active', datetime('now')
+    WHERE NEW.model_index_ref IS NOT NULL
+    ON CONFLICT(resource_id, object_ref) DO UPDATE SET lifecycle_status = 'active';
+
+  INSERT OR IGNORE INTO resource_object_deletion_outbox
+    (object_ref, resource_id, object_kind, created_at, updated_at)
+    SELECT OLD.model_content_ref, OLD.id, 'derivative', datetime('now'), datetime('now')
+    WHERE OLD.model_content_ref IS NOT NULL
+      AND OLD.model_content_ref IS NOT NEW.model_content_ref;
+
+  INSERT OR IGNORE INTO resource_object_deletion_outbox
+    (object_ref, resource_id, object_kind, created_at, updated_at)
+    SELECT OLD.model_index_ref, OLD.id, 'index', datetime('now'), datetime('now')
+    WHERE OLD.model_index_ref IS NOT NULL
+      AND OLD.model_index_ref IS NOT NEW.model_index_ref;
+
+  UPDATE resource_model_objects SET lifecycle_status = 'superseded'
+   WHERE resource_id = OLD.id AND object_ref IN (OLD.model_content_ref, OLD.model_index_ref)
+     AND object_ref NOT IN (COALESCE(NEW.model_content_ref, ''), COALESCE(NEW.model_index_ref, ''));
+END;
 
 -- This trigger applies to every resource owner. Relationship detachment never
 -- fires it; only deleting the resource's lifecycle row schedules object cleanup.

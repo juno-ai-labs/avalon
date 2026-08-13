@@ -1504,11 +1504,13 @@ describe("agent harness", () => {
         usage: { prompt_tokens: 24, completion_tokens: 2 },
       }]),
     ];
-    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
       return responses.shift()!;
-    }) as typeof fetch;
+    });
+    const fetcher = fetchMock as typeof fetch;
     const persist = vi.fn();
+    const prepare = vi.fn(async () => undefined);
     const renderAppendix = vi.fn(async () => [
       "# Authoritative work-stream resource inventory",
       "Visible resources: 2",
@@ -1524,6 +1526,7 @@ describe("agent harness", () => {
       corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
       compaction: {
         contextWindowTokensByModel: { "test/model": 100 },
+        prepare,
         persist,
         renderAppendix,
       },
@@ -1540,7 +1543,10 @@ describe("agent harness", () => {
       },
     });
     expect(persist).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(renderAppendix).toHaveBeenCalledTimes(1);
+    expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[1]!);
+    expect(renderAppendix.mock.invocationCallOrder[0]).toBeGreaterThan(fetchMock.mock.invocationCallOrder[1]!);
     expect(persist).toHaveBeenCalledWith(expect.objectContaining({
       trigger: "auto",
       contextTokensBeforeCompaction: 82,
