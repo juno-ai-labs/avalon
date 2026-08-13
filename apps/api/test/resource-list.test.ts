@@ -189,6 +189,8 @@ describe("resource listing", () => {
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
     await expect(new ResourceService(environment, authFor("outsider-user")).content("email-resource"))
       .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
+    await expect(new ResourceService(environment, authFor("outsider-user")).preview("email-resource", new AbortController().signal))
+      .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
     expect(payloadReads).toHaveLength(0);
 
     await expect(new ResourceService(environment, authFor("participant-user")).list({ limit: 10 }))

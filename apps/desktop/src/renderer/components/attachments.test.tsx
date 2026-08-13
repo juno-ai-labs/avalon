@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageAttachment } from '../lib/types';
-import { AttachmentLightbox, MessageAttachments, PendingAttachmentTile } from './attachments';
+import { AttachmentLightbox } from './attachment-lightbox';
+import { type AttachmentPreview, MessageAttachments, PendingAttachmentTile } from './attachments';
 
 describe('attachment presentation', () => {
   beforeEach(() => {
@@ -50,7 +51,7 @@ describe('attachment presentation', () => {
     };
     const loadContent = vi.fn(async () => new Blob(['image'], { type: 'image/png' }));
     function Example(): React.JSX.Element {
-      const [preview, setPreview] = useState<{ name: string; src: string } | null>(null);
+      const [preview, setPreview] = useState<AttachmentPreview | null>(null);
       return <><MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={setPreview} /><AttachmentLightbox preview={preview} onClose={() => setPreview(null)} /></>;
     }
     render(<Example />);
@@ -61,5 +62,71 @@ describe('attachment presentation', () => {
     expect(screen.getByRole('dialog', { name: 'Preview of diagram.png' })).toBeVisible();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('loads and renders a sent Markdown attachment only after it is opened', async () => {
+    const attachment: MessageAttachment = {
+      id: 'resource-markdown',
+      fileName: 'brief.md',
+      mimeType: 'text/markdown',
+      sizeBytes: 24,
+      contentAvailable: true,
+      createdAt: '2026-08-04T00:00:00.000Z',
+    };
+    const loadContent = vi.fn(async () => new Blob(['# Launch brief\n\n- First'], { type: 'text/markdown' }));
+    function Example(): React.JSX.Element {
+      const [preview, setPreview] = useState<AttachmentPreview | null>(null);
+      return <><MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={setPreview} /><AttachmentLightbox preview={preview} onClose={() => setPreview(null)} /></>;
+    }
+    render(<Example />);
+
+    expect(loadContent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview brief.md' }));
+    expect(screen.getByRole('dialog', { name: 'Preview of brief.md' })).toHaveAttribute('aria-busy', 'true');
+    expect(await screen.findByRole('heading', { name: 'Launch brief' })).toBeVisible();
+    expect(loadContent).toHaveBeenCalledOnce();
+  });
+
+  it('shows plain text as monospace text without interpreting Markdown', async () => {
+    const attachment: MessageAttachment = {
+      id: 'resource-text',
+      fileName: 'debug.log',
+      mimeType: 'text/plain',
+      sizeBytes: 16,
+      contentAvailable: true,
+      createdAt: '2026-08-04T00:00:00.000Z',
+    };
+    const loadContent = vi.fn(async () => new Blob(['**literal**\nline two'], { type: 'text/plain' }));
+    function Example(): React.JSX.Element {
+      const [preview, setPreview] = useState<AttachmentPreview | null>(null);
+      return <><MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={setPreview} /><AttachmentLightbox preview={preview} onClose={() => setPreview(null)} /></>;
+    }
+    render(<Example />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview debug.log' }));
+    const text = await screen.findByText(/\*\*literal\*\*/u);
+    expect(text.tagName).toBe('PRE');
+    expect(text).toHaveClass('attachment-lightbox-text');
+    expect(screen.queryByText('literal', { selector: 'strong' })).not.toBeInTheDocument();
+  });
+
+  it('renders a document derivative as Markdown', async () => {
+    const attachment: MessageAttachment = {
+      id: 'resource-document',
+      fileName: 'proposal.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      sizeBytes: 512,
+      contentAvailable: true,
+      createdAt: '2026-08-04T00:00:00.000Z',
+    };
+    const loadContent = vi.fn(async () => new Blob(['# Converted proposal\n\nDocument body'], { type: 'text/markdown' }));
+    function Example(): React.JSX.Element {
+      const [preview, setPreview] = useState<AttachmentPreview | null>(null);
+      return <><MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={setPreview} /><AttachmentLightbox preview={preview} onClose={() => setPreview(null)} /></>;
+    }
+    render(<Example />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview proposal.docx' }));
+    expect(await screen.findByRole('heading', { name: 'Converted proposal' })).toBeVisible();
   });
 });

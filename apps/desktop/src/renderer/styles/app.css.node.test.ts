@@ -141,6 +141,14 @@ describe('system message clamp', () => {
   });
 });
 
+describe('attachment lightbox', () => {
+  it('keeps plain attachment text visibly monospace', () => {
+    expect(rule('.attachment-lightbox-text')).toContain(
+      'font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;',
+    );
+  });
+});
+
 /**
  * Markdown list markers are drawn by the browser, which makes them exactly the
  * kind of thing a global reset can remove without any test noticing: the DOM is
