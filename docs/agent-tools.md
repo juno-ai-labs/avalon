@@ -286,16 +286,16 @@ The work-stream runtime now exposes five bounded operations. The old
 `workstream_read` hard-capped index is replaced by
 `workstream_list_resources`, whose first call accepts an optional natural-
 language kind and whose cursor-only continuations can exhaust more than fifty
-resources. `workstream_read_resource` returns at most 12,000 characters by
-default with exact characters before and after plus previous/next cursors.
+resources. `workstream_read_resource` returns 12,000 characters by default and
+at most 24,000, with exact characters before and after plus previous/next cursors.
 `workstream_search_resource` searches one derivative index and returns at most
 five passages and 20,000 characters. `workstream_view_resource` returns a
 JSON-only inclusion summary plus as many as eight ephemeral visual parts, and
 `workstream_summarize_resource` runs a range-grounded isolated reader with an
-optional untrusted focus. Every cursor is reauthorized and bound to the current
+optional untrusted prompt. Every cursor is reauthorized and bound to the current
 inventory or derivative version.
 
-All three operations use the same visibility loader as the right sidebar.
+All five operations use the same visibility loader as the right sidebar.
 Nonexistent, foreign, detached, archived, revoked, and principal-invisible note
 IDs therefore collapse to `resource_not_found`; a list continuation fails and
 restarts when current visibility changes instead of combining inventories.

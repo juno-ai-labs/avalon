@@ -511,6 +511,19 @@ async function defaultPdfExtractor(bytes: Uint8Array): Promise<AttachmentPdfText
 }
 
 function readOfficeArchive(bytes: Uint8Array, accept: (name: string) => boolean): Record<string, Uint8Array> {
+  if (
+    bytes.byteLength >= 8
+    && bytes[0] === 0xd0
+    && bytes[1] === 0xcf
+    && bytes[2] === 0x11
+    && bytes[3] === 0xe0
+    && bytes[4] === 0xa1
+    && bytes[5] === 0xb1
+    && bytes[6] === 0x1a
+    && bytes[7] === 0xe1
+  ) {
+    throw new ConversionFailure("office_encryption_unsupported");
+  }
   let expanded = 0;
   try {
     return unzipSync(bytes, {
