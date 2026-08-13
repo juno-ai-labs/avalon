@@ -27,6 +27,10 @@ import {
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
   WorkspaceSchema as WireWorkspaceSchema,
+  TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
+  TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
+  TerminalRepositoryCatalogSchema as WireTerminalRepositoryCatalogSchema,
+  TerminalWorkstreamStateSchema as WireTerminalWorkstreamStateSchema,
   WorkstreamDetailSchema as WireWorkstreamDetailSchema,
   DigestScheduleSchema as WireDigestScheduleSchema,
   WorkstreamSchema as WireWorkstreamSchema,
@@ -92,6 +96,10 @@ import type {
   WorkstreamResource,
   WorkstreamSummary,
   WorkOpportunity,
+  TerminalWorkspaceSettings,
+  TerminalNetworkPolicyPreview,
+  TerminalRepositoryCatalog,
+  TerminalWorkstreamState,
 } from './types';
 
 export class ApiError extends Error {
@@ -802,6 +810,30 @@ export class AvalonApi {
     return this.getWorkspace();
   }
 
+  async getTerminalWorkspaceSettings(signal?: AbortSignal): Promise<TerminalWorkspaceSettings> {
+    return this.request('/workspace/terminal', { schema: WireTerminalWorkspaceSettingsSchema, signal });
+  }
+
+  async previewTerminalNetworkPolicy(input: {
+    expectedRevision: number;
+    mode: 'trusted_only' | 'full_internet';
+    customDomains: string[];
+  }): Promise<TerminalNetworkPolicyPreview> {
+    return this.request('/workspace/terminal/network-policy/preview', {
+      method: 'POST', body: input, schema: WireTerminalNetworkPolicyPreviewSchema,
+    });
+  }
+
+  async applyTerminalNetworkPolicy(input: {
+    mutationId: string;
+    expectedRevision: number;
+    confirmed: true;
+  }): Promise<TerminalWorkspaceSettings> {
+    return this.request('/workspace/terminal/network-policy/apply', {
+      method: 'POST', body: input, schema: WireTerminalWorkspaceSettingsSchema,
+    });
+  }
+
   async getDigestSchedule(signal?: AbortSignal): Promise<DigestSchedule> {
     return this.request('/digest', { schema: WireDigestScheduleSchema, signal });
   }
@@ -1237,6 +1269,35 @@ export class AvalonApi {
   async getWorkstream(id: string, signal?: AbortSignal): Promise<WorkstreamDetail> {
     const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamDetailSchema, signal });
     return mapWorkstreamDetail(raw);
+  }
+
+  async getTerminalWorkstreamState(id: string, signal?: AbortSignal): Promise<TerminalWorkstreamState> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal`, {
+      schema: WireTerminalWorkstreamStateSchema,
+      signal,
+    });
+  }
+
+  async getTerminalRepositoryCatalog(id: string, signal?: AbortSignal): Promise<TerminalRepositoryCatalog> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/repositories`, {
+      schema: WireTerminalRepositoryCatalogSchema,
+      signal,
+    });
+  }
+
+  async selectTerminalRepository(id: string, input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles?: boolean }): Promise<TerminalWorkstreamState> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/repository`, {
+      method: 'PUT',
+      body: input,
+      schema: WireTerminalWorkstreamStateSchema,
+    });
+  }
+
+  async startFreshTerminalWorkspace(id: string): Promise<TerminalWorkstreamState> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/start-fresh`, {
+      method: 'POST',
+      schema: WireTerminalWorkstreamStateSchema,
+    });
   }
 
   async getHyperSight(id: string, signal?: AbortSignal): Promise<HyperSight> {

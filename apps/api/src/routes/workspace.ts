@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   AcceptWorkspaceInvitationRequestSchema,
@@ -10,17 +10,32 @@ import {
   WorkspaceInvitationSchema,
   WorkspaceMemberSchema,
   WorkspaceSchema,
+  TerminalWorkspaceSettingsSchema,
+  TerminalNetworkPolicyPreviewSchema,
+  PreviewTerminalNetworkPolicyRequestSchema,
+  ApplyTerminalNetworkPolicyRequestSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { WorkspaceService } from "../services/workspace-service";
+import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
+import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
+import { TerminalSettingsService } from "../services/terminal/settings";
 
 const invitationParam = z.object({ id: IdSchema });
 const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
 const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
 
 export const workspaceRoutes = new Hono<HonoAppEnv>();
+
+function terminalSettingsService(c: Context<HonoAppEnv>): TerminalSettingsService {
+  const configuration = parseTerminalRegionConfiguration(c.env);
+  const provider = configuration.capability === "supported"
+    ? createDaytonaTerminalProvider(configuration)
+    : null;
+  return new TerminalSettingsService(c.env, getAuth(c), provider);
+}
 
 workspaceRoutes.get("/", async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getWorkspace())));
@@ -30,6 +45,23 @@ workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), asy
 workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) =>
   c.json(WorkspaceMemberSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone))),
+);
+workspaceRoutes.get("/terminal", async (c) =>
+  c.json(TerminalWorkspaceSettingsSchema.parse(await terminalSettingsService(c).get())),
+);
+workspaceRoutes.post(
+  "/terminal/network-policy/preview",
+  zValidator("json", PreviewTerminalNetworkPolicyRequestSchema),
+  async (c) => c.json(TerminalNetworkPolicyPreviewSchema.parse(
+    await terminalSettingsService(c).preview(c.req.valid("json")),
+  )),
+);
+workspaceRoutes.post(
+  "/terminal/network-policy/apply",
+  zValidator("json", ApplyTerminalNetworkPolicyRequestSchema),
+  async (c) => c.json(TerminalWorkspaceSettingsSchema.parse(
+    await terminalSettingsService(c).apply(c.req.valid("json")),
+  )),
 );
 workspaceRoutes.get("/members", async (c) =>
   c.json(MemberPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listMembers() })),

@@ -162,6 +162,27 @@ guessed ID. Automation cursors use a separate purpose namespace, so a work-strea
 continuation cannot be replayed into the compiler. Conversion, paging, image
 normalization, isolated summaries, and result bounds remain shared.
 
+### Terminal resource exchange
+
+The Terminal plugin reuses the same authorized resource and lifecycle boundary
+without projecting original bytes into the model. `terminal_import_resource`
+resolves one resource through current work-stream/principal visibility, streams
+its regional R2 original through the Worker, verifies its stored hash, and writes
+it into the current authority-fenced sandbox generation. Daytona receives no R2
+credential or signed URL. An omitted destination is deterministic beneath
+`.avalon/resources/`; an explicit destination is create-only unless the model
+states `overwrite: true`.
+
+`terminal_publish_resource` reads one stable nonempty regular file from the
+host-provided output directory, classifies it with the attachment MIME/kind
+registry, pre-registers the regional object in the cleanup outbox, writes R2,
+then creates and attaches a normal generated `resources` row. The tool receipt
+derives `provider_resource_id`, so replay returns the same resource rather than
+duplicating bytes. Detachment and deletion therefore follow the existing
+inventory revision, derivative, replay-dependency, and cleanup rules. Command
+logs and expiry diffs use the same generated-resource shape. The sandbox bridge
+itself is documented in [`terminal-workspaces.md`](terminal-workspaces.md).
+
 ### Regional lifecycle
 
 Uploads hash the exact bounded bytes before the resource row commits. Connector
@@ -410,6 +431,30 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-13 — Terminal imports and publications reuse resource authority
+
+**What changed:** A Terminal sandbox can import currently visible originals and
+publish generated files, command logs, and final diffs through the regional R2,
+resource attachment, inventory revision, and cleanup-outbox lifecycle.
+
+**Why:** Copying attachments into code and returning generated graphs/reports is
+the useful bridge between a transient sandbox and a durable work stream. Direct
+Daytona access to R2 or a second artifact store would bypass current-principal
+visibility and split deletion/replay ownership.
+
+**Considered and rejected:** Signed R2 URLs in the sandbox, embedding file bytes
+in model tool results, and a Terminal-specific artifact table. Each either
+exports storage authority, spends unbounded context, or duplicates the resource
+lifecycle merged in #144.
+
+**Consequences:** Import always reauthorizes and verifies the original hash;
+publication identity comes from the durable invocation receipt; and new
+Terminal output formats must pass the shared attachment classifier and cleanup
+contract.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — Message previews reuse the authorized derivative boundary
 

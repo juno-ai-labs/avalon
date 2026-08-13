@@ -53,3 +53,27 @@ test("the Notion ingress URL is serialized and derived from the region's own API
     "each region's development ingress must default to that region's own Worker",
   );
 });
+
+test("Daytona Terminal configuration reaches each regional development Worker", () => {
+  const regionalizable = new Set(
+    [...block("regionalizableKeys", "[", "]").matchAll(/"([^"]+)"/gu)].map((match) => match[1]),
+  );
+  const expected = [
+    "TERMINAL_REGION_CAPABILITY",
+    "DAYTONA_API_KEY",
+    "DAYTONA_API_URL",
+    "DAYTONA_TARGET",
+    "DAYTONA_TERMINAL_SNAPSHOT",
+    "TERMINAL_EMERGENCY_DISABLED",
+  ];
+  assert.deepEqual(
+    expected.filter((key) => !workerKeys.has(key)),
+    [],
+    "Terminal configuration in .env.local must be written to .dev.vars",
+  );
+  assert.deepEqual(
+    expected.filter((key) => !regionalizable.has(key)),
+    [],
+    "Terminal configuration must support independent Global and EU values",
+  );
+});

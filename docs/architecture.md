@@ -32,6 +32,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
+| `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
 | `apps/api/src/durable-objects` | `WorkstreamRoom` and `WorkspaceScheduler`. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | The generic work-stream Workflow and the idempotent activity consumer. |
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
@@ -91,6 +92,8 @@ flowchart LR
   W --> A["Avalon Bind 11 adapter"]
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
+  A --> X["Deferred Terminal plugin"]
+  X --> DT["Private Daytona sandbox"]
   W --> R
   T --> G["Google APIs"]
   T --> M["Signed webhook"]
@@ -287,6 +290,15 @@ A lightweight structured classifier decides whether a human message is
 `agent_action`, `human_only`, `both`, or `uncertain`. Eligible messages start one
 generic Cloudflare Workflow instance parameterized by opaque IDs.
 
+Supported regional work-stream runtimes may discover the deferred Terminal
+plugin. Loading it changes only Bind's prompt/tool surface; the first file,
+command, resource, or repository tool call lazily crosses the regional API into
+one private Daytona sandbox for that work stream. D1 remains the authority for
+generation, mutation leases, tasks, egress revision, retention, resource
+exchange, and GitHub publication. The provider supplies isolation and process/
+filesystem/lifecycle primitives, not Avalon's receipts or authorization. See
+[`terminal-workspaces.md`](terminal-workspaces.md).
+
 The production entry point adapts `@juno-ai/bind` 11.0.0 to Avalon's OpenRouter
 transport and durable ports. Bind owns transcript healing, plugin and skill
 activation, turn/tool iteration, completion-defect recovery, epoch-aware
@@ -336,6 +348,14 @@ time series, not exact event recovery, so Avalon never reconstructs a run from
 loop-churn datapoints. D1 remains canonical; Workers Logs and Traces provide
 correlated diagnosis. [`runbook.md`](runbook.md#root-run-analytics) owns the
 positional dataset schema and sampling-aware queries.
+
+Daytona platform timings use a second fixed-grain dataset,
+`avalon_terminal_operations`. One content-free point measures provider create,
+managed-image bootstrap, manifest verification, stopped warming, or archived
+restore. Keeping platform operations out of `avalon_agent_runs` lets sampling
+and percentiles answer image/cold-start questions without pretending a provider
+phase is a model-run summary. The Terminal adapter emits both the structured log
+and non-blocking aggregate point; neither is canonical sandbox state.
 
 Durable memory is scoped to an ad-hoc work stream, an installed automation
 subscription, a user inside a workspace, or the workspace itself. The host — not
@@ -671,6 +691,53 @@ is active.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Daytona platform timing uses its own analytics grain
+
+**What changed:** The two API Workers bind `TERMINAL_ANALYTICS` to
+`avalon_terminal_operations`. The Terminal provider emits one versioned,
+content-free point for each create, bootstrap, or start operation, with separate
+phase durations and no tenant or provider-operation identifier.
+
+**Why:** An owned snapshot can remove recurring package installation but cannot
+remove Daytona allocation, policy read-back, or Avalon's verification. Mixing
+those provider phases into root-run summaries would hide which latency is
+actually removable and make both datasets ambiguous.
+
+**Considered and rejected:** One end-to-end Worker log only, adding fields to
+`avalon_agent_runs`, and storing raw bootstrap output. Those approaches lose
+sampling-aware distributions, mix event grains, or enlarge the content/secrets
+boundary for no image decision value.
+
+**Consequences:** Analytics failure never changes provider behavior. Operators
+query the dedicated dataset through the checked-in human-readable report and
+retain D1/Workers Logs for exact diagnosis; Cloudflare's account-level retention
+and regional caveat apply.
+
+### 2026-08-13 — Daytona is an external execution substrate, not a fourth Avalon surface
+
+**What changed:** The regional API composes a deferred Terminal plugin whose
+first tool call reaches a private Daytona sandbox. Avalon D1/R2, Bind receipts,
+the workspace scheduler, resource subsystem, and GitHub App publisher retain
+their existing ownership.
+
+**Why:** Code execution needs an isolation substrate, but making Daytona a
+canonical application surface would move authorization, retry state, resources,
+and regional lifecycle outside Avalon's existing owners.
+
+**Considered and rejected:** Treating provider labels/state as the control
+plane, exposing Daytona directly to Electron, and introducing a separate
+Terminal Workflow. They respectively cannot enforce tenant authority, create a
+new client trust boundary, or duplicate the existing harness/scheduler state
+machines.
+
+**Consequences:** Daytona SDK calls remain behind one regional adapter; loading
+Terminal cannot allocate; and any alternative provider must implement the same
+internal sandbox contract without changing model-facing tools or canonical
+state.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — HyperSight adopts the root policy with aggregate run telemetry
 

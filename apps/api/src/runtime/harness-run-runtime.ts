@@ -1632,6 +1632,7 @@ export async function completeToolInvocation(
     outputSummary: string;
     providerOperationId?: string;
     memberSafePayload?: Record<string, unknown>;
+    allowAmbiguousReconciliation?: boolean;
   },
 ): Promise<"persisted" | "already_persisted"> {
   await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
@@ -1648,7 +1649,7 @@ export async function completeToolInvocation(
          FROM tool_invocations ti
          JOIN harness_runs hr ON hr.id = ti.harness_run_id
         WHERE ti.id = ?2 AND ti.harness_run_id = ?3 AND ti.attempt_id = ?4
-          AND ti.status IN ('pending', 'started')
+          AND (ti.status IN ('pending', 'started') OR (?9 = 1 AND ti.status = 'ambiguous'))
           AND hr.attempt_id = ?4 AND hr.lease_owner = ?8 AND hr.status = 'running'
           AND hr.cancellation_requested_at IS NULL AND hr.terminalized_at IS NULL
           AND hr.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -1662,6 +1663,7 @@ export async function completeToolInvocation(
       stableJson(input.memberSafePayload ?? {}),
       now,
       lease.owner,
+      input.allowAmbiguousReconciliation ? 1 : 0,
     ),
     db.prepare(
       `UPDATE tool_invocations
@@ -1670,7 +1672,7 @@ export async function completeToolInvocation(
               checkpoint_index = ?5, last_checkpoint_at = ?4,
               lease_expires_at = NULL, error_json = NULL
         WHERE id = ?6 AND harness_run_id = ?7 AND attempt_id = ?8
-          AND status IN ('pending', 'started')
+          AND (status IN ('pending', 'started') OR (?11 = 1 AND status = 'ambiguous'))
           AND EXISTS (
             SELECT 1 FROM harness_runs
              WHERE id = ?7 AND attempt_id = ?8 AND lease_owner = ?9
@@ -1694,6 +1696,7 @@ export async function completeToolInvocation(
       lease.attemptId,
       lease.owner,
       checkpointId,
+      input.allowAmbiguousReconciliation ? 1 : 0,
     ),
   ]);
   if (d1Changes(results[1]) > 0) return "persisted";

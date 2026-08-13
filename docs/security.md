@@ -26,6 +26,7 @@ outside this document can break without their own tests failing.
 | `apps/api/src/middleware/auth.ts` | Session, workspace, role, and principal resolution on every request. |
 | `apps/api/src/middleware/validation.ts` | Request parsing at the HTTP boundary. |
 | `apps/api/src/lib/crypto.ts` | AES-GCM credential envelopes and key-version handling. |
+| `apps/api/src/services/terminal/` | The isolated Daytona execution boundary, network compiler, authority-fenced lifecycle, resource bridge, and trusted GitHub publisher. |
 | `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
 | `.gitleaks.toml`, `scripts/gitleaks-allowlist.test.mjs` | The scan's bounded exceptions and the test that keeps them honest. |
 
@@ -285,6 +286,32 @@ relationship, and current derivative dependency before any result is placed in
 the next model request. Missing authority omits that assistant/tool pair rather
 than replaying stale content.
 
+### Terminal sandbox boundary
+
+The model may run bounded code only inside the private Daytona sandbox described
+in [`terminal-workspaces.md`](terminal-workspaces.md). Loading the plugin performs
+no provider operation. On first execution Avalon freezes the execution principal,
+visible-resource authority, selected immutable GitHub repository identity, and
+connection into a sandbox-generation fingerprint; narrowing or revocation
+destroys that generation before another tool can observe its filesystem.
+
+Commands, repository contents, package output, and imported files are untrusted.
+The model receives no PTY, inbound port, background daemon, provider lifecycle,
+network-policy, credential, or raw-Daytona tool. Paths stay below `/workspace`,
+output is stripped of terminal controls and recognizable token forms, and logs
+never carry commands or output. Trusted-only egress is a host-compiled Daytona
+`domainAllowList` with an immutable baseline and read-back verification; the
+model cannot add a domain. Full internet is an explicit workspace-admin choice.
+
+Daytona receives no R2 credential. Resource originals and generated files cross
+through the regional Worker under current-principal visibility and normal cleanup
+ownership. The work-stream sandbox receives only one-hour read-only GitHub App
+credentials through host-scoped Daytona secret placeholders. It may run local
+`git` and read-only `gh`, but obvious remote Git writes are rejected. The sole
+write path validates a single-use participant-intent grant, committed fixed
+branch, ancestry, limits, and current App authority, then publishes a verified
+Git bundle from a separate ephemeral sandbox using a fresh narrowed credential.
+
 ### Logging and audit
 
 Structured logs include correlation IDs and domain IDs needed for operations.
@@ -387,6 +414,9 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   resolves membership role.** Knowing an ID authorizes nothing.
 - **Every connector tool checks execution principal, connection scope, granted
   capability, and resource visibility** — at execution, not only at admission.
+- **A Terminal sandbox generation is reused only under its exact frozen authority
+  fingerprint, and never receives a GitHub write or R2 credential.** Filesystem
+  persistence cannot become a way around later revocation.
 - **A socket ticket never travels in a URL.** Cloudflare records whole request URLs
   into the invocation log, the Logpush export, and trace spans, and no redaction in
   this repository can reach them.
@@ -530,6 +560,33 @@ must never receive key material or destination identity.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Code execution and GitHub publication use separate trust zones
+
+**What changed:** Avalon can execute model-authored code in an
+authority-fenced private Daytona sandbox with host-controlled egress and
+read-only GitHub access. Generated resources cross through regional Avalon
+services. Remote branch/PR writes use a participant-intent grant and a fresh
+isolated publisher rather than the work-stream sandbox credential.
+
+**Why:** A useful CLI workspace must process adversarial repository and resource
+content, but a GitHub write token or R2 credential in that same environment
+would let prompt injection turn code execution into durable external authority.
+Persistent files also outlive one model turn, so admission-time authorization
+alone is insufficient.
+
+**Considered and rejected:** Supplying the sandbox a reusable GitHub App write
+token, signed R2 URLs, model-managed network rules, and trusting Daytona labels
+as Avalon's authorization ledger. Those collapse storage, egress, and external
+write boundaries into an untrusted process.
+
+**Consequences:** Revocation changes the sandbox generation; publication is
+convergent and separately receipted; provider logs and failures must not expose
+commands or credentials; and a real provider isolation/egress probe gates each
+region.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — Attachment history and checkpoints reauthorize at replay
 

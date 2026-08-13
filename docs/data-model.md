@@ -241,6 +241,22 @@ includes it. Knowing an object ID is never sufficient authorization.
   so a replayed tool receipt resolves to the wake-up its first attempt created;
   `status` moves `pending → fired` under a version guard before the run is launched,
   making a wake-up at-most-once rather than at-least-once.
+- Terminal control-plane rows are regional and tenant-first.
+  `workstream_sandboxes` owns one generation, authority fingerprint, provider
+  reconciliation identity, exclusive operation lease, lifecycle deadlines, and
+  final-diff pointer per work stream. `sandbox_tasks` binds one command to one
+  harness tool receipt and retains only command hash, terminal state, exit,
+  termination reason, byte counts, and bounded head/tail plus an optional full-log
+  resource. `sandbox_imported_resources` records planned and completed imports
+  per generation, destination, source hash, and byte size so a retry never trusts
+  pre-existing sandbox bytes. `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
+  own the revision-fenced preview/confirm/read-back protocol.
+  `workstream_terminal_repositories` stores the immutable numeric GitHub
+  repository ID, canonical name, selected base/ref/SHA, fixed head ref, and healthy
+  connection; `terminal_publication_grants` stores current-participant intent;
+  `repository_publications` converges the one branch/PR write. Provider IDs and
+  repository names are facts, never authorization. See
+  [`terminal-workspaces.md`](terminal-workspaces.md).
 
 ### Activity log and digests
 
@@ -413,6 +429,10 @@ collection, opt-out, and destination behavior.
     processing, replay, recurrence, or destination acknowledgement may change a
     state column but never renew the row. EU aggregate queries operate on
     independently expiring contribution rows rather than a mutable issue lifetime.
+13. **A Terminal sandbox row is unique by `(workspace_id, workstream_id)` and its
+    provider/stable names are unique inside that workspace.** Two live generations
+    for one stream would defeat mutation serialization and make authority
+    revocation nondeterministic.
 
 ## Boundary
 
@@ -432,6 +452,7 @@ has a document, and the column notes above point at it rather than restating it:
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
 | Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Running and reverting migrations against hosted databases | [`runbook.md`](runbook.md) |
+| Daytona Terminal sandbox, task, policy, and publication behavior | [`terminal-workspaces.md`](terminal-workspaces.md) |
 
 ## Failure modes and limits
 
@@ -511,6 +532,33 @@ from surviving rows.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-13 — Regional Terminal state separates authority from provider facts
+
+**What changed:** Migration `0075_terminal_workspaces.sql` adds tenant-first
+sandbox, task, import, network-policy, repository-selection, publication-grant,
+and convergent-publication rows with work-stream/workspace guards and unique
+replay keys.
+
+**Why:** Daytona persistence cannot be Avalon's authorization or retry ledger.
+Sandbox creation, command submission, egress mutation, and GitHub writes all
+have ambiguous provider outcomes that require durable regional intent and
+receipts independent of provider state.
+
+**Considered and rejected:** Storing lifecycle only in Daytona labels, reusing
+generic tool receipts as the entire command/publication state machine, and
+keying repositories only by mutable `owner/name`. None carries the domain state
+needed to reconcile races or prove exact GitHub identity.
+
+**Consequences:** Every Terminal query and mutation includes `workspace_id`;
+provider identifiers never authorize; command/publication state converges on the
+existing tool invocation; publication retries never replace an earlier
+invocation's audit row merely because they target the same branch; and future
+schema changes receive a new migration rather than editing `0075` after
+deployment.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — One pointer and one outbox replace the model-object catalog
 
