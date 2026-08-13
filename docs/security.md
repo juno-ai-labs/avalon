@@ -572,8 +572,9 @@ place provider authority in the untrusted renderer.
 
 **Consequences:** New renderer request headers must update both the narrow Worker
 allowlist and its production-shaped preflight test. CORS failures remain ordinary
-failed product actions; telemetry observes them without changing or replaying the
-request, and EU diagnostics do not cross regions.
+failed product actions; bounded diagnostic telemetry observes them without
+changing or replaying the request or misclassifying them as process-health
+transitions, and EU diagnostics do not cross regions.
 
 ### 2026-08-13 — Telemetry operator roles and capability signing are server-owned
 

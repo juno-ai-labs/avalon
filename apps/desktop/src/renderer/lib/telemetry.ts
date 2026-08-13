@@ -6,6 +6,25 @@ import type {
 import { desktopBridge } from './platform';
 
 const reportedJavascriptErrors = new WeakSet<Error>();
+const recentNetworkErrorSignatures = new Map<string, number>();
+const networkErrorReportIntervalMs = 5 * 60 * 1_000;
+const maximumNetworkErrorSignatures = 100;
+
+function shouldReportNetworkError(candidate: DesktopJavascriptErrorCandidate): boolean {
+  if (candidate.errorCode !== 'network_error') return true;
+  const signature = candidate.frames.join('\0');
+  const now = Date.now();
+  const previous = recentNetworkErrorSignatures.get(signature);
+  if (previous !== undefined && now - previous < networkErrorReportIntervalMs) return false;
+  if (previous !== undefined) {
+    recentNetworkErrorSignatures.delete(signature);
+  } else if (recentNetworkErrorSignatures.size >= maximumNetworkErrorSignatures) {
+    const oldest = recentNetworkErrorSignatures.keys().next().value as string | undefined;
+    if (oldest !== undefined) recentNetworkErrorSignatures.delete(oldest);
+  }
+  recentNetworkErrorSignatures.set(signature, now);
+  return true;
+}
 
 export function telemetryScreenForPath(pathname: string): DesktopTelemetryScreen | null {
   if (pathname === '/workstreams/new' || pathname === '/') return 'workspace_home';
@@ -56,6 +75,7 @@ export function reportJavascriptError(
   const candidate = javascriptErrorCandidate(error, errorCode);
   if (!candidate) return;
   reportedJavascriptErrors.add(error as Error);
+  if (!shouldReportNetworkError(candidate)) return;
   fireAndForget(() => desktopBridge().reportJavascriptError(candidate));
 }
 

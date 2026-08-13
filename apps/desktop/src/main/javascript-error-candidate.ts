@@ -11,6 +11,13 @@ const processes = new Set(['main', 'preload', 'renderer']);
 const errorCodes = new Set(['type_error', 'range_error', 'unhandled_rejection', 'react_boundary', 'network_error', 'unknown']);
 const SAFE_FRAME = /^[a-zA-Z0-9_-][a-zA-Z0-9._/-]{0,159}\.(?:c?js):\d{1,7}:\d{1,5}$/u;
 
+export function javascriptErrorProcessHealthState(
+  errorCode: NormalizedJavascriptError['errorCode'],
+): 'exception' | 'rejection' | null {
+  if (errorCode === 'network_error') return null;
+  return errorCode === 'unhandled_rejection' ? 'rejection' : 'exception';
+}
+
 export async function normalizeJavascriptErrorCandidate(value: unknown): Promise<NormalizedJavascriptError> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
   const candidate = value as Record<string, unknown>;
