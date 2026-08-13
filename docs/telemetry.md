@@ -145,7 +145,10 @@ exact provider equivalents: `screen_viewed` becomes `$screen`, launch/foreground
 becomes `Application Opened`, and background becomes `Application Backgrounded`.
 `application_version_changed` becomes `Application Installed` or
 `Application Updated`; rollout onto an existing installation establishes a
-durable baseline without emitting a false installation event. The adapter keeps
+durable baseline without emitting a false installation event. A pending
+transition keeps one stable event ID until its local spool enqueue succeeds, so
+an interrupted write retries without losing or double-counting the transition.
+The adapter keeps
 `avalon_event_name` on every destination event and adds the applicable
 first-party app context: `$app_*`, `$device_type`, `$os`/`$os_name`,
 `$os_version`, `$locale`, `$timezone`, display/viewport dimensions, and
@@ -408,8 +411,9 @@ signals, never by weakening policy or deadline tests.
 identified state, OS version, locale, timezone, display dimensions, and trusted
 per-window viewport/window IDs to the typed event context. The Global adapter
 uses PostHog's reserved native-app properties and emits canonical installation
-and update lifecycle events; a durable local version marker prevents repeated
-updates and treats an existing installation's first upgraded launch as a
+and update lifecycle events. A durable local marker retains a stable pending
+event ID until the spool enqueue succeeds, then acknowledges the current
+version; it also treats an existing installation's first upgraded launch as a
 baseline rather than a new install.
 
 **Why:** Navigation events alone made PostHog paths work, but built-in breakdowns

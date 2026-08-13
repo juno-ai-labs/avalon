@@ -75,7 +75,10 @@ import {
   updateStoredApplicationSettings,
 } from './application-settings';
 import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry';
-import { applicationVersionTransition } from './application-version-telemetry';
+import {
+  acknowledgeApplicationVersionTransition,
+  applicationVersionTransition,
+} from './application-version-telemetry';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { DebugSettingsController } from './debug-settings';
@@ -1438,13 +1441,24 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
     await telemetryReporter.telemetrySpoolState('evicted', startupSpoolMaintenance.evicted);
   }
   try {
-    const transition = await applicationVersionTransition({
-      userDataDirectory: userDataDirectory(),
-      version: runtime.appVersion,
-      build: runtime.appVersion,
-      newInstallation: identityState.created,
-    });
-    if (transition) await telemetryReporter.applicationVersionChanged(transition);
+    // At most one older pending transition and one transition into this build
+    // can exist. The persisted event ID makes a retry safe even if enqueue
+    // succeeds but acknowledging the version marker is interrupted.
+    for (let transitionIndex = 0; transitionIndex < 2; transitionIndex += 1) {
+      const pending = await applicationVersionTransition({
+        userDataDirectory: userDataDirectory(),
+        version: runtime.appVersion,
+        build: runtime.appVersion,
+        newInstallation: identityState.created,
+      });
+      if (!pending) break;
+      const enqueued = await telemetryReporter.applicationVersionChanged(pending.transition, pending.eventId);
+      if (!enqueued) break;
+      await acknowledgeApplicationVersionTransition({
+        userDataDirectory: userDataDirectory(),
+        eventId: pending.eventId,
+      });
+    }
   } catch (error) {
     logWarn('avalon', 'could not record the application version transition', error);
   }
