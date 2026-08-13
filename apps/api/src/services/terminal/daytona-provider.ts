@@ -1,4 +1,5 @@
 import { Daytona } from "@daytona/sdk";
+import { Buffer } from "node:buffer";
 
 import type { TerminalRegionConfiguration } from "./contract";
 import {
@@ -67,7 +68,7 @@ interface DaytonaSandboxLike {
   updateSecrets?: (secrets: Record<string, string>) => Promise<void>;
   fs?: {
     downloadFile(path: string, timeout?: number): Promise<Uint8Array>;
-    uploadFileStream(source: Uint8Array, path: string, options?: { signal?: AbortSignal; timeout?: number }): Promise<void>;
+    uploadFile(source: Uint8Array, path: string, timeout?: number): Promise<void>;
   };
   process?: {
     executeCommand?(
@@ -83,12 +84,12 @@ interface DaytonaSandboxLike {
     createSession(sessionId: string): Promise<void>;
     getSession?(sessionId: string): Promise<{
       sessionId: string;
-      commands: Array<{ id: string; command: string; exitCode?: number }>;
+      commands: Array<{ id: string; command: string; exitCode?: number | null }>;
     }>;
     getSessionCommand?(sessionId: string, commandId: string): Promise<{
       id: string;
       command: string;
-      exitCode?: number;
+      exitCode?: number | null;
     }>;
     getSessionCommandLogs?(
       sessionId: string,
@@ -100,7 +101,7 @@ interface DaytonaSandboxLike {
       command: string;
       runAsync: boolean;
       suppressInputEcho: boolean;
-    }, timeout?: number): Promise<{ cmdId?: string; exitCode?: number; stdout?: string; stderr?: string }>;
+    }, timeout?: number): Promise<{ cmdId?: string; exitCode?: number | null; stdout?: string; stderr?: string }>;
     deleteSession(sessionId: string): Promise<void>;
   };
 }
@@ -192,6 +193,13 @@ function sandboxState(value: string | undefined): TerminalSandboxState {
     default:
       return "failed";
   }
+}
+
+function throwIfFileTransferCancelled(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  const error = new Error("Terminal file transfer cancelled");
+  error.name = "AbortError";
+  throw error;
 }
 
 function domainList(value: string | undefined): string[] {
@@ -542,9 +550,14 @@ export function createDaytonaTerminalProvider(
       return new Uint8Array(await sandbox.fs.downloadFile(path, 120));
     },
     async writeFile(idOrName, path, bytes, signal) {
+      throwIfFileTransferCancelled(signal);
       const sandbox = await load(idOrName);
       if (!sandbox.fs) throw new Error("Daytona sandbox filesystem is unavailable");
-      await sandbox.fs.uploadFileStream(bytes, path, { signal, timeout: 120 });
+      throwIfFileTransferCancelled(signal);
+      // Daytona's streaming helper is Node-only. uploadFile selects its Web
+      // FormData implementation in Cloudflare Workers.
+      await sandbox.fs.uploadFile(Buffer.from(bytes), path, 120);
+      throwIfFileTransferCancelled(signal);
     },
     async runCommand(idOrName, input) {
       const sandbox = await load(idOrName);
@@ -568,7 +581,7 @@ export function createDaytonaTerminalProvider(
           cancelled = true;
           throw new Error("Terminal command cancelled");
         }
-        const command = `cd -- ${shellQuote(input.cwd)} || exit $?; if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; avalon_status=$?; if [ "$avalon_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit "$avalon_status"`;
+        const command = `(cd -- ${shellQuote(input.cwd)} || exit $?; if [ -f /workspace/.avalon/session.env ]; then . /workspace/.avalon/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; avalon_status=$?; if [ "$avalon_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit "$avalon_status")`;
         const supportsObservation = Boolean(
           sandbox.process.getSession
           && sandbox.process.getSessionCommand
@@ -578,7 +591,7 @@ export function createDaytonaTerminalProvider(
           throw new Error("Daytona command observation is unavailable; Avalon refused to execute an unrecoverable command");
         }
         const execution = (async () => {
-          let commands: Array<{ id: string; command: string; exitCode?: number }> = [];
+          let commands: Array<{ id: string; command: string; exitCode?: number | null }> = [];
           try {
             commands = (await sandbox.process!.getSession!(input.taskName)).commands;
           } catch {
@@ -604,7 +617,7 @@ export function createDaytonaTerminalProvider(
             }
           }
           let commandId = commands[0]?.id;
-          let observedExitCode = commands[0]?.exitCode;
+          let observedExitCode = commands[0]?.exitCode ?? undefined;
           let initialStdout: string | undefined;
           let initialStderr: string | undefined;
           if (!commandId) {
@@ -615,7 +628,7 @@ export function createDaytonaTerminalProvider(
             }, timeoutSeconds + 10);
             if (!submitted.cmdId) throw new Error("Daytona did not return a command identifier");
             commandId = submitted.cmdId;
-            observedExitCode = submitted.exitCode;
+            observedExitCode = submitted.exitCode ?? undefined;
             initialStdout = submitted.stdout;
             initialStderr = submitted.stderr;
           }
@@ -626,7 +639,7 @@ export function createDaytonaTerminalProvider(
               throw new Error("Daytona command outcome is still unknown after the observation deadline");
             }
             const observed = await sandbox.process!.getSessionCommand!(input.taskName, commandId);
-            observedExitCode = observed.exitCode;
+            observedExitCode = observed.exitCode ?? undefined;
             if (observedExitCode === undefined) {
               await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
               delayMs = Math.min(2_000, delayMs * 2);
@@ -726,7 +739,7 @@ export function createDaytonaTerminalProvider(
           labels: { "avalon.publisher": input.operationId },
         }, { timeout: 60 });
         if (!publisher.fs || !publisher.process) throw new Error("The Daytona publisher sandbox is missing required services");
-        await publisher.fs.uploadFileStream(input.bundle, "/workspace/publication.bundle", { timeout: 120 });
+        await publisher.fs.uploadFile(Buffer.from(input.bundle), "/workspace/publication.bundle", 120);
         const repositoryUrl = `https://github.com/${input.repositoryFullName}.git`;
         const expectedOld = input.expectedOldSha ?? "";
         const command = [
