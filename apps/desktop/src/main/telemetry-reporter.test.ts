@@ -127,12 +127,15 @@ describe('TelemetryReporter', () => {
 
   it('records native application install and update transitions as installation lifecycle events', async () => {
     const { reporter, spool } = await harness({ enabled: false });
-    await reporter.applicationVersionChanged({ state: 'installed' });
+    await reporter.applicationVersionChanged(
+      { state: 'installed' },
+      '018f0000-0000-7000-8000-000000000020',
+    );
     await reporter.applicationVersionChanged({
       state: 'updated',
       previousVersion: '1.95.0',
       previousBuild: '19500',
-    });
+    }, '018f0000-0000-7000-8000-000000000021');
 
     const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(rows.map((row) => ({ name: row.event.name, properties: row.event.properties }))).toEqual([
@@ -142,6 +145,19 @@ describe('TelemetryReporter', () => {
         properties: { state: 'updated', previousVersion: '1.95.0', previousBuild: '19500' },
       },
     ]);
+  });
+
+  it('acknowledges an application transition only after its stable event reaches the spool', async () => {
+    const { reporter, spool } = await harness({ enabled: false });
+    const enqueue = vi.spyOn(spool, 'enqueue').mockRejectedValueOnce(new Error('disk unavailable'));
+    const eventId = '018f0000-0000-7000-8000-000000000022';
+
+    await expect(reporter.applicationVersionChanged({ state: 'installed' }, eventId)).resolves.toBe(false);
+    await expect(reporter.applicationVersionChanged({ state: 'installed' }, eventId)).resolves.toBe(true);
+
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    const [row] = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(row?.event).toMatchObject({ eventId, properties: { state: 'installed' } });
   });
 
   it('uploads authenticated rows to only their regional API and acknowledges durable results', async () => {
