@@ -189,6 +189,43 @@ function insertReadyImage(database: DatabaseSync, bucket: MemoryBucket, ordinal:
 }
 
 describe("work-stream attachment tools", () => {
+  it("reaches Markdown evidence beyond the retired 60,000-character projection boundary", async () => {
+    const { database, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, bucket, 50, { title: "Tuple transcript.md" });
+    const text = `${"opening context. ".repeat(4_200)}\n# Later decision\nThe decisive second-half evidence is MONAD_ATTACHMENT_COMPLETE.\n`;
+    const modelRef = `model/${resourceId}.md`;
+    const indexRef = `model/${resourceId}.json`;
+    bucket.objects.set(modelRef, new TextEncoder().encode(text));
+    bucket.objects.set(indexRef, new TextEncoder().encode(JSON.stringify({
+      offsetUnit: "utf16",
+      totalCharacters: text.length,
+      chunks: [{
+        ordinal: 0,
+        start: 60_000,
+        end: text.length,
+        sectionLabel: "Later decision",
+        terms: ["decisive", "second-half", "evidence", "monad_attachment_complete"],
+      }],
+    })));
+    database.prepare(
+      "UPDATE resources SET model_content_character_count = ?, model_content_ref = ?, model_index_ref = ? WHERE id = ?",
+    ).run(text.length, modelRef, indexRef, resourceId);
+    const tools = __integrationTesting.createAvalonTools(env, input());
+    const read = tools.find((tool) => tool.definition.name === "read_resource")!;
+    const search = tools.find((tool) => tool.definition.name === "search_resource")!;
+
+    await expect(read.execute({ resourceId, startCharacter: 60_000 }, context())).resolves.toMatchObject({
+      output: {
+        resourceId,
+        charactersBefore: 60_000,
+        text: expect.stringContaining("MONAD_ATTACHMENT_COMPLETE"),
+      },
+    });
+    await expect(search.execute({ resourceId, query: "MONAD_ATTACHMENT_COMPLETE" }, context())).resolves.toMatchObject({
+      output: { returnedMatches: 1, passages: [{ text: expect.stringContaining("MONAD_ATTACHMENT_COMPLETE") }] },
+    });
+  });
+
   it("lists more than fifty visible resources without duplicates and filters by every natural-language kind", async () => {
     const { database, bucket, env } = fixture();
     for (let ordinal = 0; ordinal < 55; ordinal += 1) insertReadyResource(database, bucket, ordinal);
