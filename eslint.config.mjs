@@ -15,6 +15,7 @@ import { requireValidatedResponseRule } from "./scripts/eslint-rules/require-val
 import {
   noDirectWorkstreamsCacheWriteRule,
 } from "./scripts/eslint-rules/renderer-cache-boundaries.mjs";
+import { toolInputNumberBoundaryRule } from "./scripts/eslint-rules/tool-input-boundaries.mjs";
 import {
   noApplicationContractTestCastRule,
   noDirectCloudflareTestCastRule,
@@ -49,6 +50,7 @@ export default tseslint.config(
           "require-validated-response": requireValidatedResponseRule,
           "require-inference-signal": requireInferenceSignalRule,
           "require-websocket-ticket": requireWebSocketTicketRule,
+          "tool-input-number-boundary": toolInputNumberBoundaryRule,
           "no-application-contract-test-cast": noApplicationContractTestCastRule,
           "no-direct-cloudflare-test-cast": noDirectCloudflareTestCastRule,
           "no-direct-workstreams-cache-write": noDirectWorkstreamsCacheWriteRule,
@@ -196,6 +198,16 @@ export default tseslint.config(
     files: ["apps/desktop/src/**/*.{ts,tsx}"],
     rules: {
       "no-console": "error",
+    },
+  },
+  {
+    files: [
+      "apps/**/src/**/*.{ts,tsx}",
+      "packages/**/src/**/*.{ts,tsx}",
+    ],
+    ignores: ["**/*.test.{ts,tsx}"],
+    rules: {
+      "avalon/tool-input-number-boundary": "error",
     },
   },
   {
