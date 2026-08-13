@@ -337,7 +337,7 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
-`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. One surface reads the declaration without being the digest: [contextual routing](contextual-routing.md) starts an operational type at a higher confidence bar before offering it as Suggested context, as a prior a workspace's own acceptances overrule. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. The paused [contextual routing](contextual-routing.md) implementation retains the declaration as a prior for a future re-enable: an operational type starts at a higher confidence bar before it can become Suggested context, and a workspace's own acceptances can overrule that prior. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
@@ -351,18 +351,17 @@ Manifests and facets are cross-validated at registry construction: a connector t
 4. Enqueue only region, workspace ID, and activity ID.
 5. Evaluate explicit resource watches and deterministic automation triggers.
 6. Run semantic trigger matching only after deterministic prefilters.
-7. Create automation work idempotently or produce an in-stream contextual suggestion.
-8. Persist accepted/dismissed routing feedback, which decides what step 7 offers next.
+7. Create automation work idempotently; unclaimed activity proceeds to suggested-work batching while contextual routing is paused.
+8. When contextual routing is re-enabled, persist accepted/dismissed feedback that decides what step 7 offers next.
 
 Steps 1 through 6 are deterministic and are what this document owns. **Step 7's
-speculative half — which unclaimed activity becomes a Suggested context card, the
-four gates it passes first, and what an accept or a dismiss is then worth — has
-grown into its own subsystem and moved to
-[`contextual-routing.md`](contextual-routing.md).** It consumes the digestibility
-declaration described above and nothing else from here; change what becomes a
-card there, not in this document.
+speculative half is paused.** Its retained classifier, feedback gates, and the
+single switch that must guard every producer and reader live in
+[`contextual-routing.md`](contextual-routing.md). It consumes the digestibility
+declaration described above and nothing else from here; change or re-enable it
+there, not in this document.
 
-Routing feedback is idempotent in the direction it was given. A suggestion card is rendered from the work stream detail's pending suggestions and is rebuilt whenever the transcript is refetched, so a card can outlive the resolution it belongs to — a detail snapshot read before the accept restores it, buttons and all. Repeating the same accept or dismissal therefore reports the state the suggestion already reached (the accepted resource attachment is an upsert, so the same resource ID comes back); only a resolution that contradicts the recorded one is refused, with `409 suggestion_already_resolved`. A suggestion that does not exist in the work stream is still `404 suggestion_not_found`. Clients drop a resolved suggestion from the cached detail — both when they resolve it and when `activity_suggestion_resolved` arrives — so the card cannot regress to pending.
+The dormant routing feedback endpoint remains idempotent in the direction it was given so a rolling-deploy client can settle a card it already held. Work-stream reads return no pending suggestions and current clients ignore suggestion events, so no new resolution control is exposed while the surface is paused. Repeating the same accept or dismissal reports the state the suggestion already reached; only a contradictory resolution is refused with `409 suggestion_already_resolved`.
 
 Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2, while D1 stores an idempotent delivery receipt and normalized metadata.
 
@@ -433,7 +432,7 @@ It does not own:
 
 | For | Read |
 | --- | --- |
-| Which unclaimed activity becomes a Suggested context card, and what an accept or a dismiss is worth | [`contextual-routing.md`](contextual-routing.md) |
+| The paused Suggested context surface and its retained accept/dismiss model | [`contextual-routing.md`](contextual-routing.md) |
 | Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
 | What happens to `digestible` after the log is written | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
@@ -537,6 +536,19 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-12 — Speculative work-stream routing was paused
+
+**What changed:** Activity ingestion now skips contextual routing and sends
+unclaimed connector activity directly to suggested-work batching. Watches,
+automation triggers, activity projection, and the connector digestibility
+contract are unchanged. The retained routing module owns the shared pause switch
+and its re-enable requirements.
+
+**Why:** Suggested context was too noisy and not tuned well enough to interrupt
+an active work stream. Dropping unclaimed activity was rejected because the home
+screen remains a less intrusive place to propose work; deleting digestibility or
+routing history was rejected because both remain useful to a later tuning pass.
 
 ### 2026-08-12 — Historical Notion bot grants move with their real identity
 
