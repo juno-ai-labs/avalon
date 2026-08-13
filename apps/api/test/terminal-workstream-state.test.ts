@@ -13,6 +13,9 @@ const W = "61000000-0000-4000-8000-000000000001";
 const S = "61000000-0000-4000-8000-000000000002";
 const U = "61000000-0000-4000-8000-000000000003";
 const C = "61000000-0000-4000-8000-000000000004";
+const RUN = "61000000-0000-4000-8000-000000000005";
+const INVOCATION = "61000000-0000-4000-8000-000000000006";
+const NEWER_RUN = "61000000-0000-4000-8000-000000000007";
 const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
@@ -61,13 +64,54 @@ describe("Terminal work-stream state", () => {
   it("projects absent state without allocating Daytona and lists only App-authorized repositories", async () => {
     const { catalog, service } = fixture();
     await expect(service.get(S)).resolves.toMatchObject({
-      availability: "supported", state: "absent", repository: null, lastActivityAt: null, expiresAt: null,
+      availability: "supported", state: "absent", repository: null, repositoryRequest: null,
+      lastActivityAt: null, expiresAt: null,
     });
     await expect(service.repositories(S, new AbortController().signal)).resolves.toEqual({
       state: "available",
       connections: [{ connectionId: C, displayName: "GitHub", repositories: [{ id: 42, fullName: "owner/repo", defaultBranch: "main", private: true }] }],
     });
     expect(catalog.listRepositories).toHaveBeenCalledWith(C, W, expect.any(AbortSignal));
+  });
+
+  it("projects a repository request only from the latest run's durable repository failure", async () => {
+    const { database, service } = fixture();
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'manual', '{}', 'needs_input', ?)`,
+    ).run(RUN, W, S, "2026-08-13T12:00:00.000Z");
+    database.prepare(
+      `INSERT INTO tool_invocations
+       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+        input_hash, input_json, status, error_json, started_at, completed_at)
+       VALUES (?, ?, ?, ?, 'call-1', 'terminal_write_file', 'hash', '{}', 'ambiguous', ?, ?, ?)`,
+    ).run(
+      INVOCATION,
+      W,
+      S,
+      RUN,
+      JSON.stringify({ code: "ambiguous_external_write", message: "Operation timed out" }),
+      "2026-08-13T12:00:01.000Z",
+      "2026-08-13T12:01:01.000Z",
+    );
+
+    await expect(service.get(S)).resolves.toMatchObject({ repositoryRequest: null });
+
+    database.prepare(
+      "UPDATE tool_invocations SET status = 'failed', error_json = ? WHERE id = ?",
+    ).run(JSON.stringify({ code: "repository_not_configured", message: "Choose a repository" }), INVOCATION);
+
+    await expect(service.get(S)).resolves.toMatchObject({
+      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
+    });
+
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'manual', '{}', 'completed', ?)`,
+    ).run(NEWER_RUN, W, S, "2026-08-13T12:02:00.000Z");
+    await expect(service.get(S)).resolves.toMatchObject({ repositoryRequest: null });
   });
 
   it("selects an exact authorized repository and returns lifecycle retention state", async () => {
