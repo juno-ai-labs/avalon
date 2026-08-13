@@ -371,7 +371,10 @@ that must prove the released native crash path.
 
 **Consequences:** Changes to the fixture's bundler version must update its direct
 desktop dependency and lockfile; release invariants enforce both ownership and
-package-scoped resolution.
+package-scoped resolution. pnpm starts from the workspace root to resolve the
+filter but runs `esbuild` from the desktop package, so the bundle entry and
+output remain absolute paths. The fixture verifies the bundle immediately
+because a pnpm filter that matches no package can still exit successfully.
 
 Shipped in the pull request for this change.
 

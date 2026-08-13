@@ -84,12 +84,17 @@ test('the packaged Crashpad fixture owns its clean-runner bundler dependency', a
   assert.equal(
     packageJson.devDependencies.esbuild,
     '0.25.12',
-    'The release-only fixture must not depend on a transitive esbuild binary',
+    'The desktop package must own the exact release esbuild version',
   );
   assert.match(
     fixture,
     /await run\('pnpm',\s*\[\s*'--filter',\s*'@avalon\/desktop',\s*'exec',\s*'esbuild',/u,
-    'The monorepo-root fixture must resolve esbuild from the desktop package',
+    'The fixture must resolve esbuild from the desktop package',
+  );
+  assert.match(
+    fixture,
+    /if \(\(await stat\(bundledControllerPath\)\)\.size === 0\) throw new Error/u,
+    'A missing pnpm filter match must fail immediately instead of packaging without a controller',
   );
 });
 
