@@ -1,5 +1,10 @@
 import { AGENT_MODEL_OVERRIDES, type AgentModelOverride } from '@avalon/contracts';
 
+/** Whether a served model id is one the selector's closed list admits. */
+function isAgentModelOverride(model: string): model is AgentModelOverride {
+  return (AGENT_MODEL_OVERRIDES as readonly string[]).includes(model);
+}
+
 export type { AgentModelOverride };
 
 /**
@@ -84,4 +89,39 @@ export const AGENT_MODEL_GROUPS: ReadonlyArray<{ provider: string; models: Agent
 /** The name a pinned model wears, or `Default` where nothing is pinned. */
 export function agentModelLabel(id: AgentModelOverride | null): string {
   return id === null ? UNPINNED_AGENT_MODEL_LABEL : PRESENTATION[id].label;
+}
+
+/**
+ * The name to show for the model a work stream is *already* running on.
+ *
+ * That id is not necessarily one of the nine a pin may name: it is read off the
+ * work stream's latest run, and an unpinned work stream runs on whatever
+ * `agent-model-workstream` served it — any OpenRouter id the flag's variation
+ * carries. A known id gets the same short name the menu gives it, so a pinned
+ * work stream reads identically to the composer that pinned it; anything else
+ * falls back to the id's own model segment, because the vendor prefix costs
+ * half a pill's width to repeat what the name already implies. The full id
+ * stays in the tooltip either way.
+ *
+ * Null is a work stream with neither a recorded run model nor a pin, where the
+ * honest answer is the same as an untouched composer's: the flag decides, and
+ * this process cannot see the served variation.
+ */
+export function agentModelInUseLabel(model: string | null): string {
+  if (model === null) return UNPINNED_AGENT_MODEL_LABEL;
+  if (isAgentModelOverride(model)) return PRESENTATION[model].label;
+  return model.slice(model.lastIndexOf('/') + 1);
+}
+
+/**
+ * The accessible name and tooltip for that same read-only pill. It carries the
+ * exact id rather than the shortened name — the pill is a glance, the tooltip
+ * is the answer — and says why the control does not open, because a control
+ * that looks like the composer's and does nothing has to explain itself.
+ */
+export function agentModelInUseTriggerLabel(model: string | null): string {
+  const subject = model === null
+    ? `${UNPINNED_AGENT_MODEL_LABEL} (follows the agent-model-workstream flag)`
+    : model;
+  return `Model: ${subject} — a work stream keeps the model it started on, so this cannot be changed`;
 }

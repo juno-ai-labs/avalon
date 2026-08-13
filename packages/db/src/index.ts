@@ -1,4 +1,5 @@
 import {
+  AgentModelOverrideSchema,
   ExternalActorSchema,
   WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
 } from "@avalon/contracts";
@@ -222,6 +223,10 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     archivedAt: row.archived_at == null ? null : String(row.archived_at),
     scope: row.scope === "personal" ? "personal" : "workspace",
     systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
+    // Re-validated on read rather than trusted, the same way the API's mapper
+    // does it: a model retired from the closed set reads as unpinned here
+    // because that is what the work stream will actually run as.
+    modelOverride: AgentModelOverrideSchema.safeParse(row.model_override).data ?? null,
     nextPendingWakeup: row.next_pending_wakeup_at != null
       && row.next_pending_wakeup_prompt_prefix != null
       ? {

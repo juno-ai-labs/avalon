@@ -293,6 +293,22 @@ export const WorkstreamSchema = z.object({
    * them as secondary when they do.
    */
   systemKind: z.enum(["digest"]).nullable().default(null),
+  /**
+   * The model this work stream is pinned to, ahead of `agent-model-workstream`,
+   * or null for the ordinary unpinned case. Decided once at creation and fixed
+   * for the work stream's life.
+   *
+   * On the wire so the composer's model pill can name the model a *pinned* work
+   * stream will run on even when no run has recorded one yet — a run that failed
+   * before its first token leaves `harness_runs.model` null, and a pill that
+   * answered **Default** there would be stating something false about a work
+   * stream that never consults the flag.
+   *
+   * Re-validated against the closed set on the way out, so a model retired from
+   * `AGENT_MODEL_OVERRIDES` reads as null here exactly as it resolves on the
+   * server: back to the flag.
+   */
+  modelOverride: AgentModelOverrideSchema.nullable().default(null),
   /** The first one-shot wake-up still waiting to fire, if there is one. */
   nextPendingWakeup: z.object({
     dueAt: TimestampSchema,
