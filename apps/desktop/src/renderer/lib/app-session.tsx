@@ -53,11 +53,11 @@ export interface AppSessionValue {
   pendingInvitation: PendingInvitation | null;
   clearPendingInvitation: () => void;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
-  activateWorkspace: (region: Region, workspaceId: string) => Promise<void>;
-  acceptInvitation: (region: Region, invitationId: string) => Promise<void>;
+  activateWorkspace: (region: Region, workspaceId: string, operationId?: string) => Promise<void>;
+  acceptInvitation: (region: Region, invitationId: string, operationId?: string) => Promise<void>;
   declineInvitation: (region: Region, invitationId: string) => Promise<void>;
   createDevelopmentSession: () => Promise<void>;
-  finishWorkspaceSetup: (name: string, region: Region) => Promise<void>;
+  finishWorkspaceSetup: (name: string, region: Region, operationId?: string) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
   signOut: () => Promise<void>;
   signOutIfCredentialCleared: () => Promise<void>;
@@ -256,13 +256,17 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     [bridge],
   );
 
-  const activateWorkspace = useCallback(async (selectedRegion: Region, workspaceId: string): Promise<void> => {
-    const nextSession = await bridge.activateWorkspace({ region: selectedRegion, workspaceId });
+  const activateWorkspace = useCallback(async (selectedRegion: Region, workspaceId: string, operationId?: string): Promise<void> => {
+    const nextSession = await bridge.activateWorkspace({ region: selectedRegion, workspaceId, operationId });
     applySession(nextSession);
   }, [applySession, bridge]);
 
-  const acceptInvitation = useCallback(async (invitationRegion: Region, invitationId: string): Promise<void> => {
-    const nextSession = await bridge.acceptInvitation({ region: invitationRegion, invitationId });
+  const acceptInvitation = useCallback(async (
+    invitationRegion: Region,
+    invitationId: string,
+    operationId?: string,
+  ): Promise<void> => {
+    const nextSession = await bridge.acceptInvitation({ region: invitationRegion, invitationId, operationId });
     applySession(nextSession);
   }, [applySession, bridge]);
 
@@ -282,12 +286,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     return nextSession;
   }, [bridge]);
 
-  const finishWorkspaceSetup = useCallback(async (name: string, selectedRegion: Region): Promise<void> => {
+  const finishWorkspaceSetup = useCallback(async (name: string, selectedRegion: Region, operationId?: string): Promise<void> => {
     const normalized = name.trim();
     if (normalized.length < 2) throw new Error('Enter an organization name with at least two characters.');
     setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
-    const nextSession = await bridge.createWorkspace({ region: selectedRegion, name: normalized });
+    const nextSession = await bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId });
     applySession(nextSession);
   }, [applySession, bridge]);
 

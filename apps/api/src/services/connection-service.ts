@@ -29,7 +29,8 @@ import type {
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import type { z } from "zod";
-import type { AuthContext, Env } from "../env";
+import type { AuthContext, Env, IdentityAuthContext } from "../env";
+import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from "../telemetry/api-emitter";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
@@ -93,6 +94,9 @@ interface ConnectorOAuthAttemptRow {
   connection_id: string | null;
   error_code: string | null;
   expires_at: string;
+  user_id: string;
+  workspace_id: string;
+  telemetry_operation_id: string | null;
 }
 
 export interface GitHubSetupResult {
@@ -170,6 +174,15 @@ export class ConnectionService {
       rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
     );
     return rows.map((row) => connectionFromRow(row, userDelivery.get(String(row.id)) ?? null));
+  }
+
+  async bindOAuthTelemetry(attemptId: string, operationId: string): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE connector_oauth_attempts
+       SET telemetry_operation_id = COALESCE(telemetry_operation_id, ?), updated_at = ?
+       WHERE id = ? AND region = ?
+         AND provider IN ('google', 'github', 'linear', 'notion', 'slack')`,
+    ).bind(operationId, nowIso(), attemptId, this.env.AVALON_REGION).run().catch(() => undefined);
   }
 
   async beginGoogle(input: {
@@ -1028,7 +1041,8 @@ export class ConnectionService {
       at,
     ).run();
     const row = await this.env.DB.prepare(
-      `SELECT id, provider, status, connection_id, error_code, expires_at
+      `SELECT id, provider, status, connection_id, error_code, expires_at,
+              user_id, workspace_id, telemetry_operation_id
        FROM connector_oauth_attempts
        WHERE id = ? AND workspace_id = ? AND user_id = ? AND region = ?`,
     ).bind(
@@ -1038,6 +1052,7 @@ export class ConnectionService {
       this.env.AVALON_REGION,
     ).first<ConnectorOAuthAttemptRow>();
     if (!row) throw new ApiError(404, "oauth_attempt_not_found", "The connector authorization attempt was not found");
+    await this.emitOAuthOutcome(row).catch(() => undefined);
     return {
       attemptId: row.id,
       provider: row.provider,
@@ -2084,13 +2099,42 @@ export class ConnectionService {
         throw new ApiError(409, "oauth_attempt_already_completed", "The connector authorization attempt already completed");
       }
     }
+    const settled = await this.loadOAuthAttempt(attemptId);
+    if (settled) await this.emitOAuthOutcome(settled).catch(() => undefined);
   }
 
   private async loadOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttemptRow | null> {
     return this.env.DB.prepare(
-      `SELECT id, provider, status, connection_id, error_code, expires_at
+      `SELECT id, provider, status, connection_id, error_code, expires_at,
+              user_id, workspace_id, telemetry_operation_id
        FROM connector_oauth_attempts WHERE id = ? AND region = ?`,
     ).bind(attemptId, this.env.AVALON_REGION).first<ConnectorOAuthAttemptRow>();
+  }
+
+  private async emitOAuthOutcome(row: ConnectorOAuthAttemptRow): Promise<void> {
+    if (!row.telemetry_operation_id || row.status === 'pending'
+      || !['google', 'github', 'linear', 'notion', 'slack'].includes(row.provider)) return;
+    const result = row.status === 'succeeded'
+      ? 'success'
+      : row.status === 'denied' ? 'denied'
+        : row.error_code === 'oauth_attempt_expired' ? 'unavailable' : 'failed';
+    const auth: IdentityAuthContext = {
+      sessionId: `telemetry:${row.id}`,
+      userId: row.user_id,
+      workspaceId: row.workspace_id,
+      region: this.env.AVALON_REGION,
+      role: null,
+    };
+    const event = apiTelemetryEnvelope(
+      this.env,
+      'connector_setup_completed',
+      { connector: row.provider, result },
+      row.telemetry_operation_id,
+      'workspace-user',
+      this.env.AVALON_REGION,
+      row.telemetry_operation_id,
+    );
+    await emitAuthenticatedApiTelemetry(this.env, auth, event);
   }
 
   private connectorAttemptTarget(input: {

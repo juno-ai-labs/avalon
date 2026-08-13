@@ -4,6 +4,7 @@ import {
   CreateWorkspaceRequestSchema,
   IdSchema,
   OnboardingRegionRequestSchema,
+  ProductAnalyticsPreferenceSchema,
   SessionSchema,
   WorkspaceOnboardingStateSchema,
   type Session as WireSession,
@@ -11,13 +12,14 @@ import {
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import {
   app,
   BrowserWindow,
   clipboard,
+  crashReporter,
   dialog,
   ipcMain,
   Menu,
@@ -37,6 +39,8 @@ import type {
   DesktopApplicationSettings,
   DesktopLockdownSettings,
   DesktopSession,
+  DesktopTelemetryProductIntent,
+  DesktopTelemetryScreen,
   DesktopWorkspaceOnboardingState,
   MeetingAudioPermissionKind,
   RuntimeConfig,
@@ -74,9 +78,28 @@ import { applicationMenuTemplate } from './application-menu';
 import { DebugSettingsController } from './debug-settings';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
 import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
+import { normalizeJavascriptErrorCandidate } from './javascript-error-candidate';
 import { LockdownModeController } from './lockdown-mode';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
 import { MenuBarContentStore } from './menu-bar-content';
+import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
+import { NativeCrashUploader } from './native-crash-uploader';
+import { ProductAnalyticsSettingsController } from './product-analytics-settings';
+import {
+  readTelemetryIdentity,
+  rotateTelemetryEpochs,
+  type TelemetryIdentity,
+  uuidV7,
+} from './telemetry-identity';
+import { TelemetryReporter } from './telemetry-reporter';
+import {
+  refreshTelemetryCapability,
+  resolveTelemetryRoute,
+  type ResolvedTelemetryRoute,
+} from './telemetry-route';
+import { TelemetrySpool } from './telemetry-spool';
+import { beginTelemetryLaunch, clearTelemetryLaunch, markTelemetryLaunchReady } from './telemetry-launch-marker';
+import { TelemetryBreadcrumbRing, type NewTelemetryBreadcrumb } from './telemetry-breadcrumbs';
 import { supportsSectionHeaders, type MenuBarSuggestion } from './menu-bar-menu';
 import {
   allowsTrustedAudioCapture,
@@ -153,9 +176,131 @@ const MENU_BAR_REQUEST_TIMEOUT_MS = 8_000;
  * the status item asks for it again. */
 const MENU_BAR_CONTENT_MAX_AGE_MS = 15_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
+}
+
+const telemetryScreens = new Set<DesktopTelemetryScreen>([
+  'onboarding_welcome', 'onboarding_region', 'onboarding_workspace',
+  'workspace_home', 'workstream', 'application_settings', 'developer_settings',
+]);
+
+function parseTelemetryScreen(value: unknown): DesktopTelemetryScreen {
+  if (typeof value !== 'string' || !telemetryScreens.has(value as DesktopTelemetryScreen)) {
+    throw new Error('Invalid telemetry screen');
+  }
+  return value as DesktopTelemetryScreen;
+}
+
+function safeJavascriptFrames(stack: string | undefined): string[] {
+  if (!stack) return [];
+  const frames: string[] = [];
+  const pattern = /([^\s()]+\.(?:c?js)):(\d{1,7}):(\d{1,5})/gu;
+  for (const match of stack.matchAll(pattern)) {
+    const file = basename(match[1]!.split(/[?#]/u, 1)[0]!);
+    if (!file || file.includes('..')) continue;
+    frames.push(`${file}:${match[2]}:${match[3]}`);
+    if (frames.length === 20) break;
+  }
+  return frames;
+}
+
+function javascriptErrorCode(error: unknown, fallback: 'unhandled_rejection' | 'unknown'): 'type_error' | 'range_error' | 'unhandled_rejection' | 'unknown' {
+  if (error instanceof TypeError) return 'type_error';
+  if (error instanceof RangeError) return 'range_error';
+  return fallback;
+}
+
+function parseTelemetryProductIntent(value: unknown): DesktopTelemetryProductIntent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid telemetry intent');
+  const candidate = value as Record<string, unknown>;
+  const exact = (...keys: string[]): boolean => {
+    const actual = Object.keys(candidate).sort();
+    return actual.length === keys.length && [...keys].sort().every((key, index) => actual[index] === key);
+  };
+  const region = candidate['selectedRegion'];
+  const entrypoint = candidate['entrypoint'];
+  const operationId = candidate['operationId'];
+  switch (candidate['kind']) {
+    case 'onboarding_region_selected':
+      if (exact('kind', 'selectedRegion', 'entrypoint')
+        && (region === 'global' || region === 'eu')
+        && (entrypoint === 'first_run' || entrypoint === 'settings' || entrypoint === 'invitation')) {
+        return { kind: 'onboarding_region_selected', selectedRegion: region, entrypoint };
+      }
+      break;
+    case 'workspace_create_requested':
+      if (exact('kind', 'selectedRegion', 'entrypoint', 'operationId')
+        && (region === 'global' || region === 'eu')
+        && (entrypoint === 'first_run' || entrypoint === 'settings')
+        && typeof operationId === 'string' && UUID_V7_PATTERN.test(operationId)) {
+        return { kind: 'workspace_create_requested', selectedRegion: region, entrypoint, operationId };
+      }
+      break;
+    case 'workspace_activation_requested':
+      if (exact('kind', 'selectedRegion', 'entrypoint', 'operationId')
+        && (region === 'global' || region === 'eu')
+        && (entrypoint === 'invitation' || entrypoint === 'workspace_switcher')
+        && typeof operationId === 'string' && UUID_V7_PATTERN.test(operationId)) {
+        return { kind: 'workspace_activation_requested', selectedRegion: region, entrypoint, operationId };
+      }
+      break;
+    case 'workstream_create_requested':
+    case 'run_requested':
+      if (exact('kind', 'entrypoint', 'operationId') && entrypoint === 'composer'
+        && typeof operationId === 'string' && UUID_V7_PATTERN.test(operationId)) {
+        return { kind: candidate['kind'], entrypoint, operationId };
+      }
+      break;
+    case 'connector_setup_requested':
+      if (exact('kind', 'connector', 'operationId')
+        && (candidate['connector'] === 'github' || candidate['connector'] === 'google'
+          || candidate['connector'] === 'linear' || candidate['connector'] === 'notion'
+          || candidate['connector'] === 'slack')
+        && typeof operationId === 'string' && UUID_V7_PATTERN.test(operationId)) {
+        return { kind: 'connector_setup_requested', connector: candidate['connector'], operationId };
+      }
+      break;
+  }
+  throw new Error('Invalid telemetry intent');
+}
+
+async function reportTelemetryProductIntent(value: unknown): Promise<void> {
+  const intent = parseTelemetryProductIntent(value);
+  const operation: NewTelemetryBreadcrumb | null = intent.kind === 'workspace_create_requested'
+    ? { kind: 'operation', operation: 'workspace_create', state: 'requested' }
+    : intent.kind === 'workspace_activation_requested'
+      ? { kind: 'operation', operation: 'workspace_activate', state: 'requested' }
+      : intent.kind === 'workstream_create_requested'
+        ? { kind: 'operation', operation: 'workstream_create', state: 'requested' }
+        : intent.kind === 'run_requested'
+          ? { kind: 'operation', operation: 'run_start', state: 'requested' }
+          : intent.kind === 'connector_setup_requested'
+            ? { kind: 'operation', operation: 'connector_setup', state: 'requested' }
+            : null;
+  if (operation) await telemetryBreadcrumbs?.add(operation).catch(() => undefined);
+  if (!telemetryReporter) return;
+  switch (intent.kind) {
+    case 'onboarding_region_selected':
+      await telemetryReporter.onboardingRegionSelected(intent.selectedRegion, intent.entrypoint);
+      return;
+    case 'workspace_create_requested':
+      await telemetryReporter.workspaceCreateRequested(intent.selectedRegion, intent.entrypoint, intent.operationId);
+      return;
+    case 'workspace_activation_requested':
+      await telemetryReporter.workspaceActivationRequested(intent.selectedRegion, intent.entrypoint, intent.operationId);
+      return;
+    case 'workstream_create_requested':
+      await telemetryReporter.workstreamCreateRequested(intent.entrypoint, intent.operationId);
+      return;
+    case 'run_requested':
+      await telemetryReporter.runRequested(intent.entrypoint, intent.operationId);
+      return;
+    case 'connector_setup_requested':
+      await telemetryReporter.connectorSetupRequested(intent.connector, intent.operationId);
+  }
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -174,6 +319,24 @@ let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
+let telemetryIdentity: TelemetryIdentity | null = null;
+let telemetryRoute: ResolvedTelemetryRoute = {
+  route: 'global',
+  basis: 'geolocation_fallback',
+  anonymous: null,
+};
+let telemetryCapabilityRefresh: Promise<ResolvedTelemetryRoute['anonymous']> | null = null;
+let telemetryReporter: TelemetryReporter | null = null;
+let nativeCrashUploader: NativeCrashUploader | null = null;
+let nativeCrashGenerationActive = false;
+let nativeCrashGenerationInvalidated = false;
+let telemetryFlushTimer: ReturnType<typeof setInterval> | null = null;
+let telemetryAccountBinding: string | null = null;
+let telemetryLinkInFlight: Promise<void> | null = null;
+let telemetryLinkedCapability: string | null = null;
+let telemetryLaunchId: string | null = null;
+let telemetryBreadcrumbs: TelemetryBreadcrumbRing | null = null;
+let telemetryContinuouslyEligible = false;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
@@ -188,6 +351,25 @@ const nativeSystemAudioController = new NativeSystemAudioController(() => {
   });
   return requireNativeModule(addonPath) as NativeSystemAudioBinding;
 });
+
+async function reportJavascriptErrorCandidate(value: unknown): Promise<void> {
+  const normalized = await normalizeJavascriptErrorCandidate(value);
+  if (!telemetryReporter) return;
+  await Promise.all([
+    telemetryReporter.processHealth(
+      normalized.process,
+      normalized.errorCode === 'unhandled_rejection' ? 'rejection' : 'exception',
+      'unknown',
+    ),
+    telemetryReporter.javascriptException(
+      normalized.process,
+      normalized.errorCode,
+      normalized.fingerprint,
+      telemetryBreadcrumbs?.status() ?? 'unavailable',
+      normalized.generatedFrames,
+    ),
+  ]);
+}
 
 function avalonWindows(): BrowserWindow[] {
   return [mainWindow, settingsWindow, ...meetingWindows]
@@ -233,6 +415,15 @@ app.setPath(
 function userDataDirectory(): string {
   return app.getPath('userData');
 }
+
+const telemetryFetch: typeof globalThis.fetch = (input, init) => net.fetch(
+  input instanceof URL ? input.toString() : input,
+  init,
+);
+
+const telemetrySpool = new TelemetrySpool({
+  rootDirectory: join(userDataDirectory(), 'telemetry', 'events'),
+});
 
 function publicSession(value: WireSession): DesktopSession {
   return {
@@ -307,6 +498,105 @@ function broadcastSessionChanged(value: WireSession | null): void {
   if (!exposed) menuBarContentStore.clear();
   else if (menuBarItemIsLive()) void menuBarContentStore.refresh();
   menuBarController.refresh();
+
+  const nextBinding = exposed ? flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl) : null;
+  if (nextBinding && nextBinding !== telemetryAccountBinding) {
+    void productAnalyticsSettingsController.requireRemoteVerification()
+      .then(() => productAnalyticsSettingsController.refresh())
+      .catch((error: unknown) => {
+        logWarn('avalon', 'could not synchronize the Product analytics preference', error);
+      });
+  }
+  if (telemetryAccountBinding && telemetryAccountBinding !== nextBinding) {
+    void telemetrySpool.purgeNonessential();
+    void rotateTelemetryEpochsAfterAccountChange();
+  }
+  telemetryAccountBinding = nextBinding;
+  if (exposed?.workspace) {
+    const nextRoute = exposed.workspace.region;
+    if (telemetryRoute.route !== nextRoute) {
+      telemetryRoute = {
+        route: nextRoute,
+        basis: 'explicit_binding',
+        anonymous: telemetryRoute.anonymous?.route === nextRoute ? telemetryRoute.anonymous : null,
+      };
+      if (nativeCrashGenerationActive) {
+        nativeCrashGenerationInvalidated = true;
+        telemetryContinuouslyEligible = false;
+        void telemetryReporter?.crashUploadState('invalidated');
+        void invalidateActiveNativeCrashGeneration({
+          rootDirectory: join(userDataDirectory(), 'telemetry', 'native-crashes'),
+          invalidatedAt: new Date(),
+        }).catch((error: unknown) => logWarn('avalon', 'could not invalidate the native crash generation', error));
+      }
+      if (productAnalyticsSettingsController.state().effectiveEnabled && telemetryLaunchId) {
+        // The old generation sidecar is route-bound with its invalidated dump.
+        // Keep later JavaScript breadcrumbs in memory, never in that directory.
+        telemetryBreadcrumbs = new TelemetryBreadcrumbRing({
+          launchId: telemetryLaunchId, sidecarPath: null, now: () => new Date(),
+        });
+      }
+      broadcastApplicationSettingsChanged(desktopApplicationSettings());
+    }
+  }
+  if (exposed) void linkCurrentAnonymousTelemetry();
+}
+
+async function rotateTelemetryEpochsAfterAccountChange(): Promise<void> {
+  try {
+    telemetryIdentity = await rotateTelemetryEpochs(userDataDirectory());
+  } catch (error) {
+    logWarn('avalon', 'could not rotate telemetry identity epochs', error);
+  }
+}
+
+function linkCurrentAnonymousTelemetry(): Promise<void> {
+  const anonymous = telemetryRoute.anonymous;
+  const capability = anonymous?.capability;
+  if (!capability || telemetryLinkedCapability === capability) return Promise.resolve();
+  if (telemetryLinkInFlight) return telemetryLinkInFlight;
+  telemetryLinkInFlight = (async () => {
+    // The server closes the capability after the identity transition. Drain
+    // locally accepted anonymous events first so a successful link cannot
+    // strand them behind a deliberately revoked journey.
+    await telemetryReporter?.flush();
+    const auth = await loadStoredAuth();
+    if (!auth || auth.binding.region !== anonymous.route) return;
+    const response = await telemetryFetch(`${apiBaseForAuth(auth)}/telemetry/link-anonymous`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${auth.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ capability }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw await responseError(response);
+    telemetryLinkedCapability = capability;
+    if (telemetryRoute.anonymous?.capability === capability) {
+      telemetryRoute = { ...telemetryRoute, anonymous: null };
+    }
+  })().catch((error: unknown) => {
+    logWarn('avalon', 'could not link the anonymous analytics epoch', error);
+  }).finally(() => { telemetryLinkInFlight = null; });
+  return telemetryLinkInFlight;
+}
+
+function refreshCurrentTelemetryCapability(): Promise<ResolvedTelemetryRoute['anonymous']> {
+  if (telemetryCapabilityRefresh) return telemetryCapabilityRefresh;
+  telemetryCapabilityRefresh = (async () => {
+    if (!telemetryIdentity || !telemetryRoute.anonymous) return null;
+    const refreshed = await refreshTelemetryCapability({
+      current: telemetryRoute,
+      anonymousEpochId: telemetryIdentity.anonymousEpochId,
+      globalApiBaseUrl: runtimeConfig().api.global,
+      fetch: telemetryFetch,
+    });
+    if (refreshed) telemetryRoute = { ...telemetryRoute, anonymous: refreshed };
+    return refreshed;
+  })().finally(() => { telemetryCapabilityRefresh = null; });
+  return telemetryCapabilityRefresh;
 }
 
 async function withSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -460,6 +750,77 @@ const lockdownModeController = new LockdownModeController({
 const debugSettingsController = new DebugSettingsController({
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
   writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
+  onChange: () => {
+    if (!productAnalyticsSettingsController.state().effectiveEnabled) telemetryBreadcrumbs = null;
+    else if (!telemetryBreadcrumbs && telemetryLaunchId) {
+      telemetryBreadcrumbs = new TelemetryBreadcrumbRing({
+        launchId: telemetryLaunchId, sidecarPath: null, now: () => new Date(),
+      });
+    }
+    broadcastApplicationSettingsChanged(desktopApplicationSettings());
+  },
+});
+
+async function requestProductAnalyticsPreference(): Promise<{
+  enabled: boolean;
+  version: number;
+}> {
+  const auth = await loadStoredAuth();
+  if (!auth) throw new Error('Sign in before changing Product analytics');
+  const response = await net.fetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
+    headers: { Accept: 'application/json', Authorization: `Bearer ${auth.accessToken}` },
+    signal: AbortSignal.timeout(1_000),
+  });
+  if (!response.ok) throw await responseError(response);
+  return ProductAnalyticsPreferenceSchema.parse(await readJsonBody(response));
+}
+
+async function syncProductAnalyticsPreference(
+  enabled: boolean,
+  expectedVersion: number,
+): Promise<{ enabled: boolean; version: number }> {
+  const auth = await loadStoredAuth();
+  if (!auth) throw new Error('Sign in before changing Product analytics');
+  const apply = (version: number) => net.fetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
+    method: 'PATCH',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${auth.accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ enabled, expectedVersion: version }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  let response = await apply(expectedVersion);
+  if (response.status === 409) {
+    const current = await requestProductAnalyticsPreference();
+    response = await apply(current.version);
+  }
+  if (!response.ok) throw await responseError(response);
+  return ProductAnalyticsPreferenceSchema.parse(await readJsonBody(response));
+}
+
+const productAnalyticsSettingsController = new ProductAnalyticsSettingsController({
+  readSettings: () => readStoredApplicationSettings(userDataDirectory()),
+  writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
+  readPreference: requestProductAnalyticsPreference,
+  syncPreference: syncProductAnalyticsPreference,
+  invalidateNativeCrashGeneration: async () => {
+    await invalidateActiveNativeCrashGeneration({
+      rootDirectory: join(userDataDirectory(), 'telemetry', 'native-crashes'),
+      invalidatedAt: new Date(),
+    });
+    if (nativeCrashGenerationActive) nativeCrashGenerationInvalidated = true;
+    telemetryContinuouslyEligible = false;
+    void telemetryReporter?.crashUploadState('invalidated');
+    if (nativeCrashGenerationActive) void telemetryReporter?.crashUploadState('awaiting_restart');
+  },
+  purgeNonessentialSpool: async () => {
+    await Promise.all([
+      telemetrySpool.purgeNonessential(),
+      nativeCrashUploader?.purgeInactive() ?? Promise.resolve(),
+    ]);
+  },
   onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
 });
 
@@ -599,6 +960,11 @@ function desktopApplicationSettings(
     menuBarPresent: menuBarController.present(),
     launchAtLogin: launchAtLoginController.enabled(),
     launchAtLoginAvailable: launchAtLoginController.available(),
+    productAnalyticsEnabled: productAnalyticsSettingsController.state().desiredEnabled,
+    productAnalyticsEffective: productAnalyticsSettingsController.state().effectiveEnabled,
+    productAnalyticsPreferencePending: productAnalyticsSettingsController.state().pending,
+    nativeCrashRestartRequired: nativeCrashGenerationActive
+      && (nativeCrashGenerationInvalidated || !productAnalyticsSettingsController.state().effectiveEnabled),
   };
 }
 
@@ -849,6 +1215,174 @@ function runtimeConfig(): RuntimeConfig {
   };
 }
 
+async function telemetryAuthenticatedSession(): Promise<{
+  apiBaseUrl: string;
+  accessToken: string;
+  workspace: boolean;
+  route: 'global' | 'eu';
+} | null> {
+  const auth = await loadStoredAuth();
+  if (!auth) return null;
+  return {
+    apiBaseUrl: apiBaseForAuth(auth),
+    accessToken: auth.accessToken,
+    workspace: auth.binding.workspaceId !== null,
+    route: auth.binding.region,
+  };
+}
+
+async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void> {
+  telemetryLaunchId = uuidV7();
+  const launchState = await beginTelemetryLaunch(userDataDirectory(), telemetryLaunchId, new Date());
+  telemetryIdentity = await readTelemetryIdentity(userDataDirectory());
+  telemetryAccountBinding = launchAuth
+    ? flagSessionIdentity(launchAuth.binding.userId, apiBaseForAuth(launchAuth))
+    : null;
+  telemetryRoute = await resolveTelemetryRoute({
+    explicitRegion: launchAuth?.binding.workspaceId ? launchAuth.binding.region : null,
+    anonymousEpochId: telemetryIdentity.anonymousEpochId,
+    globalApiBaseUrl: runtimeConfig().api.global,
+    fetch: telemetryFetch,
+  });
+
+  const crashRoot = join(userDataDirectory(), 'telemetry', 'native-crashes');
+  const startupSpoolMaintenance = await telemetrySpool.maintain(new Date());
+  telemetryContinuouslyEligible = productAnalyticsSettingsController.state().effectiveEnabled;
+  const crashRoute = productAnalyticsSettingsController.state().effectiveEnabled
+    && (telemetryRoute.route === 'global' || telemetryRoute.basis === 'explicit_binding')
+    ? telemetryRoute.route
+    : null;
+  const generation = await prepareNativeCrashGeneration({
+    rootDirectory: crashRoot,
+    route: crashRoute,
+    now: new Date(),
+    generationId: uuidV7(),
+    runtime: {
+      release: runtimeConfig().appVersion,
+      buildId: runtimeConfig().appVersion,
+      platform: process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux'
+        ? process.platform
+        : 'linux',
+      architecture: process.arch === 'arm64' || process.arch === 'x64' ? process.arch : 'x64',
+      launchId: telemetryLaunchId,
+      channel: app.isPackaged ? 'stable' : 'development',
+    },
+  });
+  if (productAnalyticsSettingsController.state().effectiveEnabled) {
+    telemetryBreadcrumbs = new TelemetryBreadcrumbRing({
+      launchId: telemetryLaunchId,
+      sidecarPath: generation.activeCrashpadDirectory
+        ? join(dirname(generation.activeCrashpadDirectory), 'breadcrumbs.json')
+        : null,
+      now: () => new Date(),
+    });
+    await telemetryBreadcrumbs.add({ kind: 'lifecycle', phase: 'launch_started' });
+  }
+  if (generation.activeCrashpadDirectory) {
+    try {
+      app.setPath('crashDumps', generation.activeCrashpadDirectory);
+      crashReporter.start({
+        productName: 'Avalon',
+        uploadToServer: false,
+        ignoreSystemCrashHandler: true,
+        rateLimit: false,
+        compress: false,
+        globalExtra: {
+          avalon_generation: generation.activeGenerationId ?? 'unknown',
+          avalon_region: crashRoute ?? 'unknown',
+        },
+      });
+      nativeCrashGenerationActive = true;
+    } catch (error) {
+      telemetryContinuouslyEligible = false;
+      nativeCrashGenerationInvalidated = true;
+      await invalidateActiveNativeCrashGeneration({ rootDirectory: crashRoot, invalidatedAt: new Date() });
+      logWarn('avalon', 'could not start native crash reporting', error);
+    }
+  }
+
+  const runtime = runtimeConfig();
+  telemetryReporter = new TelemetryReporter({
+    spool: telemetrySpool,
+    identity: () => {
+      if (!telemetryIdentity) throw new Error('Telemetry identity is unavailable');
+      return telemetryIdentity;
+    },
+    route: () => telemetryRoute.route,
+    productAnalyticsEnabled: () => productAnalyticsSettingsController.state().effectiveEnabled,
+    crashReportingEligible: () => telemetryContinuouslyEligible,
+    authenticatedSession: telemetryAuthenticatedSession,
+    anonymousSession: () => telemetryRoute.anonymous,
+    refreshAnonymousSession: refreshCurrentTelemetryCapability,
+    fetch: telemetryFetch,
+    now: () => new Date(),
+    runtime: {
+      environment: app.isPackaged ? 'production' : 'development',
+      release: runtime.appVersion,
+      buildId: runtime.appVersion,
+      ...(process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux'
+        ? { platform: process.platform }
+        : {}),
+      ...(process.arch === 'arm64' || process.arch === 'x64' ? { arch: process.arch } : {}),
+      channel: app.isPackaged ? 'stable' : 'development',
+      launchId: telemetryLaunchId,
+    },
+    globalApiBaseUrl: runtime.api.global,
+  });
+  nativeCrashUploader = new NativeCrashUploader({
+    rootDirectory: crashRoot,
+    enabled: () => productAnalyticsSettingsController.state().effectiveEnabled,
+    identity: () => {
+      if (!telemetryIdentity) throw new Error('Telemetry identity is unavailable');
+      return telemetryIdentity;
+    },
+    authenticatedSession: telemetryAuthenticatedSession,
+    anonymousSession: () => telemetryRoute.anonymous
+      ? {
+          capability: telemetryRoute.anonymous.capability,
+          route: telemetryRoute.route,
+          expiresAt: telemetryRoute.anonymous.expiresAt,
+        }
+      : null,
+    refreshAnonymousSession: async () => {
+      const refreshed = await refreshCurrentTelemetryCapability();
+      return refreshed ? {
+        capability: refreshed.capability,
+        route: refreshed.route,
+        expiresAt: refreshed.expiresAt,
+      } : null;
+    },
+    globalApiBaseUrl: runtime.api.global,
+    fetch: telemetryFetch,
+    onState: (state) => telemetryReporter?.crashUploadState(state),
+  });
+  if (!generation.activeCrashpadDirectory) telemetryContinuouslyEligible = false;
+  if (generation.rotatedGenerationIds.length > 0) await telemetryReporter.crashUploadState('rotated');
+  if (generation.purgedGenerationIds.length > 0) await telemetryReporter.crashUploadState('expired');
+  if (startupSpoolMaintenance.expired > 0) {
+    await telemetryReporter.telemetrySpoolState('expired', startupSpoolMaintenance.expired);
+  }
+  if (startupSpoolMaintenance.quarantined > 0) {
+    await telemetryReporter.telemetrySpoolState('quarantined', startupSpoolMaintenance.quarantined);
+  }
+  if (startupSpoolMaintenance.evicted > 0) {
+    await telemetryReporter.telemetrySpoolState('evicted', startupSpoolMaintenance.evicted);
+  }
+  await telemetryReporter.applicationLifecycle('launch_started');
+  await telemetryReporter.desktopSession('started', telemetryContinuouslyEligible);
+  if (launchState.priorUncleanExit) {
+    await telemetryReporter.processHealth('main', 'unclean_exit', launchState.priorUncleanExit);
+  }
+  if (launchAuth) void linkCurrentAnonymousTelemetry();
+  void telemetryReporter.flush();
+  void nativeCrashUploader.flush();
+  telemetryFlushTimer = setInterval(() => {
+    void telemetryReporter?.flush();
+    void nativeCrashUploader?.flush();
+  }, 30_000);
+  telemetryFlushTimer.unref();
+}
+
 function validatedApiBase(rawUrl: unknown): string {
   if (typeof rawUrl !== 'string') throw new Error('Invalid regional API endpoint');
   const normalized = new URL(rawUrl).toString().replace(/\/$/u, '');
@@ -1019,6 +1553,7 @@ async function requestOnboardingSession(
   body: unknown,
   expectedRegion: AvalonRegion,
   expectedWorkspaceId?: string,
+  operationId?: string,
 ): Promise<DesktopSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   const identity = await requireOnboardingIdentitySession();
@@ -1031,6 +1566,7 @@ async function requestOnboardingSession(
       Accept: 'application/json',
       'Content-Type': 'application/json',
       Authorization: `Bearer ${identity.accessToken}`,
+      ...(operationId ? { 'X-Avalon-Operation-Id': operationId } : {}),
     },
     body: JSON.stringify(body),
   });
@@ -1080,29 +1616,65 @@ async function requestOnboardingSession(
 }
 
 async function activateWorkspace(input: unknown): Promise<DesktopSession> {
-  const parsed = ActivateWorkspaceRequestSchema.safeParse(input);
+  const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  if (Object.keys(candidate).some((key) => !['region', 'workspaceId', 'operationId'].includes(key))) {
+    throw new Error('Invalid workspace activation request');
+  }
+  const parsed = ActivateWorkspaceRequestSchema.safeParse({
+    region: candidate['region'], workspaceId: candidate['workspaceId'],
+  });
   if (!parsed.success) throw new Error('Invalid workspace activation request');
+  const operationId = candidate['operationId'];
+  if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
+    throw new Error('Invalid workspace activation operation ID');
+  }
   return requestOnboardingSession(
     '/onboarding/workspace/activate',
     parsed.data,
     parsed.data.region,
     parsed.data.workspaceId,
+    operationId as string | undefined,
   );
 }
 
 async function createWorkspace(input: unknown): Promise<DesktopSession> {
-  const parsed = CreateWorkspaceRequestSchema.safeParse(input);
+  const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  if (Object.keys(candidate).some((key) => !['region', 'name', 'operationId'].includes(key))) {
+    throw new Error('Invalid workspace creation request');
+  }
+  const parsed = CreateWorkspaceRequestSchema.safeParse({ region: candidate['region'], name: candidate['name'] });
   if (!parsed.success) throw new Error('Invalid workspace creation request');
-  return requestOnboardingSession('/onboarding/workspace', parsed.data, parsed.data.region);
+  const operationId = candidate['operationId'];
+  if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
+    throw new Error('Invalid workspace creation operation ID');
+  }
+  return requestOnboardingSession(
+    '/onboarding/workspace', parsed.data, parsed.data.region, undefined, operationId as string | undefined,
+  );
 }
 
-function parseInvitationAction(input: unknown): { invitationId: string; region: AvalonRegion } {
+function parseInvitationAction(input: unknown): {
+  invitationId: string;
+  region: AvalonRegion;
+  operationId?: string;
+} {
   if (!input || typeof input !== 'object') throw new Error('Invalid workspace invitation request');
-  const candidate = input as { invitationId?: unknown; region?: unknown };
+  const candidate = input as { invitationId?: unknown; region?: unknown; operationId?: unknown };
+  if (Object.keys(candidate).some((key) => !['region', 'invitationId', 'operationId'].includes(key))) {
+    throw new Error('Invalid workspace invitation request');
+  }
   const invitationId = IdSchema.safeParse(candidate.invitationId);
   const region = OnboardingRegionRequestSchema.safeParse({ region: candidate.region });
   if (!invitationId.success || !region.success) throw new Error('Invalid workspace invitation request');
-  return { invitationId: invitationId.data, region: region.data.region };
+  if (candidate.operationId !== undefined
+    && (typeof candidate.operationId !== 'string' || !UUID_V7_PATTERN.test(candidate.operationId))) {
+    throw new Error('Invalid workspace invitation operation ID');
+  }
+  return {
+    invitationId: invitationId.data,
+    region: region.data.region,
+    ...(candidate.operationId ? { operationId: candidate.operationId } : {}),
+  };
 }
 
 async function acceptInvitation(input: unknown): Promise<DesktopSession> {
@@ -1111,6 +1683,8 @@ async function acceptInvitation(input: unknown): Promise<DesktopSession> {
     `/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/accept`,
     { region: parsed.region },
     parsed.region,
+    undefined,
+    parsed.operationId,
   );
 }
 
@@ -1495,6 +2069,29 @@ function registerIpc(): void {
     // login item must never run Lockdown mode's keystore fallback, which clears
     // credentials and forces a new sign-in.
     return desktopApplicationSettings();
+  });
+  ipcMain.handle('application-settings:set-product-analytics', async (event, rawEnabled: unknown) => {
+    assertTrustedIpcSender(event);
+    await productAnalyticsSettingsController.set(rawEnabled);
+    return desktopApplicationSettings();
+  });
+  ipcMain.handle('telemetry:screen', async (event, rawScreen: unknown) => {
+    assertTrustedIpcSender(event);
+    const screen = parseTelemetryScreen(rawScreen);
+    await telemetryBreadcrumbs?.add({ kind: 'screen_changed', screen }).catch(() => undefined);
+    await telemetryReporter?.screenViewed(screen);
+  });
+  ipcMain.handle('telemetry:product-intent', async (event, rawIntent: unknown) => {
+    assertTrustedIpcSender(event);
+    await reportTelemetryProductIntent(rawIntent);
+  });
+  ipcMain.handle('telemetry:inspector', (event) => {
+    assertTrustedIpcSender(event);
+    return developerSettingsFlagController.enabled() ? telemetryReporter?.inspector() ?? [] : [];
+  });
+  ipcMain.handle('telemetry:javascript-error', async (event, rawCandidate: unknown) => {
+    assertTrustedIpcSender(event);
+    await reportJavascriptErrorCandidate(rawCandidate);
   });
   ipcMain.handle('application-icon:get', (event) => {
     assertTrustedIpcSender(event);
@@ -1911,6 +2508,20 @@ function preloadPath(): string {
 }
 
 function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'settings' | 'meeting'): void {
+  window.webContents.on('preload-error', (_event, _scriptPath, error) => {
+    logError('avalon', `${surface} preload failed to initialize`, {
+      errorCode: javascriptErrorCode(error, 'unknown'),
+    });
+    void telemetryReporter?.processHealth('preload', 'exception', 'launch_failure');
+    const frames = safeJavascriptFrames(error.stack);
+    if (frames.length > 0) {
+      void reportJavascriptErrorCandidate({
+        process: 'preload',
+        errorCode: javascriptErrorCode(error, 'unknown'),
+        frames,
+      }).catch(() => undefined);
+    }
+  });
   window.webContents.on(
     'did-fail-load',
     (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
@@ -1924,10 +2535,22 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
   );
   window.webContents.on('render-process-gone', (_event, details) => {
     logError('avalon', `${surface} renderer process exited`, details);
+    const reasonClass = details.reason === 'crashed'
+      ? 'crashed'
+      : details.reason === 'killed'
+        ? 'killed'
+        : details.reason === 'oom'
+          ? 'oom'
+          : details.reason === 'launch-failed'
+            ? 'launch_failure'
+            : 'unknown';
+    void telemetryReporter?.processHealth('renderer', 'gone', reasonClass);
   });
   window.on('unresponsive', () => {
     logError('avalon', `${surface} window became unresponsive`);
+    void telemetryReporter?.processHealth('renderer', 'unresponsive', 'unknown');
   });
+  window.on('responsive', () => void telemetryReporter?.processHealth('renderer', 'responsive', 'unknown'));
   if (!app.isPackaged) {
     window.webContents.on('console-message', (details) => {
       if (details.level === 'error') {
@@ -2238,6 +2861,19 @@ if (!singleInstanceLock) {
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
     const launchAuth = await loadStoredAuth();
+    try {
+      await productAnalyticsSettingsController.initialize(launchAuth !== null);
+      if (launchAuth) await productAnalyticsSettingsController.refresh();
+    } catch (error) {
+      logWarn('avalon', 'could not synchronize the Product analytics preference', error);
+    }
+    try {
+      await initializeTelemetry(launchAuth);
+    } catch (error) {
+      // Telemetry is observational. A disk, Crashpad, or route-gate failure
+      // cannot prevent the product from opening.
+      logWarn('avalon', 'could not initialize telemetry', error);
+    }
     // Launching with a credential already on disk broadcasts no session change,
     // so the first poll is asked for here. Developer stays closed until it
     // answers, which is why this does not block the first window.
@@ -2262,6 +2898,12 @@ if (!singleInstanceLock) {
       onStatusChange: (status) => {
         updateStatus = status;
         installApplicationMenu();
+      },
+      onOutcome: (outcome) => {
+        void telemetryBreadcrumbs?.add({
+          kind: 'operation', operation: 'update', state: outcome.result === 'failed' ? 'failed' : 'succeeded',
+        });
+        void telemetryReporter?.updateOutcome(outcome.phase, outcome.result, outcome.durationMs);
       },
     });
     installApplicationMenu();
@@ -2292,6 +2934,14 @@ if (!singleInstanceLock) {
     // Avalon with nothing on screen and nothing in the menu bar, reachable only
     // by hunting for it in the Dock.
     if (!openedAtLogin || !menuBarController.present()) await createMainWindow();
+    await telemetryReporter?.applicationLifecycle('ready');
+    await telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'ready' }).catch(() => undefined);
+    if (telemetryLaunchId) {
+      await markTelemetryLaunchReady(userDataDirectory(), telemetryLaunchId, new Date()).catch((error: unknown) => {
+        logWarn('avalon', 'could not mark the telemetry launch ready', error);
+      });
+    }
+    void telemetryReporter?.flush();
     void initializeApplicationIcon();
 
     const initialDeepLink = process.argv.find((argument) => argument.startsWith(`${customProtocol}://`));
@@ -2309,6 +2959,23 @@ if (!singleInstanceLock) {
     app.quit();
   });
 }
+
+process.on('uncaughtExceptionMonitor', (error, origin) => {
+  const frames = safeJavascriptFrames(error.stack);
+  if (frames.length === 0) {
+    void telemetryReporter?.processHealth(
+      'main',
+      origin === 'unhandledRejection' ? 'rejection' : 'exception',
+      'unknown',
+    );
+    return;
+  }
+  void reportJavascriptErrorCandidate({
+    process: 'main',
+    errorCode: javascriptErrorCode(error, origin === 'unhandledRejection' ? 'unhandled_rejection' : 'unknown'),
+    frames,
+  }).catch(() => undefined);
+});
 
 app.on('window-all-closed', () => {
   // The menu bar item is not a window, and on macOS it is often the only thing
@@ -2337,4 +3004,12 @@ app.on('before-quit', () => {
 // running with the status item already destroyed and nothing that recreates it —
 // no window and no menu bar presence, which is the state the `present()` check
 // on launch exists to prevent. This fires only once the quit is going through.
-app.on('will-quit', () => menuBarController.destroy());
+app.on('will-quit', () => {
+  void telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'graceful_exit' });
+  clearTelemetryLaunch(userDataDirectory());
+  if (telemetryFlushTimer) clearInterval(telemetryFlushTimer);
+  telemetryFlushTimer = null;
+  void telemetryReporter?.applicationLifecycle('graceful_exit').then(() => telemetryReporter?.flush());
+  void telemetryReporter?.desktopSession('ended', telemetryContinuouslyEligible).then(() => telemetryReporter?.flush());
+  menuBarController.destroy();
+});

@@ -3,6 +3,7 @@ import type { HonoAppEnv } from "./env";
 import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requireAuth, requireIdentityAuth } from "./middleware/auth";
 import { requestContext, securityMiddleware } from "./middleware/request-context";
+import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
 import { authRoutes } from "./routes/auth";
 import { automationRoutes, subscriptionRoutes, templateRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
@@ -19,6 +20,8 @@ import { workspaceRoutes } from "./routes/workspace";
 import { workstreamRoutes } from "./routes/workstreams";
 import { workOpportunityRoutes } from "./routes/work-opportunities";
 import { slackIngressRoutes } from "./routes/slack";
+import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
+import { telemetryOperatorRoutes } from './routes/telemetry-operations';
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -110,15 +113,20 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/ingest/resend", resendInboundRoutes);
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);
+  app.route("/telemetry", publicTelemetryRoutes);
+  app.route('/internal/telemetry', telemetryOperatorRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();
   identityApi.use("*", requireIdentityAuth);
+  identityApi.use("*", apiOperationTelemetry());
   identityApi.route("/onboarding", onboardingRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);
+  identityApi.route("/telemetry", authenticatedTelemetryRoutes);
   app.route("/", identityApi);
 
   const protectedApi = new Hono<HonoAppEnv>();
   protectedApi.use("*", requireAuth);
+  protectedApi.use("*", apiOperationTelemetry());
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);

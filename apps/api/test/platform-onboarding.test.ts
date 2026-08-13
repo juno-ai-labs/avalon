@@ -29,6 +29,7 @@ const operationId = "00000000-0000-7000-8000-000000000005";
 const createdWorkspaceId = "00000000-0000-7000-8000-000000000006";
 const freshActivationId = "00000000-0000-7000-8000-000000000007";
 const retryOperationId = "00000000-0000-7000-8000-000000000008";
+const preferenceSubjectHandle = "00000000-0000-7000-8000-000000000009";
 const at = "2026-08-01T12:00:00.000Z";
 
 const auth: IdentityAuthContext = {
@@ -120,6 +121,13 @@ class IdentityDatabase {
           }
           if (record.sql === "SELECT platform_user_id FROM users WHERE id = ?") {
             return { platform_user_id: platformUserId } as T;
+          }
+          if (record.sql.includes("SELECT preference_subject_handle, product_analytics_enabled")) {
+            return {
+              preference_subject_handle: preferenceSubjectHandle,
+              product_analytics_enabled: 0,
+              product_analytics_preference_version: 3,
+            } as T;
           }
           throw new Error(`Unexpected first query: ${record.sql}`);
         },
@@ -290,6 +298,11 @@ describe("single-platform regional onboarding", () => {
       operationId,
       workspaceId: euWorkspaceId,
       invitationId,
+      preference: {
+        preferenceSubjectHandle,
+        enabled: false,
+        version: 3,
+      },
     }));
     expect(subject.bindings.row).toMatchObject({ region: "eu", workspace_id: euWorkspaceId, status: "active" });
     expect(subject.database.statements.some((item) => item.sql.startsWith("UPDATE sessions SET revoked_at"))).toBe(true);

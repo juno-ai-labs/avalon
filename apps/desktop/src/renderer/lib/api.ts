@@ -53,6 +53,7 @@ import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
 import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
+import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
 import type {
   ActivitySuggestionData,
   AgentModelOverride,
@@ -1207,8 +1208,12 @@ export class AvalonApi {
     modelOverride?: AgentModelOverride;
   }): Promise<CreatedWorkstream> {
     const clientMessageId = crypto.randomUUID();
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({ kind: 'workstream_create_requested', entrypoint: 'composer', operationId });
+    reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request('/workstreams', {
       method: 'POST',
+      headers: { 'X-Avalon-Operation-Id': operationId },
       body: {
         openingMessage: input.openingMessage,
         participantUserIds: input.participantIds,
@@ -1372,8 +1377,11 @@ export class AvalonApi {
     attachmentIds?: string[];
   }): Promise<Message> {
     const mentions = await this.mentionPayload(id, input.text, input.mentions);
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request(`/workstreams/${encodeURIComponent(id)}/messages`, {
       method: 'POST',
+      headers: { 'X-Avalon-Operation-Id': operationId },
       body: {
         text: input.text,
         clientMessageId: input.clientId,
@@ -1793,8 +1801,14 @@ export class AvalonApi {
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<ConnectorOAuthStart> {
+    const tracked = provider === 'granola' ? null : provider;
+    const operationId = tracked ? uuidV7() : null;
+    if (tracked && operationId) {
+      reportTelemetryProductIntent({ kind: 'connector_setup_requested', connector: tracked, operationId });
+    }
     return this.request(`/connections/${provider}/start`, {
       method: 'POST',
+      ...(operationId ? { headers: { 'X-Avalon-Operation-Id': operationId } } : {}),
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
       schema: WireConnectorOAuthStartSchema,
     });
@@ -1864,9 +1878,17 @@ export class AvalonApi {
     });
   }
 
-  async reconnectConnection(id: string): Promise<ConnectorOAuthStart> {
+  async reconnectConnection(
+    id: string,
+    provider?: 'google' | 'github' | 'linear' | 'notion' | 'slack',
+  ): Promise<ConnectorOAuthStart> {
+    const operationId = provider ? uuidV7() : null;
+    if (provider && operationId) {
+      reportTelemetryProductIntent({ kind: 'connector_setup_requested', connector: provider, operationId });
+    }
     return this.request(`/connections/${encodeURIComponent(id)}/reconnect`, {
       method: 'POST',
+      ...(operationId ? { headers: { 'X-Avalon-Operation-Id': operationId } } : {}),
       schema: WireConnectorOAuthStartSchema,
     });
   }

@@ -71,6 +71,13 @@ files that a running `wrangler dev` holds open.
 pnpm dev:api:local       # both regions, remote bindings disabled
 ```
 
+`scripts/dev-regional-api.mjs` starts Global first and waits for Wrangler's
+ready signal before starting EU. The Workers then run concurrently as before.
+This short serialization is required because both regional configs build the
+same crash-symbolicator Container image; concurrent Wrangler image builds can
+remove one another's transient local tag and leave both Workers unable to start.
+The runner forwards `SIGINT`/`SIGTERM` to both child processes.
+
 `wrangler.global.jsonc` declares an `ai` binding, and Workers AI has no local
 implementation — wrangler reports it as `Mode: remote` and opens a remote proxy
 session to Cloudflare to serve it. Without Cloudflare credentials, or behind a
@@ -180,21 +187,9 @@ workspace with its work streams, automations, and onboarding checklist.
   macOS-only and must run on a Mac.
 - **Remote D1, deploys, and anything else that needs Cloudflare credentials.**
 
-## Known issue: `pnpm smoke:local` cannot pass locally
-
-`scripts/smoke-local.mjs:157` asserts that the seeded work stream carries at
-least one connector connection:
-
-```javascript
-assert(detail.body?.connections?.length > 0, "The right-rail connection fixture is missing");
-```
-
-`packages/db/seed.sql` inserts into fourteen tables and `connector_connections`
-is not one of them, so that assertion fails on any freshly seeded database. Every
-check before it — development authentication, protected routes, work-stream
-creation, the invitation lifecycle including revocation — passes. This is a
-repository bug rather than an environment problem; either the seed needs a
-connection fixture or the assertion needs to go.
+`packages/db/seed.sql` includes the resource and connector fixtures required by
+the right-rail checks in `pnpm smoke:local`. Re-run `pnpm db:seed` after updating
+an older worktree so the smoke test sees both fixtures.
 
 ## Quick reference
 

@@ -17,6 +17,7 @@
     "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
     "NOTION_INGRESS_BASE_URL": "https://notion.with-avalon.com",
     "SLACK_INGRESS_BASE_URL": "https://slack.with-avalon.com",
+    "POSTHOG_HOST": "https://us.i.posthog.com",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/complete",
@@ -106,23 +107,42 @@
       "binding": "EU_SLACK_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "SlackRegionalBridge"
+    },
+    {
+      "binding": "EU_TELEMETRY_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "TelemetryRegionalBridge"
     }
   ],
   "r2_buckets": [
-    { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" }
+    { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" },
+    { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-global-telemetry" }
   ],
   "analytics_engine_datasets": [
     { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" }
   ],
   "images": { "binding": "IMAGES" },
+  "containers": [
+    {
+      "name": "avalon-global-crash-symbolicator",
+      "class_name": "CrashSymbolicatorContainer",
+      "image": "./crash-symbolicator/Dockerfile",
+      "max_instances": 5,
+      "instance_type": "basic",
+      "constraints": { "regions": ["ENAM", "WNAM"] },
+      "ssh": { "enabled": false }
+    }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "WORKSTREAM_ROOMS", "class_name": "WorkstreamRoom" },
-      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" }
+      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" },
+      { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] }
+    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
+    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] }
   ],
   "queues": {
     "producers": [

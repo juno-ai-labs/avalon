@@ -27,7 +27,7 @@ docs/                      Product, architecture, security, setup, runbooks
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item. |
+| `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, and the main-owned telemetry/crash boundary. |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
@@ -58,7 +58,10 @@ docs/                      Product, architecture, security, setup, runbooks
    macOS menu bar status item, which is the one surface that exists with no
    window open — Avalon opens at login by default and starts hidden — and which
    therefore reads the regional API for itself rather than through a renderer;
-   [`menu-bar.md`](menu-bar.md) owns it.
+   [`menu-bar.md`](menu-bar.md) owns it. Main also owns the typed telemetry
+   reporter, route and identity epochs, local spool, Crashpad generations, and
+   authenticated regional upload; the renderer can only invoke registered
+   semantic calls.
 2. **`apps/api`** is a Hono application deployed as the same Cloudflare Worker
    code in Global and EU environments. It owns authentication, authorization,
    REST endpoints, WebSocket upgrades, D1 repositories, R2 objects, Queue
@@ -127,6 +130,18 @@ revokes the bootstrap session. The desktop then pins that regional API base URL.
 Both deployments retain separate D1, R2, Durable Object namespaces,
 session-signing and credential-encryption keys, and Worker secrets. Cross-region
 workspace-content access is not implemented.
+
+Telemetry begins before workspace selection without introducing a third data
+plane. Global reduces Cloudflare's country signal to an immediate Global/EU route;
+an affirmative EU result crosses only as a validated semantic projection over
+`EU_TELEMETRY_BRIDGE` and prevents pre-region crash saving. The explicit workspace
+binding controls future signals, but accepted history never moves. Global delivers
+approved rows to PostHog; EU terminates telemetry in its regional D1, dedicated
+EU-jurisdiction R2, and pinned crash processor. EU uses the separate
+`GLOBAL_TELEMETRY_CONTROL` binding only for opaque preference mutation and
+Global-signed journey authorization/closure; the key and destination identities
+stay in Global. [`telemetry.md`](telemetry.md) owns the full event, preference,
+identity, crash, and restricted operator flow.
 
 ### Identity and secrets
 
@@ -469,6 +484,11 @@ precede any LLM classification.
 - **The renderer is never trusted with a secret.** It never receives provider
   credentials, native PKCE verifiers, OpenRouter keys, Cloudflare administration
   keys, raw IPC, Node integration, or arbitrary navigation.
+- **Telemetry observes product state; it never becomes product state or changes
+  its result.** Producers emit a closed semantic contract, API outcomes come from
+  the authoritative service, and a reporter/destination/processor failure is
+  swallowed outside that action. Direct PostHog or arbitrary capture from the
+  renderer would violate both halves of this rule.
 
 ## Boundary
 
@@ -488,6 +508,7 @@ document, and it does not absorb one when it grows:
 | Model routing flags | [`feature-flags.md`](feature-flags.md) |
 | The activity log and scheduled digests | [`digests.md`](digests.md) |
 | The macOS status item | [`menu-bar.md`](menu-bar.md) |
+| Regional product telemetry and crash reporting | [`telemetry.md`](telemetry.md) |
 | Hosted resources, secrets, deployment, incidents | [`runbook.md`](runbook.md) |
 
 A new module is added to this map in a sentence and documented in its own file per
@@ -555,9 +576,11 @@ that takes both regions down without Cloudflare credentials.
 ## Regional impact
 
 The Global and EU deployments run the same Worker code and share nothing but the
-identity control plane and the named RPC bridges. Each retains its own D1, R2,
-Durable Object namespaces, session-signing and credential-encryption keys, and
-Worker secrets. EU Durable Object namespaces resolve through `jurisdiction("eu")`.
+identity control plane and the named RPC bridges. Each retains its own D1, ordinary
+R2, dedicated telemetry R2, Durable Object namespaces, telemetry crash processor,
+session-signing and credential-encryption keys, and Worker secrets. EU Durable
+Object namespaces and its telemetry bucket resolve with EU jurisdiction; EU has no
+PostHog or telemetry Analytics Engine destination.
 
 This is a logical and storage boundary for the prototype, not a claim that all
 subprocessors provide complete EU-only processing. The Global identity control
@@ -575,9 +598,79 @@ contents, model context, and unnecessary personal information. External actions
 and authorization decisions create audit records with structured correlation IDs.
 Immutable run scopes and live connection reauthorization ensure progressive plugin
 activation can narrow, but never widen, a run's original authority.
+Telemetry IPC is a closed named surface, local files are owner-only and bounded,
+and raw dumps remain in a dedicated regional bucket behind audited opaque-ID
+access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-13 — Telemetry separates data projection from control authority
+
+**What changed:** The architecture now names two directional telemetry RPC
+surfaces: validated event/outcome projection from Global to EU and opaque
+preference/journey control from EU to Global. Restricted regional telemetry
+operations are mounted separately from the product-session API.
+
+**Why:** EU onboarding needs both an immediate regional event path and a way to
+verify Global-issued journey authority, but combining them or sharing the signing
+key would turn a narrow region bridge into a general cross-region data plane.
+
+**Considered and rejected:** One bidirectional telemetry bridge, a shared
+capability key, and leaving replay/raw-access helpers without a deployed
+authorization boundary.
+
+**Consequences:** Event payloads cross only Global-to-EU; EU-to-Global commands
+carry no event, dump, regional analytics identity, or destination key. Operator
+access remains independently authenticated in the owning region.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-12 — Regional telemetry joins client intent to server truth
+
+**What changed:** Electron main now owns a typed, durable regional reporter and
+Crashpad lifecycle; APIs accept the same closed contract, add authoritative
+outcomes, and route to an internal EU sink or idiomatic Global PostHog adapter.
+Anonymous onboarding receives an immediate coarse route and later same-region
+person link.
+
+**Why:** Product funnels need the intent visible only in the client and the result
+known only by the service, while crash reporting must survive renderer and process
+failure without placing provider authority in that renderer.
+
+**Considered and rejected:** A PostHog SDK in Electron, automatic DOM/network
+capture, a Global region-pending queue, Segment as a second destination layer, and
+using analytics as canonical state. Those shapes either weaken the trust/region
+boundary or lose the semantic server outcome.
+
+**Consequences:** Telemetry remains observational and independently fallible.
+Every new event enters the shared registry and receives tests at producer,
+regional acceptance, and destination boundaries; EU and Global resources are
+operated independently.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+### 2026-08-12 — Main owns route-final native crash generations
+
+**What changed:** Added the first regional telemetry module boundary in Electron
+main: Crashpad writes only inside an active route-final generation, and a later
+process rotates or purges that whole generation before starting another handler.
+The detailed lifecycle and future regional pipeline live in
+[`telemetry.md`](telemetry.md).
+
+**Why:** Crashpad cannot be stopped after startup and cannot use Avalon's required
+authenticated-header uploader. Giving main ownership of the directory above the
+live database preserves Electron's supported boundary while allowing policy,
+region, and absolute retention to be enforced between launches.
+
+**Future changes must preserve:** Renderer code never owns crash paths or
+transport, and main never reads or mutates a database while its Crashpad handler
+is active.
+
+Shipped in the pull request for this change. Design: [regional telemetry
+PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-12 — HyperSight adopts the root policy with aggregate run telemetry
 
