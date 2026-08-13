@@ -426,7 +426,7 @@ export class NoteService {
            model_content_extractor_version = 'avalon-note-v1',
            model_content_character_count = ?, model_content_extracted_at = ?,
            model_content_claimed_at = NULL, model_content_claim_id = NULL,
-           model_content_error_code = NULL, model_index_ref = NULL,
+           model_content_error_code = NULL,
            metadata_json = ?, last_hydrated_at = ?, updated_at = ?
        WHERE id = ? AND workspace_id = ?`,
     ).bind(

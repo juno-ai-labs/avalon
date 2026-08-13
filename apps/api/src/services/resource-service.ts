@@ -232,11 +232,10 @@ export class ResourceService {
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
          AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
          AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)
-       RETURNING content_ref, model_content_ref, model_index_ref`,
+       RETURNING content_ref, model_content_ref`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<{
       content_ref: string | null;
       model_content_ref: string | null;
-      model_index_ref: string | null;
     }>();
     if (!resource) throw new ApiError(404, "attachment_draft_not_found", "The draft attachment is unavailable or already sent");
     // The resource-deletion trigger has durably queued every object. Cleanup is
@@ -354,7 +353,7 @@ export class ResourceService {
           `UPDATE resources
            SET content_ref = ?, content_sha256 = ?, last_hydrated_at = ?, updated_at = ?,
                model_content_ref = NULL, model_mime_type = NULL, model_content_sha256 = NULL,
-               model_metadata_json = NULL, model_index_ref = NULL,
+               model_metadata_json = NULL,
                model_content_status = 'pending', model_content_extractor_version = NULL,
                model_content_character_count = NULL, model_content_extracted_at = NULL,
                model_content_claimed_at = NULL, model_content_claim_id = NULL,

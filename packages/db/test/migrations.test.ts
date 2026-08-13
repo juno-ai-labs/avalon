@@ -54,7 +54,7 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("tracks attachment derivative lifecycle and enqueues every regional object before resource deletion", () => {
+  it("tracks current attachment derivatives without a duplicate object catalog", () => {
     const database = migrateFreshDatabase();
     const resourceColumns = database.prepare("PRAGMA table_info(resources)").all() as Array<{ name: string }>;
     expect(resourceColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
@@ -64,7 +64,6 @@ describe("database migrations", () => {
       "model_content_character_count",
       "model_content_extracted_at",
       "model_content_error_code",
-      "model_index_ref",
       "model_content_claimed_at",
       "model_content_claim_id",
     ]));
@@ -82,41 +81,28 @@ describe("database migrations", () => {
       VALUES ('attachment-workspace', 'Attachment Workspace', 'attachment-workspace', 'global', 'attachment-owner', '2026-08-12', '2026-08-12');
       INSERT INTO resources
         (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
-         content_sha256, model_content_ref, model_index_ref, model_content_status,
+         content_sha256, model_content_ref, model_content_status,
          model_content_extractor_version, model_content_character_count,
          model_content_extracted_at, created_at, updated_at)
       VALUES
         ('attachment-resource', 'attachment-workspace', 'uploaded_file', 'avalon_upload',
          'brief.md', 'text/markdown', 'original-ref', '${"a".repeat(64)}',
-         'active-model-ref', 'active-index-ref', 'ready', 'markdown-v1', 120,
+         'active-model-ref', 'ready', 'markdown-v1', 120,
          '2026-08-12', '2026-08-12', '2026-08-12');
-      INSERT INTO resource_model_objects
-        (workspace_id, resource_id, object_ref, object_kind, lifecycle_status, created_at)
-      VALUES
-        ('attachment-workspace', 'attachment-resource', 'active-model-ref', 'derivative', 'active', '2026-08-12'),
-        ('attachment-workspace', 'attachment-resource', 'active-index-ref', 'index', 'active', '2026-08-12'),
-        ('attachment-workspace', 'attachment-resource', 'old-model-ref', 'derivative', 'superseded', '2026-08-12');
+      INSERT INTO resource_object_deletion_outbox
+        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+      VALUES ('next-model-ref', 'attachment-workspace', 'attachment-resource', 'derivative', '2026-08-12', '2026-08-12');
       UPDATE resources
-         SET model_content_ref = 'next-model-ref', model_index_ref = 'next-index-ref'
+         SET model_content_ref = 'next-model-ref'
        WHERE id = 'attachment-resource';
-      UPDATE resources
-         SET model_content_ref = 'orphan-model-ref', model_index_ref = 'orphan-index-ref'
-       WHERE id = 'missing-resource';
     `);
 
     expect(database.prepare(
-      `SELECT object_ref, object_kind, lifecycle_status FROM resource_model_objects
+      `SELECT object_ref, object_kind FROM resource_object_deletion_outbox
         WHERE resource_id = 'attachment-resource' ORDER BY object_ref`,
     ).all()).toEqual([
-      { object_ref: "active-index-ref", object_kind: "index", lifecycle_status: "superseded" },
-      { object_ref: "active-model-ref", object_kind: "derivative", lifecycle_status: "superseded" },
-      { object_ref: "next-index-ref", object_kind: "index", lifecycle_status: "active" },
-      { object_ref: "next-model-ref", object_kind: "derivative", lifecycle_status: "active" },
-      { object_ref: "old-model-ref", object_kind: "derivative", lifecycle_status: "superseded" },
+      { object_ref: "active-model-ref", object_kind: "derivative" },
     ]);
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM resource_model_objects WHERE object_ref LIKE 'orphan-%'",
-    ).get()).toEqual({ count: 0 });
 
     database.exec(`
       DELETE FROM resources WHERE id = 'attachment-resource';
@@ -126,16 +112,10 @@ describe("database migrations", () => {
       `SELECT object_ref, object_kind FROM resource_object_deletion_outbox
        WHERE resource_id = 'attachment-resource' ORDER BY object_ref`,
     ).all()).toEqual([
-      { object_ref: "active-index-ref", object_kind: "index" },
       { object_ref: "active-model-ref", object_kind: "derivative" },
-      { object_ref: "next-index-ref", object_kind: "index" },
       { object_ref: "next-model-ref", object_kind: "derivative" },
-      { object_ref: "old-model-ref", object_kind: "derivative" },
       { object_ref: "original-ref", object_kind: "original" },
     ]);
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM resource_model_objects WHERE resource_id = 'attachment-resource'",
-    ).get()).toEqual({ count: 0 });
     expect(() => database.exec(
       "INSERT INTO resources (id, workspace_id, resource_type, provider, title, model_content_status, created_at, updated_at) VALUES ('bad-status', 'attachment-workspace', 'file', 'test', 'bad', 'empty', '2026-08-12', '2026-08-12')",
     )).toThrow(/CHECK constraint failed/iu);
@@ -165,6 +145,13 @@ describe("database migrations", () => {
     const revision = () => database.prepare(
       "SELECT revision FROM workstream_resource_inventory_revisions WHERE workspace_id = 'inventory-workspace' AND workstream_id = 'inventory-workstream'",
     ).get() as { revision: number };
+    expect(revision()).toEqual({ revision: 2 });
+
+    database.exec(`
+      UPDATE resources
+         SET updated_at = '2026-08-12T00:00:30Z', model_content_status = 'processing'
+       WHERE id = 'inventory-upload';
+    `);
     expect(revision()).toEqual({ revision: 2 });
 
     database.exec(`

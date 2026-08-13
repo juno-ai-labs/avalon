@@ -13,8 +13,6 @@ const MAX_DERIVATIVE_CHARACTERS = 2_000_000;
 const MAX_PDF_PAGES = 200;
 const CONVERTER_TIMEOUT_MS = 30_000;
 const PROCESSING_LEASE_MS = 5 * 60_000;
-const DEFAULT_INDEX_CHUNK_CHARACTERS = 4_000;
-const MAX_INDEX_CHUNKS = 500;
 
 export interface AttachmentPdfText {
   pageCount: number;
@@ -52,26 +50,11 @@ export type AttachmentDerivativeResult =
       modelMimeType: "text/markdown" | "text/plain";
       extractorVersion: string;
       metadata: DerivativeMetadata;
-      index: DerivativeIndex;
     }
   | {
       status: "failed" | "unsupported";
       errorCode: string;
     };
-
-export interface DerivativeIndexChunk {
-  ordinal: number;
-  start: number;
-  end: number;
-  sectionLabel: string | null;
-  terms: string[];
-}
-
-export interface DerivativeIndex {
-  offsetUnit: "utf16";
-  totalCharacters: number;
-  chunks: DerivativeIndexChunk[];
-}
 
 export interface AuthorizedDerivativeResource {
   id: string;
@@ -83,7 +66,6 @@ export interface AuthorizedDerivativeResource {
   modelContentRef: string | null;
   modelMimeType: string | null;
   modelContentSha256: string | null;
-  modelIndexRef: string | null;
   modelContentStatus: "pending" | "processing" | "ready" | "failed" | "unsupported" | null;
   modelContentExtractorVersion: string | null;
   modelContentCharacterCount: number | null;
@@ -95,7 +77,6 @@ export type MaterializedAttachmentDerivative =
   | {
       status: "ready";
       contentRef: string;
-      indexRef: string;
       modelMimeType: string;
       sha256: string;
       extractorVersion: string;
@@ -148,7 +129,6 @@ export async function buildAttachmentDerivative(
       status: "ready",
       ...converted,
       extractorVersion: ATTACHMENT_TEXT_EXTRACTOR_VERSION,
-      index: buildDerivativeIndex(converted.text),
     };
   } catch (error) {
     if (error instanceof ConversionFailure) return { status: "failed", errorCode: error.code };
@@ -176,7 +156,6 @@ export async function materializeAttachmentDerivative(
     return {
       status: "ready",
       contentRef: resource.modelContentRef!,
-      indexRef: resource.modelIndexRef!,
       modelMimeType: resource.modelMimeType!,
       sha256: resource.modelContentSha256!,
       extractorVersion: ATTACHMENT_TEXT_EXTRACTOR_VERSION,
@@ -244,44 +223,25 @@ export async function materializeAttachmentDerivative(
 
   const prefix = derivativeObjectPrefix(resource.id, sourceSha256, converted.extractorVersion, crypto.randomUUID());
   const contentRef = `${prefix}/content.${converted.modelMimeType === "text/markdown" ? "md" : "txt"}`;
-  const indexRef = `${prefix}/index.json`;
   const contentBytes = new TextEncoder().encode(converted.text);
-  const indexBytes = new TextEncoder().encode(JSON.stringify(converted.index));
   const derivativeSha256 = await sha256Hex(contentBytes);
-  // Register both unique generation keys before the first R2 write. A failed
+  // Register the unique generation key before the R2 write. A failed
   // write, stale publisher, or failed D1 publication remains recoverable by the
   // regional cleanup worker; a successful active pointer cancels the outbox row.
-  await database.batch([
-    database.prepare(
-      `INSERT OR IGNORE INTO resource_object_deletion_outbox
-        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-       VALUES (?, ?, ?, 'derivative', ?, ?)`,
-    ).bind(contentRef, resource.workspaceId, resource.id, at, at),
-    database.prepare(
-      `INSERT OR IGNORE INTO resource_object_deletion_outbox
-        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-       VALUES (?, ?, ?, 'index', ?, ?)`,
-    ).bind(indexRef, resource.workspaceId, resource.id, at, at),
-  ]);
+  await database.prepare(
+    `INSERT OR IGNORE INTO resource_object_deletion_outbox
+      (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+     VALUES (?, ?, ?, 'derivative', ?, ?)`,
+  ).bind(contentRef, resource.workspaceId, resource.id, at, at).run();
   await payloads.put(contentRef, exactArrayBuffer(contentBytes), {
     httpMetadata: { contentType: `${converted.modelMimeType}; charset=utf-8` },
     customMetadata: { originalResourceId: resource.id, sourceSha256, extractorVersion: converted.extractorVersion, sha256: derivativeSha256 },
   });
   try {
-    await payloads.put(indexRef, exactArrayBuffer(indexBytes), {
-      httpMetadata: { contentType: "application/json" },
-      customMetadata: { originalResourceId: resource.id, sourceSha256, extractorVersion: converted.extractorVersion },
-    });
-  } catch (error) {
-    await payloads.delete(contentRef).catch(() => undefined);
-    throw error;
-  }
-
-  try {
     const result = await database.prepare(
       `UPDATE resources
           SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?,
-              model_metadata_json = ?, model_index_ref = ?, model_content_status = 'ready',
+              model_metadata_json = ?, model_content_status = 'ready',
               model_content_extractor_version = ?, model_content_character_count = ?,
               model_content_extracted_at = ?, model_content_claimed_at = NULL,
               model_content_claim_id = NULL, model_content_error_code = NULL, updated_at = ?
@@ -290,20 +250,20 @@ export async function materializeAttachmentDerivative(
           AND model_content_claim_id = ?`,
     ).bind(
       contentRef, converted.modelMimeType, derivativeSha256,
-      JSON.stringify(converted.metadata), indexRef, converted.extractorVersion,
+      JSON.stringify(converted.metadata), converted.extractorVersion,
       converted.text.length, at, at, resource.workspaceId, resource.id, resource.contentRef,
       sourceSha256, converted.extractorVersion, claimId,
     ).run();
     if ((result.meta.changes ?? 0) === 0) {
-      await Promise.allSettled([payloads.delete(contentRef), payloads.delete(indexRef)]);
+      await payloads.delete(contentRef).catch(() => undefined);
       return { status: "processing", retryAfterMs: 250 };
     }
   } catch (error) {
-    await Promise.allSettled([payloads.delete(contentRef), payloads.delete(indexRef)]);
+    await payloads.delete(contentRef).catch(() => undefined);
     throw error;
   }
   return {
-    status: "ready", contentRef, indexRef, modelMimeType: converted.modelMimeType,
+    status: "ready", contentRef, modelMimeType: converted.modelMimeType,
     sha256: derivativeSha256, extractorVersion: converted.extractorVersion,
     totalCharacters: converted.text.length,
   };
@@ -313,41 +273,6 @@ export function derivativeObjectPrefix(resourceId: string, sourceSha256: string,
   const safeVersion = extractorVersion.replace(/[^a-zA-Z0-9._-]/gu, "_").slice(0, 100);
   const safeGeneration = generation.replace(/[^a-zA-Z0-9._-]/gu, "_").slice(0, 100);
   return `model-derivatives/${resourceId}/${sourceSha256}/${safeVersion}/${safeGeneration}`;
-}
-
-export function buildDerivativeIndex(
-  text: string,
-  chunkCharacters = DEFAULT_INDEX_CHUNK_CHARACTERS,
-): DerivativeIndex {
-  if (!Number.isSafeInteger(chunkCharacters) || chunkCharacters < 1) {
-    throw new Error("chunkCharacters must be a positive safe integer");
-  }
-  const chunks: DerivativeIndexChunk[] = [];
-  let sectionLabel: string | null = null;
-  let start = 0;
-  while (start < text.length && chunks.length < MAX_INDEX_CHUNKS) {
-    const hardEnd = Math.min(text.length, start + chunkCharacters);
-    const candidate = text.slice(start, hardEnd);
-    const headings = [...candidate.matchAll(/^#{1,6}\s+(.+)$/gmu)];
-    if (headings.length > 0) sectionLabel = headings.at(-1)?.[1]?.trim() || sectionLabel;
-    let end = hardEnd;
-    if (hardEnd < text.length) {
-      const lastBoundary = Math.max(candidate.lastIndexOf("\n\n"), candidate.lastIndexOf("\n"));
-      if (lastBoundary >= Math.floor(chunkCharacters / 2)) end = start + lastBoundary + 1;
-      if (isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))) end -= 1;
-    }
-    const chunkText = text.slice(start, end);
-    chunks.push({
-      ordinal: chunks.length,
-      start,
-      end,
-      sectionLabel,
-      terms: [...new Set(chunkText.toLocaleLowerCase("en-US").match(/[\p{L}\p{N}_-]{2,}/gu) ?? [])].slice(0, 64),
-    });
-    start = end;
-  }
-  if (start < text.length) throw new ConversionFailure("index_too_large");
-  return { offsetUnit: "utf16", totalCharacters: text.length, chunks };
 }
 
 async function convertAttachment(input: BuildAttachmentDerivativeInput): Promise<ConvertedText | null> {
@@ -724,19 +649,10 @@ function escapeMarkdownUrl(value: string): string {
   return value.replace(/[()\s]/gu, (character) => encodeURIComponent(character));
 }
 
-function isHighSurrogate(value: number): boolean {
-  return value >= 0xd800 && value <= 0xdbff;
-}
-
-function isLowSurrogate(value: number): boolean {
-  return value >= 0xdc00 && value <= 0xdfff;
-}
-
 function isReadyCurrentVersion(resource: AuthorizedDerivativeResource): boolean {
   return resource.modelContentStatus === "ready"
     && resource.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION
     && Boolean(resource.modelContentRef)
-    && Boolean(resource.modelIndexRef)
     && Boolean(resource.modelMimeType)
     && Boolean(resource.modelContentSha256)
     && Number.isSafeInteger(resource.modelContentCharacterCount)

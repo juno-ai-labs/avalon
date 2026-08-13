@@ -16,7 +16,6 @@ export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   model_mime_type: string | null;
   model_content_sha256: string | null;
   model_metadata_json: string | null;
-  model_index_ref: string | null;
   model_content_status: "pending" | "processing" | "ready" | "failed" | "unsupported" | null;
   model_content_extractor_version: string | null;
   model_content_character_count: number | null;
@@ -119,7 +118,7 @@ function principalUserId(principal: ExecutionPrincipal): string | null {
   return principal.type === "user" ? principal.userId : null;
 }
 
-async function inventoryRevision(
+export async function loadWorkstreamResourceInventoryFingerprint(
   database: D1Database,
   workspaceId: string,
   workstreamId: string,
@@ -196,7 +195,7 @@ export async function loadVisibleWorkstreamResourcePage(
     after?: { attachedAt: string; resourceId: string } | null;
   },
 ): Promise<VisibleWorkstreamResourcePage> {
-  const before = await inventoryRevision(database, input.workspaceId, input.workstreamId);
+  const before = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
   if (input.expectedFingerprint && input.expectedFingerprint !== before) {
     throw new WorkstreamResourceInventoryChangedError();
   }
@@ -227,7 +226,7 @@ export async function loadVisibleWorkstreamResourcePage(
     input.after?.resourceId ?? null,
     input.limit + 1,
   ).all<VisibleWorkstreamResourceRow>();
-  const after = await inventoryRevision(database, input.workspaceId, input.workstreamId);
+  const after = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
   if (after !== before) throw new WorkstreamResourceInventoryChangedError();
   const fetched = pageResult.results ?? [];
   return {
@@ -248,7 +247,7 @@ export async function loadVisibleWorkstreamResourceInventory(
     expectedFingerprint?: string;
   },
 ): Promise<VisibleWorkstreamResourceInventory> {
-  const before = await inventoryRevision(database, input.workspaceId, input.workstreamId);
+  const before = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
   if (input.expectedFingerprint && input.expectedFingerprint !== before) {
     throw new WorkstreamResourceInventoryChangedError();
   }
@@ -263,7 +262,7 @@ export async function loadVisibleWorkstreamResourceInventory(
     count: number;
     message_attachments: number;
   }>();
-  const after = await inventoryRevision(database, input.workspaceId, input.workstreamId);
+  const after = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
   if (after !== before) throw new WorkstreamResourceInventoryChangedError();
   const rows = result.results ?? [];
   return {

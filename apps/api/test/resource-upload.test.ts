@@ -101,17 +101,16 @@ describe('uploaded attachment drafts', () => {
     await service.hydrate('connector-resource');
 
     const current = database.prepare(
-      `SELECT content_ref, content_sha256, model_content_ref, model_index_ref, model_content_status
+      `SELECT content_ref, content_sha256, model_content_ref, model_content_status
          FROM resources WHERE id = 'connector-resource'`,
     ).get() as Record<string, unknown>;
     expect(current.content_ref).toMatch(/\/hydrated\/[a-f0-9]{64}\/[0-9a-f-]+\.json$/u);
     expect(current.content_sha256).toBe(await sha256Hex(JSON.stringify({ revision: 2 })));
-    expect(current).toMatchObject({ model_content_ref: null, model_index_ref: null, model_content_status: 'pending' });
+    expect(current).toMatchObject({ model_content_ref: null, model_content_status: 'pending' });
     expect(database.prepare(
       `SELECT object_ref, object_kind FROM resource_object_deletion_outbox
-       WHERE object_ref IN ('old-original', 'old-model', 'old-index') ORDER BY object_ref`,
+       WHERE object_ref IN ('old-original', 'old-model') ORDER BY object_ref`,
     ).all()).toEqual([
-      { object_ref: 'old-index', object_kind: 'index' },
       { object_ref: 'old-model', object_kind: 'derivative' },
       { object_ref: 'old-original', object_kind: 'original' },
     ]);
@@ -135,8 +134,8 @@ describe('uploaded attachment drafts', () => {
 
     expect(put).not.toHaveBeenCalled();
     expect(database.prepare(
-      "SELECT content_ref, model_content_ref, model_index_ref FROM resources WHERE id = 'connector-resource'",
-    ).get()).toEqual({ content_ref: 'same-original', model_content_ref: 'old-model', model_index_ref: 'old-index' });
+      "SELECT content_ref, model_content_ref FROM resources WHERE id = 'connector-resource'",
+    ).get()).toEqual({ content_ref: 'same-original', model_content_ref: 'old-model' });
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
       .toEqual({ count: 0 });
     database.close();
@@ -163,13 +162,12 @@ describe('uploaded attachment drafts', () => {
     expect(deleted[0]).toMatch(/\/hydrated\//u);
     expect(stored).toEqual(new Set(['old-original']));
     expect(database.prepare(
-      `SELECT content_ref, content_sha256, model_content_ref, model_index_ref
+      `SELECT content_ref, content_sha256, model_content_ref
          FROM resources WHERE id = 'connector-resource'`,
     ).get()).toEqual({
       content_ref: 'old-original',
       content_sha256: 'old-hash',
       model_content_ref: 'old-model',
-      model_index_ref: 'old-index',
     });
     database.close();
   });
@@ -192,7 +190,7 @@ function attachmentDatabase(): DatabaseSync {
       model_content_ref TEXT, model_mime_type TEXT, model_content_sha256 TEXT, model_metadata_json TEXT,
       content_sha256 TEXT, model_content_status TEXT, model_content_extractor_version TEXT,
       model_content_character_count INTEGER, model_content_extracted_at TEXT,
-      model_content_error_code TEXT, model_index_ref TEXT,
+      model_content_error_code TEXT,
       model_content_claimed_at TEXT, model_content_claim_id TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}', last_hydrated_at TEXT,
       uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL DEFAULT 'attached',
@@ -211,10 +209,6 @@ function attachmentDatabase(): DatabaseSync {
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL,
       scope TEXT NOT NULL, owner_user_id TEXT NOT NULL, archived_at TEXT
     );
-    CREATE TABLE resource_model_objects (
-      workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_ref TEXT NOT NULL,
-      lifecycle_status TEXT NOT NULL, PRIMARY KEY (resource_id, object_ref)
-    );
     CREATE TABLE resource_object_deletion_outbox (
       object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL,
       object_kind TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -232,24 +226,21 @@ function attachmentDatabase(): DatabaseSync {
     AFTER UPDATE OF content_ref ON resources
     WHEN OLD.content_ref IS NOT NEW.content_ref AND OLD.content_ref IS NOT NULL
     BEGIN
+      DELETE FROM resource_object_deletion_outbox
+       WHERE workspace_id = NEW.workspace_id AND object_ref = NEW.content_ref;
       INSERT OR IGNORE INTO resource_object_deletion_outbox
         (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
       VALUES (OLD.content_ref, OLD.workspace_id, OLD.id, 'original', datetime('now'), datetime('now'));
     END;
     CREATE TRIGGER resources_track_models_after_update
-    AFTER UPDATE OF model_content_ref, model_index_ref ON resources
+    AFTER UPDATE OF model_content_ref ON resources
     BEGIN
+      DELETE FROM resource_object_deletion_outbox
+       WHERE workspace_id = NEW.workspace_id AND object_ref = NEW.model_content_ref;
       INSERT OR IGNORE INTO resource_object_deletion_outbox
         (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
       SELECT OLD.model_content_ref, OLD.workspace_id, OLD.id, 'derivative', datetime('now'), datetime('now')
       WHERE OLD.model_content_ref IS NOT NULL AND OLD.model_content_ref IS NOT NEW.model_content_ref;
-      INSERT OR IGNORE INTO resource_object_deletion_outbox
-        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-      SELECT OLD.model_index_ref, OLD.workspace_id, OLD.id, 'index', datetime('now'), datetime('now')
-      WHERE OLD.model_index_ref IS NOT NULL AND OLD.model_index_ref IS NOT NEW.model_index_ref;
-      UPDATE resource_model_objects SET lifecycle_status = 'superseded'
-       WHERE workspace_id = OLD.workspace_id AND resource_id = OLD.id
-         AND object_ref IN (OLD.model_content_ref, OLD.model_index_ref);
     END;
   `);
   return database;
@@ -284,14 +275,10 @@ function insertHydratedResource(database: DatabaseSync, contentRef: string, cont
     INSERT INTO resources
       (id, workspace_id, connection_id, resource_type, provider, provider_resource_id, title,
        content_ref, content_sha256, model_content_ref, model_mime_type, model_content_sha256,
-       model_index_ref, model_content_status, metadata_json, attachment_status, created_at, updated_at)
+       model_content_status, metadata_json, attachment_status, created_at, updated_at)
     VALUES ('connector-resource', '${workspaceId}', 'connector-one', 'meeting', 'granola',
       'not_12345678901234', 'Meeting', '${contentRef}', '${contentSha256}', 'old-model',
-      'text/markdown', '${'a'.repeat(64)}', 'old-index', 'ready', '{}', 'attached', '2026-08-12', '2026-08-12');
-    INSERT INTO resource_model_objects (workspace_id, resource_id, object_ref, lifecycle_status)
-    VALUES
-      ('${workspaceId}', 'connector-resource', 'old-model', 'active'),
-      ('${workspaceId}', 'connector-resource', 'old-index', 'active');
+      'text/markdown', '${'a'.repeat(64)}', 'ready', '{}', 'attached', '2026-08-12', '2026-08-12');
   `);
 }
 

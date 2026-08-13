@@ -8,7 +8,7 @@ interface PendingResourceObject {
   object_ref: string;
   workspace_id: string;
   resource_id: string;
-  object_kind: "original" | "derivative" | "index" | "receipt";
+  object_kind: "original" | "derivative" | "receipt";
 }
 
 function boundedCleanupErrorCode(error: unknown): string {
@@ -33,17 +33,11 @@ export async function reapDeletedResourceObjects(env: Env): Promise<void> {
     try {
       const active = await env.DB.prepare(
         `SELECT 1 AS active FROM resources
-          WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ? OR model_index_ref = ?)
-         UNION ALL
-        SELECT 1 AS active FROM resource_model_objects
-          WHERE workspace_id = ? AND object_ref = ? AND lifecycle_status = 'active'
+          WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
          LIMIT 1`,
       ).bind(
         object.workspace_id,
         object.object_ref,
-        object.object_ref,
-        object.object_ref,
-        object.workspace_id,
         object.object_ref,
       ).first();
       if (active) {

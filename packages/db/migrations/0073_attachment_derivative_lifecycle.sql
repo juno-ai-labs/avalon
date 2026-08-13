@@ -10,7 +10,6 @@ ALTER TABLE resources ADD COLUMN model_content_character_count INTEGER
   CHECK (model_content_character_count IS NULL OR model_content_character_count >= 0);
 ALTER TABLE resources ADD COLUMN model_content_extracted_at TEXT;
 ALTER TABLE resources ADD COLUMN model_content_error_code TEXT;
-ALTER TABLE resources ADD COLUMN model_index_ref TEXT;
 ALTER TABLE resources ADD COLUMN model_content_claimed_at TEXT;
 ALTER TABLE resources ADD COLUMN model_content_claim_id TEXT;
 
@@ -46,27 +45,11 @@ CREATE TABLE workstream_context_compactions (
 CREATE INDEX idx_workstream_context_compactions_workspace
   ON workstream_context_compactions(workspace_id, updated_at DESC);
 
--- Every current or superseded model object is registered here. The row is
--- derived state: deleting the resource deletes this catalog after the trigger
--- below has copied its object references into the durable cleanup outbox.
-CREATE TABLE resource_model_objects (
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
-  object_ref TEXT NOT NULL,
-  object_kind TEXT NOT NULL CHECK (object_kind IN ('derivative', 'index')),
-  lifecycle_status TEXT NOT NULL CHECK (lifecycle_status IN ('active', 'superseded')),
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (resource_id, object_ref)
-);
-
-CREATE INDEX idx_resource_model_objects_lifecycle
-  ON resource_model_objects(workspace_id, resource_id, lifecycle_status, created_at);
-
 CREATE TABLE resource_object_deletion_outbox (
   object_ref TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   resource_id TEXT NOT NULL,
-  object_kind TEXT NOT NULL CHECK (object_kind IN ('original', 'derivative', 'index', 'receipt')),
+  object_kind TEXT NOT NULL CHECK (object_kind IN ('original', 'derivative', 'receipt')),
   attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
   last_error_code TEXT,
   created_at TEXT NOT NULL,
@@ -74,41 +57,22 @@ CREATE TABLE resource_object_deletion_outbox (
 );
 
 CREATE INDEX idx_resource_object_deletion_outbox_created
-  ON resource_object_deletion_outbox(workspace_id, created_at, object_ref);
+  ON resource_object_deletion_outbox(created_at, object_ref);
 
--- Publication side effects belong to the successful pointer update itself.
--- A failed compare-and-swap therefore cannot catalog or enqueue an object, and
--- every writer (text, image, note, or future converter) gets the same lifecycle.
-CREATE TRIGGER resources_track_model_objects_after_update
-AFTER UPDATE OF model_content_ref, model_index_ref ON resources
+-- Writers pre-register unique model generations in the outbox before R2 put.
+-- A successful pointer compare-and-swap cancels that pending deletion and
+-- enqueues the former pointer; failed/stale publishers remain reaper-owned.
+CREATE TRIGGER resources_track_model_content_after_update
+AFTER UPDATE OF model_content_ref ON resources
 BEGIN
-  INSERT INTO resource_model_objects
-    (workspace_id, resource_id, object_ref, object_kind, lifecycle_status, created_at)
-    SELECT NEW.workspace_id, NEW.id, NEW.model_content_ref, 'derivative', 'active', datetime('now')
-    WHERE NEW.model_content_ref IS NOT NULL
-    ON CONFLICT(resource_id, object_ref) DO UPDATE SET lifecycle_status = 'active';
-
-  INSERT INTO resource_model_objects
-    (workspace_id, resource_id, object_ref, object_kind, lifecycle_status, created_at)
-    SELECT NEW.workspace_id, NEW.id, NEW.model_index_ref, 'index', 'active', datetime('now')
-    WHERE NEW.model_index_ref IS NOT NULL
-    ON CONFLICT(resource_id, object_ref) DO UPDATE SET lifecycle_status = 'active';
+  DELETE FROM resource_object_deletion_outbox
+   WHERE workspace_id = NEW.workspace_id AND object_ref = NEW.model_content_ref;
 
   INSERT OR IGNORE INTO resource_object_deletion_outbox
     (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
     SELECT OLD.model_content_ref, OLD.workspace_id, OLD.id, 'derivative', datetime('now'), datetime('now')
     WHERE OLD.model_content_ref IS NOT NULL
       AND OLD.model_content_ref IS NOT NEW.model_content_ref;
-
-  INSERT OR IGNORE INTO resource_object_deletion_outbox
-    (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-    SELECT OLD.model_index_ref, OLD.workspace_id, OLD.id, 'index', datetime('now'), datetime('now')
-    WHERE OLD.model_index_ref IS NOT NULL
-      AND OLD.model_index_ref IS NOT NEW.model_index_ref;
-
-  UPDATE resource_model_objects SET lifecycle_status = 'superseded'
-   WHERE resource_id = OLD.id AND object_ref IN (OLD.model_content_ref, OLD.model_index_ref)
-     AND object_ref NOT IN (COALESCE(NEW.model_content_ref, ''), COALESCE(NEW.model_index_ref, ''));
 END;
 
 -- Connector refreshes replace original objects without deleting the resource.
@@ -117,6 +81,9 @@ CREATE TRIGGER resources_track_original_after_update
 AFTER UPDATE OF content_ref ON resources
 WHEN OLD.content_ref IS NOT NEW.content_ref AND OLD.content_ref IS NOT NULL
 BEGIN
+  DELETE FROM resource_object_deletion_outbox
+   WHERE workspace_id = NEW.workspace_id AND object_ref = NEW.content_ref;
+
   INSERT OR IGNORE INTO resource_object_deletion_outbox
     (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
     VALUES (OLD.content_ref, OLD.workspace_id, OLD.id, 'original', datetime('now'), datetime('now'));
@@ -137,15 +104,6 @@ BEGIN
     SELECT OLD.model_content_ref, OLD.workspace_id, OLD.id, 'derivative', datetime('now'), datetime('now')
     WHERE OLD.model_content_ref IS NOT NULL;
 
-  INSERT OR IGNORE INTO resource_object_deletion_outbox
-    (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-    SELECT OLD.model_index_ref, OLD.workspace_id, OLD.id, 'index', datetime('now'), datetime('now')
-    WHERE OLD.model_index_ref IS NOT NULL;
-
-  INSERT OR IGNORE INTO resource_object_deletion_outbox
-    (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-    SELECT object_ref, OLD.workspace_id, OLD.id, object_kind, datetime('now'), datetime('now')
-    FROM resource_model_objects WHERE resource_id = OLD.id;
 END;
 
 -- Tool-receipt dependencies are part of the same attachment lifecycle and are
@@ -232,7 +190,7 @@ BEGIN
 END;
 
 CREATE TRIGGER workstream_resources_inventory_after_update
-AFTER UPDATE ON workstream_resources
+AFTER UPDATE OF workstream_id, resource_id, relationship_type, attached_at ON workstream_resources
 BEGIN
   INSERT INTO workstream_resource_inventory_revisions (workspace_id, workstream_id, revision, updated_at)
   SELECT workspace_id, id, 1, datetime('now') FROM workstreams
@@ -249,7 +207,7 @@ BEGIN
 END;
 
 CREATE TRIGGER resources_inventory_after_update
-AFTER UPDATE ON resources
+AFTER UPDATE OF title, mime_type, content_ref, content_sha256 ON resources
 BEGIN
   INSERT INTO workstream_resource_inventory_revisions (workspace_id, workstream_id, revision, updated_at)
   SELECT NEW.workspace_id, wr.workstream_id, 1, datetime('now')
@@ -267,7 +225,7 @@ BEGIN
 END;
 
 CREATE TRIGGER notes_resource_inventory_after_update
-AFTER UPDATE ON notes
+AFTER UPDATE OF resource_id, scope, owner_user_id, archived_at ON notes
 BEGIN
   INSERT INTO workstream_resource_inventory_revisions (workspace_id, workstream_id, revision, updated_at)
   SELECT workstream.workspace_id, wr.workstream_id, 1, datetime('now')
