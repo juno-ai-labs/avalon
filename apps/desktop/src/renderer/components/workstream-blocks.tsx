@@ -29,7 +29,8 @@ import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-re
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { messageExportFileName, type MessageExportFormat } from '../../common/message-export';
+import { logError } from '../../common/logger';
+import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
@@ -351,6 +352,13 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
  * that failed replaces the label until the pointer leaves, because unlike a
  * failed copy there is no other copy of the file to fall back on.
  */
+function exportStatusMessage(saving: MessageExportFormat | null, failed: MessageExportFormat | null): string {
+  const noun = (format: MessageExportFormat): string => (format === 'image' ? 'image' : 'PDF');
+  if (saving) return `Preparing the ${noun(saving)}…`;
+  if (failed) return `The ${noun(failed)} could not be saved.`;
+  return '';
+}
+
 function AssistantMessageActions({ mentions, text }: { mentions: MessageMention[]; text: string }): React.JSX.Element {
   const [saving, setSaving] = useState<MessageExportFormat | null>(null);
   const [failed, setFailed] = useState<MessageExportFormat | null>(null);
@@ -363,10 +371,13 @@ function AssistantMessageActions({ mentions, text }: { mentions: MessageMention[
     try {
       await saveMessageExport({
         content: <MarkdownBody mentions={mentions}>{text}</MarkdownBody>,
-        fileName: messageExportFileName(text, new Date().toISOString().slice(0, 10)),
+        fileName: messageExportFileName(text, messageExportDate(new Date())),
         format,
       });
-    } catch {
+    } catch (error) {
+      // The label says one attempt failed; the console is where the reason is,
+      // and it is the only trail a support conversation has to go on.
+      logError('avalon', `could not save this message as ${format === 'image' ? 'an image' : 'a PDF'}`, error);
       setFailed(format);
     } finally {
       setSaving(null);
@@ -374,32 +385,45 @@ function AssistantMessageActions({ mentions, text }: { mentions: MessageMention[
   };
 
   return (
-    <footer className="agent-message-actions">
+    <footer
+      className="agent-message-actions"
+      // The row itself is transient, so the failure on it should be too: it has
+      // been read by the time the pointer leaves, and a stale "Image failed"
+      // sitting under a turn the next day reads as a broken feature rather than
+      // as one attempt that did not work.
+      onPointerLeave={() => setFailed(null)}
+    >
       <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(text)} type="button"><Clipboard size={12} /> Copy</button>
       {exportsAvailable && (
         <>
           <button
+            aria-busy={saving === 'image' || undefined}
             aria-label="Download response as an image"
             disabled={saving !== null}
             onClick={() => void save('image')}
             type="button"
           >
-            {saving === 'image'
-              ? <LoaderCircle aria-hidden="true" className="spin" size={12} />
-              : <ImageDown aria-hidden="true" size={12} />}
+            {saving === 'image' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
+            {saving !== 'image' && failed === 'image' ? <CircleAlert aria-hidden="true" size={12} /> : null}
+            {saving !== 'image' && failed !== 'image' ? <ImageDown aria-hidden="true" size={12} /> : null}
             {failed === 'image' ? 'Image failed' : 'Image'}
           </button>
           <button
+            aria-busy={saving === 'pdf' || undefined}
             aria-label="Save response as a PDF"
             disabled={saving !== null}
             onClick={() => void save('pdf')}
             type="button"
           >
-            {saving === 'pdf'
-              ? <LoaderCircle aria-hidden="true" className="spin" size={12} />
-              : <FileDown aria-hidden="true" size={12} />}
+            {saving === 'pdf' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
+            {saving !== 'pdf' && failed === 'pdf' ? <CircleAlert aria-hidden="true" size={12} /> : null}
+            {saving !== 'pdf' && failed !== 'pdf' ? <FileDown aria-hidden="true" size={12} /> : null}
             {failed === 'pdf' ? 'PDF failed' : 'PDF'}
           </button>
+          {/* Each button keeps a fixed accessible name so it stays findable, which
+              means neither the spinner nor the changed label announces anything on
+              its own. This is where the state is spoken. */}
+          <span className="sr-only" role="status">{exportStatusMessage(saving, failed)}</span>
         </>
       )}
     </footer>

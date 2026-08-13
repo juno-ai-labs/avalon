@@ -42,7 +42,7 @@ export interface MessageExportResult {
   saved: boolean;
 }
 
-/** The extension, dialog filter name, and MIME type each format is written as. */
+/** The extension and the dialog filter label each format is written under. */
 export const MESSAGE_EXPORT_FILE_TYPES: Record<MessageExportFormat, { extension: string; label: string }> = {
   image: { extension: 'jpg', label: 'JPEG image' },
   pdf: { extension: 'pdf', label: 'PDF document' },
@@ -50,6 +50,18 @@ export const MESSAGE_EXPORT_FILE_TYPES: Record<MessageExportFormat, { extension:
 
 /** Bounds every `fileName` the main process will accept. */
 export const MESSAGE_EXPORT_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/u;
+
+/**
+ * The date a save is happening on, as the person's own calendar has it.
+ *
+ * Deliberately not `toISOString().slice(0, 10)`, which is UTC: half of every
+ * evening west of Greenwich would be filed under tomorrow, and the file names
+ * of an evening's work would not sort with the day it belonged to.
+ */
+export function messageExportDate(now: Date): string {
+  const padded = (value: number): string => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${padded(now.getMonth() + 1)}-${padded(now.getDate())}`;
+}
 
 /**
  * Turns a message's text into the file name stem offered in the save dialog:

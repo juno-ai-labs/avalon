@@ -53,7 +53,7 @@ const MEASURE_TIMEOUT_MS = 15_000;
 const RENDER_TIMEOUT_MS = 60_000;
 /** One paint after the resize, so the capture is of the page at its final size. */
 const SETTLE_MS = 180;
-/** A token is only alive while its own window is loading. */
+/** The window a token can be redeemed in, if its window never asks for it. */
 const DOCUMENT_TTL_MS = 30_000;
 
 const MAX_CONTENT_HTML_LENGTH = 600_000;
@@ -65,6 +65,23 @@ const MessageExportRequestSchema = z.object({
   fileName: z.string().regex(MESSAGE_EXPORT_FILE_NAME_PATTERN),
   logoDataUrl: z.string().max(MAX_LOGO_LENGTH).regex(/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/u),
 });
+
+/**
+ * Whether a URL addresses the export protocol.
+ *
+ * Shared with the application's `onHeadersReceived` policy so that the two
+ * agree on what an export response is: the document is served with the strict
+ * policy above, and the renderer's — far broader — policy must not be applied
+ * over it.
+ */
+export function isMessageExportUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === `${MESSAGE_EXPORT_SCHEME}:` && url.host === MESSAGE_EXPORT_HOST;
+  } catch {
+    return false;
+  }
+}
 
 /** Parses an IPC payload into a request, or throws. */
 export function parseMessageExportRequest(value: unknown): MessageExportRequest {
@@ -131,8 +148,9 @@ const MEASURE_SCRIPT = `void 0, (async () => {
 })()`;
 
 /**
- * Six washes of colour, placed by percentage so the splash spreads over a card
- * of any height instead of pooling at the top of a long one. The seed rotates
+ * Five washes of colour over a diagonal base, placed by percentage so the
+ * splash spreads over a card of any height rather than pooling at the top of a
+ * long one. The seed rotates
  * which corner each colour lands in, so two messages saved from the same work
  * stream do not come out identical.
  */
@@ -223,6 +241,10 @@ function stylesheet(format: MessageExportFormat, logoDataUrl: string, seed: numb
     justify-content: flex-end;
     padding-top: 20px;
   }
+  /* The mark goes into a CSS url() unescaped. MessageExportRequestSchema is what
+     makes that safe: base64 and padding only, so nothing in it can close the
+     string. Widening that pattern — to SVG, whose data URLs carry quotes and
+     angle brackets — means escaping here first. */
   .export-signature .export-mark {
     background: #b6c400;
     display: inline-block;
@@ -246,6 +268,31 @@ function stylesheet(format: MessageExportFormat, logoDataUrl: string, seed: numb
   .markdown-body li { margin: 5px 0; }
   .markdown-body li::marker { color: #9a9b8e; }
   .markdown-body .contains-task-list { list-style: none; padding-left: 4px; }
+  /* A system checkbox is a control, and a greyed one in a picture reads as
+     broken rather than as a task that is not done. Drawn as a mark instead. */
+  .markdown-body input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1.5px solid #bab8a7;
+    border-radius: 4px;
+    height: 13px;
+    margin: 0 8px 0 -22px;
+    position: relative;
+    top: 2px;
+    width: 13px;
+  }
+  .markdown-body input[type="checkbox"]:checked { background: #cedc00; border-color: #b6c400; }
+  .markdown-body input[type="checkbox"]:checked::after {
+    border: solid #2f3121;
+    border-width: 0 0 1.6px 1.6px;
+    content: "";
+    height: 3px;
+    left: 2px;
+    position: absolute;
+    top: 3px;
+    transform: rotate(-45deg);
+    width: 6px;
+  }
   .markdown-body blockquote { border-left: 3px solid #cedc00; color: #4d4f42; margin: 16px 0; padding: 2px 0 2px 16px; }
   .markdown-body blockquote > :last-child { margin-bottom: 0; }
   .markdown-body hr { background: #e2e0d3; border: 0; height: 1px; margin: 22px 0; }
@@ -306,6 +353,12 @@ export function messageExportDocument(input: {
   contentHtml: string;
   logoDataUrl: string;
 }): string {
+  // `contentHtml` is interpolated as markup, not escaped, because it *is* the
+  // rendered message. What makes that safe is upstream: `MarkdownBody` mounts
+  // `react-markdown` with no `rehype-raw`, so HTML in a model's markdown is
+  // already text by the time it reaches here. The window's `default-src 'none'`
+  // is the second lock. Both have to hold — a raw-HTML plug-in added to the
+  // renderer would turn this into an injection point.
   const seed = seedFrom(input.contentHtml);
   const signature = `<div class="export-signature"><span class="export-mark"></span>Saved from Avalon</div>`;
   const card = `<div class="export-card"><div class="markdown-body">${input.contentHtml}</div>${
@@ -365,33 +418,29 @@ export class MessageExporter {
 
   /**
    * Answers the export document a window is asking for, or null when the token
-   * is unknown or has expired. A token is minted per export and dropped as soon
-   * as the document has loaded, so nothing here is readable afterwards.
+   * is unknown, spent, or expired.
+   *
+   * **Reading it spends it.** A token is minted for one window and one
+   * navigation, and Chromium asks once; anything asking a second time — a
+   * reload, a request that raced the render, a URL that got out — is not that
+   * navigation and gets nothing. The alternative, dropping it when the load
+   * finished, left the document readable for as long as a capture took.
    */
   document(url: string): string | null {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return null;
-    }
-    if (parsed.protocol !== `${MESSAGE_EXPORT_SCHEME}:` || parsed.host !== MESSAGE_EXPORT_HOST) return null;
-    const token = decodeURIComponent(parsed.pathname).replace(/^\/+/u, '');
+    if (!isMessageExportUrl(url)) return null;
+    const token = decodeURIComponent(new URL(url).pathname).replace(/^\/+/u, '');
     const entry = this.documents.get(token);
     if (!entry) return null;
-    if (entry.expiresAt <= this.dependencies.now()) {
-      this.documents.delete(token);
-      return null;
-    }
-    return entry.html;
+    this.documents.delete(token);
+    return entry.expiresAt <= this.dependencies.now() ? null : entry.html;
   }
 
   async save(request: MessageExportRequest): Promise<MessageExportResult> {
-    const run = this.queue.then(
-      () => this.renderAndWrite(request),
-      () => this.renderAndWrite(request),
-    );
-    this.queue = run.catch(() => undefined);
+    // The tail is always an already-settled promise — `catch` below makes sure
+    // of it — so this needs no rejection arm: an export that failed hands the
+    // next one a resolved link rather than a poisoned chain.
+    const run = this.queue.then(() => this.renderAndWrite(request));
+    this.queue = run.then(() => undefined, () => undefined);
     return await run;
   }
 
@@ -409,13 +458,15 @@ export class MessageExporter {
   }
 
   private async render(request: MessageExportRequest): Promise<Uint8Array> {
-    const token = this.dependencies.randomToken();
-    this.documents.set(token, {
-      html: messageExportDocument(request),
-      expiresAt: this.dependencies.now() + DOCUMENT_TTL_MS,
-    });
     const width = request.format === 'image' ? IMAGE_WIDTH : PDF_WIDTH;
+    const html = messageExportDocument(request);
+    // The window comes first, and the token is published only once there is
+    // something to load it: a `createWindow` that throws — during shutdown, or
+    // out of resources — must not leave the document behind with no `finally`
+    // to clear it.
     const window = this.dependencies.createWindow({ width, height: 900 });
+    const token = this.dependencies.randomToken();
+    this.documents.set(token, { html, expiresAt: this.dependencies.now() + DOCUMENT_TTL_MS });
     try {
       return await withTimeout(this.draw(window, request, token, width), RENDER_TIMEOUT_MS, 'rendering the card');
     } finally {

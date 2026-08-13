@@ -664,6 +664,19 @@ describe('MessageBlock export actions', () => {
     expect(screen.queryByText('PDF failed')).not.toBeInTheDocument();
   });
 
+  it('forgets a failure once the pointer leaves the row', async () => {
+    exportMessage.mockRejectedValueOnce(new Error('no surface'));
+    const { container } = render(<MessageBlock {...actions} message={agentMessage} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+    await waitFor(() => expect(screen.getByText('Image failed')).toBeVisible());
+
+    fireEvent.pointerLeave(container.querySelector('.agent-message-actions')!);
+
+    expect(screen.queryByText('Image failed')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download response as an image' })).toBeEnabled();
+  });
+
   it('offers nothing to save where there is no desktop to save it with', () => {
     desktopServicesAvailable.mockReturnValue(false);
 
