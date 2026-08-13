@@ -202,11 +202,16 @@ the installation owner's six profile pins when GraphQL makes them available,
 sorts pins first and then by the newer of `pushed_at` and `updated_at`, and
 returns `totalCount`, `page`, `perPage`, `hasMore`, and an honest `truncated` /
 `totalCountIsExact` signal. Search matches `name` and `full_name` locally over
-that same authorized set. A recursive tree with a path resolves that subtree
+that same authorized set. `hasMore` means another page can be returned from the
+bounded local result; `truncated` separately says that GitHub has additional
+entries outside that bound. A recursive tree with a path resolves that subtree
 segment by segment before requesting recursion, so narrowing the path also
 narrows the provider response rather than merely filtering a full-repository
-download. Directory/tree `offset` and `limit`, like every numeric tool field,
-inherit the exact numeric-string normalization in [`agent-tools.md`](agent-tools.md).
+download. The Contents API has no truncation flag, so a directory response at
+GitHub's 1,000-entry ceiling is conservatively marked truncated and inexact and
+the model can switch to tree mode. Directory/tree `offset` and `limit`, like
+every numeric tool field, inherit the exact numeric-string normalization in
+[`agent-tools.md`](agent-tools.md).
 
 The GitHub plugin prompt treats metadata and code evidence as different things.
 When more than one repository is plausible, the model asks the user to choose
@@ -593,11 +598,13 @@ numeric coercion was rejected because the harness already owns a stricter exact
 numeric-string rule across every tool.
 
 **Consequences:** Listing/search scan at most 1,000 installation repositories and
-say when that bound makes a search count incomplete. Profile pins are a ranking
-hint: failure to read them leaves repository listing available and sets
-`pinnedSortAvailable` false. A path-scoped recursive tree costs one non-recursive
-lookup per path segment before the bounded subtree read. Models must distinguish
-“I could not verify” from “there are no discrepancies.”
+say when that bound makes a search count incomplete. `hasMore` never promises an
+empty page beyond that scan; provider truncation is a separate signal. Profile
+pins are a ranking hint: failure to read them leaves repository listing
+available and sets `pinnedSortAvailable` false. Directory responses at GitHub's
+1,000-entry cap are conservatively inexact. A path-scoped recursive tree costs
+one non-recursive lookup per path segment before the bounded subtree read.
+Models must distinguish “I could not verify” from “there are no discrepancies.”
 
 ### 2026-08-12 — Speculative work-stream routing was paused
 

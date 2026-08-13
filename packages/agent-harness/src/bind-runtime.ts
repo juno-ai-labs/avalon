@@ -72,6 +72,7 @@ import {
 import {
   formatToolArgumentValidationError,
   normalizeToolArguments,
+  validateToolArguments,
 } from "./tool-arguments";
 
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
@@ -735,12 +736,18 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             signal: toolSignal,
           }), toolSignal);
         } catch (error) {
-          // Executors remain the strict enforcement boundary. Condense their
-          // Zod issue tree for the model: raw union diagnostics routinely bury
-          // one correctable field under errors for every branch it did not use.
-          const argumentValidationError = error instanceof z.ZodError;
+          const downstreamValidationError = error instanceof z.ZodError;
+          // A tool may use Zod both for its initial argument parse and for
+          // downstream provider/stored data. Only blame the model when its
+          // normalized arguments also violate the schema it was shown.
+          const declaredArgumentError = downstreamValidationError
+            ? validateToolArguments(args, dispatched.tool.definition.inputSchema)
+            : null;
+          const argumentValidationError = declaredArgumentError !== null;
           const message = argumentValidationError
-            ? formatToolArgumentValidationError(error)
+            ? formatToolArgumentValidationError(declaredArgumentError)
+            : downstreamValidationError
+              ? "The tool failed while validating data after accepting its arguments. Retry once; if it fails again, report that the tool could not validate its data instead of changing the arguments."
             : error instanceof Error
               ? error.message
               : "Tool execution failed";
