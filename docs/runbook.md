@@ -62,12 +62,21 @@ Set these shared Worker secrets separately in each regional deployment:
 - `TELEMETRY_OPERATORS_JSON`; a JSON map from opaque bearer token to the fixed
   principal accepted by that region's restricted telemetry operator surface
 
-Set `POSTHOG_PROJECT_TOKEN` only on the Global Worker. The checked-in Global
-configuration fixes `POSTHOG_HOST` to the approved US ingest origin; EU must have
-neither value. Set `TELEMETRY_CAPABILITY_SIGNING_KEY` only on Global; EU sends
-the capability to the narrow `GLOBAL_TELEMETRY_CONTROL` RPC for verification and
-receives only a route/epoch control projection. The desktop release workflow also
-requires repository variables
+Set `POSTHOG_PROJECT_TOKEN` only on the Global Worker when PostHog delivery is
+enabled. The checked-in Global configuration fixes `POSTHOG_HOST` to the approved
+US ingest origin; EU must have neither value. Until the token is provisioned,
+regional collection remains healthy and Global accepted rows stay inside Avalon
+until their normal deadline. `TELEMETRY_CAPABILITY_SIGNING_KEY` is an optional
+Global-only hardening boundary: when absent, onboarding capabilities use the
+existing Global `SESSION_SIGNING_KEY`; EU always sends the capability to the
+narrow `GLOBAL_TELEMETRY_CONTROL` RPC for verification and receives only a
+route/epoch control projection. An absent `TELEMETRY_OPERATORS_JSON` disables
+only that region's internal operator surface with a 503 and does not disable
+collection. Enabling the dedicated signer is an immediate key cutover: schedule
+it for low traffic or accept that capabilities issued under the session key in
+the preceding hour will fail verification and clients must bootstrap again.
+Rotating whichever key is active has the same one-hour boundary. The desktop
+release workflow also requires repository variables
 `AVALON_GLOBAL_TELEMETRY_R2_BUCKET` and `AVALON_EU_TELEMETRY_R2_BUCKET` so it can
 publish source maps and native symbols to both private regional buckets before
 distribution.
