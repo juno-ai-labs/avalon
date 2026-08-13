@@ -1,12 +1,10 @@
 # Design: regional product telemetry and crash reporting
 
-> Status: proposed; product decisions in [prd.md](prd.md#open-product-decisions) remain unresolved
->
-> Related: [research](research.md), [implementation plan](plan.md)
+> Related: [research](research.md)
 
 ## Design principles
 
-1. The regional Avalon API is the collection boundary; vendors are destinations.
+1. Avalon's authenticated identity and regional APIs are the collection boundary; vendors are destinations.
 2. The event contract is an allowlist. Unknown data is rejected, not forwarded and scrubbed later.
 3. Main owns Electron telemetry. Renderer code can express semantics but cannot own policy or transport.
 4. A native dump is potentially customer content, even if most dumps do not contain readable content.
@@ -23,17 +21,31 @@ flowchart LR
     Renderer["Renderer: generated semantic API"] -->|"narrow IPC"| Main["Main reporter"]
     Preload["Preload/runtime health"] -->|"typed signal"| Main
     Main --> Spool["Bounded sanitized spool"]
-    Crashpad["Out-of-process Crashpad"]
+    Main --> CrashGate["Crash start gate"]
+    CrashGate -->|"allowed route"| Crashpad["Out-of-process Crashpad"]
+    Crashpad --> CrashDatabase["Active route-final Crashpad database"]
+    CrashDatabase -->|"next launch: rotate while inactive"| CrashUploadSpool["Bounded route-final upload spool"]
+    CrashUploadSpool --> CrashUploader["Main-process authenticated uploader"]
+    CrashGate -->|"pre-region EU"| NoDump["Crashpad stopped / no dump"]
   end
 
-  subgraph Region["Selected Avalon region"]
+  subgraph Identity["Global identity control plane"]
+    IdentityIngest["Anonymous-capability / identity-authenticated onboarding ingest"] --> ProvisionalRoute["Explicit binding or coarse Cloudflare route"]
+    IdentitySignals["Onboarding coordinator events"] --> ProvisionalRoute
+  end
+
+  subgraph Region["Routed Global or EU pipeline"]
     Ingest["Normal ingest"] --> Validate["Validate / policy / redact / enrich"]
     Validate --> Outbox["Regional D1 outbox"]
     Outbox --> Queue["Queue: region + opaque ID"]
-    Queue --> Router["Destination router"]
+    Queue --> EventProcessor["Policy recheck / transform"]
+    EventProcessor -->|"normal event"| Router["Destination router"]
+    EventProcessor -->|"JavaScript exception"| JSSymbolicate["Regional JS symbolication"]
+    JSArtifacts["Private source maps / bundles"] --> JSSymbolicate
+    JSSymbolicate --> Router
     ApiSignals["API semantic events"] --> Validate
 
-    CrashIngest["Crashpad ingest"] --> Dumps["Restricted regional R2"]
+    CrashIngest["Authenticated crash ingest"] --> Dumps["Restricted regional R2"]
     Dumps --> CrashQueue["Symbolication queue"]
     CrashQueue --> Symbolicate["Regional symbolication processor"]
     Symbols["Private regional symbols / source maps"] --> Symbolicate
@@ -41,8 +53,14 @@ flowchart LR
     CrashReports --> Router
   end
 
+  Spool -->|"bootstrap session batch"| IdentityIngest
   Spool -->|"authenticated batch"| Ingest
-  Crashpad -->|"minidump + sparse metadata"| CrashIngest
+  ProvisionalRoute -->|"Global: immediate"| Validate
+  ProvisionalRoute -->|"EU: immediate named RPC"| Validate
+  ProvisionalRoute -.-> CrashGate
+  CrashUploader -->|"header-authenticated minidump + sidecar"| CrashIngest
+  Preference["Canonical account preference\nGlobal identity control plane"] -.-> IdentityIngest
+  Preference -.->|"named RPC: opaque subject + boolean + version"| Validate
   Router -->|"Global deployment only"| PostHog["US PostHog project"]
   Router -->|"EU deployment only"| EUInternal["Isolated internal EU telemetry sink"]
   Router -.-> Future["Future destination"]
@@ -50,7 +68,7 @@ flowchart LR
   Support --> Dumps
 ```
 
-The Global and EU deployments instantiate the regional box independently. They do not share outbox rows, queues, dumps, symbols, destination credentials, or support queries. Global sends approved destination payloads to the current US PostHog project. EU has no PostHog credentials or route: its product events and crash summaries terminate in isolated Cloudflare-backed internal primitives. Aggregate service operations that already use Cloudflare Analytics Engine remain separate and content-free; the shared Analytics Engine dataset is not used as the EU product-telemetry sink because it does not provide the required jurisdiction guarantee.
+The Global and EU deployments instantiate the regional box independently. They do not share outbox rows, queues, dumps, symbols, destination credentials, or support queries. Global sends approved destination payloads, including complete sanitized structured crash reports, to the current US PostHog project. EU has no PostHog credentials or route: its product events and equivalent full structured crash reports terminate in isolated Cloudflare-backed internal primitives. Two narrow cross-region operations exist. The account-preference RPC carries a Global-issued, random, region-bound `preference_subject_handle`, the boolean, expected/current monotonic version, and authenticated operation metadata. The handle selects one regional projection but is not an analytics identity, event field, or general account credential. The immediate onboarding-event RPC carries an already-validated projection when an explicit binding or coarse Cloudflare result chooses EU; it moves Global-to-EU, never EU-to-Global or EU-to-PostHog, and contains either the anonymous epoch or a dedicated EU telemetry subject handle but no raw platform identifier, Global destination identity, IP address, or geolocation field. The route-final local crash upload spool is not a region-resolution holding area: every generation has already been assigned Global or EU at capture and can only upload to that destination. Aggregate service operations that already use Cloudflare Analytics Engine remain separate and content-free; the shared Analytics Engine dataset is not used as the EU product-telemetry sink because it does not provide the required jurisdiction guarantee.
 
 ## Canonical event envelope
 
@@ -64,11 +82,12 @@ type TelemetryEnvelope<V extends number, N extends EventName> = {
   name: N;
   source: "desktop-main" | "desktop-renderer" | "desktop-preload" | "api" | "site";
   category: "essential" | "product" | "diagnostic";
+  identityScope: "installation" | "anonymous-epoch" | "platform-user" | "workspace-user" | "site-session";
   originalTimestamp: string;
   sentAt: string;
   context: {
     environment: "development" | "staging" | "production";
-    region: "global" | "eu";
+    region?: "global" | "eu";
     release: string;
     buildId: string;
     platform?: "darwin" | "win32" | "linux";
@@ -76,6 +95,7 @@ type TelemetryEnvelope<V extends number, N extends EventName> = {
     channel?: string;
     launchId?: string;
     sessionId?: string;
+    onboardingJourneyId?: string;
     operationId?: string;
     requestId?: string;
     traceId?: string;
@@ -85,12 +105,15 @@ type TelemetryEnvelope<V extends number, N extends EventName> = {
 };
 ```
 
+The client omits `region` for pre-region onboarding events. The identity ingest accepts that state only from a valid Global anonymous-epoch capability or identity bootstrap session and adds a trusted `global` or `eu` route before durable acceptance. Anonymous-epoch semantic events use the same edge-derived provisional route. Pre-region native crashes use a separate start gate: inferred EU creates no dump, while non-EU, unknown, and geolocation failure use a Global-designated local Crashpad database.
+
 The server adds, in a separate trusted record:
 
 - `received_at` and normalized `timestamp`;
 - clock-skew magnitude and normalization status;
-- analytics person/workspace/installation identifiers where permitted;
+- analytics person/workspace/installation/anonymous-epoch identifiers where permitted;
 - authenticated entitlement and workspace context from server state;
+- trusted route (`global` or `eu`) and routing basis (`explicit_binding`, `explicit_selection`, or `ip_geolocation`);
 - ingress policy version, schema-registry version, and redaction version;
 - payload hash, delivery state, destination adapter version, and attempt metadata.
 
@@ -140,11 +163,12 @@ CI fails on unregistered event names, arbitrary properties, incompatible changes
 
 ### Main-process authority
 
-`TelemetryReporter` starts before normal windows, after the installation and currently configured regional endpoint can be read. It owns:
+`TelemetryReporter` starts before normal windows, after the installation identity and current routing state can be read. It owns:
 
-- compiled policy defaults and effective remote restriction;
-- installation, launch, and session identifiers;
+- compiled policy defaults, the durable local user choice, the last acknowledged canonical preference version, and effective remote restrictions;
+- installation, anonymous-epoch, launch, and session identifiers;
 - authenticated identity state supplied after session validation;
+- the server-bound onboarding journey and provisional/explicit routing state;
 - typed breadcrumb ring;
 - local event validation;
 - bounded persistent spool and batch scheduler;
@@ -152,7 +176,7 @@ CI fails on unregistered event names, arbitrary properties, incompatible changes
 - crash reporter configuration and pending-upload policy;
 - safe diagnostic logging and development inspector state.
 
-The product must not wait for telemetry initialization to render or complete an action. If initialization fails, the reporter becomes a no-op with an aggregate local warning.
+Normal telemetry initialization never delays rendering or a product action. The sole exception is the pre-region native-crash gate: before creating the first renderer, main waits for an explicit route, an affirmative coarse EU result, or a fixed engineering deadline whose timeout selects the approved Global fallback. This bounded gate is necessary because Electron can cover only renderers created after Crashpad starts, while an EU-country launch must create no dump at all. The startup budget and fallback are verified in packaged tests. Failure after the gate makes normal telemetry a no-op with an aggregate local warning and never delays later product actions.
 
 ### Renderer and preload
 
@@ -166,30 +190,58 @@ The normal spool is an append-only or transactional queue under Avalon's applica
 
 - validated serialized envelope only;
 - no provider payload and no raw pre-redaction input;
-- maximum age, row count, and byte size;
+- delivery eligibility ends 14 days after creation, with independent row-count and byte-size ceilings; the running process purges expired rows on schedule and startup purges them before any delivery attempt, so a dormant device cannot make an expired row eligible again;
 - priority-aware eviction: product events before essential reliability;
 - per-event attempt count and next-attempt time;
 - single-writer main ownership and crash-safe commit;
 - batch deletion only after regional acknowledgement;
-- logout purge for queued authenticated product events;
-- policy-change purge for newly prohibited categories;
-- corruption recovery that quarantines the file locally without uploading it;
+- deletion only after the identity or regional API acknowledges durable receipt;
+- logout purge for queued authenticated product events and rotation of the anonymous epoch before another account can authenticate;
+- policy-change purge for product events and detailed diagnostics that become prohibited;
+- corruption recovery that never uploads quarantined material; each independently replaceable spool generation has a main-owned creation time and absolute deletion deadline stored outside its payload, quarantine inherits that deadline and a separate byte ceiling, startup/maintenance purges it, and a missing or invalid deadline causes immediate deletion rather than inferred retention;
 - safe file permissions and no secret material.
 
 Encryption at rest can be added if the selected local database technology and OS key store provide a meaningful boundary. It is not used to justify storing sensitive payloads; data minimization remains primary.
 
 ### Desktop sessions
 
-A `launch_id` begins when the process starts. A `session_id` begins when the application becomes interactive and renews after the approved background interval. The same definition supplies both product denominators and crash-free session health. Launch and session events have high delivery priority because missing denominators bias stability scores.
+A `launch_id` begins when the process starts. A `session_id` begins when the application becomes interactive and renews after the approved background interval. The same definition supplies both total-usage denominators and crash-free session health. Each launch and session records whether detailed crash reporting was continuously eligible from its start. A preference or workspace-policy change in either direction makes the current launch/session ineligible; only the next launch/session may establish the new state. Crash-free calculations use eligible denominators, while essential launch/session events measure total use and expose eligibility coverage. Launch and session events have high delivery priority because missing denominators bias stability scores.
 
 An unclean-exit marker is fsynced before the app becomes ready and cleared only during graceful shutdown. The next launch emits the prior release/build, last known phase, and whether it was in the launch window. It does not claim “native crash” without a dump or OS signal.
+
+## Identity onboarding ingest
+
+Before Google authentication, main creates a random anonymous epoch and requests a short-lived bootstrap capability from the Global edge. The edge binds the capability to that epoch, the generated logged-out onboarding schema subset, the coarse provisional route, expiry, and abuse limits. It is not an account credential and cannot call normal product, identity, crash, or workspace APIs. Main owns it; the renderer receives only generated semantic methods.
+
+Google authentication upgrades the journey to an identity-only Global bootstrap session before Avalon knows whether the user will activate an existing Global or EU workspace, accept an invitation, or create a new workspace. This is an authenticated `platform-user` scope, not anonymous traffic and not a Global workspace session.
+
+The bootstrap session carries the canonical Product analytics boolean and preference version plus a server-created `onboarding_journey_id`. The journey ID is opaque, non-authorizing, and bound to that bootstrap session. An existing opt-out is effective before identity-scoped product events are accepted. A new account uses the approved default-on policy; the settings control is not shown during onboarding.
+
+Each event uses this routing precedence:
+
+1. an existing explicit platform workspace binding;
+2. an explicit region selection already made during the journey;
+3. otherwise the journey's provisional route, fixed on its first eligible edge request as `eu` only when Cloudflare reports `isEUCountry` affirmatively and as `global` for a non-EU, unavailable, malformed, timed-out, or failed geolocation result.
+
+The service persists only the coarse provisional route and `routing_basis`, never the source IP, country, city, continent, coordinates, postal code, timezone, ASN, or raw Cloudflare request metadata. Fixing the provisional route prevents a VPN or network change from splitting the pre-selection portion of one onboarding funnel. A later explicit choice applies prospectively; accepted history is not migrated, aliased across regions, or duplicated.
+
+The Global ingest has two disjoint modes. Logged-out mode accepts only generated anonymous-epoch schemas under the route-bound capability. Identity mode accepts only generated platform-user onboarding schemas while the authenticated session has no workspace; it derives the platform subject from the session, validates the journey binding, and applies the canonical account preference. Both modes validate each event before routing:
+
+- **Global route:** commit immediately to the Global accepted-event outbox and use the anonymous epoch or derive the Global platform-user destination identity there.
+- **EU route:** call a named Worker RPC with the exact validated projection. Anonymous events carry the random epoch. Authenticated platform-user events carry a Global-issued, EU-scoped telemetry subject handle that is opaque, versioned for deletion, stored only as restricted identity-control metadata in Global, never used as a Global destination identity, and never exposed to the client. The EU handler uses that handle as its pseudonymous destination identity, commits to the EU internal outbox/sink, and returns per-event durable acknowledgement. The payload contains no raw platform identifier, Global destination identity, or location field.
+
+For EU-routed onboarding events, Global keeps no event holding or replay payload. Global-routed onboarding events use the normal Global accepted-event outbox and replay lifecycle. Minimal journey route and content-free delivery/deduplication receipts receive immutable deletion deadlines no later than 90 days after creation. A Global claimed-epoch deletion index retains only the identifiers needed to delete an attributable Avalon-held receipt or replay copy and expires with that internal class, no later than 90 days after the last associated event. An EU claimed-epoch or telemetry-subject deletion index may remain only as long as its attributable EU event class, no later than 13 months after the last associated event. Active preference handles are account configuration: they rotate with region/account bindings and are deleted with the account rather than becoming telemetry history. Retries preserve `event_id`, and a reused identifier with another payload is rejected. Region-derived discovery data cannot escape through a rejection record, log, property, or PostHog payload.
+
+The renderer reports only presentation and intent: fixed screen enums, selected-region intent after the user acts, and requests to create, activate, accept, or decline. The coordinator and regional services report authoritative state and outcomes. A safe operation identifier correlates each intent with its result; it remains distinct from authentication credentials and from any domain idempotency key.
+
+Native dumps never use the identity event ingest. If no explicit region is available, main resolves the bounded coarse-route gate before creating the first renderer. An affirmative EU-country route leaves Crashpad stopped and creates no local artifact; non-EU, unknown, timeout, network failure, and unusable responses start a Global-designated local Crashpad database. There is no pending region-resolution queue: the dump generation's capture route is final. At the next launch, after rotating the inactive database into the separate upload spool, Avalon authenticates upload in a request header using the regional session or a refreshed main-only Global bootstrap capability and never puts a credential in the Crashpad URL. Once a regional workspace session exists, a subsequent launch configures Crashpad for that workspace region. The identity ingest accepts neither minidumps nor arbitrary diagnostic attachments.
 
 ## Normal regional ingest
 
 The normal endpoint accepts compressed batches with strict limits on compressed bytes, expanded bytes, item count, nesting, string length, and total properties. Authentication is the existing regional desktop session. The handler:
 
 1. authenticates and binds the request to one region;
-2. resolves effective user/workspace policy;
+2. resolves the persisted regional projection of the canonical account preference and the effective workspace policy;
 3. parses with resource limits;
 4. validates schema, source, category, timestamps, and properties;
 5. rejects prohibited keys and values;
@@ -201,9 +253,29 @@ The normal endpoint accepts compressed batches with strict limits on compressed 
 
 The queue payload contains region and opaque accepted-row ID only. The destination worker retrieves the row from the same regional database. This keeps sensitive schema changes from silently expanding queue payloads and aligns with Avalon's current regional queue rule.
 
+At regional acceptance, every accepted row and its validated, sanitized replay projection receive an immutable deletion deadline 90 days later. Success, retry, terminal failure, and operator replay do not restart or extend that clock. The replay store never contains the raw client candidate, rejected payload fragments, raw minidumps, or private symbolication artifacts. A deletion request suppresses replay and removes an attributable row before the 90-day ceiling.
+
+A terminal delivery failure enters a regional dead-letter state under the original acceptance deadline. Retry stops and the row is deleted when that deadline arrives, even if no attempt ever reached a terminal response. Operator replay preserves `event_id`, rechecks current preference and workspace policy, and cannot resurrect an event suppressed by opt-out, deletion, or expiry.
+
+The server rechecks the current preference version before destination delivery. A change to disabled suppresses already queued product events and detailed diagnostics for that person. API-native and asynchronous emitters perform the same check before creating an event. If the projection is unavailable or its version cannot be established, those emitters and the destination worker allow only the essential content-free schema set.
+
+Rejection handling never persists or logs an unvalidated client string. It records a fixed violation code, a registered event/schema/source/field identifier or a fixed `unknown` sentinel, server-derived release identity, and an aggregate count. Unknown event names, schema strings, client release values, property keys, and path segments are neither echoed nor hashed for inspection because even a key can carry a secret. Development validation can point to a generated registered field identifier, but it also replaces unknown values with the sentinel. This content-free rejection metadata is stored as time-bucketed contributions. Each observation contribution expires 90 days after it was recorded, and aggregate counts are recomputed from surviving buckets, so a later rejection cannot renew earlier observations. It cannot be used to retain or reconstruct a rejected value.
+
 For an API action already in progress, server telemetry is inserted through a best-effort service that cannot change the product transaction outcome. Where atomicity with a product state transition is required for an authoritative analytic, an outbox row may be committed in the same D1 transaction. Otherwise `waitUntil` can defer only the attempt to create the durable row; it cannot be treated as durable destination delivery.
 
 ## Identity design
+
+Signals use five non-overlapping identity scopes:
+
+| Scope | Server knowledge | Destination identity |
+| --- | --- | --- |
+| `installation` | Device-level reliability without an authenticated person | Random or derived installation identifier; never aliased to a person |
+| `anonymous-epoch` | One bounded logged-out product journey | Random epoch identifier; automatically linked after authentication when same-region policy permits |
+| `platform-user` | Canonical Global platform identity, no explicit workspace route | Global derived person ID or dedicated opaque EU telemetry subject handle |
+| `workspace-user` | Authenticated regional user and workspace | Region-scoped derived person ID and, if approved, workspace group ID |
+| `site-session` | One public-site browser session | Random cookieless session identifier; never aliased or transferred to desktop |
+
+The desktop's session user ID is not the cross-region analytics join key: a regional user row may differ from the canonical Global row. Only server-held identity-control state may feed regional identity selection. The raw `platform_user_id` never enters PostHog, the client event payload, or the Global-to-EU telemetry handoff. Before an EU regional user exists, the Global identity plane creates a random, EU-scoped telemetry subject handle and retains the restricted mapping needed for deletion; EU uses the opaque handle directly rather than pretending it can derive a person from a missing local row. After workspace activation, the established platform-to-regional-user link feeds normal EU derivation without changing or exporting earlier history.
 
 The server computes identifiers as versioned keyed hashes over environment, region, entity type, and stable platform identifier. Example logical input:
 
@@ -211,9 +283,13 @@ The server computes identifiers as versioned keyed hashes over environment, regi
 HMAC(key_v3, "production\0eu\0person\0" + platform_user_id)
 ```
 
-Person, workspace, and installation use separate labels. Development, staging, Global, and EU identifiers cannot be joined. The result includes a non-secret prefix and key version for operational handling. Key rotation retains a restricted mapping of active versions long enough to execute deletion, then retires it according to policy.
+Person, workspace, installation, anonymous-epoch, site-session, preference-subject, and EU-onboarding-subject values use separate labels or random namespaces. Development, staging, Global, and EU destination identifiers cannot be joined. A derived result includes a non-secret prefix and key version for operational handling. Key rotation retains a restricted mapping of active versions long enough to execute deletion, then retires it according to policy.
 
-For Global events, the PostHog `distinct_id` is the derived person ID when authenticated product analysis permits it, otherwise the derived or random installation ID. The EU internal sink uses the same scoped identity semantics without exporting them. Workspace ID is a group/property only if group analytics has been approved. No direct profile fields are sent by default.
+For Global events, the PostHog `distinct_id` is the derived person ID when authenticated product analysis permits it, the random anonymous-epoch ID for pre-auth product activity, the random site-session ID for the future aggregate website funnel, or the derived installation ID only for schemas explicitly registered for device-level reliability. Anonymous-epoch and site-session captures set `$process_person_profile: false`. The EU internal sink uses the same scoped identity semantics without exporting them. Workspace ID is a group/property only if group analytics has been approved. No direct profile fields are sent by default.
+
+Authentication creates a candidate identity transition at Avalon's collection boundary. The boundary issues an explicit identity-transition command only after it confirms that the anonymous epoch and authenticated workspace use the same telemetry region. The command contains the regional epoch identity and the newly derived regional person identity; it is idempotent and is accepted only after session validation, consent checks, and verification that the epoch belongs to the reporting client and has not already been closed or claimed. For Global PostHog, the adapter emits the documented alias operation with `distinct_id` set to the derived person ID and `alias` set to the anonymous epoch ID; the reverse mapping is forbidden even if platform-user events already created the person. For an EU activation, the EU service already knows the regional user plus the EU telemetry subject handle received during onboarding, so it records directed internal links from both the epoch and that handle to the derived EU person without returning the EU person identity to Global. The renderer and preload never call `identify` or `alias` directly. Retries cannot create additional links. Logout, account switching, and abandonment close the epoch; main persists a fresh random epoch before it accepts another logged-out product event or authentication attempt. The lifetime installation identity remains stable for eligible reliability measurement and never participates in this transition.
+
+Platform-user onboarding events created after authentication already use their regional platform identity—the derived Global person or dedicated EU telemetry subject—and are not replayed through the epoch alias command. If the anonymous epoch's provisional telemetry region differs from the authenticated workspace region, the collection boundary does not issue an alias command. The pre-auth history remains anonymous in its original regional destination, the authenticated workspace person begins prospectively in the explicit workspace region, and no analytics identifier, mapping, event, profile, export, or import bridges the two destination histories.
 
 ## Client/server correlation pattern
 
@@ -238,17 +314,21 @@ The server event never copies arbitrary client properties. It reconstructs its p
 | Renderer gone | Electron main listener | Reason/exit class/process/release | Normal spool |
 | Unresponsive renderer | Electron main listener/watchdog | Transition/duration/recovery | Normal spool |
 | Unclean exit | Next-launch marker | Prior phase/release | Normal spool next launch |
-| Native crash | Crashpad out-of-process handler | Minidump + sparse static metadata | Crash endpoint |
+| Native crash | Crashpad out-of-process handler | Local minidump + sparse static metadata + optional sanitized sidecar | Next-launch database rotation, then main uploader |
 
 ### Crashpad authentication and abuse control
 
-Crashpad cannot assume a fresh user token or arbitrary custom request behavior. A packaged prototype must determine the exact endpoint, header, multipart, retry, and pending-upload capabilities on supported Electron versions. The final endpoint uses the narrowest feasible region-bound capability, rotated per installation or release and revocable without exposing a general API credential.
+Electron Crashpad's supported start surface does not provide Avalon's required authenticated-header boundary. Avalon therefore does not configure native network submission and never embeds a token or capability in `submitURL`, query parameters, form metadata, or another URL-bearing field. Crashpad writes completed reports to a route-final database generation created for that launch. A packaged prototype must verify database location, completion semantics, process coverage, generation rotation, and pre-start purge behavior on every supported Electron version.
+
+Avalon never opens or mutates the database while its Crashpad handler is active. At the next launch, before starting a new handler, main atomically rotates the entire inactive prior database plus its launch manifest and crash sidecar into Avalon's route-final upload spool. It validates the capture route, generation eligibility, age, completion state, and integrity, deletes ineligible/incomplete material, and starts a fresh Crashpad database before rendering. Upload proceeds asynchronously from the separate spool and therefore never races Crashpad. Multipart requests use the normal regional session or a short-lived, route-bound, main-only bootstrap capability in an authorization header. The capability authorizes only one regional crash-ingest shape, is refreshed rather than persisted in a URL, and cannot call product APIs. A capture route can never be changed by a later network or workspace selection.
+
+Local reports and sidecars become permanently ineligible for upload 14 days after creation. While Avalon is running, the separate rotated upload spool is actively deleted at that deadline, and independent byte/count ceilings may evict it sooner with only a content-free aggregate loss counter. No process can delete either a rotated spool or an unrotated report while the device is dormant, and Avalon cannot safely delete an active Crashpad database. At the next launch, before any upload attempt or Crashpad restart, main checks original creation time and deletes every expired rotated or unrotated report, manifest, invalidation record, and sidecar. A later launch, authentication, route change, or retry cannot restore eligibility. User-facing privacy material describes this next-launch physical-deletion limit rather than promising background deletion while Avalon is not running.
 
 Regardless of mechanism, the endpoint enforces:
 
 - region encoded by the hostname/configuration, never a trusted form field;
 - allowed release/build/channel/platform combinations;
-- short capability lifetime or server-side revocation;
+- authenticated regional session or short capability lifetime and server-side revocation;
 - per-capability, IP-edge, release, and global rate limits without persisting raw IP in product analytics;
 - strict multipart parts, minidump magic/type, and byte limits;
 - decompression and parser resource limits;
@@ -256,7 +336,13 @@ Regardless of mechanism, the endpoint enforces:
 - one opaque crash ID returned or recorded;
 - no synchronous symbolication on the upload request.
 
-If Crashpad's native transport cannot meet the authentication boundary, Avalon keeps dumps in the local Crashpad database and adds a minimal main-process uploader on the next launch. That loses immediate fatal upload but permits authenticated regional transport. The spike chooses explicitly between those tradeoffs.
+An inferred-EU pre-region launch never starts Crashpad and therefore creates neither a dump nor a crash sidecar. Every native dump waits until the next launch for custom upload, including renderer and child-process dumps. Crash-free dashboards expose awaiting-restart, rotated, expired-local, policy-invalidated, rejected, and uploaded counts so delayed delivery cannot silently improve the apparent rate.
+
+Disabling Product analytics stops Avalon's upload-spool worker immediately, marks any bootstrap capability for revocation, and fsyncs an invalidation record for the active Crashpad generation before acknowledging the local change. A telemetry-region change or newly restrictive workspace policy performs the same generation invalidation before changing product state. Avalon does not open, mutate, or delete the active Crashpad database. On the next launch, the rotation step recognizes the invalidation and purges the entire generation and sidecars rather than uploading any report from it; Crashpad then remains stopped for opt-out or starts a fresh generation under the new effective route/policy. This deliberately discards even an earlier dump from an invalidated launch to avoid relying on racy per-report timing. Packaged tests cover database locks, crashes before and after invalidation, region changes, an upload already in flight from an older rotated generation, and a failed purge. An upload accepted before the server acknowledges the opt-out cannot be recalled synchronously and follows the regional deletion workflow; the UI does not claim otherwise.
+
+### Crash-surviving breadcrumbs
+
+The typed breadcrumb ring is bounded, already sanitized, and mirrored by main to an atomic per-launch sidecar with restrictive permissions. Each checkpoint records launch/process identity, sequence, and freshness time; it contains no arbitrary strings. The uploader attaches the matching sidecar to the multipart request and deletes it with the local dump. A renderer crash may use the latest main-owned checkpoint. A fatal main crash can lose recent in-memory transitions, so the structured report includes `breadcrumb_status: "available" | "stale" | "unavailable"` and never treats breadcrumbs as mandatory. Sidecars obey the dump's opt-out, route, local age, and deletion rules and are never uploaded independently.
 
 ### Artifact and symbol lifecycle
 
@@ -271,13 +357,24 @@ Before a release is published, CI uploads:
 
 Uploads go to separate Global and EU private symbol stores. EU artifacts stay in Avalon's Cloudflare-backed EU path and are never read by the Global symbolication service. Release publication fails when a supported target's required artifacts are absent. Symbols outlive the longest crash-report retention for that release.
 
-The symbolication processor is region-local and reads only the dump and matching artifacts. It outputs a scrubbed normalized stack, owned top frame, system frame summary, crash signature, and parser status. If Cloudflare Workers cannot safely run the required native tooling, the implementation provisions a regional job/compute service; it does not ship unsymbolicated dumps to an unapproved global service as a shortcut.
+JavaScript and native symbolication are separate regional processors:
+
+- **JavaScript exceptions** retain only release/build/debug identity plus bundle-relative generated frame identifiers and line/column coordinates until symbolication. The processor reads the matching private bundle and source map, resolves main, preload, and renderer frames, and emits original application-relative module/function/line information without source context. Generated frames and maps are deleted on their declared schedules. Global PostHog receives the already-symbolicated sanitized exception; source maps and bundles are not uploaded to PostHog. EU uses the same processor entirely inside its isolated Cloudflare-backed deployment.
+- **Native dumps** are read with matching platform debug symbols and produce a scrubbed normalized stack, owned top frame, system-frame summary, crash signature, and parser status. Global may use only an approved Avalon-operated compute path. EU symbolication may run only in Avalon-owned, isolated Cloudflare compute and storage allocated to EU. If no Cloudflare primitive can safely execute the required native tooling, the EU report remains explicitly `unsymbolicated` and the dump expires on schedule; adding external compute or egress requires a new recorded architecture and privacy decision.
+
+Neither processor places source excerpts, absolute paths, dumps, maps, bundles, or unsanitized stack text into destination payloads. Forced-error release tests prove artifact matching for all JavaScript bundles and native targets before publication.
+
+Each raw minidump has a server-derived deletion deadline 90 days after receipt. Global and EU object stores enforce the same lifecycle independently, while an audited reconciliation job proves that expired objects and their raw-artifact indexes are gone. Extending the deadline is a product/privacy decision rather than an operator override.
 
 ### Fingerprinting and issue state
 
 Default fingerprints include exception/crash type, process, owned top frames, and stable normalized frame tokens. Dynamic messages, addresses, offsets, local paths, line numbers in generated bundles, and user content are excluded. The schema permits a reviewed explicit fingerprint for known wrapper errors.
 
-Avalon's crash report store tracks first seen, last seen, event count, affected installations, affected sessions, releases, regression state, and resolution annotations. Global PostHog receives enough data for release/funnel analysis, not raw report management. EU crash summaries remain in the internal regional sink. The private support viewer can resolve an opaque `crash_id` only for an authorized role in the matching region.
+Avalon's crash report store tracks first seen, last seen, event count, affected installations, affected sessions, releases, regression state, and resolution annotations while it holds a report internally. Global PostHog receives the complete approved structured report and owns grouping, issue triage, regression, release-health, and investigation workflow for Global after delivery. It still receives no raw artifact or private symbolication asset. EU receives the equivalent structured report in the internal regional sink and uses a minimal Avalon issue surface for the same investigation fields. In either region, an authorized support role may resolve an opaque `crash_id` to the restricted raw artifact only inside Avalon.
+
+Avalon-held full structured reports retain for 90 days from occurrence. That applies to the EU internal sink and any Global pre-forward or replay copy, but not to the PostHog copy after destination acknowledgement. EU-internal minimized issue history is stored as time-bucketed contributions containing only the approved fingerprint, counts, affected releases, first/last occurrence time in the bucket, regression transitions, and resolution annotations. Each occurrence bucket expires 13 months after its events and each annotation expires 13 months after it was authored. Current counts, affected releases, first/last seen, regression state, and resolution state are recomputed from surviving contributions; when none survive, the issue row is deleted. A new recurrence after expiry creates a new 13-month history rather than reviving aged-out contributions.
+
+PostHog-side retention, deletion, profile behavior, and issue-workflow configuration are administered separately after delivery and do not gate Avalon's internal collector, outbox, replay, crash-store, or EU lifecycle. Internal reconciliation verifies only Avalon-controlled storage and never treats destination acknowledgement as permission to extend an internal deadline.
 
 ### Source and stack privacy
 
@@ -294,15 +391,20 @@ The PostHog adapter is deployed and configured only in Global. It has no access 
 - sets normalized timestamp and stable event UUID;
 - sets `distinct_id` and optional group only from derived identities;
 - disables GeoIP/profile processing according to the event plan;
+- sends anonymous-epoch and site-session events with `$process_person_profile: false`;
+- performs an epoch claim only as a directed alias with `distinct_id` equal to the derived person and `alias` equal to the anonymous epoch;
 - adds `$lib: "avalon-regional-telemetry"`, adapter version, release, and environment;
 - emits external-flag experiment properties only on planned events;
-- maps sanctioned JS exceptions via the verified SDK/API path;
+- maps already-symbolicated, sanitized JavaScript exceptions via the verified SDK/API path;
+- maps the complete allowlisted native crash report, including sanitized symbolicated frames, typed breadcrumbs when recovered, breadcrumb availability/freshness status, issue fingerprint, release/build/process context, parser state, and affected launch/session correlation;
 - records provider response class, latency, retryability, and request ID without logging payloads;
 - never includes PostHog personal properties that are not explicitly declared.
 
+“Complete” means every approved structured field needed to investigate the issue, not every byte collected by Crashpad. The adapter cannot access or emit minidumps, memory fragments, private source maps or symbols, source excerpts, absolute paths, unsanitized messages or frames, authentication material, or arbitrary metadata. Golden fixtures define both the required full-report fields and prohibited negative space.
+
 Batching respects PostHog's documented payload limit with a substantially lower Avalon cap. 4xx schema/config failures become terminal and alert; 408/429/5xx/network failures retry with exponential backoff and `Retry-After`. A circuit breaker protects the regional consumer during a provider incident.
 
-Provider configuration is treated as code where API coverage permits. A scheduled drift check verifies project region, IP capture, retention, authorized users, session replay/autocapture state, product/model-development opt-out, and deletion integration. A material privacy drift pauses forwarding and pages an operator; forwarding resumes only after remediation is verified.
+PostHog project retention, deletion, access, profile, and issue-workflow configuration are owned through a separate provider-administration process. This adapter design ends at privacy-transform validation, successful destination acknowledgement, and internal delivery-receipt handling; it does not mirror PostHog lifecycle state back into Avalon's retention engine.
 
 ### EU internal adapter
 
@@ -312,7 +414,15 @@ EU has no PostHog project token, personal API key, provider hostname, or adapter
 2. otherwise provision a dedicated EU-only primitive, binding, dataset, keyspace, and access role that no Global telemetry uses;
 3. record the locality limitation in regional and customer-facing documentation rather than claiming a stronger guarantee.
 
-The EU sink supports the same schema versions, correlation, deletion, retention, loss accounting, and sanitized crash-summary contract as Global. It does not use the existing shared Analytics Engine dataset. A future EU-specific PostHog instance is a new adapter rollout requiring a recorded architecture/privacy decision, credentials provisioned only in EU, and migration/replay rules that do not send historical EU data without approval.
+The EU sink supports the same schema versions, correlation, deletion, loss accounting, and structured crash-report contract as the Avalon-controlled Global pipeline, with its own destination-retention role because EU does not forward to PostHog. At acceptance, each EU semantic event receives an immutable deadline 13 months after occurrence, and each full structured crash report receives an immutable deadline 90 days after occurrence. Secondary indexes, materialized views, and correlations inherit the source record's deadline or an explicitly shorter class. Content-minimized issue contributions receive their own immutable deadline 13 months after the contributing occurrence, and later updates or recurrences cannot renew that contribution. A regional lifecycle job deletes expired primary and derived records, recomputes issue state from surviving contributions, removes emptied issues, and is verified by an audited reconciliation job. It does not use the existing shared Analytics Engine dataset. A future EU-specific PostHog instance is a new adapter rollout requiring a recorded architecture/privacy decision, credentials provisioned only in EU, and migration/replay rules that do not send historical EU data without approval.
+
+## Future public-site source
+
+The first release leaves the public website unchanged. A later, separately gated rollout adds only generated `site` methods for explicit landing-view, call-to-action, and download-conversion schemas. It does not load the PostHog browser SDK or expose a generic capture method, DOM autocapture, session replay, advertising pixels, or console/network collection.
+
+The browser creates a random, cookieless site-session identifier held only for the browser session. Events may add allowlisted coarse campaign and referrer enums after normalization at ingest. The identifier is never written into a download URL, deep link, installer metadata, Electron state, authentication flow, or account record. The site's funnel therefore ends at its declared web conversion; product analysis may compare aggregate site cohorts with aggregate desktop activation cohorts but cannot join individual events or people.
+
+The Cloudflare collection edge derives a provisional site route without exposing location to the client event: affirmative `isEUCountry` requests go to the EU internal sink through the named regional path, while non-EU, missing, malformed, and failed geolocation requests go to the Global outbox and site PostHog project or dataset. It stores neither the request IP nor country, city, coordinates, postal code, ASN, or other detailed location. Global Privacy Control and any legally required consent state are evaluated before nonessential site events are accepted. The rollout remains disabled until the public notice, consent behavior, bot controls, regional fixtures, and separate destination configuration pass their gate.
 
 ## Consent and policy resolution
 
@@ -326,26 +436,40 @@ AND regional/legal policy
 AND event-specific rollout
 ```
 
-No feature flag can widen the compiled ceiling. A remote response is signed/authenticated through the normal API session and cached with version and expiry. The compiled and local default enables product analytics and crash reporting; an authenticated workspace policy may only reduce that ceiling. Essential reliability continues within the compiled content-free allowlist.
+No feature flag can widen the compiled ceiling. A remote response is signed/authenticated through the normal API session and cached with version and expiry. The compiled and local default enables product analytics and crash reporting. A workspace owner or administrator can disable Product analytics for the workspace; this policy can only reduce the user's ceiling and cannot enable collection for an opted-out user. Essential reliability continues within the compiled content-free allowlist.
 
-The per-user `productAnalyticsEnabled` setting defaults to `true`. When a user turns it off, main immediately stops creating semantic product events, prevents native dump upload, purges queued product events, and removes pending Crashpad artifacts. Essential reliability remains active. Because Electron Crashpad cannot be stopped after it starts, fully preventing local dump generation takes effect after the desktop restarts; the settings UI discloses this and offers a restart. Any dump generated during the remainder of the current process is never uploaded and is removed on the next safe startup. When the setting is already off at launch, Avalon does not start native crash reporting.
+During an identity-only bootstrap session there is no workspace-policy term. The effective policy is the compiled ceiling, the canonical account preference, the identity-onboarding legal policy for the provisional route, and the event rollout. Events deliver immediately, so a workspace policy discovered or created later applies prospectively and does not migrate, duplicate, or retroactively reclassify pre-workspace identity events.
 
-When a category changes from allowed to disallowed, main stops collection immediately and purges queued events in that category. The API rejects stale clients that continue sending them. Previously delivered provider data follows the approved deletion/retention policy; the UI distinguishes “stopped future collection” from “requested deletion.”
+Logged-out mode uses the compiled ceiling, the durable local Product analytics choice, the provisional-route legal policy, and the event rollout. Logout does not reset a known local opt-out. A fresh installation uses the approved default-on value because no account is known. When authentication resolves an existing canonical opt-out, Global closes the presented epoch and sends a route-preserving internal-purge command to the Global outbox/replay store or through the existing EU onboarding RPC. The EU operation deletes every epoch-attributable accepted event, sink record, secondary index, derived issue contribution, outbox/replay copy, and correlation, recomputes affected issue state, and acknowledges only after durable deletion; the Global internal operation provides the equivalent cleanup for Avalon-held copies. The command contains only the epoch and purge authorization already bound to the journey, never a person or destination identity; no alias is emitted and further nonessential collection remains off. Data already acknowledged by PostHog follows separately managed provider configuration.
+
+The per-user `productAnalyticsEnabled` setting defaults to `true` and has a monotonic `preferenceVersion`. The Global identity control plane is canonical because the choice is account-scoped and a person signs in once there. This is minimal identity/account metadata, not product telemetry. During regional activation, Global creates or resolves a random, region-bound `preference_subject_handle` and the regional service maps it to that regional user. Preference read/write RPCs carry only this handle, the boolean, expected/current version, and authenticated operation metadata. The handle has no meaning to analytics adapters, never appears in an event, and cannot authorize another account operation. Workspace activation includes the current canonical version so a move or future activation cannot silently reset the choice.
+
+Preference writes use privacy-safe ordering and optimistic concurrency:
+
+1. Main persists a local opt-out and applies it before making a request. It sends preference mutations through a control queue that is independent of and higher priority than telemetry delivery.
+2. For disable, the regional API first writes a disabled local projection selected by its mapped preference handle, then compares-and-sets the canonical control-plane value through the same handle, and finally records the acknowledged version. For enable, collection remains disabled until both canonical and regional state contain the new enabled version. Any missing handle, mapping failure, partial write, or conflicting state resolves to disabled.
+3. The API returns the acknowledged version. Main cannot resume nonessential collection without it. A stale write refetches instead of overwriting a newer version.
+4. Other installations receive the current version at session bootstrap and refresh when the API reports a newer version. API-native and asynchronous emitters read the regional projection at creation; the destination worker rechecks it before delivery. Queued product and diagnostic rows for a disabled person are suppressed and deleted according to policy.
+
+An offline opt-out immediately stops semantic events and every detailed diagnostic payload locally. It stops the main-process crash uploader and queues the preference change ahead of telemetry for reconnect. Opt-in while offline remains pending and does not start collection. If the regional projection is unavailable, expired, or inconsistent with a known higher canonical version, only essential reliability is permitted.
+
+When enabled changes to disabled, main purges queued product events, JavaScript exception stacks, breadcrumbs, and any separate route-final crash-upload spool; it also fsyncs invalidation of the active Crashpad generation. It follows the restart-safe Crashpad procedure above rather than modifying the live database. The API rejects stale client product/diagnostic events and revokes any bootstrap crash-upload capability once it acknowledges the change. Previously delivered data follows the approved deletion/retention policy; the UI distinguishes “stopped future collection” from “requested deletion.”
+
+Workspace-policy writes require an authenticated owner or administrator and a monotonic version. The regional API applies a disable before acknowledging it, suppresses queued and asynchronous product/diagnostic events for the workspace, and notifies active desktop sessions. Re-enabling the workspace ceiling does not resume collection for an opted-out user, and each client still requires its current account preference before collection can restart. Product analytics remains the only user-facing nonessential telemetry control; there is no independent crash-reporting toggle.
 
 ## Security threats and controls
 
 | Threat | Control |
 | --- | --- |
 | Compromised renderer sends secrets | Narrow generated IPC; main runtime schema; server schema and prohibited-key scan |
-| Outdated client ignores policy | API-authoritative effective policy and schema versions |
-| Telemetry endpoint becomes data exfiltration path | Allowlisted enums/bounds, no arbitrary strings, strict sizes, authenticated normal ingest |
+| Outdated client ignores policy | Canonical account preference, durable regional projection, checks at creation and delivery, and schema versions |
+| Telemetry endpoint or rejection log becomes a data exfiltration path | Allowlisted enums/bounds, no arbitrary strings, fixed rejection sentinels/codes, strict sizes, authenticated normal ingest |
 | Crash endpoint is abused for storage or parser attacks | Region-bound capability, rate limits, type/size validation, asynchronous sandboxed parsing |
 | PostHog credential leaks or reaches EU | Global-server-only secret; EU has no PostHog binding/host; no renderer SDK or key dependency |
 | Cross-region routing | Separate hostnames, bindings, queues, stores, secrets, tests, and support roles |
 | Duplicate/replayed events bias analysis | Unique event ID, payload-hash conflict detection, bounded replay, stable destination UUID |
-| Stack/dump leaks content | Pre-forward stack scrub; user analytics control; separate dump store/access/retention; no raw dump in PostHog |
+| Stack/dump/source map leaks content | Regional symbolication, pre-forward stack scrub, user analytics control, separate artifact stores/access/retention, and no raw diagnostic artifact in PostHog |
 | Schema drift expands collection | Tracking plan in CI; destination golden fixtures; unknown fields reject |
-| Provider settings drift | Configuration-as-code where possible; scheduled drift audit; forwarding pause on material drift |
 | Deletion misses rotated identities | Versioned ID derivation and deletion index across active/historical key versions |
 | Telemetry failure harms product | Non-blocking reporter and server service; bounded resources; isolation/circuit breakers |
 
@@ -357,8 +481,8 @@ At minimum operators need:
 - oldest outbox age, retry counts, dead-letter rows, destination latency/error class;
 - local spool drop reports by reason and release;
 - crash upload accepted/rejected, dump age, symbolication backlog/failure class, missing artifacts;
-- crash-free launches/sessions with delivered and lost denominators;
-- provider configuration drift and deletion job state;
+- crash-free launches/sessions with eligible, ineligible, delivered, and lost denominators;
+- internal retention reconciliation and deletion-job state;
 - strict alerts without event property or crash content in log messages.
 
 Runbooks cover provider outage, outbox backlog, schema rejection spike, crash-upload abuse, missing symbols, accidental prohibited-data detection, cross-region test failure, consent-policy incident, and deletion failure.
