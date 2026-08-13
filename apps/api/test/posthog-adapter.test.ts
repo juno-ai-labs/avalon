@@ -48,6 +48,7 @@ describe("PostHog adapter", () => {
   it("uses PostHog's exception SDK path for a full sanitized native report", async () => {
     const crash: GlobalCrashDeliveryRow = {
       crashId: "018f22f2-4c22-7abc-8def-0123456789af",
+      deviceId: "018f22f2-4c22-7abc-8def-0123456789a4",
       analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
       workspaceAnalyticsId: "018f22f2-4c22-7abc-8def-0123456789ae",
       processPersonProfile: true,
@@ -81,6 +82,16 @@ describe("PostHog adapter", () => {
       expect.objectContaining({
         $process_person_profile: true,
         $groups: { workspace: crash.workspaceAnalyticsId },
+        $lib: "avalon-regional-telemetry",
+        $lib_version: "1",
+        $app_name: "Avalon",
+        $app_namespace: "app.avalon.desktop",
+        $app_version: crash.release,
+        $app_build: crash.buildId,
+        $device_type: "Desktop",
+        $device_id: crash.deviceId,
+        $is_identified: true,
+        $os_name: "macOS",
         $exception_fingerprint: crash.fingerprint,
         $exception_source: "avalon_native",
         $session_id: crash.launchId,
@@ -135,6 +146,13 @@ describe("PostHog adapter", () => {
       capturedError,
       row().analyticsSubjectId,
       expect.objectContaining({
+        $lib: "avalon-regional-telemetry",
+        $lib_version: "1",
+        $app_name: "Avalon",
+        $app_namespace: "app.avalon.desktop",
+        $app_version: exceptionEnvelope.context.release,
+        $app_build: exceptionEnvelope.context.buildId,
+        $device_type: "Desktop",
         $exception_fingerprint: "b".repeat(64),
         $session_id: exceptionEnvelope.context.launchId,
         launch_id: exceptionEnvelope.context.launchId,
@@ -164,6 +182,7 @@ describe("PostHog adapter", () => {
         $geoip_disable: true,
         $lib: "avalon-regional-telemetry",
         $lib_version: "1",
+        $is_server: true,
       },
     });
   });
@@ -182,8 +201,11 @@ describe("PostHog adapter", () => {
         $groups: { workspace: "018f22f2-4c22-7abc-8def-0123456789ae" },
         $lib: "avalon-regional-telemetry",
         $lib_version: "1",
+        $is_server: true,
         $process_person_profile: true,
+        $is_identified: true,
         $set_once: { first_avalon_release: "0.24.0" },
+        avalon_event_name: "workspace_create_completed",
         schema_version: 1,
         source: "api",
         category: "product",
@@ -196,6 +218,144 @@ describe("PostHog adapter", () => {
         result: "success",
       },
     });
+  });
+
+  it("maps registered desktop screens to PostHog's canonical screen event", () => {
+    const screenEnvelope: TelemetryEnvelope = {
+      ...event,
+      name: "screen_viewed",
+      source: "desktop-renderer",
+      identityScope: "workspace-user",
+      context: {
+        ...event.context,
+        platform: "darwin",
+        arch: "arm64",
+        channel: "stable",
+        launchId: "018f22f2-4c22-7abc-8def-0123456789a0",
+        deviceId: "018f22f2-4c22-7abc-8def-0123456789a4",
+        osVersion: "15.6.1",
+        locale: "en-US",
+        timezone: "America/Los_Angeles",
+        screenWidth: 3024,
+        screenHeight: 1964,
+        viewportWidth: 1480,
+        viewportHeight: 940,
+        windowId: "018f22f2-4c22-7abc-8def-0123456789a5",
+      },
+      properties: { screen: "workspace_home" },
+    };
+
+    expect(mapPostHogCapture(row({ envelope: screenEnvelope }))).toMatchObject({
+      event: "$screen",
+      properties: {
+        avalon_event_name: "screen_viewed",
+        $screen_name: "workspace_home",
+        screen: "workspace_home",
+        $app_name: "Avalon",
+        $app_namespace: "app.avalon.desktop",
+        $app_version: "0.24.0",
+        $app_build: "build-0123456789",
+        $device_type: "Desktop",
+        $os_name: "macOS",
+        $os: "Mac OS X",
+        $os_version: "15.6.1",
+        $locale: "en-US",
+        $timezone: "America/Los_Angeles",
+        $screen_width: 3024,
+        $screen_height: 1964,
+        $viewport_width: 1480,
+        $viewport_height: 940,
+        $window_id: "018f22f2-4c22-7abc-8def-0123456789a5",
+        $device_id: "018f22f2-4c22-7abc-8def-0123456789a4",
+        $is_identified: true,
+      },
+    });
+  });
+
+  it.each([
+    [
+      { state: "installed" },
+      "Application Installed",
+      {},
+    ],
+    [
+      { state: "updated", previousVersion: "0.23.0", previousBuild: "2300" },
+      "Application Updated",
+      { previous_version: "0.23.0", previous_build: "2300" },
+    ],
+  ] as const)("maps application version transition %s to %s", (properties, destinationEvent, destinationProperties) => {
+    const versionEnvelope: TelemetryEnvelope = {
+      ...event,
+      name: "application_version_changed",
+      source: "desktop-main",
+      category: "essential",
+      identityScope: "installation",
+      context: {
+        ...event.context,
+        platform: "darwin",
+        deviceId: "018f22f2-4c22-7abc-8def-0123456789a4",
+      },
+      properties,
+    };
+
+    expect(mapPostHogCapture(row({ envelope: versionEnvelope }))).toMatchObject({
+      event: destinationEvent,
+      properties: {
+        avalon_event_name: "application_version_changed",
+        $device_id: "018f22f2-4c22-7abc-8def-0123456789a4",
+        $is_identified: false,
+        ...destinationProperties,
+      },
+    });
+  });
+
+  it.each([
+    ["launch_started", "Application Opened", false],
+    ["foreground", "Application Opened", true],
+    ["background", "Application Backgrounded", undefined],
+    ["ready", "application_lifecycle", undefined],
+    ["graceful_exit", "application_lifecycle", undefined],
+  ] as const)("maps lifecycle state %s without manufacturing a second event", (state, destinationEvent, fromBackground) => {
+    const lifecycleEnvelope: TelemetryEnvelope = {
+      ...event,
+      name: "application_lifecycle",
+      source: "desktop-main",
+      category: "essential",
+      identityScope: "installation",
+      context: {
+        ...event.context,
+        platform: "win32",
+        arch: "x64",
+        channel: "stable",
+        launchId: "018f22f2-4c22-7abc-8def-0123456789a0",
+      },
+      properties: { state, crashReportingEligible: true },
+    };
+
+    const capture = mapPostHogCapture(row({ envelope: lifecycleEnvelope }));
+    expect(capture.event).toBe(destinationEvent);
+    expect(capture.properties).toMatchObject({
+      avalon_event_name: "application_lifecycle",
+      state,
+      $app_version: "0.24.0",
+      $app_build: "build-0123456789",
+      $os_name: "Windows",
+    });
+    if (fromBackground === undefined) expect(capture.properties).not.toHaveProperty("from_background");
+    else expect(capture.properties).toHaveProperty("from_background", fromBackground);
+  });
+
+  it("does not mark proxied desktop events as server events", () => {
+    const capture = mapPostHogCapture(row({
+      envelope: {
+        ...event,
+        source: "desktop-renderer",
+        name: "screen_viewed",
+        properties: { screen: "workspace_home" },
+      },
+    }));
+
+    expect(capture.properties).not.toHaveProperty("$is_server");
   });
 
   it("uses PostHog's reserved session property for desktop launch correlation", () => {
@@ -211,7 +371,7 @@ describe("PostHog adapter", () => {
   it("keeps anonymous and installation captures personless", () => {
     expect(mapPostHogCapture(row({
       envelope: { ...event, identityScope: "installation" },
-    })).properties).toMatchObject({ $process_person_profile: false });
+    })).properties).toMatchObject({ $process_person_profile: false, $is_identified: false });
   });
 
   it("uses the official batch shape and fixed configured endpoint", async () => {

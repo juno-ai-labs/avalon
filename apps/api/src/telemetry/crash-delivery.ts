@@ -68,6 +68,7 @@ export async function processCrashOutbox(env: Env): Promise<CrashDeliverySummary
     }
     const delivery: GlobalCrashDeliveryRow = {
       crashId: row.crash_id,
+      deviceId: row.installation_analytics_id,
       analyticsSubjectId: row.analytics_person_id ?? row.installation_analytics_id,
       workspaceAnalyticsId: row.analytics_workspace_id,
       processPersonProfile: row.subject_user_id !== null,
