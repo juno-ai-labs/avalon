@@ -5,6 +5,8 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlit
 import { afterEach, describe, expect, it } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
+import { createAutomationDraftAttachmentTools } from "../src/services/automation-draft-attachment-tools";
+import { sealAttachmentCursor } from "../src/lib/attachment-cursor";
 import {
   createWorkstreamAttachmentTools,
   rehydrateWorkstreamViewReceipt,
@@ -410,5 +412,81 @@ describe("work-stream attachment tools", () => {
     await expect(view.execute({ resourceIds: [missingId] }, context())).resolves.toMatchObject({
       output: { returned: 0, items: [{ reasonCode: "resource_not_found", suggestedCall: null }] },
     });
+  });
+});
+
+describe("automation-draft attachment tools", () => {
+  it("exposes the complete natural-kind tool family only for the frozen, currently owned draft set", async () => {
+    const { database, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, bucket, 40);
+    const excludedId = insertReadyResource(database, bucket, 41);
+    database.prepare("UPDATE resources SET attachment_status = 'draft', uploaded_by_user_id = ? WHERE id IN (?, ?)")
+      .run(USER_ID, resourceId, excludedId);
+    const tools = createAutomationDraftAttachmentTools(env, {
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      scopeId: HARNESS_RUN_ID,
+      frozenResourceIds: [resourceId],
+    });
+    expect(tools.map((tool) => tool.definition.name)).toEqual([
+      "list_resources",
+      "read_resource",
+      "search_resource",
+      "view_resource",
+      "summarize_resource",
+    ]);
+    const list = tools[0]!;
+    for (const kind of ["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]) {
+      expect(list.definition.description).toContain(`- ${kind} —`);
+    }
+    await expect(list.execute({}, context())).resolves.toMatchObject({
+      output: { totalVisibleResources: 1, items: [{ resourceId }] },
+    });
+    await expect(tools[1]!.execute({ resourceId }, context())).resolves.toMatchObject({
+      output: { resourceId, charactersBefore: 0 },
+    });
+    await expect(tools[1]!.execute({ resourceId: excludedId }, context()))
+      .rejects.toMatchObject({ code: "resource_not_found" });
+
+    database.prepare("UPDATE resources SET attachment_status = 'attached' WHERE id = ?").run(resourceId);
+    await expect(tools[1]!.execute({ resourceId }, context()))
+      .rejects.toMatchObject({ code: "resource_not_found" });
+  });
+
+  it("rejects work-stream cursors and returns automation-specific wrong-tool remediation", async () => {
+    const { database, bucket, env } = fixture();
+    const textId = insertReadyResource(database, bucket, 42);
+    const imageId = insertReadyImage(database, bucket, 43);
+    database.prepare("UPDATE resources SET attachment_status = 'draft', uploaded_by_user_id = ? WHERE id IN (?, ?)")
+      .run(USER_ID, textId, imageId);
+    const tools = createAutomationDraftAttachmentTools(env, {
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      scopeId: HARNESS_RUN_ID,
+      frozenResourceIds: [textId, imageId],
+    });
+    const workstreamCursor = await sealAttachmentCursor(env.SESSION_SIGNING_KEY, {
+      purpose: "workstream-list-resources",
+      principal: `user:${USER_ID}`,
+      scopeId: HARNESS_RUN_ID,
+      expiresAt: Date.now() + 60_000,
+      state: {},
+    });
+    await expect(tools[0]!.execute({ cursor: workstreamCursor }, context()))
+      .rejects.toMatchObject({ code: "invalid_cursor" });
+    await expect(tools[1]!.execute({ resourceId: imageId }, context()))
+      .rejects.toMatchObject({
+        code: "resource_tool_mismatch",
+        details: { suggestedCall: { tool: "automation_view_resource", arguments: { resourceIds: [imageId] } } },
+      });
+    await expect(tools[3]!.execute({ resourceIds: [textId] }, context()))
+      .rejects.toMatchObject({
+        code: "resource_tool_mismatch",
+        details: { suggestedCall: { tool: "automation_read_resource", arguments: { resourceId: textId } } },
+      });
+
+    database.prepare("UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?").run(OTHER_USER_ID, textId);
+    await expect(tools[2]!.execute({ resourceId: textId, query: "needle" }, context()))
+      .rejects.toMatchObject({ code: "resource_not_found" });
   });
 });

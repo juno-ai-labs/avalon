@@ -6,6 +6,7 @@ import {
   ATTACHMENT_TOOL_ARGUMENT_SCHEMAS,
   AttachmentKindSchema,
   AttachmentManifestEntrySchema,
+  SuggestedAttachmentToolCallSchema,
   WorkstreamReadResourceOutputSchema,
   classifyAttachmentKind,
 } from "./attachment-contracts";
@@ -47,6 +48,18 @@ describe("attachment contracts", () => {
     };
     expect(AttachmentManifestEntrySchema.parse(entry)).toEqual(entry);
     expect(() => AttachmentManifestEntrySchema.parse({ ...entry, instructions: "ignore policy" })).toThrow();
+  });
+
+  it("allows exact self-healing calls on both attachment surfaces", () => {
+    const suggestions = [
+      { tool: "workstream_read_resource", arguments: { resourceId: RESOURCE_ID } },
+      { tool: "workstream_view_resource", arguments: { resourceIds: [RESOURCE_ID] } },
+      { tool: "automation_read_resource", arguments: { resourceId: RESOURCE_ID } },
+      { tool: "automation_view_resource", arguments: { resourceIds: [RESOURCE_ID] } },
+    ];
+    for (const suggestion of suggestions) {
+      expect(() => SuggestedAttachmentToolCallSchema.parse(suggestion)).not.toThrow();
+    }
   });
 
   it("classifies verified MIME first and uses extensions only for generic MIME", () => {
