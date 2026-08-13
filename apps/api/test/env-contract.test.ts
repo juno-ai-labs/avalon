@@ -83,6 +83,15 @@ describe("environment contract", () => {
     }))).not.toThrow();
   });
 
+  it("allows telemetry delivery and operator access to be provisioned after collection", () => {
+    const env = productionEnv();
+    delete (env as Partial<Env>).POSTHOG_PROJECT_TOKEN;
+    delete (env as Partial<Env>).TELEMETRY_CAPABILITY_SIGNING_KEY;
+    delete (env as Partial<Env>).TELEMETRY_OPERATORS_JSON;
+
+    expect(() => assertEnvContract(env)).not.toThrow();
+  });
+
   it("names a missing required variable without echoing any value", () => {
     const env = productionEnv();
     delete (env as Partial<Env>).SESSION_SIGNING_KEY;
