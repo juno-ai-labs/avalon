@@ -313,21 +313,23 @@ resident.
 
 **What changed:** The Global Worker now declares Terminal supported with the
 verified Daytona `us` target and `daytona-small` snapshot. Its API credential
-remains a regional Worker secret. EU remains unsupported and has no Daytona
-bindings.
+remains a regional Worker secret. EU has the same provider values staged as
+regional bindings but remains explicitly unsupported.
 
 **Why:** The operator supplied an enabled Global configuration after validating
-the Daytona bootstrap and corrected stop-before-archive lifecycle. Leaving
-capability unsupported would make that integration unavailable, while copying
-the unsuffixed US target into EU would cross the regional data boundary.
+the Daytona bootstrap and corrected stop-before-archive lifecycle, and requested
+that EU be preconfigured without activation. Leaving Global capability
+unsupported would make that integration unavailable; enabling EU against the
+staged US target would cross the regional data boundary.
 
-**Considered and rejected:** Enabling both Workers from the shared local value,
-or storing the Daytona API key in Wrangler configuration. The former routes EU
+**Considered and rejected:** Inferring EU capability from the staged values, or
+storing the Daytona API key in Wrangler configuration. The former could route EU
 content to a US target; the latter would commit a provider credential.
 
-**Consequences:** Normal Global deployments preserve the non-secret Terminal
-bindings while Cloudflare retains `DAYTONA_API_KEY` as a secret. EU requires its
-own target-specific acceptance record and configuration before activation.
+**Consequences:** Normal deployments preserve each region's non-secret Terminal
+bindings while Cloudflare retains `DAYTONA_API_KEY` as a regional secret. EU
+requires its own target-specific acceptance record and an explicit capability
+change before activation.
 
 ### 2026-08-13 — EU telemetry control is narrow and keyless
 
