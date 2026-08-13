@@ -779,7 +779,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           // timer, never the signal's state.
           toolDeadline.dispose();
         }
-        const persistedResult = toolResult;
+        const persistedResult = durableHarnessToolResult(toolResult);
         if (toolResult.providerOperationId) {
           await requiredPort("Tool provider checkpoint persistence failed", () => input.checkpointToolInvocation?.({
             toolCallId: receiptId,
@@ -801,7 +801,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ...(toolResult.providerOperationId ? { providerOperationId: toolResult.providerOperationId } : {}),
         }));
         await requiredPort("Run liveness renewal failed", () => input.onLiveness?.("after_tool"));
-        return harnessResultOutcome(toolCall.id, persistedResult, () => { completedByTool = true; });
+        return harnessResultOutcome(toolCall.id, toolResult, () => { completedByTool = true; });
       },
       onAssistantMessage: (message) => {
         content += message;
@@ -1758,7 +1758,9 @@ function toOpenAiMessages(messages: RunHarnessInput["messages"]): OpenAI.ChatCom
     if (message.role === "tool") {
       return {
         role: "tool",
-        content: typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? ""),
+        content: typeof message.content === "string"
+          ? message.content
+          : message.content?.map(toOpenAiContentPart) as OpenAI.ChatCompletionToolMessageParam["content"],
         tool_call_id: message.tool_call_id ?? "missing",
       };
     }
@@ -1800,7 +1802,9 @@ function fromOpenAiMessages(messages: OpenAI.ChatCompletionMessageParam[]): RunH
     if (message.role === "tool") {
       result.push({
         role: "tool",
-        content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
+        content: typeof message.content === "string"
+          ? message.content
+          : fromOpenAiToolContent(message.content),
         tool_call_id: message.tool_call_id,
       });
       continue;
@@ -1869,6 +1873,48 @@ function fromOpenAiUserContent(
   });
 }
 
+function fromOpenAiToolContent(
+  content: unknown,
+): ModelMessageContentPart[] {
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((part): ModelMessageContentPart[] => {
+    const parsed = parseModelMessageContentPart(part);
+    return parsed ? [parsed] : [];
+  });
+}
+
+function parseModelMessageContentPart(value: unknown): ModelMessageContentPart | null {
+  if (!isRecordValue(value) || typeof value.type !== "string") return null;
+  if (value.type === "text" && typeof value.text === "string") {
+    return { type: "text", text: value.text };
+  }
+  if (value.type === "image_url" && isRecordValue(value.image_url) && typeof value.image_url.url === "string") {
+    const detail = value.image_url.detail;
+    return {
+      type: "image_url",
+      image_url: {
+        url: value.image_url.url,
+        ...(detail === "low" || detail === "high" || detail === "auto" ? { detail } : {}),
+      },
+    };
+  }
+  if (value.type === "input_audio" && isRecordValue(value.input_audio)
+    && typeof value.input_audio.data === "string"
+    && (value.input_audio.format === "wav" || value.input_audio.format === "mp3")) {
+    return { type: "input_audio", input_audio: { data: value.input_audio.data, format: value.input_audio.format } };
+  }
+  if (value.type === "file" && isRecordValue(value.file)
+    && typeof value.file.filename === "string" && typeof value.file.file_data === "string") {
+    return { type: "file", file: { filename: value.file.filename, file_data: value.file.file_data } };
+  }
+  return null;
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function modelMessagesContainFile(messages: RunHarnessInput["messages"]): boolean {
   return messages.some((message) => Array.isArray(message.content)
     && message.content.some((part) => part.type === "file"));
@@ -1880,8 +1926,18 @@ function harnessResultOutcome(
   markCompleted: () => void,
 ) {
   if (result.halt === "completed") markCompleted();
+  const jsonMessage = toolResultMessage(toolCallId, { success: true, data: result.output });
+  const toolMessage = result.contentParts?.length
+    ? {
+        ...jsonMessage,
+        content: [
+          { type: "text", text: String(jsonMessage.content) },
+          ...result.contentParts,
+        ] as OpenAI.ChatCompletionToolMessageParam["content"],
+      }
+    : jsonMessage;
   return {
-    toolMessage: toolResultMessage(toolCallId, { success: true, data: result.output }),
+    toolMessage,
     ...(result.halt === "needs_input"
       ? { suspend: { toolCallId, reason: "needs_input", resumeKind: "answer" as const } }
       : result.halt === "completed"
@@ -1890,6 +1946,17 @@ function harnessResultOutcome(
     ...((result as HarnessToolResult & { loadedPluginName?: string }).loadedPluginName
       ? { loadedPluginName: (result as HarnessToolResult & { loadedPluginName: string }).loadedPluginName }
       : {}),
+    ...(result.loadedSkillRef ? { loadedSkillRef: result.loadedSkillRef } : {}),
+  };
+}
+
+function durableHarnessToolResult(result: HarnessToolResult): HarnessToolResult {
+  return {
+    output: result.output,
+    summary: result.summary,
+    ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
+    ...(result.halt ? { halt: result.halt } : {}),
+    ...(result.loadedPluginName ? { loadedPluginName: result.loadedPluginName } : {}),
     ...(result.loadedSkillRef ? { loadedSkillRef: result.loadedSkillRef } : {}),
   };
 }

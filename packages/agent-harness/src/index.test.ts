@@ -2869,6 +2869,106 @@ describe("agent harness", () => {
     expect(new TextEncoder().encode(toolMessage?.content ?? "").byteLength).toBeGreaterThan(128 * 1_024);
   });
 
+  it("relays ephemeral image parts after bounded JSON without persisting them in the completion event", async () => {
+    const imageUrl = "data:image/png;base64,aW1hZ2UtYnl0ZXM=";
+    const viewTool: HarnessTool = {
+      definition: {
+        name: "view_resource",
+        description: "View an image resource",
+        capability: "workstream.resources.view",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false },
+      },
+      execute: async () => ({
+        output: { requested: 1, returned: 1, items: [{ resourceId: "resource-1", visualPartIndex: 0 }] },
+        summary: "Viewed one image",
+        contentParts: [{ type: "image_url" as const, image_url: { url: imageUrl, detail: "auto" as const } }],
+      }),
+    };
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-view-resource", "view_resource")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "image inspected" }, finish_reason: "stop" }] }]),
+    ];
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const events: HarnessEvent[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([viewTool])],
+      onEvent: (event) => { events.push(event); },
+    })).resolves.toMatchObject({ status: "completed", content: "image inspected" });
+
+    const toolMessage = requestBodies[1]!.messages.find((message) => message.role === "tool");
+    expect(toolMessage?.content).toEqual([
+      { type: "text", text: expect.stringContaining('"requested":1') },
+      { type: "image_url", image_url: { url: imageUrl, detail: "auto" } },
+    ]);
+    const completed = events.find((event) => event.type === "tool_completed");
+    expect(completed).toMatchObject({
+      type: "tool_completed",
+      result: { output: { requested: 1, returned: 1 }, summary: "Viewed one image" },
+    });
+    expect(JSON.stringify(completed)).not.toContain("data:image/");
+    expect(completed && completed.type === "tool_completed" ? completed.result : null)
+      .not.toHaveProperty("contentParts");
+  });
+
+  it("relays reauthorized ephemeral parts from a completed JSON receipt without executing the tool again", async () => {
+    const imageUrl = "data:image/png;base64,cmVoeWRyYXRlZA==";
+    const execute = vi.fn(async () => ({ output: { shouldNot: "run" }, summary: "Should not run" }));
+    const viewTool: HarnessTool = {
+      definition: {
+        name: "view_resource",
+        description: "View an image resource",
+        capability: "workstream.resources.view",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false },
+      },
+      execute,
+    };
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-replayed-view", "view_resource")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "replayed image inspected" }, finish_reason: "stop" }] }]),
+    ];
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([viewTool])],
+      findCompletedToolResult: async () => ({
+        output: { requested: 1, returned: 1, items: [{ resourceId: "resource-1", visualPartIndex: 0 }] },
+        summary: "Viewed one image",
+        contentParts: [{ type: "image_url", image_url: { url: imageUrl, detail: "auto" } }],
+      }),
+    })).resolves.toMatchObject({ status: "completed", content: "replayed image inspected" });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(requestBodies[1]!.messages.find((message) => message.role === "tool")?.content).toEqual([
+      { type: "text", text: expect.stringContaining('"returned":1') },
+      { type: "image_url", image_url: { url: imageUrl, detail: "auto" } },
+    ]);
+  });
+
   it("retries truncated tool completions on the same endpoint and resets streamed text", async () => {
     const responses = [
       streamResponse([{
