@@ -35,12 +35,13 @@ export function terminalManagedSnapshotBootstrapCommand(): string {
     "set -euo pipefail",
     "sudo -n install -d -o \"$(id -u)\" -g \"$(id -g)\" -m 700 /workspace /workspace/.avalon /workspace/.avalon-output /workspace/.avalon/resources /workspace/.avalon/tmp",
     "system_packages=''",
-    "command -v sqlite3 >/dev/null 2>&1 || system_packages=\"$system_packages sqlite3\"",
-    "command -v gh >/dev/null 2>&1 || system_packages=\"$system_packages gh\"",
+    "installed_capabilities=''",
+    "if ! command -v sqlite3 >/dev/null 2>&1; then system_packages=\"$system_packages sqlite3\"; installed_capabilities=\"$installed_capabilities,sqlite3\"; fi",
+    "if ! command -v gh >/dev/null 2>&1; then system_packages=\"$system_packages gh\"; installed_capabilities=\"$installed_capabilities,gh\"; fi",
     "if [ -n \"$system_packages\" ]; then sudo -n apt-get update -qq && sudo -n apt-get install -y --no-install-recommends $system_packages >/dev/null; fi",
-    "if ! command -v pnpm >/dev/null 2>&1; then npm install --global 'pnpm@11.13.0' >/dev/null; fi",
-    "if ! command -v tsx >/dev/null 2>&1; then npm install --global 'tsx@4.20.6' >/dev/null; fi",
-    terminalSnapshotProbeCommand(),
+    "if ! command -v pnpm >/dev/null 2>&1; then npm install --global 'pnpm@11.13.0' >/dev/null; installed_capabilities=\"$installed_capabilities,pnpm\"; fi",
+    "if ! command -v tsx >/dev/null 2>&1; then npm install --global 'tsx@4.20.6' >/dev/null; installed_capabilities=\"$installed_capabilities,tsx\"; fi",
+    "printf 'AVALON_BOOTSTRAP_INSTALLED=%s\\n' \"${installed_capabilities#,}\"",
   ].join("\n");
 }
 

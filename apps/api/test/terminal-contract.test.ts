@@ -91,14 +91,14 @@ describe("Terminal plugin contract", () => {
       DAYTONA_API_KEY: "daytona-test-key",
       DAYTONA_API_URL: "https://app.daytona.io/api",
       DAYTONA_TARGET: "us",
-      DAYTONA_TERMINAL_SNAPSHOT: "avalon-terminal-2026-08-13",
+      DAYTONA_TERMINAL_SNAPSHOT: "daytona-small",
       TERMINAL_EMERGENCY_DISABLED: "false",
     })).toEqual({
       capability: "supported",
       apiKey: "daytona-test-key",
       apiUrl: "https://app.daytona.io/api",
       target: "us",
-      snapshot: "avalon-terminal-2026-08-13",
+      snapshot: "daytona-small",
       emergencyDisabled: false,
     });
   });

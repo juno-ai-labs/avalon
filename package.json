@@ -13,6 +13,7 @@
     "env:sync": "node scripts/sync-dev-env.mjs",
     "cloudflare:observability": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs",
     "cloudflare:observability:check": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs --check",
+    "terminal:analytics": "dotenv -e .env.local -- node scripts/report-terminal-analytics.mjs",
     "notion:webhook:prepare": "dotenv -e .env.local -- node scripts/notion-webhook-setup.mjs prepare",
     "notion:webhook:copy-token": "dotenv -e .env.local -- node scripts/notion-webhook-setup.mjs copy-token",
     "dev:api": "pnpm env:sync && node scripts/dev-regional-api.mjs",

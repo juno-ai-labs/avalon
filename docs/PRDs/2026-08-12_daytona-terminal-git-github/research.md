@@ -116,6 +116,17 @@ shell treated `status` as a reserved zsh variable. Those observations led to an
 owned runtime workspace, passwordless-sudo bootstrap verification, and a
 shell-neutral `avalon_status` command envelope.
 
+Image size alone does not establish user-visible startup cost, and one live
+probe does not establish a tail distribution. Avalon therefore measures
+provider allocation, policy read-back, compatibility installation, full
+manifest verification, stopped warming, and archived restore separately in the
+dedicated `avalon_terminal_operations` Analytics Engine dataset. The
+human-readable report uses sampling-weighted counts and percentiles and records
+which of the fixed SQLite/`gh`/pnpm/`tsx` gaps were actually installed. A custom
+image can credibly claim only the recurring installation portion; it must still
+pass the same verification and be compared on create/warm/restore reliability
+plus snapshot maintenance.
+
 ## Harness comparison
 
 | Harness | Command surface | File mutation surface | Long-running work | Git/GitHub posture | Main lesson for Avalon |
