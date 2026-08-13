@@ -38,7 +38,8 @@ async function harness(input: {
     now: input.now ?? (() => new Date('2026-08-12T20:00:00.000Z')),
     runtime: {
       environment: 'development', release: '1.96.0', buildId: 'test',
-      platform: 'darwin', arch: 'arm64', channel: 'development',
+      platform: 'darwin', arch: 'arm64', channel: 'development', osVersion: '15.6.1',
+      locale: 'en-US', timezone: 'America/Los_Angeles', screenWidth: 2560, screenHeight: 1440,
     },
     eventId: () => `018f0000-0000-7000-8000-${(eventSequence++).toString(16).padStart(12, '0')}`,
   });
@@ -94,16 +95,70 @@ describe('TelemetryReporter', () => {
       expiresAt: '2026-08-12T21:00:00.000Z',
     };
     const { reporter, spool } = await harness({ anonymous });
-    await reporter.screenViewed('onboarding_welcome');
+    await reporter.screenViewed('onboarding_welcome', {
+      windowId: '018f0000-0000-7000-8000-000000000099',
+      viewportWidth: 1480,
+      viewportHeight: 940,
+      screenWidth: 3024,
+      screenHeight: 1964,
+    });
     await reporter.screenViewed('private/workspace/42' as never);
     const [row] = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(row?.event).toMatchObject({
+      contextSchemaVersion: 2,
       name: 'screen_viewed', source: 'desktop-renderer', category: 'product',
       identityScope: 'anonymous-epoch',
-      context: { onboardingJourneyId: anonymous.journeyId, region: 'global' },
+      context: {
+        onboardingJourneyId: anonymous.journeyId,
+        region: 'global',
+        deviceId: identity.installationId,
+        osVersion: '15.6.1',
+        locale: 'en-US',
+        timezone: 'America/Los_Angeles',
+        windowId: '018f0000-0000-7000-8000-000000000099',
+        viewportWidth: 1480,
+        viewportHeight: 940,
+        screenWidth: 3024,
+        screenHeight: 1964,
+      },
       properties: { screen: 'onboarding_welcome' },
     });
     expect(reporter.inspector().at(-1)).toMatchObject({ validation: 'rejected' });
+  });
+
+  it('records native application install and update transitions as installation lifecycle events', async () => {
+    const { reporter, spool } = await harness({ enabled: false });
+    await reporter.applicationVersionChanged(
+      { state: 'installed' },
+      '018f0000-0000-7000-8000-000000000020',
+    );
+    await reporter.applicationVersionChanged({
+      state: 'updated',
+      previousVersion: '1.95.0',
+      previousBuild: '19500',
+    }, '018f0000-0000-7000-8000-000000000021');
+
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows.map((row) => ({ name: row.event.name, properties: row.event.properties }))).toEqual([
+      { name: 'application_version_changed', properties: { state: 'installed' } },
+      {
+        name: 'application_version_changed',
+        properties: { state: 'updated', previousVersion: '1.95.0', previousBuild: '19500' },
+      },
+    ]);
+  });
+
+  it('acknowledges an application transition only after its stable event reaches the spool', async () => {
+    const { reporter, spool } = await harness({ enabled: false });
+    const enqueue = vi.spyOn(spool, 'enqueue').mockRejectedValueOnce(new Error('disk unavailable'));
+    const eventId = '018f0000-0000-7000-8000-000000000022';
+
+    await expect(reporter.applicationVersionChanged({ state: 'installed' }, eventId)).resolves.toBe(false);
+    await expect(reporter.applicationVersionChanged({ state: 'installed' }, eventId)).resolves.toBe(true);
+
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    const [row] = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(row?.event).toMatchObject({ eventId, properties: { state: 'installed' } });
   });
 
   it('uploads authenticated rows to only their regional API and acknowledges durable results', async () => {
@@ -148,7 +203,10 @@ describe('TelemetryReporter', () => {
     await reporter.screenViewed('onboarding_region');
     await reporter.flush();
     expect(fetch.mock.calls[0]?.[0]).toBe('https://api.with-avalon.com/telemetry/anonymous');
-    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({ capability: 'c'.repeat(64) });
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      capability: 'c'.repeat(64),
+      installationId: identity.installationId,
+    });
   });
 
   it('routes pre-workspace EU onboarding intent immediately through its anonymous epoch', async () => {

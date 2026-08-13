@@ -12,6 +12,10 @@ const IdentitySchema = z.object({
 }).strict();
 
 export type TelemetryIdentity = z.infer<typeof IdentitySchema>;
+export interface TelemetryIdentityState {
+  identity: TelemetryIdentity;
+  created: boolean;
+}
 
 export function uuidV7(now = new Date()): string {
   const milliseconds = now.getTime();
@@ -31,13 +35,21 @@ export function uuidV7(now = new Date()): string {
 }
 
 export async function readTelemetryIdentity(userDataDirectory: string, now = new Date()): Promise<TelemetryIdentity> {
+  return (await readTelemetryIdentityState(userDataDirectory, now)).identity;
+}
+
+export async function readTelemetryIdentityState(
+  userDataDirectory: string,
+  now = new Date(),
+): Promise<TelemetryIdentityState> {
   const path = identityPath(userDataDirectory);
+  let missing = false;
   try {
     const parsed = IdentitySchema.safeParse(JSON.parse(await readFile(path, 'utf8')) as unknown);
-    if (parsed.success) return parsed.data;
+    if (parsed.success) return { identity: parsed.data, created: false };
   } catch (error) {
-    if (!(error instanceof SyntaxError)
-      && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') missing = true;
+    else if (!(error instanceof SyntaxError)) throw error;
   }
   const identity: TelemetryIdentity = {
     version: 1,
@@ -46,7 +58,7 @@ export async function readTelemetryIdentity(userDataDirectory: string, now = new
     accountEpochId: uuidV7(now),
   };
   await writeIdentity(path, identity);
-  return identity;
+  return { identity, created: missing };
 }
 
 export async function rotateTelemetryEpochs(userDataDirectory: string, now = new Date()): Promise<TelemetryIdentity> {

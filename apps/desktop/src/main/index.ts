@@ -28,6 +28,7 @@ import {
   nativeTheme,
   protocol,
   safeStorage,
+  screen as electronScreen,
   session as electronSession,
   shell,
   systemPreferences,
@@ -73,6 +74,11 @@ import {
   readStoredApplicationSettings,
   updateStoredApplicationSettings,
 } from './application-settings';
+import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry';
+import {
+  acknowledgeApplicationVersionTransition,
+  applicationVersionTransition,
+} from './application-version-telemetry';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { DebugSettingsController } from './debug-settings';
@@ -89,12 +95,12 @@ import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } f
 import { NativeCrashUploader } from './native-crash-uploader';
 import { ProductAnalyticsSettingsController } from './product-analytics-settings';
 import {
-  readTelemetryIdentity,
+  readTelemetryIdentityState,
   rotateTelemetryEpochs,
   type TelemetryIdentity,
   uuidV7,
 } from './telemetry-identity';
-import { TelemetryReporter } from './telemetry-reporter';
+import { TelemetryReporter, type TelemetryWindowContext } from './telemetry-reporter';
 import {
   refreshTelemetryCapability,
   resolveTelemetryRoute,
@@ -270,7 +276,10 @@ function parseTelemetryProductIntent(value: unknown): DesktopTelemetryProductInt
   throw new Error('Invalid telemetry intent');
 }
 
-async function reportTelemetryProductIntent(value: unknown): Promise<void> {
+async function reportTelemetryProductIntent(
+  value: unknown,
+  windowContext?: TelemetryWindowContext,
+): Promise<void> {
   const intent = parseTelemetryProductIntent(value);
   const operation: NewTelemetryBreadcrumb | null = intent.kind === 'workspace_create_requested'
     ? { kind: 'operation', operation: 'workspace_create', state: 'requested' }
@@ -287,22 +296,26 @@ async function reportTelemetryProductIntent(value: unknown): Promise<void> {
   if (!telemetryReporter) return;
   switch (intent.kind) {
     case 'onboarding_region_selected':
-      await telemetryReporter.onboardingRegionSelected(intent.selectedRegion, intent.entrypoint);
+      await telemetryReporter.onboardingRegionSelected(intent.selectedRegion, intent.entrypoint, windowContext);
       return;
     case 'workspace_create_requested':
-      await telemetryReporter.workspaceCreateRequested(intent.selectedRegion, intent.entrypoint, intent.operationId);
+      await telemetryReporter.workspaceCreateRequested(
+        intent.selectedRegion, intent.entrypoint, intent.operationId, windowContext,
+      );
       return;
     case 'workspace_activation_requested':
-      await telemetryReporter.workspaceActivationRequested(intent.selectedRegion, intent.entrypoint, intent.operationId);
+      await telemetryReporter.workspaceActivationRequested(
+        intent.selectedRegion, intent.entrypoint, intent.operationId, windowContext,
+      );
       return;
     case 'workstream_create_requested':
-      await telemetryReporter.workstreamCreateRequested(intent.entrypoint, intent.operationId);
+      await telemetryReporter.workstreamCreateRequested(intent.entrypoint, intent.operationId, windowContext);
       return;
     case 'run_requested':
-      await telemetryReporter.runRequested(intent.entrypoint, intent.operationId);
+      await telemetryReporter.runRequested(intent.entrypoint, intent.operationId, windowContext);
       return;
     case 'connector_setup_requested':
-      await telemetryReporter.connectorSetupRequested(intent.connector, intent.operationId);
+      await telemetryReporter.connectorSetupRequested(intent.connector, intent.operationId, windowContext);
   }
 }
 
@@ -330,6 +343,10 @@ let telemetryRoute: ResolvedTelemetryRoute = {
 };
 let telemetryCapabilityRefresh: Promise<ResolvedTelemetryRoute['anonymous']> | null = null;
 let telemetryReporter: TelemetryReporter | null = null;
+const applicationLifecycleTelemetry = new ApplicationLifecycleTelemetry((state) => {
+  const reporter = telemetryReporter;
+  if (reporter) void reporter.applicationLifecycle(state).catch(() => undefined);
+});
 let nativeCrashUploader: NativeCrashUploader | null = null;
 let nativeCrashGenerationActive = false;
 let nativeCrashGenerationInvalidated = false;
@@ -342,6 +359,7 @@ let telemetryBreadcrumbs: TelemetryBreadcrumbRing | null = null;
 let telemetryContinuouslyEligible = false;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
+const telemetryWindowIds = new WeakMap<WebContents, string>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
 const nativeSystemAudioController = new NativeSystemAudioController(() => {
   if (process.platform !== 'darwin') {
@@ -355,7 +373,36 @@ const nativeSystemAudioController = new NativeSystemAudioController(() => {
   return requireNativeModule(addonPath) as NativeSystemAudioBinding;
 });
 
-async function reportJavascriptErrorCandidate(value: unknown): Promise<void> {
+function telemetryWindowContext(contents: WebContents): TelemetryWindowContext | undefined {
+  const window = BrowserWindow.fromWebContents(contents);
+  if (!window || window.isDestroyed()) return undefined;
+  let windowId = telemetryWindowIds.get(contents);
+  if (!windowId) {
+    windowId = uuidV7();
+    telemetryWindowIds.set(contents, windowId);
+  }
+  const contentSize = window.getContentSize();
+  const viewportWidth = contentSize[0];
+  const viewportHeight = contentSize[1];
+  const display = electronScreen.getDisplayMatching(window.getBounds());
+  if (viewportWidth === undefined || viewportHeight === undefined
+    || viewportWidth <= 0 || viewportHeight <= 0
+    || display.size.width <= 0 || display.size.height <= 0) {
+    return undefined;
+  }
+  return {
+    windowId,
+    viewportWidth,
+    viewportHeight,
+    screenWidth: display.size.width,
+    screenHeight: display.size.height,
+  };
+}
+
+async function reportJavascriptErrorCandidate(
+  value: unknown,
+  windowContext?: TelemetryWindowContext,
+): Promise<void> {
   const normalized = await normalizeJavascriptErrorCandidate(value);
   if (!telemetryReporter) return;
   const reports = [telemetryReporter.javascriptException(
@@ -364,6 +411,7 @@ async function reportJavascriptErrorCandidate(value: unknown): Promise<void> {
     normalized.fingerprint,
     telemetryBreadcrumbs?.status() ?? 'unavailable',
     normalized.generatedFrames,
+    windowContext,
   )];
   const processHealthState = javascriptErrorProcessHealthState(normalized.errorCode);
   if (processHealthState) {
@@ -1251,7 +1299,8 @@ async function telemetryAuthenticatedSession(): Promise<{
 async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void> {
   telemetryLaunchId = uuidV7();
   const launchState = await beginTelemetryLaunch(userDataDirectory(), telemetryLaunchId, new Date());
-  telemetryIdentity = await readTelemetryIdentity(userDataDirectory());
+  const identityState = await readTelemetryIdentityState(userDataDirectory());
+  telemetryIdentity = identityState.identity;
   telemetryAccountBinding = launchAuth
     ? flagSessionIdentity(launchAuth.binding.userId, apiBaseForAuth(launchAuth))
     : null;
@@ -1319,6 +1368,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
   }
 
   const runtime = runtimeConfig();
+  const primaryDisplay = electronScreen.getPrimaryDisplay();
   telemetryReporter = new TelemetryReporter({
     spool: telemetrySpool,
     identity: () => {
@@ -1343,6 +1393,11 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       ...(process.arch === 'arm64' || process.arch === 'x64' ? { arch: process.arch } : {}),
       channel: app.isPackaged ? 'stable' : 'development',
       launchId: telemetryLaunchId,
+      osVersion: process.getSystemVersion(),
+      locale: app.getLocale(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      screenWidth: primaryDisplay.size.width,
+      screenHeight: primaryDisplay.size.height,
     },
     globalApiBaseUrl: runtime.api.global,
   });
@@ -1384,6 +1439,32 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
   }
   if (startupSpoolMaintenance.evicted > 0) {
     await telemetryReporter.telemetrySpoolState('evicted', startupSpoolMaintenance.evicted);
+  }
+  try {
+    // At most one older pending transition and one transition into this build
+    // can exist. The persisted event ID makes a retry safe even if enqueue
+    // succeeds but acknowledging the version marker is interrupted.
+    for (let transitionIndex = 0; transitionIndex < 2; transitionIndex += 1) {
+      const pending = await applicationVersionTransition({
+        userDataDirectory: userDataDirectory(),
+        version: runtime.appVersion,
+        // Avalon publishes one immutable desktop artifact for each semantic
+        // version today, so that version is also the packaged build identity.
+        // Keep the fields separate for the native SDK contract and a future
+        // independently versioned build without changing stored history.
+        build: runtime.appVersion,
+        newInstallation: identityState.created,
+      });
+      if (!pending) break;
+      const enqueued = await telemetryReporter.applicationVersionChanged(pending.transition, pending.eventId);
+      if (!enqueued) break;
+      await acknowledgeApplicationVersionTransition({
+        userDataDirectory: userDataDirectory(),
+        eventId: pending.eventId,
+      });
+    }
+  } catch (error) {
+    logWarn('avalon', 'could not record the application version transition', error);
   }
   await telemetryReporter.applicationLifecycle('launch_started');
   await telemetryReporter.desktopSession('started', telemetryContinuouslyEligible);
@@ -2096,11 +2177,11 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     const screen = parseTelemetryScreen(rawScreen);
     await telemetryBreadcrumbs?.add({ kind: 'screen_changed', screen }).catch(() => undefined);
-    await telemetryReporter?.screenViewed(screen);
+    await telemetryReporter?.screenViewed(screen, telemetryWindowContext(event.sender));
   });
   ipcMain.handle('telemetry:product-intent', async (event, rawIntent: unknown) => {
     assertTrustedIpcSender(event);
-    await reportTelemetryProductIntent(rawIntent);
+    await reportTelemetryProductIntent(rawIntent, telemetryWindowContext(event.sender));
   });
   ipcMain.handle('telemetry:inspector', (event) => {
     assertTrustedIpcSender(event);
@@ -2108,7 +2189,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('telemetry:javascript-error', async (event, rawCandidate: unknown) => {
     assertTrustedIpcSender(event);
-    await reportJavascriptErrorCandidate(rawCandidate);
+    await reportJavascriptErrorCandidate(rawCandidate, telemetryWindowContext(event.sender));
   });
   ipcMain.handle('application-icon:get', (event) => {
     assertTrustedIpcSender(event);
@@ -2950,7 +3031,9 @@ if (!singleInstanceLock) {
     // whenever creating it failed — either way, opening no window would start
     // Avalon with nothing on screen and nothing in the menu bar, reachable only
     // by hunting for it in the Dock.
-    if (!openedAtLogin || !menuBarController.present()) await createMainWindow();
+    const startsHidden = openedAtLogin && menuBarController.present();
+    if (startsHidden) applicationLifecycleTelemetry.observeFocused(false);
+    else await createMainWindow();
     await telemetryReporter?.applicationLifecycle('ready');
     await telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'ready' }).catch(() => undefined);
     if (telemetryLaunchId) {
@@ -2992,6 +3075,19 @@ process.on('uncaughtExceptionMonitor', (error, origin) => {
     errorCode: javascriptErrorCode(error, origin === 'unhandledRejection' ? 'unhandled_rejection' : 'unknown'),
     frames,
   }).catch(() => undefined);
+});
+
+app.on('browser-window-focus', () => {
+  applicationLifecycleTelemetry.observeFocused(true);
+});
+
+app.on('browser-window-blur', () => {
+  // Electron emits blur before focus while moving between Avalon windows. Wait
+  // one turn and observe the application as backgrounded only if no Avalon
+  // window acquired focus.
+  setImmediate(() => {
+    applicationLifecycleTelemetry.observeFocused(BrowserWindow.getFocusedWindow() !== null);
+  });
 });
 
 app.on('window-all-closed', () => {
