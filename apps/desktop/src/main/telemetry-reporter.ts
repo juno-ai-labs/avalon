@@ -313,6 +313,7 @@ export class TelemetryReporter {
       const event = TelemetryEnvelopeSchema.parse({
         schema: 'com.avalon.telemetry.event',
         schemaVersion: 1,
+        contextSchemaVersion: 2,
         eventId: eventId ?? (this.options.eventId ?? uuidV7)(now),
         name,
         source,

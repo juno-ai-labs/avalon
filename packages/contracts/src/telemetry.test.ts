@@ -18,6 +18,7 @@ function envelope(name: string, properties: unknown) {
   return {
     schema: "com.avalon.telemetry.event",
     schemaVersion: 1,
+    contextSchemaVersion: 2,
     eventId,
     name,
     source: "desktop-renderer",
@@ -67,6 +68,25 @@ describe("telemetry registry", () => {
     }))).toMatchObject({ name: "onboarding_region_selected" });
   });
 
+  it("accepts legacy context v1 while requiring native desktop fields to declare context v2", () => {
+    const current = envelope("onboarding_region_selected", {
+      selectedRegion: "eu",
+      entrypoint: "first_run",
+    });
+    const withoutContextVersion: Record<string, unknown> = { ...current };
+    delete withoutContextVersion.contextSchemaVersion;
+    const legacyContext: Record<string, unknown> = { ...current.context };
+    delete legacyContext.deviceId;
+    const legacy = { ...withoutContextVersion, context: legacyContext };
+
+    expect(TelemetryEnvelopeSchema.safeParse(legacy).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse(current).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...withoutContextVersion,
+      context: current.context,
+    }).success).toBe(false);
+  });
+
   it("accepts bounded native desktop SDK context and rejects malformed dimensions", () => {
     const base = envelope("onboarding_region_selected", {
       selectedRegion: "eu",
@@ -90,6 +110,32 @@ describe("telemetry registry", () => {
     expect(TelemetryEnvelopeSchema.safeParse({
       ...candidate,
       context: { ...candidate.context, viewportWidth: -1 },
+    }).success).toBe(false);
+  });
+
+  it.each([
+    "Version 15.6.1 (Build 24G1234)",
+    "6.1.0-0~bpo11+1",
+    "10.0.26100.4770",
+  ])("accepts a bounded platform OS version: %s", (osVersion) => {
+    const candidate = envelope("onboarding_region_selected", {
+      selectedRegion: "eu",
+      entrypoint: "first_run",
+    });
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...candidate,
+      context: { ...candidate.context, osVersion },
+    }).success).toBe(true);
+  });
+
+  it("rejects control characters in an OS version", () => {
+    const candidate = envelope("onboarding_region_selected", {
+      selectedRegion: "eu",
+      entrypoint: "first_run",
+    });
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...candidate,
+      context: { ...candidate.context, osVersion: "15.6.1\nforged" },
     }).success).toBe(false);
   });
 

@@ -82,8 +82,6 @@ describe("PostHog adapter", () => {
       expect.objectContaining({
         $process_person_profile: true,
         $groups: { workspace: crash.workspaceAnalyticsId },
-        $lib: "avalon-regional-telemetry",
-        $lib_version: "1",
         $app_name: "Avalon",
         $app_namespace: "app.avalon.desktop",
         $app_version: crash.release,
@@ -101,6 +99,8 @@ describe("PostHog adapter", () => {
       }),
       crash.crashId,
     );
+    expect(captureException.mock.calls[0]?.[2]).not.toHaveProperty("$lib");
+    expect(captureException.mock.calls[0]?.[2]).not.toHaveProperty("$lib_version");
     expect(flush).toHaveBeenCalledOnce();
   });
 
@@ -110,6 +110,7 @@ describe("PostHog adapter", () => {
   ] as const)("uses PostHog's exception SDK path for %s diagnostics", async (errorCode, expectedName) => {
     const exceptionEnvelope: TelemetryEnvelope = {
       ...event,
+      contextSchemaVersion: 2,
       name: "javascript_exception",
       source: "desktop-main",
       category: "diagnostic",
@@ -146,8 +147,6 @@ describe("PostHog adapter", () => {
       capturedError,
       row().analyticsSubjectId,
       expect.objectContaining({
-        $lib: "avalon-regional-telemetry",
-        $lib_version: "1",
         $app_name: "Avalon",
         $app_namespace: "app.avalon.desktop",
         $app_version: exceptionEnvelope.context.release,
@@ -161,6 +160,8 @@ describe("PostHog adapter", () => {
       }),
       exceptionEnvelope.eventId,
     );
+    expect(captureException.mock.calls[0]?.[2]).not.toHaveProperty("$lib");
+    expect(captureException.mock.calls[0]?.[2]).not.toHaveProperty("$lib_version");
   });
 
   it("uses PostHog's identify direction for the one anonymous-to-person transition", () => {
@@ -224,6 +225,7 @@ describe("PostHog adapter", () => {
   it("maps registered desktop screens to PostHog's canonical screen event", () => {
     const screenEnvelope: TelemetryEnvelope = {
       ...event,
+      contextSchemaVersion: 2,
       name: "screen_viewed",
       source: "desktop-renderer",
       identityScope: "workspace-user",
@@ -292,6 +294,7 @@ describe("PostHog adapter", () => {
   ] as const)("maps application version transition %s to %s", (properties, destinationEvent, destinationProperties) => {
     const versionEnvelope: TelemetryEnvelope = {
       ...event,
+      contextSchemaVersion: 2,
       name: "application_version_changed",
       source: "desktop-main",
       category: "essential",
@@ -324,6 +327,7 @@ describe("PostHog adapter", () => {
   ] as const)("maps lifecycle state %s without manufacturing a second event", (state, destinationEvent, fromBackground) => {
     const lifecycleEnvelope: TelemetryEnvelope = {
       ...event,
+      contextSchemaVersion: 2,
       name: "application_lifecycle",
       source: "desktop-main",
       category: "essential",
@@ -361,6 +365,7 @@ describe("PostHog adapter", () => {
     const capture = mapPostHogCapture(row({
       envelope: {
         ...event,
+        contextSchemaVersion: 2,
         source: "desktop-renderer",
         name: "screen_viewed",
         properties: { screen: "workspace_home" },

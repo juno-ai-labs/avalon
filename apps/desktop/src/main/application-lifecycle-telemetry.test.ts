@@ -28,7 +28,7 @@ describe('ApplicationLifecycleTelemetry', () => {
     ]);
   });
 
-  it('does not claim a foreground transition when the first observed window belongs to a hidden launch', () => {
+  it('reports a foreground transition after a hidden launch establishes an unfocused baseline', () => {
     const report = vi.fn();
     const lifecycle = new ApplicationLifecycleTelemetry(report);
 
