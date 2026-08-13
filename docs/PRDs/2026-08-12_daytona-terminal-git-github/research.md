@@ -81,6 +81,41 @@ file and terminal tools, non-interactive commands, host-driven suspend/resume,
 read-scoped GitHub access, and a host-side typed PR publication tool. It does
 not clone an entire coding harness.
 
+## Daytona snapshot and image comparison
+
+Daytona's current snapshot documentation distinguishes reusable container
+snapshots from VM snapshots, permits snapshots built from a Dockerfile, requires
+tagged or digest-pinned base images, and automatically deactivates an unused
+snapshot after two weeks. Container snapshots preserve the filesystem and are
+the correct class for Avalon's command/file/Git workload; VM-only hot memory
+snapshots, nested Docker/Kubernetes, and a separate kernel do not justify their
+cost here ([snapshot documentation](https://www.daytona.io/docs/en/snapshots.md)).
+
+Registry manifests and a live `us` account probe on 2026-08-13 produced this
+comparison:
+
+| Candidate | Manifest-layer total (amd64) | Runtimes and useful contents | Avalon gaps | Decision |
+| --- | ---: | --- | --- | --- |
+| Managed `daytona-small` snapshot (0.9.0 when observed) | 6.85 GiB compressed underlying image | Daytona's best-supported default: Node, Python, TypeScript, uv, Git, `rg`, GUI tooling, ML/data/image libraries, and coding harness CLIs | No `/workspace`, SQLite CLI, pnpm, or `gh` in the observed revision | **Use with an idempotent compatibility bootstrap** |
+| `daytonaio/sandbox:0.10.0` image | 6.91 GiB compressed | Same architecture as 0.9.0 with refreshed Daytona, Claude Code, Codex, OpenCode, and Python agent-package versions | Direct image use makes Avalon own snapshot refresh and activation | Reject direct pinning; accept when Daytona promotes it behind the managed snapshot and probes pass |
+| `daytonaio/sandbox:v0.185.0-slim-amd64` | 457 MiB compressed | Node 22.14, Python 3.14, TypeScript, uv, `rg`, sudo, NumPy, pandas, and matplotlib | Needs Git, `gh`, SQLite CLI, pnpm, `tsx`, common archive/build utilities, and an Avalon-owned snapshot lifecycle | Reject in favor of the managed default |
+| Generic `node:22-*-bookworm-slim` | Smallest base | Node 22 and apt | Rebuilds Daytona's user/sudo/Python/data-tool conventions and loses its curated agent baseline | Reject |
+
+The slim image minimizes storage and cold-start weight, but it also makes Avalon
+own image builds, snapshot activation, and refresh compatibility. The managed
+`daytona-small` snapshot is more common, exercises Daytona's standard path, and
+is more likely to receive coordinated SDK/toolbox updates. Avalon therefore
+accepts its broader contents and adapts only the missing launch contract at
+first creation. The separate executable manifest remains the authority for what
+Avalon advertises, so a managed update cannot silently change the prompt
+contract.
+
+The live `daytona-small` image was `0.9.0`; its toolbox ran
+as unprivileged `daytona` despite a requested `user: "root"`, and its default
+shell treated `status` as a reserved zsh variable. Those observations led to an
+owned runtime workspace, passwordless-sudo bootstrap verification, and a
+shell-neutral `avalon_status` command envelope.
+
 ## Harness comparison
 
 | Harness | Command surface | File mutation surface | Long-running work | Git/GitHub posture | Main lesson for Avalon |
@@ -432,12 +467,15 @@ The harnesses demonstrate three viable shapes:
 2. return a task or shell ID and expose output/input/kill tools;
 3. move the command to host background work and notify the model on completion.
 
-Avalon chooses a fourth presentation built from the second and third runtime
-shapes: start one Daytona session command, persist its stable identity in host
-state, suspend the Bind run, consume its WebSocket log stream, store the final
-result, and issue one Workflow continuation. The model sees a single final tool
-result. A host reconciler reads the command's stable status after lost events or
-restarts. It never reruns a command merely because a WebSocket closed.
+The initial design explored a fourth presentation built from the second and
+third runtime shapes: start one Daytona session command, persist its stable
+identity, suspend Bind, and issue a Workflow continuation after an event. The
+implemented design found a smaller equivalent boundary: the existing regional
+harness Workflow retries the exact Bind call after interruption, and the
+Terminal executor reattaches to the sole command in its stable Daytona session.
+The model still sees one final tool result. A host observer reads the command's
+stable status after a lost response or Worker restart and never resubmits merely
+because observation was interrupted.
 
 This removes model polling, `sleep`, duplicate commands, and task-ID leakage.
 It also makes a five-minute test command compatible with a short Worker request
@@ -556,10 +594,10 @@ can test as a small snapshot:
 | Language | Launch runtime | Managers and hosts |
 | --- | --- | --- |
 | Bash | Bash and POSIX `sh` | `apt`/`dpkg` and signed Debian/Ubuntu repositories |
-| Python | pinned Python 3 and `venv` | `pip`, `uv`, and PyPI |
-| JavaScript | Node.js 22 | `npm`, `pnpm`, and the npm registry |
-| TypeScript | Node.js 22 with pinned `typescript` and `tsx` | `npm`, `pnpm`, and the npm registry |
-| SQLite | pinned SQLite 3 CLI plus tested Python/Node bindings | local database files and the chosen host-language manager |
+| Python | Daytona-managed Python 3 and `venv` | `pip`, `uv`, and PyPI |
+| JavaScript | Daytona-managed Node.js | `npm`, `pnpm`, and the npm registry |
+| TypeScript | Daytona-managed Node.js with tested `typescript` and `tsx` | `npm`, `pnpm`, and the npm registry |
+| SQLite | Tested SQLite 3 CLI plus Python/Node bindings | local database files and the chosen host-language manager |
 
 Competing managers and hosts were considered rather than assuming the official
 default was the only model-familiar path. Poetry, PDM, Conda, Yarn, Bun, Deno,

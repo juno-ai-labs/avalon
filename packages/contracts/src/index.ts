@@ -1704,7 +1704,7 @@ export const ToolDefinitionSchema = z.object({
   mode: z.enum(["read", "write"]),
   idempotency: z.enum(["safe", "provider_key", "record_before_execute"]),
   /** Optional per-tool ceiling. The host still applies its overall run limit. */
-  timeoutMs: z.number().int().positive().max(300_000).optional()
+  timeoutMs: z.number().int().positive().max(930_000).optional()
 });
 
 /**
@@ -2092,6 +2092,85 @@ export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
 export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
 export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+
+export const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
+export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verified", "failed"]);
+export const TerminalWorkspaceSettingsSchema = z.object({
+  availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
+  mode: TerminalNetworkModeSchema,
+  revision: z.number().int().positive(),
+  verificationState: TerminalNetworkVerificationStateSchema,
+  customDomains: z.array(z.string().min(1).max(253)).max(20),
+  remainingCustomSlots: z.number().int().nonnegative().max(20),
+  failureCode: z.string().min(1).max(160).nullable(),
+}).strict();
+export const PreviewTerminalNetworkPolicyRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  mode: TerminalNetworkModeSchema,
+  customDomains: z.array(z.string().min(1).max(253)).max(20),
+}).strict();
+export const TerminalNetworkPolicyPreviewSchema = z.object({
+  mutationId: IdSchema,
+  expectedRevision: z.number().int().positive(),
+  proposedMode: TerminalNetworkModeSchema,
+  customDomains: z.array(z.string().min(1).max(253)).max(20),
+  remainingCustomSlots: z.number().int().nonnegative().max(20),
+  affectedWorkstreamIds: z.array(IdSchema).max(1_000),
+  affectedWorkstreams: z.array(z.object({
+    id: IdSchema,
+    title: z.string().min(1).max(500),
+  }).strict()).max(1_000),
+  warning: z.string().min(1).max(1_000),
+}).strict();
+export const ApplyTerminalNetworkPolicyRequestSchema = z.object({
+  mutationId: IdSchema,
+  expectedRevision: z.number().int().positive(),
+  confirmed: z.literal(true),
+}).strict();
+export const TerminalSandboxStateSchema = z.enum([
+  "absent", "starting", "running", "stopped", "archived", "restoring", "expired", "failed",
+]);
+export const TerminalSelectedRepositorySchema = z.object({
+  id: z.number().int().positive(),
+  fullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
+  baseRef: z.string().min(1).max(240),
+  baseSha: z.string().regex(/^[0-9a-f]{40}$/u),
+  headRef: z.string().min(1).max(240),
+}).strict();
+export const TerminalWorkstreamStateSchema = z.object({
+  availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
+  state: TerminalSandboxStateSchema,
+  lastActivityAt: TimestampSchema.nullable(),
+  expiresAt: TimestampSchema.nullable(),
+  retentionWarning: z.enum(["expires_within_7_days", "expires_within_24_hours"]).nullable(),
+  localFilesRetained: z.boolean(),
+  finalDiffResourceId: IdSchema.nullable(),
+  failureCode: z.string().min(1).max(160).nullable(),
+  repository: TerminalSelectedRepositorySchema.nullable(),
+}).strict();
+export const TerminalCatalogRepositorySchema = z.object({
+  id: z.number().int().positive(),
+  fullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
+  defaultBranch: z.string().min(1).max(240),
+  private: z.boolean(),
+}).strict();
+export const TerminalRepositoryCatalogSchema = z.object({
+  state: z.enum(["disconnected", "empty", "available", "revoked"]),
+  connections: z.array(z.object({
+    connectionId: IdSchema,
+    displayName: z.string().min(1).max(240),
+    repositories: z.array(TerminalCatalogRepositorySchema).max(1_000),
+  }).strict()).max(20),
+}).strict();
+export const SelectTerminalRepositoryRequestSchema = z.object({
+  connectionId: IdSchema,
+  repositoryFullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
+  confirmDiscardLocalFiles: z.boolean().optional(),
+}).strict();
+export type TerminalWorkspaceSettings = z.infer<typeof TerminalWorkspaceSettingsSchema>;
+export type TerminalNetworkPolicyPreview = z.infer<typeof TerminalNetworkPolicyPreviewSchema>;
+export type TerminalWorkstreamState = z.infer<typeof TerminalWorkstreamStateSchema>;
+export type TerminalRepositoryCatalog = z.infer<typeof TerminalRepositoryCatalogSchema>;
 export type SlackSearchAuthorization = z.infer<typeof SlackSearchAuthorizationSchema>;
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;

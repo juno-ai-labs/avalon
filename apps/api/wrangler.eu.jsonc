@@ -3,6 +3,7 @@
   "name": "avalon-api-eu",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
@@ -16,6 +17,8 @@
     "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
     "NOTION_INGRESS_BASE_URL": "https://notion.with-avalon.com",
     "SLACK_INGRESS_BASE_URL": "https://slack.with-avalon.com",
+    "TERMINAL_REGION_CAPABILITY": "unsupported",
+    "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/complete",

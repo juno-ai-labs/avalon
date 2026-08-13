@@ -100,6 +100,17 @@ validation, and provider declaration are owned by
 
 Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
+In a provider-verified region, ordinary work-stream runs also register the
+deferred built-in `avalon:terminal` plugin. It has no connection row and loading
+it is allocation-free: activation exposes its static supported-language prompt
+and complete eight-tool family, while the first tool execution acquires the
+separate Terminal mutation lease and Daytona sandbox. It is absent—not merely
+tool-filtered—when the region is unsupported or emergency-disabled. All eight
+tools stay visible together after activation; current principal/resource and
+repository/publication checks remain executor preconditions rather than scopes.
+The sandbox lifecycle and authority fence are owned by
+[`terminal-workspaces.md`](terminal-workspaces.md), not by Bind.
+
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Avalon revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
 
 Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference, and is answered from Avalon's own records: the principal, the work stream, the automation authority, the connection's identity, scope, owner, grants, and disablement are what that check exists to catch, and all of them are already known here. Asking the provider instead would spend a round trip per active plugin per turn to rediscover them, and on a connector whose health check writes it would repeat that write. A credential the provider has since refused therefore surfaces on the next tool call rather than between turns — which is the right place, since that is where a provider call was going to happen anyway.
@@ -520,6 +531,33 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
+
+**What changed:** Supported regional work-stream runtimes register
+`avalon:terminal` as a deferred built-in plugin. Loading exposes one static
+prompt and all eight typed tools but creates no sandbox; execution crosses into
+the Terminal coordinator, which keeps its own mutation lease and rechecks its
+frozen authority fingerprint.
+
+**Why:** Models need to discover code and CLI capability before choosing it, but
+discovery happens more often than execution. Allocating during activation would
+couple a cheap Bind routing decision to provider cost and persistent filesystem
+state. Splitting tools into inferred scopes would make a medium model reason
+about a host-selected subset instead of following visible preconditions.
+
+**Considered and rejected:** Preloading Terminal, allocating at `load_plugin`,
+and exposing separate scratch/repository/publication scopes. These respectively
+spend prompt/context on ordinary prose, start unused sandboxes, or make tool
+availability masquerade as authorization.
+
+**Consequences:** A region must omit the plugin until its provider gate passes;
+activation cannot be used as evidence that a sandbox exists. Future built-in
+sandbox plugins must keep allocation and authority checks outside Bind plugin
+loading.
+
+Shipped in the pull request for this change. Design:
+[`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
 
 ### 2026-08-12 — Revision recovery remains executable after races and resumes
 

@@ -35,6 +35,8 @@ import {
   type HarnessCompactionCheckpoint,
   type HarnessEvent,
   type HarnessPlugin,
+  type HarnessToolContext,
+  type HarnessToolResult,
   type HarnessToolPolicyIdentity,
   type RunHarnessInput,
   type HarnessTool,
@@ -175,6 +177,8 @@ import {
   loadAutomationMemoryTableContext,
 } from "./memory-table-service";
 import { workstreamRunLimits } from "./workstream-run-policy";
+import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
+import { createAvalonTerminalPlugin } from "./terminal/plugin";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -2295,6 +2299,69 @@ export async function runWorkstreamHarness(
           ...(contentParts.length > 0 ? { contentParts } : {}),
         };
       }
+      try {
+        const recovered = await reconcileRecoverableTerminalWrite({
+          row: {
+            status: row.status,
+            inputHash: row.input_hash,
+            inputJson: row.input_json,
+          },
+          expectedInputHash: inputHash,
+          policyMatches,
+          expectedPolicy,
+          plugins: harnessTools.plugins,
+          context: {
+            workspaceId: input.workspaceId,
+            workstreamId: input.workstreamId,
+            harnessRunId: input.harnessRunId,
+            toolCallId,
+            executionPrincipal: input.executionPrincipal,
+            signal: harnessSignal,
+          },
+        });
+        if (recovered) {
+          await persistSuccessfulToolResult(env, input, liveness.lease, {
+            invocationId: row.id,
+            toolCallId,
+            output: durableToolReplayOutput(
+              expectedPolicy.definition.capability,
+              recovered.output,
+              recovered.summary,
+            ),
+            outputSummary: recovered.summary,
+            memberSafePayload: { toolName: row.tool_name, recovered: true },
+            allowAmbiguousReconciliation: row.status === "ambiguous",
+          });
+          const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
+          if (invocation) {
+            if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
+            await emit({ type: "tool_completed", invocation });
+            await recordToolAudit(env, input, invocation.id, row.tool_name, "write", "completed");
+          }
+          logStructuredEvent(env, "info", "terminal_tool_receipt_recovered", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            harness_run_id: input.harnessRunId,
+            tool_invocation_id: row.id,
+          });
+          return recovered;
+        }
+      } catch (error) {
+        const codedRecoveryFailure = typeof error === "object" && error !== null && "code" in error;
+        const cannotProveSafeRecovery = codedRecoveryFailure && (
+          error.code === "command_recovery_unavailable"
+          || expectedPolicy.definition.name === "publish_branch_and_pr"
+        );
+        if (!cannotProveSafeRecovery) {
+          throw error;
+        }
+        logStructuredEvent(env, "warn", "terminal_tool_receipt_recovery_ambiguous", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          harness_run_id: input.harnessRunId,
+          tool_invocation_id: row.id,
+        });
+      }
       // Classify replay safety from the canonical policy persisted in the
       // receipt, never from a provider-rewritten wire alias. A missing or
       // mismatched plan fails closed and is never replayed as a read.
@@ -3909,6 +3976,7 @@ async function persistSuccessfulToolResult(
     outputSummary: string;
     providerOperationId?: string;
     memberSafePayload?: Record<string, unknown>;
+    allowAmbiguousReconciliation?: boolean;
   },
   ownershipGuard?: () => Promise<void>,
 ): Promise<string> {
@@ -3950,6 +4018,9 @@ async function persistSuccessfulToolResult(
       : {}),
     ...(result.memberSafePayload
       ? { memberSafePayload: result.memberSafePayload }
+      : {}),
+    ...(result.allowAmbiguousReconciliation
+      ? { allowAmbiguousReconciliation: true }
       : {}),
   });
   await ownershipGuard?.();
@@ -4099,11 +4170,12 @@ async function loadHarnessTools(
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
   const webPlugin = createAvalonWebPlugin(coreTools);
+  const terminalPlugin = await createAvalonTerminalPlugin(env, input);
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
-  const builtinPlugins = [workstreamPlugin, webPlugin].filter(
+  const builtinPlugins = [workstreamPlugin, webPlugin, terminalPlugin].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
   const plugins: HarnessPlugin[] = [...builtinPlugins];
@@ -5219,8 +5291,42 @@ function isLoadableBuiltinHarnessPlugin(
   pluginId: string,
   harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
 ): boolean {
-  return [AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID].includes(pluginId)
+  return ([AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID, TERMINAL_PLUGIN_ID] as string[]).includes(pluginId)
     && harnessTools.plugins.some((plugin) => plugin.canonicalId === pluginId);
+}
+
+async function reconcileRecoverableTerminalWrite(input: {
+  row: { status: string; inputHash: string; inputJson: string };
+  expectedInputHash: string;
+  policyMatches: boolean;
+  expectedPolicy: { pluginId: string; definition: ToolDefinition };
+  plugins: readonly HarnessPlugin[];
+  context: HarnessToolContext;
+}): Promise<HarnessToolResult | null> {
+  const recoverableTerminalWrite = (
+    input.expectedPolicy.definition.name === "run_command"
+    && input.expectedPolicy.definition.capability === "terminal.command.run"
+  ) || (
+    input.expectedPolicy.definition.name === "publish_branch_and_pr"
+    && input.expectedPolicy.definition.capability === "terminal.repository.publish"
+  );
+  if (
+    (input.row.status !== "started" && input.row.status !== "ambiguous")
+    || input.row.inputHash !== input.expectedInputHash
+    || !input.policyMatches
+    || input.expectedPolicy.pluginId !== TERMINAL_PLUGIN_ID
+    || !recoverableTerminalWrite
+    || input.expectedPolicy.definition.mode !== "write"
+    || input.expectedPolicy.definition.idempotency !== "record_before_execute"
+  ) {
+    return null;
+  }
+  const plugin = input.plugins.find((candidate) => candidate.canonicalId === TERMINAL_PLUGIN_ID);
+  const tool = plugin?.tools.find((candidate) => (
+    candidate.definition.name === input.expectedPolicy.definition.name
+  ));
+  if (!tool) return null;
+  return tool.execute(parseJson(input.row.inputJson, {}), input.context);
 }
 
 type ToolPolicyIdentity = { pluginId: string } & HarnessToolPolicyIdentity;
@@ -6582,6 +6688,7 @@ export const __integrationTesting = {
   classifyHarnessToolFailure,
   createConnectorToolContext,
   resolveHarnessToolReceiptPolicy,
+  reconcileRecoverableTerminalWrite,
   storedToolPolicyMatches,
   eligibleConnectionCapabilityMap,
   persistInitialPluginActivations,

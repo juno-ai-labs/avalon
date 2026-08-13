@@ -700,6 +700,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
+  const [replacingTerminalRepository, setReplacingTerminalRepository] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
@@ -758,6 +759,62 @@ export function WorkstreamScreen(): React.JSX.Element {
     queryFn: ({ signal }) => api!.getWorkstream(id, signal),
     enabled: Boolean(api && id),
     staleTime: 5_000,
+  });
+  const terminalWorkspace = useQuery({
+    queryKey: ['terminal-workstream', id],
+    queryFn: ({ signal }) => api!.getTerminalWorkstreamState(id, signal),
+    enabled: Boolean(api && id),
+    staleTime: 5_000,
+    refetchInterval: (query) => {
+      const state = query.state.data;
+      if (!state) return false;
+      if (['starting', 'running', 'restoring'].includes(state.state)) return 5_000;
+      return state.localFilesRetained ? 30_000 : false;
+    },
+  });
+  const terminalParticipant = Boolean(
+    session?.user.id && workstream.data?.participants.some((participant) => participant.id === session.user.id),
+  );
+  const terminalRepositoryCatalog = useQuery({
+    queryKey: ['terminal-repository-catalog', id],
+    queryFn: ({ signal }) => api!.getTerminalRepositoryCatalog(id, signal),
+    enabled: Boolean(
+      api
+      && id
+      && terminalParticipant
+      && terminalWorkspace.data?.availability === 'supported'
+      && (!terminalWorkspace.data.repository || replacingTerminalRepository),
+    ),
+    staleTime: 30_000,
+  });
+  const selectTerminalRepository = useMutation({
+    mutationFn: async (input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles: boolean }) => {
+      const state = await api!.selectTerminalRepository(id, input);
+      const base = state.repository?.baseSha ?? '00000000000000000000000000000000';
+      const repositoryIdentity = (state.repository?.id ?? 0).toString(16).padStart(12, '0').slice(-12);
+      const continuationClientId = `${base.slice(0, 8)}-${base.slice(8, 12)}-4${base.slice(13, 16)}-8${base.slice(17, 20)}-${repositoryIdentity}`;
+      await api!.createMessage(id, {
+        text: `Continue the requested repository work using ${input.repositoryFullName}.`,
+        clientId: continuationClientId,
+      });
+      return state;
+    },
+    onSuccess: (state) => {
+      queryClient.setQueryData(['terminal-workstream', id], state);
+      setReplacingTerminalRepository(false);
+      void queryClient.invalidateQueries({ queryKey: ['terminal-repository-catalog', id] });
+      void queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
+    },
+  });
+  const chooseTerminalRepository = (connectionId: string, repositoryFullName: string): void => {
+    const retained = terminalWorkspace.data?.localFilesRetained === true;
+    if (retained && !window.confirm('Replacing this repository destroys retained local Terminal files after Avalon saves the final Git diff. Unpublished scratch files cannot be recovered. Continue?')) return;
+    selectTerminalRepository.mutate({ connectionId, repositoryFullName, confirmDiscardLocalFiles: retained });
+  };
+  const startFreshTerminal = useMutation({
+    mutationFn: () => api!.startFreshTerminalWorkspace(id),
+    onSuccess: (state) => queryClient.setQueryData(['terminal-workstream', id], state),
   });
   const messageCursor = useQuery<string | null>({
     queryKey: ['messages-cursor', id],
@@ -1450,6 +1507,32 @@ export function WorkstreamScreen(): React.JSX.Element {
               })}
             </div>
           )}
+          {!terminalWorkspace.data?.repository
+            && terminalRepositoryCatalog.data?.state === 'available'
+            && terminalParticipant && (
+              <section aria-label="Repository required" className="terminal-repository-request-card">
+                <div>
+                  <strong>Choose a repository to continue</strong>
+                  <p>The Terminal run needs one GitHub App-authorized repository. Your choice resumes the request once.</p>
+                </div>
+                <select
+                  aria-label="Repository for Terminal request"
+                  defaultValue=""
+                  disabled={selectTerminalRepository.isPending}
+                  onChange={(event) => {
+                    const [connectionId, repositoryFullName] = event.target.value.split('::', 2);
+                    if (connectionId && repositoryFullName) chooseTerminalRepository(connectionId, repositoryFullName);
+                  }}
+                >
+                  <option disabled value="">Choose one repository…</option>
+                  {terminalRepositoryCatalog.data.connections.flatMap((connection) => connection.repositories.map((repository) => (
+                    <option key={`${connection.connectionId}:${repository.id}`} value={`${connection.connectionId}::${repository.fullName}`}>
+                      {repository.fullName} · {connection.displayName}
+                    </option>
+                  )))}
+                </select>
+              </section>
+            )}
           {runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
@@ -1493,13 +1576,26 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <InspectorRail
         dropTarget={railDrop}
-        error={deferredContext.error?.message ?? watchResource.error?.message ?? detachResource.error?.message ?? attachResource.error?.message}
+        error={deferredContext.error?.message
+          ?? terminalWorkspace.error?.message
+          ?? terminalRepositoryCatalog.error?.message
+          ?? selectTerminalRepository.error?.message
+          ?? startFreshTerminal.error?.message
+          ?? watchResource.error?.message
+          ?? detachResource.error?.message
+          ?? attachResource.error?.message}
         leaving={railLeaving === 'inspector'}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
         onDetachResource={(resource) => detachResource.mutate(resource)}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
+        onReplaceTerminalRepository={() => setReplacingTerminalRepository(true)}
+        onSelectTerminalRepository={chooseTerminalRepository}
+        onStartFreshTerminal={() => startFreshTerminal.mutate()}
+        terminalRepositoryCatalog={terminalRepositoryCatalog.data}
+        terminalRepositorySelectionPending={selectTerminalRepository.isPending}
+        terminalWorkspace={terminalWorkspace.data}
         workstream={displayedDetail}
       />
 

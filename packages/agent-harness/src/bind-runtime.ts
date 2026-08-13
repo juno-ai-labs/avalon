@@ -760,7 +760,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               : "Tool execution failed";
           const structured = readStructuredFailure(error);
           const interrupted = toolSignal.aborted;
-          const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation)
+          const recoverableTerminalObservation = structured?.code === "command_outcome_unknown"
+            && dispatched.pluginId === "avalon:terminal"
+            && dispatched.tool.definition.name === "run_command";
+          const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation || recoverableTerminalObservation)
             && dispatched.tool.definition.mode === "write"
             && dispatched.tool.definition.idempotency === "record_before_execute";
           const failureOutcome = ambiguousExternalWrite
@@ -793,7 +796,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             }));
             throw new AmbiguousExternalWriteError(
               receiptId,
-              ambiguousResponseValidation
+              recoverableTerminalObservation
+                ? "Terminal command has an unknown provider outcome and must be reconciled from its durable task"
+                : ambiguousResponseValidation
                 ? `Write ${dispatched.tool.definition.name} has an unknown external outcome because its response could not be validated`
                 : `Interrupted write ${dispatched.tool.definition.name} has an unknown external outcome`,
             );

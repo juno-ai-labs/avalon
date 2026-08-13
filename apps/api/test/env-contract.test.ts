@@ -56,6 +56,33 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(productionEnv())).not.toThrow();
   });
 
+  it("disables Terminal gracefully when Daytona configuration is incomplete", () => {
+    const incomplete = productionEnv({ TERMINAL_REGION_CAPABILITY: "supported" });
+    expect(() => assertEnvContract(incomplete)).not.toThrow();
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "not-a-url",
+    }))).not.toThrow();
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "http://daytona.example.com/api",
+      DAYTONA_TARGET: "us",
+      DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
+    }))).toThrow(/DAYTONA_API_URL is invalid/u);
+
+    expect(() => assertEnvContract(productionEnv({
+      TERMINAL_REGION_CAPABILITY: "supported",
+      DAYTONA_API_KEY: "daytona-key",
+      DAYTONA_API_URL: "https://daytona.example.com/api",
+      DAYTONA_TARGET: "us",
+      DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
+    }))).not.toThrow();
+  });
+
   it("names a missing required variable without echoing any value", () => {
     const env = productionEnv();
     delete (env as Partial<Env>).SESSION_SIGNING_KEY;
