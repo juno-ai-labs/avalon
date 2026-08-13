@@ -1320,6 +1320,8 @@ export async function compileAutomation(input: {
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
   /** Avalon-owned plugins available through the same progressive-disclosure catalog. */
   additionalPlugins?: HarnessPlugin[];
+  /** Request-scoped tools owned by the preloaded automation architect. */
+  architectTools?: HarnessTool[];
   maxResearchIterations?: number;
   maxWebResults?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
@@ -1573,8 +1575,8 @@ export async function compileAutomation(input: {
       canonicalId: AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID,
       modelId: "avalon_automation_architect",
       shortWireName: "automation",
-      description: "Research authorized plugins and submit automation drafts.",
-      tools: creatorTools,
+      description: "Research authorized plugins, inspect frozen draft attachments, and submit automation drafts.",
+      tools: [...creatorTools, ...(input.architectTools ?? [])],
       preload: true,
       explicit: true,
     },

@@ -159,6 +159,17 @@ describe("agent harness", () => {
       model: "test/model",
       messages: [{ role: "user", content: "Run it every morning in Pacific time." }],
       latestUserAttachmentParts: [{ type: "text", text: "<attachment name=\"schedule.md\">Every weekday at 08:00</attachment>" }],
+      architectTools: [{
+        definition: {
+          name: "list_resources",
+          description: "List frozen automation attachments. image, markdown, pdf, document, spreadsheet, presentation, text, other.",
+          capability: "automation.attachments.list",
+          mode: "read",
+          idempotency: "safe",
+          inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        },
+        execute: async () => ({ output: { items: [] }, summary: "Listed attachments" }),
+      }],
       currentDraft,
       fetch: fetcher,
     })).resolves.toMatchObject({ ready: true, suggestedScope: "personal" });
@@ -198,6 +209,10 @@ describe("agent harness", () => {
       "followUpQuestion",
       "requiredCapabilities",
     ]));
+    const listResourcesTool = (requestBody!.tools as Array<{
+      function: { name: string; description: string };
+    }>).find((tool) => tool.function.name === "automation_list_resources");
+    expect(listResourcesTool?.function.description).toContain("image, markdown, pdf, document, spreadsheet, presentation, text, other");
     const elicitationTool = (requestBody!.tools as Array<{
       function: { name: string; description: string; parameters: { properties: Record<string, unknown> } };
     }>).find((tool) => tool.function.name === "core_request_elicitation");

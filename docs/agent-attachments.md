@@ -25,6 +25,7 @@ changes in the same commits as those boundaries move.
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Applies the sidebar/list/read/search principal boundary and fingerprints the visible inventory. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
+| `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
 | `apps/api/src/services/attachment-model-content.ts` | Renders durable manifests and, during additive rollout, the legacy eager content plus normalized current-turn images. |
 | `apps/api/src/services/integrations.ts` | Current message projection and work-stream resource-tool registration. |
 | `apps/api/src/durable-objects/workstream-room.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
@@ -108,6 +109,22 @@ derivative. `workstream_summarize_resource` sends bounded chunks to an isolated
 reader, verifies every returned range, and caps all model-authored strings. A
 derivative beyond the reader budget is sampled across its length and explicitly
 returns `partial` coverage.
+
+### Automation-draft hydration
+
+When a compiler request includes attachments, Avalon freezes the unique resource
+IDs after verifying that every row is a draft upload owned by the requesting
+user in the current workspace. The preloaded automation architect receives the
+same list, read, search, view, and summarize definitions under `automation_*`
+wire names. Their natural-kind list description names all eight supported kinds.
+
+The frozen set is only an upper bound, never cached authority. Every operation
+queries those IDs again and requires the same workspace, owner, upload provider,
+and `attachment_status = 'draft'`. Deletion, ownership change, or promotion to
+an attached resource therefore returns the same `resource_not_found` result as a
+guessed ID. Automation cursors use a separate purpose namespace, so a work-stream
+continuation cannot be replayed into the compiler. Conversion, paging, image
+normalization, isolated summaries, and result bounds remain shared.
 
 ### Regional lifecycle
 
@@ -320,6 +337,31 @@ terms rather than duplicating attachment text. Later phases must preserve those
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Automation drafts gain revocable attachment tools
+
+**What changed:** Compiler requests with attachments now preload draft-scoped
+list, read, search, view, and summarize tools. The executor freezes the admitted
+ID set, rechecks current workspace/owner/draft state on every call, uses a
+separate cursor namespace, and emits automation-specific self-healing calls.
+
+**Why:** Durable manifests cannot safely replace eager compiler prompt bytes
+until the architect has a bounded way to hydrate every admitted format. A frozen
+ID list alone is not enough because an upload can be deleted or cease to be the
+caller's draft while the model is working.
+
+**Considered and rejected:** A globally readable attachment-by-ID tool, copying
+the work-stream visibility query into the compiler, and treating the frozen set
+as permanent authorization. They respectively turn IDs into bearer tokens,
+conflate unrelated ownership models, or preserve revoked access.
+
+**Consequences:** Draft and work-stream wrappers share conversion and paging but
+not cursor purposes or authorization. The eager non-image compiler projection
+can now be removed together with the work-stream legacy projection in the next
+cutover commit.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Message history gains durable attachment identities
 

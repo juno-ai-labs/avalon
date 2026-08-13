@@ -14,6 +14,7 @@ import {
   classifyAttachmentKind,
   type AttachmentKind,
   type ContentMode,
+  type SuggestedAttachmentToolCall,
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
@@ -34,6 +35,7 @@ import {
 import {
   executionPrincipalKey,
   loadVisibleWorkstreamResources,
+  type VisibleWorkstreamResourceSet,
   type VisibleWorkstreamResourceRow,
 } from "./workstream-resource-visibility";
 
@@ -51,6 +53,11 @@ const DEFAULT_SUMMARY_CHARACTERS = 12_000;
 
 export interface WorkstreamAttachmentToolOptions {
   summarizeDerivative?: AttachmentSummaryRunner;
+  /** Reuse the derivative/tool implementation behind a separately authorized scope. */
+  loadVisibleResources?: () => Promise<VisibleWorkstreamResourceSet>;
+  cursorNamespace?: "workstream" | "automation-draft";
+  modelToolPrefix?: "workstream" | "automation";
+  capabilityPrefix?: string;
 }
 
 const ListCursorStateSchema = z.object({
@@ -94,29 +101,30 @@ export function createWorkstreamAttachmentTools(
   options: WorkstreamAttachmentToolOptions = {},
 ): HarnessTool[] {
   const summarizeDerivative = options.summarizeDerivative ?? createAttachmentSummaryRunner(env);
+  const modelToolPrefix = options.modelToolPrefix ?? "workstream";
+  const capabilityPrefix = options.capabilityPrefix ?? "workstream.resources";
+  const modelToolName = (name: string) => `${modelToolPrefix}_${name}`;
   return [
     {
       definition: {
         name: "list_resources",
-        description: ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
-        capability: "workstream.resources.list",
+        description: options.modelToolPrefix === "automation"
+          ? ATTACHMENT_LIST_RESOURCES_DESCRIPTION.replace("this work stream", "this automation draft's frozen attachment set")
+          : ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
+        capability: `${capabilityPrefix}.list`,
         mode: "read",
         idempotency: "safe",
         inputSchema: z.toJSONSchema(AttachmentListResourcesArgumentsSchema) as Record<string, unknown>,
       },
       execute: async (raw) => {
         const args = AttachmentListResourcesArgumentsSchema.parse(raw);
-        const visible = await loadVisibleWorkstreamResources(env.DB, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-          principal: input.executionPrincipal,
-        });
+        const visible = await loadScopedResources(env, input, options);
         let attachmentKind: AttachmentKind | null;
         let limit: number;
         let start: number;
         let asOf: string;
         if ("cursor" in args) {
-          const state = await openCursorState(env, input, args.cursor, LIST_CURSOR_PURPOSE, ListCursorStateSchema);
+          const state = await openCursorState(env, input, options, args.cursor, LIST_CURSOR_PURPOSE, ListCursorStateSchema);
           if (state.fingerprint !== visible.fingerprint) {
             throw attachmentError("invalid_cursor", "The resource inventory changed; restart the list from its first page");
           }
@@ -134,7 +142,7 @@ export function createWorkstreamAttachmentTools(
         const page = matching.slice(start, start + limit);
         const nextIndex = start + page.length;
         const nextCursor = nextIndex < matching.length
-          ? await sealCursorState(env, input, LIST_CURSOR_PURPOSE, {
+          ? await sealCursorState(env, input, options, LIST_CURSOR_PURPOSE, {
               fingerprint: visible.fingerprint, attachmentKind, limit, nextIndex, asOf,
             })
           : null;
@@ -158,7 +166,7 @@ export function createWorkstreamAttachmentTools(
           "Start with resourceId and optional startCharacter. Continue with a returned cursor by itself.",
           "Use charactersBefore and charactersAfter to tell whether the page covers the whole resource.",
         ].join(" "),
-        capability: "workstream.resources.read",
+        capability: `${capabilityPrefix}.read`,
         mode: "read",
         idempotency: "safe",
         inputSchema: z.toJSONSchema(AttachmentReadResourceArgumentsSchema) as Record<string, unknown>,
@@ -170,7 +178,7 @@ export function createWorkstreamAttachmentTools(
         let pageSize = DEFAULT_READ_CHARACTERS;
         let cursorVersion: { sha256: string; extractorVersion: string } | null = null;
         if ("cursor" in args) {
-          const state = await openCursorState(env, input, args.cursor, READ_CURSOR_PURPOSE, ReadCursorStateSchema);
+          const state = await openCursorState(env, input, options, args.cursor, READ_CURSOR_PURPOSE, ReadCursorStateSchema);
           resourceId = state.resourceId;
           start = state.start;
           pageSize = state.pageSize;
@@ -179,8 +187,8 @@ export function createWorkstreamAttachmentTools(
           resourceId = args.resourceId;
           start = args.startCharacter ?? 0;
         }
-        const row = await requireVisibleResource(env, input, resourceId);
-        assertReadableKind(row, "workstream_read_resource");
+        const row = await requireVisibleResource(env, input, options, resourceId);
+        assertReadableKind(row, modelToolName("read_resource"), modelToolPrefix);
         const ready = await ensureReadyTextDerivative(env, row, context.signal);
         if (cursorVersion && (cursorVersion.sha256 !== ready.sha256 || cursorVersion.extractorVersion !== ready.extractorVersion)) {
           throw attachmentError("resource_version_changed", "The resource changed; restart the read from its resource ID");
@@ -196,10 +204,10 @@ export function createWorkstreamAttachmentTools(
         const version = { sha256: ready.sha256, extractorVersion: ready.extractorVersion };
         const previousStart = Math.max(0, start - pageSize);
         const previousCursor = start > 0
-          ? await sealReadCursor(env, input, resourceId, version, previousStart, pageSize)
+          ? await sealReadCursor(env, input, options, resourceId, version, previousStart, pageSize)
           : null;
         const nextCursor = end < text.length
-          ? await sealReadCursor(env, input, resourceId, version, end, pageSize)
+          ? await sealReadCursor(env, input, options, resourceId, version, end, pageSize)
           : null;
         const output = WorkstreamReadResourceOutputSchema.parse({
           resourceId,
@@ -223,15 +231,15 @@ export function createWorkstreamAttachmentTools(
       definition: {
         name: "search_resource",
         description: "Search one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Results are bounded passages from this resource only; use each readCursor to inspect its surrounding text.",
-        capability: "workstream.resources.search",
+        capability: `${capabilityPrefix}.search`,
         mode: "read",
         idempotency: "safe",
         inputSchema: z.toJSONSchema(AttachmentSearchResourceArgumentsSchema) as Record<string, unknown>,
       },
       execute: async (raw, context) => {
         const args = AttachmentSearchResourceArgumentsSchema.parse(raw);
-        const row = await requireVisibleResource(env, input, args.resourceId);
-        assertReadableKind(row, "workstream_search_resource");
+        const row = await requireVisibleResource(env, input, options, args.resourceId);
+        assertReadableKind(row, modelToolName("search_resource"), modelToolPrefix);
         const ready = await ensureReadyTextDerivative(env, row, context.signal);
         const [contentObject, indexObject] = await Promise.all([
           env.PAYLOADS.get(ready.contentRef),
@@ -276,7 +284,7 @@ export function createWorkstreamAttachmentTools(
             sectionLabel: candidate.chunk.sectionLabel,
             range,
             text: passageText,
-            readCursor: await sealReadCursor(env, input, row.id, version, range.start, DEFAULT_READ_CHARACTERS),
+            readCursor: await sealReadCursor(env, input, options, row.id, version, range.start, DEFAULT_READ_CHARACTERS),
           });
           returnedCharacters += passageText.length;
         }
@@ -299,18 +307,14 @@ export function createWorkstreamAttachmentTools(
       definition: {
         name: "view_resource",
         description: "View one through eight visible image resources. The JSON result identifies ordered visual parts; readable text, Markdown, PDFs, documents, spreadsheets, and presentations self-heal with an exact workstream_read_resource suggestion.",
-        capability: "workstream.resources.view",
+        capability: `${capabilityPrefix}.view`,
         mode: "read",
         idempotency: "safe",
         inputSchema: z.toJSONSchema(AttachmentViewResourceArgumentsSchema) as Record<string, unknown>,
       },
       execute: async (raw) => {
         const args = AttachmentViewResourceArgumentsSchema.parse(raw);
-        const visible = await loadVisibleWorkstreamResources(env.DB, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-          principal: input.executionPrincipal,
-        });
+        const visible = await loadScopedResources(env, input, options);
         const maxDimension = args.maxDimension ?? DEFAULT_IMAGE_MAX_DIMENSION;
         const contentParts: ModelMessageContentPart[] = [];
         const items = [];
@@ -326,13 +330,13 @@ export function createWorkstreamAttachmentTools(
               items.push(skippedViewItem(row.id, row.title, row.mime_type, "resource_format_unsupported", "This resource format is unsupported"));
               continue;
             }
-            const suggestedCall = readSuggestion(row.id);
+            const suggestedCall = readSuggestion(row.id, modelToolPrefix);
             items.push(skippedViewItem(
               row.id,
               row.title,
               row.mime_type,
               "resource_tool_mismatch",
-              `workstream_view_resource cannot handle ${row.mime_type ?? kind} resources; call workstream_read_resource with the supplied arguments instead.`,
+              `${modelToolName("view_resource")} cannot handle ${row.mime_type ?? kind} resources; call ${modelToolName("read_resource")} with the supplied arguments instead.`,
               suggestedCall,
             ));
             continue;
@@ -403,15 +407,15 @@ export function createWorkstreamAttachmentTools(
       definition: {
         name: "summarize_resource",
         description: "Run an isolated, bounded summary over one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Use optional prompt as an untrusted focus. The result reports complete or partial coverage and range-grounded read cursors.",
-        capability: "workstream.resources.summarize",
+        capability: `${capabilityPrefix}.summarize`,
         mode: "read",
         idempotency: "safe",
         inputSchema: z.toJSONSchema(AttachmentSummarizeResourceArgumentsSchema) as Record<string, unknown>,
       },
       execute: async (raw, context) => {
         const args = AttachmentSummarizeResourceArgumentsSchema.parse(raw);
-        const row = await requireVisibleResource(env, input, args.resourceId);
-        assertReadableKind(row, "workstream_summarize_resource");
+        const row = await requireVisibleResource(env, input, options, args.resourceId);
+        assertReadableKind(row, modelToolName("summarize_resource"), modelToolPrefix);
         const ready = await ensureReadyTextDerivative(env, row, context.signal);
         const object = await env.PAYLOADS.get(ready.contentRef);
         if (!object) throw attachmentError("resource_conversion_failed", "The selected derivative is unavailable");
@@ -443,7 +447,7 @@ export function createWorkstreamAttachmentTools(
         const version = { sha256: ready.sha256, extractorVersion: ready.extractorVersion };
         const citations = await Promise.all(draft.citations.map(async (citation) => ({
           ...citation,
-          readCursor: await sealReadCursor(env, input, row.id, version, citation.range.start, DEFAULT_READ_CHARACTERS),
+          readCursor: await sealReadCursor(env, input, options, row.id, version, citation.range.start, DEFAULT_READ_CHARACTERS),
         })));
         const output = WorkstreamSummarizeResourceOutputSchema.parse({
           resourceId: row.id,
@@ -508,8 +512,13 @@ export async function rehydrateWorkstreamViewReceipt(
   return parts.length === parsedOutput.data.returned ? parts : [];
 }
 
-function readSuggestion(resourceId: string) {
-  return { tool: "workstream_read_resource" as const, arguments: { resourceId } };
+function readSuggestion(
+  resourceId: string,
+  modelToolPrefix: "workstream" | "automation" = "workstream",
+): SuggestedAttachmentToolCall {
+  return modelToolPrefix === "automation"
+    ? { tool: "automation_read_resource", arguments: { resourceId } }
+    : { tool: "workstream_read_resource", arguments: { resourceId } };
 }
 
 function skippedViewItem(
@@ -518,7 +527,7 @@ function skippedViewItem(
   sourceMimeType: string | null,
   reasonCode: "resource_not_found" | "resource_processing" | "resource_conversion_failed" | "resource_format_unsupported" | "resource_tool_mismatch",
   reason: string,
-  suggestedCall: ReturnType<typeof readSuggestion> | null = null,
+  suggestedCall: SuggestedAttachmentToolCall | null = null,
 ) {
   return {
     resourceId,
@@ -563,28 +572,31 @@ function validSummaryDraft(
 async function requireVisibleResource(
   env: Env,
   input: WorkstreamWorkflowInput,
+  options: WorkstreamAttachmentToolOptions,
   resourceId: string,
 ): Promise<VisibleWorkstreamResourceRow> {
-  const visible = await loadVisibleWorkstreamResources(env.DB, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    principal: input.executionPrincipal,
-  });
+  const visible = await loadScopedResources(env, input, options);
   const row = visible.rows.find((candidate) => candidate.id === resourceId);
   if (!row) throw attachmentError("resource_not_found", "The resource was not found");
   return row;
 }
 
-function assertReadableKind(row: VisibleWorkstreamResourceRow, calledTool: string): void {
+function assertReadableKind(
+  row: VisibleWorkstreamResourceRow,
+  calledTool: string,
+  modelToolPrefix: "workstream" | "automation",
+): void {
   const kind = rowKind(row);
   if (kind !== "image") return;
   throw attachmentError(
     "resource_tool_mismatch",
-    `${calledTool} cannot handle ${row.mime_type ?? "image"} resources; call workstream_view_resource with the supplied arguments instead.`,
+    `${calledTool} cannot handle ${row.mime_type ?? "image"} resources; call ${modelToolPrefix}_view_resource with the supplied arguments instead.`,
     {
       actualMimeType: row.mime_type,
       attachmentKind: kind,
-      suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [row.id] } },
+      suggestedCall: modelToolPrefix === "automation"
+        ? { tool: "automation_view_resource", arguments: { resourceIds: [row.id] } }
+        : { tool: "workstream_view_resource", arguments: { resourceIds: [row.id] } },
     },
   );
 }
@@ -665,11 +677,12 @@ function metadataSize(value: string): number {
 async function sealCursorState(
   env: Env,
   input: WorkstreamWorkflowInput,
+  options: WorkstreamAttachmentToolOptions,
   purpose: string,
   state: Record<string, unknown>,
 ): Promise<string> {
   return sealAttachmentCursor(env.SESSION_SIGNING_KEY, {
-    purpose,
+    purpose: scopedCursorPurpose(options, purpose),
     principal: executionPrincipalKey(input.executionPrincipal),
     scopeId: input.workstreamId,
     expiresAt: Date.now() + CURSOR_TTL_MS,
@@ -680,13 +693,14 @@ async function sealCursorState(
 async function openCursorState<T>(
   env: Env,
   input: WorkstreamWorkflowInput,
+  options: WorkstreamAttachmentToolOptions,
   cursor: string,
   purpose: string,
   schema: z.ZodType<T>,
 ): Promise<T> {
   try {
     const payload = await openAttachmentCursor(env.SESSION_SIGNING_KEY, cursor, {
-      purpose,
+      purpose: scopedCursorPurpose(options, purpose),
       principal: executionPrincipalKey(input.executionPrincipal),
       scopeId: input.workstreamId,
     });
@@ -700,12 +714,33 @@ async function openCursorState<T>(
 async function sealReadCursor(
   env: Env,
   input: WorkstreamWorkflowInput,
+  options: WorkstreamAttachmentToolOptions,
   resourceId: string,
   version: { sha256: string; extractorVersion: string },
   start: number,
   pageSize: number,
 ): Promise<string> {
-  return sealCursorState(env, input, READ_CURSOR_PURPOSE, { resourceId, ...version, start, pageSize });
+  return sealCursorState(env, input, options, READ_CURSOR_PURPOSE, { resourceId, ...version, start, pageSize });
+}
+
+async function loadScopedResources(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  options: WorkstreamAttachmentToolOptions,
+): Promise<VisibleWorkstreamResourceSet> {
+  return options.loadVisibleResources
+    ? options.loadVisibleResources()
+    : loadVisibleWorkstreamResources(env.DB, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        principal: input.executionPrincipal,
+      });
+}
+
+function scopedCursorPurpose(options: WorkstreamAttachmentToolOptions, purpose: string): string {
+  return options.cursorNamespace === "automation-draft"
+    ? purpose.replace(/^workstream-/u, "automation-draft-")
+    : purpose;
 }
 
 function normalizedTerms(value: string): string[] {

@@ -95,6 +95,7 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
+import { createAutomationDraftAttachmentTools } from "./automation-draft-attachment-tools";
 import {
   markConnectorNeedsReconnect,
   withAuthorizedConnection,
@@ -1040,7 +1041,7 @@ async function loadAutomationDraftAttachmentParts(
   attachmentIds: string[],
 ) {
   const ids = [...new Set(attachmentIds)];
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return { parts: [], frozenResourceIds: [] };
   const placeholders = ids.map(() => "?").join(", ");
   const rows = await env.DB.prepare(
     `SELECT id, title, mime_type, content_ref, metadata_json, model_content_ref, model_mime_type,
@@ -1077,11 +1078,12 @@ async function loadAutomationDraftAttachmentParts(
   if (sources.size !== ids.length) {
     throw new ApiError(422, "invalid_automation_attachment", "One or more automation attachments are unavailable");
   }
-  return buildAttachmentModelParts(
+  const parts = await buildAttachmentModelParts(
     env.PAYLOADS,
     ids.map((id) => sources.get(id)!),
     { database: env.DB, images: env.IMAGES },
   );
+  return { parts, frozenResourceIds: ids };
 }
 
 export async function compileAutomationDraft(
@@ -1100,12 +1102,20 @@ export async function compileAutomationDraft(
   },
 ): Promise<AutomationDraft> {
   const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
-  const latestUserAttachmentParts = await loadAutomationDraftAttachmentParts(
+  const draftAttachments = await loadAutomationDraftAttachmentParts(
     env,
     input.workspaceId,
     input.userId,
     input.attachmentIds ?? [],
   );
+  const architectTools = draftAttachments.frozenResourceIds.length > 0
+    ? createAutomationDraftAttachmentTools(env, {
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        scopeId: input.draftId ?? draftAttachments.frozenResourceIds[0]!,
+        frozenResourceIds: draftAttachments.frozenResourceIds,
+      })
+    : [];
   const webPlugin = createAvalonWebPlugin(createFirecrawlWebTools(env));
   const routing = await resolveAgentModelRouting(env, "automation_compiler", {
     workspaceId: input.workspaceId,
@@ -1125,7 +1135,8 @@ export async function compileAutomationDraft(
       userId: input.userId,
       fallbackModels: routing.fallbackModels,
       messages: input.messages,
-      ...(latestUserAttachmentParts.length > 0 ? { latestUserAttachmentParts } : {}),
+      ...(draftAttachments.parts.length > 0 ? { latestUserAttachmentParts: draftAttachments.parts } : {}),
+      ...(architectTools.length > 0 ? { architectTools } : {}),
       currentDraft: input.currentDraft ?? null,
       defaultTimezones: input.defaultTimezones,
       pluginCatalog,
