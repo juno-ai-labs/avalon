@@ -1291,7 +1291,7 @@ export class AvalonApi {
     });
   }
 
-  async selectTerminalRepository(id: string, input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles?: boolean }): Promise<TerminalWorkstreamState> {
+  async selectTerminalRepository(id: string, input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles?: boolean; repositoryRequestId?: string }): Promise<TerminalWorkstreamState> {
     return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/repository`, {
       method: 'PUT',
       body: input,

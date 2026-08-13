@@ -350,8 +350,12 @@ in-progress exit codes before polling. The managed-image acceptance check uses
 the promised passwordless `sudo` boundary for apt metadata. Tool deadlines
 reserve two minutes for lazy sandbox acquisition in addition to their operation
 budget. The transcript repository chooser now appears only for the latest run's
-durable `repository_not_configured` failure, and only that request identity can
-trigger its one continuation.
+durable nested `repository_not_configured` failure, excludes HyperSight
+background runs from that participant-facing latest-run fence, and lets only
+that request identity trigger its one continuation. Repository selection and
+continuation now share one server operation: the durable invocation identity
+fences both message persistence and run admission, while an already-selected
+matching repository and an already-persisted message are safe retry points.
 
 **Why:** The first production `terminal_write_file` reached Daytona but timed
 out after one minute because `uploadFileStream` throws in serverless runtimes.
@@ -371,9 +375,12 @@ leave every other cold-start tool vulnerable to the same budget error.
 **Consequences:** Transfers buffer at most the existing 10 MiB file or 50 MiB
 publication limit and work in Node and Workers. Manual rail selection does not
 manufacture a participant message; a genuine repository request resumes with
-its invocation UUID as the idempotency key. The full provider gate now includes
-file and asynchronous-session round-trip evidence, while the lighter interface
-gate can run with only the standard Daytona variables.
+its invocation UUID as the idempotency key. A lost response can retry without
+destroying the selected sandbox, duplicating the message, or superseding a newer
+run; a stale request returns `terminal_repository_request_stale`. The full
+provider gate now includes file and asynchronous-session round-trip evidence,
+while the lighter interface gate can run with only the standard Daytona
+variables.
 
 ### 2026-08-13 — Provider acceptance stops before archive
 
