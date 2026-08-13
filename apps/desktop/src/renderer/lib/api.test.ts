@@ -1355,4 +1355,29 @@ describe('expired access-token recovery', () => {
       'network_error',
     );
   });
+
+  it('does not report a late upload error after cancellation', async () => {
+    class CancelledUpload {
+      readonly upload = { addEventListener: (): void => undefined };
+      private readonly listeners = new Map<string, () => void>();
+      responseType = '';
+      open(): void { /* Test transport does not open a real connection. */ }
+      setRequestHeader(): void { /* Headers are irrelevant to cancellation. */ }
+      addEventListener(name: string, listener: () => void): void { this.listeners.set(name, listener); }
+      send(): void { /* Cancellation drives the events. */ }
+      abort(): void {
+        this.listeners.get('abort')?.();
+        this.listeners.get('error')?.();
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', CancelledUpload);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    const controller = new AbortController();
+    const upload = api.uploadResource(new File(['body'], 'note.txt'), 'draft-1', undefined, controller.signal);
+
+    controller.abort();
+
+    await expect(upload).rejects.toMatchObject({ name: 'AbortError' });
+    expect(reportJavascriptError).not.toHaveBeenCalled();
+  });
 });

@@ -1495,7 +1495,10 @@ export class AvalonApi {
       request.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable) onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
       });
+      let settled = false;
       request.addEventListener('load', () => {
+        if (settled) return;
+        settled = true;
         if (request.status < 200 || request.status >= 300) {
           const nested = request.response && typeof request.response === 'object' && 'error' in request.response
             ? (request.response as { error?: { code?: string; message?: string; details?: unknown; requestId?: string } }).error
@@ -1517,8 +1520,16 @@ export class AvalonApi {
         onProgress?.(100);
         resolve(mapResource(parsed.data));
       });
-      request.addEventListener('error', () => reject(networkApiError('Avalon could not upload the attachment.')));
-      request.addEventListener('abort', () => reject(new DOMException('The upload was cancelled.', 'AbortError')));
+      request.addEventListener('error', () => {
+        if (settled) return;
+        settled = true;
+        reject(networkApiError('Avalon could not upload the attachment.'));
+      });
+      request.addEventListener('abort', () => {
+        if (settled) return;
+        settled = true;
+        reject(new DOMException('The upload was cancelled.', 'AbortError'));
+      });
       if (signal) {
         if (signal.aborted) {
           request.abort();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeJavascriptErrorCandidate } from './javascript-error-candidate';
+import { javascriptErrorProcessHealthState, normalizeJavascriptErrorCandidate } from './javascript-error-candidate';
 
 describe('JavaScript error candidate normalization', () => {
   it('accepts only bounded bundle-relative frames and returns a stable content-free fingerprint', async () => {
@@ -20,5 +20,11 @@ describe('JavaScript error candidate normalization', () => {
     { process: 'renderer', errorCode: 'unknown', frames: [], message: 'secret' },
   ])('rejects paths, query data, empty stacks, and arbitrary fields', async (candidate) => {
     await expect(normalizeJavascriptErrorCandidate(candidate)).rejects.toThrow('Invalid JavaScript error candidate');
+  });
+
+  it('does not classify a handled network failure as process-health degradation', () => {
+    expect(javascriptErrorProcessHealthState('network_error')).toBeNull();
+    expect(javascriptErrorProcessHealthState('unhandled_rejection')).toBe('rejection');
+    expect(javascriptErrorProcessHealthState('type_error')).toBe('exception');
   });
 });
