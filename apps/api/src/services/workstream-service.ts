@@ -98,6 +98,11 @@ type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
 type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema> & {
   /** Validated request-header correlation injected by the API route. */
   telemetryOperationId?: string;
+  /** Server-owned continuation metadata; never accepted from the message API. */
+  forcedHarnessOrigin?: string;
+  parentHarnessRunId?: string;
+  expectedLatestHarnessRunId?: string;
+  expectedToolInvocationId?: string;
 };
 type AnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
 interface AcknowledgeReadInput {
@@ -197,6 +202,8 @@ export async function launchWorkstreamHarness(
     digestDeliveryId?: string;
     telemetryOperationId?: string;
     telemetrySubjectUserId?: string;
+    /** Admit only while this is still the latest participant-facing run. */
+    expectedLatestHarnessRunId?: string;
   },
 ): Promise<string> {
   const id = newId();
@@ -205,7 +212,7 @@ export async function launchWorkstreamHarness(
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
   });
-  await env.DB.batch([
+  const statements = [
     ...(input.supersedeActiveRun ? [env.DB.prepare(
       `UPDATE harness_runs
           SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
@@ -219,7 +226,15 @@ export async function launchWorkstreamHarness(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
         status, started_at, model, created_at, trigger_message_id)
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
+       SELECT ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?
+        WHERE ? IS NULL OR ? = (
+          SELECT latest.id FROM harness_runs latest
+           WHERE latest.workspace_id = ? AND latest.workstream_id = ?
+             AND latest.parent_tool_call_id IS NULL
+             AND latest.origin != 'hypersight_block'
+           ORDER BY latest.created_at DESC, latest.id DESC
+           LIMIT 1
+        )`,
     ).bind(
       id,
       input.workspaceId,
@@ -234,12 +249,22 @@ export async function launchWorkstreamHarness(
       // against, and reconstructing it later is a guess that gets the answer
       // wrong for every run whose trigger was not the newest human message.
       input.triggerMessageId,
+      input.expectedLatestHarnessRunId ?? null,
+      input.expectedLatestHarnessRunId ?? null,
+      input.workspaceId,
+      input.workstreamId,
     ),
     env.DB.prepare(
       `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ?`,
-    ).bind(at, at, input.workstreamId, input.workspaceId),
-  ]);
+       WHERE id = ? AND workspace_id = ?
+         AND EXISTS (SELECT 1 FROM harness_runs WHERE id = ?)`,
+    ).bind(at, at, input.workstreamId, input.workspaceId, id),
+  ];
+  const insertIndex = input.supersedeActiveRun ? 1 : 0;
+  const admission = await env.DB.batch(statements);
+  if (Number(admission[insertIndex]?.meta.changes ?? 0) !== 1) {
+    throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before continuing.");
+  }
   const workflowInput: WorkstreamWorkflowInput = {
     region: env.AVALON_REGION,
     workspaceId: input.workspaceId,
@@ -1359,6 +1384,23 @@ export class WorkstreamService {
     ).bind(position, at, id, this.auth.userId, this.auth.workspaceId)));
   }
 
+  async continueTerminalRepositoryRequest(
+    id: string,
+    input: { repositoryRequestId: string; harnessRunId: string; repositoryFullName: string },
+  ) {
+    return this.createMessage(id, {
+      text: `Continue the requested repository work using ${input.repositoryFullName}.`,
+      clientMessageId: input.repositoryRequestId,
+      mentions: [],
+      confirmedParticipantUserIds: [],
+      attachmentIds: [],
+      forcedHarnessOrigin: "terminal_repository_answer",
+      parentHarnessRunId: input.harnessRunId,
+      expectedLatestHarnessRunId: input.harnessRunId,
+      expectedToolInvocationId: input.repositoryRequestId,
+    });
+  }
+
   async createMessage(
     id: string,
     input: CreateMessageInput,
@@ -1368,6 +1410,9 @@ export class WorkstreamService {
     const workstream = await this.requireWorkstream(id);
     const replayed = await this.loadMessageByClientId(id, input.clientMessageId);
     if (replayed) {
+      if (input.forcedHarnessOrigin && input.expectedLatestHarnessRunId) {
+        return this.ensureForcedMessageHarness(id, replayed, input);
+      }
       return { message: replayed, agentInvoked: false, harnessRunId: null };
     }
     const attachmentIds = [...new Set(input.attachmentIds)];
@@ -1396,6 +1441,9 @@ export class WorkstreamService {
     await this.assertMembersExist(input.confirmedParticipantUserIds);
     const persisted = await this.persistHumanMessage(id, preparedInput);
     if (!persisted.inserted) {
+      if (preparedInput.forcedHarnessOrigin && preparedInput.expectedLatestHarnessRunId) {
+        return this.ensureForcedMessageHarness(id, persisted.message, preparedInput);
+      }
       return { message: persisted.message, agentInvoked: false, harnessRunId: null };
     }
     const message = persisted.message;
@@ -1450,7 +1498,9 @@ export class WorkstreamService {
       .filter((mention) => mention.type === "connector" && mention.connectorType)
       .map((mention) => mention.connectorType!);
     const participantCount = await this.activeParticipantCount(id);
-    let shouldInvoke = participantCount === 1 || attachmentIds.length > 0;
+    let shouldInvoke = Boolean(preparedInput.forcedHarnessOrigin)
+      || participantCount === 1
+      || attachmentIds.length > 0;
     if (!shouldInvoke) {
       const recentMessages = await this.recentAddressingMessages(id, message.sequenceNumber);
       const classification = await classifyWorkstreamMessage(this.env, {
@@ -1470,14 +1520,56 @@ export class WorkstreamService {
       ? await this.launchHarness(
           id,
           message.id,
-          "human_message",
-          undefined,
+          preparedInput.forcedHarnessOrigin ?? "human_message",
+          preparedInput.parentHarnessRunId,
           slackOrigin,
           slackSearchAuthorization,
           input.telemetryOperationId,
+          preparedInput.expectedLatestHarnessRunId,
         )
       : null;
     return { message: messageWithMentions, agentInvoked: shouldInvoke, harnessRunId };
+  }
+
+  private async ensureForcedMessageHarness(
+    workstreamId: string,
+    message: Message,
+    input: CreateMessageInput,
+  ) {
+    const existingRun = async () => this.env.DB.prepare(
+      `SELECT id FROM harness_runs
+        WHERE workspace_id = ? AND workstream_id = ? AND trigger_message_id = ?
+          AND origin = ? AND parent_tool_call_id IS NULL
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+    ).bind(
+      this.auth.workspaceId,
+      workstreamId,
+      message.id,
+      input.forcedHarnessOrigin,
+    ).first<{ id: string }>();
+    const existing = await existingRun();
+    if (existing) return { message, agentInvoked: true, harnessRunId: existing.id };
+    try {
+      const harnessRunId = await this.launchHarness(
+        workstreamId,
+        message.id,
+        input.forcedHarnessOrigin!,
+        input.parentHarnessRunId,
+        undefined,
+        undefined,
+        input.telemetryOperationId,
+        input.expectedLatestHarnessRunId,
+      );
+      return { message, agentInvoked: true, harnessRunId };
+    } catch (error) {
+      // Two retries can observe the durable message before either observes its
+      // run. The latest-run fence admits one; the loser replays that same run.
+      if (error instanceof ApiError && error.code === "terminal_repository_request_stale") {
+        const raced = await existingRun();
+        if (raced) return { message, agentInvoked: true, harnessRunId: raced.id };
+      }
+      throw error;
+    }
   }
 
   private async recentAddressingMessages(id: string, beforeSequence: number) {
@@ -1926,8 +2018,44 @@ export class WorkstreamService {
           message_type, text_content, structured_content_json, sequence_number, created_at)
          SELECT ?, ?, ?, w.id, 'human', ?, 'text', ?, NULL, w.next_sequence_number, ?
          FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
+           AND (? IS NULL OR EXISTS (
+             SELECT 1 FROM harness_runs expected
+             JOIN tool_invocations invocation
+               ON invocation.harness_run_id = expected.id
+              AND invocation.workspace_id = expected.workspace_id
+              AND invocation.workstream_id = expected.workstream_id
+              AND invocation.id = ?
+              AND invocation.status = 'failed'
+              AND json_extract(invocation.error_json, '$.data.code') = 'repository_not_configured'
+            WHERE expected.id = ?
+              AND expected.workspace_id = w.workspace_id
+              AND expected.workstream_id = w.id
+              AND expected.parent_tool_call_id IS NULL
+              AND expected.status = 'needs_input'
+              AND expected.id = (
+                SELECT latest.id FROM harness_runs latest
+                 WHERE latest.workspace_id = w.workspace_id
+                   AND latest.workstream_id = w.id
+                   AND latest.parent_tool_call_id IS NULL
+                   AND latest.origin != 'hypersight_block'
+                 ORDER BY latest.created_at DESC, latest.id DESC
+                 LIMIT 1
+              )
+           ))
          ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-      ).bind(messageId, input.clientMessageId, this.auth.workspaceId, this.auth.userId, input.text, at, workstreamId, this.auth.workspaceId),
+      ).bind(
+        messageId,
+        input.clientMessageId,
+        this.auth.workspaceId,
+        this.auth.userId,
+        input.text,
+        at,
+        workstreamId,
+        this.auth.workspaceId,
+        input.expectedLatestHarnessRunId ?? null,
+        input.expectedToolInvocationId ?? null,
+        input.expectedLatestHarnessRunId ?? null,
+      ),
       this.env.DB.prepare(
         `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
          latest_attention_sequence_number = next_sequence_number,
@@ -1953,6 +2081,9 @@ export class WorkstreamService {
     ]);
     const inserted = Number(results[1]?.meta.changes ?? 0) > 0;
     const message = await this.loadMessageByClientId(workstreamId, input.clientMessageId);
+    if (!message && input.expectedLatestHarnessRunId) {
+      throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before continuing.");
+    }
     if (!message) throw new ApiError(500, "message_write_failed", "The message could not be stored");
     return { message, inserted };
   }
@@ -1986,6 +2117,7 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
     telemetryOperationId?: string,
+    expectedLatestHarnessRunId?: string,
   ): Promise<string> {
     return launchWorkstreamHarness(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -2001,6 +2133,7 @@ export class WorkstreamService {
         telemetryOperationId,
         telemetrySubjectUserId: this.auth.userId,
       } : {}),
+      ...(expectedLatestHarnessRunId ? { expectedLatestHarnessRunId } : {}),
     });
   }
 

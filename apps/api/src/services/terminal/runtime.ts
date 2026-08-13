@@ -188,6 +188,7 @@ export function createDaytonaTerminalRuntime(
       command: `realpath -m -- ${shellQuote(intended)}`,
       cwd: ROOT,
       timeoutMs: 10_000,
+      signal: context.signal,
     });
     const resolved = result.stdout.trim();
     if (result.exitCode !== 0 || (resolved !== ROOT && !resolved.startsWith(`${ROOT}/`))) {
@@ -260,6 +261,7 @@ export function createDaytonaTerminalRuntime(
         ].join("\n"),
         cwd: ROOT,
         timeoutMs: 10_000,
+        signal: context.signal,
       });
       if (metadata.exitCode === 44) return null;
       if (metadata.exitCode === 45) {
@@ -294,6 +296,7 @@ export function createDaytonaTerminalRuntime(
         command: `target=${shellQuote(target)}; mkdir -p -- "$(dirname -- "$target")" && mv -- ${shellQuote(temporary)} "$target"`,
         cwd: ROOT,
         timeoutMs: 30_000,
+        signal: context.signal,
       });
       if (result.exitCode !== 0) {
         throw new TerminalToolError("file_write_failed", "The atomic file replacement failed. Inspect the parent directory and retry.", { reason: "Inspect the parent directory and available space, then retry." });
@@ -310,6 +313,7 @@ export function createDaytonaTerminalRuntime(
         command: `git apply --check -- ${shellQuote(temporary)} && git apply -- ${shellQuote(temporary)}; status=$?; rm -f -- ${shellQuote(temporary)}; exit $status`,
         cwd: ROOT,
         timeoutMs: 60_000,
+        signal: context.signal,
       });
       if (result.exitCode !== 0) {
         throw new TerminalToolError(

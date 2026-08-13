@@ -40,6 +40,7 @@ interface SandboxStateRow {
 }
 
 interface RepositoryRow {
+  connection_id: string;
   repository_id: number;
   repository_full_name: string;
   base_ref: string;
@@ -49,6 +50,7 @@ interface RepositoryRow {
 }
 
 interface ConnectionRow { id: string; display_name: string | null }
+interface RepositoryRequestRow { id: string; harness_run_id: string }
 
 function publicState(state: string): "absent" | "starting" | "running" | "stopped" | "archived" | "restoring" | "expired" | "failed" {
   switch (state) {
@@ -76,17 +78,18 @@ export class TerminalWorkstreamService {
 
   async get(workstreamId: string) {
     await this.requireVisible(workstreamId);
-    const [sandbox, repository] = await Promise.all([
+    const [sandbox, repository, repositoryRequest] = await Promise.all([
       this.env.DB.prepare(
         `SELECT state, provider_sandbox_id, last_activity_at, expire_due_at,
                 final_diff_resource_id, failure_code
            FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?`,
       ).bind(this.auth.workspaceId, workstreamId).first<SandboxStateRow>(),
       this.env.DB.prepare(
-        `SELECT repository_id, repository_full_name, base_ref, base_sha, head_ref, state
+        `SELECT connection_id, repository_id, repository_full_name, base_ref, base_sha, head_ref, state
            FROM workstream_terminal_repositories
           WHERE workspace_id = ? AND workstream_id = ?`,
       ).bind(this.auth.workspaceId, workstreamId).first<RepositoryRow>(),
+      this.loadRepositoryRequest(workstreamId),
     ]);
     const configuration = parseTerminalRegionConfiguration(this.env);
     const state = sandbox ? publicState(sandbox.state) : "absent";
@@ -111,6 +114,10 @@ export class TerminalWorkstreamService {
         baseRef: repository.base_ref,
         baseSha: repository.base_sha,
         headRef: repository.head_ref,
+      } : null,
+      repositoryRequest: repositoryRequest ? {
+        id: repositoryRequest.id,
+        harnessRunId: repositoryRequest.harness_run_id,
       } : null,
     };
   }
@@ -140,15 +147,41 @@ export class TerminalWorkstreamService {
 
   async selectRepository(
     workstreamId: string,
-    input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles?: boolean | undefined },
+    input: {
+      connectionId: string;
+      repositoryFullName: string;
+      confirmDiscardLocalFiles?: boolean | undefined;
+      repositoryRequestId?: string | undefined;
+    },
     signal: AbortSignal,
   ) {
     await this.requireParticipant(workstreamId);
+    if (input.repositoryRequestId && !await this.loadRepositoryRequest(workstreamId, input.repositoryRequestId)) {
+      throw new ApiError(409, "terminal_repository_request_stale", "That Terminal repository request is no longer current. Reload the work stream before continuing.");
+    }
     const connection = await this.env.DB.prepare(
       `SELECT id FROM connector_connections
         WHERE workspace_id = ? AND id = ? AND connector_type = 'github' AND status = 'healthy'`,
     ).bind(this.auth.workspaceId, input.connectionId).first<{ id: string }>();
     if (!connection) throw new ApiError(409, "github_connection_revoked", "That GitHub connection is no longer available. Reconnect GitHub and choose the repository again.");
+    if (input.repositoryRequestId) {
+      const existing = await this.env.DB.prepare(
+        `SELECT connection_id, repository_full_name, state
+           FROM workstream_terminal_repositories
+          WHERE workspace_id = ? AND workstream_id = ?`,
+      ).bind(this.auth.workspaceId, workstreamId).first<{
+        connection_id: string;
+        repository_full_name: string;
+        state: "selected" | "revoked";
+      }>();
+      if (
+        existing?.state === "selected"
+        && existing.connection_id === input.connectionId
+        && existing.repository_full_name.toLowerCase() === input.repositoryFullName.toLowerCase()
+      ) {
+        return this.get(workstreamId);
+      }
+    }
     let resolved: TerminalResolvedRepository;
     try {
       resolved = await this.catalog.resolveRepository(
@@ -166,6 +199,9 @@ export class TerminalWorkstreamService {
     }
     if (!/^[0-9a-f]{40}$/u.test(resolved.baseSha)) {
       throw new ApiError(502, "github_response_invalid", "GitHub returned an invalid base revision. Retry repository selection.");
+    }
+    if (input.repositoryRequestId && !await this.loadRepositoryRequest(workstreamId, input.repositoryRequestId)) {
+      throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before selecting a repository.");
     }
     const retained = await this.env.DB.prepare(
       `SELECT state FROM workstream_sandboxes
@@ -261,6 +297,43 @@ export class TerminalWorkstreamService {
           AND ${WORKSTREAM_VISIBILITY_SQL}`,
     ).bind(workstreamId, this.auth.workspaceId, ...workstreamVisibilityBindings(this.auth.userId)).first<{ id: string }>();
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+  }
+
+  private async loadRepositoryRequest(
+    workstreamId: string,
+    expectedRequestId?: string,
+  ): Promise<RepositoryRequestRow | null> {
+    return this.env.DB.prepare(
+      `SELECT invocation.id, invocation.harness_run_id
+         FROM harness_runs run
+         JOIN tool_invocations invocation
+           ON invocation.harness_run_id = run.id
+          AND invocation.workspace_id = run.workspace_id
+          AND invocation.workstream_id = run.workstream_id
+        WHERE run.workspace_id = ? AND run.workstream_id = ?
+          AND run.parent_tool_call_id IS NULL
+          AND run.status = 'needs_input'
+          AND invocation.status = 'failed'
+          AND json_extract(invocation.error_json, '$.data.code') = 'repository_not_configured'
+          AND (? IS NULL OR invocation.id = ?)
+          AND run.id = (
+            SELECT latest.id FROM harness_runs latest
+             WHERE latest.workspace_id = ? AND latest.workstream_id = ?
+               AND latest.parent_tool_call_id IS NULL
+               AND latest.origin != 'hypersight_block'
+             ORDER BY latest.created_at DESC, latest.id DESC
+             LIMIT 1
+          )
+        ORDER BY invocation.started_at DESC, invocation.id DESC
+        LIMIT 1`,
+    ).bind(
+      this.auth.workspaceId,
+      workstreamId,
+      expectedRequestId ?? null,
+      expectedRequestId ?? null,
+      this.auth.workspaceId,
+      workstreamId,
+    ).first<RepositoryRequestRow>();
   }
 
   private async requireParticipant(workstreamId: string): Promise<void> {

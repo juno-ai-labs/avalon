@@ -53,7 +53,7 @@ import {
 } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, TerminalRepositoryCatalog, TerminalWorkstreamState, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -88,6 +88,44 @@ export function workstreamRunTiming(
   const canonicalCompletedAt = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
   const completedAt = Number.isFinite(canonicalCompletedAt) ? canonicalCompletedAt : now;
   return { active: false, durationMs: Math.max(0, completedAt - startedAt) };
+}
+
+export function TerminalRepositoryRequestCard({
+  catalog,
+  disabled,
+  onSelect,
+  request,
+}: {
+  catalog: TerminalRepositoryCatalog | undefined;
+  disabled: boolean;
+  onSelect: (connectionId: string, repositoryFullName: string, requestId: string) => void;
+  request: TerminalWorkstreamState['repositoryRequest'];
+}): React.JSX.Element | null {
+  if (!request || catalog?.state !== 'available') return null;
+  return (
+    <section aria-label="Repository required" className="terminal-repository-request-card">
+      <div>
+        <strong>Choose a repository to continue</strong>
+        <p>The Terminal run needs one GitHub App-authorized repository. Your choice resumes the request once.</p>
+      </div>
+      <select
+        aria-label="Repository for Terminal request"
+        defaultValue=""
+        disabled={disabled}
+        onChange={(event) => {
+          const [connectionId, repositoryFullName] = event.target.value.split('::', 2);
+          if (connectionId && repositoryFullName) onSelect(connectionId, repositoryFullName, request.id);
+        }}
+      >
+        <option disabled value="">Choose one repository…</option>
+        {catalog.connections.flatMap((connection) => connection.repositories.map((repository) => (
+          <option key={`${connection.connectionId}:${repository.id}`} value={`${connection.connectionId}::${repository.fullName}`}>
+            {repository.fullName} · {connection.displayName}
+          </option>
+        )))}
+      </select>
+    </section>
+  );
 }
 
 /**
@@ -783,19 +821,21 @@ export function WorkstreamScreen(): React.JSX.Element {
       && id
       && terminalParticipant
       && terminalWorkspace.data?.availability === 'supported'
-      && (!terminalWorkspace.data.repository || replacingTerminalRepository),
+      && (
+        !terminalWorkspace.data.repository
+        || Boolean(terminalWorkspace.data.repositoryRequest)
+        || replacingTerminalRepository
+      ),
     ),
     staleTime: 30_000,
   });
   const selectTerminalRepository = useMutation({
-    mutationFn: async (input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles: boolean }) => {
-      const state = await api!.selectTerminalRepository(id, input);
-      const base = state.repository?.baseSha ?? '00000000000000000000000000000000';
-      const repositoryIdentity = (state.repository?.id ?? 0).toString(16).padStart(12, '0').slice(-12);
-      const continuationClientId = `${base.slice(0, 8)}-${base.slice(8, 12)}-4${base.slice(13, 16)}-8${base.slice(17, 20)}-${repositoryIdentity}`;
-      await api!.createMessage(id, {
-        text: `Continue the requested repository work using ${input.repositoryFullName}.`,
-        clientId: continuationClientId,
+    mutationFn: async (input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles: boolean; repositoryRequestId: string | null }) => {
+      const state = await api!.selectTerminalRepository(id, {
+        connectionId: input.connectionId,
+        repositoryFullName: input.repositoryFullName,
+        confirmDiscardLocalFiles: input.confirmDiscardLocalFiles,
+        ...(input.repositoryRequestId ? { repositoryRequestId: input.repositoryRequestId } : {}),
       });
       return state;
     },
@@ -806,11 +846,16 @@ export function WorkstreamScreen(): React.JSX.Element {
       void queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
     },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['terminal-workstream', id], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
+    },
   });
-  const chooseTerminalRepository = (connectionId: string, repositoryFullName: string): void => {
+  const chooseTerminalRepository = (connectionId: string, repositoryFullName: string, repositoryRequestId = terminalWorkspace.data?.repositoryRequest?.id ?? null): void => {
     const retained = terminalWorkspace.data?.localFilesRetained === true;
     if (retained && !window.confirm('Replacing this repository destroys retained local Terminal files after Avalon saves the final Git diff. Unpublished scratch files cannot be recovered. Continue?')) return;
-    selectTerminalRepository.mutate({ connectionId, repositoryFullName, confirmDiscardLocalFiles: retained });
+    selectTerminalRepository.mutate({ connectionId, repositoryFullName, confirmDiscardLocalFiles: retained, repositoryRequestId });
   };
   const startFreshTerminal = useMutation({
     mutationFn: () => api!.startFreshTerminalWorkspace(id),
@@ -1507,32 +1552,14 @@ export function WorkstreamScreen(): React.JSX.Element {
               })}
             </div>
           )}
-          {!terminalWorkspace.data?.repository
-            && terminalRepositoryCatalog.data?.state === 'available'
-            && terminalParticipant && (
-              <section aria-label="Repository required" className="terminal-repository-request-card">
-                <div>
-                  <strong>Choose a repository to continue</strong>
-                  <p>The Terminal run needs one GitHub App-authorized repository. Your choice resumes the request once.</p>
-                </div>
-                <select
-                  aria-label="Repository for Terminal request"
-                  defaultValue=""
-                  disabled={selectTerminalRepository.isPending}
-                  onChange={(event) => {
-                    const [connectionId, repositoryFullName] = event.target.value.split('::', 2);
-                    if (connectionId && repositoryFullName) chooseTerminalRepository(connectionId, repositoryFullName);
-                  }}
-                >
-                  <option disabled value="">Choose one repository…</option>
-                  {terminalRepositoryCatalog.data.connections.flatMap((connection) => connection.repositories.map((repository) => (
-                    <option key={`${connection.connectionId}:${repository.id}`} value={`${connection.connectionId}::${repository.fullName}`}>
-                      {repository.fullName} · {connection.displayName}
-                    </option>
-                  )))}
-                </select>
-              </section>
-            )}
+          {terminalParticipant && (
+            <TerminalRepositoryRequestCard
+              catalog={terminalRepositoryCatalog.data}
+              disabled={selectTerminalRepository.isPending}
+              onSelect={chooseTerminalRepository}
+              request={terminalWorkspace.data?.repositoryRequest ?? null}
+            />
+          )}
           {runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice

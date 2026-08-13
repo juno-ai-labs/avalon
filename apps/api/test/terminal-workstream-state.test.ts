@@ -13,6 +13,12 @@ const W = "61000000-0000-4000-8000-000000000001";
 const S = "61000000-0000-4000-8000-000000000002";
 const U = "61000000-0000-4000-8000-000000000003";
 const C = "61000000-0000-4000-8000-000000000004";
+const RUN = "61000000-0000-4000-8000-000000000005";
+const INVOCATION = "61000000-0000-4000-8000-000000000006";
+const NEWER_RUN = "61000000-0000-4000-8000-000000000007";
+const HYPERSIGHT_RUN = "61000000-0000-4000-8000-000000000008";
+const PARENT_RUN = "61000000-0000-4000-8000-000000000009";
+const INLINE_CHILD_RUN = "61000000-0000-4000-8000-000000000010";
 const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
@@ -61,13 +67,131 @@ describe("Terminal work-stream state", () => {
   it("projects absent state without allocating Daytona and lists only App-authorized repositories", async () => {
     const { catalog, service } = fixture();
     await expect(service.get(S)).resolves.toMatchObject({
-      availability: "supported", state: "absent", repository: null, lastActivityAt: null, expiresAt: null,
+      availability: "supported", state: "absent", repository: null, repositoryRequest: null,
+      lastActivityAt: null, expiresAt: null,
     });
     await expect(service.repositories(S, new AbortController().signal)).resolves.toEqual({
       state: "available",
       connections: [{ connectionId: C, displayName: "GitHub", repositories: [{ id: 42, fullName: "owner/repo", defaultBranch: "main", private: true }] }],
     });
     expect(catalog.listRepositories).toHaveBeenCalledWith(C, W, expect.any(AbortSignal));
+  });
+
+  it("projects a repository request only from the latest run's durable repository failure", async () => {
+    const { database, service } = fixture();
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'manual', '{}', 'completed', ?)`,
+    ).run(PARENT_RUN, W, S, "2026-08-13T11:59:00.000Z");
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json,
+        parent_harness_run_id, status, created_at)
+       VALUES (?, ?, ?, 'elicitation_answer', '{}', ?, 'needs_input', ?)`,
+    ).run(RUN, W, S, PARENT_RUN, "2026-08-13T12:00:00.000Z");
+    database.prepare(
+      `INSERT INTO tool_invocations
+       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+        input_hash, input_json, status, error_json, started_at, completed_at)
+       VALUES (?, ?, ?, ?, 'call-1', 'terminal_write_file', 'hash', '{}', 'ambiguous', ?, ?, ?)`,
+    ).run(
+      INVOCATION,
+      W,
+      S,
+      RUN,
+      JSON.stringify({ code: "ambiguous_external_write", message: "Operation timed out" }),
+      "2026-08-13T12:00:01.000Z",
+      "2026-08-13T12:01:01.000Z",
+    );
+
+    await expect(service.get(S)).resolves.toMatchObject({ repositoryRequest: null });
+
+    database.prepare(
+      "UPDATE tool_invocations SET status = 'failed', error_json = ? WHERE id = ?",
+    ).run(JSON.stringify({
+      code: "tool_failed",
+      message: "Choose a repository",
+      data: { code: "repository_not_configured" },
+    }), INVOCATION);
+
+    await expect(service.get(S)).resolves.toMatchObject({
+      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
+    });
+
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json,
+        parent_harness_run_id, parent_tool_call_id, status, created_at)
+       VALUES (?, ?, ?, 'inline_child', '{}', ?, 'inline-call', 'completed', ?)`,
+    ).run(INLINE_CHILD_RUN, W, S, RUN, "2026-08-13T12:01:45.000Z");
+    await expect(service.get(S)).resolves.toMatchObject({
+      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
+    });
+
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'hypersight_block', '{}', 'completed', ?)`,
+    ).run(HYPERSIGHT_RUN, W, S, "2026-08-13T12:01:30.000Z");
+    await expect(service.get(S)).resolves.toMatchObject({
+      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
+    });
+
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'manual', '{}', 'completed', ?)`,
+    ).run(NEWER_RUN, W, S, "2026-08-13T12:02:00.000Z");
+    await expect(service.get(S)).resolves.toMatchObject({ repositoryRequest: null });
+  });
+
+  it("fences repository answers to the current durable request and makes selection retryable", async () => {
+    const { database, catalog, service } = fixture();
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'manual', '{}', 'needs_input', ?)`,
+    ).run(RUN, W, S, "2026-08-13T12:00:00.000Z");
+    database.prepare(
+      `INSERT INTO tool_invocations
+       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+        input_hash, input_json, status, error_json, started_at, completed_at)
+       VALUES (?, ?, ?, ?, 'call-repository', 'terminal_publish_branch_and_pr',
+               'hash', '{}', 'failed', ?, ?, ?)`,
+    ).run(
+      INVOCATION,
+      W,
+      S,
+      RUN,
+      JSON.stringify({ code: "tool_failed", message: "Choose", data: { code: "repository_not_configured" } }),
+      "2026-08-13T12:00:01.000Z",
+      "2026-08-13T12:00:02.000Z",
+    );
+    const input = {
+      connectionId: C,
+      repositoryFullName: "owner/repo",
+      repositoryRequestId: INVOCATION,
+    };
+
+    await expect(service.selectRepository(S, input, new AbortController().signal)).resolves.toMatchObject({
+      repository: { fullName: "owner/repo" },
+      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
+    });
+    await expect(service.selectRepository(S, input, new AbortController().signal)).resolves.toMatchObject({
+      repository: { fullName: "owner/repo" },
+    });
+    expect(catalog.resolveRepository).toHaveBeenCalledTimes(1);
+
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'manual', '{}', 'completed', ?)`,
+    ).run(NEWER_RUN, W, S, "2026-08-13T12:01:00.000Z");
+    await expect(service.selectRepository(S, input, new AbortController().signal)).rejects.toMatchObject({
+      status: 409,
+      code: "terminal_repository_request_stale",
+    });
   });
 
   it("selects an exact authorized repository and returns lifecycle retention state", async () => {
