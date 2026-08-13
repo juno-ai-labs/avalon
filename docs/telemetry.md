@@ -328,15 +328,44 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-13 — Artifact verification uses authoritative upload metadata
+
+**What changed:** Private artifact publication now verifies Cloudflare's
+single-PUT response against the submitted byte count and MD5 ETag, requires a
+new upload version and timestamp, then confirms that same key, size, ETag, and
+timestamp through the exact-prefix object inventory. It accepts only an
+inventory explicitly marked `DYNAMIC` and no longer verifies through the
+object-body GET.
+
+**Why:** The first release after moving off Wrangler proved that Cloudflare had
+stored a new native-symbol object at 19:09:29 with a new ETag, while the REST
+object GET still returned a 4,548-second-old `CF-Cache-Status: HIT` carrying the
+previous ETag. `Cache-Control: no-cache` did not bypass that response, so a
+correct upload failed the release checksum gate even though the authoritative
+inventory showed the new object.
+
+**Considered and rejected:** Removing integrity verification, accepting any
+successful PUT, or adding a query nonce to the object GET. Those would
+respectively lose the exact-byte check, fail to prove persistence, or change
+the R2 object key and return 404. The upload result plus dynamic inventory keeps
+both byte integrity and storage confirmation without trusting a cached body.
+
+**Consequences:** Release artifacts remain bounded before upload and requests
+remain timeout-limited. The publisher relies on R2's default MD5 checksum for a
+non-multipart object and the upload endpoint's returned version; any ETag,
+size, key, timestamp, non-dynamic cache status, or inventory mismatch fails
+closed. Inventory time may trail the upload response by at most one second to
+allow for provider timestamp-serialization precision.
+
 ### 2026-08-13 — Release artifacts use the regional object API directly
 
-**What changed:** The macOS release publisher now uploads and reads back private
-source maps and native symbols through Cloudflare's object REST API. It hashes
-the exact bounded bytes supplied to the upload, streams and bounds the returned
-hash verification, times out stalled requests, and sends the explicit `eu`
-jurisdiction header only for the EU telemetry bucket. API deployment also
-derives a hosted-R2 inventory from both Wrangler files, logs every binding, and
-proves each bucket exists before remote mutations.
+**What changed:** The initial REST migration uploaded and read back private
+source maps and native symbols through Cloudflare's object API. It bounded the
+uploaded and returned bytes, timed out stalled requests, and sent the explicit
+`eu` jurisdiction header only for the EU telemetry bucket. API deployment also
+derived a hosted-R2 inventory from both Wrangler files, logged every binding,
+and proved each bucket existed before remote mutations. The cached-read failure
+and replacement verification strategy are recorded in the newer entry above.
 
 **Why:** Wrangler's object read returned a deleted, earlier native-symbol object
 on a release retry even though Cloudflare's authoritative object listing no
@@ -352,11 +381,11 @@ archive, or rotating both buckets. Those would respectively remove the
 end-to-end integrity proof, risk publishing symbols for a different binary, or
 replace regional infrastructure to work around a client-path inconsistency.
 
-**Consequences:** The release token must retain `Workers R2 Storage Write`; the
-publisher holds one preflight-bounded artifact in memory at a time and hashes
-the verification response incrementally. Regional isolation is explicit in the
-request rather than inferred from CLI state, and a retry remains fail-closed on
-any upload, readback, timeout, size, or checksum error.
+**Consequences:** The release token must retain `Workers R2 Storage Write` and
+the publisher holds one preflight-bounded artifact in memory at a time.
+Regional isolation is explicit in the request rather than inferred from CLI
+state, and retries remain fail-closed on upload, timeout, size, or integrity
+errors.
 
 ### 2026-08-13 — Telemetry dependencies can be staged safely
 
