@@ -21,10 +21,21 @@ const MAX_INLINE_PDF_BYTES = 10 * 1_024 * 1_024;
 
 type DetectedImageFormat = "gif" | "heif" | "jpeg" | "png" | "tiff" | "webp";
 
-interface NormalizedImage {
+export interface NormalizedModelImage {
   bytes: Uint8Array;
   mimeType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
   metadata?: GifModelMetadata;
+}
+
+type NormalizedImage = NormalizedModelImage;
+
+export interface LoadedModelImage {
+  bytes: Uint8Array;
+  mimeType: NormalizedModelImage["mimeType"];
+  sha256: string;
+  extractorVersion: "image-v1";
+  width: number | null;
+  height: number | null;
 }
 
 export interface AttachmentModelContentOptions {
@@ -39,6 +50,7 @@ export interface ModelAttachmentSource {
   contentRef: string | null;
   modelContentRef?: string | null;
   modelMimeType?: string | null;
+  modelContentSha256?: string | null;
   modelMetadataJson?: string | null;
 }
 
@@ -128,6 +140,43 @@ export async function buildAttachmentModelParts(
     }
   }
   return parts;
+}
+
+/**
+ * Load the durable model image for an already-authorized resource, creating it
+ * from the original when necessary. A smaller requested edge is a current-turn
+ * derivative only; the reusable regional source remains the image-v1 object.
+ */
+export async function loadModelImageForTool(
+  payloads: R2Bucket,
+  attachment: ModelAttachmentSource,
+  options: AttachmentModelContentOptions & { maxDimension: number },
+): Promise<LoadedModelImage | null> {
+  const durable = await loadPersistedModelImage(payloads, attachment)
+    ?? await loadAndCreateModelImage(payloads, attachment, options);
+  if (!durable) return null;
+  const durableSha256 = await sha256Hex(durable.bytes);
+  if (attachment.modelContentSha256 && attachment.modelContentSha256 !== durableSha256) return null;
+  const delivered = options.maxDimension < MODEL_IMAGE_MAX_EDGE
+    ? options.images
+      ? await transformWithImages(durable.bytes, options.images, options.maxDimension)
+      : null
+    : durable;
+  if (!delivered) return null;
+  const dimensions = modelImageDimensions(delivered.bytes, delivered.mimeType, delivered.metadata);
+  if (dimensions && Math.max(dimensions.width, dimensions.height) > options.maxDimension) return null;
+  return {
+    bytes: delivered.bytes,
+    mimeType: delivered.mimeType,
+    sha256: durableSha256,
+    extractorVersion: "image-v1",
+    width: dimensions?.width ?? null,
+    height: dimensions?.height ?? null,
+  };
+}
+
+export function modelImageDataUri(bytes: Uint8Array, mimeType: string): string {
+  return dataUri(bytes, mimeType);
 }
 
 function extractText(bytes: Uint8Array, mime: string, fileName: string): string | null {
@@ -282,11 +331,15 @@ async function normalizeImage(
   return bytes.byteLength <= MAX_MODEL_IMAGE_BYTES ? { bytes, mimeType } : null;
 }
 
-async function transformWithImages(bytes: Uint8Array, images: ImagesBinding): Promise<NormalizedImage | null> {
+async function transformWithImages(
+  bytes: Uint8Array,
+  images: ImagesBinding,
+  maxEdge = MODEL_IMAGE_MAX_EDGE,
+): Promise<NormalizedImage | null> {
   try {
     const transformed = await images
       .input(new Blob([exactArrayBuffer(bytes)]).stream())
-      .transform({ width: MODEL_IMAGE_MAX_EDGE, height: MODEL_IMAGE_MAX_EDGE, fit: "scale-down" })
+      .transform({ width: maxEdge, height: maxEdge, fit: "scale-down" })
       .output({ format: "image/jpeg", quality: 85, background: "#ffffff", anim: false });
     const output = new Uint8Array(await new Response(transformed.image()).arrayBuffer());
     return output.byteLength > 0 && output.byteLength <= MAX_MODEL_IMAGE_BYTES
@@ -296,6 +349,23 @@ async function transformWithImages(bytes: Uint8Array, images: ImagesBinding): Pr
     // Some source formats are not accepted by every Images plan.
     return null;
   }
+}
+
+function modelImageDimensions(
+  bytes: Uint8Array,
+  mimeType: NormalizedImage["mimeType"],
+  metadata?: GifModelMetadata,
+): { width: number; height: number } | null {
+  if (metadata) return { width: metadata.width, height: metadata.height };
+  if (mimeType === "image/png" && bytes.length >= 24 && hasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47])) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+  }
+  if (mimeType === "image/gif" && bytes.length >= 10) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { width: view.getUint16(6, true), height: view.getUint16(8, true) };
+  }
+  return null;
 }
 
 function decodeTiffToPng(bytes: Uint8Array): NormalizedImage | null {

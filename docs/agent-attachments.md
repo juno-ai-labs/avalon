@@ -21,6 +21,7 @@ document changes in the same commits as those boundaries move.
 | `apps/api/src/lib/attachment-cursor.ts` | Signs, verifies, scopes, expires, and bounds opaque attachment continuations. |
 | `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
 | `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives and bounded range indexes, then atomically selects their regional objects. |
+| `apps/api/src/services/attachment-summary-service.ts` | Runs the isolated, range-grounded hierarchical reader and reports honest complete or sampled coverage. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Applies the sidebar/list/read/search principal boundary and fingerprints the visible inventory. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
@@ -90,6 +91,15 @@ both sides, with independently usable previous and next cursors.
 `workstream_search_resource` ranks the bounded term index deterministically,
 returns no more than five passages or 20,000 passage characters, and gives every
 passage a read cursor against the same derivative version.
+
+`workstream_view_resource` accepts up to eight unique image IDs, keeps valid
+members in request order, and returns a JSON inclusion summary followed by
+ephemeral image parts. The JSON is the only durable receipt. A replay
+reauthorizes the resource and rebuilds those parts from the selected regional
+derivative. `workstream_summarize_resource` sends bounded chunks to an isolated
+reader, verifies every returned range, and caps all model-authored strings. A
+derivative beyond the reader budget is sampled across its length and explicitly
+returns `partial` coverage.
 
 ### Regional lifecycle
 
@@ -224,15 +234,21 @@ generic tool execution/receipt loop is owned by
   selection, and ready-version reuse.
 - `apps/api/test/workstream-attachment-tools.test.ts` covers more-than-fifty
   pagination, natural-language filtering, exact two-sided read arithmetic,
-  tampering/version invalidation, bounded search, and workspace/private-note
-  equivalence. `apps/api/test/workstream-read-state.test.ts` proves the sidebar
-  uses the same boundary.
+  tampering/version invalidation, bounded search, ordered image batches,
+  normalization failure, wrong-kind recovery, focused summaries, receipt
+  rehydration, and workspace/private-note equivalence.
+- `apps/api/test/attachment-summary-service.test.ts` covers complete
+  hierarchical and sampled-partial summaries, prompt trust placement, citation
+  validation, output budgets, and provider failure. The harness suite proves
+  ephemeral image parts reach only the next model request and never its durable
+  completion event. `apps/api/test/workstream-read-state.test.ts` proves the
+  sidebar uses the same visibility boundary.
 - `packages/db/test/migrations.test.ts`,
   `apps/api/test/resource-upload.test.ts`,
   `apps/api/test/attachment-derivative-state.test.ts`, and
   `apps/api/test/resource-object-cleanup.test.ts` cover lifecycle schema,
-  exact-byte hashing, legacy interpretation, deletion enqueue, retry, and
-  convergence.
+  exact-byte hashing, legacy interpretation, derivative-change and deletion
+  receipt invalidation, cleanup retry, and convergence.
 
 Run focused suites from their package directories through `pnpm --filter`, then
 run the repository-wide lint, typecheck, and test gates before committing. Cursor
@@ -245,6 +261,10 @@ derivative status, extractor version, readable-character count, extraction time,
 bounded error code, and current index ref. `resource_model_objects` catalogs
 active or superseded model objects, while `resource_object_deletion_outbox`
 survives resource deletion long enough to remove R2 objects.
+`attachment_tool_receipts` maps completed read, search, view, and summary
+receipts to the exact derivative hashes they used. A replacement or deletion
+invalidates the complete invocation and queues its JSON replay object; the map
+stores no excerpts, prompts, image parts, or data URIs.
 `message_attachments` and `workstream_resources` remain relationship and
 visibility authorities. [`data-model.md`](data-model.md) and migrations are
 authoritative.
@@ -292,6 +312,32 @@ terms rather than duplicating attachment text. Later phases must preserve those
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Images and large-document understanding become recoverable
+
+**What changed:** Work-stream agents can reload up to eight ordered image
+derivatives and request a focused, isolated summary of a readable derivative.
+Wrong content tools return exact read/view calls after authorization. Live image
+parts are stripped from completion events and receipts, then rehydrated from
+regional state on safe receipt replay.
+
+**Why:** An image visible only on its trigger turn disappears after retry or
+compaction, while copying it into durable JSON creates the opposite context and
+storage failure. Streaming every page of a large document into the main run has
+the same context cost in text form.
+
+**Considered and rejected:** Binary JSON results, automatic execution of a
+suggested correction, and unqualified whole-document summaries over sampled
+input. The chosen contracts keep the model in control of correction while
+making coverage and persistence boundaries explicit.
+
+**Consequences:** The model-facing result may contain ephemeral parts that are
+absent from its receipt by design. Every new view kind therefore needs a
+reauthorizing rehydrator, and every summary provider must return ranges the host
+can verify before exposing them.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Sidebar-parity discovery and bounded text hydration ship
 

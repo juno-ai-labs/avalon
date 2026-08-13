@@ -104,7 +104,11 @@ import {
   buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
-import { createWorkstreamAttachmentTools } from "./workstream-attachment-tools";
+import {
+  createWorkstreamAttachmentTools,
+  rehydrateWorkstreamViewReceipt,
+} from "./workstream-attachment-tools";
+import { registerAttachmentToolReceipt } from "./attachment-tool-receipts";
 import {
   ACCEPTED_DELAY_UNITS_HINT,
   ACCEPTED_TIMESTAMP_HINT,
@@ -2021,7 +2025,7 @@ export async function runWorkstreamHarness(
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
       const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, harnessTools);
       const row = await env.DB.prepare(
-        `SELECT id, tool_name, input_hash, status, output_ref, output_summary, execution_plan_json
+        `SELECT id, tool_name, input_hash, input_json, status, output_ref, output_summary, execution_plan_json
          FROM tool_invocations WHERE harness_run_id = ? AND tool_call_id = ?`,
       )
         .bind(input.harnessRunId, toolCallId)
@@ -2029,6 +2033,7 @@ export async function runWorkstreamHarness(
           id: string;
           tool_name: string;
           input_hash: string;
+          input_json: string;
           status: string;
           output_ref: string | null;
           output_summary: string | null;
@@ -2045,9 +2050,14 @@ export async function runWorkstreamHarness(
         const replayedOutput = row.output_ref
           ? await loadToolReplayOutput(env, row.output_ref)
           : null;
+        const contentParts = expectedPolicy.definition.name === "view_resource" && replayedOutput
+          ? await rehydrateWorkstreamViewReceipt(env, input, parseJson(row.input_json, {}), replayedOutput)
+              .catch(() => [])
+          : [];
         return {
           output: replayedOutput ?? { summary: row.output_summary },
           summary: row.output_summary ?? "Completed",
+          ...(contentParts.length > 0 ? { contentParts } : {}),
         };
       }
       // Classify replay safety from the canonical policy persisted in the
@@ -2198,6 +2208,11 @@ export async function runWorkstreamHarness(
           if (transientSlackSearch) suppressInferencePayloadLogging = true;
           const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
+          await registerAttachmentToolReceipt(env.DB, {
+            invocationId: plannedInvocation.id,
+            canonicalToolName: receiptPolicy.definition.name,
+            output: event.result.output,
+          });
           await persistSuccessfulToolResult(env, input, liveness.lease, {
             invocationId: plannedInvocation.id,
             toolCallId: event.toolCallId,
@@ -3016,11 +3031,12 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               throw new ConnectorError("unauthorized", "Sub-agents may only replay read-only receipts");
             }
             const row = await options.env.DB.prepare(
-              `SELECT input_hash, status, output_ref, output_summary, execution_plan_json
+              `SELECT input_hash, input_json, status, output_ref, output_summary, execution_plan_json
                  FROM tool_invocations
                 WHERE harness_run_id = ? AND tool_call_id = ?`,
             ).bind(childInput.harnessRunId, toolCallId).first<{
               input_hash: string;
+              input_json: string;
               status: string;
               output_ref: string | null;
               output_summary: string | null;
@@ -3035,9 +3051,18 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             const replay = row.output_ref
               ? await loadToolReplayOutput(options.env, row.output_ref)
               : null;
+            const contentParts = expectedPolicy.definition.name === "view_resource" && replay
+              ? await rehydrateWorkstreamViewReceipt(
+                  options.env,
+                  childInput,
+                  parseJson(row.input_json, {}),
+                  replay,
+                ).catch(() => [])
+              : [];
             return {
               output: replay ?? { summary: row.output_summary },
               summary: row.output_summary ?? "Completed",
+              ...(contentParts.length > 0 ? { contentParts } : {}),
             };
           },
           onInferenceRequest: (request) => suppressChildInferencePayloadLogging
@@ -3162,6 +3187,11 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   event.toolCallId,
                 );
                 if (!invocation) throw new Error("tool_execution_plan_missing");
+                await registerAttachmentToolReceipt(options.env.DB, {
+                  invocationId: invocation.id,
+                  canonicalToolName: receiptPolicy.definition.name,
+                  output: event.result.output,
+                });
                 await persistSuccessfulToolResult(options.env, childInput, childLiveness.lease, {
                   invocationId: invocation.id,
                   toolCallId: event.toolCallId,

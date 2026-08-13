@@ -111,6 +111,49 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("invalidates attachment receipts when their derivative changes or resource is deleted", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('receipt-owner', 'receipt-subject', 'receipt@example.com', 'Receipt Owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('receipt-workspace', 'Receipt Workspace', 'receipt-workspace', 'global', 'receipt-owner', '2026-08-12', '2026-08-12');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('receipt-workstream', 'receipt-workspace', 'Receipts', 'Test receipt lifecycle', 'ad_hoc', 'receipt-owner', 'idle', '2026-08-12', '2026-08-12', '2026-08-12');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('receipt-run', 'receipt-workspace', 'receipt-workstream', 'manual', '{"type":"user","userId":"receipt-owner"}', 'completed', '2026-08-12');
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, model_content_sha256, created_at, updated_at)
+      VALUES ('receipt-resource', 'receipt-workspace', 'file', 'avalon_upload', 'brief.md', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-08-12', '2026-08-12');
+      INSERT INTO tool_invocations
+        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, output_ref, output_summary, status)
+      VALUES ('receipt-invocation-one', 'receipt-workspace', 'receipt-workstream', 'receipt-run', 'call-one', 'read_resource', 'hash-one', '{}', 'receipt/object-one', 'Read', 'completed');
+      INSERT INTO attachment_tool_receipts (resource_id, tool_invocation_id, derivative_sha256, created_at)
+      VALUES ('receipt-resource', 'receipt-invocation-one', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2026-08-12');
+      UPDATE resources SET model_content_sha256 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE id = 'receipt-resource';
+    `);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations WHERE id = 'receipt-invocation-one'").get())
+      .toEqual({ count: 0 });
+    expect(database.prepare("SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = 'receipt/object-one'").get())
+      .toEqual({ object_ref: "receipt/object-one", object_kind: "receipt" });
+
+    database.exec(`
+      INSERT INTO tool_invocations
+        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, output_ref, output_summary, status)
+      VALUES ('receipt-invocation-two', 'receipt-workspace', 'receipt-workstream', 'receipt-run', 'call-two', 'view_resource', 'hash-two', '{}', 'receipt/object-two', 'Viewed', 'completed');
+      INSERT INTO attachment_tool_receipts (resource_id, tool_invocation_id, derivative_sha256, created_at)
+      VALUES ('receipt-resource', 'receipt-invocation-two', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '2026-08-12');
+      DELETE FROM resources WHERE id = 'receipt-resource';
+    `);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM tool_invocations WHERE id = 'receipt-invocation-two'").get())
+      .toEqual({ count: 0 });
+    expect(database.prepare("SELECT object_ref, object_kind FROM resource_object_deletion_outbox WHERE object_ref = 'receipt/object-two'").get())
+      .toEqual({ object_ref: "receipt/object-two", object_kind: "receipt" });
+    database.close();
+  });
+
   it("persists normalized activity targets independently from provider visibility metadata", () => {
     const database = migrateFreshDatabase();
     const columns = database.prepare("PRAGMA table_info(activities)").all() as Array<{ name: string }>;
