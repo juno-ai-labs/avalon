@@ -1,5 +1,6 @@
 import type { SlackOriginContext } from "@avalon/contracts";
 import type { PromptMessage } from "./types";
+import { ATTACHMENT_INSPECTION_POLICY } from "./attachment-policy";
 
 export interface WorkstreamAutomationPromptContext {
   name: string;
@@ -68,6 +69,8 @@ const SYSTEM_PROMPT = `You are Avalon, the inherent intelligent environment in t
 - Batch independent reads when useful. Perform the requested write instead of merely describing one. Verify a material write when a read-back path exists.
 - Stay focused on this work stream's objective. Do not promise deferred work unless an available tool actually schedules or persists it; state the limitation instead.
 - When work truly belongs later — an external result to wait on, or a time a person named — schedule it with workstream_schedule_wakeup and say when it will happen. Do not schedule a wake-up for work you can finish now.
+
+${ATTACHMENT_INSPECTION_POLICY}
 
 # Communication and completion
 - For interactive work that needs multiple tool rounds, begin with one short plan before the first tool calls and add only meaningful phase-change updates.

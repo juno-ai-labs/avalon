@@ -24,6 +24,11 @@ Read this alongside [`connectors.md`](connectors.md) for what a resource is, and
 activity reaches a work stream — a card someone accepts, which is a decision
 rather than a fact about how the work stream began.
 
+Origin resources are always references at the model boundary. The message
+attachment manifest cutover does not copy connector origin content into a
+trigger: the agent discovers the origin through `workstream_list_resources` and
+hydrates a currently authorized derivative only when the task needs it.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -350,6 +355,28 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-12 — Origin content stays behind scoped hydration
+
+**What changed:** The manifest-only message cutover explicitly keeps connector
+origin resources reference-first; no origin bytes are added to a triggering
+message as a compatibility shortcut.
+
+**Why:** Origins and message uploads share resource hydration, but only message
+uploads have a same-turn manifest. Treating an origin relationship as implicit
+prompt content would restore the context-growth and partial-coverage problem the
+attachment cutover removes.
+
+**Considered and rejected:** Eagerly hydrating the origin when a work stream is
+created. Many tasks never need its full contents, and large provider objects
+would consume the opening context before the agent chooses relevant evidence.
+
+**Consequences:** Origin discovery remains through the pageable sidebar-aligned
+list, and every content read retains current principal authorization and exact
+coverage metadata.
+
+Pull request: pending. Design:
+`docs/PRDs/2026-08-12_context-safe-agent-attachments/prd.md`.
 
 ### 2026-08-12 — Origin discovery uses the shared pageable resource boundary
 
