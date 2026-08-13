@@ -175,9 +175,9 @@ async function uploadAndVerify(
     await inventory.body?.cancel();
     throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`);
   }
-  if (inventory.headers.get('cf-cache-status') === 'HIT') {
+  if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {
     await inventory.body?.cancel();
-    throw new Error(`Could not verify r2://${target}: Cloudflare returned a cached inventory`);
+    throw new Error(`Could not verify r2://${target}: Cloudflare returned a non-dynamic inventory`);
   }
   const inventoryBody = await inventory.json().catch(() => null);
   if (inventoryBody?.success !== true || !Array.isArray(inventoryBody.result)) {
