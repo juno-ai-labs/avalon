@@ -64,6 +64,7 @@ import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunities } from "./work-opportunity-batching";
 import { recordActivityEvent } from "./activity-event-service";
+import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
 import {
   claimDueWorkstreamWakeup,
@@ -90,9 +91,14 @@ type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema> & {
    * than something a request may claim about itself.
    */
   originResource?: OriginResourceDescriptor;
+  /** Validated request-header correlation injected by the API route. */
+  telemetryOperationId?: string;
 };
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
-type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema>;
+type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema> & {
+  /** Validated request-header correlation injected by the API route. */
+  telemetryOperationId?: string;
+};
 type AnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
 interface AcknowledgeReadInput {
   readThroughSequenceNumber: number;
@@ -189,6 +195,8 @@ export async function launchWorkstreamHarness(
     supersedeActiveRun?: boolean;
     scheduledWakeupId?: string;
     digestDeliveryId?: string;
+    telemetryOperationId?: string;
+    telemetrySubjectUserId?: string;
   },
 ): Promise<string> {
   const id = newId();
@@ -246,6 +254,10 @@ export async function launchWorkstreamHarness(
       : {}),
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
     ...(input.digestDeliveryId ? { digestDeliveryId: input.digestDeliveryId } : {}),
+    ...(input.telemetryOperationId && input.telemetrySubjectUserId ? {
+      telemetryOperationId: input.telemetryOperationId,
+      telemetrySubjectUserId: input.telemetrySubjectUserId,
+    } : {}),
     ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
     ...(input.slackSearchAuthorization
       ? { slackSearchAuthorization: input.slackSearchAuthorization }
@@ -285,6 +297,13 @@ export async function launchWorkstreamHarness(
         "UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?",
       ).bind(nowIso(), input.workstreamId),
     ]);
+    await emitCorrelatedRunOutcome(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      harnessRunId: id,
+      telemetryOperationId: input.telemetryOperationId,
+      telemetrySubjectUserId: input.telemetrySubjectUserId,
+    }).catch(() => undefined);
     // The work stream and its run exist whatever the caller does with the 503,
     // so anyone already watching is told the run failed rather than left on a
     // `running` row that nothing will move.
@@ -753,6 +772,7 @@ export class WorkstreamService {
       undefined,
       slackOrigin,
       slackSearchAuthorization,
+      input.telemetryOperationId,
     );
     // Only when the caller did not supply one: a title that arrived with the
     // request is a decision already made, not a placeholder to improve on.
@@ -1454,6 +1474,7 @@ export class WorkstreamService {
           undefined,
           slackOrigin,
           slackSearchAuthorization,
+          input.telemetryOperationId,
         )
       : null;
     return { message: messageWithMentions, agentInvoked: shouldInvoke, harnessRunId };
@@ -1964,6 +1985,7 @@ export class WorkstreamService {
     parentHarnessRunId?: string,
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
+    telemetryOperationId?: string,
   ): Promise<string> {
     return launchWorkstreamHarness(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -1975,6 +1997,10 @@ export class WorkstreamService {
       ...(slackOrigin ? { slackOrigin } : {}),
       ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
       ...(parentHarnessRunId ? { parentHarnessRunId } : {}),
+      ...(telemetryOperationId ? {
+        telemetryOperationId,
+        telemetrySubjectUserId: this.auth.userId,
+      } : {}),
     });
   }
 

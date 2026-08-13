@@ -129,6 +129,8 @@ jobs:
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_TEAM_ID: 7ZLT6A8W25
       AVALON_RELEASE_R2_BUCKET: ${{ vars.AVALON_RELEASE_R2_BUCKET }}
+      AVALON_GLOBAL_TELEMETRY_R2_BUCKET: ${{ vars.AVALON_GLOBAL_TELEMETRY_R2_BUCKET }}
+      AVALON_EU_TELEMETRY_R2_BUCKET: ${{ vars.AVALON_EU_TELEMETRY_R2_BUCKET }}
       AVALON_RELEASE_BASE_URL: https://downloads.with-avalon.com
       AVALON_RELEASE_PREFIX: stable/darwin/arm64
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -270,6 +272,15 @@ jobs:
       - name: Run release invariants
         run: pnpm --filter @avalon/desktop test:release
 
+      # This is a separate minimal packaged Electron app. It proves the exact
+      # Electron version can collect a renderer minidump without a submission
+      # URL, then relinquish the database so a later launch can rotate it before
+      # starting a fresh handler. Keep it before signing credentials are loaded:
+      # the fixture is intentionally unsigned and must never inherit release
+      # authority merely to test Crashpad.
+      - name: Run the packaged Crashpad lifecycle fixture
+        run: pnpm --filter @avalon/desktop test:crashpad
+
       - name: Import the Developer ID identity into a shared signing keychain
         shell: bash
         env:
@@ -337,6 +348,12 @@ jobs:
 
       - name: Build, sign, notarize, staple, and verify
         run: pnpm --filter @avalon/desktop package:release
+
+      - name: Install the pinned native symbol extractor
+        run: cargo install dump_syms --version 2.3.7 --locked
+
+      - name: Publish private regional telemetry artifacts
+        run: pnpm --filter @avalon/desktop telemetry:publish-artifacts
 
       - name: Preserve verified release artifacts
         uses: actions/upload-artifact@v4

@@ -96,23 +96,42 @@
       "binding": "GLOBAL_SLACK_ROUTER",
       "service": "avalon-api-global",
       "entrypoint": "SlackRoutingBridge"
+    },
+    {
+      "binding": "GLOBAL_TELEMETRY_CONTROL",
+      "service": "avalon-api-global",
+      "entrypoint": "TelemetryControlBridge"
     }
   ],
   "r2_buckets": [
-    { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" }
+    { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" },
+    { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-eu-telemetry", "jurisdiction": "eu" }
   ],
   "analytics_engine_datasets": [
     { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" }
   ],
   "images": { "binding": "IMAGES" },
+  "containers": [
+    {
+      "name": "avalon-eu-crash-symbolicator",
+      "class_name": "CrashSymbolicatorContainer",
+      "image": "./crash-symbolicator/Dockerfile",
+      "max_instances": 5,
+      "instance_type": "basic",
+      "constraints": { "jurisdiction": "eu", "regions": ["EEUR", "WEUR"] },
+      "ssh": { "enabled": false }
+    }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "WORKSTREAM_ROOMS", "class_name": "WorkstreamRoom" },
-      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" }
+      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" },
+      { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] }
+    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
+    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] }
   ],
   "queues": {
     "producers": [

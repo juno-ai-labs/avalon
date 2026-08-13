@@ -37,6 +37,8 @@ jobs:
             command: >-
               pnpm --filter @avalon/api exec vitest run --shard=2/2 &&
               pnpm --filter @avalon/api test:workers
+          - name: crash-symbolicator-container
+            command: pnpm --filter @avalon/api test:crash-symbolicator-container
           - name: remaining-tests
             command: >-
               pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test &&

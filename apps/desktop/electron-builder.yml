@@ -10,6 +10,7 @@ directories:
   buildResources: resources
 files:
   - out/**/*
+  - "!out/**/*.map"
   - package.json
 protocols:
   - name: Avalon desktop authentication

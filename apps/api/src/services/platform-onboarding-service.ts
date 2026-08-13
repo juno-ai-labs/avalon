@@ -16,6 +16,11 @@ import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { AuthService } from "./auth-service";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
+import {
+  PreferenceProjectionSchema,
+  applyRegionalPreferenceProjection,
+  loadOrCreateCanonicalPreferenceProjection,
+} from "../telemetry/preference";
 
 export const platformIdentitySchema = z.object({
   platformUserId: z.string().uuid(),
@@ -37,6 +42,7 @@ const regionalActionBaseSchema = z.object({
   identity: platformIdentitySchema,
   operationId: z.string().uuid(),
   workspaceId: z.string().uuid(),
+  preference: PreferenceProjectionSchema,
 });
 
 export const regionalActivateSchema = regionalActionBaseSchema;
@@ -266,6 +272,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   async activate(rawInput: RegionalActivateInput): Promise<Session> {
     const input = regionalActivateSchema.parse(rawInput);
     const user = await this.ensureRegionalUser(input.identity);
+    await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
     await this.requireMembership(user.id, input.workspaceId);
     // Activation is a read/verify plus fresh session issue. It intentionally
     // does not claim the action journal because the binding's operation may
@@ -276,6 +283,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   async create(rawInput: RegionalCreateInput): Promise<Session> {
     const input = regionalCreateSchema.parse(rawInput);
     const user = await this.ensureRegionalUser(input.identity);
+    await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
     const replay = await this.loadOperation(input.operationId);
     if (replay) {
       this.assertOperation(replay, input, "create", null);
@@ -323,6 +331,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   async accept(rawInput: RegionalAcceptInput): Promise<Session> {
     const input = regionalAcceptSchema.parse(rawInput);
     const user = await this.ensureRegionalUser(input.identity);
+    await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
     const replay = await this.loadOperation(input.operationId);
     if (replay) {
       this.assertOperation(replay, input, "accept", input.invitationId);
@@ -628,8 +637,8 @@ export class PlatformOnboardingService {
     const workspace = discovery.flatMap((item) => item.workspaces)
       .find((item) => item.region === region && item.id === workspaceId);
     if (!workspace) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
-    return this.completeRegionalAction(identity, region, workspaceId, (operationId) =>
-      this.gateways[region].activate({ identity, operationId, workspaceId }));
+    return this.completeRegionalAction(identity, region, workspaceId, (operationId, preference) =>
+      this.gateways[region].activate({ identity, operationId, workspaceId, preference }));
   }
 
   async createWorkspace(name: string, region: Region): Promise<Session> {
@@ -639,8 +648,8 @@ export class PlatformOnboardingService {
       throw new ApiError(409, "workspace_membership_conflict", "This Avalon account already belongs to another organization");
     }
     const workspaceId = this.createId();
-    return this.completeRegionalAction(identity, region, workspaceId, (operationId) =>
-      this.gateways[region].create({ identity, operationId, workspaceId, name }));
+    return this.completeRegionalAction(identity, region, workspaceId, (operationId, preference) =>
+      this.gateways[region].create({ identity, operationId, workspaceId, name, preference }));
   }
 
   async acceptInvitation(invitationId: string, region: Region): Promise<Session> {
@@ -654,12 +663,13 @@ export class PlatformOnboardingService {
     if (!invitation) {
       throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
     }
-    return this.completeRegionalAction(identity, region, invitation.workspaceId, (operationId) =>
+    return this.completeRegionalAction(identity, region, invitation.workspaceId, (operationId, preference) =>
       this.gateways[region].accept({
         identity,
         operationId,
         workspaceId: invitation.workspaceId,
         invitationId,
+        preference,
       }));
   }
 
@@ -769,8 +779,15 @@ export class PlatformOnboardingService {
     identity: PlatformIdentity,
     region: Region,
     workspaceId: string,
-    action: (operationId: string) => Promise<Session>,
+    action: (
+      operationId: string,
+      preference: z.infer<typeof PreferenceProjectionSchema>,
+    ) => Promise<Session>,
   ): Promise<Session> {
+    const preference = await loadOrCreateCanonicalPreferenceProjection(
+      this.env,
+      identity.platformUserId,
+    );
     const operationId = this.createId();
     const reservation = await this.bindings.reserve(
       identity.platformUserId,
@@ -790,7 +807,7 @@ export class PlatformOnboardingService {
 
     let session: Session;
     try {
-      session = await action(operationId);
+      session = await action(operationId, preference);
     } catch (error) {
       // Only a validated RPC business-error envelope becomes ApiError here.
       // It proves the regional action was rejected, so the reservation is safe
@@ -799,7 +816,14 @@ export class PlatformOnboardingService {
         await this.bindings.release(identity.platformUserId, operationId);
         throw error;
       }
-      session = await this.recoverAmbiguousAction(identity, region, workspaceId, operationId, error);
+      session = await this.recoverAmbiguousAction(
+        identity,
+        region,
+        workspaceId,
+        operationId,
+        preference,
+        error,
+      );
     }
     this.assertRegionalSession(session, region, workspaceId);
     await this.bindings.activate(identity.platformUserId, operationId);
@@ -816,8 +840,17 @@ export class PlatformOnboardingService {
     region: Region,
     workspaceId: string,
   ): Promise<Session> {
+    const preference = await loadOrCreateCanonicalPreferenceProjection(
+      this.env,
+      identity.platformUserId,
+    );
     const operationId = this.createId();
-    const session = await this.gateways[region].activate({ identity, operationId, workspaceId });
+    const session = await this.gateways[region].activate({
+      identity,
+      operationId,
+      workspaceId,
+      preference,
+    });
     this.assertRegionalSession(session, region, workspaceId);
     await new AuthService(this.env).logout({ sessionId: this.auth.sessionId });
     return session;
@@ -828,13 +861,19 @@ export class PlatformOnboardingService {
     region: Region,
     workspaceId: string,
     operationId: string,
+    preference: z.infer<typeof PreferenceProjectionSchema>,
     originalError: unknown,
   ): Promise<Session> {
     try {
       const discovery = await this.gateways[region].discover(identity);
       const membership = discovery.workspaces.find((item) => item.id === workspaceId && item.region === region);
       if (membership) {
-        return this.gateways[region].activate({ identity, operationId, workspaceId });
+        return this.gateways[region].activate({
+          identity,
+          operationId,
+          workspaceId,
+          preference,
+        });
       }
       // A thrown RPC/runtime error can race a regional commit. Never release
       // the reservation merely because an immediate read did not yet observe

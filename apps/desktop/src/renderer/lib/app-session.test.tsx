@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
+import type { AvalonDesktopBridge, DesktopSession, RuntimeConfig } from '../../common/desktop';
 import {
   AppSessionProvider,
   useAppSession,
@@ -35,7 +35,8 @@ const bridge = vi.hoisted(() => ({
   openExternal: vi.fn(),
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
-}) satisfies AppSessionDesktopBridge);
+  reportTelemetryProductIntent: vi.fn(),
+}) satisfies AppSessionDesktopBridge & Pick<AvalonDesktopBridge, 'reportTelemetryProductIntent'>);
 
 vi.mock('./platform', () => ({ desktopBridge: () => bridge }));
 
@@ -125,6 +126,7 @@ function resetDesktopBridge(): void {
   bridge.getSession.mockResolvedValue(null);
   bridge.hasStoredCredential.mockResolvedValue(false);
   bridge.consumePendingDeepLinks.mockResolvedValue([]);
+  bridge.reportTelemetryProductIntent.mockResolvedValue(undefined);
   bridge.onDeepLink.mockImplementation((listener: (url: string) => void) => {
     deepLinkListener = listener;
     return () => { deepLinkListener = null; };

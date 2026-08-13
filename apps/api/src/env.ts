@@ -17,12 +17,17 @@ import type {
   GlobalSlackRouterRpcBinding,
   SlackRegionalBridgeRpcBinding,
 } from "./services/slack-routing-service";
+import type { RegionalTelemetryBridgeRpcBinding } from "./telemetry/regional-bridge";
+import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
+import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
+import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 
 export const HYPERSIGHT_MODEL = "x-ai/grok-4.3";
 
 export interface Env {
   DB: D1Database;
   PAYLOADS: R2Bucket;
+  TELEMETRY_PAYLOADS: R2Bucket;
   IMAGES: ImagesBinding;
   AI: Ai;
   MEMORY_INDEX: VectorizeIndex;
@@ -34,6 +39,7 @@ export interface Env {
   FLAGS?: Flagship;
   WORKSTREAM_ROOMS: DurableObjectNamespace;
   WORKSPACE_SCHEDULERS: DurableObjectNamespace;
+  CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   ACTIVITY_QUEUE: Queue;
   WORKSTREAM_LOOP_WORKFLOW: Workflow;
   CONNECTOR_POLL_WORKFLOW: Workflow;
@@ -43,11 +49,13 @@ export interface Env {
   EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
   EU_NOTION_BRIDGE?: NotionRegionalBridgeRpcBinding;
   EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;
+  EU_TELEMETRY_BRIDGE?: RegionalTelemetryBridgeRpcBinding;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
   GLOBAL_NOTION_ROUTER?: GlobalNotionRouterRpcBinding;
   GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
+  GLOBAL_TELEMETRY_CONTROL?: GlobalTelemetryControlRpcBinding;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   APP_VERSION?: string;
@@ -63,6 +71,7 @@ export interface Env {
   LINEAR_INGRESS_BASE_URL?: string;
   NOTION_INGRESS_BASE_URL?: string;
   SLACK_INGRESS_BASE_URL?: string;
+  POSTHOG_HOST?: string;
 
   OPENROUTER_API_KEY: string;
   OPENROUTER_PRIMARY_MODEL: string;
@@ -106,6 +115,13 @@ export interface Env {
   SLACK_CLIENT_SECRET?: string;
   SLACK_SIGNING_SECRET?: string;
   TWITTER_API_IO_API_KEY?: string;
+  POSTHOG_PROJECT_TOKEN?: string;
+  /** Global-only signer for onboarding telemetry capabilities. EU validates
+   * them through the narrow Global telemetry-control RPC. */
+  TELEMETRY_CAPABILITY_SIGNING_KEY?: string;
+  /** Per-region operator credentials for the restricted telemetry operations
+   * surface. Stored as a JSON map from opaque bearer token to fixed principal. */
+  TELEMETRY_OPERATORS_JSON?: string;
   SESSION_SIGNING_KEY: string;
   OAUTH_STATE_ENCRYPTION_KEY: string;
   CONNECTOR_CREDENTIALS_KEY: string;
@@ -152,6 +168,7 @@ export interface AuthContext extends IdentityAuthContext {
 export interface AppVariables {
   requestId: string;
   auth: IdentityAuthContext | undefined;
+  telemetryOperator: TelemetryOperatorPrincipal | undefined;
 }
 
 export type HonoAppEnv = {
@@ -189,12 +206,14 @@ const numericString = z.string().regex(/^\d+$/u, "must be a base-10 integer");
 const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
+  TELEMETRY_PAYLOADS: binding<R2Bucket>(),
   IMAGES: binding<ImagesBinding>(),
   AI: binding<Ai>(),
   MEMORY_INDEX: binding<VectorizeIndex>(),
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
   WORKSTREAM_ROOMS: binding<DurableObjectNamespace>(),
   WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace>(),
+  CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ACTIVITY_QUEUE: binding<Queue>(),
   WORKSTREAM_LOOP_WORKFLOW: binding<Workflow>(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
@@ -251,6 +270,7 @@ const EnvContractSchema = z.object({
   LINEAR_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   NOTION_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   SLACK_INGRESS_BASE_URL: HttpUrlSchema.optional(),
+  POSTHOG_HOST: HttpUrlSchema.optional(),
 });
 
 /**
@@ -288,6 +308,9 @@ const productionOnlySecrets = [
   { key: "GOOGLE_OAUTH_CLIENT_ID", regions: ["global"] },
   { key: "GOOGLE_OAUTH_CLIENT_SECRET", regions: ["global"] },
   { key: "OPENROUTER_API_KEY", regions: ["global", "eu"] },
+  { key: "POSTHOG_PROJECT_TOKEN", regions: ["global"] },
+  { key: "TELEMETRY_CAPABILITY_SIGNING_KEY", regions: ["global"] },
+  { key: "TELEMETRY_OPERATORS_JSON", regions: ["global", "eu"] },
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**

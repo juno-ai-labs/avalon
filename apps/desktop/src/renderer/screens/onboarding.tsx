@@ -4,6 +4,7 @@ import type { AvalonDesktopBridge } from '../../common/desktop';
 import { AvalonMark, Button, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
+import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
 import type { PendingWorkspaceInvitation, Region } from '../lib/types';
 
 export type SignInDesktopBridge = Pick<
@@ -151,10 +152,22 @@ export function RegionOnboarding(): React.JSX.Element {
 
   const continueSetup = async (): Promise<void> => {
     if (name.trim().length < 2) return;
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({
+      kind: 'onboarding_region_selected',
+      selectedRegion: selected,
+      entrypoint: 'first_run',
+    });
+    reportTelemetryProductIntent({
+      kind: 'workspace_create_requested',
+      selectedRegion: selected,
+      entrypoint: 'first_run',
+      operationId,
+    });
     setWorking(true);
     setError(null);
     try {
-      await finishWorkspaceSetup(name, selected);
+      await finishWorkspaceSetup(name, selected, operationId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Avalon could not create this organization.');
     } finally {
@@ -222,10 +235,17 @@ export function InvitationOnboarding({
   const [error, setError] = useState<string | null>(null);
 
   const accept = async (invitation: PendingWorkspaceInvitation): Promise<void> => {
+    const operationId = uuidV7();
+    reportTelemetryProductIntent({
+      kind: 'workspace_activation_requested',
+      selectedRegion: invitation.region,
+      entrypoint: 'invitation',
+      operationId,
+    });
     setWorkingId(invitation.id);
     setError(null);
     try {
-      await acceptInvitation(invitation.region, invitation.id);
+      await acceptInvitation(invitation.region, invitation.id, operationId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The invitation could not be accepted.');
       await onChanged();

@@ -21,6 +21,12 @@ export type UpdateStatus =
   | { readonly kind: 'downloading'; readonly percent?: number }
   | { readonly kind: 'downloaded'; readonly version: string };
 
+export interface UpdateOutcome {
+  phase: 'check' | 'download' | 'apply' | 'rollback';
+  result: 'available' | 'current' | 'success' | 'failed' | 'cancelled';
+  durationMs: number;
+}
+
 interface UpdateLogger {
   info(message: string, ...args: unknown[]): void;
   warn(message: string, ...args: unknown[]): void;
@@ -71,6 +77,9 @@ export interface AutoUpdateDependencies {
   /** Roll back preparation side effects when installation does not start. */
   readonly onInstallFailed?: () => Promise<void> | void;
   readonly onStatusChange?: (status: UpdateStatus) => void;
+  /** Content-free observation seam; exceptions are isolated from update control flow. */
+  readonly onOutcome?: (outcome: UpdateOutcome) => void;
+  readonly now?: () => number;
   readonly log?: UpdateLogger;
   /** Test seam; production uses electron-updater's singleton. */
   readonly updater?: AutoUpdaterPort;
@@ -137,6 +146,18 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   let downloadRetryScheduled = false;
   let manualRecoveryPrompted = false;
   let installInFlight = false;
+  let checkStartedAt: number | null = null;
+  let downloadStartedAt: number | null = null;
+  let applyStartedAt: number | null = null;
+  const now = deps.now ?? Date.now;
+  const outcome = (phase: UpdateOutcome['phase'], result: UpdateOutcome['result'], startedAt: number | null): void => {
+    if (startedAt === null) return;
+    try {
+      deps.onOutcome?.({ phase, result, durationMs: Math.max(0, Math.round(now() - startedAt)) });
+    } catch {
+      // Telemetry must never alter update state, retry, or user feedback.
+    }
+  };
   const setStatus = (next: UpdateStatus): void => {
     if (sameStatus(status, next)) return;
     status = next;
@@ -174,14 +195,20 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   const installUpdate = (): void => {
     if (installInFlight) return;
     installInFlight = true;
+    applyStartedAt = now();
     void Promise.resolve()
       .then(() => deps.beforeInstall?.())
       .then(() => updater.quitAndInstall(false, true))
       .catch(async (error: unknown) => {
+        outcome('apply', 'failed', applyStartedAt);
+        applyStartedAt = null;
         log.error('[avalon] could not prepare the downloaded update for installation', error);
+        const rollbackStartedAt = now();
         try {
           await deps.onInstallFailed?.();
+          outcome('rollback', 'success', rollbackStartedAt);
         } catch (rollbackError) {
+          outcome('rollback', 'failed', rollbackStartedAt);
           log.error('[avalon] could not roll back failed update preparation', rollbackError);
         } finally {
           installInFlight = false;
@@ -205,6 +232,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     if (!downloadInFlight || downloadRetryScheduled) return;
     if (downloadRetryCount >= MAX_DOWNLOAD_RETRIES) {
       downloadInFlight = false;
+      outcome('download', 'failed', downloadStartedAt);
+      downloadStartedAt = null;
       setStatus({ kind: 'idle' });
       promptManualRecovery();
       return;
@@ -237,20 +266,26 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
 
   updater.on('checking-for-update', () => {
     checkInFlight = true;
+    checkStartedAt ??= now();
     setStatus({ kind: 'checking' });
     log.info('[avalon] checking for updates');
   });
   updater.on('update-available', (info) => {
+    outcome('check', 'available', checkStartedAt);
+    checkStartedAt = null;
     checkInFlight = false;
     manualCheck = false;
     downloadInFlight = true;
     downloadRetryCount = 0;
     downloadRetryScheduled = false;
     manualRecoveryPrompted = false;
+    downloadStartedAt = now();
     setStatus({ kind: 'downloading' });
     log.info(`[avalon] update ${info.version} is available`);
   });
   updater.on('update-not-available', () => {
+    outcome('check', 'current', checkStartedAt);
+    checkStartedAt = null;
     checkInFlight = false;
     setStatus({ kind: 'idle' });
     log.info('[avalon] is up to date');
@@ -268,6 +303,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     setStatus({ kind: 'downloading', percent: progress.percent });
   });
   updater.on('update-downloaded', (info) => {
+    outcome('download', 'success', downloadStartedAt);
+    downloadStartedAt = null;
     checkInFlight = false;
     downloadInFlight = false;
     downloadRetryCount = 0;
@@ -292,6 +329,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       return;
     }
     log.error('[avalon] auto-update error', error);
+    outcome('check', 'failed', checkStartedAt);
+    checkStartedAt = null;
     setStatus({ kind: 'idle' });
     showCheckFailure();
   });
@@ -300,9 +339,12 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     if (checkInFlight || status.kind === 'downloading' || status.kind === 'downloaded') return;
     manualCheck = manual;
     checkInFlight = true;
+    checkStartedAt = now();
     setStatus({ kind: 'checking' });
     void updater.checkForUpdates().catch((error: unknown) => {
       checkInFlight = false;
+      outcome('check', 'failed', checkStartedAt);
+      checkStartedAt = null;
       setStatus({ kind: 'idle' });
       log.error('[avalon] update check failed', error);
       showCheckFailure();
