@@ -98,11 +98,13 @@ Configure the Azure values in every region where dictation is enabled. `AZURE_OP
 
 Terminal is fail-closed per region. Global is enabled for the configured Daytona
 `us` target and `daytona-small` snapshot; EU remains checked in with
-`TERMINAL_REGION_CAPABILITY=unsupported`. Leave any unverified region there
-until its Daytona data residency, private-sandbox isolation, managed snapshot
-bootstrap, native domain policy, secret-host restriction, stop/archive/restore,
-and deletion behavior have passed for that exact target and provider version.
-There is no cross-region fallback.
+`TERMINAL_REGION_CAPABILITY=unsupported` even though its provider values are
+preconfigured. Presence of provider values never implies availability. Leave
+any unverified region unsupported until its Daytona data residency,
+private-sandbox isolation, managed snapshot bootstrap, native domain policy,
+secret-host restriction, stop/archive/restore, and deletion behavior have
+passed for that exact target and provider version. There is no cross-region
+fallback.
 
 An activated region requires:
 
