@@ -316,8 +316,8 @@ describe("connector tools selected for harness runs", () => {
     }, selected);
     const workstreamPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
       pluginId: "avalon:workstream",
-      canonicalToolName: "read",
-      capability: "workstream.read",
+      canonicalToolName: "list_resources",
+      capability: "workstream.resources.list",
       mode: "read",
       idempotency: "safe",
     }, selected);
@@ -344,7 +344,7 @@ describe("connector tools selected for harness runs", () => {
       pluginId: "avalon:workstream",
       connectionId: null,
       toolSurfaceHash: expect.any(String),
-      definition: { name: "read", mode: "read", idempotency: "safe" },
+      definition: { name: "list_resources", mode: "read", idempotency: "safe" },
     });
     expect(webPolicy).toMatchObject({
       pluginId: "avalon:web",
@@ -463,8 +463,9 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.plugins.find((plugin) =>
       plugin.canonicalId === "avalon:workstream"
     )?.tools.map(({ definition }) => definition.name)).toEqual(expect.arrayContaining([
-      "read",
+      "list_resources",
       "read_resource",
+      "search_resource",
       "run_subagent",
     ]));
     expect(selected.tools.filter(({ definition }) =>
@@ -517,11 +518,14 @@ describe("connector tools selected for harness runs", () => {
       "sheets.read_values",
     ]);
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
-      "current_time",
-      "read",
+      "list_resources",
+      "read_resource",
       "search",
       "fetch",
-      "read_resource",
+      "search_resource",
+      "view_resource",
+      "summarize_resource",
+      "current_time",
     ]);
     expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
       .toBe(false);
@@ -589,9 +593,12 @@ describe("connector tools selected for harness runs", () => {
     });
 
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
-      "current_time",
-      "read",
+      "list_resources",
       "read_resource",
+      "search_resource",
+      "view_resource",
+      "summarize_resource",
+      "current_time",
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("fetch");

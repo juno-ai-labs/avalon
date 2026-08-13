@@ -1197,6 +1197,22 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
     started: "Loading the selected plugin…",
     completed: "Plugin guidance and tools are ready",
   },
+  automation_read_resource: {
+    started: "Reading an attached automation resource…",
+    completed: "Attached resource is ready",
+  },
+  automation_search_resource: {
+    started: "Searching an attached automation resource…",
+    completed: "Attachment search completed",
+  },
+  automation_view_resource: {
+    started: "Viewing an attached automation image…",
+    completed: "Attached image is ready",
+  },
+  automation_summarize_resource: {
+    started: "Summarizing an attached automation resource…",
+    completed: "Attachment summary is ready",
+  },
 };
 
 /**
@@ -1320,6 +1336,8 @@ export async function compileAutomation(input: {
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
   /** Avalon-owned plugins available through the same progressive-disclosure catalog. */
   additionalPlugins?: HarnessPlugin[];
+  /** Request-scoped tools owned by the preloaded automation architect. */
+  architectTools?: HarnessTool[];
   maxResearchIterations?: number;
   maxWebResults?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
@@ -1573,8 +1591,8 @@ export async function compileAutomation(input: {
       canonicalId: AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID,
       modelId: "avalon_automation_architect",
       shortWireName: "automation",
-      description: "Research authorized plugins and submit automation drafts.",
-      tools: creatorTools,
+      description: "Research authorized plugins, inspect frozen draft attachments, and submit automation drafts.",
+      tools: [...creatorTools, ...(input.architectTools ?? [])],
       preload: true,
       explicit: true,
     },
@@ -2059,6 +2077,12 @@ export interface HarnessToolContext {
 export interface HarnessToolResult {
   output: unknown;
   summary: string;
+  /**
+   * Current-turn model content that must never enter a durable receipt or
+   * transcript. The harness relays these parts after the JSON tool result and
+   * the host recreates them from authorized regional state on receipt replay.
+   */
+  contentParts?: ModelMessageContentPart[];
   providerOperationId?: string;
   halt?: "needs_input" | "completed";
   /** Bind control signal used only by Avalon's discovery plugin loader. */
@@ -2346,8 +2370,12 @@ export interface HarnessCompactionCheckpoint {
 export interface HarnessCompactionConfig {
   /** Optional catalog snapshot, primarily for deterministic hosts/tests. */
   contextWindowTokensByModel?: Readonly<Record<string, number | null | undefined>>;
+  /** Capture host authorization state before the summary sees the transcript. */
+  prepare?: () => void | Promise<void>;
   /** Persist the compacted continuation context after Bind swaps it in. */
   persist?: (checkpoint: HarnessCompactionCheckpoint) => void | Promise<void>;
+  /** Render fresh, authorized deterministic context for the live checkpoint only. */
+  renderAppendix?: () => string | Promise<string>;
 }
 
 /**
@@ -2592,5 +2620,6 @@ export const __testing = {
   executeAutomationCreatorDiscoveryTool,
   addressingJsonSchema,
   automationJsonSchema: automationDraftSubmissionJsonSchema,
-  normalizeAutomationDraft
+  normalizeAutomationDraft,
+  automationResearchToolPresentation: AUTOMATION_RESEARCH_TOOL_PRESENTATION,
 };

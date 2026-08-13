@@ -26,6 +26,7 @@ import {
   workstreamViewerBindings,
 } from "../mappers/workstream";
 import { launchHyperSightRefresh } from "../services/hypersight-service";
+import { loadVisibleWorkstreamResources } from "../services/workstream-resource-visibility";
 import { memberSafeHarnessError } from "../services/workstream-service";
 
 const SocketAttachmentSchema = z.object({
@@ -368,26 +369,13 @@ export async function loadVisibleWorkstreamRoomResources(
   workstreamId: string,
   viewerUserId: string,
 ): Promise<Record<string, unknown>[]> {
-  const result = await env.DB.prepare(
-    `SELECT r.*, CASE WHEN rw.id IS NOT NULL THEN 1 ELSE 0 END AS attached_watch_enabled
-       FROM workstream_resources wr
-       JOIN resources r ON r.id = wr.resource_id
-       LEFT JOIN resource_watches rw
-        ON rw.workstream_id = wr.workstream_id
-        AND rw.resource_id = wr.resource_id
-        AND rw.enabled = 1
-      WHERE wr.workstream_id = ?1
-        AND (r.provider != 'avalon_note' OR EXISTS (
-          SELECT 1 FROM notes visible_note
-          WHERE visible_note.resource_id = r.id
-            AND visible_note.workspace_id = ?2
-            AND visible_note.workspace_id = r.workspace_id
-            AND visible_note.archived_at IS NULL
-            AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?3)
-        ))
-      ORDER BY wr.attached_at`,
-  ).bind(workstreamId, workspaceId, viewerUserId).all<Record<string, unknown>>();
-  return result.results ?? [];
+  const visible = await loadVisibleWorkstreamResources(env.DB, {
+    workspaceId,
+    workstreamId,
+    principal: { type: "user", userId: viewerUserId },
+    order: "ascending",
+  });
+  return visible.rows;
 }
 
 export async function consumeSocketTicket(

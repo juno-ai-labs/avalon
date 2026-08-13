@@ -71,15 +71,20 @@ function sqliteD1(database: DatabaseSync): D1Database {
  * any more, so asserting on puts would only be asserting on this class.
  */
 class MemoryBucket {
-  private readonly objects = new Map<string, string>();
+  private readonly objects = new Map<string, string | ArrayBuffer>();
 
-  async put(key: string, value: string): Promise<void> {
+  async put(key: string, value: string | ArrayBuffer): Promise<void> {
     this.objects.set(key, value);
   }
 
-  async get(key: string): Promise<{ text: () => Promise<string> } | null> {
+  async get(key: string): Promise<{ text: () => Promise<string>; arrayBuffer: () => Promise<ArrayBuffer> } | null> {
     const value = this.objects.get(key);
-    return value === undefined ? null : { text: async () => value };
+    if (value === undefined) return null;
+    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : new Uint8Array(value);
+    return {
+      text: async () => new TextDecoder().decode(bytes),
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+    };
   }
 
   async delete(key: string): Promise<void> {
@@ -176,26 +181,26 @@ describe("Avalon core write-tool idempotency", () => {
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
     const tools = __integrationTesting.createAvalonTools(env, workspaceInput);
-    const read = tools.find((tool) => tool.definition.name === "read")!;
+    const listResources = tools.find((tool) => tool.definition.name === "list_resources")!;
     const readResource = tools.find((tool) => tool.definition.name === "read_resource")!;
 
-    await expect(read.execute({}, context())).resolves.toMatchObject({
-      output: { attachedResources: [] },
+    await expect(listResources.execute({}, context())).resolves.toMatchObject({
+      output: { items: [], totalVisibleResources: 0 },
     });
     await expect(readResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toThrow("Attached resource content is not hydrated");
+      .rejects.toMatchObject({ code: "resource_not_found" });
 
     await noteService.update(note.id, { scope: "workspace" });
-    const visible = await read.execute({}, context());
+    const visible = await listResources.execute({}, context());
     expect(visible.output).toMatchObject({
-      attachedResources: [expect.objectContaining({ id: note.resourceId, title: "Sensitive note" })],
+      items: [expect.objectContaining({ resourceId: note.resourceId, title: "Sensitive note" })],
     });
     await expect(readResource.execute({ resourceId: note.resourceId }, context()))
       .resolves.toMatchObject({ output: expect.objectContaining({ title: "Sensitive note" }) });
 
     await noteService.update(note.id, { scope: "personal" });
     await expect(readResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toThrow("Attached resource content is not hydrated");
+      .rejects.toMatchObject({ code: "resource_not_found" });
 
     const ownerReadResource = __integrationTesting.createAvalonTools(env, workflowInput())
       .find((tool) => tool.definition.name === "read_resource")!;
@@ -205,7 +210,7 @@ describe("Avalon core write-tool idempotency", () => {
     database.prepare("UPDATE notes SET archived_at = ? WHERE id = ?")
       .run("2026-08-07T19:00:00.000Z", note.id);
     await expect(ownerReadResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toThrow("Attached resource content is not hydrated");
+      .rejects.toMatchObject({ code: "resource_not_found" });
   });
 
   it("returns easy-English current time in the user's configured timezone", async () => {

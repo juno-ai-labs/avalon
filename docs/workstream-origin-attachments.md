@@ -4,7 +4,7 @@ A work stream that exists because of a place in a connected tool — the Slack
 thread `@Avalon` was mentioned in, the Linear issue an automation fired on, the
 GitHub pull request a suggestion was built out of — carries that place as a
 resource attached to it, from the moment it is created. The **Resources** section
-of the inspector rail shows it, and the agent's `workstream_read` tool lists it
+of the inspector rail shows it, and the agent's `workstream_list_resources` tool lists it
 with the relationship `origin`.
 
 The promise is narrow and worth stating exactly: **where a work stream came from
@@ -23,6 +23,11 @@ Read this alongside [`connectors.md`](connectors.md) for what a resource is, and
 [`contextual-routing.md`](contextual-routing.md) for the *other* way connector
 activity reaches a work stream — a card someone accepts, which is a decision
 rather than a fact about how the work stream began.
+
+Origin resources are always references at the model boundary. The message
+attachment manifest cutover does not copy connector origin content into a
+trigger: the agent discovers the origin through `workstream_list_resources` and
+hydrates a currently authorized derivative only when the task needs it.
 
 ## Where the code lives
 
@@ -186,7 +191,7 @@ it.
   the connector's own normalization, so rejecting it would drop attachments over
   a drifted manifest rather than over a real mistake.
 - **`relationship_type = 'origin'` means the work stream *began* there.** The
-  agent is handed the relationship by `workstream_read`, which is how it tells
+  agent is handed the relationship by `workstream_list_resources`, which is how it tells
   the channel it was summoned from apart from a document somebody attached
   afterwards. Nothing *automatic* may treat the two alike — a cleanup sweep or a
   re-attach path that cannot tell them apart would drop the only record of where
@@ -207,8 +212,8 @@ it.
 
   Concretely, an origin's `content_ref` is always null. An activity's
   `payload_ref` addresses the raw verified webhook body in R2, and
-  `workstream_read_resource` serves whatever `content_ref` points at to the model
-  with no connector authorization of its own — so copying it would turn "record
+  `workstream_read_resource` serves a selected model derivative only after the
+  shared work-stream visibility boundary authorizes it — so copying it would turn "record
   where this came from" into "publish the provider payload to the run".
   `attachActivityResource` is the one path that still sets it, because there a
   person accepted a card about that activity and reading it is the point.
@@ -234,8 +239,10 @@ It deliberately does **not** cover:
 - **Inbound email.** A work stream created from an address already attaches its
   email resource in `resend-inbound-email-service.ts`, and a scheduled automation
   run already copies its subscription's resources; neither is rewritten here.
-- **What the model does with the attachment.** The `workstream_read` and
-  `workstream_read_resource` tools are [`agent-harness.md`](agent-harness.md).
+- **What the model does with the attachment.** The pageable
+  `workstream_list_resources` index and bounded read/search tools are
+  [`agent-harness.md`](agent-harness.md) and
+  [`agent-attachments.md`](agent-attachments.md).
 
 ## Failure modes and limits
 
@@ -348,6 +355,52 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-12 — Origin content stays behind scoped hydration
+
+**What changed:** The manifest-only message cutover explicitly keeps connector
+origin resources reference-first; no origin bytes are added to a triggering
+message as a compatibility shortcut.
+
+**Why:** Origins and message uploads share resource hydration, but only message
+uploads have a same-turn manifest. Treating an origin relationship as implicit
+prompt content would restore the context-growth and partial-coverage problem the
+attachment cutover removes.
+
+**Considered and rejected:** Eagerly hydrating the origin when a work stream is
+created. Many tasks never need its full contents, and large provider objects
+would consume the opening context before the agent chooses relevant evidence.
+
+**Consequences:** Origin discovery remains through the pageable sidebar-aligned
+list, and every content read retains current principal authorization and exact
+coverage metadata.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
+### 2026-08-12 — Origin discovery uses the shared pageable resource boundary
+
+**What changed:** The agent now discovers origin relationships through
+`workstream_list_resources`, using the same principal-aware visibility loader as
+the right sidebar. Content hydration reads a bounded, versioned derivative
+rather than handing the model the resource's raw `content_ref`.
+
+**Why:** The retired `workstream_read` index stopped at fifty rows and had its
+own note-visibility SQL, so the rail and the agent could disagree as either
+query evolved. Raw resource refs also offered no structured partial-coverage or
+version guarantee.
+
+**Considered and rejected:** Keeping a separate origin-only listing path. Origin
+is a relationship value inside the complete resource inventory; a second
+catalog would recreate the synchronization problem and make a small model choose
+between overlapping discovery tools.
+
+**Consequences:** Code and documentation that teach the agent where an origin
+appears must name `workstream_list_resources`. Origin creation remains unchanged
+and still precedes run launch; only authorized discovery and hydration moved.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — A work stream records the connector place it started from
 
