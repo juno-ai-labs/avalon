@@ -62,6 +62,7 @@ import {
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
 import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
+import { renderCompactionCheckpointContent } from "./prompts/compaction";
 import {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,
@@ -76,13 +77,6 @@ const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const OPENROUTER_CATALOG_TTL_MS = 60 * 60 * 1_000;
 const OPENROUTER_CATALOG_TIMEOUT_MS = 5_000;
-const COMPACTION_CHECKPOINT_PREAMBLE = [
-  "[Compaction checkpoint — synthetic message, not a request from a person.",
-  "Every earlier message, including the original request and any attachments,",
-  "has been removed from context; the summary below is this conversation's whole",
-  "record. Build on the work it reports rather than redoing it, and continue from",
-  "where it leaves off.]",
-].join(" ");
 /**
  * What the model is asked for when a compaction fires.
  *
@@ -125,6 +119,9 @@ Work that is actually finished, kept apart from work that was only attempted or 
 # Facts
 Identifiers, names, links, paths, values, and tool results a later turn needs and cannot cheaply look up again. Copy each one exactly rather than from memory.
 
+# Relevant attachments
+Only attachments consulted or still needed for unfinished work. Preserve each exact resource ID, derivative version, ranges you consulted, conclusions reached, and unresolved need. Do not reproduce a complete attachment catalog, filenames for unrelated resources, file contents, or image bytes; Avalon appends the current authorized inventory after your summary.
+
 # Open
 What was in progress at this checkpoint, what failed and why it failed, and the next step if one was already settled.
 
@@ -162,9 +159,10 @@ The previous attempt ran past the output limit and was discarded. Write a shorte
  */
 const compactionCheckpointMessage = (
   summary: string,
+  appendix?: string | null,
 ): OpenAI.ChatCompletionUserMessageParam => ({
   role: "user",
-  content: `${COMPACTION_CHECKPOINT_PREAMBLE}\n\n${summary}`,
+  content: renderCompactionCheckpointContent(summary, appendix),
 });
 const circuitBreaker = createCircuitBreaker({
   failureThreshold: 3,
@@ -389,9 +387,20 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       ) {
         throw new HarnessLimitError("run_cost_limit_exceeded", "Run cost ceiling exceeded during compaction");
       }
-      const compactedMessages: OpenAI.ChatCompletionMessageParam[] = [
+      const persistedMessages: OpenAI.ChatCompletionMessageParam[] = [
         systemMessage,
         compactionCheckpointMessage(summary),
+      ];
+      const renderAppendix = input.compaction?.renderAppendix;
+      const appendix = renderAppendix
+        ? await requiredPort(
+            "Compaction resource inventory rendering failed",
+            () => renderAppendix(),
+          )
+        : null;
+      const compactedMessages: OpenAI.ChatCompletionMessageParam[] = [
+        systemMessage,
+        compactionCheckpointMessage(summary, appendix),
       ];
       return {
         messages: compactedMessages,
@@ -409,7 +418,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             // needs the attachment scrubbing an earlier preserved-message
             // checkpoint did — a data: URL or file part can no longer reach a
             // stored checkpoint at all.
-            messages: fromOpenAiMessages(compactedMessages.slice(1)),
+            messages: fromOpenAiMessages(persistedMessages.slice(1)),
             model: routed.result.model,
             contextTokensBeforeCompaction,
             contextWindowTokens,

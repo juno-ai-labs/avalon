@@ -24,6 +24,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/attachment-summary-service.ts` | Runs the isolated, range-grounded hierarchical reader and reports honest complete or sampled coverage. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Applies the sidebar/list/read/search principal boundary and fingerprints the visible inventory. |
+| `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
 | `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
 | `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives. |
@@ -110,6 +111,23 @@ derivative. `workstream_summarize_resource` sends bounded chunks to an isolated
 reader, verifies every returned range, and caps all model-authored strings. A
 derivative beyond the reader budget is sampled across its length and explicitly
 returns `partial` coverage.
+
+### Compaction rediscovery
+
+After the LLM produces its continuation summary, Avalon appends current visible
+resource and message-attachment totals plus non-empty groups for the same eight
+natural-language kinds used by the list tool. The aggregate comes from the
+shared sidebar visibility loader, not the summary. It contains no name, ID, MIME
+type, or content, so its size is constant in the number of resources. Exact
+entries remain discoverable by paging `workstream_list_resources` until
+`nextCursor` is null.
+
+The stored checkpoint contains the raw LLM summary and a principal-neutral base
+message only. Replay rerenders its appendix for the active principal, so resource
+attachment, detachment, deletion, revocation, and private-note visibility are
+reflected without rewriting remembered conclusions. Relevant resource IDs and
+consulted derivative ranges still belong in the summary when unfinished work
+needs them; the aggregate supplements that working set rather than replacing it.
 
 ### Automation-draft hydration
 
@@ -341,6 +359,27 @@ terms rather than duplicating attachment text. Later phases must preserve those
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-12 — Compaction inventory stays synchronized with visible resources
+
+**What changed:** Live and replayed checkpoints now include fixed-order totals
+for visible resources, message attachments, and non-empty natural attachment
+kinds. The appendix is rebuilt from the same current-principal visibility loader
+as the sidebar; only the principal-neutral LLM summary is persisted.
+
+**Why:** Images and documents remain durable resources after their prompt bytes
+leave context, but a selective summary is not a complete or current catalog.
+Regenerating a bounded aggregate restores discovery without copying every
+attachment into the checkpoint or leaking one viewer's private notes to another.
+
+**Considered and rejected:** MIME summaries, a stored filename/ID catalog, and
+LLM-generated totals. Natural kinds are easier for routed models, a full catalog
+grows without bound, and model prose cannot track current authorization.
+
+**Consequences:** Changes to sidebar visibility must continue flowing through
+`loadVisibleWorkstreamResources`; compaction, sidebar, and list must never grow
+independent interpretations. Exact recovery always goes through the filtered,
+paginated resource tool.
 
 ### 2026-08-12 — Projection becomes manifest-only for non-images
 
