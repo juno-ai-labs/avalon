@@ -854,6 +854,11 @@ curl -sS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 ```
 
+Add `-H "cf-r2-jurisdiction: eu"` to every REST object request for
+`avalon-eu-payloads` or `avalon-eu-telemetry`; omit it only for Global buckets.
+Without that header Cloudflare addresses the default jurisdiction and a real EU
+object appears to be missing.
+
 A retrieved payload contains the prompt, the connector data pulled into it, and
 whatever the person wrote. Treat it as production user content: read it from a
 scratch directory, keep it out of logs, tickets, and commits, and delete it when
