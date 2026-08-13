@@ -67,6 +67,34 @@ describe('desktop application settings', () => {
       .launchAtLoginDefaultApplied).toBe(true);
   });
 
+  it('migrates old files to default-on analytics without inventing pending synchronization', () => {
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false })).toEqual(
+      settings({ productAnalyticsEnabled: true, productAnalyticsPreferenceVersion: 0, productAnalyticsPreferencePending: false }),
+    );
+    expect(parseStoredApplicationSettings({
+      version: 1,
+      lockdownMode: false,
+      productAnalyticsEnabled: false,
+      productAnalyticsPreferenceVersion: 7,
+      productAnalyticsPreferencePending: true,
+    })).toEqual(settings({
+      productAnalyticsEnabled: false,
+      productAnalyticsPreferenceVersion: 7,
+      productAnalyticsPreferencePending: true,
+    }));
+    expect(parseStoredApplicationSettings({
+      version: 1,
+      lockdownMode: false,
+      productAnalyticsEnabled: 'no',
+      productAnalyticsPreferenceVersion: -1,
+      productAnalyticsPreferencePending: 'yes',
+    })).toEqual(settings({
+      productAnalyticsEnabled: true,
+      productAnalyticsPreferenceVersion: 0,
+      productAnalyticsPreferencePending: false,
+    }));
+  });
+
   it('persists preferences in an owner-readable application file', async () => {
     const directory = await temporaryUserDataDirectory();
     await expect(readStoredApplicationSettings(directory))
@@ -83,6 +111,9 @@ describe('desktop application settings', () => {
         debugEnabled: true,
         menuBarEnabled: true,
         launchAtLoginDefaultApplied: false,
+        productAnalyticsEnabled: true,
+        productAnalyticsPreferenceVersion: 0,
+        productAnalyticsPreferencePending: false,
       });
     expect((await stat(applicationSettingsFilePath(directory))).mode & 0o777).toBe(0o600);
   });

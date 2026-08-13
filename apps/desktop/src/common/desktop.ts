@@ -69,6 +69,50 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   launchAtLogin: boolean;
   /** Whether this platform has login items at all. */
   launchAtLoginAvailable: boolean;
+  /** The account choice shown in Settings. */
+  productAnalyticsEnabled: boolean;
+  /** False on the browser fallback, which can display but cannot persist the
+   * account preference. Older desktop bridges omit it and remain writable. */
+  productAnalyticsAvailable?: boolean;
+  /** Collection is off while an enable is awaiting server acknowledgement. */
+  productAnalyticsEffective: boolean;
+  /** A durable offline account mutation waiting to synchronize. */
+  productAnalyticsPreferencePending: boolean;
+  /** Stopping the already-running Crashpad handler requires the next launch. */
+  nativeCrashRestartRequired: boolean;
+}
+
+export type DesktopTelemetryScreen =
+  | 'onboarding_welcome'
+  | 'onboarding_region'
+  | 'onboarding_workspace'
+  | 'workspace_home'
+  | 'workstream'
+  | 'application_settings'
+  | 'developer_settings';
+
+export type DesktopTelemetryProductIntent =
+  | { kind: 'onboarding_region_selected'; selectedRegion: AvalonRegion; entrypoint: 'first_run' | 'settings' | 'invitation' }
+  | { kind: 'workspace_create_requested'; selectedRegion: AvalonRegion; entrypoint: 'first_run' | 'settings'; operationId: string }
+  | { kind: 'workspace_activation_requested'; selectedRegion: AvalonRegion; entrypoint: 'invitation' | 'workspace_switcher'; operationId: string }
+  | { kind: 'workstream_create_requested'; entrypoint: 'composer'; operationId: string }
+  | { kind: 'run_requested'; entrypoint: 'composer'; operationId: string }
+  | { kind: 'connector_setup_requested'; connector: 'github' | 'google' | 'linear' | 'notion' | 'slack'; operationId: string };
+
+export interface DesktopTelemetryInspectorEntry {
+  name: string;
+  schemaVersion: number;
+  policyClass: 'essential' | 'product' | 'diagnostic';
+  propertyNames: string[];
+  route: AvalonRegion;
+  validation: 'accepted' | 'suppressed' | 'rejected' | 'delivered' | 'retrying' | 'terminal';
+  queueState: 'none' | 'queued' | 'delivered' | 'retrying' | 'removed';
+}
+
+export interface DesktopJavascriptErrorCandidate {
+  process: 'preload' | 'renderer';
+  errorCode: 'type_error' | 'range_error' | 'unhandled_rejection' | 'react_boundary' | 'unknown';
+  frames: string[];
 }
 
 export interface DesktopWorkspaceSummary {
@@ -136,6 +180,11 @@ export interface AvalonDesktopBridge {
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setProductAnalyticsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  reportTelemetryScreen: (screen: DesktopTelemetryScreen) => Promise<void>;
+  reportTelemetryProductIntent: (intent: DesktopTelemetryProductIntent) => Promise<void>;
+  getTelemetryInspector: () => Promise<DesktopTelemetryInspectorEntry[]>;
+  reportJavascriptError: (candidate: DesktopJavascriptErrorCandidate) => Promise<void>;
   onApplicationSettingsChanged: (listener: (settings: DesktopApplicationSettings) => void) => () => void;
   getApplicationIcon: () => Promise<DesktopApplicationIconState>;
   setApplicationIcon: (iconId: ApplicationIconId) => Promise<DesktopApplicationIconState>;
@@ -152,9 +201,9 @@ export interface AvalonDesktopBridge {
   }) => Promise<DesktopSession>;
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
-  activateWorkspace: (input: { region: AvalonRegion; workspaceId: string }) => Promise<DesktopSession>;
-  createWorkspace: (input: { region: AvalonRegion; name: string }) => Promise<DesktopSession>;
-  acceptInvitation: (input: { region: AvalonRegion; invitationId: string }) => Promise<DesktopSession>;
+  activateWorkspace: (input: { region: AvalonRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
+  createWorkspace: (input: { region: AvalonRegion; name: string; operationId?: string }) => Promise<DesktopSession>;
+  acceptInvitation: (input: { region: AvalonRegion; invitationId: string; operationId?: string }) => Promise<DesktopSession>;
   declineInvitation: (input: { region: AvalonRegion; invitationId: string }) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
   /** Pure read of whether a durable credential is still stored. Unlike

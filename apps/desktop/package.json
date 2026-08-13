@@ -24,7 +24,9 @@
     "release:guard": "node scripts/validate-release-tag.mjs",
     "release:verify": "node scripts/verify-macos-release.mjs",
     "release:publish:r2": "node scripts/publish-r2-release.mjs",
-    "test:release": "node --test scripts/*.test.mjs"
+    "telemetry:publish-artifacts": "node scripts/publish-telemetry-artifacts.mjs",
+    "test:release": "node --test scripts/*.test.mjs",
+    "test:crashpad": "node scripts/telemetry-crashpad-fixture.mjs"
   },
   "dependencies": {
     "@avalon/contracts": "workspace:*",

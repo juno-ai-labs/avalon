@@ -1100,6 +1100,10 @@ describe('Avalon API wire adapter', () => {
       url: 'https://linear.app/oauth/authorize?state=opaque',
       attemptId,
     });
+    const startHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(startHeaders.get('X-Avalon-Operation-Id')).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
     await expect(api.waitForConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
       status: 'succeeded',
       connectionId,

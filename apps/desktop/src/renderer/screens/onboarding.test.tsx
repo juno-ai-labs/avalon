@@ -12,6 +12,10 @@ import {
 const api = vi.hoisted(() => ({
   beginGoogleLogin: vi.fn(),
 }));
+const telemetry = vi.hoisted(() => ({
+  operationId: '00000000-0000-7000-8000-000000000011',
+  reportTelemetryProductIntent: vi.fn(),
+}));
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
@@ -48,6 +52,10 @@ const sessionState = vi.hoisted(() => ({
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => sessionState }));
 vi.mock('../lib/platform', () => ({ desktopBridge: () => bridge }));
+vi.mock('../lib/telemetry', () => ({
+  reportTelemetryProductIntent: telemetry.reportTelemetryProductIntent,
+  uuidV7: () => telemetry.operationId,
+}));
 
 const invitation: PendingWorkspaceInvitation = {
   id: '00000000-0000-7000-8000-000000000009',
@@ -98,14 +106,24 @@ describe('identity-first onboarding screens', () => {
     fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
     fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
 
-    await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith('Acme Research', 'eu'));
+    await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith(
+      'Acme Research', 'eu', telemetry.operationId,
+    ));
   });
 
   it('accepts a pending invitation through its own region without another login prompt', async () => {
     render(<InvitationOnboarding invitations={[invitation]} onChanged={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
-    await waitFor(() => expect(sessionState.acceptInvitation).toHaveBeenCalledWith('eu', invitation.id));
+    await waitFor(() => expect(sessionState.acceptInvitation).toHaveBeenCalledWith(
+      'eu', invitation.id, telemetry.operationId,
+    ));
+    expect(telemetry.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'workspace_activation_requested',
+      selectedRegion: 'eu',
+      entrypoint: 'invitation',
+      operationId: telemetry.operationId,
+    });
   });
 
   it('declines a pending invitation and reloads the remaining choices', async () => {

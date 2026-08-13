@@ -6,6 +6,7 @@ import {
   MANUAL_UPDATE_URL,
   type AutoUpdateDependencies,
   type AutoUpdaterPort,
+  type UpdateOutcome,
   type UpdateStatus,
 } from './updater';
 
@@ -59,6 +60,22 @@ function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
 }
 
 describe('desktop auto-update runtime', () => {
+  it('emits bounded check and download outcomes without provider error text', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-12T20:00:00Z'));
+    const outcomes: UpdateOutcome[] = [];
+    const { updater } = setup({ onOutcome: (outcome) => outcomes.push(outcome), now: () => Date.now() });
+    vi.advanceTimersByTime(1_500);
+    updater.emit('update-available', { version: 'private-version-is-not-telemetry' });
+    vi.advanceTimersByTime(6_000);
+    updater.emit('update-downloaded', { version: 'private-version-is-not-telemetry' });
+    expect(outcomes).toEqual([
+      { phase: 'check', result: 'available', durationMs: 1_500 },
+      { phase: 'download', result: 'success', durationMs: 6_000 },
+    ]);
+    vi.useRealTimers();
+  });
+
   it('checks immediately and every three hours without disabling differential downloads', () => {
     const { controller, updater, statuses, scheduleInterval, unref } = setup();
 

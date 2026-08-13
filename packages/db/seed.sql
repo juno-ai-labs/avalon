@@ -16,6 +16,16 @@ VALUES
   ('00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000001', 'owner', 'active', '2026-07-31T18:00:00.000Z'),
   ('00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003', 'member', 'active', '2026-07-31T18:00:00.000Z');
 
+INSERT OR IGNORE INTO connector_connections
+  (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+   display_name, granted_scopes_json, status, cursor_json, config_json,
+   created_at, updated_at, model_plugin_id)
+VALUES
+  ('00000000-0000-7000-8000-000000000061', '00000000-0000-7000-8000-000000000002',
+   'generic_webhook', 'workspace', NULL, 'seed-incident-webhook', 'Incident updates fixture',
+   '[]', 'healthy', '{}', '{"eventTypes":["incident.updated"]}',
+   '2026-07-31T18:01:00.000Z', '2026-07-31T18:01:00.000Z', 'plugin_webhook');
+
 INSERT OR IGNORE INTO automation_templates
   (id, workspace_id, owner_user_id, name, description, sharing_state, latest_version_number, created_at, updated_at)
 VALUES
