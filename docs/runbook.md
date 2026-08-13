@@ -72,7 +72,11 @@ existing Global `SESSION_SIGNING_KEY`; EU always sends the capability to the
 narrow `GLOBAL_TELEMETRY_CONTROL` RPC for verification and receives only a
 route/epoch control projection. An absent `TELEMETRY_OPERATORS_JSON` disables
 only that region's internal operator surface with a 503 and does not disable
-collection. The desktop release workflow also requires repository variables
+collection. Enabling the dedicated signer is an immediate key cutover: schedule
+it for low traffic or accept that capabilities issued under the session key in
+the preceding hour will fail verification and clients must bootstrap again.
+Rotating whichever key is active has the same one-hour boundary. The desktop
+release workflow also requires repository variables
 `AVALON_GLOBAL_TELEMETRY_R2_BUCKET` and `AVALON_EU_TELEMETRY_R2_BUCKET` so it can
 publish source maps and native symbols to both private regional buckets before
 distribution.
