@@ -139,27 +139,29 @@ includes it. Knowing an object ID is never sufficient authorization.
   model extraction. Uploads hash before the row commits; connector hydration
   writes a hash-versioned object and atomically invalidates an older derivative.
   `model_content_status`, extractor version, readable-character count,
-  extraction timestamp, bounded error code, and optional derivative/index refs
+  extraction timestamp, bounded error code, and optional derivative ref
   make pending, failed, unsupported, and ready states distinct. Existing image
   attachments may also carry a signature-validated model derivative and bounded
   metadata; animated GIF metadata records dimensions, frame count, duration,
   approximate frame rate, loop behavior, and storyboard timestamps.
-  `resource_model_objects` catalogs active or superseded derivative/index
-  objects. Deleting a resource copies the original and every registered model
-  reference into `resource_object_deletion_outbox` before cascade cleanup, while
-  detaching one relationship leaves shared resource objects intact.
+  Each new original or derivative generation is pre-registered in
+  `resource_object_deletion_outbox`. Successful pointer publication cancels the
+  new row and queues the former pointer; resource deletion queues its current
+  original and derivative, while detaching one relationship leaves shared
+  resource objects intact.
   `attachment_tool_receipts` relates a versioned read, search, view, or summary
   receipt to every derivative it used. Replacing that version or deleting the
   resource invalidates the whole invocation and queues its JSON replay object;
   the table never contains attachment content or ephemeral image data. All
-  three tenant-owned attachment tables carry `workspace_id`, and every
+  Both tenant-owned attachment tables carry `workspace_id`, and every
   dependency registration, invalidation, replay, and cleanup mutation supplies
   it even though resource and invocation IDs are globally unique.
   `workstream_resource_inventory_revisions` holds one monotonic revision per
   work stream. D1 triggers advance it when resource membership, message
-  attachment relationships, resource classification state, or private-note
-  visibility can change the authorized inventory; it is a race fence, not an
-  attachment catalog.
+  attachment relationships, resource classification/content identity, or
+  private-note visibility can change the authorized inventory. Derivative claim,
+  processing, and hydration timestamp updates do not advance it; it is a race
+  fence, not an attachment catalog.
   `workstream_resources` owns
   attachment/watch behavior; its `relationship_type` distinguishes an ordinary
   `attachment` from the `origin` a work stream was created from — see
@@ -437,6 +439,30 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-12 — One pointer and one outbox replace the model-object catalog
+
+**What changed:** Text derivatives no longer have a companion index object, and
+`resource_model_objects` is removed. Generation-unique originals and derivatives
+are pre-registered directly in `resource_object_deletion_outbox`; successful
+pointer publication cancels the winning generation and enqueues the displaced
+pointer. Inventory revisions now ignore processing-only resource updates.
+
+**Why:** The index was downloaded beside the complete derivative and never used
+to select candidates, while the catalog retained a row for every superseded
+generation after cleanup had already deleted its object. Both duplicated state
+without providing a distinct recovery path.
+
+**Considered and rejected:** Reaping catalog rows separately and preserving an
+unused index for speculative future search performance. Direct outbox ownership
+has fewer states and the same recoverability.
+
+**Consequences:** Current pointers remain on `resources`; every non-current
+generation is either pending deletion in the outbox or already gone. A future
+search index needs its own measured performance case and lifecycle design.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Attachment state is tenant-scoped and revision fenced
 

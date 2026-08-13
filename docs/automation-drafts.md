@@ -249,6 +249,27 @@ creation, not at draft time.
 
 ## Changelog
 
+### 2026-08-12 — Draft manifests replace redundant resource pagination
+
+**What changed:** The automation architect exposes read, search, view, and
+summarize operations for the frozen attachment IDs, but no list operation. The
+complete set is capped at ten, loaded in one query, and already present in the
+current-turn manifest.
+
+**Why:** Paginating an already-visible ten-item immutable set added cursor state,
+fingerprints, and an unreachable multi-query loop without improving discovery.
+
+**Considered and rejected:** Retaining the list operation for naming symmetry
+with work-stream tools. Symmetry is not worth a model-visible operation that has
+no distinct task.
+
+**Consequences:** Automation content access remains freshly authorized and uses
+the same derivative implementations; only work streams expose pageable resource
+discovery.
+
+Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
+[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
+
 ### 2026-08-12 — Compiler attachments become frozen, revocable resources
 
 **What changed:** The automation architect now receives list, read, search,
