@@ -57,7 +57,7 @@ import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
 import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
-import { reportTelemetryProductIntent, uuidV7 } from './telemetry';
+import { reportJavascriptError, reportTelemetryProductIntent, uuidV7 } from './telemetry';
 import type {
   ActivitySuggestionData,
   AgentModelOverride,
@@ -116,6 +116,12 @@ export class ApiError extends Error {
     this.details = details;
     this.requestId = requestId;
   }
+}
+
+function networkApiError(message: string, cause?: unknown): ApiError {
+  const error = new ApiError(message, 0, 'network_error', cause);
+  reportJavascriptError(error, 'network_error');
+  return error;
 }
 
 /** The service answers 401 for plenty of things that are not a dead bearer —
@@ -673,7 +679,7 @@ export class AvalonApi {
       return await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      throw new ApiError('Avalon could not reach the selected regional service.', 0, 'network_error', error);
+      throw networkApiError('Avalon could not reach the selected regional service.', error);
     }
   }
 
@@ -1511,7 +1517,7 @@ export class AvalonApi {
         onProgress?.(100);
         resolve(mapResource(parsed.data));
       });
-      request.addEventListener('error', () => reject(new ApiError('Avalon could not upload the attachment.', 0, 'network_error')));
+      request.addEventListener('error', () => reject(networkApiError('Avalon could not upload the attachment.')));
       request.addEventListener('abort', () => reject(new DOMException('The upload was cancelled.', 'AbortError')));
       if (signal) {
         if (signal.aborted) {

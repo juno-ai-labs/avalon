@@ -25,6 +25,7 @@ outside this document can break without their own tests failing.
 | `apps/desktop/src/main/debug-settings.ts`, `developer-settings-flag.ts` | Debug enabled, and the flag that suppresses it. |
 | `apps/api/src/middleware/auth.ts` | Session, workspace, role, and principal resolution on every request. |
 | `apps/api/src/middleware/validation.ts` | Request parsing at the HTTP boundary. |
+| `apps/api/src/middleware/request-context.ts` | Exact desktop-origin CORS policy, request IDs, regional assertion, and response security headers. |
 | `apps/api/src/lib/crypto.ts` | AES-GCM credential envelopes and key-version handling. |
 | `apps/api/src/services/terminal/` | The isolated Daytona execution boundary, network compiler, authority-fenced lifecycle, resource bridge, and trusted GitHub publisher. |
 | `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
@@ -194,6 +195,14 @@ accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
 intentional HTTP(S)/Avalon handoff union. Bare Zod URL validation is forbidden
 because it accepts non-web schemes such as `javascript:` and `data:` while hiding
 the product boundary being enforced.
+
+Renderer HTTP requests use the pinned application origin and the regional API's
+explicit CORS origin, method, and header allowlists. Every custom header emitted by
+the desktop must be named there and exercised by a production-shaped `OPTIONS`
+test. Otherwise Chromium rejects the request before authentication or route code
+runs, which appears to the renderer as a transport failure and leaves no API
+request log for the blocked mutation. The required implementation and test steps
+live in [When adding a new HTTP header](when-adding-a-new-http-header.md).
 
 ### Side effects and retries
 
@@ -424,6 +433,9 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   ticket endpoint returned**, enforced by ESLint at each production constructor.
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
   validation accepts `javascript:` and `data:`.
+- **Every desktop HTTP header is covered by the regional CORS allowlist and an
+  exact preflight test.** A header implemented only in the renderer cannot reach
+  the Worker.
 - **A webhook is verified against its exact raw body before anything parses,
   stores, or queues it.**
 - **A tool call is a proposal, never an instruction.** Name, schema, principal,
@@ -475,6 +487,10 @@ does not own the subsystems on either side of them:
 - **A lost custom-protocol notification is recoverable.** The durable connector
   attempt result lets the desktop reconcile success, denial, failure, or expiry
   regardless.
+- **A rejected desktop CORS preflight is a client-side transport failure.** The
+  shared renderer boundary reports its sanitized stack as `network_error`, but
+  the rejected product mutation is not retried implicitly and cannot appear in
+  Worker request logs because the browser never sent it.
 - **An unavailable keystore turns Lockdown mode off and requires sign-in**, rather
   than leaving an unreadable envelope in place.
 - **Composer drafts are workspace content stored unencrypted** under `userData`,
@@ -510,6 +526,7 @@ no unit test standing in for them.
 | `apps/desktop/src/main/*.test.ts` | Session encryption and the envelope versions, Lockdown migration, the settings write queue, the developer-settings flag suppression, launch-at-login, the menu bar's content fetch. |
 | `apps/api/test/connector-credential-envelope.test.ts` | The AES-GCM envelope, its connection-bound additional authenticated data, and key-version rotation reads. |
 | `apps/api/test/auth-session-lifecycle.test.ts` | Session minting, revocation, and single-use consumption. |
+| `apps/api/test/security-and-config.test.ts` | Exact desktop CORS origin/method/header preflights and environment guardrails. |
 | `apps/api/test/rpc-contracts.test.ts` | That a cross-region rejection names field paths and never values. |
 | `apps/desktop/src/main/telemetry-*.test.ts`, `native-crash-*.test.ts` | Sender/schema boundaries, redacted inspection, owner-only bounded spools, route-final generations, opt-out invalidation, and authenticated next-launch upload. |
 | `apps/api/test/telemetry-*.test.ts`, `crash-*.test.ts`, `posthog-adapter.test.ts` | Regional acceptance, capabilities, preference/identity ordering, immutable deadlines, raw-object access, sanitization, and exact destination negative space. |
@@ -535,6 +552,28 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-13 — Desktop mutation headers are proven at the CORS boundary
+
+**What changed:** The regional API now admits `X-Avalon-Operation-Id` in its
+explicit CORS header allowlist, and an app-origin preflight test covers the full
+desktop mutation header set. Caught renderer transport failures use the existing
+sanitized, main-owned exception route rather than a new renderer destination.
+
+**Why:** The production desktop added the operation identifier to work-stream and
+message mutations without adding it to the Worker allowlist. Chromium stopped the
+request at preflight, so authenticated route code and API observability never saw
+the attempted mutation.
+
+**Considered and rejected:** A wildcard CORS header policy, removing operation
+correlation, or adding a direct renderer PostHog client. Those respectively widen
+the accepted browser boundary, lose idempotent intent/outcome correlation, or
+place provider authority in the untrusted renderer.
+
+**Consequences:** New renderer request headers must update both the narrow Worker
+allowlist and its production-shaped preflight test. CORS failures remain ordinary
+failed product actions; telemetry observes them without changing or replaying the
+request, and EU diagnostics do not cross regions.
 
 ### 2026-08-13 — Telemetry operator roles and capability signing are server-owned
 

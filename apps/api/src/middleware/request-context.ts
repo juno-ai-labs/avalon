@@ -45,6 +45,7 @@ export function securityMiddleware(): MiddlewareHandler<HonoAppEnv>[] {
         "content-type",
         "idempotency-key",
         "x-avalon-draft-id",
+        "x-avalon-operation-id",
         "x-avalon-region",
         "x-request-id",
       ],

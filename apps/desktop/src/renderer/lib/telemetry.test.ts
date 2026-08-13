@@ -46,6 +46,23 @@ describe('renderer semantic telemetry helpers', () => {
     expect(javascriptErrorCandidate(error, 'unknown')).toBeNull();
   });
 
+  it('reports a caught network error only once when global handlers see the same error', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportJavascriptError: report });
+    const error = new Error('private transport detail');
+    error.stack = 'Error: private transport detail\n at send (app://avalon/assets/index.js:10:2)';
+
+    reportJavascriptError(error, 'network_error');
+    reportJavascriptError(error, 'unhandled_rejection');
+
+    expect(report).toHaveBeenCalledOnce();
+    expect(report).toHaveBeenCalledWith({
+      process: 'renderer',
+      errorCode: 'network_error',
+      frames: ['index.js:10:2'],
+    });
+  });
+
   it('keeps telemetry observational when preload lookup or invocation throws synchronously', () => {
     desktopBridge.mockImplementation(() => { throw new Error('preload unavailable'); });
     expect(() => reportTelemetryScreen('workspace_home')).not.toThrow();
