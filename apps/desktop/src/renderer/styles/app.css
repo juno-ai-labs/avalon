@@ -2102,7 +2102,8 @@ pre {
 .attachment-progress small { color: #f1f0eb; font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
 .sent-attachment { height: 86px; width: 86px; }
 .human-message .message-attachments { justify-content: flex-end; }
-.attachment-lightbox { background: rgba(10, 11, 8, .98); display: grid; grid-template-rows: 58px minmax(0, 1fr); inset: 0; position: fixed; z-index: 1000; }
+.attachment-lightbox-overlay { background: rgba(10, 11, 8, .98); inset: 0; position: fixed; z-index: 1000; }
+.attachment-lightbox { background: rgba(10, 11, 8, .98); display: grid; grid-template-rows: 58px minmax(0, 1fr); inset: 0; position: fixed; z-index: 1001; }
 .attachment-lightbox-header { align-items: center; border-bottom: 1px solid #33342f; display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 0 16px 0 22px; }
 .attachment-lightbox-header h2 { color: #deddd8; font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }

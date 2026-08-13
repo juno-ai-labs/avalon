@@ -194,7 +194,7 @@ export class ResourceService {
     // against a newly uploaded resource with the same UUID.
     const key = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/${contentSha256}/${crypto.randomUUID()}`;
     await this.env.PAYLOADS.put(key, bytes, {
-      httpMetadata: { contentType: verifiedMimeType, contentDisposition: `attachment; filename="${safeFilename(file.name)}"` },
+      httpMetadata: { contentType: verifiedMimeType, contentDisposition: contentDisposition("attachment", file.name) },
       customMetadata: { originalName: file.name, uploadedBy: this.auth.userId },
     });
     const at = nowIso();
@@ -294,8 +294,9 @@ export class ResourceService {
     const fileName = String(resource.title);
     const mimeType = resource.mime_type == null ? null : String(resource.mime_type);
     const kind = classifyAttachmentKind({ fileName, mimeType });
+    const normalizedMimeType = mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 
-    if (kind === "image" || kind === "markdown" || kind === "text") {
+    if (kind === "image" || kind === "markdown" || kind === "text" || normalizedMimeType.startsWith("text/")) {
       const object = await this.env.PAYLOADS.get(resource.content_ref);
       if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
       return resourceObjectResponse(object, fileName);
@@ -598,7 +599,7 @@ function resourceObjectResponse(object: R2ObjectBody, inlineFileName?: string): 
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
   headers.set("cache-control", "private, max-age=0, no-store");
-  if (inlineFileName) headers.set("content-disposition", `inline; filename="${safeFilename(inlineFileName)}"`);
+  if (inlineFileName) headers.set("content-disposition", contentDisposition("inline", inlineFileName));
   return new Response(object.body, { headers });
 }
 
@@ -650,6 +651,14 @@ function parseJson<T>(value: unknown, fallback: T): T {
 }
 function safeFilename(value: string): string {
   return value.replace(/[\r\n"\\]/gu, "_").slice(0, 180) || "attachment";
+}
+
+function contentDisposition(disposition: "attachment" | "inline", fileName: string): string {
+  const safe = safeFilename(fileName);
+  const asciiFallback = safe.replace(/[^\x20-\x7e]/gu, "_");
+  const encoded = encodeURIComponent(safe)
+    .replace(/[!'()*]/gu, (character) => `%${character.codePointAt(0)!.toString(16).toUpperCase()}`);
+  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
 }
 
 export const __resourceServiceTesting = {

@@ -9,6 +9,7 @@ export interface AttachmentPreview {
   mimeType?: string;
   src?: string;
   loadContent?: (signal?: AbortSignal) => Promise<Blob>;
+  returnFocus?: HTMLElement;
 }
 
 function extension(fileName: string): string {
@@ -48,7 +49,7 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
         aria-label={image ? `Preview ${attachment.file.name}` : attachment.file.name}
         className="attachment-tile-content"
         disabled={!image}
-        onClick={() => image && onOpen({ name: attachment.file.name, src: attachment.previewUrl! })}
+        onClick={(event) => image && onOpen({ name: attachment.file.name, src: attachment.previewUrl!, returnFocus: event.currentTarget })}
         type="button"
       >
         {image ? <img alt="" src={attachment.previewUrl} /> : <span className="attachment-extension">{extension(attachment.file.name)}</span>}
@@ -87,10 +88,11 @@ function RemoteAttachmentTile({ attachment, loadContent, onOpen }: {
       <button
         aria-label={`Preview ${attachment.fileName}`}
         className="attachment-tile-content"
-        disabled={!attachment.contentAvailable || (isImage && !src)}
-        onClick={() => onOpen({
+        disabled={!attachment.contentAvailable}
+        onClick={(event) => onOpen({
           name: attachment.fileName,
           mimeType: attachment.mimeType,
+          returnFocus: event.currentTarget,
           ...(src ? { src } : {}),
           loadContent: (signal) => loadContent(attachment.id, signal),
         })}

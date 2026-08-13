@@ -200,8 +200,8 @@ is a failure rather than empty success.
 
 The message-feed preview endpoint reuses this same current derivative after the
 ordinary resource visibility query authorizes the signed-in person. Images,
-Markdown, and plain text come from their exact original object; PDF and Office
-formats materialize or reuse the semantic derivative. The endpoint never treats
+Markdown, and readable text such as plain text or CSV come from their exact
+original object; PDF and Office formats materialize or reuse the semantic derivative. The endpoint never treats
 a resource ID as authority and never creates a second display-only conversion.
 Presentation remains a desktop concern: Markdown derivatives go through the
 shared renderer, while plain source text stays literal monospace text.
@@ -435,7 +435,9 @@ unbounded content fetch.
 unchanged derivatives are reused by source hash and extractor version. New
 previewable document kinds must extend the shared classifier/converter rather
 than add a desktop-only parser. Missing, unsupported, processing, or failed
-derivatives remain explicit preview errors.
+derivatives remain explicit preview errors. Closing a preview while it owns a
+conversion releases the fenced claim back to pending rather than persisting
+ordinary viewer cancellation as a shared derivative failure.
 
 ### 2026-08-12 — Attachment hydration drops speculative indexes and fan-out summaries
 

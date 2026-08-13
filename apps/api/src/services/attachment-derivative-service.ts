@@ -211,6 +211,10 @@ export async function materializeAttachmentDerivative(
     ...(options.signal ? { signal: options.signal } : {}),
   });
   if (converted.status !== "ready") {
+    if (converted.status === "failed" && converted.errorCode === "conversion_aborted") {
+      await releaseDerivativeClaim(database, resource, options, claimId);
+      return { status: "processing", retryAfterMs: 250 };
+    }
     return updateTerminalState(
       database,
       { ...resource, contentSha256: sourceSha256 },
@@ -267,6 +271,22 @@ export async function materializeAttachmentDerivative(
     sha256: derivativeSha256, extractorVersion: converted.extractorVersion,
     totalCharacters: converted.text.length,
   };
+}
+
+async function releaseDerivativeClaim(
+  database: D1Database,
+  resource: AuthorizedDerivativeResource,
+  options: MaterializeAttachmentDerivativeOptions,
+  claimId: string,
+): Promise<void> {
+  const at = (options.now ?? (() => new Date()))().toISOString();
+  await database.prepare(
+    `UPDATE resources
+        SET model_content_status = 'pending', model_content_claimed_at = NULL,
+            model_content_claim_id = NULL, model_content_error_code = NULL, updated_at = ?
+      WHERE workspace_id = ? AND id = ? AND content_ref IS ?
+        AND model_content_status = 'processing' AND model_content_claim_id = ?`,
+  ).bind(at, resource.workspaceId, resource.id, resource.contentRef, claimId).run();
 }
 
 /**
