@@ -42,6 +42,7 @@ function summary(id: string, title: string): WorkstreamSummary {
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     lastActivityAt: '2026-08-11T12:00:00.000Z',
     pinPosition: null,
   } satisfies WorkstreamSummary;

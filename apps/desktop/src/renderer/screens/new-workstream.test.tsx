@@ -79,6 +79,7 @@ function workstream(id: string, title: string, harnessStatus: WorkstreamSummary[
     manualUnreadGeneration: 0,
     hasUnread: false,
     firstUnreadSequenceNumber: null,
+    nextPendingWakeup: null,
     pinPosition: null,
     preview: `${title} preview`,
   };

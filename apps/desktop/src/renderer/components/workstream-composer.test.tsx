@@ -29,6 +29,7 @@ const workstream: WorkstreamDetail = {
   manualUnreadGeneration: 0,
   hasUnread: false,
   firstUnreadSequenceNumber: null,
+  nextPendingWakeup: null,
   pinPosition: null,
   createdAt: '2026-07-31T20:00:00.000Z',
   participants: [creator],

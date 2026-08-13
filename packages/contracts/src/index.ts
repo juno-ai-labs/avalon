@@ -204,6 +204,9 @@ export const ViewerSchema = z.object({
 
 export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
 
+/** The most prompt text a compact work-stream wake-up marker may expose. */
+export const WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH = 40;
+
 export const WorkstreamSchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -250,6 +253,11 @@ export const WorkstreamSchema = z.object({
    * them as secondary when they do.
    */
   systemKind: z.enum(["digest"]).nullable().default(null),
+  /** The first one-shot wake-up still waiting to fire, if there is one. */
+  nextPendingWakeup: z.object({
+    dueAt: TimestampSchema,
+    promptPreview: z.string().min(1).max(WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1),
+  }).nullable().default(null),
   /**
    * Where this work stream sits in *the reader's* pinned list, or `null` when
    * they have not pinned it. Per-viewer the way the read-state fields above are:
