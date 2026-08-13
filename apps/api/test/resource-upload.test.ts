@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuthContext } from '../src/env';
 import { ResourceService } from '../src/services/resource-service';
 import { reapDeletedResourceObjects } from '../src/services/resource-object-cleanup';
+import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from '../src/services/attachment-derivative-service';
 import { sha256Hex } from '../src/lib/crypto';
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -116,6 +117,56 @@ describe('uploaded attachment drafts', () => {
     ]);
     expect(stored.has('old-original')).toBe(true);
     expect(stored.has(String(current.content_ref))).toBe(true);
+    database.close();
+  });
+
+  it('serves source Markdown and a ready Office derivative through the preview boundary', async () => {
+    const database = attachmentDatabase();
+    database.exec(`
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         content_sha256, model_content_ref, model_mime_type, model_content_sha256,
+         model_content_status, model_content_extractor_version, model_content_character_count,
+         metadata_json, attachment_status, created_at, updated_at)
+      VALUES
+        ('markdown-resource', '${workspaceId}', 'uploaded_file', 'avalon_upload', 'brief.md',
+         'text/markdown', 'source-markdown', '${'a'.repeat(64)}', NULL, NULL, NULL,
+         'pending', NULL, NULL, '{}', 'attached', '2026-08-12', '2026-08-12'),
+        ('document-resource', '${workspaceId}', 'uploaded_file', 'avalon_upload', 'proposal.docx',
+         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+         'source-document', '${'b'.repeat(64)}', 'model-document', 'text/markdown',
+         '${'c'.repeat(64)}', 'ready', '${ATTACHMENT_TEXT_EXTRACTOR_VERSION}', 20,
+         '{}', 'attached', '2026-08-12', '2026-08-12');
+    `);
+    const contents = new Map([
+      ['source-markdown', '# Source brief'],
+      ['model-document', '# Converted proposal'],
+    ]);
+    const reads: string[] = [];
+    const environment = createTestEnv({
+      DB: sqliteD1(database),
+      PAYLOADS: {
+        async get(key: string) {
+          reads.push(key);
+          const content = contents.get(key);
+          if (content === undefined) return null;
+          return {
+            body: new Blob([content], { type: 'text/markdown' }).stream(),
+            httpEtag: '"preview-etag"',
+            writeHttpMetadata(headers: Headers) { headers.set('content-type', 'text/markdown; charset=utf-8'); },
+          };
+        },
+      },
+    });
+    const service = new ResourceService(environment, auth);
+
+    const markdown = await service.preview('markdown-resource', new AbortController().signal);
+    expect(await markdown.text()).toBe('# Source brief');
+    expect(markdown.headers.get('content-disposition')).toBe('inline; filename="brief.md"');
+
+    const document = await service.preview('document-resource', new AbortController().signal);
+    expect(await document.text()).toBe('# Converted proposal');
+    expect(reads).toEqual(['source-markdown', 'model-document']);
     database.close();
   });
 

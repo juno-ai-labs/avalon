@@ -20,7 +20,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guard that `react-markdown` stays mounted in one place. |
 
-Six call sites, all passing a markdown string as `children`:
+Seven call sites, all passing a markdown string as `children`:
 
 | Surface | Call site |
 | --- | --- |
@@ -29,6 +29,7 @@ Six call sites, all passing a markdown string as `children`:
 | An automation's overview while it is being set up | `new-automation.tsx` |
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
+| A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
 
 ## How it works
 
@@ -181,6 +182,7 @@ Two suites, and they cover different failures — neither subsumes the other.
 pnpm --filter @avalon/desktop exec vitest run src/renderer/styles/app.css.node.test.ts
 pnpm --filter @avalon/desktop exec vitest run src/renderer/components/markdown-renderer.node.test.ts
 pnpm --filter @avalon/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
+pnpm --filter @avalon/desktop exec vitest run src/renderer/components/attachments.test.tsx
 ```
 
 Both guards are `.node.test.ts` files: they read source off disk with `node:fs`,
@@ -204,6 +206,24 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-12 — Attachment documents join the shared renderer
+
+**What changed:** The full-window attachment lightbox sends Markdown files and
+the semantic derivatives of PDF and Office attachments through `MarkdownBody`.
+Plain text is intentionally excluded and rendered literally in a monospace
+`pre`, while images keep their intrinsic dimensions until the window requires
+scaling.
+
+**Why:** Message-feed attachments beyond images had no readable surface, and the
+existing server-side derivative already expresses document structure as
+Markdown. Mounting another Markdown library inside the lightbox would recreate
+the renderer drift this module exists to prevent.
+
+**Consequences:** Attachment Markdown receives the same tables, code, links,
+list markers, and trust boundary as every other surface. Lightbox geometry may
+style the `.attachment-lightbox-document` host, but Markdown element styling
+still belongs only to `.markdown-body`.
 
 ### 2026-08-12 — One markdown renderer, so there is one place to fix markdown
 
