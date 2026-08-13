@@ -15,6 +15,7 @@ import {
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { truncateUtf16Safe } from "../lib/text";
 import { workstreamVisibilitySql } from "../lib/workstream-visibility";
 import { connectionFromRow } from "../mappers/connection";
@@ -1260,15 +1261,17 @@ export async function loadWorkstreamRoomSnapshot(
       )
         .bind(workstreamId)
         .all<Record<string, unknown>>(),
-      env.DB.prepare(
-        `SELECT s.*, a.title, a.summary
-           FROM activity_suggestions s
-           JOIN activities a ON a.id = s.activity_id
-          WHERE s.workstream_id = ?1 AND s.status = 'pending'
-          ORDER BY s.created_at DESC`
-      )
-        .bind(workstreamId)
-        .all<Record<string, unknown>>(),
+      SUGGESTED_CONTEXT_ENABLED
+        ? env.DB.prepare(
+          `SELECT s.*, a.title, a.summary
+             FROM activity_suggestions s
+             JOIN activities a ON a.id = s.activity_id
+            WHERE s.workstream_id = ?1 AND s.status = 'pending'
+            ORDER BY s.created_at DESC`
+        )
+          .bind(workstreamId)
+          .all<Record<string, unknown>>()
+        : Promise.resolve({ results: [] as Record<string, unknown>[] }),
       // The same columns and the same order as `GET /workstreams/:id`. A
       // snapshot replaces the client's whole detail, so anything it omits is
       // lost until the next REST read — omitting the run itself left a running

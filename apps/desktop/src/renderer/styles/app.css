@@ -1986,18 +1986,6 @@ pre {
 .tool-details pre { background: #171815; border-radius: 5px; color: #aaa9a2; font-size: 10px; margin: 0; max-height: 220px; overflow: auto; padding: 9px; white-space: pre-wrap; }
 .tool-warning { color: #dda49e; font-size: 11px; margin: 0; }
 
-.suggestion-block { background: #24241f; border: 1px solid #484434; border-radius: 9px; padding: 14px; }
-.suggestion-block > header { align-items: flex-start; display: flex; gap: 10px; }
-.suggestion-block > header > span:first-child { align-items: center; background: #3a3423; border-radius: 6px; color: var(--yellow); display: flex; height: 30px; justify-content: center; width: 30px; }
-.suggestion-block > header > div { flex: 1; }
-.suggestion-block header small { color: var(--yellow); font-size: 9px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; }
-.suggestion-block h3 { font-size: 13px; line-height: 1.38; margin: 2px 0 0; }
-.suggestion-reason { background: #1c1d1a; border-radius: 6px; margin-top: 12px; padding: 9px 10px; }
-.suggestion-reason small { color: var(--muted); font-size: 9px; text-transform: uppercase; }
-.suggestion-reason p { color: var(--ink-soft); font-size: 11.5px; margin: 3px 0 0; }
-.suggestion-block > footer { display: flex; gap: 7px; justify-content: flex-end; margin-top: 11px; }
-.suggestion-block.is-resolved { border-color: var(--line); opacity: 0.78; }
-.suggestion-resolution { align-items: center; color: var(--green); display: flex; font-size: 10.5px; gap: 5px; margin: 10px 0 0; }
 
 .agent-work-timing { align-items: center; color: #77766f; display: flex; font-size: 11.5px; gap: 7px; margin: 2px 0 26px; min-height: 20px; }
 .agent-work-timing-label { display: inline-block; font-weight: 480; }

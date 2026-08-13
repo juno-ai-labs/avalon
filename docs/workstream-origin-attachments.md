@@ -227,9 +227,10 @@ It deliberately does **not** cover:
   origin does not go through: an origin is a fact the server observed, not a
   request a caller may make. `originResource` is therefore absent from
   `CreateWorkstreamRequestSchema` and cannot be asserted over the wire.
-- **Contextual routing.** A **Suggested context** card offering an activity to an
-  *existing* work stream is [`contextual-routing.md`](contextual-routing.md);
-  accepting one produces an `attachment`, not an `origin`.
+- **Contextual routing.** The paused **Suggested context** surface offered an
+  activity to an *existing* work stream; if re-enabled, accepting one produces
+  an `attachment`, not an `origin`. See
+  [`contextual-routing.md`](contextual-routing.md).
 - **Inbound email.** A work stream created from an address already attaches its
   email resource in `resend-inbound-email-service.ts`, and a scheduled automation
   run already copies its subscription's resources; neither is rewritten here.

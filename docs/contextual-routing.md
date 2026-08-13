@@ -1,4 +1,17 @@
-# Contextual routing
+# Contextual routing (paused)
+
+**Status:** Suggested context is paused as of 2026-08-12. It was too noisy to
+justify interrupting active work streams before its relevance model was tuned
+further. `SUGGESTED_CONTEXT_ENABLED` in
+`apps/api/src/lib/suggested-context.ts` is the single product switch: both
+producers consult it before doing work, REST and room snapshots return an empty
+`suggestions` list, and the desktop transcript discards legacy suggestion rows
+and realtime events. Existing `activity_suggestions` rows and the dormant
+routing/feedback implementation are intentionally retained for a future tuning
+pass; none are deleted or rewritten by the pause.
+
+The remainder of this document records the dormant design that must still hold
+if the surface is re-enabled.
 
 The speculative half of activity routing. When a connector activity matches no
 resource watch and triggers no automation, contextual routing asks whether one
@@ -24,6 +37,7 @@ that feeds it.
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/api/src/lib/suggested-context.ts` | The pause switch shared by both producers and both work-stream read paths. |
 | `apps/api/src/queues/activity-consumer.ts` → `routeContextually` | The whole decision: the prior, the candidate query, the one inference, the write. The only caller. |
 | `apps/api/src/queues/activity-consumer.ts` → `declaredConfidenceFloor` | Reads the connector manifest's digestibility partition as a starting bar. The one place that translation is made. |
 | `apps/api/src/services/activity-routing-feedback.ts` | Every threshold and window, and both reads of past accept/dismiss decisions. The single source of what the feedback means. |
@@ -31,11 +45,20 @@ that feeds it.
 | `apps/api/src/services/work-opportunity-service.ts` → `routeExistingDecision` | **The other producer of the same card.** Not part of this module; listed because every feedback read here has to exclude it. |
 | `packages/agent-harness/src/prompts/activity-routing.ts` | The classifier prompt and its output schema. |
 | `apps/api/src/services/workstream-service.ts` → `resolveSuggestion` | Records `accepted`/`dismissed` and who clicked. The only writer of the signal both feedback reads consume. |
-| `apps/desktop/src/renderer/lib/transcript.ts` | Defines the feed visibility rule and the session-lived dismissal IDs that stop stale message pages reopening a card. |
-| `apps/desktop/src/renderer/lib/api.ts`, `use-workstream-socket.ts`, `screens/workstream.tsx` | Apply that rule to canonical pages, realtime resolution, manual pagination, and the no-socket request fallback. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | Defines the pause-time feed visibility rule that drops every legacy suggestion row. |
+| `apps/desktop/src/renderer/lib/api.ts`, `use-workstream-socket.ts` | Apply that rule to canonical and paginated responses, and ignore rollout-era suggestion events while the surface is paused. |
 | `packages/db/migrations/0066_activity_suggestion_feedback.sql` | The two indexes those reads seek on. |
 
 ## How it works
+
+While paused, `consumeOne` does not call `routeContextually`: activity not
+claimed by a watch or automation proceeds directly to suggested-work batching.
+Suggested-work admission may still classify an item as `route_existing` so it
+does not become a duplicate home-screen opportunity, but
+`routeExistingDecision` creates no card. Work-stream REST and room snapshots
+return `suggestions: []`, including for pending rows written before the pause.
+
+When enabled, the retained routing path works as follows.
 
 `consumeOne` tries the deterministic routes first — resource watches, then
 automation triggers — and calls `routeContextually` only with what neither
@@ -94,7 +117,7 @@ routing feedback.
   says anything about relevance to a work stream — a Google Doc being edited is
   prime context and a poor digest line. Treating the flag as a veto silently
   removes Drive, Docs, Sheets, Granola edits, and every generic webhook from
-  contextual routing, which is how [PRD flow 4](e2e.md#prd-flow-4--contextual-routing)
+  contextual routing, which is how [PRD flow 4](e2e.md#prd-flow-4--contextual-routing-paused)
   — the acceptance flow for this feature, run over a generic-webhook connection
   — would pass its own tests while testing nothing.
 - **An empty `digestible` list is the absence of a judgement, not a negative
@@ -137,19 +160,18 @@ routing feedback.
   notice. Stamped with the original resolvers, or with several identities, it
   clears the corroboration bar and suppresses those types outright. Neither is a
   decision anybody made about routing.
-- **A dismissal removes the card, not the feedback.** The desktop filters a
-  dismissed suggestion out of every message page and removes it on both the live
-  resolution event and a successful request without a socket. It keeps the
-  suggestion ID as a session-lived query-cache tombstone, which every canonical
-  reconciliation and manual pagination commit consults before updating the
-  transcript. Leaving any of those paths out lets a rejected interruption
-  reappear or accumulate in the message feed, while deleting the database row
-  would erase the evidence the routing thresholds need.
+- **The pause hides cards; it does not delete feedback.** Every desktop message
+  path filters suggestion rows through one visibility rule, while the server
+  returns empty suggestion snapshots and keeps existing database rows intact.
+  Deleting those rows would erase the evidence the dormant routing thresholds
+  need. A future re-enable must deliberately restore resolution behavior across
+  canonical pages, pagination, realtime events, and the no-socket fallback.
 
 ## Boundary
 
-Contextual routing owns the decision to *offer* an activity to a work stream, and
-nothing else. It never attaches, never posts a message, never starts a run.
+When enabled, contextual routing owns the decision to *offer* an activity to a
+work stream, and nothing else. It never attaches, never posts a message, never
+starts a run. While paused, no production caller reaches that decision.
 
 It does not own: resource watches or automation triggers (`consumeActivityQueue`,
 [`connectors.md`](connectors.md#activity-ingestion)), which are deterministic and
@@ -179,18 +201,18 @@ policies that will drift.
 | Activity snippet / candidate objective sent to the model | 2,000 / 1,000 characters |
 | Stored title / summary / reason / matched entities | 300 / 2,000 / 1,200 characters, 100 entities |
 
-- **The connector registry will not build.** The prior falls back to the base
+- **When enabled, the connector registry will not build.** The prior falls back to the base
   floor and routing continues. Withholding would mean one malformed credential
   silently disabling contextual routing region-wide; the same failure is already
   logged as `connector_registry_unavailable_for_digestibility` by
   `activityIsDigestible` on the projection path for the same activity, so the
   fallback here does not log again.
-- **No `OPENROUTER_API_KEY`.** Contextual routing is skipped entirely; watches
+- **When enabled, there is no `OPENROUTER_API_KEY`.** Contextual routing is skipped entirely; watches
   and automations are unaffected.
-- **A suppressed activity is not dropped, and suppression governs this module's
-  output rather than the card type.** Every path here returns `false`, which is
+- **When enabled, a suppressed activity is not dropped, and suppression governs
+  this module's output rather than the card type.** Every path here returns `false`, which is
   the same answer "the model declined" gives, so the activity continues to
-  suggested-work batching. That surface's `routeExistingDecision` can then
+  suggested-work batching. When the card surface is also enabled, that surface's `routeExistingDecision` can then
   publish a card of its own for the same activity — a genuinely different
   decision, made over a whole window with `confidence: 1` rather than per event,
   and scored separately — but it is the same card in the same transcript, so a
@@ -217,19 +239,22 @@ policies that will drift.
 
 ## Testing
 
-`apps/api/test/activity-contextual-routing.test.ts` covers the prior, both
-feedback reads, the corroboration rule, and both candidate exclusions against a
-migrated in-memory SQLite database:
+`apps/api/test/activity-contextual-routing.test.ts` keeps the dormant prior,
+feedback reads, corroboration rule, and candidate exclusions covered against a
+migrated in-memory SQLite database. Its queue-level regression also proves the
+pause skips inference while preserving Suggested work batching. Work-opportunity,
+work-stream REST and room-snapshot, and desktop transcript/socket tests
+separately assert that the pause creates and shows no cards.
 
 ```bash
 pnpm --filter @avalon/api exec vitest run test/activity-contextual-routing.test.ts
 ```
 
 `apps/desktop/src/renderer/lib/api.test.ts` covers canonical feed reconstruction
-and dismissed rows in a paginated message response.
+and suppression of legacy suggestion rows.
 `apps/desktop/src/renderer/lib/use-workstream-socket-suggestions.test.tsx`
-covers accepted and dismissed resolution events in the live feed, including a
-canonical fetch that started before the dismissal and completes after it.
+covers ignoring suggestion creation and resolution events while the surface is
+paused.
 
 Four traps. **GitHub credentials in the fake env are load-bearing** — the registry
 is what answers digestibility, and `GITHUB_APP_PRIVATE_KEY` must be PEM-shaped or
@@ -273,7 +298,8 @@ maximum floor rather than toward suppression, which is the safe direction.
 
 ## Operations
 
-Why a card did not appear, in the order to check: the event type's record, then
+No card should appear while `SUGGESTED_CONTEXT_ENABLED` is false. After a future
+re-enable, diagnose a missing card in this order: the event type's record, then
 the prior, then the model's own answer. The record is a query rather than a log
 line — suppression is evaluated once per ingested activity, and logging it at
 `info` would write thousands of identical lines a day for a suppressed
@@ -311,6 +337,22 @@ suppressed type. The prior is `connector-digestibility.md` plus whether that
 connector declares any digestible type at all.
 
 ## Changelog
+
+### 2026-08-12 — Suggested context was paused end to end
+
+**What changed:** One shared switch now prevents the per-activity router and
+suggested-work's `route_existing` branch from creating cards. REST and room
+snapshots return no pending suggestions, the desktop no longer renders the card
+or its controls, and rollout-era suggestion socket events are ignored. Existing
+rows, feedback, schemas, and the dormant classifier remain in place.
+
+**Why:** The cards were too noisy and their relevance was not tuned well enough
+to earn space inside an active work stream. Deleting stored decisions or the
+whole implementation was rejected because this is a temporary product pause:
+the existing accept/dismiss record and testable routing code are useful inputs
+to a future tuning pass. A future re-enable must restore all four guarded
+boundaries together — both producers, both snapshot paths, transcript synthesis,
+and realtime handling — rather than exposing only part of the surface.
 
 ### 2026-08-12 — Dismissing a suggestion removes it from the message feed
 

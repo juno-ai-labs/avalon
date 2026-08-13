@@ -365,7 +365,7 @@ describe("suggested-work aggregation", () => {
     ]);
   });
 
-  it("turns route_existing activity decisions into work-stream suggestions", async () => {
+  it("does not turn route_existing decisions into work-stream suggestions while the surface is paused", async () => {
     const database = migratedDatabase();
     seed(database);
     const activityId = "00000000-0000-7000-8000-000000000110";
@@ -424,15 +424,9 @@ describe("suggested-work aggregation", () => {
       }],
       [{ id: workstreamId, title: "Existing launch work", objective: "Ship the launch" }],
     );
-    expect(routed).toBe(true);
-    expect(database.prepare(
-      "SELECT activity_id, workstream_id, reason FROM activity_suggestions",
-    ).get()).toEqual({
-      activity_id: activityId,
-      workstream_id: workstreamId,
-      reason: "Route the launch dependency update here",
-    });
-    expect(roomFetch).toHaveBeenCalledOnce();
+    expect(routed).toBe(false);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_suggestions").get()).toEqual({ count: 0 });
+    expect(roomFetch).not.toHaveBeenCalled();
 
     await expect(__workOpportunityTesting.routeExistingDecision(
       environment(database, { WORKSTREAM_ROOMS: rooms }),
@@ -457,7 +451,7 @@ describe("suggested-work aggregation", () => {
       [],
       [{ id: workstreamId, title: "Existing launch work", objective: "Ship the launch" }],
     )).resolves.toBe(false);
-    expect(roomFetch).toHaveBeenCalledOnce();
+    expect(roomFetch).not.toHaveBeenCalled();
   });
 
   it("keeps execution prompts and reasoning out of the renderer contract and rejects stale starts", async () => {
