@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { readTelemetryIdentity, rotateTelemetryEpochs, uuidV7 } from './telemetry-identity';
+import { readTelemetryIdentity, readTelemetryIdentityState, rotateTelemetryEpochs, uuidV7 } from './telemetry-identity';
 
 const roots: string[] = [];
 
@@ -27,6 +27,15 @@ describe('desktop telemetry identity', () => {
     expect(first.accountEpochId[14]).toBe('7');
     const encoded = await readFile(join(directory, 'telemetry', 'identity.json'), 'utf8');
     expect(encoded).not.toMatch(/email|userId|workspaceId|token/iu);
+  });
+
+  it('reports whether the installation identity was created by this read', async () => {
+    const directory = await root();
+    const first = await readTelemetryIdentityState(directory, new Date('2026-08-12T00:00:00.000Z'));
+    const second = await readTelemetryIdentityState(directory, new Date('2026-08-13T00:00:00.000Z'));
+
+    expect(first.created).toBe(true);
+    expect(second).toEqual({ identity: first.identity, created: false });
   });
 
   it('rotates anonymous and account epochs without changing installation identity', async () => {

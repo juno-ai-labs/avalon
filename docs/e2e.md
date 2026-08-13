@@ -63,11 +63,20 @@ use a customer dump for this acceptance run.
    and create or activate a Global workspace. In PostHog, confirm the anonymous
    epoch's funnel events join automatically to the stable person using `$identify`,
    that the profile has the verified name and email, and that the workspace group
-   has its current name. Confirm the installation identity never joins the person.
+   has its current name. Confirm desktop events carry the random installation ID
+   as `$device_id`, the correct `$is_identified` value, app/OS/locale/timezone and
+   display context, and a stable `$window_id` plus viewport dimensions for one
+   renderer window. Confirm `$device_id` is not used as `$anon_distinct_id` and
+   that the anonymous history merge uses only the current login epoch.
 2. Exercise workspace creation, work-stream creation and a run, and connector
    setup. Confirm the semantic client request and authoritative API outcome share
    `operation_id`, and desktop events use `$session_id`. Reload and repeat an
    accepted upload; confirm `$insert_id` prevents duplicate counts.
+   On a fresh disposable installation, confirm exactly one
+   `Application Installed`; on the next release, confirm one
+   `Application Updated` with the
+   previous version/build. Upgrading a profile created before this instrumentation
+   must establish a baseline without emitting `Application Installed`.
 3. Open **Settings → Application → Privacy & diagnostics**. Confirm **Product
    analytics** is on and its disclosure says Global may include verified name and
    email, EU stays in Avalon's EU platform, and essential content-free reliability

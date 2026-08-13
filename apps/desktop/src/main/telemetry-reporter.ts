@@ -29,6 +29,19 @@ interface ReporterRuntime {
   arch?: 'arm64' | 'x64';
   channel?: 'development' | 'alpha' | 'beta' | 'stable';
   launchId?: string;
+  osVersion?: string;
+  locale?: string;
+  timezone?: string;
+  screenWidth?: number;
+  screenHeight?: number;
+}
+
+export interface TelemetryWindowContext {
+  windowId: string;
+  screenWidth: number;
+  screenHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
 }
 
 interface AuthenticatedTelemetrySession {
@@ -88,6 +101,16 @@ export class TelemetryReporter {
     });
   }
 
+  applicationVersionChanged(
+    transition: { state: 'installed' } | {
+      state: 'updated';
+      previousVersion: string;
+      previousBuild: string;
+    },
+  ): Promise<void> {
+    return this.capture('application_version_changed', 'desktop-main', 'installation', transition);
+  }
+
   desktopSession(state: 'started' | 'ended', continuouslyEligible: boolean): Promise<void> {
     return this.capture('desktop_session', 'desktop-main', 'installation', { state, continuouslyEligible });
   }
@@ -109,32 +132,64 @@ export class TelemetryReporter {
     });
   }
 
-  screenViewed(screen: TelemetryScreen): Promise<void> {
-    return this.captureProduct('screen_viewed', 'desktop-renderer', { screen });
+  screenViewed(screen: TelemetryScreen, windowContext?: TelemetryWindowContext): Promise<void> {
+    return this.captureProduct('screen_viewed', 'desktop-renderer', { screen }, undefined, windowContext);
   }
 
-  onboardingRegionSelected(selectedRegion: 'global' | 'eu', entrypoint: TelemetryEntrypoint): Promise<void> {
-    return this.captureProduct('onboarding_region_selected', 'desktop-renderer', { selectedRegion, entrypoint });
+  onboardingRegionSelected(
+    selectedRegion: 'global' | 'eu',
+    entrypoint: TelemetryEntrypoint,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct(
+      'onboarding_region_selected', 'desktop-renderer', { selectedRegion, entrypoint }, undefined, windowContext,
+    );
   }
 
-  workspaceCreateRequested(selectedRegion: 'global' | 'eu', entrypoint: TelemetryEntrypoint, operationId: string): Promise<void> {
-    return this.captureProduct('workspace_create_requested', 'desktop-renderer', { selectedRegion, entrypoint }, operationId);
+  workspaceCreateRequested(
+    selectedRegion: 'global' | 'eu',
+    entrypoint: TelemetryEntrypoint,
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct(
+      'workspace_create_requested', 'desktop-renderer', { selectedRegion, entrypoint }, operationId, windowContext,
+    );
   }
 
-  workspaceActivationRequested(selectedRegion: 'global' | 'eu', entrypoint: TelemetryEntrypoint, operationId: string): Promise<void> {
-    return this.captureProduct('workspace_activation_requested', 'desktop-renderer', { selectedRegion, entrypoint }, operationId);
+  workspaceActivationRequested(
+    selectedRegion: 'global' | 'eu',
+    entrypoint: TelemetryEntrypoint,
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct(
+      'workspace_activation_requested', 'desktop-renderer', { selectedRegion, entrypoint }, operationId, windowContext,
+    );
   }
 
-  workstreamCreateRequested(entrypoint: TelemetryEntrypoint, operationId: string): Promise<void> {
-    return this.captureProduct('workstream_create_requested', 'desktop-renderer', { entrypoint }, operationId);
+  workstreamCreateRequested(
+    entrypoint: TelemetryEntrypoint,
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('workstream_create_requested', 'desktop-renderer', { entrypoint }, operationId, windowContext);
   }
 
-  runRequested(entrypoint: TelemetryEntrypoint, operationId: string): Promise<void> {
-    return this.captureProduct('run_requested', 'desktop-renderer', { entrypoint }, operationId);
+  runRequested(
+    entrypoint: TelemetryEntrypoint,
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('run_requested', 'desktop-renderer', { entrypoint }, operationId, windowContext);
   }
 
-  connectorSetupRequested(connector: 'github' | 'google' | 'linear' | 'notion' | 'slack', operationId: string): Promise<void> {
-    return this.captureProduct('connector_setup_requested', 'desktop-renderer', { connector }, operationId);
+  connectorSetupRequested(
+    connector: 'github' | 'google' | 'linear' | 'notion' | 'slack',
+    operationId: string,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('connector_setup_requested', 'desktop-renderer', { connector }, operationId, windowContext);
   }
 
   processHealth(
@@ -163,6 +218,7 @@ export class TelemetryReporter {
     fingerprint: string,
     breadcrumbStatus: 'available' | 'stale' | 'unavailable',
     generatedFrames: string[],
+    windowContext?: TelemetryWindowContext,
   ): Promise<void> {
     const authenticated = await this.options.authenticatedSession().catch(() => null);
     if (!authenticated) return;
@@ -171,7 +227,7 @@ export class TelemetryReporter {
       'desktop-main',
       authenticated.workspace ? 'workspace-user' : 'platform-user',
       { process, errorCode, breadcrumbStatus, fingerprint, generatedFrames },
-      { authenticated, anonymous: null },
+      { authenticated, anonymous: null, windowContext },
     );
   }
 
@@ -190,6 +246,7 @@ export class TelemetryReporter {
     source: TelemetrySource,
     properties: Record<string, unknown>,
     operationId?: string,
+    windowContext?: TelemetryWindowContext,
   ): Promise<void> {
     const authenticated = await this.options.authenticatedSession().catch(() => null);
     const route = this.options.route();
@@ -205,6 +262,7 @@ export class TelemetryReporter {
       authenticated: effectiveAuthenticated,
       anonymous,
       operationId,
+      windowContext,
     });
   }
 
@@ -217,6 +275,7 @@ export class TelemetryReporter {
       authenticated: AuthenticatedTelemetrySession | null;
       anonymous: AnonymousTelemetrySession | null;
       operationId?: string;
+      windowContext?: TelemetryWindowContext;
     },
   ): Promise<void> {
     const registry = TELEMETRY_EVENTS[name];
@@ -261,6 +320,8 @@ export class TelemetryReporter {
         context: {
           ...this.options.runtime,
           region: route,
+          deviceId: identity.installationId,
+          ...resolved?.windowContext,
           ...(anonymous && identityScope === 'anonymous-epoch'
             ? { onboardingJourneyId: anonymous.journeyId }
             : {}),

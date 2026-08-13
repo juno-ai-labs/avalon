@@ -28,6 +28,7 @@ function envelope(name: string, properties: unknown) {
       environment: "production",
       release: "0.24.0",
       buildId: "build-0123456789",
+      deviceId: "018f22f2-4c22-7abc-8def-0123456789aa",
       onboardingJourneyId: eventId,
       operationId: eventId,
     },
@@ -63,6 +64,49 @@ describe("telemetry registry", () => {
       selectedRegion: "eu",
       entrypoint: "first_run",
     }))).toMatchObject({ name: "onboarding_region_selected" });
+  });
+
+  it("accepts bounded native desktop SDK context and rejects malformed dimensions", () => {
+    const base = envelope("onboarding_region_selected", {
+      selectedRegion: "eu",
+      entrypoint: "first_run",
+    });
+    const candidate = {
+      ...base,
+      context: {
+        ...base.context,
+        osVersion: "15.6.1",
+        locale: "en-US",
+        timezone: "America/Los_Angeles",
+        screenWidth: 2560,
+        screenHeight: 1440,
+        viewportWidth: 1480,
+        viewportHeight: 940,
+        windowId: "018f22f2-4c22-7abc-8def-0123456789a9",
+      },
+    };
+    expect(TelemetryEnvelopeSchema.safeParse(candidate).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...candidate,
+      context: { ...candidate.context, viewportWidth: -1 },
+    }).success).toBe(false);
+  });
+
+  it("requires both previous build fields only for application updates", () => {
+    const candidate = {
+      ...envelope("application_version_changed", {
+        state: "updated",
+        previousVersion: "0.23.0",
+      }),
+      source: "desktop-main",
+      category: "essential",
+      identityScope: "installation",
+    };
+    expect(TelemetryEnvelopeSchema.safeParse(candidate).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...candidate,
+      properties: { state: "installed", previousVersion: "0.23.0" },
+    }).success).toBe(false);
   });
 
   it("accepts only bounded bundle-relative generated frames for JavaScript diagnostics", () => {

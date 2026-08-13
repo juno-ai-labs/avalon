@@ -60,6 +60,17 @@ function event<T extends RegistryInput>(input: T): T & {
 }
 
 const lifecycleState = z.enum(["launch_started", "ready", "foreground", "background", "graceful_exit"]);
+const applicationVersionProperties = z.object({
+  state: z.enum(["installed", "updated"]),
+  previousVersion: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u).optional(),
+  previousBuild: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u).optional(),
+}).strict().superRefine((value, context) => {
+  const previousCount = Number(value.previousVersion !== undefined) + Number(value.previousBuild !== undefined);
+  if ((value.state === "installed" && previousCount !== 0)
+    || (value.state === "updated" && previousCount !== 2)) {
+    context.addIssue({ code: "custom", message: "application_version_transition_invalid" });
+  }
+});
 const durationBucket = z.enum(["lt_100ms", "100ms_1s", "1s_5s", "5s_30s", "gte_30s"]);
 const resultClass = z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed"]);
 const region = z.enum(["global", "eu"]);
@@ -98,6 +109,24 @@ export const TELEMETRY_EVENTS = {
     properties: z.object({ state: lifecycleState, crashReportingEligible: z.boolean() }).strict(),
     propertyClassifications: { state: "operational", crashReportingEligible: "operational" },
     priority: "critical",
+    regionalRetention: "90-days",
+  }),
+  application_version_changed: event({
+    ...common,
+    name: "application_version_changed",
+    definition: "A durable first-observed installation or application build transition on one desktop installation.",
+    productQuestion: "Which application versions are installed or reached through a confirmed desktop update?",
+    sources: ["desktop-main"],
+    authoritativeSource: "desktop-main",
+    category: "essential",
+    identityScopes: ["installation"],
+    properties: applicationVersionProperties,
+    propertyClassifications: {
+      state: "operational",
+      previousVersion: "operational",
+      previousBuild: "operational",
+    },
+    priority: "high",
     regionalRetention: "90-days",
   }),
   desktop_session: event({
@@ -477,9 +506,18 @@ const TelemetryContextSchema = z.object({
   region: z.enum(["global", "eu"]).optional(),
   release: SafeReleaseSchema,
   buildId: SafeReleaseSchema,
+  deviceId: UuidV7Schema.optional(),
   platform: z.enum(["darwin", "win32", "linux"]).optional(),
   arch: z.enum(["arm64", "x64"]).optional(),
   channel: z.enum(["development", "alpha", "beta", "stable"]).optional(),
+  osVersion: SafeReleaseSchema.optional(),
+  locale: z.string().min(2).max(35).regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/u).optional(),
+  timezone: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_+-]+(?:\/[a-zA-Z0-9_+-]+)*$/u).optional(),
+  screenWidth: z.number().int().positive().max(100_000).optional(),
+  screenHeight: z.number().int().positive().max(100_000).optional(),
+  viewportWidth: z.number().int().positive().max(100_000).optional(),
+  viewportHeight: z.number().int().positive().max(100_000).optional(),
+  windowId: UuidV7Schema.optional(),
   launchId: UuidV7Schema.optional(),
   sessionId: UuidV7Schema.optional(),
   onboardingJourneyId: UuidV7Schema.optional(),
