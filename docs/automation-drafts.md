@@ -19,6 +19,7 @@ or the New automation screen.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/services/automation-service.ts` | `saveDraft` writes each compiled turn; `draftState` reads one back; `create` promotes one; `archiveDraft` hides one. `loadOwnDraft` is the single check of whether a client-supplied draft id may be written through to. |
+| `apps/api/src/services/automation-draft-attachment-tools.ts` | Gives the compiler bounded access to the exact attachment IDs frozen into its current request while rechecking present ownership and draft state. |
 | `apps/api/src/routes/automations.ts` | `POST /automations/draft/stream` and `POST /automations/draft` compile and persist; `GET /automations/:id/draft` returns the conversation; `POST /automations/:id/archive` hides it. |
 | `packages/contracts/src/index.ts` | `AutomationDraftStateSchema` is the resumable conversation; `AutomationDraftStreamEventSchema`'s `completed` event carries the draft's id; `CreateAutomationRequestSchema.draftId` is what makes creation a promotion. |
 | `apps/desktop/src/renderer/lib/api.ts` | `compileAutomation` adopts the id the API assigns; `resumeAutomationDraft` reopens one; `createAutomation` names the draft being promoted. |
@@ -65,6 +66,14 @@ person walked away from rather than on their own last message.
 `GET /automations/:id/draft` returns it. The builder renders every turn as text
 except the compiler's last, which it re-renders from the draft so a choice that
 was open is open again rather than being a sentence describing one.
+
+Attachments in the current compile request are also a frozen hydration scope.
+The compiler sees durable manifest entries and five `automation_*` read tools;
+the scope never expands beyond those IDs, and each call requires the resource to
+still be this user's draft upload in this workspace. Deleting an upload, changing
+its owner, or committing it elsewhere revokes it during the same compiler run.
+The saved conversation may remember an ID for continuity, but that identity is
+not authority on a later request.
 
 ### Promotion
 
@@ -239,6 +248,28 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-12 — Compiler attachments become frozen, revocable resources
+
+**What changed:** The automation architect now receives list, read, search,
+view, and summarize operations for the attachment IDs admitted to the current
+compile request. Every operation rechecks workspace, owner, provider, and draft
+state, and its cursor namespace is separate from work streams.
+
+**Why:** Preserving large attachment bytes in the compiler prompt silently
+truncates documents and spends context repeatedly. Replacing bytes with resource
+references first required an equally capable read path that cannot outlive a
+deletion or ownership change.
+
+**Considered and rejected:** Making all of a user's draft uploads discoverable,
+or trusting the initially validated set for the rest of the run. The first leaks
+unrelated composer work into this draft; the second defeats revocation.
+
+**Consequences:** Each compiler request explicitly carries the IDs it needs.
+Future resume behavior must re-admit attachments rather than treating IDs saved
+in conversation JSON as durable authority.
+
+Shipped in: pending.
 
 ### 2026-08-12 — A navigation the address bar cannot show, and the sentence it stranded
 

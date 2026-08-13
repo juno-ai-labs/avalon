@@ -216,6 +216,14 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
     tool: z.literal("workstream_view_resource"),
     arguments: z.object({ resourceIds: z.tuple([CanonicalUuidSchema]) }).strict(),
   }).strict(),
+  z.object({
+    tool: z.literal("automation_read_resource"),
+    arguments: z.object({ resourceId: CanonicalUuidSchema }).strict(),
+  }).strict(),
+  z.object({
+    tool: z.literal("automation_view_resource"),
+    arguments: z.object({ resourceIds: z.tuple([CanonicalUuidSchema]) }).strict(),
+  }).strict(),
 ]);
 export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentToolCallSchema>;
 
