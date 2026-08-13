@@ -128,17 +128,6 @@ export function TerminalRepositoryRequestCard({
   );
 }
 
-export function terminalRepositoryContinuation(
-  repositoryRequestId: string | null,
-  repositoryFullName: string,
-): { clientId: string; text: string } | null {
-  if (!repositoryRequestId) return null;
-  return {
-    clientId: repositoryRequestId,
-    text: `Continue the requested repository work using ${repositoryFullName}.`,
-  };
-}
-
 /**
  * Which panel holds the right sidebar. The inspector rail's open state is local
  * and immediate, while HyperSight's is a preference write that can fail and roll
@@ -832,7 +821,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       && id
       && terminalParticipant
       && terminalWorkspace.data?.availability === 'supported'
-      && (!terminalWorkspace.data.repository || replacingTerminalRepository),
+      && (
+        !terminalWorkspace.data.repository
+        || Boolean(terminalWorkspace.data.repositoryRequest)
+        || replacingTerminalRepository
+      ),
     ),
     staleTime: 30_000,
   });
@@ -842,15 +835,19 @@ export function WorkstreamScreen(): React.JSX.Element {
         connectionId: input.connectionId,
         repositoryFullName: input.repositoryFullName,
         confirmDiscardLocalFiles: input.confirmDiscardLocalFiles,
+        ...(input.repositoryRequestId ? { repositoryRequestId: input.repositoryRequestId } : {}),
       });
-      const continuation = terminalRepositoryContinuation(input.repositoryRequestId, input.repositoryFullName);
-      if (continuation) await api!.createMessage(id, continuation);
       return state;
     },
     onSuccess: (state) => {
       queryClient.setQueryData(['terminal-workstream', id], state);
       setReplacingTerminalRepository(false);
       void queryClient.invalidateQueries({ queryKey: ['terminal-repository-catalog', id] });
+      void queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['terminal-workstream', id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
     },
@@ -1555,7 +1552,7 @@ export function WorkstreamScreen(): React.JSX.Element {
               })}
             </div>
           )}
-          {!terminalWorkspace.data?.repository && terminalParticipant && (
+          {terminalParticipant && (
             <TerminalRepositoryRequestCard
               catalog={terminalRepositoryCatalog.data}
               disabled={selectTerminalRepository.isPending}

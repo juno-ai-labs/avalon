@@ -2171,6 +2171,7 @@ export const SelectTerminalRepositoryRequestSchema = z.object({
   connectionId: IdSchema,
   repositoryFullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
   confirmDiscardLocalFiles: z.boolean().optional(),
+  repositoryRequestId: IdSchema.optional(),
 }).strict();
 export type TerminalWorkspaceSettings = z.infer<typeof TerminalWorkspaceSettingsSchema>;
 export type TerminalNetworkPolicyPreview = z.infer<typeof TerminalNetworkPolicyPreviewSchema>;

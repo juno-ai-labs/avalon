@@ -13,7 +13,6 @@ import {
   JumpToLatestButton,
   manualElicitationResponse,
   RunFailureNotice,
-  terminalRepositoryContinuation,
   TerminalRepositoryRequestCard,
   WorkstreamErrorState,
   WorkstreamHeader,
@@ -35,14 +34,6 @@ const terminalRepositoryCatalog = {
 };
 
 describe('Terminal repository request', () => {
-  it('does not manufacture a continuation for proactive rail selection', () => {
-    expect(terminalRepositoryContinuation(null, 'owner/repo')).toBeNull();
-    expect(terminalRepositoryContinuation(repositoryRequest.id, 'owner/repo')).toEqual({
-      clientId: repositoryRequest.id,
-      text: 'Continue the requested repository work using owner/repo.',
-    });
-  });
-
   it('stays hidden until a run durably requests a repository', () => {
     render(<TerminalRepositoryRequestCard
       catalog={terminalRepositoryCatalog}

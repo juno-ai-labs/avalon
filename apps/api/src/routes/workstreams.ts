@@ -27,6 +27,7 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
+import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { WorkstreamService } from "../services/workstream-service";
@@ -202,13 +203,27 @@ workstreamRoutes.put(
   "/:id/terminal/repository",
   zValidator("param", idParam),
   zValidator("json", SelectTerminalRepositoryRequestSchema),
-  async (c) => c.json(TerminalWorkstreamStateSchema.parse(
-    await terminalWorkstreamService(c).selectRepository(
-      c.req.valid("param").id,
-      c.req.valid("json"),
-      c.req.raw.signal,
-    ),
-  )),
+  async (c) => {
+    const workstreamId = c.req.valid("param").id;
+    const input = c.req.valid("json");
+    const terminal = terminalWorkstreamService(c);
+    const selected = await terminal.selectRepository(workstreamId, input, c.req.raw.signal);
+    if (input.repositoryRequestId) {
+      const request = selected.repositoryRequest;
+      if (!request || request.id !== input.repositoryRequestId || !selected.repository) {
+        throw new ApiError(409, "terminal_repository_request_stale", "That Terminal repository request is no longer current. Reload the work stream before continuing.");
+      }
+      await new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).continueTerminalRepositoryRequest(
+        workstreamId,
+        {
+          repositoryRequestId: request.id,
+          harnessRunId: request.harnessRunId,
+          repositoryFullName: selected.repository.fullName,
+        },
+      );
+    }
+    return c.json(TerminalWorkstreamStateSchema.parse(await terminal.get(workstreamId)));
+  },
 );
 workstreamRoutes.post("/:id/terminal/start-fresh", zValidator("param", idParam), async (c) =>
   c.json(TerminalWorkstreamStateSchema.parse(
