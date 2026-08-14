@@ -365,6 +365,31 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-13 — Git trusts Daytona's secret-substitution proxy CA
+
+**What changed:** Repository bootstrap and the ephemeral trusted publisher now
+map Daytona's `CURL_CA_BUNDLE` to Git's `GIT_SSL_CAINFO` before their first
+authenticated remote operation. Bootstrap persists that mapping in the Terminal
+session environment for later fetches and pushes. Both paths fail if Daytona
+advertises a CA bundle that is not readable.
+
+**Why:** Live production testing proved that authenticated `curl` requests using
+a mounted Daytona Secret succeeded while the identical Git request failed with
+`unable to get local issuer certificate`. Daytona's secret-substitution path is
+signed by its Netleash CA. The managed image configures curl to trust that CA,
+but Git otherwise uses the system bundle and rejects it.
+
+**Considered and rejected:** Disabling Git TLS verification, copying the GitHub
+token into the sandbox, and hard-coding Daytona's current Netleash certificate
+path. They respectively remove transport authentication, break the placeholder
+secret boundary, or bind Avalon to a provider-internal path when Daytona already
+publishes the correct bundle through a process environment variable.
+
+**Consequences:** Git retains full certificate verification while authenticated
+clone, fetch, and push can traverse Daytona's host-scoped secret proxy. Managed
+snapshot activation and production smoke tests must continue to prove that the
+advertised bundle is readable and accepted by Git.
+
 ### 2026-08-13 — Repository replacement joins the sandbox lease and lifecycle
 
 **What changed:** Model-driven checkout now reserves and claims the same

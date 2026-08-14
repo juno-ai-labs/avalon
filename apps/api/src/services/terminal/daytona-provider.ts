@@ -745,6 +745,9 @@ export function createDaytonaTerminalProvider(
         const command = [
           "set -euo pipefail",
           "export GIT_CONFIG_NOSYSTEM=1 HOME=/tmp/avalon-publisher-home",
+          "test -n \"${CURL_CA_BUNDLE:-}\"",
+          "test -r \"$CURL_CA_BUNDLE\"",
+          "export GIT_SSL_CAINFO=\"$CURL_CA_BUNDLE\"",
           'mkdir -p "$HOME"',
           "git init --bare /workspace/repository.git >/dev/null",
           `git -C /workspace/repository.git fetch /workspace/publication.bundle ${shellQuote(`refs/heads/${input.headRef}`)}:${shellQuote(`refs/heads/${input.headRef}`)}`,
