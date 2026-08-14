@@ -9,6 +9,7 @@ import {
 } from '@avalon/contracts';
 import type { ApplicationIconId } from '../common/application-icons';
 import type {
+  DesktopTelemetryConnectorSetupIntent,
   DesktopTelemetryProductIntent,
   DesktopTelemetrySemanticIntent,
 } from '../common/desktop';
@@ -173,11 +174,12 @@ export class TelemetryReporter {
   }
 
   semanticProductIntent(
-    intent: DesktopTelemetrySemanticIntent,
+    intent: DesktopTelemetrySemanticIntent | Omit<DesktopTelemetryConnectorSetupIntent, 'operationId'>,
     windowContext?: TelemetryWindowContext,
+    operationId?: string,
   ): Promise<void> {
     const { kind, ...properties } = intent;
-    return this.captureProduct(kind, 'desktop-renderer', properties, undefined, windowContext);
+    return this.captureProduct(kind, 'desktop-renderer', properties, operationId, windowContext);
   }
 
   applicationIconChanged(properties: {
@@ -343,14 +345,6 @@ export class TelemetryReporter {
     return this.captureProduct('run_requested', 'desktop-renderer', { entrypoint }, operationId, windowContext);
   }
 
-  connectorSetupRequested(
-    connector: 'github' | 'google' | 'linear' | 'notion' | 'slack',
-    operationId: string,
-    windowContext?: TelemetryWindowContext,
-  ): Promise<void> {
-    return this.captureProduct('connector_setup_requested', 'desktop-renderer', { connector }, operationId, windowContext);
-  }
-
   processHealth(
     process: 'main' | 'preload' | 'renderer' | 'utility' | 'gpu',
     state: 'gone' | 'unresponsive' | 'responsive' | 'exception' | 'rejection' | 'unclean_exit',
@@ -410,6 +404,10 @@ export class TelemetryReporter {
   ): Promise<void> {
     const authenticated = await this.options.authenticatedSession().catch(() => null);
     const route = this.options.route();
+    // A signed-in user without a workspace still belongs to the provisional
+    // onboarding route. Never carry that platform identity across regions;
+    // use the route-bound anonymous epoch until an authoritative workspace is
+    // available.
     const provisionalRoute = authenticated !== null
       && !authenticated.workspace
       && authenticated.route !== route;

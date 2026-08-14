@@ -311,6 +311,24 @@ value.
 
 ## Changelog
 
+### 2026-08-13 — Older suggestion clients retain successful-start telemetry
+
+**What changed:** A start request without the newer surface/position context now
+emits the compatibility `suggested_work_started` event with
+`surface=workspace_home`. New clients with complete exposure context continue to
+emit only `suggested_work_started_v2`.
+
+**Why:** Released clients do not send `surface`. Conditioning the compatibility
+event on that optional field silently removed successful-start measurement until
+every client upgraded.
+
+**Considered and rejected:** Dropping older-client events or fabricating v2
+position/provenance context. The former breaks the adoption series; the latter
+would corrupt detailed exposure analysis.
+
+**Consequences:** Missing optional attribution degrades to the truthful legacy
+home surface and never creates a partially invented v2 event.
+
 ### 2026-08-13 — Exposure context completes the suggested-work funnel
 
 **What changed:** Meaningful impressions, dismissals, and successful starts now

@@ -156,7 +156,11 @@ The public site needs no analytics secret. The Global Worker needs exact
 `https://www.with-avalon.com`, plus the existing telemetry capability signing
 key and Global PostHog configuration. Operators inspect Global and EU telemetry
 backlogs independently; a healthy Global PostHog graph says nothing about EU
-site delivery.
+site delivery. Cloudflare Pages applies one `/*` Content Security Policy to
+every public path. Its `connect-src` permits only `https://api.with-avalon.com`:
+the route probe, bootstrap, and anonymous batch all use that Global browser
+origin. An EU decision is forwarded server-side over `EU_TELEMETRY_BRIDGE`; the
+browser must not call `https://eu.api.with-avalon.com` directly.
 
 ## Performance and cost
 
@@ -167,6 +171,43 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-08-13 — One site-wide CSP admits the complete regional telemetry exchange
+
+**What changed:** The `/*` Cloudflare Pages policy permits the one Global API
+origin used by route lookup, bootstrap, and anonymous batch delivery. Tests
+enumerate all three paths and reject a direct EU browser origin.
+
+**Why:** `connect-src 'none'` blocked the reporter before CORS or regional
+routing ran. Adding the EU API origin would have bypassed the Global-only route
+decision and signed-capability exchange.
+
+**Considered and rejected:** Allowing broad HTTPS connections or both regional
+API hosts. The site needs one outbound origin; affirmative EU traffic crosses
+the named server-side RPC after validation.
+
+**Consequences:** Every new public-site network dependency needs an explicit CSP
+review. Telemetry path additions must stay on the Global API origin unless the
+regional architecture is deliberately revised.
+
+### 2026-08-13 — Public paths and invalid handoffs keep truthful bounded classes
+
+**What changed:** Canonical work-stream handoff paths collapse their UUID segment
+to `/app/workstreams/:id` before page-view or page-leave construction. Invalid
+generic desktop targets preserve a provable workstream/settings/automation type,
+or use `unknown` when no type is provable, instead of defaulting to Settings.
+
+**Why:** Raw work-stream pathnames leaked the resource identifier that the public
+site contract prohibits, while attributing every malformed target to Settings
+corrupted the handoff funnel.
+
+**Considered and rejected:** Dropping all path and invalid-handoff observations.
+Bounded canonical paths and explicit validity retain useful acquisition and
+failure metrics without retaining the target.
+
+**Consequences:** Any future dynamic public path needs canonicalization before
+envelope construction, and invalid target classification must never invent a
+specific product surface.
 
 ### 2026-08-13 — Identity selection and bootstrap consume one signed route decision
 

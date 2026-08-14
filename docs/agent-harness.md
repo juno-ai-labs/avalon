@@ -551,6 +551,23 @@ pass locally and fail `pnpm lint`.
 
 ## Changelog
 
+### 2026-08-13 — Telemetry attributes automation only to automation-origin runs
+
+**What changed:** Run and tool telemetry resolves an automation only when the
+root harness run declares an automation origin and its work stream points to the
+same durable automation run. A later person-initiated run in that work stream
+stays a work-stream run with no automation identifier.
+
+**Why:** Automation-created work streams remain usable by people. Joining any
+automation row by work-stream identity incorrectly relabeled their later manual
+messages and retries as unattended automation usage.
+
+**Considered and rejected:** Treating the work stream's creation origin as the
+owner of every future run. Container provenance is not execution provenance.
+
+**Consequences:** Any new run-owner or tool-owner dimension must come from the
+specific harness execution path, not merely from a related work stream.
+
 ### 2026-08-13 — Durable tool and run receipts emit content-free product usage
 
 **What changed:** Root, HyperSight, automation, system, and inline-child runs now

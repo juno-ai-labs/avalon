@@ -376,6 +376,25 @@ generic Electron activation callback rather than also counting a Dock open.
 
 ## Changelog
 
+### 2026-08-13 — Native navigation carries its proven entrypoint into the renderer
+
+**What changed:** Main-to-renderer deep-link messages now carry a closed
+entrypoint alongside the validated URL. Menu-bar navigation is marked
+`menu_bar`, operating-system links are `deep_link`, and a meeting's note reveal
+is `in_app_link`. The renderer records that source before changing routes.
+
+**Why:** A URL alone proves the destination but not who initiated it. Treating
+every native navigation as an unmarked hash change produced `unknown` or stale
+surface attribution and hid menu-bar adoption.
+
+**Considered and rejected:** Adding an untrusted query parameter to the custom
+URL and treating every navigation as `deep_link`. Both lose the main process's
+already-proven source.
+
+**Consequences:** Any new native navigation producer must send one closed source
+through the isolated bridge. The source is analytics context only and grants no
+navigation authority; URL validation remains separate.
+
 ### 2026-08-13 — Menu activations remain distinct from Dock opens
 
 **What changed:** A menu action that raises Avalon now contributes the explicit

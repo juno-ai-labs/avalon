@@ -378,6 +378,24 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-13 — Terminal lifecycle telemetry observes transitions, not tool reuse
+
+**What changed:** Sandbox acquisition reports `start`, `restore`, or
+`repository_replace` only when that acquire actually performs the corresponding
+lifecycle transition. Reusing an already-running sandbox emits no lifecycle
+event.
+
+**Why:** Every Terminal command calls `acquire`. Treating the running fast path
+as `start` multiplied adoption counts by ordinary tool usage.
+
+**Considered and rejected:** Deduplicating downstream by sandbox ID. A later
+real restore or replacement belongs to the same work stream and must remain
+observable; transition truth is available only in the coordinator.
+
+**Consequences:** Provider operation metrics and product lifecycle metrics retain
+their distinct meanings. New acquire fast paths must explicitly decide whether
+they performed a lifecycle transition before invoking the observer.
+
 ### 2026-08-13 — Git trusts Daytona's secret-substitution proxy CA
 
 **What changed:** Repository bootstrap and the ephemeral trusted publisher now

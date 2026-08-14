@@ -124,6 +124,37 @@ describe('agent tool usage telemetry', () => {
       VALUES ('${workstreamId}', '${workspaceId}', 'Run', '', 'ad_hoc', '${userId}',
               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z',
               '2026-08-12T20:00:00.000Z');
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state,
+         latest_version_number, created_at, updated_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', '${workspaceId}', '${userId}',
+              'Automation', '', 'private', 1, '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json,
+         created_by_user_id, created_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902',
+              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', 1, 'Run', '[]', '${userId}',
+              '2026-08-12T20:00:00.000Z');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, status, created_at, updated_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workspaceId}',
+              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901',
+              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', 'personal', '${userId}',
+              '{"type":"user","userId":"${userId}"}', 'active',
+              '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
+      UPDATE workstreams
+         SET origin_type = 'automation',
+             automation_subscription_id = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903',
+             automation_run_id = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904'
+       WHERE id = '${workstreamId}';
+      INSERT INTO automation_runs
+        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
+         started_at, completed_at, status, created_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904', '${workspaceId}',
+              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workstreamId}', 'scheduled',
+              '2026-08-12T19:00:00.000Z', '2026-08-12T19:10:00.000Z', 'completed',
+              '2026-08-12T19:00:00.000Z');
       INSERT INTO harness_runs
         (id, workspace_id, workstream_id, origin, execution_principal_json,
          status, started_at, created_at)
@@ -176,6 +207,7 @@ describe('agent tool usage telemetry', () => {
         replayed: false,
       },
     });
+    expect(JSON.parse(row.envelope_json).properties).not.toHaveProperty('automationId');
     expect(row.envelope_json).not.toContain('secret');
     expect(database.prepare(
       `SELECT COUNT(*) AS count FROM telemetry_accepted_events

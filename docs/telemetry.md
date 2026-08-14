@@ -33,6 +33,7 @@ terminates in Avalon's EU-isolated Cloudflare resources.
 | `apps/site/src/telemetry.ts`, `apps/site/src/site-entry.ts` | Region-before-identity public-site page, action, acquisition, and browser-to-desktop handoff reporting. |
 | `apps/api/src/crash-symbolicator*.ts`, `apps/api/crash-symbolicator/` | Private Cloudflare Container boundary and pinned native stack-walking image. |
 | `packages/db/migrations/0074_regional_telemetry.sql` | Telemetry identities, preferences, outboxes, internal EU projections, crash indexes, deadlines, rate buckets, circuits, and analysis dimensions. |
+| `packages/db/migrations/0077_connector_oauth_telemetry_shape.sql` | The bounded event version, connector scope, capability count, and reconnect state admitted with an OAuth attempt for later terminal telemetry. |
 | `apps/desktop/scripts/publish-telemetry-artifacts.mjs` | Private source-map and native-symbol publication to both isolated telemetry buckets. |
 | `apps/desktop/scripts/telemetry-crashpad-fixture.mjs` | Real packaged Electron/Crashpad two-launch release gate. |
 
@@ -121,7 +122,13 @@ active-sandbox dimensions. Connector telemetry covers setup, user actions,
 health transitions, and admitted activity; digests cover schedule and delivery;
 invitations cover creation through terminal response. Provider payloads,
 connection/account IDs, invite email addresses, digest contents, and Terminal
-commands or paths remain prohibited.
+commands or paths remain prohibited. OAuth connector attempts persist their
+closed telemetry shape and the renderer's explicit event-contract version. A
+current client emits only `connector_setup_requested_v2`; a benign query marker
+selects V2 while the already-deployed operation header retains correlation. The
+API answers it with only `connector_setup_completed_v2` under the same operation
+ID, including terminal failures. An older client without the version marker
+retains the V1 outcome, so one attempt never emits both destination versions.
 
 Automation measurement starts when the builder becomes actionable. The API
 records each durable compiler turn, first create-ready revision, authoritative
@@ -562,6 +569,72 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-13 — Connector telemetry negotiates one correlated contract version
+
+**What changed:** Current desktop connector starts emit only the rich V2 intent,
+carry its operation ID plus an explicit query version marker, and persist a
+closed setup shape on the OAuth attempt. The terminal API event uses that same
+version and operation ID for success or failure. Marker-less released clients
+continue to receive only the V1 outcome.
+
+**Why:** Emitting V1 and V2 for the same setup action double-counted one person
+journey, while emitting V2 only after success omitted the exact failures the
+funnel is meant to explain.
+
+**Considered and rejected:** Emitting both versions during migration, inferring
+missing failure dimensions after OAuth returns, and dropping the legacy outcome
+immediately. Those corrupt counts, fabricate context, or strand released-client
+funnels. A new header was also rejected because API and desktop deployments can
+race: an older Worker safely ignores the query marker, whereas Chromium would
+block an unknown header at CORS preflight and prevent connector setup itself.
+
+**Consequences:** A connector attempt owns one immutable telemetry contract
+version. New connector versions must negotiate at request admission and persist
+every terminal property needed later; PostHog queries never union V1 and V2 for
+one attempt.
+
+### 2026-08-13 — Shutdown and automation attribution use authoritative boundaries
+
+**What changed:** Desktop quit is held once while graceful lifecycle and session
+events enter the spool and one bounded flush runs; a 750-ms deadline always
+resumes exit. Run and tool events attach automation metadata only when the
+harness run has an automation origin and the work stream points to that exact
+automation run.
+
+**Why:** Electron does not await promises started from `will-quit`, and a work
+stream can contain later person-initiated runs after automation created it.
+Without these boundaries, normal-exit events disappeared and manual activity
+was mislabeled as automation activity.
+
+**Considered and rejected:** Fire-and-forget shutdown writes, an unbounded quit
+delay, and inferring run ownership from any automation row on the work stream.
+Those respectively lose events, harm shutdown, or corrupt attribution.
+
+**Consequences:** New shutdown telemetry belongs inside the bounded barrier, and
+new automation dimensions must be proved from the specific run rather than the
+container that happens to hold it.
+
+### 2026-08-13 — Review closes systematic overcount and misattribution paths
+
+**What changed:** Redirect-only `/` no longer reports a duplicate home surface;
+reused running Terminal sandboxes no longer report starts; native navigation
+carries a proven source; released suggestion clients retain a legacy home
+fallback; public dynamic paths and invalid handoffs use bounded truthful
+classes; and digest telemetry cannot interrupt settlement.
+
+**Why:** Each issue produced structurally plausible events, so schema validation
+could not detect the corrupted count or attribution. The authoritative producer
+already knew the missing transition, source, compatibility, or canonicalization
+fact.
+
+**Considered and rejected:** Dashboard deduplication and downstream repair.
+Those approaches encode product behavior in provider queries and cannot recover
+the omitted source or distinguish a true later transition.
+
+**Consequences:** Producers must emit only real transitions, redirect routes do
+not own observations, optional old-client context has an explicit fallback, and
+privacy canonicalization runs before the envelope is built.
 
 ### 2026-08-13 — Public-site bootstrap is bound to its pre-identity route
 

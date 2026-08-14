@@ -104,4 +104,13 @@ describe('Electron telemetry wiring', () => {
     expect(source).toContain('applicationOpenObserver.activated()');
     expect(source).toContain("'push_notification'");
   });
+
+  it('preserves native navigation sources and holds quit behind one bounded flush', () => {
+    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+
+    expect(source).toContain("emitDeepLink(`${customProtocol}://workstreams/new`, 'menu_bar')");
+    expect(source).toContain('const telemetryQuitBarrier = new TelemetryQuitBarrier');
+    expect(source).toContain('if (telemetryQuitBarrier.hold(() => app.quit())) event.preventDefault()');
+    expect(source).not.toContain("void telemetryReporter?.applicationLifecycle('graceful_exit')");
+  });
 });

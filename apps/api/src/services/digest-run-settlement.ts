@@ -122,7 +122,7 @@ export async function settleDigestRun(
       nowIso(),
       deliveryId,
     ).run();
-    await emitDigestTerminal(env, delivery, "failed");
+    await emitDigestTerminal(env, delivery, "failed").catch(() => undefined);
     return;
   }
 
@@ -162,7 +162,7 @@ export async function settleDigestRun(
       nowIso(),
       deliveryId,
     ).run();
-    await emitDigestTerminal(env, delivery, "failed");
+    await emitDigestTerminal(env, delivery, "failed").catch(() => undefined);
     return;
   }
 
@@ -174,7 +174,7 @@ export async function settleDigestRun(
     `UPDATE digest_deliveries SET status = 'delivered', updated_at = ?
       WHERE id = ? AND status NOT IN ('delivered', 'failed')`,
   ).bind(nowIso(), deliveryId).run();
-  await emitDigestTerminal(env, delivery, "success");
+  await emitDigestTerminal(env, delivery, "success").catch(() => undefined);
   await noteDeliveryInTranscript(env, delivery.id, delivered.delivered);
 }
 

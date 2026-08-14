@@ -141,8 +141,12 @@ export async function emitAgentToolTerminalTelemetry(
             ar.automation_subscription_id AS automation_id
        FROM tool_invocations ti
        JOIN harness_runs hr ON hr.id = ti.harness_run_id
+       JOIN workstreams w
+         ON w.id = hr.workstream_id AND w.workspace_id = hr.workspace_id
        LEFT JOIN automation_runs ar
-         ON ar.workspace_id = hr.workspace_id AND ar.workstream_id = hr.workstream_id
+         ON ar.id = w.automation_run_id
+        AND ar.workspace_id = hr.workspace_id
+        AND hr.origin IN ('automation', 'automation_run')
       WHERE ti.id = ? AND ti.workspace_id = ? AND ti.workstream_id = ?
         AND ti.harness_run_id = ?`,
   ).bind(

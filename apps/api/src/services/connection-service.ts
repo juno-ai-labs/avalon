@@ -106,6 +106,10 @@ interface ConnectorOAuthAttemptRow {
   user_id: string;
   workspace_id: string;
   telemetry_operation_id: string | null;
+  telemetry_event_version: number;
+  telemetry_scope: Scope | null;
+  telemetry_capability_count: number | null;
+  telemetry_reconnect: number;
   created_at: string;
 }
 
@@ -393,13 +397,16 @@ export class ConnectionService {
     };
   }
 
-  async bindOAuthTelemetry(attemptId: string, operationId: string): Promise<void> {
+  async bindOAuthTelemetry(attemptId: string, operationId: string, eventVersion: 1 | 2): Promise<void> {
     await this.env.DB.prepare(
       `UPDATE connector_oauth_attempts
-       SET telemetry_operation_id = COALESCE(telemetry_operation_id, ?), updated_at = ?
+       SET telemetry_operation_id = COALESCE(telemetry_operation_id, ?),
+           telemetry_event_version = CASE
+             WHEN telemetry_operation_id IS NULL THEN ? ELSE telemetry_event_version END,
+           updated_at = ?
        WHERE id = ? AND region = ?
-         AND provider IN ('google', 'github', 'linear', 'notion', 'slack')`,
-    ).bind(operationId, nowIso(), attemptId, this.env.AVALON_REGION).run().catch(() => undefined);
+         AND provider IN ('google', 'github', 'granola', 'linear', 'notion', 'slack')`,
+    ).bind(operationId, eventVersion, nowIso(), attemptId, this.env.AVALON_REGION).run().catch(() => undefined);
   }
 
   async beginGoogle(input: {
@@ -433,6 +440,9 @@ export class ConnectionService {
       statePayload,
       auth,
       expiresAt,
+      scope: input.scope,
+      capabilityCount: capabilities.length,
+      reconnect: input.connectionId !== undefined,
     });
     const adapter = this.registry().get("google");
     const authorization = await adapter.beginAuthorization?.({
@@ -627,6 +637,9 @@ export class ConnectionService {
       statePayload,
       auth,
       expiresAt,
+      scope: input.scope,
+      capabilityCount: capabilities.length,
+      reconnect: input.connectionId !== undefined,
     });
     return { url: authorization.url, attemptId };
   }
@@ -667,6 +680,9 @@ export class ConnectionService {
       statePayload,
       auth,
       expiresAt,
+      scope: input.scope,
+      capabilityCount: capabilities.length,
+      reconnect: input.connectionId !== undefined,
     });
     const url = new URL(`https://github.com/apps/${encodeURIComponent(this.env.GITHUB_APP_SLUG)}/installations/new`);
     url.searchParams.set("state", state);
@@ -1259,7 +1275,8 @@ export class ConnectionService {
     ).run();
     const row = await this.env.DB.prepare(
       `SELECT id, provider, status, connection_id, error_code, expires_at,
-              user_id, workspace_id, telemetry_operation_id, created_at
+              user_id, workspace_id, telemetry_operation_id, telemetry_event_version,
+              telemetry_scope, telemetry_capability_count, telemetry_reconnect, created_at
        FROM connector_oauth_attempts
        WHERE id = ? AND workspace_id = ? AND user_id = ? AND region = ?`,
     ).bind(
@@ -2292,14 +2309,18 @@ export class ConnectionService {
     statePayload: string;
     auth: AuthContext;
     expiresAt: string;
+    scope: Scope;
+    capabilityCount: number;
+    reconnect: boolean;
   }): Promise<void> {
     const at = nowIso();
     await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO connector_oauth_attempts
          (id, region, provider, user_id, workspace_id, status, connection_id,
-          error_code, expires_at, completed_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, ?, ?)`,
+          error_code, expires_at, completed_at, created_at, updated_at,
+          telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+         VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, ?, ?, ?, ?, ?)`,
       ).bind(
         input.attemptId,
         this.env.AVALON_REGION,
@@ -2309,6 +2330,9 @@ export class ConnectionService {
         input.expiresAt,
         at,
         at,
+        input.scope,
+        input.capabilityCount,
+        input.reconnect ? 1 : 0,
       ),
       this.env.DB.prepare(
         `INSERT INTO oauth_states
@@ -2374,14 +2398,15 @@ export class ConnectionService {
   private async loadOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttemptRow | null> {
     return this.env.DB.prepare(
       `SELECT id, provider, status, connection_id, error_code, expires_at,
-              user_id, workspace_id, telemetry_operation_id, created_at
+              user_id, workspace_id, telemetry_operation_id, telemetry_event_version,
+              telemetry_scope, telemetry_capability_count, telemetry_reconnect, created_at
        FROM connector_oauth_attempts WHERE id = ? AND region = ?`,
     ).bind(attemptId, this.env.AVALON_REGION).first<ConnectorOAuthAttemptRow>();
   }
 
   private async emitOAuthOutcome(row: ConnectorOAuthAttemptRow): Promise<void> {
     if (!row.telemetry_operation_id || row.status === 'pending'
-      || !['google', 'github', 'linear', 'notion', 'slack'].includes(row.provider)) return;
+      || !['google', 'github', 'granola', 'linear', 'notion', 'slack'].includes(row.provider)) return;
     const result = row.status === 'succeeded'
       ? 'success'
       : row.status === 'denied' ? 'denied'
@@ -2393,7 +2418,32 @@ export class ConnectionService {
       region: this.env.AVALON_REGION,
       role: null,
     };
-    const event = apiTelemetryEnvelope(
+    const connector = telemetryConnector(row.provider);
+    if (row.telemetry_event_version === 2
+      && connector !== null
+      && row.telemetry_scope !== null
+      && row.telemetry_capability_count !== null) {
+      await emitAuthenticatedApiTelemetry(this.env, auth, apiTelemetryEnvelope(
+        this.env,
+        'connector_setup_completed_v2',
+        {
+          connector,
+          scope: row.telemetry_scope,
+          method: 'oauth',
+          result,
+          duration: telemetryJourneyDuration(Math.max(0, Date.now() - Date.parse(row.created_at))),
+          capabilityCount: telemetryCountBucket(row.telemetry_capability_count),
+          reconnect: row.telemetry_reconnect === 1,
+        },
+        row.telemetry_operation_id,
+        'workspace-user',
+        this.env.AVALON_REGION,
+        row.telemetry_operation_id,
+      ));
+      return;
+    }
+    if (row.provider === 'granola') return;
+    await emitAuthenticatedApiTelemetry(this.env, auth, apiTelemetryEnvelope(
       this.env,
       'connector_setup_completed',
       { connector: row.provider, result },
@@ -2401,40 +2451,7 @@ export class ConnectionService {
       'workspace-user',
       this.env.AVALON_REGION,
       row.telemetry_operation_id,
-    );
-    await emitAuthenticatedApiTelemetry(this.env, auth, event);
-    if (row.status === 'succeeded' && row.connection_id) {
-      const connection = await this.env.DB.prepare(
-        `SELECT id, connector_type, scope, granted_scopes_json, created_at
-         FROM connector_connections WHERE id = ? AND workspace_id = ?`,
-      ).bind(row.connection_id, row.workspace_id).first<{
-        id: string;
-        connector_type: string;
-        scope: Scope;
-        granted_scopes_json: string;
-        created_at: string;
-      }>();
-      const connector = telemetryConnector(connection?.connector_type);
-      if (connection && connector) {
-        await emitAuthenticatedApiTelemetry(this.env, auth, apiTelemetryEnvelope(
-          this.env,
-          'connector_setup_completed_v2',
-          {
-            connector,
-            scope: connection.scope,
-            method: 'oauth',
-            result: 'success',
-            duration: telemetryJourneyDuration(Math.max(0, Date.now() - Date.parse(row.created_at))),
-            capabilityCount: telemetryCountBucket(parseJson(connection.granted_scopes_json, []).length),
-            reconnect: Date.parse(connection.created_at) < Date.parse(row.created_at) - 1_000,
-          },
-          row.telemetry_operation_id,
-          'workspace-user',
-          this.env.AVALON_REGION,
-          newId(),
-        ));
-      }
-    }
+    ));
   }
 
   private connectorAttemptTarget(input: {

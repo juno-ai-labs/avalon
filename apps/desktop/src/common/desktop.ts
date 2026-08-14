@@ -5,6 +5,13 @@ import type { TelemetryEventProperties } from '@avalon/contracts';
 
 export type AvalonRegion = 'global' | 'eu';
 
+export type DesktopDeepLinkEntrypoint = 'deep_link' | 'menu_bar' | 'notification' | 'in_app_link';
+
+export interface DesktopDeepLinkNavigation {
+  url: string;
+  entrypoint: DesktopDeepLinkEntrypoint;
+}
+
 export interface RuntimeConfig {
   appVersion: string;
   isPackaged: boolean;
@@ -101,12 +108,16 @@ export type DesktopTelemetrySemanticEventName =
   | 'workstream_resource_action_completed'
   | 'recording_start_completed'
   | 'recording_terminal'
-  | 'note_opened_v2'
-  | 'connector_setup_requested_v2';
+  | 'note_opened_v2';
 
 export type DesktopTelemetrySemanticIntent = {
   [Name in DesktopTelemetrySemanticEventName]: { kind: Name } & TelemetryEventProperties<Name>;
 }[DesktopTelemetrySemanticEventName];
+
+export type DesktopTelemetryConnectorSetupIntent = {
+  kind: 'connector_setup_requested_v2';
+  operationId?: string;
+} & TelemetryEventProperties<'connector_setup_requested_v2'>;
 
 export type DesktopTelemetryProductIntent =
   | { kind: 'onboarding_region_selected'; selectedRegion: AvalonRegion; entrypoint: 'first_run' | 'settings' | 'invitation' }
@@ -114,7 +125,7 @@ export type DesktopTelemetryProductIntent =
   | { kind: 'workspace_activation_requested'; selectedRegion: AvalonRegion; entrypoint: 'invitation' | 'workspace_switcher'; operationId: string }
   | { kind: 'workstream_create_requested'; entrypoint: 'composer'; operationId: string }
   | { kind: 'run_requested'; entrypoint: 'composer'; operationId: string }
-  | { kind: 'connector_setup_requested'; connector: 'github' | 'google' | 'linear' | 'notion' | 'slack'; operationId: string }
+  | DesktopTelemetryConnectorSetupIntent
   | { kind: 'command_shortcuts_revealed'; availableCount: number }
   | {
     kind: 'command_shortcut_used';
@@ -338,7 +349,7 @@ export interface AvalonDesktopBridge {
   openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
   onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
-  consumePendingDeepLinks: () => Promise<string[]>;
-  onDeepLink: (listener: (url: string) => void) => () => void;
+  consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
+  onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
 }
