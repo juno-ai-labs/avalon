@@ -8,7 +8,7 @@ import {
   type TerminalToolExecutors,
 } from "../src/services/terminal/contract";
 
-const expectedSystemMessage = "You have a Daytona terminal workspace with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, or archive. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. For deliberate text changes, read first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch`; use `terminal_write_file` only for intentional complete replacement. To create a durable artifact, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then call `terminal_publish_resource` with a path relative to that directory. A nonzero command exit, timeout, cancellation, or output limit is a successful tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone. Tool availability does not require you to start a sandbox unless the task benefits from it.";
+const expectedSystemMessage = "You have a Daytona terminal workspace with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, or archive. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. To work in an authorized GitHub repository, choose the exact owner/name yourself and call `terminal_checkout_repository`; use GitHub repository search first when needed, and set `requiredRemoteAccess` to `full_access` when the task needs a push or pull request. The checkout result's `remoteAccess` is the remote boundary: `read_only` allows local edits and commits but its credential cannot push or mutate GitHub; `full_access` provides a repository-scoped credential for ordinary `git` and `gh` commands. Before every repository tool Avalon creates or restores `$AVALON_GIT_BRANCH` and switches to it. Stay on that branch, commit normally, push only that branch, and create or update its pull request against `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. Avalon creates a durable recovery backup before replacing nonempty workspace state. For deliberate text changes, read first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch`; use `terminal_write_file` only for intentional complete replacement. To create a durable artifact, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then call `terminal_publish_resource` with a path relative to that directory. A nonzero command exit, timeout, cancellation, or output limit is a successful tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone. Tool availability does not require you to start a sandbox unless the task benefits from it.";
 
 const executor = async () => ({ output: {}, summary: "test" });
 const executors = {
@@ -17,6 +17,7 @@ const executors = {
   write_file: executor,
   apply_patch: executor,
   run_command: executor,
+  checkout_repository: executor,
   import_resource: executor,
   publish_resource: executor,
   publish_branch_and_pr: executor,
@@ -42,6 +43,7 @@ describe("Terminal plugin contract", () => {
       "write_file",
       "apply_patch",
       "run_command",
+      "checkout_repository",
       "import_resource",
       "publish_resource",
       "publish_branch_and_pr",
@@ -60,6 +62,7 @@ describe("Terminal plugin contract", () => {
       { name: "write_file", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
       { name: "apply_patch", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
       { name: "run_command", capability: "terminal.command.run", mode: "write", idempotency: "record_before_execute", timeoutMs: 1_050_000, serial: true, additionalProperties: false },
+      { name: "checkout_repository", capability: "terminal.repository.checkout", mode: "write", idempotency: "record_before_execute", timeoutMs: 300_000, serial: true, additionalProperties: false },
       { name: "import_resource", capability: "terminal.resource.import", mode: "write", idempotency: "record_before_execute", timeoutMs: 240_000, serial: true, additionalProperties: false },
       { name: "publish_resource", capability: "terminal.resource.publish", mode: "write", idempotency: "provider_key", timeoutMs: 240_000, serial: true, additionalProperties: false },
       { name: "publish_branch_and_pr", capability: "terminal.repository.publish", mode: "write", idempotency: "record_before_execute", timeoutMs: 300_000, serial: true, additionalProperties: false },

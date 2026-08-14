@@ -74,7 +74,7 @@ describe("Terminal HTTP route contracts", () => {
     const state = await app.request(`/workstreams/${S}/terminal`, undefined, env);
     expect(state.status).toBe(200);
     expect(TerminalWorkstreamStateSchema.parse(await state.json())).toMatchObject({
-      availability: "unsupported", state: "absent", repository: null, repositoryRequest: null,
+      availability: "unsupported", state: "absent", repository: null,
     });
   });
 
@@ -100,11 +100,16 @@ describe("Terminal HTTP route contracts", () => {
     });
   });
 
-  it("serves the disconnected repository catalog and start-fresh endpoint", async () => {
+  it("keeps participant repository-selection endpoints absent and serves start-fresh", async () => {
     const { app, env } = fixture();
     const catalog = await app.request(`/workstreams/${S}/terminal/repositories`, undefined, env);
-    expect(catalog.status).toBe(200);
-    expect(await catalog.json()).toMatchObject({ state: "disconnected", connections: [] });
+    expect(catalog.status).toBe(404);
+    const selection = await app.request(`/workstreams/${S}/terminal/repository`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connectionId: W, repositoryFullName: "owner/repo" }),
+    }, env);
+    expect(selection.status).toBe(404);
 
     const fresh = await app.request(`/workstreams/${S}/terminal/start-fresh`, { method: "POST" }, env);
     expect(fresh.status).toBe(200);
@@ -126,10 +131,9 @@ describe("Terminal HTTP route contracts", () => {
     for (const [path, body] of [
       ["/workspace/terminal/network-policy/preview", { mode: "trusted_only" }],
       ["/workspace/terminal/network-policy/apply", {}],
-      [`/workstreams/${S}/terminal/repository`, { connectionId: "not-an-id", repositoryFullName: "invalid" }],
     ] as const) {
       const response = await owner.app.request(path, {
-        method: path.includes("/repository") ? "PUT" : "POST",
+        method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }, owner.env);

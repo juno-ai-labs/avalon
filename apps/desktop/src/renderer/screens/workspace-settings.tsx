@@ -47,6 +47,7 @@ import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
 import { desktopBridge } from '../lib/platform';
 import type {
+  GitHubRepositoryAccessSettings,
   TerminalNetworkPolicyPreview,
   TerminalWorkspaceSettings,
   Workspace,
@@ -92,6 +93,7 @@ interface SettingsNavItem {
   label: string;
   searchTerms: string;
   icon: LucideIcon;
+  child?: boolean;
 }
 
 const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
@@ -368,6 +370,8 @@ export function WorkspaceSettingsScreen({
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
   const [navigationQuery, setNavigationQuery] = useState('');
   const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('all');
+  const [githubSettingsConnectionId, setGitHubSettingsConnectionId] = useState<string | null>(null);
+  const [githubRepositorySearch, setGitHubRepositorySearch] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
@@ -427,6 +431,42 @@ export function WorkspaceSettingsScreen({
     enabled: Boolean(api),
     refetchOnWindowFocus: 'always',
     staleTime: 5_000,
+  });
+  const githubSettingsConnections = useMemo(
+    () => (connections.data ?? []).filter((connection) => (
+      connection.settingsKind === 'github_repository_access'
+      && connection.status !== 'disabled'
+    )),
+    [connections.data],
+  );
+  useEffect(() => {
+    if (
+      githubSettingsConnectionId
+      && githubSettingsConnections.some((connection) => connection.id === githubSettingsConnectionId)
+    ) return;
+    setGitHubSettingsConnectionId(githubSettingsConnections[0]?.id ?? null);
+  }, [githubSettingsConnectionId, githubSettingsConnections]);
+  const githubRepositorySettings = useQuery({
+    queryKey: ['github-repository-access', githubSettingsConnectionId],
+    queryFn: ({ signal }) => api!.getGitHubRepositoryAccessSettings(githubSettingsConnectionId!, signal),
+    enabled: Boolean(api && activeSection === 'github' && githubSettingsConnectionId),
+    staleTime: 10_000,
+  });
+  const updateGitHubRepositorySettings = useMutation({
+    mutationFn: (next: Pick<GitHubRepositoryAccessSettings, 'mode' | 'defaultRemoteAccess' | 'repositories'>) => (
+      api!.updateGitHubRepositoryAccessSettings(githubSettingsConnectionId!, {
+        expectedRevision: githubRepositorySettings.data!.revision,
+        mode: next.mode,
+        defaultRemoteAccess: next.defaultRemoteAccess,
+        repositories: next.repositories,
+      })
+    ),
+    onSuccess: (settings) => {
+      queryClient.setQueryData(['github-repository-access', settings.connectionId], settings);
+    },
+    onError: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['github-repository-access', githubSettingsConnectionId] });
+    },
   });
   const terminalSettings = useQuery({
     queryKey: ['terminal-workspace-settings'],
@@ -635,10 +675,26 @@ export function WorkspaceSettingsScreen({
     [invitations.data],
   );
   const developerSettingsAvailable = applicationSettings?.developerSettingsAvailable ?? false;
+  const settingsNavigationWithConnectors = useMemo(() => settingsNavigation.map((group) => (
+    group.label !== 'Settings' || githubSettingsConnections.length === 0
+      ? group
+      : {
+          ...group,
+          items: group.items.flatMap((item) => item.id === 'connections'
+            ? [item, {
+                id: 'github' as const,
+                label: 'GitHub',
+                searchTerms: 'github repositories remote read only full access push pull request',
+                icon: GitBranch,
+                child: true,
+              }]
+            : [item]),
+        }
+  )), [githubSettingsConnections.length]);
   const filteredNavigation = useMemo(() => {
     const query = navigationQuery.trim().toLowerCase();
-    if (!query) return settingsNavigation;
-    return settingsNavigation
+    if (!query) return settingsNavigationWithConnectors;
+    return settingsNavigationWithConnectors
       .map((group) => ({
         ...group,
         items: group.items.filter((item) =>
@@ -647,7 +703,7 @@ export function WorkspaceSettingsScreen({
             .includes(query)),
       }))
       .filter((group) => group.items.length > 0);
-  }, [navigationQuery, developerSettingsAvailable]);
+  }, [navigationQuery, developerSettingsAvailable, settingsNavigationWithConnectors]);
   const availableSections = useMemo(
     () => new Set(filteredNavigation.flatMap((group) => group.items.map((item) => item.id))),
     [filteredNavigation],
@@ -799,7 +855,51 @@ export function WorkspaceSettingsScreen({
     setCopied(true);
   };
 
-  const sectionTitle = settingsNavigation
+  const githubSettings = githubRepositorySettings.data;
+  const selectedGitHubSettingsConnection = githubSettingsConnections.find((connection) => (
+    connection.id === githubSettingsConnectionId
+  ));
+  const canEditGitHubSettings = selectedGitHubSettingsConnection?.scope === 'you' || isAdmin;
+  const visibleGitHubRepositories = useMemo(() => {
+    const query = githubRepositorySearch.trim().toLowerCase();
+    const repositories = githubSettings?.availableRepositories ?? [];
+    return query
+      ? repositories.filter((repository) => repository.repositoryFullName.toLowerCase().includes(query))
+      : repositories;
+  }, [githubRepositorySearch, githubSettings?.availableRepositories]);
+  const saveGitHubRepositoryPolicy = (
+    next: Pick<GitHubRepositoryAccessSettings, 'mode' | 'defaultRemoteAccess' | 'repositories'>,
+  ): void => {
+    if (canEditGitHubSettings && !updateGitHubRepositorySettings.isPending) {
+      updateGitHubRepositorySettings.mutate(next);
+    }
+  };
+  const setGitHubRepositoryRemoteAccess = (
+    repository: GitHubRepositoryAccessSettings['availableRepositories'][number],
+    remoteAccess: 'read_only' | 'full_access' | null,
+  ): void => {
+    if (!githubSettings) return;
+    const repositories = githubSettings.repositories.filter((candidate) => (
+      candidate.repositoryId !== repository.repositoryId
+    ));
+    if (remoteAccess && (
+      githubSettings.mode === 'selected_repositories'
+      || remoteAccess !== githubSettings.defaultRemoteAccess
+    )) {
+      repositories.push({
+        repositoryId: repository.repositoryId,
+        repositoryFullName: repository.repositoryFullName,
+        remoteAccess,
+      });
+    }
+    saveGitHubRepositoryPolicy({
+      mode: githubSettings.mode,
+      defaultRemoteAccess: githubSettings.defaultRemoteAccess,
+      repositories,
+    });
+  };
+
+  const sectionTitle = settingsNavigationWithConnectors
     .flatMap((group) => group.items)
     .find((item) => item.id === activeSection)?.label ?? 'Settings';
 
@@ -827,6 +927,7 @@ export function WorkspaceSettingsScreen({
                   return (
                     <button
                       aria-current={activeSection === item.id ? 'page' : undefined}
+                      className={item.child ? 'settings-navigation-child' : undefined}
                       key={item.id}
                       onClick={() => setActiveSection(item.id)}
                       type="button"
@@ -1309,6 +1410,157 @@ export function WorkspaceSettingsScreen({
                 {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
                 {(connectorOAuthError || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
                   <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
+                )}
+              </section>
+            )}
+
+            {activeSection === 'github' && (
+              <section aria-labelledby="settings-title" className="settings-pane settings-github-pane">
+                <div className="settings-pane-heading">
+                  <h2>Repository access</h2>
+                  <p>Choose which GitHub repositories Avalon may use and whether it may change the remote repository.</p>
+                </div>
+                {githubSettingsConnections.length > 1 && (
+                  <label className="settings-field settings-github-connection">
+                    <span>Connection</span>
+                    <select
+                      aria-label="GitHub connection"
+                      disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                      onChange={(event) => {
+                        setGitHubSettingsConnectionId(event.currentTarget.value);
+                        setGitHubRepositorySearch('');
+                      }}
+                      value={githubSettingsConnectionId ?? ''}
+                    >
+                      {githubSettingsConnections.map((connection) => (
+                        <option key={connection.id} value={connection.id}>{connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Workspace'}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {githubRepositorySettings.isLoading ? (
+                  <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading GitHub repositories…</div>
+                ) : githubSettings ? (
+                  <>
+                    {!canEditGitHubSettings && (
+                      <p className="settings-section-copy">Workspace repository access is read-only here. Ask a workspace administrator to change it.</p>
+                    )}
+                    <div className="settings-list-card settings-github-policy">
+                      <label className="settings-preference-row">
+                        <span className="settings-row-icon"><GitBranch aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>Repository availability</strong>
+                          <small>All repositories follows the GitHub App installation. Selected repositories exposes only the entries you add below.</small>
+                        </span>
+                        <select
+                          aria-label="Repository availability"
+                          disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                          onChange={(event) => saveGitHubRepositoryPolicy({
+                            mode: event.currentTarget.value as GitHubRepositoryAccessSettings['mode'],
+                            defaultRemoteAccess: githubSettings.defaultRemoteAccess,
+                            repositories: githubSettings.repositories,
+                          })}
+                          value={githubSettings.mode}
+                        >
+                          <option value="all_repositories">All repositories</option>
+                          <option value="selected_repositories">Selected repositories</option>
+                        </select>
+                      </label>
+                      {githubSettings.mode === 'all_repositories' && (
+                        <label className="settings-preference-row">
+                          <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
+                          <span className="settings-row-copy">
+                            <strong>Default remote access</strong>
+                            <small>Read-only still allows Avalon to edit and commit locally. It blocks push, pull requests, issues, reviews, and other remote mutations.</small>
+                          </span>
+                          <select
+                            aria-label="Default remote access"
+                            disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                            onChange={(event) => saveGitHubRepositoryPolicy({
+                              mode: githubSettings.mode,
+                              defaultRemoteAccess: event.currentTarget.value as GitHubRepositoryAccessSettings['defaultRemoteAccess'],
+                              repositories: githubSettings.repositories,
+                            })}
+                            value={githubSettings.defaultRemoteAccess}
+                          >
+                            <option value="read_only">Read-only remote</option>
+                            <option value="full_access">Full remote access</option>
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                    <div className="settings-github-repository-heading">
+                      <div>
+                        <strong>Repositories</strong>
+                        <small>{githubSettings.availableRepositories.length} available through {githubSettings.connectionName}</small>
+                      </div>
+                      <label className="settings-search settings-github-search">
+                        <Search aria-hidden="true" size={15} />
+                        <span className="sr-only">Search GitHub repositories</span>
+                        <input
+                          data-saved-value={githubRepositorySearch}
+                          onChange={(event) => setGitHubRepositorySearch(event.currentTarget.value)}
+                          placeholder="Search repositories"
+                          type="search"
+                          value={githubRepositorySearch}
+                        />
+                      </label>
+                    </div>
+                    <div className="settings-list-card settings-github-repository-list">
+                      {visibleGitHubRepositories.map((repository) => {
+                        const configured = githubSettings.repositories.find((candidate) => (
+                          candidate.repositoryId === repository.repositoryId
+                        ));
+                        const selected = githubSettings.mode === 'all_repositories' || Boolean(configured);
+                        const effectiveAccess = configured?.remoteAccess
+                          ?? (githubSettings.mode === 'all_repositories' ? githubSettings.defaultRemoteAccess : 'read_only');
+                        return (
+                          <div className="settings-github-repository-row" key={repository.repositoryId}>
+                            <span>
+                              <strong>{repository.repositoryFullName}</strong>
+                              <small>{repository.private ? 'Private repository' : 'Public repository'}</small>
+                            </span>
+                            {selected ? (
+                              <>
+                                <select
+                                  aria-label={`Remote access for ${repository.repositoryFullName}`}
+                                  disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                  onChange={(event) => setGitHubRepositoryRemoteAccess(
+                                    repository,
+                                    event.currentTarget.value as 'read_only' | 'full_access',
+                                  )}
+                                  value={effectiveAccess}
+                                >
+                                  <option value="read_only">Read-only remote</option>
+                                  <option value="full_access">Full remote access</option>
+                                </select>
+                                {githubSettings.mode === 'selected_repositories' && (
+                                  <Button
+                                    disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                    onClick={() => setGitHubRepositoryRemoteAccess(repository, null)}
+                                  >Remove</Button>
+                                )}
+                              </>
+                            ) : (
+                              <Button
+                                disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                onClick={() => setGitHubRepositoryRemoteAccess(repository, 'read_only')}
+                              >Add</Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {visibleGitHubRepositories.length === 0 && (
+                        <EmptyState title="No repositories found" description="Try a different repository name." />
+                      )}
+                    </div>
+                    <p className="settings-section-copy settings-github-footnote">
+                      Models see the effective remote access when they search or check out a repository. The Terminal harness always permits local edits and local commits, and independently blocks remote publication unless access is full and the participant explicitly requested it.
+                    </p>
+                  </>
+                ) : null}
+                {(githubRepositorySettings.error || updateGitHubRepositorySettings.error) && (
+                  <InlineError>{githubRepositorySettings.error?.message ?? updateGitHubRepositorySettings.error?.message}</InlineError>
                 )}
               </section>
             )}

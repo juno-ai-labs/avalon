@@ -253,8 +253,10 @@ includes it. Knowing an object ID is never sufficient authorization.
   own the revision-fenced preview/confirm/read-back protocol.
   `workstream_terminal_repositories` stores the immutable numeric GitHub
   repository ID, canonical name, selected base/ref/SHA, fixed head ref, and healthy
-  connection; `terminal_publication_grants` stores current-participant intent;
-  `repository_publications` converges the one branch/PR write. Provider IDs and
+  connection; `terminal_publication_grants` retains run/principal provenance for
+  the optional typed publisher; `repository_publications` converges its
+  branch/PR writes. Standard full-access Git/CLI writes do not depend on these
+  receipt tables. Provider IDs and
   repository names are facts, never authorization. See
   [`terminal-workspaces.md`](terminal-workspaces.md).
 
@@ -506,6 +508,26 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-13 — Publication grants become compatibility provenance
+
+**What changed:** Existing Terminal publication-grant rows no longer parse
+request prose or limit a run to one write. They remain as provenance/FK records
+for the optional typed publisher while full-access sandboxes may use standard
+Git and GitHub CLI directly.
+
+**Why:** Connector repository policy is the durable authorization choice, and
+normal PR work may push several commits. Rebuilding the shipped migration only
+to remove a now-optional receipt relationship would add migration risk without
+changing the model-facing behavior.
+
+**Considered and rejected:** Dropping/rebuilding the tables immediately and
+keeping single-use semantics. Future schema work may retire the compatibility
+rows only with a normal forward migration.
+
+**Consequences:** Code must not treat `consumed_at` as an authorization gate.
+Typed publications may share one run provenance row; their own invocation rows
+remain the idempotency boundary.
 
 ### 2026-08-13 — Telemetry rows enforce independent absolute lifecycles
 

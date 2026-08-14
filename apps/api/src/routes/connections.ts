@@ -5,8 +5,10 @@ import {
   ConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema,
   CreateWebhookConnectionRequestSchema,
+  GitHubRepositoryAccessSettingsSchema,
   IdSchema,
   ScopeSchema,
+  UpdateGitHubRepositoryAccessSettingsSchema,
 } from "@avalon/contracts";
 import type { ConnectorOAuthProvider } from "@avalon/contracts";
 import { z } from "zod";
@@ -240,6 +242,22 @@ connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) 
 });
 connectionRoutes.post("/:id/test", zValidator("param", idParam), async (c) =>
   c.json(ConnectionTestSchema.parse(await new ConnectionService(c.env, getAuth(c)).test(c.req.valid("param").id))),
+);
+connectionRoutes.get("/:id/github/repository-access", zValidator("param", idParam), async (c) =>
+  c.json(GitHubRepositoryAccessSettingsSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).getGitHubRepositoryAccess(c.req.valid("param").id),
+  )),
+);
+connectionRoutes.put(
+  "/:id/github/repository-access",
+  zValidator("param", idParam),
+  zValidator("json", UpdateGitHubRepositoryAccessSettingsSchema),
+  async (c) => c.json(GitHubRepositoryAccessSettingsSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).updateGitHubRepositoryAccess(
+      c.req.valid("param").id,
+      c.req.valid("json"),
+    ),
+  )),
 );
 connectionRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ConnectionService(c.env, getAuth(c)).disable(c.req.valid("param").id);

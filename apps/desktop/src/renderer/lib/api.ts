@@ -7,6 +7,7 @@ import {
   AutomationSummarySchema as WireAutomationSummarySchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
+  GitHubRepositoryAccessSettingsSchema as WireGitHubRepositoryAccessSettingsSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
@@ -29,7 +30,6 @@ import {
   WorkspaceSchema as WireWorkspaceSchema,
   TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
   TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
-  TerminalRepositoryCatalogSchema as WireTerminalRepositoryCatalogSchema,
   TerminalWorkstreamStateSchema as WireTerminalWorkstreamStateSchema,
   WorkstreamDetailSchema as WireWorkstreamDetailSchema,
   DigestScheduleSchema as WireDigestScheduleSchema,
@@ -49,6 +49,7 @@ import {
   type User as WireUser,
   type Workstream as WireWorkstream,
   type WorkstreamDetail as WireWorkstreamDetail,
+  type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
 } from '@avalon/contracts';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@avalon/contracts/socket-tickets';
 import { HttpUrlSchema } from '@avalon/contracts/url-schemas';
@@ -98,7 +99,6 @@ import type {
   WorkOpportunity,
   TerminalWorkspaceSettings,
   TerminalNetworkPolicyPreview,
-  TerminalRepositoryCatalog,
   TerminalWorkstreamState,
 } from './types';
 
@@ -345,6 +345,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
         ? 'disabled'
         : 'reconnect_required',
     capabilities: connection.grantedCapabilities,
+    ...(connection.settingsKind ? { settingsKind: connection.settingsKind } : {}),
     ...(connection.userDelivery ? { userDelivery: connection.userDelivery } : {}),
   };
 }
@@ -1284,21 +1285,6 @@ export class AvalonApi {
     });
   }
 
-  async getTerminalRepositoryCatalog(id: string, signal?: AbortSignal): Promise<TerminalRepositoryCatalog> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/repositories`, {
-      schema: WireTerminalRepositoryCatalogSchema,
-      signal,
-    });
-  }
-
-  async selectTerminalRepository(id: string, input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles?: boolean; repositoryRequestId?: string }): Promise<TerminalWorkstreamState> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/repository`, {
-      method: 'PUT',
-      body: input,
-      schema: WireTerminalWorkstreamStateSchema,
-    });
-  }
-
   async startFreshTerminalWorkspace(id: string): Promise<TerminalWorkstreamState> {
     return this.request(`/workstreams/${encodeURIComponent(id)}/terminal/start-fresh`, {
       method: 'POST',
@@ -1868,6 +1854,36 @@ export class AvalonApi {
       signal,
     });
     return result.availableConnectorTypes;
+  }
+
+  async getGitHubRepositoryAccessSettings(
+    connectionId: string,
+    signal?: AbortSignal,
+  ): Promise<WireGitHubRepositoryAccessSettings> {
+    return this.request(`/connections/${encodeURIComponent(connectionId)}/github/repository-access`, {
+      schema: WireGitHubRepositoryAccessSettingsSchema,
+      signal,
+    });
+  }
+
+  async updateGitHubRepositoryAccessSettings(
+    connectionId: string,
+    input: {
+      expectedRevision: number;
+      mode: 'all_repositories' | 'selected_repositories';
+      defaultRemoteAccess: 'read_only' | 'full_access';
+      repositories: Array<{
+        repositoryId: string;
+        repositoryFullName: string;
+        remoteAccess: 'read_only' | 'full_access';
+      }>;
+    },
+  ): Promise<WireGitHubRepositoryAccessSettings> {
+    return this.request(`/connections/${encodeURIComponent(connectionId)}/github/repository-access`, {
+      method: 'PUT',
+      body: input,
+      schema: WireGitHubRepositoryAccessSettingsSchema,
+    });
   }
 
   async startGoogleConnection(scope: 'you' | 'workspace', capabilities: string[]): Promise<ConnectorOAuthStart> {

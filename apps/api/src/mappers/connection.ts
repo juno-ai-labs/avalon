@@ -33,6 +33,7 @@ export function connectionFromRow(
     displayName: row.display_name,
     grantedCapabilities,
     status: row.status,
+    settingsKind: row.connector_type === "github" ? "github_repository_access" : null,
     userDelivery,
     lastSyncAt: row.last_sync_at,
     createdAt: row.created_at,

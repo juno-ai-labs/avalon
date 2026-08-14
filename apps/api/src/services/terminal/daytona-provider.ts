@@ -511,7 +511,7 @@ export function createDaytonaTerminalProvider(
         : { domainAllowList: domains.join(",") });
     },
     async configureGitHubReadAccess(idOrName, input) {
-      if (!client.secret) throw new Error("Daytona Secrets are unavailable for GitHub read access");
+      if (!client.secret) throw new Error("Daytona Secrets are unavailable for GitHub repository access");
       const sandbox = await load(idOrName);
       if (!sandbox.updateSecrets) throw new Error("Daytona sandbox secret mounting is unavailable");
       const prefix = secretPrefix(sandbox.id);
@@ -529,7 +529,7 @@ export function createDaytonaTerminalProvider(
           await client.secret.create({
             name: specification.name,
             value: specification.value,
-            description: `Avalon read-only GitHub access for ${sandbox.id}`,
+            description: `Avalon GitHub repository access for ${sandbox.id}`,
             hosts: [...specification.hosts],
           });
           attachedNewSecret = true;

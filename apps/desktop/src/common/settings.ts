@@ -3,6 +3,7 @@ export const desktopSettingsSections = [
   'digest',
   'workspace',
   'connections',
+  'github',
   'application',
 ] as const;
 

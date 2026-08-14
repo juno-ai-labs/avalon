@@ -1,11 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
-import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
-import {
-  TerminalWorkstreamService,
-  type TerminalRepositoryCatalogGateway,
-} from "../src/services/terminal/workstream-state";
+import { TerminalWorkstreamService } from "../src/services/terminal/workstream-state";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -13,12 +9,6 @@ const W = "61000000-0000-4000-8000-000000000001";
 const S = "61000000-0000-4000-8000-000000000002";
 const U = "61000000-0000-4000-8000-000000000003";
 const C = "61000000-0000-4000-8000-000000000004";
-const RUN = "61000000-0000-4000-8000-000000000005";
-const INVOCATION = "61000000-0000-4000-8000-000000000006";
-const NEWER_RUN = "61000000-0000-4000-8000-000000000007";
-const HYPERSIGHT_RUN = "61000000-0000-4000-8000-000000000008";
-const PARENT_RUN = "61000000-0000-4000-8000-000000000009";
-const INLINE_CHILD_RUN = "61000000-0000-4000-8000-000000000010";
 const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
 afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
@@ -52,155 +42,26 @@ function fixture() {
     DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_EMERGENCY_DISABLED: "false",
   });
   const auth: AuthContext = { sessionId: "session", userId: U, workspaceId: W, region: "global", role: "member" };
-  const catalog: TerminalRepositoryCatalogGateway = {
-    listRepositories: vi.fn(async () => [{
-      id: 42, fullName: "owner/repo", defaultBranch: "main", private: true,
-    }]),
-    resolveRepository: vi.fn(async () => ({
-      id: 42, fullName: "owner/repo", defaultBranch: "main", baseSha: "a".repeat(40), private: true,
-    })),
-  };
-  return { database, env, auth, catalog, service: new TerminalWorkstreamService(env, auth, catalog) };
+  return { database, env, auth, service: new TerminalWorkstreamService(env, auth) };
 }
 
 describe("Terminal work-stream state", () => {
-  it("projects absent state without allocating Daytona and lists only App-authorized repositories", async () => {
-    const { catalog, service } = fixture();
+  it("projects absent state without allocating Daytona or a participant repository gate", async () => {
+    const { service } = fixture();
     await expect(service.get(S)).resolves.toMatchObject({
-      availability: "supported", state: "absent", repository: null, repositoryRequest: null,
+      availability: "supported", state: "absent", repository: null,
       lastActivityAt: null, expiresAt: null,
     });
-    await expect(service.repositories(S, new AbortController().signal)).resolves.toEqual({
-      state: "available",
-      connections: [{ connectionId: C, displayName: "GitHub", repositories: [{ id: 42, fullName: "owner/repo", defaultBranch: "main", private: true }] }],
-    });
-    expect(catalog.listRepositories).toHaveBeenCalledWith(C, W, expect.any(AbortSignal));
   });
 
-  it("projects a repository request only from the latest run's durable repository failure", async () => {
+  it("returns model-selected repository and lifecycle retention state", async () => {
     const { database, service } = fixture();
     database.prepare(
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'manual', '{}', 'completed', ?)`,
-    ).run(PARENT_RUN, W, S, "2026-08-13T11:59:00.000Z");
-    database.prepare(
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json,
-        parent_harness_run_id, status, created_at)
-       VALUES (?, ?, ?, 'elicitation_answer', '{}', ?, 'needs_input', ?)`,
-    ).run(RUN, W, S, PARENT_RUN, "2026-08-13T12:00:00.000Z");
-    database.prepare(
-      `INSERT INTO tool_invocations
-       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-        input_hash, input_json, status, error_json, started_at, completed_at)
-       VALUES (?, ?, ?, ?, 'call-1', 'terminal_write_file', 'hash', '{}', 'ambiguous', ?, ?, ?)`,
-    ).run(
-      INVOCATION,
-      W,
-      S,
-      RUN,
-      JSON.stringify({ code: "ambiguous_external_write", message: "Operation timed out" }),
-      "2026-08-13T12:00:01.000Z",
-      "2026-08-13T12:01:01.000Z",
-    );
-
-    await expect(service.get(S)).resolves.toMatchObject({ repositoryRequest: null });
-
-    database.prepare(
-      "UPDATE tool_invocations SET status = 'failed', error_json = ? WHERE id = ?",
-    ).run(JSON.stringify({
-      code: "tool_failed",
-      message: "Choose a repository",
-      data: { code: "repository_not_configured" },
-    }), INVOCATION);
-
-    await expect(service.get(S)).resolves.toMatchObject({
-      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
-    });
-
-    database.prepare(
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json,
-        parent_harness_run_id, parent_tool_call_id, status, created_at)
-       VALUES (?, ?, ?, 'inline_child', '{}', ?, 'inline-call', 'completed', ?)`,
-    ).run(INLINE_CHILD_RUN, W, S, RUN, "2026-08-13T12:01:45.000Z");
-    await expect(service.get(S)).resolves.toMatchObject({
-      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
-    });
-
-    database.prepare(
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'hypersight_block', '{}', 'completed', ?)`,
-    ).run(HYPERSIGHT_RUN, W, S, "2026-08-13T12:01:30.000Z");
-    await expect(service.get(S)).resolves.toMatchObject({
-      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
-    });
-
-    database.prepare(
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'manual', '{}', 'completed', ?)`,
-    ).run(NEWER_RUN, W, S, "2026-08-13T12:02:00.000Z");
-    await expect(service.get(S)).resolves.toMatchObject({ repositoryRequest: null });
-  });
-
-  it("fences repository answers to the current durable request and makes selection retryable", async () => {
-    const { database, catalog, service } = fixture();
-    database.prepare(
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'manual', '{}', 'needs_input', ?)`,
-    ).run(RUN, W, S, "2026-08-13T12:00:00.000Z");
-    database.prepare(
-      `INSERT INTO tool_invocations
-       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-        input_hash, input_json, status, error_json, started_at, completed_at)
-       VALUES (?, ?, ?, ?, 'call-repository', 'terminal_publish_branch_and_pr',
-               'hash', '{}', 'failed', ?, ?, ?)`,
-    ).run(
-      INVOCATION,
-      W,
-      S,
-      RUN,
-      JSON.stringify({ code: "tool_failed", message: "Choose", data: { code: "repository_not_configured" } }),
-      "2026-08-13T12:00:01.000Z",
-      "2026-08-13T12:00:02.000Z",
-    );
-    const input = {
-      connectionId: C,
-      repositoryFullName: "owner/repo",
-      repositoryRequestId: INVOCATION,
-    };
-
-    await expect(service.selectRepository(S, input, new AbortController().signal)).resolves.toMatchObject({
-      repository: { fullName: "owner/repo" },
-      repositoryRequest: { id: INVOCATION, harnessRunId: RUN },
-    });
-    await expect(service.selectRepository(S, input, new AbortController().signal)).resolves.toMatchObject({
-      repository: { fullName: "owner/repo" },
-    });
-    expect(catalog.resolveRepository).toHaveBeenCalledTimes(1);
-
-    database.prepare(
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'manual', '{}', 'completed', ?)`,
-    ).run(NEWER_RUN, W, S, "2026-08-13T12:01:00.000Z");
-    await expect(service.selectRepository(S, input, new AbortController().signal)).rejects.toMatchObject({
-      status: 409,
-      code: "terminal_repository_request_stale",
-    });
-  });
-
-  it("selects an exact authorized repository and returns lifecycle retention state", async () => {
-    const { database, service } = fixture();
-    await expect(service.selectRepository(S, {
-      connectionId: C, repositoryFullName: "owner/repo",
-    }, new AbortController().signal)).resolves.toMatchObject({
-      repository: { id: 42, fullName: "owner/repo", baseRef: "main", baseSha: "a".repeat(40), headRef: `avalon/${S}` },
-    });
+      `INSERT INTO workstream_terminal_repositories
+       (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
+        base_ref, base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, 42, 'owner/repo', 'main', ?, ?, 'selected', ?, ?, ?)`,
+    ).run(W, S, C, "a".repeat(40), `avalon/${S}`, U, "2026-08-13", "2026-08-13");
     database.prepare(
       `INSERT INTO workstream_sandboxes
        (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
@@ -211,51 +72,7 @@ describe("Terminal work-stream state", () => {
     await expect(service.get(S)).resolves.toMatchObject({
       state: "stopped", lastActivityAt: "2026-08-13T12:00:00.000Z", expiresAt: "2026-09-12T12:00:00.000Z",
       localFilesRetained: true,
+      repository: { id: 42, fullName: "owner/repo", baseRef: "main", baseSha: "a".repeat(40), headRef: `avalon/${S}` },
     });
-  });
-
-  it("requires an active participant to change repository selection", async () => {
-    const { database, service } = fixture();
-    database.prepare("UPDATE workstream_participants SET removed_at = '2026-08-13' WHERE workstream_id = ? AND user_id = ?").run(S, U);
-    await expect(service.selectRepository(S, { connectionId: C, repositoryFullName: "owner/repo" }, new AbortController().signal)).rejects.toMatchObject({
-      status: 403, code: "workstream_participant_required",
-    });
-  });
-
-  it("requires destructive confirmation and preserves a final diff before replacing retained files", async () => {
-    const { database, env, auth, catalog, service } = fixture();
-    await service.selectRepository(S, { connectionId: C, repositoryFullName: "owner/repo" }, new AbortController().signal);
-    database.prepare(
-      `INSERT INTO workstream_sandboxes
-       (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
-        authority_fingerprint, applied_network_revision, version, last_activity_at,
-        expire_due_at, created_at, updated_at)
-       VALUES (?, ?, 'running', 'state-sandbox', 'provider-1', 1, 'authority', 1, 1,
-               '2026-08-13', '2026-09-12', '2026-08-13', '2026-08-13')`,
-    ).run(W, S);
-    const provider: TerminalSandboxProvider = {
-      createSandbox: vi.fn(), getSandbox: vi.fn(), startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(),
-      deleteSandbox: vi.fn(async () => undefined), updateNetworkPolicy: vi.fn(), configureGitHubReadAccess: vi.fn(),
-      clearGitHubReadAccess: vi.fn(async () => undefined), readFile: vi.fn(), writeFile: vi.fn(),
-      runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "diff --git a/a b/a\n", stderr: "" })),
-      publishGitBundle: vi.fn(),
-    };
-    const replacing = new TerminalWorkstreamService(env, auth, catalog, provider);
-
-    await expect(replacing.selectRepository(S, {
-      connectionId: C, repositoryFullName: "owner/repo",
-    }, new AbortController().signal)).rejects.toMatchObject({
-      status: 409, code: "terminal_local_files_confirmation_required",
-    });
-    expect(provider.deleteSandbox).not.toHaveBeenCalled();
-
-    await expect(replacing.selectRepository(S, {
-      connectionId: C, repositoryFullName: "owner/repo", confirmDiscardLocalFiles: true,
-    }, new AbortController().signal)).resolves.toMatchObject({ repository: { fullName: "owner/repo" } });
-    expect(provider.runCommand).toHaveBeenCalledBefore(vi.mocked(provider.deleteSandbox));
-    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM workstream_resources WHERE workstream_id = ?",
-    ).get(S)).toEqual({ count: 1 });
   });
 });

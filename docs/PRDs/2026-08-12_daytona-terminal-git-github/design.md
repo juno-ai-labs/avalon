@@ -9,20 +9,22 @@
 flowchart LR
     M["Work-stream model"] -->|"typed file, command, resource, and publish tools"| H["Regional Bind harness"]
     H -->|"lease, lifecycle, toolbox"| D["Daytona sandbox"]
-    H -->|"read-scoped token behind placeholder"| S["Daytona Secrets"]
+    H -->|"repository-scoped policy token behind placeholder"| S["Daytona Secrets"]
     S -->|"host-scoped HTTPS substitution"| D
     D -->|"native domain policy"| GH["GitHub and package hosts"]
-    H -->|"download committed Git bundle"| P["Trusted regional publisher"]
+    H -.->|"optional committed Git bundle"| P["Trusted regional publisher"]
     P -->|"fresh GitHub App write token"| API["GitHub"]
     H -->|"state, audit, publication receipts"| DB["Regional D1"]
     H -->|"resource bytes, bounded output, final diff"| R2["Regional R2"]
 ```
 
-The model may choose root-relative paths, command text, a bounded timeout, and
-resource metadata. For publication it may choose only the PR title and body. It
-cannot choose sandbox identity or lifecycle, snapshot, network policy, GitHub
-repository, base or head ref, credentials, publisher operation, retention, or
-resource limits.
+The model may choose root-relative paths, command text, a bounded timeout,
+resource metadata, and one exact GitHub repository from connector-authorized
+discovery. With full repository access it may use standard `git` and `gh`
+commands. It cannot choose sandbox identity or lifecycle, snapshot, network
+policy, provider repository identity, credential permissions, retention, or
+resource limits. Avalon prepares the intended branch and the prompt directs the
+model to stay on it; GitHub does not technically scope the token to that ref.
 
 ## Plugin activation and prompt
 
@@ -46,10 +48,14 @@ while receipts and policy retain the local canonical name.
 
 Bind exposes every canonical tool in this document whenever the plugin loads; it
 does not construct scratch, repository, or publication subsets. Scratch code
-needs no GitHub connection. Repository calls revalidate an active App
-installation and exactly one authorized repository. The always-visible
-publication tool additionally requires explicit participant intent and current
-external-write authorization when called.
+needs no GitHub connection. `checkout_repository` lets the model select an exact
+authorized repository and exposes its effective remote access; before a change
+replaces retained filesystem state, the harness stores a verified recovery
+resource. Repository calls revalidate an active App installation, immutable
+repository ID, and connector policy. `read_only` and `full_access` determine the
+permissions of the mounted repository token. The always-visible typed
+publication tool is an optional convenience rather than a second
+participant-intent gate.
 
 The plugin contributes the exact, contract-tested system-prompt block in the
 PRD's [language support section](./prd.md#explicit-language-and-package-support),
@@ -71,6 +77,7 @@ The model receives production-harness-shaped primitives, not Daytona APIs:
 | `apply_patch` | `patch` | Atomic per-file operation and diff summary | `write` / `record_before_execute`; reconcile internal content hashes and resulting content |
 | `import_resource` | automatic: `resourceId`; explicit: `resourceId`, `destinationPath`, `overwrite?` | Authorized original at a sandbox path with source hash | `write` / `record_before_execute`; reconcile resource visibility, destination hash, and source hash |
 | `run_command` | `command`, `cwd?`, `timeoutMs?`, `description?` | One final exit result; Bind may suspend while it runs | `write` / `record_before_execute`; reconcile stable Daytona task |
+| `checkout_repository` | `repositoryFullName`, `requiredRemoteAccess?` | Immutable repository identity, fixed refs, effective remote access, and optional recovery resource | `write` / `record_before_execute`; reconcile completed receipt and recovery resource before sandbox replacement |
 | `publish_resource` | `filePath`, `displayName?`, `description?` | Attached Avalon resource identity, classification, hash, and canonical address | `write` / `provider_key`; stable receipt-derived resource ID and current visibility check |
 | `publish_branch_and_pr` | `title`, `body` | Published commit, PR number, canonical URL | `write` / `record_before_execute`; reconcile exact ref and head/base PR |
 
@@ -150,7 +157,7 @@ The managed `daytona-small` snapshot plus Avalon's idempotent compatibility boot
 - Daytona's current Node.js, `npm`, and `pnpm`;
 - `typescript` and `tsx`;
 - SQLite 3;
-- `git`, read-only `gh`, `rg`, and `jq`; and
+- `git`, `gh`, `rg`, and `jq`; and
 - the managed `apt`/`dpkg` path and signed base-image sources.
 
 The provider records and probes the effective runtime and manager versions,
@@ -892,50 +899,53 @@ Bootstrap performs:
 
 1. revalidate the regional GitHub connection, App installation, exact repository,
    base ref, and current base SHA;
-2. mint a one-hour installation token narrowed to the repository and read-only
-   permissions needed for contents, metadata, PR/check/action inspection, and any
-   already-authorized issue reads;
+2. mint a one-hour installation token narrowed to the repository and the
+   connector's current `read_only` or `full_access` contents/PR permissions;
 3. encode `x-access-token:<token>` outside the sandbox and store it as a
    per-sandbox Daytona secret allowed only for `github.com`;
 4. configure only the exact canonical repository URL with a URL-scoped
    `Authorization: Basic <placeholder>` extra header;
 5. clone/fetch without a token in the URL, environment, command, credential
    helper, or Git config; and
-6. record the base SHA and check out the server-derived Avalon branch.
+6. reuse Avalon's adjective-adjective-adjective-noun naming scheme, record the
+   branch, restore its remote head when present or create it at the recorded base
+   for full access, set its upstream, and check it out before returning control.
 
 Daytona substitutes literal placeholders in HTTPS headers. Git normally
 base64-encodes Basic credentials, which would hide the placeholder. Pre-encoding
 the real Basic value outside the sandbox and placing the placeholder directly in
 the header preserves substitution without revealing plaintext.
 
-Read-only `gh` receives an equivalent repository-scoped token through a Daytona
+`gh` receives the same repository-scoped token through a Daytona
 secret allowed only for `api.github.com`, exposed as the placeholder value of
-`GH_TOKEN`; `GH_REPO` is fixed. Secrets rotate before resume and disappear on
-revocation or deletion. The sandbox never receives contents-write or PR-write
-authority. Command validation rejects obvious `git push` and mutating `gh`
-commands, while read-only token permissions are the independent enforcement
-backstop.
+`GH_TOKEN`; `GH_REPO`, `AVALON_GIT_BRANCH`, `AVALON_GIT_BASE_BRANCH`, and
+`AVALON_REMOTE_ACCESS` describe the prepared environment. Secrets rotate before expiry, after connector-policy
+changes, and disappear on revocation or deletion. Read-only token permissions
+reject remote writes. Full access deliberately supports normal `git push` and
+`gh pr` commands; the plugin prompt tells the model to push only the prepared
+branch and target the prepared base.
 
 If direct private clone is unavailable, a trusted regional service may create a
 bounded Git bundle and let bootstrap download it from a host-scoped regional
 endpoint. It never copies a server working directory, hooks, config, sockets, or
 caches into the sandbox.
 
-## Host-side branch and PR publication
+## Optional host-side branch and PR publication
 
-`publish_branch_and_pr({title, body})` is the only GitHub write surface. It is
-always exposed with the other Terminal tools, then executes as follows:
+`publish_branch_and_pr({title, body})` remains an optional convergent write
+surface alongside native CLI use. It is always exposed with the other Terminal
+tools, then executes as follows:
 
-1. Revalidate the host-created participant grant, its source participant
-   message, principal/run/repository/ref binding, expiry and single-action use,
-   plus the connection, installation, repository, recorded base/head refs, and
-   current known remote head.
+1. Revalidate the run/principal provenance, current participation, connection,
+   installation, repository, recorded base/head refs, and current known remote
+   head. Provenance is not a single-action or prose-derived gate.
 2. Ask the sandbox for `git status --porcelain`, current branch and `HEAD`, base
    ancestry, changed paths, and a bounded Git bundle containing the committed
    branch. Reject a dirty tree, wrong branch, missing ancestry, size limit, or
    `.github/workflows/` change.
 3. Download the bundle through the Daytona file API. Do not grant the sandbox an
-   upload URL, bridge capability, or GitHub write token.
+   upload URL or bridge capability; its ordinary repository credential is not
+   used by this typed path.
 4. In the trusted regional publisher, verify the bundle in an isolated bare Git
    directory with hooks and ambient Git configuration disabled. Confirm every
    object/ref/commit against the frozen plan and expected old SHA.
@@ -959,9 +969,10 @@ branch, or create a second PR. A completed receipt still replays its original
 successful result after later PR closure because that receipt answers what its
 own invocation did.
 
-This design intentionally avoids a smart-HTTP receive-pack proxy. The untrusted
-sandbox only creates a local bundle; a bounded typed host operation performs and
-records the external write.
+This design intentionally avoids a smart-HTTP receive-pack proxy. Native CLI
+calls use the mounted repository token. When the optional typed path is chosen,
+the sandbox creates a local bundle and a bounded host operation performs and
+records that write.
 
 ## Workspace network policy
 
@@ -1016,10 +1027,11 @@ stop results so Settings can preserve the proposed value without pretending it
 applied. Once verified, only a subsequent tool call starts work. A running
 sandbox never gains a widened policy; the policy change stops it first.
 
-Full internet changes destination reach, not secret authority. Daytona still
-substitutes each placeholder only on its configured HTTPS host, and the trusted
-publisher remains the sole GitHub writer. The UI warning states that non-secret
-sandbox data can nevertheless be exfiltrated.
+Full internet changes destination reach, not connector authority. Daytona still
+substitutes each placeholder only on its configured HTTPS host. A full-access
+repository token can write through native `git`/`gh`; read-only remains enforced
+by token permissions. The UI warning states that non-secret sandbox data can
+nevertheless be exfiltrated.
 
 ## Resource import and publication
 
