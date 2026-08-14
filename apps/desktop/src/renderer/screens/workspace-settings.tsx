@@ -596,7 +596,12 @@ export function WorkspaceSettingsScreen({
       const provider = ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)
         ? connection.connectorType as 'google' | 'github' | 'linear' | 'notion' | 'slack'
         : undefined;
-      const authorization: ConnectorOAuthStart = await api!.reconnectConnection(connection.id, provider);
+      const authorization: ConnectorOAuthStart = await api!.reconnectConnection(
+        connection.id,
+        provider,
+        connection.scope,
+        connection.capabilities?.length ?? 0,
+      );
       const attempt = await api!.getConnectorOAuthAttempt(authorization.attemptId);
       await desktopBridge().openExternal(authorization.url);
       return { authorization, provider: attempt.provider };

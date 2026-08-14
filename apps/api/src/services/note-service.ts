@@ -14,6 +14,11 @@ import { sha256Hex } from "../lib/crypto";
 import { logWarn } from "../observability/logger";
 import { MeetingNotesService } from "./meeting-notes-service";
 import { processPendingNotePrivacyNotifications } from "./note-privacy-notification-service";
+import {
+  emitProductUsageTelemetry,
+  telemetryCountBucket,
+  telemetryJourneyDuration,
+} from "../telemetry/product-usage";
 
 const MAX_NOTES_CONTEXT_CHARACTERS = 50_000;
 const MAX_TRANSCRIPT_CONTEXT_CHARACTERS = 400_000;
@@ -341,18 +346,62 @@ export class NoteService {
     }
     const completeTranscript = boundedTranscript(allSegments, MAX_TRANSCRIPT_CONTEXT_CHARACTERS);
 
-    const generated = await this.meetingNotesGenerator.generate({
-      mode,
-      meetingTitle: note.title,
-      previousNotes: mode === "live" ? elideMiddle(note.live_notes_markdown.trim(), MAX_NOTES_CONTEXT_CHARACTERS) : "",
-      userNotes: note.manual_notes_markdown,
-      transcript: completeTranscript.transcript,
-      recentTranscript: mode === "live" ? recentTranscriptContext(allSegments) : "",
-      startedAt: note.started_at,
-      endedAt: mode === "final" ? note.ended_at ?? nowIso() : note.ended_at,
-      transcriptStatus: completeTranscript.omitted ? "partial" : transcriptStatus,
-      refreshSeconds: mode === "live" ? refreshSeconds : null,
-    }, requestId);
+    const telemetryStartedAt = Date.now();
+    const actualTranscriptStatus = completeTranscript.omitted ? "partial" as const : transcriptStatus;
+    const refreshCadence = mode === "final" || refreshSeconds === null
+      ? "disabled" as const
+      : refreshSeconds === 60 ? "one_minute" as const
+        : refreshSeconds === 120 ? "two_minutes" as const
+          : refreshSeconds === 300 ? "five_minutes" as const : "custom" as const;
+    let generated: Awaited<ReturnType<MeetingNotesGenerator["generate"]>>;
+    try {
+      generated = await this.meetingNotesGenerator.generate({
+        mode,
+        meetingTitle: note.title,
+        previousNotes: mode === "live" ? elideMiddle(note.live_notes_markdown.trim(), MAX_NOTES_CONTEXT_CHARACTERS) : "",
+        userNotes: note.manual_notes_markdown,
+        transcript: completeTranscript.transcript,
+        recentTranscript: mode === "live" ? recentTranscriptContext(allSegments) : "",
+        startedAt: note.started_at,
+        endedAt: mode === "final" ? note.ended_at ?? nowIso() : note.ended_at,
+        transcriptStatus: actualTranscriptStatus,
+        refreshSeconds: mode === "live" ? refreshSeconds : null,
+      }, requestId);
+      await emitProductUsageTelemetry(this.env, {
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        name: "note_summary_generation_completed",
+        properties: {
+          noteId: id,
+          mode,
+          result: "success",
+          duration: telemetryJourneyDuration(Date.now() - telemetryStartedAt),
+          transcriptStatus: actualTranscriptStatus,
+          segmentCount: telemetryCountBucket(allSegments.length),
+          refreshCadence,
+        },
+        operationId: requestId,
+        eventId: newId(),
+      }).catch(() => undefined);
+    } catch (error) {
+      await emitProductUsageTelemetry(this.env, {
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        name: "note_summary_generation_completed",
+        properties: {
+          noteId: id,
+          mode,
+          result: "failed",
+          duration: telemetryJourneyDuration(Date.now() - telemetryStartedAt),
+          transcriptStatus: actualTranscriptStatus,
+          segmentCount: telemetryCountBucket(allSegments.length),
+          refreshCadence,
+        },
+        operationId: requestId,
+        eventId: newId(),
+      }).catch(() => undefined);
+      throw error;
+    }
     const throughSequence = Number(allSegments.at(-1)!.sequence_number);
     const update = await this.env.DB.prepare(
       `UPDATE notes

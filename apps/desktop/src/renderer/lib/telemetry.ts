@@ -9,6 +9,92 @@ const reportedJavascriptErrorPriorities = new WeakMap<Error, number>();
 const recentNetworkErrorSignatures = new Map<string, number>();
 const networkErrorReportIntervalMs = 5 * 60 * 1_000;
 const maximumNetworkErrorSignatures = 100;
+const openedWorkstreamIds = new Set<string>();
+const openedNoteIds = new Set<string>();
+const pendingWorkstreamNavigation = new Map<string, 'opened' | 'switched'>();
+export type TelemetrySurfaceEntrypoint =
+  | 'direct' | 'sidebar_new' | 'sidebar_pinned' | 'sidebar_recent' | 'sidebar_note' | 'sidebar_automation'
+  | 'home_waiting' | 'home_suggested' | 'menu_bar' | 'command_shortcut' | 'deep_link'
+  | 'notification' | 'automation_run_list' | 'in_app_link' | 'settings' | 'unknown';
+let pendingSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
+let activeSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
+
+export function markSurfaceEntrypoint(entrypoint: TelemetrySurfaceEntrypoint): void {
+  pendingSurfaceEntrypoint = entrypoint;
+}
+
+export function consumeSurfaceEntrypoint(): TelemetrySurfaceEntrypoint {
+  const entrypoint = pendingSurfaceEntrypoint;
+  activeSurfaceEntrypoint = entrypoint;
+  pendingSurfaceEntrypoint = 'unknown';
+  return entrypoint;
+}
+
+export function currentSurfaceEntrypoint(): TelemetrySurfaceEntrypoint {
+  return activeSurfaceEntrypoint;
+}
+
+export function telemetryCountBucket(value: number):
+  'zero' | 'one' | 'two_to_five' | 'six_to_twenty' | 'twenty_one_to_one_hundred' | 'over_one_hundred' {
+  const count = Math.max(0, Math.trunc(Number.isFinite(value) ? value : 0));
+  if (count === 0) return 'zero';
+  if (count === 1) return 'one';
+  if (count <= 5) return 'two_to_five';
+  if (count <= 20) return 'six_to_twenty';
+  if (count <= 100) return 'twenty_one_to_one_hundred';
+  return 'over_one_hundred';
+}
+
+export function telemetryJourneyDuration(milliseconds: number):
+  'lt_1s' | '1s_5s' | '5s_30s' | '30s_2m' | '2m_10m' | 'gte_10m' {
+  const duration = Math.max(0, Number.isFinite(milliseconds) ? milliseconds : 0);
+  if (duration < 1_000) return 'lt_1s';
+  if (duration < 5_000) return '1s_5s';
+  if (duration < 30_000) return '5s_30s';
+  if (duration < 120_000) return '30s_2m';
+  if (duration < 600_000) return '2m_10m';
+  return 'gte_10m';
+}
+
+export function telemetrySurfaceForPath(pathname: string): {
+  surface: 'workspace_home' | 'workstream' | 'note_detail' | 'meeting_capture' | 'automation_builder'
+    | 'automation_detail' | 'settings_application';
+  resourceType?: 'workstream' | 'note' | 'automation';
+  resourceId?: string;
+} | null {
+  if (pathname === '/' || pathname === '/workstreams/new') return { surface: 'workspace_home' };
+  if (pathname === '/meeting') return { surface: 'meeting_capture' };
+  if (pathname === '/automations/new') return { surface: 'automation_builder' };
+  if (pathname === '/settings') return { surface: 'settings_application' };
+  const match = /^\/(workstreams|notes|automations)\/([0-9a-f-]{36})$/iu.exec(pathname);
+  if (!match) return null;
+  const resourceType = match[1] === 'workstreams' ? 'workstream' : match[1] === 'notes' ? 'note' : 'automation';
+  const surface = resourceType === 'workstream' ? 'workstream' : resourceType === 'note' ? 'note_detail' : 'automation_detail';
+  return { surface, resourceType, resourceId: match[2] };
+}
+
+export function telemetryVisibility(scope: 'personal' | 'workspace' | 'you'): 'private' | 'public' {
+  return scope === 'workspace' ? 'public' : 'private';
+}
+
+export function markWorkstreamNavigation(workstreamId: string, switched: boolean): void {
+  pendingWorkstreamNavigation.set(workstreamId, switched ? 'switched' : 'opened');
+}
+
+export function workstreamNavigation(workstreamId: string): 'opened' | 'switched' | 'reopened' {
+  const pending = pendingWorkstreamNavigation.get(workstreamId);
+  pendingWorkstreamNavigation.delete(workstreamId);
+  const seen = openedWorkstreamIds.has(workstreamId);
+  openedWorkstreamIds.add(workstreamId);
+  if (pending === 'switched') return 'switched';
+  return seen ? 'reopened' : 'opened';
+}
+
+export function noteNavigation(noteId: string): 'opened' | 'reopened' {
+  const seen = openedNoteIds.has(noteId);
+  openedNoteIds.add(noteId);
+  return seen ? 'reopened' : 'opened';
+}
 
 function javascriptErrorPriority(errorCode: DesktopJavascriptErrorCandidate['errorCode']): number {
   return errorCode === 'network_error' ? 0 : 1;

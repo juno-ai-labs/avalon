@@ -79,6 +79,7 @@ describe('elicitation normalization', () => {
       responseType: 'free_text',
       options: [],
       allowOther: false,
+      presentedAt: '2026-08-13T12:00:00.000Z',
     })).toEqual({
       id: 'question-text',
       prompt: 'Which document?',
@@ -86,6 +87,7 @@ describe('elicitation normalization', () => {
       options: [],
       allowOther: false,
       status: 'open',
+      createdAt: '2026-08-13T12:00:00.000Z',
     });
   });
 

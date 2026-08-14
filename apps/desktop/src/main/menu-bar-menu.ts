@@ -21,7 +21,19 @@ export interface MenuBarContent {
 
 export const emptyMenuBarContent: MenuBarContent = { suggestions: [], recents: [], pinned: [] };
 
+export type MenuBarAction =
+  | 'new_meeting_note'
+  | 'new_workstream'
+  | 'new_automation'
+  | 'suggested_work'
+  | 'recent_workstream'
+  | 'pinned_workstream'
+  | 'open_avalon'
+  | 'quit_avalon';
+
 export interface MenuBarActions {
+  /** Observational only: a reporting failure must not block the selected row. */
+  readonly selected: (action: MenuBarAction) => void;
   readonly newMeetingNote: () => void;
   readonly newWorkstream: () => void;
   readonly newAutomation: () => void;
@@ -149,15 +161,26 @@ export function menuBarLabel(rawLabel: string): string {
  */
 export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstructorOptions[] {
   const { actions, content } = options;
+  const tracked = (action: MenuBarAction, invoke: () => void): (() => void) => () => {
+    try {
+      actions.selected(action);
+    } catch {
+      // Reporting is observational; the selected product action still runs.
+    }
+    invoke();
+  };
   const template: MenuItemConstructorOptions[] = [
-    { label: 'New Meeting/Note', click: actions.newMeetingNote },
-    { label: 'New Work Stream', click: actions.newWorkstream },
-    { label: 'New Automation', click: actions.newAutomation },
+    { label: 'New Meeting/Note', click: tracked('new_meeting_note', actions.newMeetingNote) },
+    { label: 'New Work Stream', click: tracked('new_workstream', actions.newWorkstream) },
+    { label: 'New Automation', click: tracked('new_automation', actions.newAutomation) },
   ];
 
-  const openWorkstreamRow = (workstream: MenuBarWorkstream): MenuItemConstructorOptions => ({
+  const openWorkstreamRow = (
+    workstream: MenuBarWorkstream,
+    action: 'recent_workstream' | 'pinned_workstream',
+  ): MenuItemConstructorOptions => ({
     label: menuBarLabel(workstream.title),
-    click: () => actions.openWorkstream(workstream.id),
+    click: tracked(action, () => actions.openWorkstream(workstream.id)),
   });
 
   const pushGroup = (title: string, emptyLabel: string, rows: MenuItemConstructorOptions[]): void => {
@@ -179,7 +202,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
       SUGGESTIONS_EMPTY_LABEL,
       content.suggestions.map((suggestion) => ({
         label: menuBarLabel(suggestion.label),
-        click: () => actions.startSuggestion(suggestion),
+        click: tracked('suggested_work', () => actions.startSuggestion(suggestion)),
       })),
     );
     template.push({ type: 'separator' });
@@ -190,7 +213,8 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     // A menu that silently loses its lower half reads as broken. Say which of
     // the two reasons it is: nothing to show, or nobody to show it to.
     options.signedIn ? 'No recent work streams' : 'Sign in to Avalon',
-    content.recents.slice(0, MENU_BAR_RECENT_LIMIT).map(openWorkstreamRow),
+    content.recents.slice(0, MENU_BAR_RECENT_LIMIT)
+      .map((workstream) => openWorkstreamRow(workstream, 'recent_workstream')),
   );
 
   // Below Recent, because a pin is a standing choice and the recent list is
@@ -200,14 +224,15 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     pushGroup(
       'Pinned',
       'Pin a work stream to see it here',
-      content.pinned.slice(0, MENU_BAR_PINNED_LIMIT).map(openWorkstreamRow),
+      content.pinned.slice(0, MENU_BAR_PINNED_LIMIT)
+        .map((workstream) => openWorkstreamRow(workstream, 'pinned_workstream')),
     );
   }
 
   template.push(
     { type: 'separator' },
-    { label: `Open ${options.appName}`, click: actions.openAvalon },
-    { label: `Quit ${options.appName}`, click: actions.quit },
+    { label: `Open ${options.appName}`, click: tracked('open_avalon', actions.openAvalon) },
+    { label: `Quit ${options.appName}`, click: tracked('quit_avalon', actions.quit) },
   );
 
   return template;

@@ -46,6 +46,7 @@ export function normalizeElicitation(source: ElicitationSource): ElicitationData
 export function automationQuestionToElicitation(question: AutomationDraftQuestion): ElicitationData {
   return normalizeElicitation({
     ...question,
+    createdAt: question.presentedAt,
     status: 'open',
   });
 }

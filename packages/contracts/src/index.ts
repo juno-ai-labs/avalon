@@ -9,6 +9,7 @@ export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
   TELEMETRY_BATCH_MAX_BYTES,
   TELEMETRY_CATEGORIES,
+  TELEMETRY_APPLICATION_ICON_IDS,
   TELEMETRY_EVENTS,
   TELEMETRY_IDENTITY_SCOPES,
   TELEMETRY_SOURCES,
@@ -19,6 +20,7 @@ export {
   TelemetryAcceptanceResultSchema,
   TelemetryBootstrapRequestSchema,
   TelemetryBootstrapResponseSchema,
+  TelemetryRouteResponseSchema,
   ProductAnalyticsPreferenceSchema,
   UpdateProductAnalyticsPreferenceSchema,
   TelemetryBatchSchema,
@@ -27,6 +29,7 @@ export {
   TelemetryEnvelopeSchema,
   telemetryEventNames,
   type TelemetryBatch,
+  type TelemetryApplicationIconId,
   type TelemetryBreadcrumb,
   type TelemetryBreadcrumbSidecar,
   type AnonymousTelemetryBatch,
@@ -36,10 +39,12 @@ export {
   type TelemetryAcceptanceResult,
   type TelemetryBootstrapRequest,
   type TelemetryBootstrapResponse,
+  type TelemetryRouteResponse,
   type ProductAnalyticsPreference,
   type TelemetryCategory,
   type TelemetryEnvelope,
   type TelemetryEventName,
+  type TelemetryEventProperties,
   type TelemetryIdentityScope,
   type TelemetrySource,
 } from "./telemetry";
@@ -982,6 +987,8 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
      * keeping the key it opened the conversation with.
      */
     draftId: IdSchema,
+    elicitationId: IdSchema.nullable().default(null),
+    elicitationPresentedAt: TimestampSchema.nullable().default(null),
     draft: AutomationDraftSchema,
     assistantMessage: z.string().min(1)
   }),
@@ -1012,6 +1019,8 @@ export const AutomationDraftStateSchema = z.object({
   draftId: IdSchema,
   messages: z.array(AutomationCompilerMessageSchema),
   attachmentIds: z.array(IdSchema).default([]),
+  elicitationId: IdSchema.nullable().default(null),
+  elicitationPresentedAt: TimestampSchema.nullable().default(null),
   draft: AutomationDraftSchema
 });
 
@@ -1225,10 +1234,13 @@ export const WorkOpportunityPageSchema = z.object({
 });
 export const RecordWorkOpportunityImpressionsRequestSchema = z.object({
   opportunityIds: z.array(IdSchema).max(4),
+  surface: z.enum(["menu_bar", "workspace_home"]),
 });
 export const StartWorkOpportunityRequestSchema = z.object({
   version: z.number().int().positive(),
   idempotencyKey: z.string().trim().min(1).max(120),
+  surface: z.enum(["menu_bar", "workspace_home"]).optional(),
+  position: z.number().int().min(1).max(4).optional(),
 });
 
 export const UpdateWorkstreamRequestSchema = z.object({
@@ -1247,6 +1259,11 @@ export const UpdateWorkstreamRequestSchema = z.object({
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   readThroughSequenceNumber: z.number().int().nonnegative(),
   observedManualUnreadGeneration: z.number().int().nonnegative(),
+  entrypoint: z.enum([
+    'direct', 'sidebar_new', 'sidebar_pinned', 'sidebar_recent', 'sidebar_note', 'sidebar_automation',
+    'home_waiting', 'home_suggested', 'menu_bar', 'command_shortcut', 'deep_link', 'notification',
+    'automation_run_list', 'in_app_link', 'settings', 'unknown',
+  ]).optional(),
 });
 
 /**
@@ -1339,6 +1356,15 @@ export const CompileAutomationRequestSchema = z.object({
   messages: z.array(AutomationCompilerMessageSchema).min(1),
   currentDraft: AutomationDraftSchema.nullable().default(null),
   attachmentIds: z.array(IdSchema).max(10).default([]),
+  inputMode: z.enum(['typed', 'suggested_prompt', 'elicitation_response', 'edit']).default('typed'),
+  connectorMentionCount: z.number().int().min(0).max(100).default(0),
+  resolvedElicitation: z.object({
+    id: IdSchema,
+    responseType: z.enum(['free_text', 'single_select', 'multi_select']),
+    resolution: z.enum(['answered', 'skipped']),
+    customResponseUsed: z.boolean(),
+    presentedAt: TimestampSchema,
+  }).optional(),
 });
 export const CreateWebhookConnectionRequestSchema = z.object({
   displayName: z.string().min(1).max(180),

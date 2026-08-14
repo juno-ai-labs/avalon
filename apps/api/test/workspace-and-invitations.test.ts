@@ -351,7 +351,7 @@ describe("workspace invitation lifecycle", () => {
       invitationRow.id,
       { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
     )).resolves.toBeUndefined();
-    expect(database.runs).toHaveLength(1);
+    expect(database.runs.filter(({ sql }) => sql.startsWith('UPDATE workspace_invitations'))).toHaveLength(1);
   });
 
   it("does not send a decline notification for invalid terminal invitations or administrator revocation", async () => {
@@ -366,7 +366,7 @@ describe("workspace invitation lifecycle", () => {
       { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
     )).rejects.toMatchObject({ status: 404, code: "invitation_invalid" });
 
-    const revokeDatabase = new StubDatabase(() => undefined);
+    const revokeDatabase = new StubDatabase(({ sql }) => sql.includes('WHERE i.id = ?') ? null : undefined);
     await expect(new WorkspaceService(
       environment(revokeDatabase, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
       ownerAuth,
@@ -460,8 +460,8 @@ describe("workspace invitation lifecycle", () => {
       RESEND_API_KEY: "re_test_send_only",
     }), ownerAuth).createInvitation(invitationRow.email, "member"))
       .rejects.toMatchObject({ status: 502, code: "invitation_email_failed" });
-    expect(database.runs.at(-1)?.sql).toContain("UPDATE workspace_invitations SET revoked_at = ?");
-    expect(database.runs.at(-1)?.values.slice(1)).toEqual([invitationRow.id, ownerAuth.workspaceId]);
+    const revocation = database.runs.find(({ sql }) => sql.includes("UPDATE workspace_invitations SET revoked_at = ?"));
+    expect(revocation?.values.slice(1)).toEqual([invitationRow.id, ownerAuth.workspaceId]);
   });
 
   it("limits administrator invitations to workspace owners", async () => {

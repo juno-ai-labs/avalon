@@ -6,6 +6,7 @@ import {
   TelemetryBatchSchema,
   TelemetryBootstrapRequestSchema,
   TelemetryBootstrapResponseSchema,
+  TelemetryRouteResponseSchema,
   TelemetryAcceptanceBatchResponseSchema,
   ProductAnalyticsPreferenceSchema,
   UpdateProductAnalyticsPreferenceSchema,
@@ -19,7 +20,7 @@ import { ApiError } from "../lib/api-error";
 import { getIdentityAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { acceptAuthenticatedTelemetry } from "../telemetry/authenticated";
-import { TelemetryBootstrapService } from "../telemetry/bootstrap";
+import { coarseTelemetryRoute, TelemetryBootstrapService } from "../telemetry/bootstrap";
 import { CrashIngestService } from "../telemetry/crash-ingest";
 import { purgeIneligibleCrashReports } from "../telemetry/crash-delivery";
 import { ProductAnalyticsPreferenceService } from "../telemetry/preference";
@@ -45,6 +46,15 @@ const crashUploadBodyLimit = bodyLimit({
   onError: () => {
     throw new ApiError(413, 'crash_dump_too_large', 'The crash report is too large');
   },
+});
+
+publicTelemetryRoutes.get("/route", (c) => {
+  if (c.env.AVALON_REGION !== "global") {
+    throw new ApiError(404, "not_found", "The requested API route does not exist");
+  }
+  const cf = c.req.raw.cf as { country?: string } | undefined;
+  c.header("Cache-Control", "no-store");
+  return c.json(TelemetryRouteResponseSchema.parse(coarseTelemetryRoute(cf?.country)));
 });
 
 const CrashUploadMetadataSchema = z.object({
@@ -217,9 +227,19 @@ authenticatedTelemetryRoutes.post(
   "/events",
   telemetryBatchBodyLimit,
   zValidator("json", TelemetryBatchSchema),
-  async (c) => c.json(TelemetryAcceptanceBatchResponseSchema.parse({
-    results: await acceptAuthenticatedTelemetry(c.env, getIdentityAuth(c), c.req.valid("json")),
-  }), 202),
+  async (c) => {
+    const batch = c.req.valid("json");
+    // The public contract has to parse API events so internal producers can
+    // build one envelope type, but the desktop transport is not that producer.
+    // Accepting `source: api` here would let a modified client forge every
+    // authoritative completion event while retaining a valid user session.
+    if (batch.events.some((event) => event.source === "api")) {
+      throw new ApiError(403, "telemetry_source_forbidden", "The telemetry source is not allowed");
+    }
+    return c.json(TelemetryAcceptanceBatchResponseSchema.parse({
+      results: await acceptAuthenticatedTelemetry(c.env, getIdentityAuth(c), batch),
+    }), 202);
+  },
 );
 
 authenticatedTelemetryRoutes.post(

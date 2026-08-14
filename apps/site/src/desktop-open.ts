@@ -1,4 +1,4 @@
-export {};
+import { reportDesktopHandoff } from './telemetry';
 
 const button = document.querySelector<HTMLAnchorElement>('#open-avalon');
 const error = document.querySelector<HTMLElement>('#open-error');
@@ -21,9 +21,16 @@ function allowedTarget(value: string | null): value is string {
 window.history.replaceState(null, document.title, window.location.pathname);
 
 if (button && allowedTarget(target)) {
+  const parsed = new URL(target);
+  const handoffType = parsed.hostname === 'workstreams'
+    ? 'workstream' as const
+    : parsed.hostname === 'settings' ? 'settings' as const : 'automation' as const;
+  reportDesktopHandoff(handoffType, 'presented', 'valid');
   button.href = target;
   button.removeAttribute('aria-disabled');
+  button.addEventListener('click', () => reportDesktopHandoff(handoffType, 'manual', 'valid'));
 } else {
+  reportDesktopHandoff('settings', 'presented', 'invalid');
   button?.setAttribute('hidden', '');
   error?.removeAttribute('hidden');
 }

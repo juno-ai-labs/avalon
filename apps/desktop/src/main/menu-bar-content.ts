@@ -225,7 +225,7 @@ export class MenuBarContentStore {
     try {
       await this.dependencies.requestJson('/work-opportunities/impressions', {
         method: 'POST',
-        body: { opportunityIds: shown.map((suggestion) => suggestion.id) },
+        body: { opportunityIds: shown.map((suggestion) => suggestion.id), surface: 'menu_bar' },
       });
     } catch (error) {
       // Nothing on screen waits on this. Forgetting that it was reported is the
@@ -248,6 +248,7 @@ export class MenuBarContentStore {
    * nothing on screen explaining why.
    */
   async startSuggestion(suggestion: MenuBarSuggestion): Promise<string> {
+    const position = this.cached.suggestions.findIndex((item) => item.id === suggestion.id) + 1;
     this.forget(suggestion.id);
     const response = await this.dependencies.requestJson(
       `/work-opportunities/${encodeURIComponent(suggestion.id)}/start`,
@@ -255,6 +256,8 @@ export class MenuBarContentStore {
         method: 'POST',
         body: {
           version: suggestion.version,
+          surface: 'menu_bar',
+          position,
           // Bounded to this click. A retry after a failure is a new attempt by
           // a person who watched nothing happen, not a duplicate delivery.
           idempotencyKey: crypto.randomUUID(),

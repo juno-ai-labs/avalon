@@ -445,13 +445,27 @@ describe('public Avalon site', () => {
       }
     }
 
-    expect(readProjectFile('privacy/index.html')).toContain('does not scrape, mirror');
-    expect(readProjectFile('privacy/index.html')).toContain('do not sell personal information');
+    const privacy = readProjectFile('privacy/index.html');
+    expect(privacy).toContain('Effective August 13, 2026');
+    expect(privacy).toContain('does not scrape, mirror');
+    expect(privacy).toContain('do not sell personal information');
+    expect(privacy).toContain('accepted product-event and delivery records expire within 90 days');
     expect(readProjectFile('dpa/index.html')).toContain('without undue delay');
     expect(readProjectFile('dpa/index.html')).toContain('Annex B · Technical and organizational measures');
     expect(readProjectFile('subprocessors/index.html')).toContain('Cloudflare, Inc.');
-    expect(readProjectFile('cookies/index.html')).toContain('does not currently set non-essential cookies');
+    expect(readProjectFile('cookies/index.html')).toContain('uses bounded first-party product analytics');
+    expect(readProjectFile('cookies/index.html')).toContain('uses no persistent browser analytics identifier');
     expect(readProjectFile('security/index.html')).toContain('context isolation');
+  });
+
+  it('routes site telemetry before choosing whether an anonymous browser identifier may persist', () => {
+    const telemetry = readProjectFile('src/telemetry.ts');
+
+    expect(telemetry).toContain('/telemetry/route');
+    expect(telemetry).toContain("route.route === 'global' ? globalAnonymousEpochId() : transientAnonymousEpochId");
+    expect(telemetry).not.toContain('sessionStorage');
+    expect(telemetry).toContain("report('site_page_viewed'");
+    expect(telemetry).toContain("report('site_page_left'");
   });
 
   it('validates and launches only exact desktop OAuth handoff targets', () => {

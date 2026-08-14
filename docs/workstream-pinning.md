@@ -93,6 +93,13 @@ long copy disappears underneath it instead of shrinking the row or touching the
 pill. Each numbered link also declares its `Meta+<number>` shortcut to assistive
 technology when the visual hint is hidden.
 
+The first non-repeated Command keydown in one hold emits
+`command_shortcuts_revealed` with the bounded number of available targets.
+A valid Command+1–9 activation emits `command_shortcut_used` with the number and
+only the destination class (`pinned_workstream`, `recent_workstream`, or
+`recent_note`). Repeats, missing targets, and shortcuts blocked by a dialog emit
+nothing; no destination identifier or title enters telemetry.
+
 A drag is committed only when something accepted the drop. `dragend` fires
 whatever ended the drag, so the handler reads `dataTransfer.dropEffect`: `none`
 means Escape, or a release outside the pinned list, and the arrangement built
@@ -254,6 +261,26 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-13 — Command shortcut discovery and use are distinct signals
+
+**What changed:** Holding Command reports one reveal per physical hold, and a
+successful numbered navigation reports the selected number plus a bounded
+destination class. Repeated keydowns, unavailable numbers, and dialog-blocked
+attempts are excluded.
+
+**Why:** Navigation outcomes alone could not distinguish discovering the
+numbered overlay from using it, while raw route or work-stream identifiers would
+create unnecessary high-cardinality analytics.
+
+**Considered and rejected:** Reporting every Meta keydown, route paths, titles,
+or failed shortcut attempts. Those respectively inflate long holds, expose
+content or identifiers, and count interactions the product intentionally did
+not perform.
+
+**Consequences:** The reveal event's available count remains capped at nine and
+the use event taxonomy must stay aligned with the pinned-then-recent target
+builder. Product analytics opt-out suppresses both.
 
 ### 2026-08-12 — Command numbering continues into recent work
 

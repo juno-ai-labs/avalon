@@ -58,7 +58,8 @@ import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
 import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
-import { reportJavascriptError, reportTelemetryProductIntent, uuidV7 } from './telemetry';
+import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
+import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import type {
   ActivitySuggestionData,
   AgentModelOverride,
@@ -1043,18 +1044,27 @@ export class AvalonApi {
   async recordWorkOpportunityImpressions(opportunityIds: string[]): Promise<void> {
     await this.requestVoid('/work-opportunities/impressions', {
       method: 'POST',
-      body: { opportunityIds },
+      body: { opportunityIds, surface: 'workspace_home' },
     });
   }
 
-  async dismissWorkOpportunity(id: string): Promise<void> {
-    await this.requestVoid(`/work-opportunities/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  async dismissWorkOpportunity(id: string, version?: number, position?: number): Promise<void> {
+    const query = new URLSearchParams({ surface: 'workspace_home' });
+    if (version != null) query.set('version', String(version));
+    if (position != null) query.set('position', String(position));
+    await this.requestVoid(`/work-opportunities/${encodeURIComponent(id)}?${query.toString()}`, { method: 'DELETE' });
   }
 
-  async startWorkOpportunity(id: string, version: number, idempotencyKey: string): Promise<CreatedWorkstream> {
+  async startWorkOpportunity(
+    id: string,
+    version: number,
+    idempotencyKey: string,
+    surface: 'workspace_home',
+    position?: number,
+  ): Promise<CreatedWorkstream> {
     const response = await this.request(`/work-opportunities/${encodeURIComponent(id)}/start`, {
       method: 'POST',
-      body: { version, idempotencyKey },
+      body: { version, idempotencyKey, surface, ...(position == null ? {} : { position }) },
       schema: createWorkstreamResponseSchema,
     });
     return {
@@ -1185,10 +1195,11 @@ export class AvalonApi {
     id: string,
     readThroughSequenceNumber: number,
     observedManualUnreadGeneration: number,
+    entrypoint?: TelemetrySurfaceEntrypoint,
   ): Promise<WorkstreamSummary> {
     const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}/read-state`, {
       method: 'PATCH',
-      body: { readThroughSequenceNumber, observedManualUnreadGeneration },
+      body: { readThroughSequenceNumber, observedManualUnreadGeneration, entrypoint },
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);
@@ -1640,7 +1651,21 @@ export class AvalonApi {
   }
 
   async compileAutomation(
-    input: { message: string; draftId?: string; templateId?: string; attachmentIds?: string[] },
+    input: {
+      message: string;
+      draftId?: string;
+      templateId?: string;
+      attachmentIds?: string[];
+      inputMode?: 'typed' | 'suggested_prompt' | 'elicitation_response' | 'edit';
+      connectorMentionCount?: number;
+      resolvedElicitation?: {
+        id: string;
+        responseType: 'free_text' | 'single_select' | 'multi_select';
+        resolution: 'answered' | 'skipped';
+        customResponseUsed: boolean;
+        presentedAt: string;
+      };
+    },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
   ): Promise<AutomationDraftResponse> {
     // The first turn has no draft to continue. Every later one names the draft
@@ -1663,6 +1688,9 @@ export class AvalonApi {
         messages,
         currentDraft: previous.draft,
         attachmentIds,
+        inputMode: input.inputMode ?? 'typed',
+        connectorMentionCount: input.connectorMentionCount ?? 0,
+        ...(input.resolvedElicitation ? { resolvedElicitation: input.resolvedElicitation } : {}),
       }),
     });
     if (!response.ok) return this.throwResponseError(response);
@@ -1708,7 +1736,13 @@ export class AvalonApi {
       messages: [...messages, { role: 'assistant', content: assistantMessage }],
       draft: raw,
     });
-    return this.automationDraftResponse(draftId, raw, assistantMessage);
+    return this.automationDraftResponse(
+      draftId,
+      raw,
+      assistantMessage,
+      completed.elicitationId ?? undefined,
+      completed.elicitationPresentedAt ?? undefined,
+    );
   }
 
   /** The one place a compiled draft becomes what the builder screen renders,
@@ -1718,6 +1752,8 @@ export class AvalonApi {
     draftId: string,
     raw: WireAutomationDraft,
     assistantMessage: string,
+    elicitationId?: string,
+    elicitationPresentedAt?: string,
   ): AutomationDraftResponse {
     const elicitation = raw.elicitation;
     return {
@@ -1726,7 +1762,8 @@ export class AvalonApi {
       ...(raw.followUpQuestion
         ? {
             question: {
-              id: crypto.randomUUID(),
+              id: elicitationId ?? crypto.randomUUID(),
+              presentedAt: elicitationPresentedAt ?? new Date().toISOString(),
               prompt: elicitation?.prompt ?? raw.followUpQuestion,
               ...(elicitation?.placeholder ? { placeholder: elicitation.placeholder } : {}),
               responseType: elicitation?.responseType ?? 'free_text',
@@ -1778,7 +1815,13 @@ export class AvalonApi {
     const assistantMessage = [...state.messages].reverse()
       .find((message) => message.role === 'assistant')?.content ?? '';
     return {
-      draft: this.automationDraftResponse(state.draftId, state.draft, assistantMessage),
+      draft: this.automationDraftResponse(
+        state.draftId,
+        state.draft,
+        assistantMessage,
+        state.elicitationId ?? undefined,
+        state.elicitationPresentedAt ?? undefined,
+      ),
       messages: state.messages,
     };
   }
@@ -1901,6 +1944,13 @@ export class AvalonApi {
     if (tracked && operationId) {
       reportTelemetryProductIntent({ kind: 'connector_setup_requested', connector: tracked, operationId });
     }
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2',
+      connector: provider,
+      scope: scope === 'you' ? 'personal' : 'workspace',
+      method: 'oauth',
+      capabilityCount: telemetryCountBucket(capabilities.length),
+    });
     return this.request(`/connections/${provider}/start`, {
       method: 'POST',
       ...(operationId ? { headers: { 'X-Avalon-Operation-Id': operationId } } : {}),
@@ -1912,6 +1962,10 @@ export class AvalonApi {
   async createXConnection(
     capabilities: string[],
   ): Promise<WorkstreamConnection> {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'x', scope: 'workspace',
+      method: 'api_key', capabilityCount: telemetryCountBucket(capabilities.length),
+    });
     const response = await this.request('/connections/x', {
       method: 'POST',
       body: { scope: 'workspace', capabilities },
@@ -1921,6 +1975,10 @@ export class AvalonApi {
   }
 
   async createGranolaWorkspaceConnection(apiKey: string): Promise<WorkstreamConnection> {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'granola', scope: 'workspace',
+      method: 'api_key', capabilityCount: telemetryCountBucket(1),
+    });
     const response = await this.request('/connections/granola/workspace', {
       method: 'POST',
       body: { apiKey, capabilities: ['granola.workspace.read'] },
@@ -1940,6 +1998,10 @@ export class AvalonApi {
     signingSecret: string;
     signatureFormat: string;
   }> {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'generic_webhook',
+      scope: scope === 'you' ? 'personal' : 'workspace', method: 'webhook', capabilityCount: telemetryCountBucket(0),
+    });
     const response = await this.request('/connections/webhook', {
       method: 'POST',
       body: {
@@ -1976,10 +2038,17 @@ export class AvalonApi {
   async reconnectConnection(
     id: string,
     provider?: 'google' | 'github' | 'linear' | 'notion' | 'slack',
+    scope: 'you' | 'workspace' = 'you',
+    capabilityCount = 0,
   ): Promise<ConnectorOAuthStart> {
     const operationId = provider ? uuidV7() : null;
     if (provider && operationId) {
       reportTelemetryProductIntent({ kind: 'connector_setup_requested', connector: provider, operationId });
+      reportTelemetryProductIntent({
+        kind: 'connector_setup_requested_v2', connector: provider,
+        scope: scope === 'you' ? 'personal' : 'workspace', method: 'oauth',
+        capabilityCount: telemetryCountBucket(capabilityCount),
+      });
     }
     return this.request(`/connections/${encodeURIComponent(id)}/reconnect`, {
       method: 'POST',

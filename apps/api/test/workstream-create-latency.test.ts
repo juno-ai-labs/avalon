@@ -90,6 +90,31 @@ describe("work-stream create", () => {
     });
   });
 
+  it("records the durable composer creation from the API without a renderer duplicate", async () => {
+    const database = seededDatabase();
+    const service = new WorkstreamService(environment(database), auth());
+    const operationId = "00000000-0000-7000-8000-000000000099";
+
+    const created = await service.create({ ...request(), telemetryOperationId: operationId });
+
+    const row = database.prepare(
+      "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
+    ).get(created.workstream.id) as { envelope_json: string };
+    expect(JSON.parse(row.envelope_json)).toMatchObject({
+      name: "workstream_created",
+      source: "api",
+      identityScope: "workspace-user",
+      context: { operationId },
+      properties: {
+        workstreamId: created.workstream.id,
+        creationSource: "composer",
+        origin: "ad_hoc",
+        connectorType: "none",
+        connectorTypes: [],
+      },
+    });
+  });
+
   it("reports the same refusal whichever of two bad pre-flight checks loses the race", async () => {
     // Both checks run concurrently, so a request that violates both must not
     // report whichever rejection happened to land first.
@@ -143,7 +168,7 @@ function auth(): AuthContext {
 function environment(database: DatabaseSync): Env {
   return createTestEnv({
     DB: sqliteD1(database),
-    APP_ENV: "test",
+    APP_ENV: "development",
     AVALON_REGION: "global",
     // Outside production the address key is derived from this one, and a create
     // reserves an address before it writes anything.
