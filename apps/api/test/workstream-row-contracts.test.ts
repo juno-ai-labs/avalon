@@ -127,7 +127,10 @@ describe("work-stream row contracts", () => {
   it("re-validates the stored model pin on the way out", () => {
     expect(toWorkstream(workstreamRow({ model_override: "deepseek/deepseek-v4-pro" })).modelOverride)
       .toBe("deepseek/deepseek-v4-pro");
+    // Absent and explicitly null are both the ordinary unpinned state; the
+    // column is nullable and the mapper's schema admits either.
     expect(toWorkstream(workstreamRow()).modelOverride).toBeNull();
+    expect(toWorkstream(workstreamRow({ model_override: null })).modelOverride).toBeNull();
     // A model retired from AGENT_MODEL_OVERRIDES leaves rows still naming it.
     // They read as unpinned here because that is what they now *run* as — the
     // resolver drops the same value and returns them to the flag — and a
