@@ -7,7 +7,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/renderer/test/setup.ts'],
-    include: ['./src/{renderer,main}/**/*.test.{ts,tsx}'],
+    // `common` is in the list because the code both processes share lives there
+    // and a test that never runs is worse than no test: it reads as coverage.
+    // `src/common/application-icons.test.ts` had been dark since it was written.
+    include: ['./src/{renderer,main,common}/**/*.test.{ts,tsx}'],
     // Must stay above the `asyncUtilTimeout` configured in the setup file, so a
     // condition that never settles is reported as the assertion that failed
     // rather than as a bare test timeout.

@@ -11,6 +11,7 @@ import {
 } from '@avalon/contracts';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -91,6 +92,14 @@ import {
 import { LockdownModeController } from './lockdown-mode';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
 import { MenuBarContentStore } from './menu-bar-content';
+import {
+  isMessageExportUrl,
+  MESSAGE_EXPORT_CONTENT_SECURITY_POLICY,
+  MESSAGE_EXPORT_SCHEME,
+  MessageExporter,
+  parseMessageExportRequest,
+  type MessageExportWindow,
+} from './message-export';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 import { ProductAnalyticsSettingsController } from './product-analytics-settings';
@@ -447,6 +456,17 @@ protocol.registerSchemesAsPrivileged([{
     secure: true,
     supportFetchAPI: true,
     corsEnabled: true,
+  },
+}, {
+  // The scheme a saved message is rendered from. Deliberately narrower than the
+  // renderer's: an export document is one page of markup that fetches nothing,
+  // so it needs an origin of its own and nothing else. Keeping it off
+  // `app://avalon` is the point — a document built out of a model's words never
+  // shares an origin with the application.
+  scheme: MESSAGE_EXPORT_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
   },
 }]);
 
@@ -2292,6 +2312,10 @@ function registerIpc(): void {
     }
     clipboard.writeText(text);
   });
+  ipcMain.handle('message-export:save', async (event, request: unknown) => {
+    assertTrustedIpcSender(event);
+    return messageExporter.save(parseMessageExportRequest(request));
+  });
   ipcMain.handle('auth:consume-pending-deep-links', (event) => {
     // Settings shares the preload bridge but must never drain authentication
     // or invitation links intended for the primary application window.
@@ -2406,6 +2430,100 @@ async function installRendererProtocol(): Promise<void> {
     }
   });
 }
+
+function installMessageExportProtocol(): void {
+  protocol.handle(MESSAGE_EXPORT_SCHEME, (request) => {
+    const html = messageExporter.document(request.url);
+    if (html === null) return new Response('Not found', { status: 404 });
+    return new Response(html, {
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': MESSAGE_EXPORT_CONTENT_SECURITY_POLICY,
+      },
+    });
+  });
+}
+
+/**
+ * A window that exists only to be rendered from. It is never shown, carries no
+ * preload and therefore none of the desktop bridge, and is thrown away as soon
+ * as the bytes are out. `backgroundThrottling` is off because a window nobody
+ * can see is otherwise free to stop painting, and a capture then waits for a
+ * frame that never arrives.
+ */
+function createMessageExportWindow(size: { width: number; height: number }): MessageExportWindow {
+  const window = new BrowserWindow({
+    show: false,
+    width: size.width,
+    height: size.height,
+    useContentSize: true,
+    webPreferences: {
+      contextIsolation: true,
+      devTools: false,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      backgroundThrottling: false,
+    },
+  });
+  const contents = window.webContents;
+  return {
+    load: async (url) => {
+      // Deliberately not `await loadURL(...)`: its promise also rejects when a
+      // hidden window stops loading before Chromium reports the load finished,
+      // which is a race rather than a failure. The events are the truth.
+      const finished = new Promise<void>((resolve, reject) => {
+        contents.once('did-finish-load', () => resolve());
+        contents.once('did-fail-load', (_event, code, description) => {
+          reject(new Error(`The export document failed to load: ${description} (${code})`));
+        });
+      });
+      void contents.loadURL(url).catch(() => undefined);
+      await finished;
+    },
+    evaluate: (script) => contents.executeJavaScript(script, true),
+    resize: (width, height, zoom) => {
+      contents.setZoomFactor(zoom);
+      window.setContentSize(width, height);
+    },
+    captureJpeg: async (quality) => (await contents.capturePage()).toJPEG(quality),
+    printPdf: async ({ footerHtml, margins }) => new Uint8Array(await contents.printToPDF({
+      displayHeaderFooter: true,
+      footerTemplate: footerHtml,
+      // Required whenever header and footer are on at all; empty suppresses it.
+      headerTemplate: '<div></div>',
+      margins: { ...margins },
+      pageSize: 'Letter',
+      printBackground: true,
+    })),
+    destroy: () => {
+      if (!window.isDestroyed()) window.destroy();
+    },
+  };
+}
+
+const messageExporter = new MessageExporter({
+  createWindow: createMessageExportWindow,
+  showSaveDialog: async ({ defaultFileName, extension, filterLabel }) => {
+    const parent = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const options: Electron.SaveDialogOptions = {
+      defaultPath: join(app.getPath('downloads'), defaultFileName),
+      filters: [{ name: filterLabel, extensions: [extension] }],
+      title: 'Save from Avalon',
+    };
+    const result = parent && !parent.isDestroyed()
+      ? await dialog.showSaveDialog(parent, options)
+      : await dialog.showSaveDialog(options);
+    return result.canceled || !result.filePath ? null : result.filePath;
+  },
+  writeFile: (path, data) => writeFile(path, data),
+  logWarning: (message, error) => logWarn('avalon', message, error),
+  randomToken: () => crypto.randomUUID(),
+  now: () => Date.now(),
+  delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+});
 
 function applicationWindowIconPath(): string {
   return app.isPackaged
@@ -2868,6 +2986,15 @@ async function createMainWindow(): Promise<void> {
 
 function installContentSecurityPolicy(): void {
   electronSession.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // An export document already carries a policy of its own, and a far stricter
+    // one: it is markup built out of a model's words, and it is allowed no
+    // script at all. Leaving its response untouched is what keeps that the
+    // policy in force. Falling through would attach the renderer's policy
+    // alongside it, and while two policies are enforced conjunctively — so the
+    // stricter directives would still win today — that only holds because the
+    // header this handler writes is cased differently from the one the protocol
+    // set. A boundary that survives on header casing is not a boundary.
+    if (isMessageExportUrl(details.url)) return callback({});
     const configuredOrigins = Object.values(runtimeConfig().api).flatMap((rawUrl) => {
       const url = new URL(rawUrl);
       const socketProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2981,6 +3108,7 @@ if (!singleInstanceLock) {
       );
     }
     await installRendererProtocol();
+    installMessageExportProtocol();
     installContentSecurityPolicy();
     registerIpc();
     autoUpdateController = initializeAutoUpdate({
