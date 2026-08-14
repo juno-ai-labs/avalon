@@ -21,6 +21,7 @@ the main process holds the menu's content itself.
 | `apps/desktop/src/main/menu-bar-content.ts` | The menu's data — recent work streams and suggested work streams — fetched from the regional API by the main process, cached, and started on click. |
 | `apps/desktop/src/main/menu-bar.ts` | The status item's lifecycle: whether it exists, and rebuilding its menu when its content moves. |
 | `apps/desktop/src/main/launch-at-login.ts` | Whether Avalon is registered to open at login, and `launchedAtLogin`, which decides whether this launch opens a window. |
+| `apps/desktop/src/main/application-open-observer.ts` | Coalesces a menu-triggered focus with Electron activation so one open retains the explicit `menu_bar` source. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Where each `avalon://` row lands, including `workstreams/new`. |
 | `apps/desktop/src/main/index.ts` | Wires them together: creates the Electron `Tray`, performs the authorized requests (`avalonApiRequest`), and supplies every action. |
 | `apps/desktop/src/main/application-settings.ts` | Stores `menuBarEnabled` and `launchAtLoginDefaultApplied` beside Lockdown mode and the Developer preference. |
@@ -125,6 +126,23 @@ item and would otherwise count suggestions that were never on screen. A set is
 reported once, matching the home screen, whose effect is keyed on the ids and
 versions rather than on each render.
 
+The same open also emits the product event `menu_bar_opened` with only whether
+the account is signed in and bounded counts for suggestions, recent rows, and
+pinned rows. Electron can notify one opening through both the Tray click and the
+Menu `menu-will-show`; `MenuBarOpenObserver` coalesces those until
+`menu-will-close`, so one visible menu is one event. Selecting an enabled row
+emits `menu_bar_action_selected` with a closed action enum. It never includes a
+suggestion prompt, work-stream title, or identifier, and reporting cannot block
+the selected action.
+
+A suggestion click is an intent, not adoption. The start request carries only
+the surface plus bounded card version/position; after the work stream exists, the
+regional API emits the authoritative `suggested_work_started_v2` with the opaque
+opportunity/work-stream IDs and stored exposure/provenance dimensions. Failed
+starts therefore produce the menu selection event but not the successful-start
+event. The home surface uses the same API outcome with
+`surface: workspace_home`.
+
 `MenuBarContentStore` fetches both halves through `avalonApiRequest`, the main
 process's authorized request helper, which renews once through the shared
 coalescing refresh on a 401 and always settles. Refreshes happen when the pointer
@@ -152,6 +170,13 @@ asked for.
 The toggle lives in Application → **Startup**, and only there. Its state comes
 from `DesktopApplicationSettings.launchAtLogin`, which the main process fills
 from the operating system on every read.
+
+After launch initialization, Product analytics records that actual state and
+whether login items are available as part of `application_settings_state_v2`. A
+successful Settings interaction records `application_setting_change_completed_v2`
+with the previous, requested, and read-back applied booleans. This is deliberately
+not a renderer click: macOS may keep an enable request off while approval is
+pending, and analytics must preserve that distinction.
 
 ### Detecting a login launch
 
@@ -195,6 +220,11 @@ destination, so the hidden state is not sticky.
 - **A surface that shows suggestions reports them.** The ranking cannot tell a
   suggestion nobody wanted from one nobody was shown, so a surface that displays
   without reporting freezes its own list.
+- **Menu analytics are structural, never content-bearing.** Open events carry
+  booleans/counts, action events carry one enum, and successful suggested-work
+  events carry bounded exposure/provenance plus opaque opportunity and work-stream
+  UUIDs. Titles, prompts, activity content, and provider account IDs remain
+  outside telemetry.
 - **Content is fetched only where a menu can be built.** Otherwise the fetch is
   recurring API traffic and workspace titles held in memory for nobody — on every
   non-macOS install, on every token renewal.
@@ -292,7 +322,9 @@ suggestions (what `GET /work-opportunities` returns), 60-character labels
 ```text
 pnpm --filter @avalon/desktop exec vitest run src/main/menu-bar-menu.test.ts \
   src/main/menu-bar-content.test.ts src/main/menu-bar.test.ts \
+  src/main/menu-bar-open-observer.test.ts src/main/telemetry-reporter.test.ts \
   src/main/launch-at-login.test.ts
+pnpm --filter @avalon/api exec vitest run test/work-opportunity-telemetry.test.ts
 ```
 
 Nothing here imports Electron at runtime. `menu-bar-menu.ts` builds a plain
@@ -337,7 +369,74 @@ shared write queue: a lost update there would leave an off Lockdown preference
 beside a Lockdown envelope, which the next launch reads as an out-of-app edit and
 answers by deleting the stored credentials. See [`security.md`](security.md).
 
+Selecting a menu action that raises Avalon also records
+`application_opened(entrypoint=menu_bar, phase=activation)`. The explicit source
+is reported before `app.focus`, so the application-open coalescer suppresses the
+generic Electron activation callback rather than also counting a Dock open.
+
 ## Changelog
+
+### 2026-08-13 — Menu activations remain distinct from Dock opens
+
+**What changed:** A menu action that raises Avalon now contributes the explicit
+`menu_bar` application-open source before main focuses the app.
+
+**Why:** Focusing from a status item can also trigger Electron's generic
+activation callback. Counting that callback independently would turn one menu
+interaction into both a menu and Dock open.
+
+**Considered and rejected:** Inferring the source after focus or relying only on
+the existing row-selection event. The former races Electron; the latter cannot
+join the same canonical open-source analysis as system, Dock, and deep-link
+entrypoints.
+
+**Consequences:** The shared open observer coalesces the two callbacks. Menu row
+selection and application opening remain distinct signals because a selection
+describes the chosen action while an open describes how Avalon was raised.
+
+### 2026-08-13 — Login-item analytics use the operating system's applied answer
+
+**What changed:** Launch initialization contributes the real login-item state and
+availability to the bounded settings snapshot. A completed Settings interaction
+records its previous, requested, and macOS read-back applied state.
+
+**Why:** A toggle click is not proof that macOS registered the login item; approval
+can remain pending and the UI already reads the operating system back for this
+reason.
+
+**Considered and rejected:** Reporting the renderer click or requested boolean as
+the new state. Either would count an unapproved registration as enabled.
+
+**Consequences:** The Product analytics preference governs both events. The
+login-item controller remains authoritative and telemetry runs only after its
+mutation completes.
+
+### 2026-08-13 — Menu opens, selections, and successful suggested work are measurable
+
+**What changed:** Each visible status-menu open now emits one bounded product
+event despite Electron's duplicate click/show callbacks. Every enabled row emits
+a closed action enum, while successful suggested-work adoption is emitted by the
+regional API after creation with exposure context and `menu_bar` or
+`workspace_home` as its surface.
+
+**Why:** Suggestion impressions answered ranking needs but could not answer how
+often people opened the menu, which rows they chose, or whether a suggestion
+actually became work. Selection alone also over-counts failures, so successful
+suggested work needs the server commit as its boundary.
+
+**Considered and rejected:** Reporting labels, prompts, activity content, or
+provider account IDs, and treating every click as a successful start. Those
+approaches add content or corrupt adoption when creation fails. Opaque
+opportunity/work-stream UUIDs are retained because they are required to join the
+versioned exposure to its one created resource. Emitting only from the desktop
+was also rejected because it cannot authoritatively distinguish a committed
+start from an interrupted response.
+
+**Consequences:** New menu actions must extend the closed action taxonomy and
+its contract tests. Detailed start context is optional for compatibility with
+released clients; current callers supply it and receive the detailed API event,
+while an older request receives only the legacy successful-start fallback.
+Telemetry remains observational and cannot prevent a menu action.
 
 ### 2026-08-11 — Avalon gets a menu bar item, opens at login, and starts hidden
 

@@ -5,6 +5,7 @@ import type { HonoAppEnv } from '../src/env';
 import { errorHandler } from '../src/middleware/errors';
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from '../src/routes/telemetry';
 import { requireIdentityAuth } from '../src/middleware/auth';
+import { coarseTelemetryRoute } from '../src/telemetry/bootstrap';
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -31,6 +32,28 @@ describe('telemetry HTTP bounds', () => {
     vi.setSystemTime(new Date('2026-08-12T20:00:00.000Z'));
   });
   afterEach(() => vi.useRealTimers());
+
+  it('exposes the same content-free Cloudflare route decision without creating a journey', async () => {
+    expect(coarseTelemetryRoute('DE')).toEqual({ route: 'eu', routingBasis: 'ip_geolocation' });
+    expect(coarseTelemetryRoute('US')).toEqual({ route: 'global', routingBasis: 'ip_geolocation' });
+    expect(coarseTelemetryRoute(undefined)).toEqual({
+      route: 'global', routingBasis: 'geolocation_fallback',
+    });
+    const prepare = vi.fn();
+    const response = await publicApp().request('/telemetry/route', {}, createTestEnv({
+      AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: createTestD1Database({ prepare }),
+    }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      route: 'global', routingBasis: 'geolocation_fallback',
+    });
+    expect(prepare).not.toHaveBeenCalled();
+
+    const regional = await publicApp().request('/telemetry/route', {}, createTestEnv({
+      AVALON_REGION: 'eu', LOG_LEVEL: 'error', DB: createTestD1Database({ prepare }),
+    }));
+    expect(regional.status).toBe(404);
+  });
 
   it('rejects an oversized anonymous batch before validation or persistence', async () => {
     const body = JSON.stringify({ padding: 'x'.repeat(TELEMETRY_BATCH_MAX_BYTES) });
@@ -109,6 +132,48 @@ describe('telemetry HTTP bounds', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: 'telemetry_capability_invalid' },
     });
+  });
+
+  it('accepts public-site events through the coarse regional anonymous route', async () => {
+    const database = migratedSqliteDatabase();
+    const environment = createTestEnv({
+      AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
+      TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
+    });
+    const bootstrapResponse = await publicApp().request('/telemetry/bootstrap', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ anonymousEpochId: epochId }),
+    }, environment);
+    const bootstrap = await bootstrapResponse.json() as { capability: string; journeyId: string };
+    const eventId = '018f22f2-4c22-7abc-8def-0123456789bc';
+
+    const response = await publicApp().request('/telemetry/anonymous', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        capability: bootstrap.capability,
+        events: [{
+          schema: 'com.avalon.telemetry.event', schemaVersion: 1, eventId,
+          name: 'site_page_viewed', source: 'site', category: 'product',
+          identityScope: 'anonymous-epoch', originalTimestamp: '2026-08-12T20:00:00.000Z',
+          sentAt: '2026-08-12T20:00:00.000Z',
+          context: {
+            environment: 'production', region: 'global', release: 'site-1', buildId: 'site-1',
+            sessionId: '018f22f2-4c22-7abc-8def-0123456789bd',
+            onboardingJourneyId: bootstrap.journeyId,
+          },
+          properties: { page: 'landing', pathname: '/', campaignSource: 'launch' },
+        }],
+      }),
+    }, environment);
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ results: [{ result: 'accepted', eventId }] });
+    const persisted = database.prepare(
+      'SELECT envelope_json, delivery_state FROM telemetry_accepted_events WHERE event_id = ?',
+    ).get(eventId) as { envelope_json: string; delivery_state: string };
+    expect(JSON.parse(persisted.envelope_json)).toMatchObject({ name: 'site_page_viewed', source: 'site' });
+    expect(persisted.delivery_state).toBe('pending');
+    database.close();
   });
 
   it('accepts valid multipart crash input and rejects invalid multipart before R2', async () => {
@@ -198,6 +263,52 @@ describe('telemetry HTTP bounds', () => {
     await expect(accepted.json()).resolves.toMatchObject({
       results: [{ result: 'accepted', eventId: '018f22f2-4c22-7abc-8def-0123456789af' }],
     });
+
+    const forgedApiEvent = await authenticatedApp().request('/telemetry/events', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-avalon-dev-user-id': 'user-1',
+        'x-avalon-dev-workspace-id': 'workspace-1',
+      },
+      body: JSON.stringify({ events: [{
+        schema: 'com.avalon.telemetry.event', schemaVersion: 1,
+        eventId: '018f22f2-4c22-7abc-8def-0123456789b1',
+        name: 'workstream_create_completed', source: 'api', category: 'product',
+        identityScope: 'workspace-user', originalTimestamp: '2026-08-12T20:00:00.000Z',
+        sentAt: '2026-08-12T20:00:00.000Z',
+        context: { environment: 'production', release: '1.0.0', buildId: 'build', region: 'global' },
+        properties: { result: 'success' },
+      }] }),
+    }, environment);
+    expect(forgedApiEvent.status).toBe(403);
+    await expect(forgedApiEvent.json()).resolves.toMatchObject({
+      error: { code: 'telemetry_source_forbidden' },
+    });
+
+    const forgedWorkspaceEvent = await authenticatedApp().request('/telemetry/events', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-avalon-dev-user-id': 'user-1',
+        'x-avalon-dev-workspace-id': 'workspace-1',
+      },
+      body: JSON.stringify({ events: [{
+        schema: 'com.avalon.telemetry.event', schemaVersion: 1,
+        eventId: '018f22f2-4c22-7abc-8def-0123456789b0',
+        name: 'agent_tool_started', source: 'api', category: 'product',
+        identityScope: 'workspace', originalTimestamp: '2026-08-12T20:00:00.000Z',
+        sentAt: '2026-08-12T20:00:00.000Z',
+        context: { environment: 'production', release: '1.0.0', buildId: 'build', region: 'global' },
+        properties: {
+          workstreamId: '018f22f2-4c22-7abc-8def-012345678901',
+          harnessRunId: '018f22f2-4c22-7abc-8def-012345678902',
+          toolName: 'search_messages', pluginId: 'avalon.workstream', capability: 'workstream.search',
+          mode: 'read', runKind: 'system', executionScope: 'workspace',
+        },
+      }] }),
+    }, environment);
+    expect(forgedWorkspaceEvent.status).toBe(403);
     database.close();
   });
 });

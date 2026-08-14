@@ -222,6 +222,116 @@ describe("PostHog adapter", () => {
     });
   });
 
+  it("preserves server-authoritative connector attribution for work-stream creation", () => {
+    const workstreamEnvelope: TelemetryEnvelope = {
+      ...event,
+      name: "workstream_created",
+      identityScope: "workspace-user",
+      properties: {
+        workstreamId: "018f22f2-4c22-7abc-8def-0123456789a1",
+        visibility: "public",
+        creationSource: "suggested_work",
+        origin: "ad_hoc",
+        connectorType: "multiple",
+        connectorTypes: ["linear", "slack"],
+        connectorTypeCount: 2,
+        participantCount: 1,
+        attachmentCount: 0,
+        modelOverride: false,
+      },
+    };
+
+    expect(mapPostHogCapture(row({ envelope: workstreamEnvelope })).properties).toMatchObject({
+      $is_server: true,
+      avalon_event_name: "workstream_created",
+      creationSource: "suggested_work",
+      connectorType: "multiple",
+      connectorTypes: ["linear", "slack"],
+      connectorTypeCount: 2,
+    });
+  });
+
+  it("updates current person properties from application-settings state", () => {
+    const settingsEnvelope: TelemetryEnvelope = {
+      ...event,
+      contextSchemaVersion: 2,
+      name: "application_settings_state",
+      source: "desktop-main",
+      identityScope: "workspace-user",
+      context: { ...event.context, platform: "darwin" },
+      properties: {
+        launchAtLoginEnabled: true,
+        launchAtLoginAvailable: true,
+        lockdownModeEnabled: false,
+        lockdownModeAvailable: true,
+        applicationIcon: "ruby",
+        applicationIconAutomatic: false,
+        applicationIconAvailable: true,
+      },
+    };
+
+    expect(mapPostHogCapture(row({ envelope: settingsEnvelope })).properties).toMatchObject({
+      $set: {
+        avalon_launch_at_login_enabled: true,
+        avalon_launch_at_login_available: true,
+        avalon_lockdown_mode_enabled: false,
+        avalon_lockdown_mode_available: true,
+        avalon_application_icon: "ruby",
+        avalon_application_icon_automatic: false,
+        avalon_application_icon_available: true,
+      },
+    });
+  });
+
+  it.each([
+    [
+      "application_setting_change_completed",
+      {
+        setting: "launch_at_login",
+        previousEnabled: false,
+        requestedEnabled: true,
+        appliedEnabled: false,
+      },
+      { avalon_launch_at_login_enabled: false },
+    ],
+    [
+      "application_setting_change_completed",
+      {
+        setting: "lockdown_mode",
+        previousEnabled: false,
+        requestedEnabled: true,
+        appliedEnabled: true,
+      },
+      { avalon_lockdown_mode_enabled: true },
+    ],
+    [
+      "application_icon_changed",
+      {
+        previousIcon: "dark",
+        previousAutomatic: true,
+        selectedIcon: "holographic",
+        automatic: false,
+      },
+      {
+        avalon_application_icon: "holographic",
+        avalon_application_icon_automatic: false,
+      },
+    ],
+  ] as const)("updates the relevant person property for %s", (name, properties, expectedSet) => {
+    const settingsEnvelope: TelemetryEnvelope = {
+      ...event,
+      contextSchemaVersion: 2,
+      name,
+      source: "desktop-main",
+      identityScope: "workspace-user",
+      context: { ...event.context, platform: "darwin" },
+      properties,
+    };
+
+    expect(mapPostHogCapture(row({ envelope: settingsEnvelope })).properties)
+      .toMatchObject({ $set: expectedSet });
+  });
+
   it("maps registered desktop screens to PostHog's canonical screen event", () => {
     const screenEnvelope: TelemetryEnvelope = {
       ...event,
@@ -275,6 +385,72 @@ describe("PostHog adapter", () => {
     });
   });
 
+  it("maps detailed desktop surfaces to PostHog's canonical screen event", () => {
+    const capture = mapPostHogCapture(row({
+      envelope: {
+        ...event,
+        name: "surface_viewed",
+        source: "desktop-renderer",
+        identityScope: "workspace-user",
+        properties: {
+          surface: "note_detail",
+          entrypoint: "sidebar_note",
+          resourceType: "note",
+          resourceId: "018f22f2-4c22-7abc-8def-0123456789a1",
+        },
+      },
+    }));
+
+    expect(capture).toMatchObject({
+      event: "$screen",
+      properties: { $screen_name: "note_detail", avalon_event_name: "surface_viewed" },
+    });
+  });
+
+  it("maps public-site visits to canonical PostHog web events without desktop metadata", () => {
+    const siteEnvelope: TelemetryEnvelope = {
+      ...event,
+      name: "site_page_viewed",
+      source: "site",
+      identityScope: "anonymous-epoch",
+      context: {
+        environment: "production",
+        region: "global",
+        release: "site-1",
+        buildId: "site-1",
+        sessionId: "018f22f2-4c22-7abc-8def-0123456789a0",
+        onboardingJourneyId: "018f22f2-4c22-7abc-8def-0123456789a1",
+      },
+      properties: {
+        page: "landing",
+        pathname: "/",
+        referringDomain: "example.com",
+        campaignSource: "launch",
+        campaignMedium: "email",
+        campaignName: "august",
+      },
+    };
+
+    const capture = mapPostHogCapture(row({ envelope: siteEnvelope }));
+    expect(capture).toMatchObject({
+      event: "$pageview",
+      properties: {
+        $current_url: "https://with-avalon.com/",
+        $pathname: "/",
+        $host: "with-avalon.com",
+        $referrer: "https://example.com/",
+        $referring_domain: "example.com",
+        $utm_source: "launch",
+        $utm_medium: "email",
+        $utm_campaign: "august",
+        $session_id: "018f22f2-4c22-7abc-8def-0123456789a0",
+        $process_person_profile: false,
+      },
+    });
+    expect(capture.properties).not.toHaveProperty("$app_name");
+    expect(capture.properties).not.toHaveProperty("$device_type");
+  });
+
   it.each([
     [
       { state: "installed" },
@@ -319,8 +495,34 @@ describe("PostHog adapter", () => {
   });
 
   it.each([
-    ["launch_started", "Application Opened", false],
-    ["foreground", "Application Opened", true],
+    ["system_start", "cold_start", false],
+    ["dock", "activation", true],
+    ["push_notification", "activation", true],
+  ] as const)("maps %s application opens to the canonical PostHog event", (entrypoint, phase, fromBackground) => {
+    const openedEnvelope: TelemetryEnvelope = {
+      ...event,
+      contextSchemaVersion: 2,
+      name: "application_opened",
+      source: "desktop-main",
+      identityScope: "workspace-user",
+      context: { ...event.context, platform: "darwin" },
+      properties: { entrypoint, phase },
+    };
+
+    expect(mapPostHogCapture(row({ envelope: openedEnvelope }))).toMatchObject({
+      event: "Application Opened",
+      properties: {
+        avalon_event_name: "application_opened",
+        application_open_source: entrypoint,
+        from_background: fromBackground,
+        ...(phase === "cold_start" ? { version: "0.24.0", build: "build-0123456789" } : {}),
+      },
+    });
+  });
+
+  it.each([
+    ["launch_started", "application_lifecycle", undefined],
+    ["foreground", "application_lifecycle", undefined],
     ["background", "Application Backgrounded", undefined],
     ["ready", "application_lifecycle", undefined],
     ["graceful_exit", "application_lifecycle", undefined],
@@ -353,12 +555,8 @@ describe("PostHog adapter", () => {
     });
     if (fromBackground === undefined) expect(capture.properties).not.toHaveProperty("from_background");
     else expect(capture.properties).toHaveProperty("from_background", fromBackground);
-    if (state === "launch_started") {
-      expect(capture.properties).toMatchObject({ version: "0.24.0", build: "build-0123456789" });
-    } else {
-      expect(capture.properties).not.toHaveProperty("version");
-      expect(capture.properties).not.toHaveProperty("build");
-    }
+    expect(capture.properties).not.toHaveProperty("version");
+    expect(capture.properties).not.toHaveProperty("build");
   });
 
   it("does not mark proxied desktop events as server events", () => {
@@ -389,6 +587,60 @@ describe("PostHog adapter", () => {
     expect(mapPostHogCapture(row({
       envelope: { ...event, identityScope: "installation" },
     })).properties).toMatchObject({ $process_person_profile: false, $is_identified: false });
+  });
+
+  it("keeps workspace-owned tool activity personless while grouping it", () => {
+    const toolEnvelope: TelemetryEnvelope = {
+      ...event,
+      name: "agent_tool_started",
+      source: "api",
+      identityScope: "workspace",
+      properties: {
+        workstreamId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d3",
+        harnessRunId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d4",
+        toolName: "search_messages",
+        pluginId: "avalon.workstream",
+        capability: "workstream.search",
+        mode: "read",
+        runKind: "system",
+        executionScope: "workspace",
+      },
+    };
+    const workspaceAnalyticsId = "018f22f2-4c22-7abc-8def-012345678900";
+
+    expect(mapPostHogCapture(row({
+      envelope: toolEnvelope,
+      analyticsSubjectId: workspaceAnalyticsId,
+      workspaceAnalyticsId,
+    })).properties).toMatchObject({
+      distinct_id: workspaceAnalyticsId,
+      $groups: { workspace: workspaceAnalyticsId },
+      $process_person_profile: false,
+      $is_identified: false,
+    });
+  });
+
+  it("does not update a person profile from an anonymous settings snapshot", () => {
+    const settingsEnvelope: TelemetryEnvelope = {
+      ...event,
+      contextSchemaVersion: 2,
+      name: "application_settings_state",
+      source: "desktop-main",
+      identityScope: "anonymous-epoch",
+      context: { ...event.context, platform: "darwin" },
+      properties: {
+        launchAtLoginEnabled: true,
+        launchAtLoginAvailable: true,
+        lockdownModeEnabled: false,
+        lockdownModeAvailable: true,
+        applicationIcon: "dark",
+        applicationIconAutomatic: true,
+        applicationIconAvailable: true,
+      },
+    };
+
+    expect(mapPostHogCapture(row({ envelope: settingsEnvelope })).properties)
+      .not.toHaveProperty("$set");
   });
 
   it("uses the official batch shape and fixed configured endpoint", async () => {

@@ -1,5 +1,6 @@
 import type { HarnessPlugin } from "@avalon/agent-harness";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import { newId } from "@avalon/db";
 
 import type { Env } from "../../env";
 import { logStructuredEvent } from "../../observability/logger";
@@ -26,6 +27,10 @@ import { createTerminalRepositorySelector } from "./repository-selection";
 import { createGitHubTerminalCatalogGateway } from "./workstream-state";
 import { createTerminalToolExecutors, TerminalToolError } from "./tools";
 import { refreshWorkspaceSchedulerAlarm } from "../workstream-wakeup-service";
+import {
+  emitProductUsageTelemetry,
+  telemetryJourneyDuration,
+} from "../../telemetry/product-usage";
 
 export async function createAvalonTerminalPlugin(
   env: Env,
@@ -51,6 +56,22 @@ export async function createAvalonTerminalPlugin(
     undefined,
     (workspaceId) => refreshWorkspaceSchedulerAlarm(env, workspaceId),
     configuration.emergencyDisabled,
+    async (context, observation) => emitProductUsageTelemetry(env, {
+      workspaceId: context.workspaceId,
+      ...(context.executionPrincipal.type === "user" ? { userId: context.executionPrincipal.userId } : {}),
+      name: "terminal_workspace_terminal",
+      properties: {
+        workstreamId: context.workstreamId,
+        action: observation.action,
+        result: "success",
+        duration: telemetryJourneyDuration(observation.durationMs),
+        repositorySelected: observation.repositorySelected,
+        connectorType: observation.repositorySelected ? "github" : "none",
+        localFilesRetained: observation.localFilesRetained,
+      },
+      operationId: context.harnessRunId,
+      eventId: newId(),
+    }),
   );
   const readGateway = createGitHubRestReadGateway(env);
   const runtime = createDaytonaTerminalRuntime(

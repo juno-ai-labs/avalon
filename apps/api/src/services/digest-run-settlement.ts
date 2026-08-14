@@ -1,6 +1,11 @@
 import type { Env } from "../env";
 import { newId, nowIso } from "@avalon/db";
 import { deliverDigest } from "./digest-delivery-service";
+import {
+  emitProductUsageTelemetry,
+  resourceTelemetryEventId,
+  telemetryCountBucket,
+} from "../telemetry/product-usage";
 
 /**
  * Settles one digest run: record what it wrote, then send it.
@@ -48,6 +53,35 @@ interface DigestDeliveryRow {
   workspace_name: string;
 }
 
+async function emitDigestTerminal(env: Env, delivery: DigestDeliveryRow, result: "success" | "failed"): Promise<void> {
+  const [targets, prior] = await Promise.all([
+    env.DB.prepare(
+      `SELECT DISTINCT target_type FROM digest_delivery_targets target
+       JOIN digest_deliveries delivery ON delivery.digest_schedule_id = target.digest_schedule_id
+       WHERE delivery.id = ? ORDER BY target_type LIMIT 2`,
+    ).bind(delivery.id).all<{ target_type: "email" | "slack_agent_dm" }>(),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM digest_deliveries current
+       JOIN digest_deliveries previous ON previous.digest_schedule_id = current.digest_schedule_id
+       WHERE current.id = ? AND previous.status = 'delivered' AND previous.id <> current.id`,
+    ).bind(delivery.id).first<{ count: number }>(),
+  ]);
+  await emitProductUsageTelemetry(env, {
+    workspaceId: delivery.workspace_id,
+    userId: delivery.user_id,
+    name: "digest_delivery_terminal",
+    properties: {
+      deliveryId: delivery.id,
+      result,
+      activityCount: telemetryCountBucket(Number(delivery.event_count)),
+      targetTypes: targets.results.map((row) => row.target_type),
+      firstDelivery: Number(prior?.count ?? 0) === 0,
+    },
+    operationId: delivery.id,
+    eventId: resourceTelemetryEventId(delivery.id, 10),
+  }).catch(() => undefined);
+}
+
 export async function settleDigestRun(
   env: Env,
   deliveryId: string,
@@ -88,6 +122,7 @@ export async function settleDigestRun(
       nowIso(),
       deliveryId,
     ).run();
+    await emitDigestTerminal(env, delivery, "failed");
     return;
   }
 
@@ -127,6 +162,7 @@ export async function settleDigestRun(
       nowIso(),
       deliveryId,
     ).run();
+    await emitDigestTerminal(env, delivery, "failed");
     return;
   }
 
@@ -138,6 +174,7 @@ export async function settleDigestRun(
     `UPDATE digest_deliveries SET status = 'delivered', updated_at = ?
       WHERE id = ? AND status NOT IN ('delivered', 'failed')`,
   ).bind(nowIso(), deliveryId).run();
+  await emitDigestTerminal(env, delivery, "success");
   await noteDeliveryInTranscript(env, delivery.id, delivered.delivered);
 }
 

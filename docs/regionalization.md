@@ -24,6 +24,7 @@ bridges, or any code that selects a Durable Object namespace.
 | `apps/api/src/inbound-email-regional-bridge.ts` | One verified Resend event handed to the owning data plane. |
 | `apps/api/src/telemetry-regional-bridge.ts`, `telemetry-control-bridge.ts` | Validated Global-to-EU onboarding/outcome projections and narrow EU-to-Global capability/preference control commands. They are not general event-forwarding bridges. |
 | `apps/api/src/routes/telemetry.ts`, `apps/api/src/telemetry/` | Immediate route bootstrap, regional acceptance, EU internal sink, and Global PostHog delivery. |
+| `apps/site/src/telemetry.ts` | Uses the content-free Cloudflare route before choosing a persistent Global or page-scoped EU anonymous identity. |
 | `apps/api/src/lib/rpc-contracts.ts` | The schema every bridge argument is parsed against at the hop. |
 | `apps/api/src/lib/durable-object-namespace.ts` | The shared helper that selects a namespace, pinning EU with `jurisdiction("eu")`. |
 | `apps/api/src/lib/region-routed-state.ts` | Region-prefixed provider state, so a callback knows where it started. |
@@ -50,6 +51,14 @@ the bootstrap session. The desktop then stores that regional API base URL and do
 not query the other region for ordinary workspace requests. Invitation acceptance
 remains email-bound, expiring, single-use, idempotent, and server-authorized; no
 second regional Google OAuth flow exists.
+
+After the regional authority commits an invitation creation, revocation,
+acceptance, or decline, it emits one idempotent `workspace_invitation_terminal`
+observation in that invitation's region. The event keeps only the opaque
+invitation ID, role, terminal action, delivery-result class, and bounded elapsed
+time; it never contains the invited address, workspace name, link, or token.
+Acceptance is attributed to the accepting member after the regional membership
+write, while administrator actions are attributed to that administrator.
 
 ### Deployments
 
@@ -139,6 +148,14 @@ identifier. Capability verification and journey closure also use that narrow
 control RPC: the signing key stays in Global, and EU receives only the fixed
 route/epoch control result. [`telemetry.md`](telemetry.md) owns the complete
 mechanism.
+
+The public site asks the same Global edge for a content-free route before it
+chooses browser identity. A Global page may reuse one first-party random epoch
+across page loads. An affirmative EU page uses a new in-memory epoch and never
+reads or writes a persistent analytics identifier. The later capability exchange
+still fixes the route and the event still crosses only the named EU bridge. A
+route lookup creates no onboarding journey row and retains neither country nor IP.
+See [`public-site-telemetry.md`](public-site-telemetry.md).
 
 ## Invariants
 
@@ -308,6 +325,48 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-13 — Invitation conversion is measured by the regional authority
+
+**What changed:** The service that commits each invitation lifecycle transition
+now emits one idempotent regional terminal event for created, revoked, accepted,
+and declined outcomes, including bounded role, delivery, and elapsed-time
+dimensions.
+
+**Why:** Client clicks and email-provider acceptance could not establish whether
+an invitation actually became a member, was declined, or was revoked. The
+regional mutation is the only boundary that can report that journey without
+guessing or crossing regions.
+
+**Considered and rejected:** Renderer-only events, email addresses, workspace
+names, invite URLs/tokens, and Global aggregation of EU invitation outcomes.
+Those alternatives count intent as success, expose identity or bearer material,
+or violate the invitation's owning-region boundary.
+
+**Consequences:** Product funnels can join invitation terminal states by the
+opaque invitation ID inside one region. New invitation terminal states must be
+added at the committing service, remain idempotent, and keep recipient identity
+out of semantic event properties.
+
+### 2026-08-13 — Public-site identity is selected after the Cloudflare route
+
+**What changed:** Added a no-store, content-free Global telemetry route lookup.
+The public site uses it before reading browser analytics storage: Global may
+reuse a first-party anonymous epoch, while an affirmative EU route uses only an
+in-memory page epoch and the existing named EU telemetry bridge.
+
+**Why:** The desktop's capability bootstrap assumes an epoch already exists.
+Applying that order to a website would read or mint a persistent identifier
+before Avalon knew whether the visitor belonged to the EU internal path.
+
+**Considered and rejected:** One Global browser identity for all locations,
+persisting an EU identity in `localStorage`, and using a disposable bootstrap as
+the route probe. Those choices merge residency histories, persist more EU data,
+or create a 90-day control row for a request that only needed a two-value route.
+
+**Consequences:** EU public-site funnels are aggregate across page loads; Global
+can form anonymous acquisition paths. The route endpoint grants no event or
+account authority and remains Global-only.
 
 ### 2026-08-13 — Terminal activation stays within the Global US target
 

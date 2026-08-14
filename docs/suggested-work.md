@@ -149,6 +149,18 @@ workspace connection or the selecting member's own — so the work stream links
 back to the issue, thread, or page it was proposed from. See
 [work-stream origin attachments](workstream-origin-attachments.md).
 
+### Product measurement
+
+A suggestion is measurable only after the API durably records the observation.
+The home and menu-bar surfaces submit the opportunity ID, current version,
+bounded position, and surface; the server adds audience, connector provenance,
+freshness, and prior-impression count from stored state. Dismiss and start use the
+same versioned context. A start emits only after work-stream creation succeeds and
+includes the created work-stream UUID for the conversion join. Replays use stable
+event IDs, and a current detailed start does not also emit the legacy success
+event. Prompts, titles, activity bodies, provider account IDs, and ranking-model
+output never enter telemetry.
+
 ## Invariants
 
 - **A request never ranks.** `list()` reads `suggested_work_sets` and filters it to
@@ -298,6 +310,26 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-08-13 — Exposure context completes the suggested-work funnel
+
+**What changed:** Meaningful impressions, dismissals, and successful starts now
+emit server-owned events with opportunity version, position, surface, audience,
+connector types, freshness/exposure buckets, and—on success—the new work-stream
+UUID.
+
+**Why:** A start count alone cannot distinguish an unseen suggestion from a
+visible one that was ignored or rejected, and client-only clicks over-count
+failed creation.
+
+**Considered and rejected:** DOM impression capture, prompt/title properties,
+one connector event per provenance root, and emitting legacy plus detailed starts
+for the same request. Those choices respectively mismeasure visibility, expose
+content, multiply conversions, or inflate starts.
+
+**Consequences:** Every suggestion surface must report a bounded position and
+version. Older clients without that context keep the legacy success fallback;
+current requests produce one detailed event per state transition.
 
 ### 2026-08-12 — Existing-work decisions stopped creating transcript cards
 

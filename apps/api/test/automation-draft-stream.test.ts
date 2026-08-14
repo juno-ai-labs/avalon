@@ -78,7 +78,13 @@ describe("automation draft stream", () => {
         durationMs: 42,
       });
       await options?.onStreamEvent?.({ type: "completed" });
-      return { draftId, draft, assistantMessage: "Paste the full blog URL." };
+      return {
+        draftId,
+        elicitationId: null,
+        elicitationPresentedAt: null,
+        draft,
+        assistantMessage: "Paste the full blog URL.",
+      };
     });
 
     const response = await testApp().request("/automations/draft/stream", {
@@ -126,7 +132,10 @@ describe("automation draft stream", () => {
         plugin: { pluginId: "plugin_github", displayName: "GitHub", icon: "brand-github" },
         durationMs: 42,
       },
-      { type: "completed", draftId, draft, assistantMessage: "Paste the full blog URL." },
+      {
+        type: "completed", draftId, draft, assistantMessage: "Paste the full blog URL.",
+        elicitationId: null, elicitationPresentedAt: null,
+      },
     ]);
   });
 });

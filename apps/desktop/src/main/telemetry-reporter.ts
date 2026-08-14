@@ -7,6 +7,12 @@ import {
   type TelemetryIdentityScope,
   type TelemetrySource,
 } from '@avalon/contracts';
+import type { ApplicationIconId } from '../common/application-icons';
+import type {
+  DesktopTelemetryProductIntent,
+  DesktopTelemetrySemanticIntent,
+} from '../common/desktop';
+import type { ApplicationOpenEntrypoint, ApplicationOpenPhase } from './application-open-observer';
 import type { TelemetryIdentity } from './telemetry-identity';
 import { uuidV7 } from './telemetry-identity';
 import type { TelemetrySpool, TelemetrySpoolRow } from './telemetry-spool';
@@ -42,6 +48,19 @@ export interface TelemetryWindowContext {
   screenHeight: number;
   viewportWidth: number;
   viewportHeight: number;
+}
+
+export interface ApplicationSettingsTelemetryState {
+  launchAtLoginEnabled: boolean;
+  launchAtLoginAvailable: boolean;
+  lockdownModeEnabled: boolean;
+  lockdownModeAvailable: boolean;
+  menuBarEnabled: boolean;
+  menuBarAvailable: boolean;
+  menuBarPresent: boolean;
+  applicationIcon: ApplicationIconId;
+  applicationIconAutomatic: boolean;
+  applicationIconAvailable: boolean;
 }
 
 interface AuthenticatedTelemetrySession {
@@ -135,6 +154,145 @@ export class TelemetryReporter {
 
   screenViewed(screen: TelemetryScreen, windowContext?: TelemetryWindowContext): Promise<void> {
     return this.captureProduct('screen_viewed', 'desktop-renderer', { screen }, undefined, windowContext);
+  }
+
+  applicationSettingsState(properties: ApplicationSettingsTelemetryState): Promise<void> {
+    return this.captureProduct('application_settings_state_v2', 'desktop-main', { ...properties });
+  }
+
+  applicationSettingChangeCompleted(
+    setting: 'launch_at_login' | 'lockdown_mode' | 'menu_bar',
+    previousEnabled: boolean,
+    requestedEnabled: boolean,
+    appliedEnabled: boolean,
+  ): Promise<void> {
+    const result = appliedEnabled === requestedEnabled ? 'success' : 'not_applied';
+    return this.captureProduct('application_setting_change_completed_v2', 'desktop-main', {
+      setting, previousEnabled, requestedEnabled, appliedEnabled, result,
+    });
+  }
+
+  semanticProductIntent(
+    intent: DesktopTelemetrySemanticIntent,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    const { kind, ...properties } = intent;
+    return this.captureProduct(kind, 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  applicationIconChanged(properties: {
+    previousIcon: ApplicationIconId;
+    previousAutomatic: boolean;
+    selectedIcon: ApplicationIconId;
+    automatic: boolean;
+  }): Promise<void> {
+    return this.captureProduct('application_icon_changed', 'desktop-main', properties);
+  }
+
+  applicationOpened(entrypoint: ApplicationOpenEntrypoint, phase: ApplicationOpenPhase): Promise<void> {
+    return this.captureProduct('application_opened', 'desktop-main', { entrypoint, phase });
+  }
+
+  menuBarOpened(properties: {
+    signedIn: boolean;
+    suggestionCount: number;
+    recentCount: number;
+    pinnedCount: number;
+  }): Promise<void> {
+    return this.captureProduct('menu_bar_opened', 'desktop-main', properties);
+  }
+
+  menuBarActionSelected(
+    action: 'new_meeting_note' | 'new_workstream' | 'new_automation' | 'suggested_work'
+      | 'recent_workstream' | 'pinned_workstream' | 'open_avalon' | 'quit_avalon',
+  ): Promise<void> {
+    return this.captureProduct('menu_bar_action_selected', 'desktop-main', { action });
+  }
+
+  commandShortcutsRevealed(availableCount: number, windowContext?: TelemetryWindowContext): Promise<void> {
+    return this.captureProduct(
+      'command_shortcuts_revealed', 'desktop-renderer', { availableCount }, undefined, windowContext,
+    );
+  }
+
+  commandShortcutUsed(
+    shortcutNumber: number,
+    destinationType: 'pinned_workstream' | 'recent_workstream' | 'recent_note',
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct(
+      'command_shortcut_used', 'desktop-renderer', { shortcutNumber, destinationType }, undefined, windowContext,
+    );
+  }
+
+  workstreamOpened(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'workstream_opened' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('workstream_opened', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  workstreamActionCompleted(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'workstream_action_completed' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('workstream_action_completed', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  automationCreated(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'automation_created' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('automation_created', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  automationActionCompleted(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'automation_action_completed' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('automation_action_completed', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  messageSent(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'message_sent' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('message_sent', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  contentCopied(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'content_copied' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('content_copied', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  noteOpened(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'note_opened' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('note_opened', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  noteCreated(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'note_created' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('note_created', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  noteActionCompleted(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'note_action_completed' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('note_action_completed', 'desktop-renderer', properties, undefined, windowContext);
+  }
+
+  transcriptionStateChanged(
+    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'transcription_state_changed' }>, 'kind'>,
+    windowContext?: TelemetryWindowContext,
+  ): Promise<void> {
+    return this.captureProduct('transcription_state_changed', 'desktop-renderer', properties, undefined, windowContext);
   }
 
   onboardingRegionSelected(

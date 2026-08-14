@@ -109,6 +109,16 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
+import {
+  emitAgentToolStartedTelemetry,
+  emitAgentToolTerminalTelemetry,
+} from "../telemetry/tool-usage";
+import {
+  emitProductUsageTelemetry,
+  resourceTelemetryEventId,
+  telemetryCountBucket,
+  telemetryJourneyDuration,
+} from "../telemetry/product-usage";
 import { createAutomationDraftAttachmentTools } from "./automation-draft-attachment-tools";
 import {
   markConnectorNeedsReconnect,
@@ -1738,16 +1748,18 @@ export async function runWorkstreamHarness(
   if (initialRun.status === "stopped") return { status: "stopped" };
   const hyperSightRun = initialRun.origin === "hypersight_block"
     ? await env.DB.prepare(
-        `SELECT id, block_id, prompt, status, markdown, error_json
+        `SELECT id, block_id, configuration_version_id, prompt, status, markdown, error_json, created_at
            FROM hypersight_block_runs
           WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
       ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{
         id: string;
         block_id: string;
+        configuration_version_id: string;
         prompt: string;
         status: string;
         markdown: string | null;
         error_json: string | null;
+        created_at: string;
       }>()
     : null;
   if (initialRun.origin === "hypersight_block" && !hyperSightRun) {
@@ -2483,6 +2495,12 @@ export async function runWorkstreamHarness(
             if (invocation) {
               if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
               await emit({ type: "tool_failed", invocation });
+              await emitAgentToolTerminalTelemetry(env, {
+                workspaceId: input.workspaceId,
+                workstreamId: input.workstreamId,
+                harnessRunId: input.harnessRunId,
+                invocationId: invocation.id,
+              }).catch(() => undefined);
             }
             stopController.abort("ambiguous_external_write");
             throw new Error("ambiguous_external_write");
@@ -2496,6 +2514,27 @@ export async function runWorkstreamHarness(
           }
           const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (invocation) {
+            await emitAgentToolStartedTelemetry(env, {
+              workspaceId: input.workspaceId,
+              workstreamId: input.workstreamId,
+              harnessRunId: input.harnessRunId,
+              invocationId: invocation.id,
+              ...(input.automationSubscriptionId
+                ? { automationId: input.automationSubscriptionId }
+                : {}),
+              executionPrincipal: input.executionPrincipal,
+              toolName: receiptPolicy.definition.name,
+              pluginId: receiptPolicy.pluginId,
+              capability: receiptPolicy.definition.capability,
+              mode,
+              runKind: hyperSightRun
+                ? "hypersight"
+                : input.automationSubscriptionId
+                  ? "automation"
+                  : input.executionPrincipal.type === "workspace"
+                    ? "system"
+                    : "workstream",
+            }).catch(() => undefined);
             if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_started", invocation });
           }
@@ -2537,6 +2576,12 @@ export async function runWorkstreamHarness(
             if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_completed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, "completed");
+            await emitAgentToolTerminalTelemetry(env, {
+              workspaceId: input.workspaceId,
+              workstreamId: input.workstreamId,
+              harnessRunId: input.harnessRunId,
+              invocationId: invocation.id,
+            }).catch(() => undefined);
           }
           break;
         }
@@ -2602,6 +2647,12 @@ export async function runWorkstreamHarness(
             if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_failed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed");
+            await emitAgentToolTerminalTelemetry(env, {
+              workspaceId: input.workspaceId,
+              workstreamId: input.workstreamId,
+              harnessRunId: input.harnessRunId,
+              invocationId: invocation.id,
+            }).catch(() => undefined);
           }
           break;
         }
@@ -2663,6 +2714,28 @@ export async function runWorkstreamHarness(
       liveness.lease.owner,
     ).run();
     if (Number(result.meta.changes ?? 0) !== 1) throw new Error("hypersight_result_ownership_lost");
+    const latest = await env.DB.prepare(
+      `SELECT id FROM hypersight_configuration_versions
+       WHERE workspace_id = ? AND workstream_id = ? ORDER BY version_number DESC LIMIT 1`,
+    ).bind(input.workspaceId, input.workstreamId).first<{ id: string }>();
+    await emitProductUsageTelemetry(env, {
+      workspaceId: input.workspaceId,
+      ...(input.executionPrincipal.type === 'user'
+        ? { userId: input.executionPrincipal.userId }
+        : {}),
+      name: 'hypersight_run_terminal',
+      properties: {
+        workstreamId: input.workstreamId,
+        harnessRunId: input.harnessRunId,
+        result: blockStatus === 'completed'
+          ? 'success'
+          : blockStatus === 'stopped' ? 'cancelled' : 'failed',
+        duration: telemetryJourneyDuration(Math.max(0, Date.now() - Date.parse(hyperSightRun.created_at))),
+        staleAtCompletion: latest?.id !== hyperSightRun.configuration_version_id,
+      },
+      operationId: input.harnessRunId,
+      eventId: resourceTelemetryEventId(input.harnessRunId, 7),
+    }).catch(() => undefined);
   } else if (streamedText) {
     const at = nowIso();
     await persistHarnessFinalMessage(env.DB, input, liveness.lease, {
@@ -3479,6 +3552,26 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 if (receipt.state === "replay_completed") {
                   throw new Error("tool_receipt_replay_race");
                 }
+                const invocation = await loadToolInvocation(
+                  options.env,
+                  childInput.harnessRunId,
+                  event.toolCallId,
+                );
+                if (invocation) await emitAgentToolStartedTelemetry(options.env, {
+                  workspaceId: childInput.workspaceId,
+                  workstreamId: childInput.workstreamId,
+                  harnessRunId: childInput.harnessRunId,
+                  invocationId: invocation.id,
+                  ...(childInput.automationSubscriptionId
+                    ? { automationId: childInput.automationSubscriptionId }
+                    : {}),
+                  executionPrincipal: childInput.executionPrincipal,
+                  toolName: receiptPolicy.definition.name,
+                  pluginId: receiptPolicy.pluginId,
+                  capability: receiptPolicy.definition.capability,
+                  mode,
+                  runKind: "subagent",
+                }).catch(() => undefined);
                 break;
               }
               case "tool_completed": {
@@ -3516,6 +3609,12 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   memberSafePayload: { toolName: event.toolName },
                 }, assertChildOwned);
                 await assertChildOwned();
+                await emitAgentToolTerminalTelemetry(options.env, {
+                  workspaceId: childInput.workspaceId,
+                  workstreamId: childInput.workstreamId,
+                  harnessRunId: childInput.harnessRunId,
+                  invocationId: invocation.id,
+                }).catch(() => undefined);
                 break;
               }
               case "tool_failed": {
@@ -3571,6 +3670,12 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   memberSafePayload: { code: failure.errorCode },
                 });
                 await assertChildOwned();
+                await emitAgentToolTerminalTelemetry(options.env, {
+                  workspaceId: childInput.workspaceId,
+                  workstreamId: childInput.workstreamId,
+                  harnessRunId: childInput.harnessRunId,
+                  invocationId: invocation.id,
+                }).catch(() => undefined);
                 break;
               }
               case "needs_input":
@@ -6040,6 +6145,23 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           ),
         ]);
         await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, { type: "elicitation_created", elicitation });
+        await emitProductUsageTelemetry(env, {
+          workspaceId: input.workspaceId,
+          ...(input.executionPrincipal.type === 'user'
+            ? { userId: input.executionPrincipal.userId }
+            : {}),
+          name: 'elicitation_presented',
+          properties: {
+            elicitationId: id,
+            runId: input.harnessRunId,
+            workstreamId: input.workstreamId,
+            responseType: args.responseType,
+            optionCount: telemetryCountBucket(args.options.length),
+            surface: 'workstream',
+          },
+          operationId: input.harnessRunId,
+          eventId: id,
+        }).catch(() => undefined);
         return { output: { elicitationId: id }, summary: "Requested human input", providerOperationId: id, halt: "needs_input" as const };
       },
     },

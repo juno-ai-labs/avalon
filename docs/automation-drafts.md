@@ -158,6 +158,19 @@ cached on the device by [`composer-drafts.md`](composer-drafts.md). The two
 answer different questions: that cache keeps the sentence someone was typing,
 this module keeps the automation they were describing.
 
+### Product measurement
+
+The renderer records when a new or resumed builder becomes actionable. The API
+records each compiler turn after its durable draft write, including input mode,
+bounded attachment/connector counts, duration, result, turn bucket, and whether
+the revision is create-ready. The first create-ready revision emits once with
+trigger, connector, plugin, visibility, and delivery-target classes. Elicitations
+receive a stable server UUID and presentation time; resolution records only
+response type, answered/skipped, custom-response use, and latency. Neither the
+conversation, prompt, follow-up question, answer, compiler output, nor attachment
+content enters telemetry. Promotion emits the authoritative automation creation
+from the API, not a second renderer completion.
+
 ## Failure modes and limits
 
 - **The compile fails.** Nothing is written. `saveDraft` runs only after the
@@ -248,6 +261,25 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-13 — Automation authoring becomes a durable content-free funnel
+
+**What changed:** Builder entry, compiler turns, first create-ready state,
+elicitation presentation/resolution, promotion, reopen, and lifecycle actions now
+have typed product events at their authoritative desktop or API boundaries.
+
+**Why:** Created-automation totals did not explain where authors abandoned,
+whether questions blocked them, how many revisions creation required, or which
+configuration shapes reached a durable subscription.
+
+**Considered and rejected:** Capturing the draft conversation, inferred intent,
+question/answer text, renderer-reported promotion, and parallel legacy creation
+events. Those alternatives expose content or count a creation before the server
+commits it.
+
+**Consequences:** Stable elicitation and draft IDs join the funnel without
+becoming authority. The server event owns successful creation and action state;
+current clients do not also emit the legacy completion contracts.
 
 ### 2026-08-12 — Draft manifests replace redundant resource pagination
 
