@@ -135,8 +135,12 @@ export async function emitCorrelatedRunOutcome(
             EXISTS(SELECT 1 FROM inference_attempts ia
               WHERE ia.harness_run_id = hr.id AND ia.fallback_attempt > 0) AS fallback_used
        FROM harness_runs hr
+       JOIN workstreams w
+         ON w.id = hr.workstream_id AND w.workspace_id = hr.workspace_id
        LEFT JOIN automation_runs ar
-         ON ar.workspace_id = hr.workspace_id AND ar.workstream_id = hr.workstream_id
+         ON ar.id = w.automation_run_id
+        AND ar.workspace_id = hr.workspace_id
+        AND hr.origin IN ('automation', 'automation_run')
       WHERE hr.id = ? AND hr.workspace_id = ? AND hr.workstream_id = ?
         AND hr.parent_tool_call_id IS NULL`,
   ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<RunRow>();

@@ -735,15 +735,18 @@ uses a closed setting enum, and cannot influence migration, rollback, or session
 recovery.
 ### 2026-08-13 — Desktop mutation headers are proven at the CORS boundary
 
-**What changed:** The regional API now admits `X-Avalon-Operation-Id` in its
-explicit CORS header allowlist, and an app-origin preflight test covers the full
-desktop mutation header set. Caught renderer transport failures use the existing
-sanitized, main-owned exception route rather than a new renderer destination.
+**What changed:** The regional API admits `X-Avalon-Operation-Id` in its explicit
+CORS header allowlist, and app-origin preflight tests cover the desktop mutation
+header in both Global and EU. Connector telemetry-version negotiation
+deliberately uses a query marker rather than another header. Caught renderer
+transport failures use the existing sanitized, main-owned exception route
+rather than a new renderer destination.
 
-**Why:** The production desktop added the operation identifier to work-stream and
-message mutations without adding it to the Worker allowlist. Chromium stopped the
-request at preflight, so authenticated route code and API observability never saw
-the attempted mutation.
+**Why:** Chromium stops a request at preflight when any renderer header is absent
+from the Worker allowlist. Operation correlation must therefore be admitted in
+both regions. The connector version marker avoids expanding that preflight
+contract and remains safe while the independently deployed desktop and API
+briefly run different revisions.
 
 **Considered and rejected:** A wildcard CORS header policy, removing operation
 correlation, or adding a direct renderer PostHog client. Those respectively widen

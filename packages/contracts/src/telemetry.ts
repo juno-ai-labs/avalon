@@ -1630,7 +1630,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "site",
     identityScopes: ["anonymous-epoch"],
     properties: z.object({
-      handoffType: z.enum(["auth", "invite", "workstream", "slack", "settings", "automation"]),
+      handoffType: z.enum(["auth", "invite", "workstream", "slack", "settings", "automation", "unknown"]),
       method: z.enum(["presented", "automatic", "manual"]),
       validity: z.enum(["valid", "invalid"]),
     }).strict(),

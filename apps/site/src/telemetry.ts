@@ -167,9 +167,14 @@ function report<TName extends TelemetryEventName>(
   }).catch(() => undefined);
 }
 
-function normalizedPathname(): string {
-  const path = location.pathname.toLowerCase().slice(0, 160);
+export function normalizedTelemetryPathname(pathname: string): string {
+  const path = pathname.toLowerCase().slice(0, 160);
+  if (path.startsWith('/app/workstreams/')) return '/app/workstreams/:id';
   return /^\/[a-z0-9_:/.-]*$/u.test(path) ? path : '/';
+}
+
+function normalizedPathname(): string {
+  return normalizedTelemetryPathname(location.pathname);
 }
 
 export function currentSitePage(): SitePage {
@@ -221,6 +226,9 @@ export function reportDesktopHandoff(
   method: TelemetryEventProperties<'desktop_handoff_attempted'>['method'],
   validity: TelemetryEventProperties<'desktop_handoff_attempted'>['validity'],
 ): void {
+  // Automatic/manual handoffs can navigate away immediately; keepalive gives
+  // the already-bounded event a best-effort chance to leave during unload.
+  // Merely presenting the handoff stays on the ordinary request path.
   report('desktop_handoff_attempted', { handoffType, method, validity }, method !== 'presented');
 }
 

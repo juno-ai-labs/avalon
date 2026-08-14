@@ -190,9 +190,13 @@ export class TerminalSandboxCoordinator {
     }));
     const domains = policy.mode === "trusted_only" ? parseEffectiveDomains(policy) : [];
     let row = await this.loadSandbox(context.workspaceId, context.workstreamId);
-    let telemetryAction: TerminalAcquisitionObservation["action"] = row?.state === "stopped" || row?.state === "archived"
-      ? "restore"
-      : "start";
+    let telemetryAction: TerminalAcquisitionObservation["action"] | null = !row
+      ? "start"
+      : row.state === "stopped" || row.state === "archived"
+        ? "restore"
+        : row.state === "running" && row.provider_sandbox_id
+          ? null
+          : "start";
     const localFilesRetained = Boolean(row?.provider_sandbox_id);
     if (!row) {
       row = await this.reserveFirstGeneration(context, authorityFingerprint, policy.revision, timestamp);
@@ -238,12 +242,14 @@ export class TerminalSandboxCoordinator {
       );
     }
     await this.lifecycleChanged?.(context.workspaceId).catch(() => undefined);
-    await this.acquisitionObserved?.(context, {
-      action: telemetryAction,
-      durationMs: Date.now() - acquisitionStartedAt,
-      repositorySelected: repositoryAuthority !== null,
-      localFilesRetained,
-    }).catch(() => undefined);
+    if (telemetryAction) {
+      await this.acquisitionObserved?.(context, {
+        action: telemetryAction,
+        durationMs: Date.now() - acquisitionStartedAt,
+        repositorySelected: repositoryAuthority !== null,
+        localFilesRetained,
+      }).catch(() => undefined);
+    }
     return {
       providerSandboxId: row.provider_sandbox_id!,
       stableName: row.stable_name,

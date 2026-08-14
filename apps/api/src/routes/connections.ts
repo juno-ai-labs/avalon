@@ -174,7 +174,8 @@ async function bindConnectorTelemetry(
   result: z.infer<typeof ConnectorOAuthStartSchema>,
 ): Promise<z.infer<typeof ConnectorOAuthStartSchema>> {
   const operationId = telemetryOperationId(c.req.header('x-avalon-operation-id'));
-  if (operationId) await service.bindOAuthTelemetry(result.attemptId, operationId);
+  const telemetryVersion = c.req.query('telemetryVersion') === '2' ? 2 : 1;
+  if (operationId) await service.bindOAuthTelemetry(result.attemptId, operationId, telemetryVersion);
   return result;
 }
 
@@ -207,10 +208,12 @@ connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c
     c, service, await service.beginProvider("notion", c.req.valid("json")),
   )));
 });
-connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) =>
-  c.json(ConnectorOAuthStartSchema.parse(
-    await new ConnectionService(c.env, getAuth(c)).beginProvider("granola", c.req.valid("json")))),
-);
+connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginProvider("granola", c.req.valid("json")),
+  )));
+});
 connectionRoutes.post("/granola/workspace", zValidator("json", granolaWorkspace), async (c) =>
   c.json(CreatedConnectionSchema.parse(
     await new ConnectionService(c.env, getAuth(c)).createGranolaWorkspace(c.req.valid("json"))), 201),

@@ -22,4 +22,13 @@ describe("suggested-work telemetry", () => {
       });
     },
   );
+
+  it("defaults released clients without a surface to workspace home", () => {
+    const opportunityId = "018f22f2-4c22-7abc-8def-0123456789ac";
+    const event = startedWorkOpportunityTelemetryEnvelope(
+      createTestEnv({ AVALON_REGION: "global" }), undefined, opportunityId,
+    );
+
+    expect(event.properties).toEqual({ surface: "workspace_home" });
+  });
 });

@@ -174,7 +174,7 @@ workOpportunityRoutes.post(
       ));
     const surface = input.surface;
     const hasDetailedContext = Boolean(context && surface && input.position);
-    if (surface && !hasDetailedContext) {
+    if (!hasDetailedContext) {
       try {
         requestDeferral(c)(Promise.resolve().then(async () => {
           const event = startedWorkOpportunityTelemetryEnvelope(
@@ -211,13 +211,13 @@ workOpportunityRoutes.post(
 
 export function startedWorkOpportunityTelemetryEnvelope(
   env: HonoAppEnv["Bindings"],
-  surface: "menu_bar" | "workspace_home",
+  surface: "menu_bar" | "workspace_home" | undefined,
   opportunityId: string,
 ) {
   return apiTelemetryEnvelope(
     env,
     "suggested_work_started",
-    { surface },
+    { surface: surface ?? "workspace_home" },
     opportunityId,
     "workspace-user",
     env.AVALON_REGION,
