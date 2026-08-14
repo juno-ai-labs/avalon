@@ -20,7 +20,7 @@ const baseSession = {
     region: 'global' as const,
     role: 'owner' as const,
     timezone: 'America/Los_Angeles',
-    logAgentInference: false,
+    shareWorkstreamsForImprovement: false,
     createdAt: '2026-08-01T12:00:00.000Z',
   },
   apiBaseUrl: 'https://api.with-avalon.com',
@@ -71,7 +71,7 @@ describe('legacy encrypted desktop sessions', () => {
       futureWireField: 'ignored',
     })).toMatchObject({
       user: { timezone: 'America/Los_Angeles' },
-      workspace: { timezone: 'America/Los_Angeles', logAgentInference: false },
+      workspace: { timezone: 'America/Los_Angeles', shareWorkstreamsForImprovement: false },
     });
   });
 

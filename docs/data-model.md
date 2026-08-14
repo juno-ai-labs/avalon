@@ -34,6 +34,14 @@ knowing an object's ID is enough to read it — it never is.
   sessions, PKCE, and single-use Electron deep-link completion.
 - `workspace_invitations` supports explicit membership growth without introducing
   a workspace switcher in V1.
+- `workspaces.share_workstreams_for_improvement` is the workspace's answer to
+  whether Avalon may learn from its captured inference payloads, and
+  `workspace_improvement_sharing_periods` is the interval that answer was in
+  force for — one row per period, `ended_at` NULL while it is open, at most one
+  open row per workspace. The column is the current answer and the periods are
+  the record a payload is attributed against, so the two are written in one
+  batch. `workspaces.log_agent_inference` is retired and read by nothing,
+  awaiting the second phase of its drop.
 
 Every tenant-owned table carries `workspace_id`, and every repository lookup
 includes it. Knowing an object ID is never sufficient authorization.
@@ -452,6 +460,7 @@ has a document, and the column notes above point at it rather than restating it:
 | The draft automation lifecycle | [`automation-drafts.md`](automation-drafts.md) |
 | The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
+| What is captured of every model request, and the consent over it | [`inference-payload-logging.md`](inference-payload-logging.md) |
 | Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Running and reverting migrations against hosted databases | [`runbook.md`](runbook.md) |
 | Daytona Terminal sandbox, task, policy, and publication behavior | [`terminal-workspaces.md`](terminal-workspaces.md) |
@@ -508,6 +517,35 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-14 — Improvement-sharing consent is stored as periods
+
+**What changed:** Migration `0077_workstream_sharing_consent.sql` adds
+`workspaces.share_workstreams_for_improvement` and
+`workspace_improvement_sharing_periods`, whose partial unique index allows at
+most one open period per workspace. `workspaces.log_agent_inference` is left in
+place but is no longer read by anything.
+
+**Why:** The consent this records is read to answer "was sharing on when this
+inference payload was written", so it has to be an interval. A boolean column
+answers that only for the present, and a workspace that shared for a quarter and
+then stopped is indistinguishable from one that never shared. Periods make the
+question a join. The partial unique index is what keeps them disjoint — without
+it a double enable leaves two open rows and every interval join silently doubles
+its result set, which is a wrong answer rather than an error.
+
+**Considered and rejected:** Dropping `log_agent_inference` in this migration.
+The deploy job applies both regions' migrations before it deploys either Worker,
+and the previous Worker selects that column on every workspace read, so the drop
+belongs in a later migration once a Worker that ignores it is live — the same
+two-phase shape as `0070`. Also rejected: backfilling workspaces that had
+capture enabled into the new column, which would read a debugging opt-in as
+agreement to be learned from.
+
+**Consequences:** The column is a cache of "is there an open period" and the two
+must be written together; `updateWorkspace` batches them for that reason. A
+reader that finds them disagreeing should trust the ledger. Any future selection
+of payloads for training joins the periods, never the column.
 
 ### 2026-08-13 — Recoverable GitHub status remains a valid Terminal reference
 

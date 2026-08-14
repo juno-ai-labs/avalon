@@ -913,7 +913,7 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("keeps full agent inference logging opt-in and creates its regional payload index", () => {
+  it("defaults improvement sharing off and creates the regional payload index", () => {
     const database = migrateFreshDatabase();
     database.exec(`
       INSERT INTO users
@@ -927,8 +927,8 @@ describe("database migrations", () => {
     `);
 
     expect(database.prepare(
-      "SELECT log_agent_inference FROM workspaces WHERE id = 'workspace-inference'",
-    ).get()).toEqual({ log_agent_inference: 0 });
+      "SELECT share_workstreams_for_improvement FROM workspaces WHERE id = 'workspace-inference'",
+    ).get()).toEqual({ share_workstreams_for_improvement: 0 });
     expect(database.prepare("PRAGMA table_info(agent_inference_payload_logs)").all()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "object_key" }),
@@ -937,6 +937,41 @@ describe("database migrations", () => {
         expect.objectContaining({ name: "context_tokens" }),
       ]),
     );
+    database.close();
+  });
+
+  it("keeps improvement-sharing consent periods disjoint per workspace", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-consent', 'google-consent', 'consent@example.com',
+              'Consent Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-consent', 'Consent', 'consent', 'global',
+              'user-consent', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_improvement_sharing_periods
+        (id, workspace_id, started_at, ended_at, started_by_user_id, ended_by_user_id)
+      VALUES ('period-1', 'workspace-consent', '2026-02-01', '2026-03-01',
+              'user-consent', 'user-consent');
+      INSERT INTO workspace_improvement_sharing_periods
+        (id, workspace_id, started_at, started_by_user_id)
+      VALUES ('period-2', 'workspace-consent', '2026-04-01', 'user-consent');
+    `);
+
+    // A closed period plus one open period is the whole shape: the payloads a
+    // workspace has allowed us to learn from are the ones whose `created_at`
+    // falls inside a period, so a second open row would double every join.
+    expect(() => database.exec(`
+      INSERT INTO workspace_improvement_sharing_periods
+        (id, workspace_id, started_at, started_by_user_id)
+      VALUES ('period-3', 'workspace-consent', '2026-05-01', 'user-consent');
+    `)).toThrow(/UNIQUE constraint failed/u);
+    expect(() => database.exec(`
+      UPDATE workspace_improvement_sharing_periods
+         SET ended_at = '2026-01-01' WHERE id = 'period-2';
+    `)).toThrow(/CHECK constraint failed/u);
     database.close();
   });
 

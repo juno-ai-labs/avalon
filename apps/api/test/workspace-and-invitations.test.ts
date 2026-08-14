@@ -147,33 +147,68 @@ describe("workspace preferences", () => {
     slug: "avalon-studio",
     region: "global",
     timezone: "America/Los_Angeles",
-    log_agent_inference: 1,
+    share_workstreams_for_improvement: 1,
     role: "owner",
     created_at: "2026-08-01T00:00:00.000Z",
   };
 
-  it("returns and updates the opt-in inference logging preference", async () => {
+  function preferenceService() {
     const database = new StubDatabase(({ sql }) =>
       sql.includes("FROM workspaces w JOIN workspace_members") ? workspaceRow : undefined
     );
-    const service = new WorkspaceService(environment(database), ownerAuth);
+    return { database, service: new WorkspaceService(environment(database), ownerAuth) };
+  }
 
-    await expect(service.getWorkspace()).resolves.toMatchObject({ logAgentInference: true });
-    await expect(service.updateWorkspace({ logAgentInference: false }))
-      .resolves.toMatchObject({ logAgentInference: true });
+  it("returns the improvement-sharing preference and opens a consent period with it", async () => {
+    const { database, service } = preferenceService();
 
-    const update = database.runs.find((statement) => statement.sql.startsWith("UPDATE workspaces"));
-    expect(update?.values[0]).toBeNull();
-    expect(update?.values[1]).toBe(0);
+    await expect(service.getWorkspace())
+      .resolves.toMatchObject({ shareWorkstreamsForImprovement: true });
+    await expect(service.updateWorkspace({ shareWorkstreamsForImprovement: true }))
+      .resolves.toMatchObject({ shareWorkstreamsForImprovement: true });
+
+    const [update, ledger] = database.batches.at(-1) ?? [];
+    expect(update?.sql).toContain("share_workstreams_for_improvement = COALESCE(?");
+    expect(update?.values.slice(0, 2)).toEqual([null, 1]);
+    expect(ledger?.sql).toContain("INSERT INTO workspace_improvement_sharing_periods");
+    // The insert is guarded on there being no open period, so an admin who
+    // toggles the switch twice does not split one window into two.
+    expect(ledger?.sql).toContain("WHERE NOT EXISTS");
+    expect(ledger?.values.slice(1)).toEqual([
+      ownerAuth.workspaceId, "2026-08-01T01:00:00.000Z", ownerAuth.userId, ownerAuth.workspaceId,
+    ]);
+  });
+
+  it("closes the open consent period when sharing is turned off", async () => {
+    const { database, service } = preferenceService();
+
+    await service.updateWorkspace({ shareWorkstreamsForImprovement: false });
+
+    const [update, ledger] = database.batches.at(-1) ?? [];
+    expect(update?.values.slice(0, 2)).toEqual([null, 0]);
+    expect(ledger?.sql).toContain("UPDATE workspace_improvement_sharing_periods");
+    expect(ledger?.sql).toContain("ended_at IS NULL");
+    expect(ledger?.values).toEqual([
+      "2026-08-01T01:00:00.000Z", ownerAuth.userId, ownerAuth.workspaceId,
+    ]);
+  });
+
+  it("leaves the consent ledger alone when only the timezone changes", async () => {
+    const { database, service } = preferenceService();
+
+    await service.updateWorkspace({ timezone: "Europe/London" });
+
+    expect(database.batches.at(-1)).toHaveLength(1);
   });
 
   it("keeps workspace preferences admin-only", async () => {
     const database = new StubDatabase(() => undefined);
     const service = new WorkspaceService(environment(database), { ...ownerAuth, role: "member" });
 
-    await expect(service.updateWorkspace({ logAgentInference: true }))
+    await expect(service.updateWorkspace({ shareWorkstreamsForImprovement: true }))
       .rejects.toMatchObject({ status: 403 });
     expect(database.runs).toHaveLength(0);
+    expect(database.batches).toHaveLength(0);
   });
 });
 

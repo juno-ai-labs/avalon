@@ -271,7 +271,8 @@ export class WorkspaceService {
 
   async getWorkspace() {
     const row = await this.env.DB.prepare(
-      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.log_agent_inference, w.created_at, m.role
+      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.share_workstreams_for_improvement,
+              w.created_at, m.role
        FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
        WHERE w.id = ? AND m.user_id = ? AND m.status = 'active'`,
     )
@@ -284,7 +285,7 @@ export class WorkspaceService {
       slug: String(row.slug),
       region: String(row.region),
       timezone: String(row.timezone),
-      logAgentInference: Number(row.log_agent_inference ?? 0) === 1,
+      shareWorkstreamsForImprovement: Number(row.share_workstreams_for_improvement ?? 0) === 1,
       role: String(row.role),
       createdAt: String(row.created_at),
     };
@@ -325,23 +326,62 @@ export class WorkspaceService {
     };
   }
 
-  async updateWorkspace(input: { timezone?: string | undefined; logAgentInference?: boolean | undefined }) {
+  async updateWorkspace(input: {
+    timezone?: string | undefined;
+    shareWorkstreamsForImprovement?: boolean | undefined;
+  }) {
     this.requireAdmin();
-    await this.env.DB.prepare(
-      `UPDATE workspaces
-       SET timezone = COALESCE(?, timezone),
-           log_agent_inference = COALESCE(?, log_agent_inference),
-           updated_at = ?
-       WHERE id = ?`,
-    )
-      .bind(
+    const changedAt = nowIso();
+    // The column and the period ledger are one decision recorded twice — the
+    // current answer, and the window it applies to — so they move in a single
+    // batch. Split into two round trips, a failure between them leaves a
+    // workspace whose setting says shared and whose ledger has no window to
+    // attribute the payloads to, or the reverse.
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE workspaces
+         SET timezone = COALESCE(?, timezone),
+             share_workstreams_for_improvement = COALESCE(?, share_workstreams_for_improvement),
+             updated_at = ?
+         WHERE id = ?`,
+      ).bind(
         input.timezone ?? null,
-        input.logAgentInference === undefined ? null : input.logAgentInference ? 1 : 0,
-        nowIso(),
+        input.shareWorkstreamsForImprovement === undefined
+          ? null
+          : input.shareWorkstreamsForImprovement ? 1 : 0,
+        changedAt,
         this.auth.workspaceId,
-      )
-      .run();
+      ),
+      ...this.improvementSharingLedgerStatements(input.shareWorkstreamsForImprovement, changedAt),
+    ]);
     return this.getWorkspace();
+  }
+
+  /**
+   * The statements that move `workspace_improvement_sharing_periods` in step
+   * with the preference. Both are conditional on the state already stored, so
+   * re-sending the value a workspace already holds writes nothing: an admin
+   * toggling twice, or two settings screens saving the same answer, must not
+   * chop one consent window into two or reopen a closed one.
+   */
+  private improvementSharingLedgerStatements(share: boolean | undefined, changedAt: string) {
+    if (share === undefined) return [];
+    if (share) {
+      return [this.env.DB.prepare(
+        `INSERT INTO workspace_improvement_sharing_periods
+           (id, workspace_id, started_at, started_by_user_id)
+         SELECT ?, ?, ?, ?
+          WHERE NOT EXISTS (
+            SELECT 1 FROM workspace_improvement_sharing_periods
+             WHERE workspace_id = ? AND ended_at IS NULL
+          )`,
+      ).bind(newId(), this.auth.workspaceId, changedAt, this.auth.userId, this.auth.workspaceId)];
+    }
+    return [this.env.DB.prepare(
+      `UPDATE workspace_improvement_sharing_periods
+          SET ended_at = ?, ended_by_user_id = ?
+        WHERE workspace_id = ? AND ended_at IS NULL`,
+    ).bind(changedAt, this.auth.userId, this.auth.workspaceId)];
   }
 
   async listMembers() {

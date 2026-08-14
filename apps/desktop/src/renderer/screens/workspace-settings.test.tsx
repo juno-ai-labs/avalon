@@ -25,7 +25,7 @@ const api = vi.hoisted(() => ({
   testConnection: vi.fn(),
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
-  updateWorkspaceLogAgentInference: vi.fn(),
+  updateWorkspaceSharesForImprovement: vi.fn(),
   getTerminalWorkspaceSettings: vi.fn(),
   previewTerminalNetworkPolicy: vi.fn(),
   applyTerminalNetworkPolicy: vi.fn(),
@@ -99,7 +99,7 @@ const workspace: Workspace = {
   name: 'Avalon Studio',
   region: 'eu',
   timezone: 'Europe/London',
-  logAgentInference: false,
+  shareWorkstreamsForImprovement: false,
   currentUser: owner,
 };
 const invitation: WorkspaceInvitation = {
@@ -247,9 +247,9 @@ describe('Workspace settings', () => {
     });
     api.createWorkspaceInvitation.mockResolvedValue({ invitation, inviteUrl, emailDelivery: 'sent' });
     api.revokeWorkspaceInvitation.mockResolvedValue(undefined);
-    api.updateWorkspaceLogAgentInference.mockImplementation(async (enabled: boolean) => ({
+    api.updateWorkspaceSharesForImprovement.mockImplementation(async (enabled: boolean) => ({
       ...workspace,
-      logAgentInference: enabled,
+      shareWorkstreamsForImprovement: enabled,
     }));
     api.getTerminalWorkspaceSettings.mockResolvedValue({
       availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',
@@ -363,15 +363,15 @@ describe('Workspace settings', () => {
     resetApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
   });
 
-  it('lets workspace admins enable full agent inference logging', async () => {
+  it('lets workspace admins opt into sharing work streams for platform improvement', async () => {
     renderSettings();
     openSettingsSection('Workspace');
 
-    const toggle = screen.getByRole('switch', { name: 'Log agent inference' });
+    const toggle = screen.getByRole('switch', { name: 'Share work streams for platform improvement' });
     expect(toggle).not.toBeChecked();
     fireEvent.click(toggle);
 
-    await waitFor(() => expect(api.updateWorkspaceLogAgentInference).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(api.updateWorkspaceSharesForImprovement).toHaveBeenCalledWith(true));
     expect(toggle).toBeChecked();
   });
 

@@ -798,7 +798,7 @@ buckets as credential-adjacent: bucket-scoped write-only delivery credentials,
 no wider dashboard access than a responder needs. Moving those two secrets off
 the query string is the only fix that removes them from the capture.
 
-Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. The response body is not retained either, for the same reason. Rejections are logged for every workspace; the `log_agent_inference` preference gates only the R2 payload ledger, not this. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
+Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. The response body is not retained either, for the same reason. Rejections are logged for every workspace, as is the payload ledger itself — see [`inference-payload-logging.md`](inference-payload-logging.md). A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
 
 Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. Use `pnpm cloudflare:observability:check` for a read-only release check.
 
@@ -821,9 +821,11 @@ work-stream URL into it. Nothing here mutates production; every step is a read.
 **Preconditions.** `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are already
 present in the sandbox environment and in `.env.local` locally — check for them
 before concluding that production data is out of reach. Payload capture is
-per-workspace and **off by default**: `workspaces.log_agent_inference` must have
-been `1` while the run happened. No rows means logging was off, not that the run
-did not happen, and it cannot be turned on retroactively.
+unconditional for every workspace, so a run that reached a provider has rows. No
+rows means the request never left the Worker, or that capture itself failed —
+`agent_inference_payload_log_failed` in Workers Logs is the second case. Runs
+from before capture stopped being an opt-in preference are the exception, and
+cannot be recovered retroactively.
 
 1. **Pull the ID out of the URL.** In the canonical
    `https://with-avalon.com/app/workstreams/<uuid>` and in the
@@ -878,8 +880,9 @@ object appears to be missing.
 A retrieved payload contains the prompt, the connector data pulled into it, and
 whatever the person wrote. Treat it as production user content: read it from a
 scratch directory, keep it out of logs, tickets, and commits, and delete it when
-the investigation is done. What the feature stores and why is
-[`agent-harness.md`](agent-harness.md#failure-modes-and-limits); this section is
+the investigation is done. What the feature stores and why, and the
+separate consent that governs any other use of a payload, is
+[`inference-payload-logging.md`](inference-payload-logging.md); this section is
 only how to read it back.
 
 ## Regional telemetry

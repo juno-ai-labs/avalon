@@ -189,7 +189,7 @@ describe("boundary contracts", () => {
     expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
   });
 
-  it("defaults inference logging off and accepts only explicit workspace preference updates", () => {
+  it("defaults improvement sharing off and accepts only explicit workspace preference updates", () => {
     expect(WorkspaceSchema.parse({
       id,
       name: "Avalon",
@@ -198,9 +198,9 @@ describe("boundary contracts", () => {
       role: "owner",
       timezone: "America/Los_Angeles",
       createdAt: "2026-08-05T00:00:00.000Z",
-    }).logAgentInference).toBe(false);
-    expect(UpdateWorkspaceRequestSchema.parse({ logAgentInference: true }))
-      .toEqual({ logAgentInference: true });
+    }).shareWorkstreamsForImprovement).toBe(false);
+    expect(UpdateWorkspaceRequestSchema.parse({ shareWorkstreamsForImprovement: true }))
+      .toEqual({ shareWorkstreamsForImprovement: true });
     expect(UpdateWorkspaceRequestSchema.safeParse({}).success).toBe(false);
   });
 

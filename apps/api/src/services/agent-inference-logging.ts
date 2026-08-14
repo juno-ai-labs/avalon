@@ -26,14 +26,14 @@ export function createAgentInferenceLogger(
   env: Env,
   context: AgentInferenceLogContext,
 ): AgentInferenceLogger {
-  // Resolve lazily once per agent run. The default-off path performs one
-  // indexed D1 read and then adds no R2 writes or per-turn D1 updates.
-  let loggingEnabled: Promise<boolean> | null = null;
-  const isEnabled = () => loggingEnabled ??= workspaceInferenceLoggingEnabled(env.DB, context.workspaceId);
+  // Capture is unconditional: the ledger is the compliance record of what every
+  // model was asked, so there is no workspace preference to read and no path
+  // through here that skips the write. Whether a captured payload may then be
+  // used to improve the platform is a separate consent question, answered later
+  // from `workspace_improvement_sharing_periods` — see
+  // `docs/inference-payload-logging.md`.
   return {
     onRequest: (request) => bestEffort(env, context, "request", request.inferenceRequestId, async () => {
-      if (!await isEnabled()) return;
-
       const createdAt = new Date().toISOString();
       const objectKey = inferenceObjectKey(context, request.inferenceRequestId, createdAt);
       const metadata = {
@@ -112,9 +112,10 @@ export function createAgentInferenceLogger(
       });
     }),
     onAttempt: (attempt) => bestEffort(env, context, "attempt", attempt.inferenceRequestId, async () => {
-      // A provider rejection is an operational event, not payload capture, so it
-      // is recorded for every workspace. The gated block below is the opt-in
-      // payload ledger and stays behind the flag.
+      // A provider rejection is an operational event rather than payload
+      // capture, so it is a structured log line as well as a ledger update: the
+      // ledger row exists only once a request was built, and a rejection is
+      // worth seeing in Workers Logs without a D1 read.
       if (!attempt.success && attempt.disposition !== "cancelled") {
         logStructuredEvent(env, "warn", "agent_inference_attempt_failed", {
           request_id: context.requestId,
@@ -134,7 +135,6 @@ export function createAgentInferenceLogger(
           provider_error_provider: attempt.providerError?.providerName,
         });
       }
-      if (!await isEnabled()) return;
       const completedAt = new Date().toISOString();
       await env.DB.prepare(
         `UPDATE agent_inference_payload_logs
@@ -171,16 +171,6 @@ export function createAgentInferenceLogger(
       ).run();
     }),
   };
-}
-
-async function workspaceInferenceLoggingEnabled(
-  db: D1Database,
-  workspaceId: string,
-): Promise<boolean> {
-  const row = await db.prepare(
-    "SELECT log_agent_inference FROM workspaces WHERE id = ?",
-  ).bind(workspaceId).first<{ log_agent_inference: number }>();
-  return row?.log_agent_inference === 1;
 }
 
 function inferenceObjectKey(

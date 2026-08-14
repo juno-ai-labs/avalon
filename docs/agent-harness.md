@@ -456,6 +456,7 @@ It does not own:
 | The create path a run is launched from | [`workstream-creation.md`](workstream-creation.md) |
 | The digest that rides this loop | [`digests.md`](digests.md) |
 | The description pass that runs after a terminal run | [`workstream-descriptions.md`](workstream-descriptions.md) |
+| What is recorded of every model request, and who may use it | [`inference-payload-logging.md`](inference-payload-logging.md) |
 | Reading a captured inference payload back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
 
 A run is one server-side, tool-using loop inherent to a work stream. It is
@@ -498,7 +499,7 @@ the mutation before its response failed validation.
 
 The harness reads that half by shape through `readStructuredFailure` in `@avalon/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into the inference payload logs on every failed call. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
 
-Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
+Every regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. There is no workspace preference in front of it: capture is the compliance record of what each model was asked, and the separate question of whether Avalon may learn from a captured payload is answered by the workspace's **Share work streams for platform improvement** consent. This path is best-effort and cannot fail an agent run. What is stored, and the consent ledger over it, is [`inference-payload-logging.md`](inference-payload-logging.md); reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
 ## Testing
 
@@ -515,7 +516,7 @@ Workspace admins may opt into **Log agent inference** from Workspace preferences
 | `apps/api/test/hypersight-block-submission.test.ts` | The single nudge, the `hypersight_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, the pending sidebar marker, and claim-before-launch. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
-| `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
+| `apps/api/test/agent-inference-logging.test.ts` | That capture reads no preference, and that the path is best-effort and cannot fail a run. |
 | `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, and `toolActivityName`. |
 
 Run one with
@@ -531,6 +532,33 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-14 — Inference capture is unconditional
+
+**What changed:** The harness's payload capture no longer consults
+`workspaces.log_agent_inference`, or any other preference. Every request to a
+provider is recorded. The workspace preference that used to gate it now asks a
+different question — may Avalon learn from these payloads — and is owned by
+[`inference-payload-logging.md`](inference-payload-logging.md).
+
+**Why:** Capture is what makes a run explainable after the fact, and it is a
+compliance obligation rather than a diagnostic nicety. Gating it meant the runs
+worth investigating were usually the ones with nothing recorded, and it also let
+a support question be answered only for workspaces that had guessed in advance
+that they would need it.
+
+**Considered and rejected:** Keeping the flag and defaulting it on. The value
+would then differ per workspace with nothing enforcing it, and a record with
+gaps that are invisible until queried is worse than one whose absence is
+structural.
+
+**Consequences:** Anything in this loop that reaches a provider now costs an R2
+write and two D1 statements per request, on the best-effort path that cannot fail
+a run. A future change must not reintroduce a skip — sampling, a per-source
+exclusion, or a flag — without moving the compliance argument somewhere it is
+still true.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
 

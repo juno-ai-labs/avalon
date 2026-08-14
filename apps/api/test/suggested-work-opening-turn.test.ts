@@ -253,8 +253,14 @@ function completeLatestRun(database: DatabaseSync, workstreamId: string): void {
  * A later run of the kind that has no message behind it, already failed.
  *
  * `created_at` is after the opening run's, which is the order `retry` reads.
+ * The opening run is written by the service under test with the real clock, so
+ * this one is stamped relative to that clock rather than with a literal instant:
+ * a fixed date is only "later" until the day arrives, and the one that was here
+ * stopped being later on 2026-08-14, turning this into a fixture that selected
+ * the completed opening run instead.
  */
 function insertFailedTriggerlessRun(database: DatabaseSync, workstreamId: string): void {
+  const createdAt = new Date(Date.now() + 60_000).toISOString();
   database.prepare(
     `INSERT INTO harness_runs
      (id, workspace_id, workstream_id, origin, execution_principal_json, status,
@@ -265,9 +271,9 @@ function insertFailedTriggerlessRun(database: DatabaseSync, workstreamId: string
     workspaceId,
     workstreamId,
     JSON.stringify({ type: "user", userId: selectorId }),
-    "2026-08-14T09:00:00.000Z",
-    "2026-08-14T09:05:00.000Z",
-    "2026-08-14T09:00:00.000Z",
+    createdAt,
+    new Date(Date.now() + 360_000).toISOString(),
+    createdAt,
   );
   database.prepare("UPDATE workstreams SET harness_status = 'failed' WHERE id = ?").run(workstreamId);
 }

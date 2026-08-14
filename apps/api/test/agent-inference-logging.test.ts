@@ -8,7 +8,7 @@ interface RecordedStatement {
   values: unknown[];
 }
 
-function fixture(enabled: boolean) {
+function fixture() {
   const statements: RecordedStatement[] = [];
   const objects = new Map<string, string>();
   const db = createTestD1Database({
@@ -21,7 +21,7 @@ function fixture(enabled: boolean) {
         },
         async first() {
           statements.push({ sql, values });
-          return { log_agent_inference: enabled ? 1 : 0 };
+          return null;
         },
         async run() {
           statements.push({ sql, values });
@@ -71,8 +71,8 @@ const request = {
 } satisfies InferenceRequestEvent;
 
 describe("agent inference logging", () => {
-  it("does nothing while the workspace preference is off", async () => {
-    const { env, objects, statements } = fixture(false);
+  it("captures every request without reading a workspace preference", async () => {
+    const { env, objects, statements } = fixture();
     const logger = createAgentInferenceLogger(env, {
       workspaceId: "workspace-1",
       workstreamId: "workstream-1",
@@ -82,13 +82,17 @@ describe("agent inference logging", () => {
 
     await logger.onRequest(request);
 
-    expect(objects.size).toBe(0);
+    // Capture is the compliance record, so there is no preference read and no
+    // branch that can skip the write. Consent to *use* a captured payload is a
+    // separate ledger this path never consults.
+    expect(objects.size).toBe(1);
     expect(statements).toHaveLength(1);
-    expect(statements[0]?.sql).toContain("SELECT log_agent_inference");
+    expect(statements[0]?.sql).toContain("INSERT INTO agent_inference_payload_logs");
+    expect(statements.some((statement) => statement.sql.includes("SELECT log_agent_inference"))).toBe(false);
   });
 
   it("stores complete messages and tools in R2 and indexes actual OpenRouter usage", async () => {
-    const { env, objects, statements } = fixture(true);
+    const { env, objects, statements } = fixture();
     const logger = createAgentInferenceLogger(env, {
       workspaceId: "workspace-1",
       requestId: "run-1",
@@ -141,8 +145,8 @@ describe("agent inference logging", () => {
     expect(update?.values).toEqual(expect.arrayContaining([42_000, 800, 42_800, 300, 20_000, 12_500, 4096]));
   });
 
-  it("records a provider rejection even while the payload ledger is off", async () => {
-    const { env, objects, statements } = fixture(false);
+  it("records a provider rejection in the log line as well as the ledger", async () => {
+    const { env, statements } = fixture();
     env.LOG_LEVEL = "info";
     const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
     const logger = createAgentInferenceLogger(env, {
@@ -165,11 +169,10 @@ describe("agent inference logging", () => {
       providerError: { code: 400, message: "Provider returned error", providerName: "xAI" },
     });
 
-    // The opt-in ledger stays off — no R2 object, no payload row.
-    expect(objects.size).toBe(0);
-    expect(statements.some((statement) => statement.sql.includes("UPDATE"))).toBe(false);
-    // The rejection itself is operational and is always recorded; without this a
-    // model call that OpenRouter refused left no trace in any channel.
+    // The outcome lands on the ledger row the request opened, and the rejection
+    // is also its own structured line: an operator watching for refused calls
+    // should not have to query D1 to see one.
+    expect(statements.some((statement) => statement.sql.includes("UPDATE agent_inference_payload_logs"))).toBe(true);
     expect(logged).toHaveBeenCalledTimes(1);
     expect(logged.mock.calls[0]![0]).toMatchObject({
       level: "warn",
@@ -192,7 +195,7 @@ describe("agent inference logging", () => {
   });
 
   it("stays quiet when a run is cancelled", async () => {
-    const { env } = fixture(false);
+    const { env } = fixture();
     env.LOG_LEVEL = "info";
     const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
     const logger = createAgentInferenceLogger(env, {

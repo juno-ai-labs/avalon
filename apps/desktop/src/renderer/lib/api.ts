@@ -786,7 +786,7 @@ export class AvalonApi {
       name: raw.name,
       region: raw.region,
       timezone: raw.timezone,
-      logAgentInference: raw.logAgentInference,
+      shareWorkstreamsForImprovement: raw.shareWorkstreamsForImprovement,
       currentUser,
     };
   }
@@ -808,10 +808,10 @@ export class AvalonApi {
     return this.getWorkspace();
   }
 
-  async updateWorkspaceLogAgentInference(logAgentInference: boolean): Promise<Workspace> {
+  async updateWorkspaceSharesForImprovement(shareWorkstreamsForImprovement: boolean): Promise<Workspace> {
     await this.request('/workspace', {
       method: 'PATCH',
-      body: { logAgentInference },
+      body: { shareWorkstreamsForImprovement },
       schema: WireWorkspaceSchema,
     });
     return this.getWorkspace();

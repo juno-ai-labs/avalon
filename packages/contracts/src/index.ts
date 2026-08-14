@@ -131,7 +131,7 @@ export const WorkspaceSchema = z.object({
   region: RegionSchema,
   role: MemberRoleSchema,
   timezone: IanaTimezoneSchema,
-  logAgentInference: z.boolean().default(false),
+  shareWorkstreamsForImprovement: z.boolean().default(false),
   createdAt: TimestampSchema
 });
 
@@ -1111,9 +1111,9 @@ export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema 
 export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
 export const UpdateWorkspaceRequestSchema = z.object({
   timezone: IanaTimezoneSchema.optional(),
-  logAgentInference: z.boolean().optional(),
+  shareWorkstreamsForImprovement: z.boolean().optional(),
 }).refine(
-  (value) => value.timezone !== undefined || value.logAgentInference !== undefined,
+  (value) => value.timezone !== undefined || value.shareWorkstreamsForImprovement !== undefined,
   "At least one workspace preference is required",
 );
 
