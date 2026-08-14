@@ -2043,6 +2043,12 @@ export async function runWorkstreamHarness(
         ttftTimeoutMs: numericEnv(env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
         streamIdleTimeoutMs: numericEnv(env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
         sameModelRetries: 0,
+        // Matters most for a work stream pinned from the developer-mode model
+        // selector: its route carries no fallbacks by design, so without this a
+        // single stalled request throws away however long the run had already
+        // spent — a repository checkout, a sandbox, an install and two
+        // typechecks, in the case that prompted this.
+        transportRetries: numericEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       },
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
@@ -3337,6 +3343,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             ttftTimeoutMs: numericEnv(options.env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
             streamIdleTimeoutMs: numericEnv(options.env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
             sameModelRetries: 0,
+            transportRetries: numericEnv(options.env, "HARNESS_TRANSPORT_RETRIES", 1),
           },
           workspaceId: childInput.workspaceId,
           workstreamId: childInput.workstreamId,
