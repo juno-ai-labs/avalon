@@ -1007,6 +1007,12 @@ pre {
 .settings-navigation-group button:hover { background: #292a26; color: var(--ink); }
 .settings-navigation-group button[aria-current='page'] { background: #353631; color: var(--ink); }
 .settings-navigation-group button[aria-current='page']::before { background: var(--brand); }
+.settings-navigation-group button.settings-navigation-child {
+  font-size: 11.5px;
+  min-height: 32px;
+  padding-left: 35px;
+}
+.settings-navigation-group button.settings-navigation-child svg { height: 14px; width: 14px; }
 .settings-search-empty { color: var(--muted); font-size: 11px; padding: 18px 9px; }
 
 .settings-content {
@@ -1674,6 +1680,46 @@ pre {
 }
 
 .settings-connection-list { display: grid; }
+.settings-github-pane { max-width: 760px; }
+.settings-github-connection { margin-bottom: 18px; max-width: 360px; }
+.settings-github-policy { margin-bottom: 22px; }
+.settings-github-policy .settings-preference-row > select,
+.settings-github-repository-row > select,
+.settings-github-connection > select {
+  background: #20211e;
+  border: 1px solid #464842;
+  border-radius: 7px;
+  color: var(--ink);
+  min-height: 32px;
+  padding: 0 28px 0 9px;
+}
+.settings-github-repository-heading {
+  align-items: flex-end;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.settings-github-repository-heading > div { display: grid; gap: 3px; }
+.settings-github-repository-heading strong { font-size: 12px; }
+.settings-github-repository-heading small { color: var(--muted); font-size: 10.5px; }
+.settings-github-search { flex: 0 1 280px; margin: 0; }
+.settings-github-repository-list { max-height: 390px; overflow-y: auto; }
+.settings-github-repository-row {
+  align-items: center;
+  border-bottom: 1px solid #3b3c37;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-height: 58px;
+  padding: 9px 12px;
+}
+.settings-github-repository-row:last-child { border-bottom: 0; }
+.settings-github-repository-row > span { display: grid; gap: 2px; min-width: 0; }
+.settings-github-repository-row strong { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-github-repository-row small { color: var(--muted); font-size: 10px; }
+.settings-github-repository-row .button { min-height: 30px; padding: 4px 9px; }
+.settings-github-footnote { margin-top: 12px; }
 .settings-connection-row {
   align-items: center;
   border-bottom: 1px solid var(--line-soft);

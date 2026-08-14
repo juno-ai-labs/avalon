@@ -21,13 +21,10 @@ import {
   WorkstreamContextSchema,
   WorkstreamDetailSchema,
   WorkstreamSchema,
-  SelectTerminalRepositoryRequestSchema,
-  TerminalRepositoryCatalogSchema,
   TerminalWorkstreamStateSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
-import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { WorkstreamService } from "../services/workstream-service";
@@ -35,10 +32,7 @@ import { HyperSightService } from "../services/hypersight-service";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
-import {
-  createGitHubTerminalCatalogGateway,
-  TerminalWorkstreamService,
-} from "../services/terminal/workstream-state";
+import { TerminalWorkstreamService } from "../services/terminal/workstream-state";
 
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
@@ -115,7 +109,6 @@ function terminalWorkstreamService(c: Context<HonoAppEnv>): TerminalWorkstreamSe
   return new TerminalWorkstreamService(
     c.env,
     getAuth(c),
-    createGitHubTerminalCatalogGateway(c.env),
     provider,
   );
 }
@@ -193,37 +186,6 @@ workstreamRoutes.get("/:id/terminal", zValidator("param", idParam), async (c) =>
   c.json(TerminalWorkstreamStateSchema.parse(
     await terminalWorkstreamService(c).get(c.req.valid("param").id),
   )),
-);
-workstreamRoutes.get("/:id/terminal/repositories", zValidator("param", idParam), async (c) =>
-  c.json(TerminalRepositoryCatalogSchema.parse(
-    await terminalWorkstreamService(c).repositories(c.req.valid("param").id, c.req.raw.signal),
-  )),
-);
-workstreamRoutes.put(
-  "/:id/terminal/repository",
-  zValidator("param", idParam),
-  zValidator("json", SelectTerminalRepositoryRequestSchema),
-  async (c) => {
-    const workstreamId = c.req.valid("param").id;
-    const input = c.req.valid("json");
-    const terminal = terminalWorkstreamService(c);
-    const selected = await terminal.selectRepository(workstreamId, input, c.req.raw.signal);
-    if (input.repositoryRequestId) {
-      const request = selected.repositoryRequest;
-      if (!request || request.id !== input.repositoryRequestId || !selected.repository) {
-        throw new ApiError(409, "terminal_repository_request_stale", "That Terminal repository request is no longer current. Reload the work stream before continuing.");
-      }
-      await new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).continueTerminalRepositoryRequest(
-        workstreamId,
-        {
-          repositoryRequestId: request.id,
-          harnessRunId: request.harnessRunId,
-          repositoryFullName: selected.repository.fullName,
-        },
-      );
-    }
-    return c.json(TerminalWorkstreamStateSchema.parse(await terminal.get(workstreamId)));
-  },
 );
 workstreamRoutes.post("/:id/terminal/start-fresh", zValidator("param", idParam), async (c) =>
   c.json(TerminalWorkstreamStateSchema.parse(

@@ -20,7 +20,6 @@ import { formatDateTime, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type {
   AutomationRunSummary,
-  TerminalRepositoryCatalog,
   TerminalWorkstreamState,
   WorkstreamDetail,
   WorkstreamResource,
@@ -40,10 +39,6 @@ interface InspectorRailProps {
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
   onOpenRun?: (run: AutomationRunSummary) => void;
   terminalWorkspace?: TerminalWorkstreamState;
-  terminalRepositoryCatalog?: TerminalRepositoryCatalog;
-  onSelectTerminalRepository?: (connectionId: string, repositoryFullName: string) => void;
-  onReplaceTerminalRepository?: () => void;
-  terminalRepositorySelectionPending?: boolean;
   onStartFreshTerminal?: () => void;
   /** True while the inspector is fading out under HyperSight taking the slot. */
   leaving?: boolean;
@@ -91,10 +86,6 @@ function ContextContent({
   onAddResource,
   onToggleWatch,
   terminalWorkspace,
-  terminalRepositoryCatalog,
-  onSelectTerminalRepository,
-  onReplaceTerminalRepository,
-  terminalRepositorySelectionPending,
   onStartFreshTerminal,
 }: Pick<InspectorRailProps,
   | 'workstream'
@@ -102,10 +93,6 @@ function ContextContent({
   | 'onAddResource'
   | 'onToggleWatch'
   | 'terminalWorkspace'
-  | 'terminalRepositoryCatalog'
-  | 'onSelectTerminalRepository'
-  | 'onReplaceTerminalRepository'
-  | 'terminalRepositorySelectionPending'
   | 'onStartFreshTerminal'
 >): React.JSX.Element {
   const inspect = useUiStore((state) => state.inspect);
@@ -228,53 +215,7 @@ function ContextContent({
                   <div><dt>Base</dt><dd>{terminalWorkspace.repository.baseRef}</dd></div>
                   <div><dt>Branch</dt><dd>{terminalWorkspace.repository.headRef}</dd></div>
                 </dl>
-                {onReplaceTerminalRepository && <Button disabled={terminalRepositorySelectionPending} onClick={onReplaceTerminalRepository}>Refresh or replace repository</Button>}
-                {terminalRepositoryCatalog?.state === 'available' && onSelectTerminalRepository && (
-                  <label className="terminal-repository-select">
-                    <span>New repository</span>
-                    <select
-                      aria-label="Replacement Terminal repository"
-                      defaultValue=""
-                      disabled={terminalRepositorySelectionPending}
-                      onChange={(event) => {
-                        const [connectionId, repositoryFullName] = event.target.value.split('::', 2);
-                        if (connectionId && repositoryFullName) onSelectTerminalRepository(connectionId, repositoryFullName);
-                      }}
-                    >
-                      <option disabled value="">Choose one repository…</option>
-                      {terminalRepositoryCatalog.connections.flatMap((connection) => connection.repositories.map((repository) => (
-                        <option key={`${connection.connectionId}:${repository.id}`} value={`${connection.connectionId}::${repository.fullName}`}>
-                          {repository.fullName} · {connection.displayName}
-                        </option>
-                      )))}
-                    </select>
-                  </label>
-                )}
               </>
-            ) : terminalRepositoryCatalog?.state === 'available' && onSelectTerminalRepository ? (
-              <label className="terminal-repository-select">
-                <span>Repository</span>
-                <select
-                  aria-label="Terminal repository"
-                  defaultValue=""
-                  disabled={terminalRepositorySelectionPending}
-                  onChange={(event) => {
-                    const [connectionId, repositoryFullName] = event.target.value.split('::', 2);
-                    if (connectionId && repositoryFullName) onSelectTerminalRepository(connectionId, repositoryFullName);
-                  }}
-                >
-                  <option disabled value="">Choose one repository…</option>
-                  {terminalRepositoryCatalog.connections.flatMap((connection) => connection.repositories.map((repository) => (
-                    <option key={`${connection.connectionId}:${repository.id}`} value={`${connection.connectionId}::${repository.fullName}`}>
-                      {repository.fullName} · {connection.displayName}
-                    </option>
-                  )))}
-                </select>
-              </label>
-            ) : terminalRepositoryCatalog?.state === 'disconnected' ? (
-              <p className="rail-empty-line">Connect the Avalon GitHub App in Workspace connections to choose a repository.</p>
-            ) : terminalRepositoryCatalog?.state === 'empty' ? (
-              <p className="rail-empty-line">The connected GitHub App has no accessible repositories.</p>
             ) : null}
             {(terminalWorkspace.lastActivityAt || terminalWorkspace.expiresAt) && (
               <dl className="detail-list terminal-rail-details">

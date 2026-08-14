@@ -5,9 +5,9 @@ import type {
   NoteSummary as ContractNoteSummary,
   NoteTranscriptSegment as ContractNoteTranscriptSegment,
   Scope as ContractScope,
+  GitHubRepositoryAccessSettings as ContractGitHubRepositoryAccessSettings,
   TerminalWorkspaceSettings as ContractTerminalWorkspaceSettings,
   TerminalNetworkPolicyPreview as ContractTerminalNetworkPolicyPreview,
-  TerminalRepositoryCatalog as ContractTerminalRepositoryCatalog,
   TerminalWorkstreamState as ContractTerminalWorkstreamState,
 } from '@avalon/contracts';
 
@@ -16,8 +16,8 @@ import type {
 export type { AgentModelOverride };
 export type TerminalWorkspaceSettings = ContractTerminalWorkspaceSettings;
 export type TerminalNetworkPolicyPreview = ContractTerminalNetworkPolicyPreview;
-export type TerminalRepositoryCatalog = ContractTerminalRepositoryCatalog;
 export type TerminalWorkstreamState = ContractTerminalWorkstreamState;
+export type GitHubRepositoryAccessSettings = ContractGitHubRepositoryAccessSettings;
 
 export type Region = 'global' | 'eu';
 /** How a connection or automation is owned, in the words the UI uses for it. */
@@ -178,6 +178,7 @@ export interface WorkstreamConnection {
   ownerName?: string;
   status: 'healthy' | 'reconnect_required' | 'disabled';
   capabilities?: string[];
+  settingsKind?: 'github_repository_access';
   /** Set when this connection can hand automation results to the signed-in user. */
   userDelivery?: AutomationUserDelivery;
 }

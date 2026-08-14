@@ -22,6 +22,8 @@ import {
 } from "./repository";
 import { createTerminalResourceBridge } from "./resource-bridge";
 import { createDaytonaTerminalRuntime } from "./runtime";
+import { createTerminalRepositorySelector } from "./repository-selection";
+import { createGitHubTerminalCatalogGateway } from "./workstream-state";
 import { createTerminalToolExecutors, TerminalToolError } from "./tools";
 import { refreshWorkspaceSchedulerAlarm } from "../workstream-wakeup-service";
 
@@ -57,6 +59,12 @@ export async function createAvalonTerminalPlugin(
     provider,
     createTerminalResourceBridge(env),
     createRepositoryPublisher(env, createGitHubRestPublicationGateway(env)),
+    createTerminalRepositorySelector(
+      env,
+      provider,
+      createGitHubTerminalCatalogGateway(env),
+      coordinator,
+    ),
     async (context, sandbox, sandboxProvider) => {
       try {
         await bootstrapTerminalRepository(env, context, sandbox, sandboxProvider, readGateway);

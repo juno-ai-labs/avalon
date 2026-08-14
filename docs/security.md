@@ -303,6 +303,11 @@ no provider operation. On first execution Avalon freezes the execution principal
 visible-resource authority, selected immutable GitHub repository identity, and
 connection into a sandbox-generation fingerprint; narrowing or revocation
 destroys that generation before another tool can observe its filesystem.
+The GitHub connector policy is checked before selection, sandbox bootstrap, and
+remote publication. An explicitly configured repository is bound to its
+immutable provider ID, not just its reusable `owner/name`. Read-only policy is a
+remote boundary and does not prevent the untrusted sandbox from changing its
+own local checkout.
 
 Commands, repository contents, package output, and imported files are untrusted.
 The model receives no PTY, inbound port, background daemon, provider lifecycle,
@@ -311,15 +316,24 @@ output is stripped of terminal controls and recognizable token forms, and logs
 never carry commands or output. Trusted-only egress is a host-compiled Daytona
 `domainAllowList` with an immutable baseline and read-back verification; the
 model cannot add a domain. Full internet is an explicit workspace-admin choice.
+Before a model-selected repository change destroys a retained generation,
+Avalon transfers a bounded recovery archive through the trusted Worker, verifies
+its size and digest, and attaches it as a regional resource. Git metadata,
+credentials, host state, and regenerable dependency trees are excluded; any
+backup ambiguity leaves the old sandbox in place.
 
 Daytona receives no R2 credential. Resource originals and generated files cross
 through the regional Worker under current-principal visibility and normal cleanup
-ownership. The work-stream sandbox receives only one-hour read-only GitHub App
-credentials through host-scoped Daytona secret placeholders. It may run local
-`git` and read-only `gh`, but obvious remote Git writes are rejected. The sole
-write path validates a single-use participant-intent grant, committed fixed
-branch, ancestry, limits, and current App authority, then publishes a verified
-Git bundle from a separate ephemeral sandbox using a fresh narrowed credential.
+ownership. The work-stream sandbox receives a one-hour, single-repository GitHub
+App credential through host-scoped Daytona secret placeholders. Connector
+`read_only` maps to read permissions and technically rejects remote mutation;
+`full_access` maps to contents-write and pull-request-write so the model can use
+standard `git` and `gh`. Avalon prepares and switches to a persisted word-based
+work-stream branch before each model-facing operation. GitHub cannot scope an
+installation token to one branch, so branch discipline is explicit model
+guidance rather than a custom proxy or claimed technical boundary. Policy
+changes invalidate the cached expiry and force credential rotation before the
+next command.
 
 ### Logging and audit
 
@@ -552,6 +566,80 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-13 — GitHub policy drift fails closed without inventing a new gate
+
+**What changed:** GitHub authorization distinguishes absent legacy policy from
+present malformed policy, resolves immutable repository IDs before applying
+overrides, refuses settings discovery for disabled connections, and commits a
+policy subtree change with Terminal credential invalidation atomically. Disabling
+a GitHub connection atomically revokes its selected Terminal rows and cached
+credential expiry. Repository
+replacement also claims the shared sandbox operation lease and compensates a
+temporary stopped/archive wake on failure.
+
+**Why:** Mutable names, cached health, partial D1 commits, and a command-only busy
+check could each expose authority or bytes different from the administrator's
+current policy. These are enforcement gaps in existing boundaries, not reasons
+to add participant prompts or a bespoke Git proxy.
+
+**Considered and rejected:** A new branch-scoped authorization service, treating
+transient connector errors as revocation, and relying on system-prompt guidance
+for immutable identity. GitHub does not issue branch-scoped tokens; connector
+`disabled`, provider IDs, the D1 batch, and the existing sandbox lease supply the
+enforceable primitives.
+
+**Consequences:** A policy downgrade and credential expiry are indivisible, and
+no later Terminal acquisition may treat a disabled or missing connection as an
+absent permissive policy.
+Malformed present policy denies use until repaired, and every destructive
+workspace replacement must participate in the same mutation lease as ordinary
+Terminal tools.
+
+### 2026-08-13 — Full repository access uses the native trained CLI path
+
+**What changed:** A connector's `full_access` setting now gives the Daytona
+sandbox a short-lived single-repository GitHub App credential for standard Git
+and GitHub CLI writes. Avalon creates/restores and checks out the persisted
+word-based work-stream branch first; read-only continues to be enforced by
+token permissions.
+
+**Why:** GitHub has no branch-scoped installation token, and building a Git/API
+proxy plus a prose-derived single-use publication gate would over-architect the
+feature and prevent normal multi-commit PR workflows.
+
+**Considered and rejected:** Claiming the repository token was branch-scoped,
+blocking `git push` in favor of only a typed publisher, and parsing participant
+messages for a separate publish authorization. The explicit connector policy is
+the durable user choice.
+
+**Consequences:** Full access is genuinely repository-wide at GitHub. The model
+is told to push only `AVALON_GIT_BRANCH`, while repository rulesets may provide a
+provider-side backstop. New code must preserve credential rotation on policy
+changes and must not expose token plaintext in commands, output, or logs.
+
+### 2026-08-13 — Repository choice is model-driven but policy- and recovery-fenced
+
+**What changed:** The model may select an exact GitHub repository through a
+typed Terminal tool. Connector settings bind repository IDs to read-only or full
+remote access, every read/publish boundary rechecks that policy, and Avalon must
+store a verified recovery resource before destroying sandbox state for another
+selection.
+
+**Why:** Removing the participant chooser avoids an unnecessary interruption,
+but moving choice into an untrusted model cannot give it authority to broaden
+the GitHub App grant or silently discard persistent workspace bytes.
+
+**Considered and rejected:** Authorizing by mutable `owner/name`, treating
+read-only as a prohibition on local edits, and deleting after only a tracked Git
+diff. Those respectively permit replacement-repository confusion, remove safe
+local capability, and lose untracked files and generated artifacts.
+
+**Consequences:** Repository listings must disclose effective remote access,
+configured entries must be revalidated by provider ID, and remote-write tools
+must fail closed after policy drift. Repository replacement has bounded R2 and
+latency cost and refuses workspaces whose compressed recovery state exceeds the
+limit.
 
 ### 2026-08-13 — Desktop mutation headers are proven at the CORS boundary
 

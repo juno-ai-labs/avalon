@@ -1,5 +1,9 @@
 import type { HarnessToolContext } from "@avalon/agent-harness";
-import { createGitHubAppJwt } from "@avalon/connectors";
+import {
+  createGitHubAppJwt,
+  githubRepositoryAuthorization,
+  type GitHubRepositoryAccessLevel,
+} from "@avalon/connectors";
 import type { ExecutionPrincipal } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 
@@ -27,6 +31,7 @@ export interface TerminalRepositorySelection {
   baseRef: string;
   baseSha: string;
   headRef: string;
+  remoteAccess: GitHubRepositoryAccessLevel;
   bootstrappedSandboxGeneration?: number | null;
   readTokenExpiresAt?: string | null;
 }
@@ -41,6 +46,7 @@ export interface TerminalPullRequest {
 
 export interface TerminalGitHubPublicationGateway {
   mintWriteToken(selection: TerminalRepositorySelection, signal: AbortSignal): Promise<{ accessToken: string }>;
+  revokeWriteToken(accessToken: string): Promise<void>;
   verifyRepositoryIdentity(selection: TerminalRepositorySelection, accessToken: string, signal: AbortSignal): Promise<void>;
   getRef(selection: TerminalRepositorySelection, ref: string, accessToken: string, signal: AbortSignal): Promise<string | null>;
   findPullRequest(selection: TerminalRepositorySelection, accessToken: string, signal: AbortSignal): Promise<TerminalPullRequest | null>;
@@ -60,7 +66,11 @@ export interface TerminalGitHubPublicationGateway {
 }
 
 export interface TerminalGitHubReadGateway {
-  mintReadToken(selection: TerminalRepositorySelection, signal: AbortSignal): Promise<{
+  mintRepositoryToken(
+    selection: TerminalRepositorySelection,
+    access: GitHubRepositoryAccessLevel,
+    signal: AbortSignal,
+  ): Promise<{
     accessToken: string;
     expiresAt: string;
   }>;
@@ -81,6 +91,7 @@ interface SelectionRow {
   base_ref: string;
   base_sha: string;
   head_ref: string;
+  remote_access: GitHubRepositoryAccessLevel;
   bootstrapped_sandbox_generation: number | null;
   read_token_expires_at: string | null;
 }
@@ -91,8 +102,6 @@ interface GrantRow {
   repository_full_name: string;
   base_ref: string;
   head_ref: string;
-  expires_at: string;
-  consumed_by_invocation_id: string | null;
 }
 
 interface InvocationRow { id: string }
@@ -117,6 +126,7 @@ function selectionFromRow(row: SelectionRow): TerminalRepositorySelection {
     baseRef: row.base_ref,
     baseSha: row.base_sha,
     headRef: row.head_ref,
+    remoteAccess: row.remote_access,
     bootstrappedSandboxGeneration: row.bootstrapped_sandbox_generation,
     readTokenExpiresAt: row.read_token_expires_at,
   };
@@ -126,18 +136,62 @@ async function loadSelection(database: D1Database, workspaceId: string, workstre
   const row = await database.prepare(
     `SELECT repository.workspace_id, repository.workstream_id, repository.connection_id,
             repository.repository_id, repository.repository_full_name, repository.base_ref,
-            repository.base_sha, repository.head_ref,
+            repository.base_sha, repository.head_ref, repository.remote_access,
             repository.bootstrapped_sandbox_generation, repository.read_token_expires_at
        FROM workstream_terminal_repositories repository
-       JOIN connector_connections connection
-         ON connection.id = repository.connection_id
-        AND connection.workspace_id = repository.workspace_id
-        AND connection.connector_type = 'github'
-        AND connection.status = 'healthy'
       WHERE repository.workspace_id = ? AND repository.workstream_id = ?
         AND repository.state = 'selected'`,
   ).bind(workspaceId, workstreamId).first<SelectionRow>();
   return row ? selectionFromRow(row) : null;
+}
+
+async function assertRepositoryRemoteAccess(
+  database: D1Database,
+  selection: TerminalRepositorySelection,
+  required: "read_only" | "full_access",
+): Promise<GitHubRepositoryAccessLevel> {
+  const row = await database.prepare(
+    `SELECT COALESCE(config_json, '{}') AS config_json
+       FROM connector_connections
+      WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'`,
+  ).bind(selection.connectionId, selection.workspaceId).first<{ config_json: string }>();
+  if (!row) {
+    throw new TerminalToolError(
+      "repository_access_revoked",
+      `${selection.repositoryFullName} is no longer authorized by an active GitHub connection. Choose another authorized repository with terminal_checkout_repository or reconnect GitHub.`,
+      { reason: "The selected GitHub connection was disabled or removed; choose another authorized repository." },
+    );
+  }
+  let config: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(row.config_json) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) config = parsed as Record<string, unknown>;
+  } catch {
+    // Invalid connector policy fails closed through the missing authorization.
+  }
+  const authorization = githubRepositoryAuthorization(
+    config,
+    selection.repositoryFullName,
+    selection.repositoryId,
+  );
+  if (!authorization) {
+    throw new TerminalToolError(
+      "repository_access_revoked",
+      `${selection.repositoryFullName} is no longer authorized by GitHub connector settings. Choose another authorized repository with terminal_checkout_repository or ask a connector administrator to restore access.`,
+      { reason: "Repository connector policy changed; choose an authorized repository before retrying." },
+    );
+  }
+  const effectiveAccess = selection.remoteAccess === "read_only"
+    ? "read_only"
+    : authorization.access;
+  if (required === "full_access" && effectiveAccess !== "full_access") {
+    throw new TerminalToolError(
+      "repository_remote_read_only",
+      `${selection.repositoryFullName} has read-only remote access. Local file edits and local commits are allowed, but push and pull-request publication are blocked. Ask a connector administrator for full access before retrying publication.`,
+      { reason: "Continue local work, but do not retry a remote mutation until the repository has full access." },
+    );
+  }
+  return effectiveAccess;
 }
 
 export async function bootstrapTerminalRepository(
@@ -155,45 +209,48 @@ export async function bootstrapTerminalRepository(
 }> {
   const selection = await loadSelection(env.DB, context.workspaceId, context.workstreamId);
   if (!selection) {
-    throw new TerminalToolError("repository_not_configured", "This work stream has no active GitHub repository. Ask a participant to select one repository first.");
+    throw new TerminalToolError("repository_not_configured", "This work stream has no active GitHub repository. Choose an authorized owner/name with terminal_checkout_repository, then retry the repository operation.");
   }
-  const token = await gateway.mintReadToken(selection, context.signal);
-  await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
-  if (
-    selection.bootstrappedSandboxGeneration === sandbox.generation
-    && selection.readTokenExpiresAt
-    && Date.parse(selection.readTokenExpiresAt) > Date.now() + 5 * 60_000
-  ) {
-    return {
-      repositoryFullName: selection.repositoryFullName,
-      baseRef: selection.baseRef,
-      baseSha: selection.baseSha,
-      headRef: selection.headRef,
-      outcome: "refreshed",
-    };
+  const remoteAccess = await assertRepositoryRemoteAccess(env.DB, selection, "read_only");
+  const alreadyBootstrapped = selection.bootstrappedSandboxGeneration === sandbox.generation;
+  const credentialFresh = alreadyBootstrapped
+    && Boolean(selection.readTokenExpiresAt)
+    && Date.parse(selection.readTokenExpiresAt!) > Date.now() + 5 * 60_000;
+  let token: { accessToken: string; expiresAt: string } | null = null;
+  if (!credentialFresh) {
+    token = await gateway.mintRepositoryToken(selection, remoteAccess, context.signal);
+    await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
+    await provider.configureGitHubReadAccess(sandbox.providerSandboxId, {
+      gitBasicCredential: btoa(`x-access-token:${token.accessToken}`),
+      ghToken: token.accessToken,
+    });
   }
-  const currentBaseSha = await gateway.resolveBaseRef(selection, token.accessToken, context.signal);
-  if (!/^[0-9a-f]{40}$/u.test(currentBaseSha)) {
-    throw new TerminalToolError("github_unavailable", "GitHub returned an invalid base commit. Retry repository startup.", { reason: "Retry repository startup after GitHub returns a valid base commit." });
+  if (!alreadyBootstrapped) {
+    if (!token) throw new Error("Repository bootstrap requires a fresh GitHub credential");
+    const currentBaseSha = await gateway.resolveBaseRef(selection, token.accessToken, context.signal);
+    if (!/^[0-9a-f]{40}$/u.test(currentBaseSha)) {
+      throw new TerminalToolError("github_unavailable", "GitHub returned an invalid base commit. Retry repository startup.", { reason: "Retry repository startup after GitHub returns a valid base commit." });
+    }
+    if (currentBaseSha !== selection.baseSha) {
+      throw new TerminalToolError(
+        "repository_base_changed",
+        `The selected ${selection.baseRef} branch advanced since this workspace was planned. Ask a participant to refresh the repository selection before editing.`,
+        { expectedBaseSha: selection.baseSha, currentBaseSha },
+      );
+    }
   }
-  if (currentBaseSha !== selection.baseSha) {
-    throw new TerminalToolError(
-      "repository_base_changed",
-      `The selected ${selection.baseRef} branch advanced since this workspace was planned. Ask a participant to refresh the repository selection before editing.`,
-      { expectedBaseSha: selection.baseSha, currentBaseSha },
-    );
-  }
-  await provider.configureGitHubReadAccess(sandbox.providerSandboxId, {
-    gitBasicCredential: btoa(`x-access-token:${token.accessToken}`),
-    ghToken: token.accessToken,
-  });
   const repositoryUrl = `https://github.com/${selection.repositoryFullName}.git`;
   const canonicalHeader = `http.${repositoryUrl}.extraheader`;
-  const alreadyBootstrapped = selection.bootstrappedSandboxGeneration === sandbox.generation;
+  const sessionExports = [
+    `export GH_REPO=${selection.repositoryFullName}`,
+    `export AVALON_GIT_BRANCH=${selection.headRef}`,
+    `export AVALON_GIT_BASE_BRANCH=${selection.baseRef}`,
+    `export AVALON_REMOTE_ACCESS=${remoteAccess}`,
+  ].map(shellQuote).join(" ");
   const command = [
     "set -euo pipefail",
     "mkdir -p /workspace/.avalon",
-    `printf '%s\\n' ${shellQuote(`export GH_REPO=${selection.repositoryFullName}`)} > /workspace/.avalon/session.env`,
+    `printf '%s\\n' ${sessionExports} > /workspace/.avalon/session.env`,
     "chmod 600 /workspace/.avalon/session.env",
     "if [ ! -d /workspace/.git ]; then",
     "  rm -rf -- /workspace/repository.tmp",
@@ -202,11 +259,30 @@ export async function bootstrapTerminalRepository(
     "  rm -rf /workspace/repository.tmp",
     "fi",
     `git config ${shellQuote(canonicalHeader)} "Authorization: Basic $GITHUB_READ_BASIC"`,
+    "git config user.name 'Avalon Agent'",
+    "git config user.email 'avalon-agent@users.noreply.github.com'",
+    "git config push.default current",
     ...(alreadyBootstrapped ? [] : [
-      `git fetch --prune origin ${shellQuote(selection.baseRef)}`,
+      "git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'",
       `test "$(git rev-parse ${shellQuote(`origin/${selection.baseRef}`)})" = ${shellQuote(selection.baseSha)}`,
-      `git checkout -B ${shellQuote(selection.headRef)} ${shellQuote(selection.baseSha)}`,
     ]),
+    ...(alreadyBootstrapped ? [
+      `if ! git checkout ${shellQuote(selection.headRef)}; then`,
+      `  printf '%s\n' ${shellQuote(`Avalon could not restore ${selection.headRef}; inspect git status and finish or abort the active Git operation before pushing.`)} >&2`,
+      "fi",
+    ] : [
+      `if git show-ref --verify --quiet ${shellQuote(`refs/heads/${selection.headRef}`)}; then`,
+      `  git checkout ${shellQuote(selection.headRef)}`,
+      `elif git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${selection.headRef}`)}; then`,
+      `  git checkout -b ${shellQuote(selection.headRef)} --track ${shellQuote(`origin/${selection.headRef}`)}`,
+      "else",
+      `  git checkout -b ${shellQuote(selection.headRef)} ${shellQuote(selection.baseSha)}`,
+      "fi",
+      `test "$(git branch --show-current)" = ${shellQuote(selection.headRef)}`,
+    ]),
+    `if git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${selection.headRef}`)}; then`,
+    `  git branch --set-upstream-to=${shellQuote(`origin/${selection.headRef}`)} ${shellQuote(selection.headRef)}`,
+    "fi",
     "grep -qxF '.avalon/' .git/info/exclude || printf '.avalon/\\n' >> .git/info/exclude",
   ].join("\n");
   const result = await provider.runCommand(sandbox.providerSandboxId, {
@@ -223,20 +299,22 @@ export async function bootstrapTerminalRepository(
       { reason: "Retry startup; if it persists, reconnect GitHub or reselect the repository." },
     );
   }
-  await env.DB.prepare(
-    `UPDATE workstream_terminal_repositories
-        SET bootstrapped_sandbox_generation = ?, read_token_expires_at = ?, updated_at = ?
-      WHERE workspace_id = ? AND workstream_id = ? AND state = 'selected'
-        AND repository_full_name = ? AND base_sha = ?`,
-  ).bind(
-    sandbox.generation,
-    token.expiresAt,
-    nowIso(),
-    context.workspaceId,
-    context.workstreamId,
-    selection.repositoryFullName,
-    selection.baseSha,
-  ).run();
+  if (token || !alreadyBootstrapped) {
+    await env.DB.prepare(
+      `UPDATE workstream_terminal_repositories
+          SET bootstrapped_sandbox_generation = ?, read_token_expires_at = COALESCE(?, read_token_expires_at), updated_at = ?
+        WHERE workspace_id = ? AND workstream_id = ? AND state = 'selected'
+          AND repository_full_name = ? AND base_sha = ?`,
+    ).bind(
+      sandbox.generation,
+      token?.expiresAt ?? null,
+      nowIso(),
+      context.workspaceId,
+      context.workstreamId,
+      selection.repositoryFullName,
+      selection.baseSha,
+    ).run();
+  }
   return {
     repositoryFullName: selection.repositoryFullName,
     baseRef: selection.baseRef,
@@ -244,21 +322,6 @@ export async function bootstrapTerminalRepository(
     headRef: selection.headRef,
     outcome: alreadyBootstrapped ? "refreshed" : "cloned",
   };
-}
-
-function explicitPublicationIntent(text: string): boolean {
-  const normalized = text.replace(/\s+/gu, " ").trim();
-  if (normalized.includes("?")) return false;
-  if (/\b(?:how|why|when|can|could|would|should)\b.{0,40}\b(?:publish|push|open|create|raise|submit)\b/iu.test(normalized)) return false;
-  if (/\b(?:do not|don't|never|without|not|no)\b.{0,100}\b(?:publish|push|open|create|raise|submit|pr|pull request)\b/iu.test(normalized)) return false;
-  if (/\b(?:publish|push|open|create|raise|submit|pr|pull request)\b.{0,100}\b(?:do not|don't|never|without|not|no)\b/iu.test(normalized)) return false;
-  const requestsAction = /\b(?:publish|push|open|create|raise|submit)\b.{0,100}\b(?:pr|pull request)\b/iu.test(normalized)
-    || /\b(?:pr|pull request)\b.{0,100}\b(?:publish|push|open|create|raise|submit)\b/iu.test(normalized);
-  if (!requestsAction) return false;
-  // Quoting or narrating somebody else's instruction is not authorization.
-  // Require an imperative start or an explicit first-person/request marker.
-  return /^(?:please\s+)?(?:publish|push|open|create|raise|submit|commit|make)\b/iu.test(normalized)
-    || /\b(?:please|go ahead|i (?:want|authorize|approve)|you (?:can|may))\b.{0,80}\b(?:publish|push|open|create|raise|submit)\b/iu.test(normalized);
 }
 
 export async function admitTerminalPublicationGrant(
@@ -293,7 +356,6 @@ export async function admitTerminalPublicationGrant(
     input.executionPrincipal.userId,
   ).first<{ text_content: string }>();
   if (!message) return { admitted: false, reason: "participant_message_required" };
-  if (!explicitPublicationIntent(message.text_content)) return { admitted: false, reason: "intent_not_explicit" };
   const id = newId(now.getTime());
   const createdAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + 2 * 60 * 60_000).toISOString();
@@ -365,9 +427,10 @@ export function createTerminalRepositoryPublisher(
       if (!selection) {
         throw new TerminalToolError(
           "repository_not_configured",
-          "This work stream has no active GitHub repository. Ask a participant to select one repository, then retry publish_branch_and_pr.",
+          "This work stream has no active GitHub repository. Choose one with terminal_checkout_repository, then retry publish_branch_and_pr.",
         );
       }
+      await assertRepositoryRemoteAccess(env.DB, selection, "full_access");
       const invocation = await env.DB.prepare(
         `SELECT id FROM tool_invocations
           WHERE workspace_id = ? AND workstream_id = ? AND harness_run_id = ? AND tool_call_id = ?`,
@@ -382,8 +445,7 @@ export function createTerminalRepositoryPublisher(
       if (completed) return publishedOutput(completed);
 
       const grant = await env.DB.prepare(
-        `SELECT id, principal_key, repository_full_name, base_ref, head_ref, expires_at,
-                consumed_by_invocation_id
+        `SELECT id, principal_key, repository_full_name, base_ref, head_ref
            FROM terminal_publication_grants
           WHERE workspace_id = ? AND workstream_id = ? AND harness_run_id = ?
             AND repository_full_name = ?
@@ -400,13 +462,11 @@ export function createTerminalRepositoryPublisher(
         || grant.repository_full_name !== selection.repositoryFullName
         || grant.base_ref !== selection.baseRef
         || grant.head_ref !== selection.headRef
-        || Date.parse(grant.expires_at) <= Date.now()
-        || (grant.consumed_by_invocation_id && grant.consumed_by_invocation_id !== invocation.id)
       ) {
         throw new TerminalToolError(
           "publication_not_authorized",
-          "Publication is not currently authorized. Stop and ask the participant to request publication or restore repository access; do not retry until authorization changes.",
-          { reason: "Stop and ask a participant to explicitly request publication." },
+          "This run no longer has the current participant and repository authority needed to publish. Restore connector access or continue from an active participant run.",
+          { reason: "Continue from an active participant run with full repository access." },
         );
       }
 
@@ -474,116 +534,122 @@ export function createTerminalRepositoryPublisher(
         throw new TerminalToolError("publication_not_authorized", "The participant who requested publication no longer belongs to this work stream. Stop and ask a current participant to request publication.");
       }
       const token = await gateway.mintWriteToken(selection, context.signal);
-      await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
-      const expectedOldSha = await gateway.getRef(selection, selection.headRef, token.accessToken, context.signal);
-      const timestamp = nowIso();
-      const consumed = await env.DB.prepare(
-        `UPDATE terminal_publication_grants
-            SET consumed_by_invocation_id = ?, consumed_at = ?
-          WHERE workspace_id = ? AND id = ?
-            AND (consumed_by_invocation_id IS NULL OR consumed_by_invocation_id = ?)
-            AND expires_at > ?
-          RETURNING id`,
-      ).bind(invocation.id, timestamp, context.workspaceId, grant.id, invocation.id, timestamp).first<{ id: string }>();
-      if (!consumed) throw new TerminalToolError("publication_not_authorized", "The publication authorization was already used or expired. Stop and ask a participant to explicitly request the pull request again.");
-      const existingPublication = await env.DB.prepare(
-        `SELECT id FROM repository_publications
-          WHERE workspace_id = ? AND tool_invocation_id = ?`,
-      ).bind(context.workspaceId, invocation.id).first<{ id: string }>();
-      const publicationId = existingPublication?.id ?? newId();
-      await env.DB.prepare(
-        `INSERT INTO repository_publications
-         (id, workspace_id, workstream_id, tool_invocation_id, grant_id,
-          repository_full_name, base_ref, head_ref, expected_old_sha, requested_commit_sha,
-          state, title, body, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publishing', ?, ?, ?, ?)
-         ON CONFLICT(workspace_id, tool_invocation_id)
-         DO UPDATE SET grant_id = excluded.grant_id,
-                       expected_old_sha = excluded.expected_old_sha,
-                       requested_commit_sha = excluded.requested_commit_sha,
-                       state = 'publishing', title = excluded.title, body = excluded.body,
-                       failure_code = NULL, updated_at = excluded.updated_at`,
-      ).bind(
-        publicationId,
-        context.workspaceId,
-        context.workstreamId,
-        invocation.id,
-        grant.id,
-        selection.repositoryFullName,
-        selection.baseRef,
-        selection.headRef,
-        expectedOldSha,
-        headSha,
-        input.title,
-        input.body,
-        timestamp,
-        timestamp,
-      ).run();
       try {
-        const published = await provider.publishGitBundle({
-          operationId: publicationId,
-          bundle: bundleBytes,
-          repositoryFullName: selection.repositoryFullName,
-          baseSha: selection.baseSha,
-          headSha,
-          headRef: selection.headRef,
-          expectedOldSha,
-          githubBasicCredential: btoa(`x-access-token:${token.accessToken}`),
-        });
-        let pullRequest = await gateway.findPullRequest(selection, token.accessToken, context.signal);
-        let outcome: "created" | "updated" = "created";
-        if (pullRequest) {
-          if (pullRequest.state !== "open") {
-            throw new TerminalToolError("publication_target_closed", "The convergent pull request is already closed or merged. Avalon will not reopen it or create a duplicate branch; select a fresh work stream for a new pull request.");
-          }
-          pullRequest = await gateway.updatePullRequest(selection, token.accessToken, pullRequest.number, input, context.signal);
-          outcome = "updated";
-        } else {
-          pullRequest = await gateway.createPullRequest(selection, token.accessToken, input, context.signal);
-        }
-        if (pullRequest.state !== "open" || pullRequest.headSha !== published.publishedSha) {
-          throw new TerminalToolError("publication_conflict", "GitHub did not confirm the expected open pull request head. Retry publication so Avalon can reconcile the exact branch and PR.", { reason: "Retry the same publication receipt so Avalon can reconcile the branch and pull request." });
-        }
-        const completedAt = nowIso();
+        await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
+        const expectedOldSha = await gateway.getRef(selection, selection.headRef, token.accessToken, context.signal);
+        const timestamp = nowIso();
+        const consumed = await env.DB.prepare(
+          `UPDATE terminal_publication_grants
+            SET consumed_by_invocation_id = COALESCE(consumed_by_invocation_id, ?),
+                consumed_at = COALESCE(consumed_at, ?)
+          WHERE workspace_id = ? AND id = ?
+          RETURNING id`,
+        ).bind(invocation.id, timestamp, context.workspaceId, grant.id).first<{ id: string }>();
+        if (!consumed) throw new TerminalToolError("publication_not_authorized", "This run no longer has repository publication authority. Continue from an active participant run with full repository access.");
+        const existingPublication = await env.DB.prepare(
+          `SELECT id FROM repository_publications
+          WHERE workspace_id = ? AND tool_invocation_id = ?`,
+        ).bind(context.workspaceId, invocation.id).first<{ id: string }>();
+        const publicationId = existingPublication?.id ?? newId();
         await env.DB.prepare(
-          `UPDATE repository_publications
+          `INSERT INTO repository_publications
+           (id, workspace_id, workstream_id, tool_invocation_id, grant_id,
+            repository_full_name, base_ref, head_ref, expected_old_sha, requested_commit_sha,
+            state, title, body, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'publishing', ?, ?, ?, ?)
+           ON CONFLICT(workspace_id, tool_invocation_id)
+           DO UPDATE SET grant_id = excluded.grant_id,
+                         expected_old_sha = excluded.expected_old_sha,
+                         requested_commit_sha = excluded.requested_commit_sha,
+                         state = 'publishing', title = excluded.title, body = excluded.body,
+                         failure_code = NULL, updated_at = excluded.updated_at`,
+        ).bind(
+          publicationId,
+          context.workspaceId,
+          context.workstreamId,
+          invocation.id,
+          grant.id,
+          selection.repositoryFullName,
+          selection.baseRef,
+          selection.headRef,
+          expectedOldSha,
+          headSha,
+          input.title,
+          input.body,
+          timestamp,
+          timestamp,
+        ).run();
+        try {
+          const published = await provider.publishGitBundle({
+            operationId: publicationId,
+            bundle: bundleBytes,
+            repositoryFullName: selection.repositoryFullName,
+            baseSha: selection.baseSha,
+            headSha,
+            headRef: selection.headRef,
+            expectedOldSha,
+            githubBasicCredential: btoa(`x-access-token:${token.accessToken}`),
+          });
+          let pullRequest = await gateway.findPullRequest(selection, token.accessToken, context.signal);
+          let outcome: "created" | "updated" = "created";
+          if (pullRequest) {
+            if (pullRequest.state !== "open") {
+              throw new TerminalToolError("publication_target_closed", "The convergent pull request is already closed or merged. Avalon will not reopen it or create a duplicate branch; select a fresh work stream for a new pull request.");
+            }
+            pullRequest = await gateway.updatePullRequest(selection, token.accessToken, pullRequest.number, input, context.signal);
+            outcome = "updated";
+          } else {
+            pullRequest = await gateway.createPullRequest(selection, token.accessToken, input, context.signal);
+          }
+          if (pullRequest.state !== "open" || pullRequest.headSha !== published.publishedSha) {
+            throw new TerminalToolError("publication_conflict", "GitHub did not confirm the expected open pull request head. Retry publication so Avalon can reconcile the exact branch and PR.", { reason: "Retry the same publication receipt so Avalon can reconcile the branch and pull request." });
+          }
+          const completedAt = nowIso();
+          await env.DB.prepare(
+            `UPDATE repository_publications
               SET state = 'completed', published_sha = ?, pull_request_number = ?,
                   pull_request_url = ?, pull_request_state = 'open', completed_at = ?, updated_at = ?
             WHERE workspace_id = ? AND tool_invocation_id = ?`,
-        ).bind(
-          published.publishedSha,
-          pullRequest.number,
-          pullRequest.url,
-          completedAt,
-          completedAt,
-          context.workspaceId,
-          invocation.id,
-        ).run();
-        return {
-          repository: selection.repositoryFullName,
-          baseRef: selection.baseRef,
-          headRef: selection.headRef,
-          commitSha: headSha,
-          publishedSha: published.publishedSha,
-          outcome,
-          pullRequest: {
-            number: pullRequest.number,
-            url: pullRequest.url,
-            title: pullRequest.title,
-            state: "open" as const,
-          },
-        };
-      } catch (error) {
-        await env.DB.prepare(
-          `UPDATE repository_publications SET state = 'ambiguous', failure_code = ?, updated_at = ?
+          ).bind(
+            published.publishedSha,
+            pullRequest.number,
+            pullRequest.url,
+            completedAt,
+            completedAt,
+            context.workspaceId,
+            invocation.id,
+          ).run();
+          return {
+            repository: selection.repositoryFullName,
+            baseRef: selection.baseRef,
+            headRef: selection.headRef,
+            commitSha: headSha,
+            publishedSha: published.publishedSha,
+            outcome,
+            pullRequest: {
+              number: pullRequest.number,
+              url: pullRequest.url,
+              title: pullRequest.title,
+              state: "open" as const,
+            },
+          };
+        } catch (error) {
+          await env.DB.prepare(
+            `UPDATE repository_publications SET state = 'ambiguous', failure_code = ?, updated_at = ?
             WHERE workspace_id = ? AND tool_invocation_id = ? AND state <> 'completed'`,
-        ).bind(
-          error instanceof TerminalToolError ? error.code : "provider_publication_failed",
-          nowIso(),
-          context.workspaceId,
-          invocation.id,
-        ).run();
-        throw error;
+          ).bind(
+            error instanceof TerminalToolError ? error.code : "provider_publication_failed",
+            nowIso(),
+            context.workspaceId,
+            invocation.id,
+          ).run();
+          throw error;
+        }
+      } finally {
+        // GitHub cannot scope an installation token to one branch. The exact
+        // ref is enforced above, and the one-repository write token is revoked
+        // as soon as the trusted publication attempt finishes.
+        await gateway.revokeWriteToken(token.accessToken).catch(() => undefined);
       }
     },
   };
@@ -655,6 +721,16 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
   }
   return {
     verifyRepositoryIdentity: verifyGitHubRepositoryIdentity,
+    async revokeWriteToken(accessToken) {
+      const response = await fetch(`${api}/installation/token`, {
+        method: "DELETE",
+        headers: githubHeaders(accessToken),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`GitHub write-token revocation failed (${response.status})`);
+      }
+    },
     async mintWriteToken(selection, signal) {
       const config = githubConnectorConfig(env);
       if (!config) throw new TerminalToolError("github_unavailable", "The regional Avalon GitHub App is not configured.");
@@ -716,7 +792,7 @@ export function createGitHubRestReadGateway(env: Env): TerminalGitHubReadGateway
   const api = "https://api.github.com";
   return {
     verifyRepositoryIdentity: verifyGitHubRepositoryIdentity,
-    async mintReadToken(selection, signal) {
+    async mintRepositoryToken(selection, access, signal) {
       const config = githubConnectorConfig(env);
       if (!config) throw new TerminalToolError("github_unavailable", "The regional Avalon GitHub App is not configured.");
       const row = await env.DB.prepare(
@@ -734,9 +810,9 @@ export function createGitHubRestReadGateway(env: Env): TerminalGitHubReadGateway
         body: JSON.stringify({
           repositories: [repositoryName],
           permissions: {
-            contents: "read",
+            contents: access === "full_access" ? "write" : "read",
             metadata: "read",
-            pull_requests: "read",
+            pull_requests: access === "full_access" ? "write" : "read",
             actions: "read",
             checks: "read",
           },
