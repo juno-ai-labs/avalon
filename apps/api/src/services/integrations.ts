@@ -66,7 +66,7 @@ import {
   type ToolDefinition,
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { createDatabase, newId, nowIso, toTranscriptMessage } from "@avalon/db";
 import {
   connectorCapabilitySupportsScope,
   ConnectorError,
@@ -722,7 +722,7 @@ async function persistWorkstreamContextCompaction(
 async function loadTriggerFencedTranscriptMessages(
   env: Pick<Env, "DB">,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
-    & Partial<Pick<WorkstreamWorkflowInput, "transcriptFenceMessageId">>,
+    & Partial<Pick<WorkstreamWorkflowInput, "transcriptFenceMessageId" | "harnessRunId">>,
   listMessages: TranscriptMessageLister,
   afterSequence = -1,
   pageSize = 250,
@@ -792,7 +792,49 @@ async function loadTriggerFencedTranscriptMessages(
       code: "trigger_message_not_found",
     });
   }
-  return messages;
+  return [...messages, ...await loadRunOwnTranscriptMessages(env, input, beforeSequence, pageSize)];
+}
+
+/**
+ * The rows this run has already written, which sit above its own fence.
+ *
+ * The fence answers "what had been said when this run was launched", and every
+ * row above it belongs to somebody else — except the run's own. A pass that
+ * replays under the same lease (a Workflow step retried after a provider
+ * failure, which keeps the memoized claim) has already narrated, already called
+ * tools, and already recorded receipts for them. Rebuilding its prompt without
+ * that history hands the model a conversation in which it has done nothing, so
+ * it does the work again: it re-issues tool calls at the same loop positions
+ * with different arguments, and those positions are exactly what a receipt id
+ * is made of. The collision that follows is read as an unconfirmable external
+ * write and suspends the run waiting on a person who was never asked anything.
+ *
+ * Its own work is not evidence about the world that the fence exists to bound;
+ * it is what this run did. Reading it back is what makes the replay
+ * deterministic, so a receipt replays as the same call rather than colliding
+ * with a different one.
+ */
+async function loadRunOwnTranscriptMessages(
+  env: Pick<Env, "DB">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId">
+    & Partial<Pick<WorkstreamWorkflowInput, "harnessRunId">>,
+  aboveSequence: number | undefined,
+  pageSize: number,
+): Promise<Message[]> {
+  if (!input.harnessRunId || aboveSequence === undefined) return [];
+  const rows = await env.DB.prepare(
+    `SELECT m.*, u.email AS author_email, u.name AS author_name,
+            u.avatar_url AS author_avatar_url, u.timezone AS author_timezone,
+            u.created_at AS author_created_at,
+            '[]' AS mentions_json, '[]' AS attachments_json
+       FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
+      WHERE m.workspace_id = ?1 AND m.workstream_id = ?2
+        AND m.harness_run_id = ?3 AND m.sequence_number >= ?4
+      ORDER BY m.sequence_number
+      LIMIT ?5`,
+  ).bind(input.workspaceId, input.workstreamId, input.harnessRunId, aboveSequence, pageSize)
+    .all<Record<string, unknown>>();
+  return (rows.results ?? []).map(toTranscriptMessage);
 }
 
 /**
@@ -6687,8 +6729,9 @@ async function persistToolTranscriptMessage(
     env.DB.prepare(
       `INSERT INTO messages
        (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
-        text_content, structured_content_json, sequence_number, created_at, edited_at)
-       SELECT ?, ?, ?, w.id, 'agent', 'tool', '', ?, w.next_sequence_number, ?, ?
+        text_content, structured_content_json, sequence_number, created_at, edited_at,
+        harness_run_id)
+       SELECT ?, ?, ?, w.id, 'agent', 'tool', '', ?, w.next_sequence_number, ?, ?, ?
        FROM workstreams w
        WHERE w.id = ? AND w.workspace_id = ?
        ON CONFLICT(id) DO UPDATE SET
@@ -6704,6 +6747,7 @@ async function persistToolTranscriptMessage(
       JSON.stringify({ invocation }),
       createdAt,
       editedAt,
+      invocation.harnessRunId,
       input.workstreamId,
       input.workspaceId,
     ),

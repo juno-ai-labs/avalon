@@ -235,6 +235,15 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
   };
 }
 
+/**
+ * One `messages` row as the shared contract, for a caller that had to select
+ * the rows itself. Exported so a bespoke window over the same table maps
+ * through the same function the repository does rather than a second copy of it.
+ */
+export function toTranscriptMessage(row: Record<string, unknown>): Message {
+  return toMessage(row);
+}
+
 function toMessage(row: Record<string, unknown>): Message {
   const authorType = String(row.author_type);
   const externalActor = ExternalActorSchema.safeParse(

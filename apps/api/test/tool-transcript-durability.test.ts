@@ -55,7 +55,7 @@ class ToolTranscriptStatement {
           id,
           clientMessageId: String(this.values[1]),
           workspaceId: String(this.values[2]),
-          workstreamId: String(this.values[6]),
+          workstreamId: String(this.values[7]),
           sequenceNumber: this.database.nextSequenceNumber,
           structuredContent: String(this.values[3]),
           createdAt: String(this.values[4]),
