@@ -453,6 +453,8 @@ export function mapMessage(message: WireMessage): Message {
     ...(message.author.type === 'external' ? { externalActor: { ...message.author.actor } } : {}),
     messageType,
     text: message.textContent,
+    ...(message.narration ? { narration: true } : {}),
+    ...(message.harnessRunId ? { harnessRunId: message.harnessRunId } : {}),
     ...(structured['kind'] === 'suggested_work_expansion' && typeof structured['label'] === 'string'
       ? { contextLabel: structured['label'] }
       : {}),

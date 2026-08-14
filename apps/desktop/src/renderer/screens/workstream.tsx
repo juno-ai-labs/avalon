@@ -884,7 +884,15 @@ export function WorkstreamScreen(): React.JSX.Element {
   }), [expandedSystemRows]);
   const transcriptVirtualizer = useVirtualizer({
     count: transcript.length,
-    estimateSize: () => 140,
+    // Tuned against the shape a run actually writes now: several short rows —
+    // narration, tool, tool, narration — rather than one tall block. A single
+    // estimate over-reports the small ones badly enough that a long transcript
+    // opens with thousands of pixels of scroll height that collapse as rows
+    // measure.
+    estimateSize: (index) => {
+      const kind = transcript[index]?.messageType;
+      return kind === 'tool_event' || kind === 'thought' ? 34 : 120;
+    },
     getItemKey: (index) => transcript[index]?.id ?? index,
     getScrollElement: () => transcriptRef.current,
     overscan: 8,
@@ -1454,8 +1462,10 @@ export function WorkstreamScreen(): React.JSX.Element {
                     {virtualRow.index === firstUnreadIndex && (
                       <div className="unread-divider" role="separator"><span>Unread messages</span></div>
                     )}
+                    {/* A divider is a break: the row under "Unread messages" is
+                        where a reader most needs the name and the time. */}
                     <MessageBlock
-                      continuesTurn={continuedTurns.has(message.id)}
+                      continuesTurn={continuedTurns.has(message.id) && virtualRow.index !== firstUnreadIndex}
                       currentUserId={session?.user.id}
                       loadAttachmentContent={loadAttachmentContent}
                       message={message}

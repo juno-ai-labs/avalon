@@ -145,7 +145,8 @@ The prompt sections are a pure render of run state. Bodies are rebuilt from the 
 4. Stream text through the epoch-aware protocol; reasoning fields are ignored.
 5. Normalize unambiguous schema-declared numeric strings, validate tools, and recheck authority. Bind runs writes sequentially and may overlap independent reads, while returning results in the model's original call order.
 6. Persist each immutable execution plan before execution and make a successful bounded result durable before returning it to Bind.
-7. Persist the complete assistant message, then let the lease-owning Workflow append the terminal lifecycle event.
+7. Settle the turn's narration into its own transcript row before writing that turn's first tool row, so the words claim a position ahead of the tools they announced.
+8. Persist the message the run ends on — or name the row it already settled, when it completed on a tool call — then let the lease-owning Workflow append the terminal lifecycle event.
 8. Stop on completion, elicitation, durable cancellation, ambiguous write, limit, lease loss, or failure.
 
 Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY` and from inbound-email runs.
@@ -239,7 +240,9 @@ The run's *final message* is unchanged in kind: it is the text the run ends on, 
 
 Replay puts the two back together: a narration row immediately above a tool group is projected as the `content` of the assistant message carrying those `tool_calls`, because that is the single turn the model actually took. A narration row with no tool group under it stays its own assistant message.
 
-The desktop places every realtime block at the anchor above everything already in the transcript, tool rows included — the settle frame arrives first, so nothing has to be threaded back above anything. Consecutive agent rows are one turn in the reading: only the first carries the identity line.
+A settled row is marked as narration, and that mark is what every reader needs. The classifier that decides whether a message in a shared work stream is addressed to the agent reads the last ten things said; naming counts what a work stream has said and reads its opening; a description is written from a window of it. One talkative run is not ten things said, so all three windows filter narration out. The desktop reads the same mark: a narration row continues into what follows and an answer closes the turn, which is what keeps two runs apart without the reader having to know runs exist.
+
+The desktop anchors every realtime block at the tail, below everything already in the transcript, tool rows included. A tool row that arrives before its settle frame — the frame is best-effort — still sorts below the row it belongs under, because that row is already open and already holds an anchor. Consecutive agent rows are one turn in the reading: only the first carries the name, and the identity line's clock stays on the rest of them.
 
 ### Transcript row attribution
 
@@ -370,7 +373,16 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   settled; either way the lifecycle checkpoint names it.
 - **A turn's narration is durable before that turn's first tool row is
   written.** The two share one sequence counter, and the order they claim it in
-  is the order the transcript is read in.
+  is the order the transcript is read in. A change that adds another way to
+  write a tool row settles the pending narration first; the run loop keeps
+  exactly one such path so that stays checkable.
+- **A run's final message is identified only by the lifecycle checkpoint's
+  `finalMessageId`.** The run id and `client_message_id` both address segment
+  zero, which is the final message only for a run that never called a tool.
+- **A row a run wrote is that run's to rewrite, and nobody else's.** A replayed
+  attempt restates its own rows in place — including the one it ends on, which
+  an abandoned attempt may have written as narration — and deletes the
+  narration an abandoned longer attempt left below its answer.
 - **A launch is never split across the response that asked for it.** The
   `harness_runs` row, the `running` status, and the Workflows start all complete
   before `launchWorkstreamHarness` returns, because `attempt_id` and
@@ -577,12 +589,31 @@ words below the tools they announced. Reserving a sequence number at the first
 delta and writing the row later, which leaves an empty row behind whenever a run
 dies mid-turn.
 
+**Follow-up in the same change:** review found the id space overloaded — the
+final message was drawn from the same derived `(run, turn)` ids as narration, so
+a replayed attempt that answered a turn earlier landed on a row the abandoned
+attempt had written, and an untargeted `ON CONFLICT DO NOTHING` swallowed it: the
+run's real answer was dropped and the transcript kept the abandoned sentence, or
+the run failed reporting a lease it had not lost. The conflict clause is now
+targeted and updating, fenced to the run's own rows, and the attention update
+reads the row's position rather than a number the caller reserved for an insert
+that never happened — a work stream whose attention points at a position no
+message holds can never be marked read. Rows below the answer from a longer
+abandoned attempt are deleted with it. `harness_narration` was added in the same
+pass, because the windows that count what a work stream has said had all silently
+changed meaning.
+
 **Consequences:** A work stream now has several agent text rows per run, and
 anything reading "the run's message" must read the row the lifecycle checkpoint
 names rather than assume the message id equals the run id. Everything that
 delivers "the answer" outward — the Slack stream, an automation's result email —
 now carries what the run ended on rather than that text preceded by its own
-narration, which is what those surfaces meant by it. `client_message_id`
+narration, which is what those surfaces meant by it — and only for a run that
+*completed*. A run that stopped, failed, or is waiting on a person has no answer,
+and the last thing it said before a tool call is not one; those keep the sentence
+describing what happened. Anything that counts or reads "what this work stream
+has said" filters `harness_narration = 0`, and anything new that reads the
+transcript has to decide which of the two it wants. `client_message_id`
 no longer identifies a run's final message on its own, so the recovery lookup
 goes through the checkpoint payload. A change that adds another way to write a
 tool row has to settle the pending narration first; the run loop keeps exactly

@@ -353,6 +353,17 @@ export const MessageSchema = z.object({
   author: MessageAuthorSchema,
   messageType: z.enum(["text", "system", "tool", "elicitation", "suggestion"]),
   textContent: z.string(),
+  /**
+   * Agent text a run said on its way to a set of tool calls, rather than the
+   * answer it ended on. Both are ordinary rows in the same list; this is what
+   * lets a reader group them into one turn and every consumer of "the run's
+   * answer" ask for that one row. Optional rather than required so a desktop
+   * build older than the field keeps parsing, and a newer one reading an older
+   * region sees every row as an answer — which is what they were.
+   */
+  narration: z.boolean().optional(),
+  /** The run that wrote this row, for the rows a run writes. */
+  harnessRunId: IdSchema.nullish(),
   structuredContent: z.record(z.string(), z.unknown()).nullable(),
   mentions: z.array(MentionSchema),
   attachments: z.array(MessageAttachmentSchema).default([]),

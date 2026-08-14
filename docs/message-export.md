@@ -1,6 +1,6 @@
 # Saving one of Avalon's messages
 
-Under every finished turn from Avalon, beside **Copy**, are **Image** and **PDF**.
+Under every finished turn from Avalon, beside **Copy**, are **Image** and **PDF**. A turn is the answer a run ended on, not each thing it said on the way there: a run writes its narration as its own rows so the transcript reads in order, and those rows carry no export controls — five footers under five fragments would make **Copy** mean a fifth of the response. See [`agent-harness.md`](agent-harness.md#narration-segments).
 Each renders that turn onto a card — a splash of colour, a rounded white sheet,
 the message set as a document, and the Avalon mark over *Saved from Avalon* — and
 offers to save it wherever the person points the dialog. A picture is one tall

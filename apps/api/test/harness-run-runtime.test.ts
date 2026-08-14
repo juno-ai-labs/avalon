@@ -230,13 +230,16 @@ describe("durable harness attempt runtime", () => {
       text: "Done",
       createdAt: "2026-08-03T00:00:00.000Z",
     }, { status: "completed" });
-    expect(sqlite.database.prepare(
+    const stamped = sqlite.database.prepare(
       `SELECT latest_attention_sequence_number, last_activity_at
        FROM workstreams WHERE id = ?`,
-    ).get(WORKSTREAM_ID)).toEqual({
-      latest_attention_sequence_number: 1,
-      last_activity_at: "2026-08-03T00:00:00.000Z",
-    });
+    ).get(WORKSTREAM_ID) as { latest_attention_sequence_number: number; last_activity_at: string };
+    expect(stamped.latest_attention_sequence_number).toBe(1);
+    // The work stream was active when the run finished, not when the row it
+    // ended on was written — a run that ends on words it settled before its
+    // last tool calls would otherwise stamp itself staler than that work.
+    expect(stamped.last_activity_at).not.toBe("2026-08-03T00:00:00.000Z");
+    expect(Number.isFinite(Date.parse(stamped.last_activity_at))).toBe(true);
 
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), first.lease, {
       status: "completed",
@@ -425,8 +428,14 @@ describe("durable harness attempt runtime", () => {
 
     const secondId = await narrationSegmentMessageId(RUN_ONE, 1);
     expect(secondId).not.toBe(first.id);
-    expect(secondId).toBe(await narrationSegmentMessageId(RUN_ONE, 1));
     expect(IdSchema.safeParse(secondId).success).toBe(true);
+    // Pinned, not recomputed. The id has to be the same bytes in the release
+    // that replays a run as in the one that wrote it, or a replayed attempt
+    // writes a second copy of its own words instead of rewriting them.
+    expect(secondId).toBe("82d56dad-328f-8f0b-8c0e-a8433d6de5e8");
+    // And keyed by the run, not just the turn: without that every run in the
+    // work stream would collide on one set of ids.
+    expect(await narrationSegmentMessageId(RUN_TWO, 1)).not.toBe(secondId);
     const second = await persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), claim.lease, {
       id: secondId,
       clientMessageId: `harness:${RUN_ONE}:segment:1`,
@@ -444,6 +453,91 @@ describe("durable harness attempt runtime", () => {
       text: "Must not persist",
       createdAt: "2026-08-03T00:00:04.000Z",
     })).rejects.toThrow("durable attempt lease");
+  });
+
+  it("rewrites its own row when a replay ends on a turn an abandoned attempt already wrote", async () => {
+    // Segment ids are derived from the run and the turn, and a replay does not
+    // have to take the same number of tool-calling turns. When it answers a
+    // turn earlier it lands on an id the previous attempt used for narration.
+    // The run's real answer has to win: leaving that row alone would commit an
+    // abandoned attempt's mid-flight sentence as the run's answer, and would
+    // strand the run on a lifecycle event that can never join it.
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const abandoned = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-abandoned",
+      owner: "owner-abandoned",
+    });
+    if (abandoned.state !== "claimed") throw new Error("expected claimed attempt");
+    const segmentZero = await narrationSegmentMessageId(RUN_ONE, 0);
+    const segmentOne = await narrationSegmentMessageId(RUN_ONE, 1);
+    for (const [index, id] of [segmentZero, segmentOne].entries()) {
+      await persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), abandoned.lease, {
+        id,
+        clientMessageId: `harness:${RUN_ONE}:segment:${index}`,
+        text: `Abandoned narration ${index}`,
+        createdAt: "2026-08-03T00:00:00.000Z",
+      });
+    }
+    // A third segment, below the row the replay will end on.
+    const segmentTwo = await narrationSegmentMessageId(RUN_ONE, 2);
+    await persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), abandoned.lease, {
+      id: segmentTwo,
+      clientMessageId: `harness:${RUN_ONE}:segment:2`,
+      text: "Words below the answer",
+      createdAt: "2026-08-03T00:00:01.000Z",
+    });
+
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+    const replay = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-replay",
+      owner: "owner-replay",
+    });
+    if (replay.state !== "claimed") throw new Error("expected claimed replay");
+    await persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), replay.lease, {
+      id: segmentZero,
+      clientMessageId: `harness:${RUN_ONE}:segment:0`,
+      text: "Replayed narration 0",
+      createdAt: "2026-08-03T00:01:00.000Z",
+    });
+    await persistHarnessFinalMessage(sqlite.binding, input(RUN_ONE), replay.lease, {
+      id: segmentOne,
+      sequenceNumber: 99,
+      text: "The answer this run actually produced",
+      createdAt: "2026-08-03T00:01:02.000Z",
+    }, { status: "completed" });
+
+    const answer = sqlite.database.prepare(
+      "SELECT text_content, client_message_id, harness_attempt_id, harness_narration, sequence_number FROM messages WHERE id = ?",
+    ).get(segmentOne);
+    expect(answer).toEqual({
+      text_content: "The answer this run actually produced",
+      client_message_id: `harness:${RUN_ONE}`,
+      harness_attempt_id: "attempt-replay",
+      // No longer narration, and it keeps the position it claimed rather than
+      // the one the caller reserved for a row that did not need writing.
+      harness_narration: 0,
+      sequence_number: 2,
+    });
+    expect(await loadPersistedHarnessFinalOutcome(sqlite.binding, input(RUN_ONE)))
+      .toEqual({ messageId: segmentOne, status: "completed" });
+    expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), replay.lease, {
+      status: "completed",
+      finalMessageId: segmentOne,
+    })).toBe("terminalized");
+
+    // The abandoned attempt's words below the answer are gone: nothing revisits
+    // them, and left in place they read as the run continuing past its answer.
+    expect(sqlite.database.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE id = ?",
+    ).get(segmentTwo)).toEqual({ count: 0 });
+    // The work stream's attention points at a row that exists, so it can still
+    // be marked read.
+    expect(sqlite.database.prepare(
+      "SELECT latest_attention_sequence_number FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toEqual({ latest_attention_sequence_number: 2 });
   });
 
   it("finishes a run on the last narration segment it settled", async () => {

@@ -1564,6 +1564,10 @@ export class WorkstreamService {
           AND m.workstream_id = ?
           AND m.sequence_number < ?
           AND m.message_type = 'text'
+          -- Not the narration a run wrote on its way to a tool call. This
+          -- window is the evidence a small model classifies against, and ten
+          -- slots of one run's preambles push out the human turns it needs.
+          AND m.harness_narration = 0
           AND m.author_type IN ('human', 'agent')
         ORDER BY m.sequence_number DESC
         LIMIT 10`,

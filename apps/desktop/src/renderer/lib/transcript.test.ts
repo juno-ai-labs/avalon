@@ -45,8 +45,10 @@ describe('transcript messages', () => {
     expect(removeTranscriptMessage([persisted, trailing], persisted.id)).toEqual([trailing]);
   });
 
-  it('groups the rows of one agent turn and starts a new one after anybody else speaks', () => {
-    const agent = (id: string, sequenceNumber: number): Message =>
+  it('groups a run\'s narration with the answer it ends on, and keeps two runs apart', () => {
+    const narration = (id: string, sequenceNumber: number): Message =>
+      createTextMessage({ ...base, id, sequenceNumber, authorType: 'agent', text: id, narration: true });
+    const answer = (id: string, sequenceNumber: number): Message =>
       createTextMessage({ ...base, id, sequenceNumber, authorType: 'agent', text: id });
     const tool = (id: string, sequenceNumber: number): Message => createToolEventMessage({
       ...base,
@@ -60,15 +62,21 @@ describe('transcript messages', () => {
 
     const grouped = continuedAgentTurns([
       human('asked', 1),
-      agent('said', 2),
+      narration('said', 2),
       tool('ran', 3),
-      agent('said-again', 4),
-      human('replied', 5),
-      agent('answered', 6),
+      answer('answered', 4),
+      // A retry, an automation, or a wake-up speaks under no message of its
+      // own. The row above it ended a turn, so this starts a new one — two runs
+      // must never read as one voice under one timestamp.
+      narration('said-again', 5),
+      tool('ran-again', 6),
+      answer('answered-again', 7),
+      human('replied', 8),
+      answer('answered-once-more', 9),
     ]);
 
-    // The work between two things the run said is its own; a person speaking
-    // between them is not.
-    expect([...grouped]).toEqual(['said-again']);
+    // The work between two things one run said is its own; a person speaking
+    // between them is not, and neither is the end of a run.
+    expect([...grouped]).toEqual(['answered', 'answered-again']);
   });
 });

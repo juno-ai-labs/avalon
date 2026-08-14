@@ -151,14 +151,10 @@ app (`electron-vite/dist/cli.js`, `dist/chunks/lib-*.js`). Do not "correct" them
 to the Chromium spellings — electron-vite does not define those options, and the
 flags would stop reaching Electron.
 
-`error during start dev server and electron app: Error: Electron uninstall`
-means the package is installed but its binary was never downloaded, which the
-renderer's dev server starting first can disguise. Fetch it once and start
-again:
-
-```bash
-(cd node_modules/.pnpm/electron@*/node_modules/electron && node install.js)
-```
+`error during start dev server and electron app: Error: Electron uninstall` here
+means the binary was never downloaded — the renderer's dev server starts first,
+so the failure arrives late and reads like a dev-server problem. Fix it with the
+step in [Install and prepare](#1-install-and-prepare) and start again.
 
 The renderer's Vite server comes up on `http://localhost:5173/` and the app
 window opens on the virtual display. `Failed to connect to the bus` errors from

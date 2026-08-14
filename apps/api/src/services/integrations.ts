@@ -405,6 +405,39 @@ async function publishRuntimeEventBestEffort(
   }
 }
 
+/**
+ * The transcript row a settled narration segment is, as the realtime frame that
+ * announces it.
+ *
+ * Named rather than written inline at the publish, because this is a second
+ * producer of a shape the desktop parses — the other reads the row back through
+ * the repository — and the room drops a frame that fails `MessageSchema`
+ * silently, best-effort. A test asserts this exact function against the socket
+ * contract; an inline literal is one nothing can hold.
+ */
+function settledNarrationMessage(
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId">,
+  persisted: PersistedNarrationSegment,
+  clientMessageId: string,
+): Record<string, unknown> {
+  return {
+    id: persisted.id,
+    clientMessageId,
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    author: { type: "agent" },
+    messageType: "text",
+    textContent: persisted.text,
+    structuredContent: null,
+    mentions: [],
+    attachments: [],
+    narration: true,
+    sequenceNumber: persisted.sequenceNumber,
+    createdAt: persisted.createdAt,
+    editedAt: null,
+  };
+}
+
 function workstreamHarnessTerminalResult(input: {
   outcome: Pick<Awaited<ReturnType<typeof runHarness>>, "status" | "failure">;
   /** The row the run's answer is in, whether it ended on it or settled it earlier. */
@@ -917,13 +950,21 @@ async function projectModelProtocolTranscript(
    * assistant turns where the model produced one, and would tell the model it
    * once answered without calling anything.
    */
-  let pendingAssistantText: string | null = null;
+  let pendingAssistantText: { text: string; harnessRunId: string | null } | null = null;
   const flushTools = () => {
     if (pendingTools.length === 0) return;
     pendingTools.sort((left, right) => left.order - right.order);
+    // Only this run's own words. A retry, an automation, and a wake-up all
+    // start with no message of their own, so the row directly above their first
+    // tool call is the *previous* run's — replaying that as the preamble of
+    // these calls tells the model it said something it never said, in a turn it
+    // never took, and deletes a turn it did take.
+    const spokenHere = pendingAssistantText !== null
+      && pendingAssistantText.harnessRunId === (pendingGroupKey?.split(":turn:")[0] ?? null);
+    if (pendingAssistantText !== null && !spokenHere) flushAssistantText();
     projected.push({
       role: "assistant",
-      content: pendingAssistantText,
+      content: spokenHere ? pendingAssistantText?.text ?? null : null,
       tool_calls: pendingTools.map((tool) => tool.call),
     });
     projected.push(...pendingTools.map((tool) => tool.result));
@@ -932,11 +973,11 @@ async function projectModelProtocolTranscript(
     pendingGroupKey = null;
   };
   /** Narration that turned out to have no tool calls under it is its own turn. */
-  const flushAssistantText = () => {
+  function flushAssistantText(): void {
     if (pendingAssistantText === null) return;
-    projected.push({ role: "assistant", content: pendingAssistantText });
+    projected.push({ role: "assistant", content: pendingAssistantText.text });
     pendingAssistantText = null;
-  };
+  }
 
   for (const message of storedMessages) {
     if (message.messageType === "tool") {
@@ -1055,7 +1096,9 @@ async function projectModelProtocolTranscript(
         }
       }
     }
-    else if (message.author.type === "agent") pendingAssistantText = content;
+    else if (message.author.type === "agent") {
+      pendingAssistantText = { text: content, harnessRunId: message.harnessRunId ?? null };
+    }
   }
   flushTools();
   flushAssistantText();
@@ -2029,47 +2072,52 @@ export async function runWorkstreamHarness(
    * told about the final message — `stream_completed` carries the persisted
    * row, so the live transcript stops treating it as an open stream and the
    * next `stream_started` opens a new one below the tools.
+   *
+   * Serialized, because Bind runs the independent tool calls of one turn
+   * concurrently and each of them arrives here. Two callers would otherwise
+   * both pass the guard — nothing clears `streamedText` until four awaits
+   * later — and settle the same words twice: two rows, two published frames,
+   * and a segment index that skips.
    */
+  let settlingNarration: Promise<void> | null = null;
   const settleNarrationSegment = async (): Promise<void> => {
-    if (hyperSightRun || !streamedText) return;
-    await streamDeltaBatcher.flush();
-    const clientMessageId = `harness:${input.harnessRunId}:segment:${segmentIndex}`;
-    const persisted = await persistHarnessNarrationSegment(env.DB, input, liveness.lease, {
-      id: messageId,
-      clientMessageId,
-      text: streamedText,
-      createdAt: nowIso(),
-    });
-    narration.settled = persisted;
-    narration.settledText += persisted.text;
-    await publishEvent({
-      type: "stream_completed",
-      message: {
-        id: persisted.id,
+    if (settlingNarration) return settlingNarration;
+    // Whitespace is not something the model said. A turn that emits only a
+    // newline before its tool calls would otherwise take a transcript position
+    // and render as an empty turn nobody wrote.
+    if (hyperSightRun || !streamedText.trim()) return;
+    const settle = (async () => {
+      await streamDeltaBatcher.flush();
+      const clientMessageId = `harness:${input.harnessRunId}:segment:${segmentIndex}`;
+      // Trimmed here rather than at the edges of the comparison below, so the
+      // stored row and every account of it share one normalization.
+      const persisted = await persistHarnessNarrationSegment(env.DB, input, liveness.lease, {
+        id: messageId,
         clientMessageId,
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        author: { type: "agent" },
-        messageType: "text",
-        textContent: persisted.text,
-        structuredContent: null,
-        mentions: [],
-        attachments: [],
-        sequenceNumber: persisted.sequenceNumber,
-        createdAt: persisted.createdAt,
-        editedAt: null,
-      },
-    });
-    streamedText = "";
-    streamStarted = false;
-    segmentIndex += 1;
-    messageId = await narrationSegmentMessageId(input.harnessRunId, segmentIndex);
+        text: streamedText.trim(),
+        createdAt: nowIso(),
+      });
+      narration.settled = persisted;
+      narration.settledText += persisted.text;
+      await publishEvent({
+        type: "stream_completed",
+        message: settledNarrationMessage(input, persisted, clientMessageId),
+      });
+      streamedText = "";
+      streamStarted = false;
+      segmentIndex += 1;
+      messageId = await narrationSegmentMessageId(input.harnessRunId, segmentIndex);
+    })();
+    settlingNarration = settle.finally(() => { settlingNarration = null; });
+    return settlingNarration;
   };
 
   /**
    * Put one tool row in the transcript, behind whatever the model said on its
    * way to calling it. Every tool lifecycle update goes through here, and only
-   * the first of them for a turn has narration to settle.
+   * the first of them for a turn has narration to settle. HyperSight is checked
+   * inside the settle as well: a block run writes no transcript row at all, and
+   * that rule is enforced in code rather than in either statement's SQL.
    */
   const recordToolTranscriptRow = async (invocation: ToolInvocation): Promise<void> => {
     if (hyperSightRun) return;
@@ -2721,12 +2769,25 @@ export async function runWorkstreamHarness(
   await streamDeltaBatcher.flush();
 
   const stoppedByUser = await isHarnessStopped(env, input.harnessRunId);
-  // What the run leaves behind as its answer. Usually the text it ended on; for
-  // a run that stopped, was interrupted, or ran out of turns after its last
-  // words were already settled, the last row it wrote is the answer it has.
-  const durableMessageId = streamedText
+  // What the run leaves behind as its answer.
+  //
+  // The text it ended on, when it ended on words. A run that *completed* on a
+  // tool call — the model's last turn produced its answer before one final
+  // write — ends on the row it already settled, and that row is its answer.
+  //
+  // A run that stopped, failed, or is waiting on a person has no answer, and
+  // the last thing it happened to say before a tool call is not one: "Sending
+  // the invoice now." delivered to Slack as the outcome of an interrupted run
+  // is worse than the sentence describing what actually happened, which is what
+  // an absent id falls back to.
+  const endedOnWords = streamedText.trim().length > 0;
+  const completedWithoutTrailingWords = !endedOnWords
+    && outcome.status === "completed"
+    && !ambiguousToolOutcome
+    && !stoppedByUser;
+  const durableMessageId = endedOnWords
     ? messageId
-    : narration.settled?.id;
+    : completedWithoutTrailingWords ? narration.settled?.id : undefined;
   const terminalResult = workstreamHarnessTerminalResult({
     outcome,
     durableMessageId,
@@ -2769,13 +2830,14 @@ export async function runWorkstreamHarness(
     ).run();
     if (Number(result.meta.changes ?? 0) !== 1) throw new Error("hypersight_result_ownership_lost");
   } else {
-    // A run that ended on words writes them here. A run whose last words were
-    // settled before its last tool call has nothing left to write and names
-    // that row instead: the checkpoint has to exist either way, because it is
-    // what lets terminalization commit a completed run.
-    const finalMessage = streamedText
-      ? { id: messageId, sequenceNumber: await ensureSequence(), text: streamedText, createdAt: nowIso() }
-      : narration.settled;
+    // A run that ended on words writes them here. A run that completed on a
+    // tool call has nothing left to write and names the row it settled instead:
+    // the checkpoint has to exist either way, because it is what lets
+    // terminalization commit a completed run. The settled row keeps the
+    // position it already claimed, so no sequence is reserved for it.
+    const finalMessage = endedOnWords
+      ? { id: messageId, sequenceNumber: await ensureSequence(), text: streamedText.trim(), createdAt: nowIso() }
+      : completedWithoutTrailingWords ? narration.settled : null;
     if (finalMessage) {
       await persistHarnessFinalMessage(env.DB, input, liveness.lease, finalMessage, {
         status: terminalResult.status,
@@ -6791,6 +6853,7 @@ export const __integrationTesting = {
   toolReplayOutputKey,
   persistSuccessfulToolResult,
   persistToolTranscriptMessage,
+  settledNarrationMessage,
   persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,

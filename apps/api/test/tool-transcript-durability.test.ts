@@ -1,4 +1,4 @@
-import type { ToolInvocation } from "@avalon/contracts";
+import { ServerSocketEventSchema, type ToolInvocation } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
@@ -268,5 +268,40 @@ describe("tool invocation failure wording", () => {
     const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
     expect(loaded?.plugin).toBeNull();
     expect(loaded?.activityName).toBe("Google 2 drive search");
+  });
+});
+
+describe("the frame that announces a settled narration row", () => {
+  it("is a message the socket contract accepts", () => {
+    // The room drops a frame that fails the contract, best-effort and silently:
+    // every settle would vanish, the live transcript would go back to reading as
+    // one block at the end, and every test of this change would still pass. The
+    // other producer of this shape reads the row back through the repository;
+    // this one builds it by hand, so the contract is asserted against the
+    // function rather than against a copy of it written in a test.
+    const frame = {
+      type: "stream_completed" as const,
+      sequence: 42,
+      occurredAt: "2026-08-14T19:20:00.000Z",
+      message: __integrationTesting.settledNarrationMessage(
+        { workspaceId, workstreamId },
+        {
+          id: invocationId,
+          sequenceNumber: 12,
+          text: "Searching the repository.",
+          createdAt: "2026-08-14T19:19:59.000Z",
+        },
+        `harness:${harnessRunId}:segment:0`,
+      ),
+    };
+
+    const parsed = ServerSocketEventSchema.parse(frame);
+    expect(parsed.type).toBe("stream_completed");
+    if (parsed.type !== "stream_completed") throw new Error("expected a stream_completed frame");
+    expect(parsed.message.textContent).toBe("Searching the repository.");
+    expect(parsed.message.sequenceNumber).toBe(12);
+    // The reader groups on this, and every window that counts what a work
+    // stream has said filters on it.
+    expect(parsed.message.narration).toBe(true);
   });
 });

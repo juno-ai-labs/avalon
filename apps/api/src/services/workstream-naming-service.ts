@@ -162,16 +162,17 @@ export async function refreshWorkstreamName(env: Env, input: {
     // This pass is the one thing that comes along afterwards, so it repairs the
     // row rather than stepping over it.
     // The count is over exactly the rows the naming context reads. `messages`
-    // also holds a row per tool call and per elicitation — and a run
-    // ends where those accumulate, which is one of the two places this is
-    // called from. Counting them would trip the threshold on a work stream that
-    // has said two things, and name it from what the first pass already saw.
+    // also holds a row per tool call and per elicitation, and a row for what a
+    // run said on its way to each set of tool calls — and a run ends where
+    // those accumulate, which is one of the two places this is called from.
+    // Counting them would trip the threshold on a work stream that has said two
+    // things, and name it from what the first pass already saw.
     const row = await env.DB.prepare(
       `SELECT w.title, w.title_status, w.objective,
          (SELECT COUNT(*) FROM (
             SELECT 1 FROM messages m
              WHERE m.workspace_id = w.workspace_id AND m.workstream_id = w.id
-               AND m.message_type = 'text'
+               AND m.message_type = 'text' AND m.harness_narration = 0
                AND m.text_content IS NOT NULL AND m.text_content != ''
              LIMIT ?
           )) AS message_count
@@ -228,6 +229,7 @@ async function loadNamingContext(
   const result = await env.DB.prepare(
     `SELECT author_type, text_content FROM messages
       WHERE workspace_id = ? AND workstream_id = ? AND message_type = 'text'
+        AND harness_narration = 0
         AND text_content IS NOT NULL AND text_content != ''
       ORDER BY sequence_number
       LIMIT ?`,

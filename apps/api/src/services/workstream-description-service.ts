@@ -611,7 +611,8 @@ async function loadWindow(
     `SELECT COUNT(*) AS message_count
        FROM messages
       WHERE workspace_id = ? AND workstream_id = ?
-        AND message_type <> 'tool' AND trim(text_content) <> ''
+        AND message_type <> 'tool' AND harness_narration = 0
+        AND trim(text_content) <> ''
         AND created_at >= ?`,
   ).bind(workspaceId, workstreamId, cutoff).first<{ message_count: number }>();
 
@@ -622,7 +623,11 @@ async function loadWindow(
             u.name AS author_name
        FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
       WHERE m.workspace_id = ? AND m.workstream_id = ?
-        AND m.message_type <> 'tool' AND trim(m.text_content) <> ''
+        -- Tool rows and the narration a run wrote between them are the work,
+        -- not what the work stream is about; a window of them describes one
+        -- run's method and pushes the human turns that state the point out.
+        AND m.message_type <> 'tool' AND m.harness_narration = 0
+        AND trim(m.text_content) <> ''
       ORDER BY m.sequence_number DESC
       LIMIT ?`,
   ).bind(workspaceId, workstreamId, limit).all<WindowMessageRow>();

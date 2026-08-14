@@ -118,7 +118,13 @@ export function applyStreamingSocketEvent(
 ): Message[] {
   const messageId = streamingMessageId(event);
   const cursor = cursors.get(messageId);
-  if (cursor) {
+  // A settled row can legitimately reopen: segment ids are derived from the run
+  // and the turn, so a replayed attempt streams the same turns into the same
+  // rows. Only a `stream_started` may do it — a late delta for a row that has
+  // already landed is the stale frame this cursor exists to drop — and the row
+  // starts empty, because the text it holds is the abandoned attempt's.
+  const reopensSettledRow = cursor?.completed === true && event.type === 'stream_started';
+  if (cursor && !reopensSettledRow) {
     if (event.sequence <= cursor.roomSequence) return messages ?? [];
     if (cursor.completed) return messages ?? [];
     if (event.turnId === cursor.turnId) {
@@ -134,9 +140,10 @@ export function applyStreamingSocketEvent(
   }
 
   const existing = (messages ?? []).find((message) => message.id === messageId);
-  const startsNewTurn = !cursor || event.turnId !== cursor.turnId;
-  const turnStartText = startsNewTurn ? existing?.text ?? '' : cursor.turnStartText;
-  const replacesAttempt = event.reset
+  const startsNewTurn = !cursor || reopensSettledRow || event.turnId !== cursor.turnId;
+  const turnStartText = reopensSettledRow ? '' : startsNewTurn ? existing?.text ?? '' : cursor.turnStartText;
+  const replacesAttempt = reopensSettledRow
+    || event.reset
     || (!startsNewTurn && event.epoch > cursor.epoch);
   const seenTurnIds = new Set(cursor?.seenTurnIds);
   seenTurnIds.add(event.turnId);
@@ -452,7 +459,15 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   workstream: T,
   message: Message,
 ): T {
-  if (message.messageType === 'tool_event' || message.realtimeOrder !== undefined) return workstream;
+  // Narration is the run still working, and the server does not count it as
+  // attention either — it advances the work stream's own attention only for the
+  // row a run ends on. A dot that appears once per turn and is taken back by
+  // the next list refresh is worse than one that arrives when the run does.
+  if (
+    message.messageType === 'tool_event'
+    || message.narration === true
+    || message.realtimeOrder !== undefined
+  ) return workstream;
   const latestAttentionSequenceNumber = Math.max(
     workstream.latestAttentionSequenceNumber,
     message.sequenceNumber,

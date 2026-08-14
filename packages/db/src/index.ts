@@ -266,6 +266,8 @@ function toMessage(row: Record<string, unknown>): Message {
     author,
     messageType: String(row.message_type) as Message["messageType"],
     textContent: String(row.text_content ?? ""),
+    narration: Number(row.harness_narration ?? 0) === 1,
+    harnessRunId: row.harness_run_id == null ? null : String(row.harness_run_id),
     structuredContent: parseJson<Record<string, unknown> | null>(row.structured_content_json, null),
     mentions: parseJson<Message["mentions"]>(row.mentions_json, []),
     attachments: parseMessageAttachments(row.attachments_json),

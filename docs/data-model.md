@@ -129,7 +129,13 @@ includes it. Knowing an object ID is never sufficient authorization.
 - `workstream_participants` records explicit participation reasons. Viewer
   presence is intentionally absent from D1.
 - `messages` has a per-work-stream `sequence_number`;
-  `workstreams.next_sequence_number` allocates ordered events.
+  `workstreams.next_sequence_number` allocates ordered events. A run writes
+  several `messages` rows: one per turn that called tools, marked
+  `harness_narration = 1`, and the answer it ends on. Only the answer is the
+  run's message — the lifecycle checkpoint names it, `client_message_id` alone
+  no longer does — and every window that counts what a work stream has said
+  filters the narration out. See
+  [`agent-harness.md`](agent-harness.md#narration-segments).
 - `message_mentions` stores validated person and connector spans.
 - `message_attachments` relates a resource to one exact owning message. A
   resource can appear in multiple work streams, so projections that report

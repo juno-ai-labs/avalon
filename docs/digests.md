@@ -586,6 +586,31 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-14 — The final message a digest settles on is now the run's last turn, not everything it said
+
+**What changed:** A run's assistant text is persisted per turn rather than as one
+message at the end ([`agent-harness.md`](agent-harness.md#narration-segments)),
+so the row `settleDigestRun` receives is the text the run *ended* on. It is no
+longer that text preceded by every plan and progress note the run wrote along the
+way, and a run that ends on a tool call names the row it settled last — but only
+when it completed; a stopped or failed run names nothing and sends nothing.
+
+**Why:** Not a digest change at all — a consequence of the transcript ordering
+fix, recorded here because this document owns what gets mailed. It moves in the
+direction the brief already demanded: `renderDigestBrief` tells the run its final
+message *is* the digest and that no summary of it may take its place, and until
+now the mailed body could still be that digest with the run's narration in front
+of it.
+
+**What a future change must respect:** `MINIMUM_DIGEST_CHARACTERS` is now the
+floor under a *single turn* rather than under a run's whole output, so it guards
+less text than it used to. A run that writes the digest and then calls one more
+tool settles the digest as narration and ends on something shorter — the floor
+catches that, the delivery fails, and the cursor does not advance, which is the
+designed direction. Tuning that floor without knowing this would reopen the
+receipt-mailed-as-a-digest failure the entry below records.
+
+
 ### 2026-08-12 — The schedule's work-stream pointer is dropped, now that the window it was waiting on has closed
 
 **What changed:** `0070_drop_digest_schedule_workstream.sql` drops

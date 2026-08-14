@@ -304,6 +304,15 @@ export interface Message {
     | 'activity_suggestion'
     | 'system';
   text?: string;
+  /**
+   * Agent text a run said on its way to a set of tool calls, rather than the
+   * answer it ended on. The rows of one run read as one turn, and only the
+   * answer carries the identity line, the export actions, and the attention a
+   * new message deserves.
+   */
+  narration?: boolean;
+  /** The run that wrote this row, for the rows a run writes. */
+  harnessRunId?: string;
   contextLabel?: string;
   mentions?: MessageMention[];
   attachments?: MessageAttachment[];

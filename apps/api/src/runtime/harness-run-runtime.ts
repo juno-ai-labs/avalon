@@ -1286,8 +1286,9 @@ export async function persistHarnessNarrationSegment(
     db.prepare(
       `INSERT INTO messages
        (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
-        text_content, sequence_number, created_at, harness_run_id, harness_attempt_id)
-       SELECT ?6, ?7, ?2, w.id, 'agent', 'text', ?8, w.next_sequence_number, ?9, ?1, ?4
+        text_content, sequence_number, created_at, harness_run_id, harness_attempt_id,
+        harness_narration)
+       SELECT ?6, ?7, ?2, w.id, 'agent', 'text', ?8, w.next_sequence_number, ?9, ?1, ?4, 1
          FROM workstreams w
          JOIN harness_runs run
            ON run.id = ?1 AND run.workspace_id = w.workspace_id AND run.workstream_id = w.id
@@ -1296,9 +1297,15 @@ export async function persistHarnessNarrationSegment(
           AND run.attempt_id = ?4 AND run.lease_owner = ?5 AND run.status = 'running'
           AND run.terminalized_at IS NULL
           AND run.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       -- A replayed attempt streams the same turns again and rewrites its own
+       -- rows in place. harness_narration is restated because the same row is
+       -- a segment now and may be the run's answer by the end of the attempt,
+       -- and sequence_number is deliberately absent: the row keeps the
+       -- position it already claimed.
        ON CONFLICT(id) DO UPDATE SET
          text_content = excluded.text_content,
-         harness_attempt_id = excluded.harness_attempt_id
+         harness_attempt_id = excluded.harness_attempt_id,
+         harness_narration = excluded.harness_narration
        WHERE messages.workspace_id = excluded.workspace_id
          AND messages.workstream_id = excluded.workstream_id
          AND messages.harness_run_id = excluded.harness_run_id`,
@@ -1378,8 +1385,8 @@ export async function persistHarnessFinalMessage(
       `INSERT INTO messages
        (id, client_message_id, workspace_id, workstream_id, author_type,
         message_type, text_content, sequence_number, created_at,
-        harness_run_id, harness_attempt_id)
-       SELECT ?6, ?7, ?2, ?3, 'agent', 'text', ?8, ?9, ?10, ?1, ?4
+        harness_run_id, harness_attempt_id, harness_narration)
+       SELECT ?6, ?7, ?2, ?3, 'agent', 'text', ?8, ?9, ?10, ?1, ?4, 0
          FROM harness_runs
         WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
           AND parent_tool_call_id IS NULL
@@ -1387,11 +1394,23 @@ export async function persistHarnessFinalMessage(
           AND terminalized_at IS NULL
           AND (?11 = 'stopped' OR cancellation_requested_at IS NULL)
           AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       -- Untargeted, because this row may already exist: a run whose last words
-       -- were streamed before its last tool call has them durable as a
-       -- narration segment, and finishing it means naming that row as the final
-       -- message rather than writing a second copy of it.
-       ON CONFLICT DO NOTHING`,
+       -- The row a run ends on is the row it was streaming into, and that row
+       -- may already exist: as this attempt's last narration segment, or as an
+       -- abandoned attempt's, since a replay that answers a turn earlier lands
+       -- on an index the previous attempt already wrote. Both are the same
+       -- correction — restate the text, claim the row for this attempt, and
+       -- stop calling it narration. Leaving it to DO NOTHING would commit the
+       -- abandoned attempt's words as this run's answer, or strand the run with
+       -- a row no lifecycle event can join. The position it already claimed is
+       -- kept; sequence_number is not restated.
+       ON CONFLICT(id) DO UPDATE SET
+         client_message_id = excluded.client_message_id,
+         text_content = excluded.text_content,
+         harness_attempt_id = excluded.harness_attempt_id,
+         harness_narration = 0
+       WHERE messages.workspace_id = excluded.workspace_id
+         AND messages.workstream_id = excluded.workstream_id
+         AND messages.harness_run_id = excluded.harness_run_id`,
     ).bind(
       input.harnessRunId,
       input.workspaceId,
@@ -1438,10 +1457,25 @@ export async function persistHarnessFinalMessage(
       hostOutcome.status,
     ),
     db.prepare(
+      // Read from the row rather than trusting the caller's number. The row may
+      // have claimed its position earlier, as a narration segment, in which case
+      // the sequence the caller reserved for a fresh insert was never used —
+      // and a work stream whose attention points at a position no message holds
+      // can never be marked read, because a reader can only ever acknowledge a
+      // sequence a message actually has.
+      //
+      // `last_activity_at` is the terminal instant, not the row's `created_at`:
+      // a run that ends on a row it settled minutes earlier would otherwise
+      // stamp the work stream as staler than the tool calls that followed it,
+      // and that column orders the sidebar and pages `GET /workstreams`.
       `UPDATE workstreams
-          SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?4),
-              last_activity_at = ?5,
-              updated_at = ?5
+          SET latest_attention_sequence_number = MAX(
+                latest_attention_sequence_number,
+                (SELECT sequence_number FROM messages
+                  WHERE id = ?3 AND workstream_id = ?1 AND workspace_id = ?2)
+              ),
+              last_activity_at = MAX(last_activity_at, ?4),
+              updated_at = ?4
         WHERE id = ?1 AND workspace_id = ?2
           AND EXISTS (
             SELECT 1 FROM messages
@@ -1452,8 +1486,34 @@ export async function persistHarnessFinalMessage(
       input.workstreamId,
       input.workspaceId,
       message.id,
-      message.sequenceNumber,
-      message.createdAt,
+      new Date().toISOString(),
+    ),
+    // An attempt that took more tool-calling turns than the one that finished
+    // left narration below the row this run ended on. Those words were said by
+    // an attempt that was replaced, and nothing else will ever revisit them:
+    // left in place they read as the run continuing past its own answer, and
+    // the next run replays them to the model as history. Only this run's
+    // narration, only below its answer, and only under the same lease.
+    db.prepare(
+      `DELETE FROM messages
+        WHERE workspace_id = ?2 AND workstream_id = ?1
+          AND harness_run_id = ?3 AND harness_narration = 1
+          AND sequence_number > (
+            SELECT sequence_number FROM messages
+             WHERE id = ?4 AND workstream_id = ?1 AND workspace_id = ?2
+          )
+          AND EXISTS (
+            SELECT 1 FROM harness_runs
+             WHERE id = ?3 AND attempt_id = ?5 AND lease_owner = ?6
+               AND terminalized_at IS NULL
+          )`,
+    ).bind(
+      input.workstreamId,
+      input.workspaceId,
+      input.harnessRunId,
+      message.id,
+      lease.attemptId,
+      lease.owner,
     ),
   ]);
   const persisted = await db.prepare(

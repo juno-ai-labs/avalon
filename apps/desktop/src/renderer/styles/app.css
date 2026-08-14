@@ -3313,6 +3313,28 @@ pre {
   margin: -17px 0 18px;
 }
 
+/* A run's words and the tools they announced are one turn, and the reader has
+   to be able to see which way each cluster binds. A continued row closes the
+   gap above it so the tools stay attached to the sentence that introduced them,
+   rather than floating equidistant between two paragraphs and reading as though
+   they belong to the one below. The name is suppressed on these rows, so the
+   timestamp is all the header carries — it appears on hover, the way the export
+   actions do, instead of stamping a time over every paragraph. */
+:is(.workstream-screen, .automation-chat-surface) .agent-message.continues-turn {
+  margin-top: -8px;
+}
+
+:is(.workstream-screen, .automation-chat-surface) .agent-message.continues-turn > header {
+  margin-bottom: 2px;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+:is(.workstream-screen, .automation-chat-surface) .agent-message.continues-turn:hover > header,
+:is(.workstream-screen, .automation-chat-surface) .agent-message.continues-turn:focus-within > header {
+  opacity: 0.7;
+}
+
 :is(.workstream-screen, .automation-chat-surface) .transcript-event:has(.agent-work-timing) {
   margin: -12px 0 18px;
 }

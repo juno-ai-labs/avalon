@@ -255,8 +255,9 @@ replay cache itself remains memory-only and bounded to 256 events or 512 KB.
 
 Room `sequence` orders replayable socket events. Model streaming has a second
 cursor domain: stable `turnId`, retry `epoch`, and per-epoch `streamSeq`; `reset`
-replaces only the active turn's partial text from an abandoned route, preserving
-completed text from earlier tool turns. Deltas are batched without crossing
+replaces only the active turn's partial text from an abandoned route; the text of
+a completed tool turn is its own persisted row by then, per
+[`agent-harness.md`](agent-harness.md#narration-segments). Deltas are batched without crossing
 turn/epoch boundaries, and reset frames are emitted alone. The desktop retains
 room and stream cursors across socket and route handoffs, keeps background
 subscribers only for listed running work streams, drops duplicate or stale

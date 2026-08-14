@@ -9,28 +9,33 @@ export function visibleTranscriptMessages(messages: Message[]): Message[] {
 }
 
 /**
- * The agent turns that continue the one above them rather than starting a new
- * one, by id.
+ * The agent rows that continue the turn above them rather than starting one.
  *
- * A run now writes its words in several rows — what it said before each set of
- * tool calls, and what it ended on — so one answer arrives as a column of
- * bubbles rather than as a single one. Repeating "Avalon" and a timestamp over
- * each of them would read as several people answering in turn. The tool and
- * timing rows between them are the run's own work and do not interrupt it;
- * anything else — a person, a question, a note about the work stream — does,
- * and the next thing the agent says starts a new turn.
+ * A run writes its words in several rows — what it said before each set of tool
+ * calls, and the answer it ended on — so one answer arrives as a column of
+ * bubbles. Repeating the identity line over each of them would read as several
+ * people answering in turn.
+ *
+ * The row itself says which it is: narration continues into what follows, an
+ * answer closes the turn. That is what keeps two *runs* apart without the
+ * reader having to know runs exist — a retry, an automation, or a wake-up
+ * starts speaking under no message of its own, and the row above it is the
+ * previous run's answer, which ended its turn. The tool and timing rows a run
+ * writes between its own words are its work and do not interrupt it; a person,
+ * a question, or a note about the work stream does.
  */
 export function continuedAgentTurns(messages: Message[]): Set<string> {
   const continued = new Set<string>();
-  let agentIsSpeaking = false;
+  let openTurn = false;
   for (const message of messages) {
     if (message.messageType === 'tool_event' || message.messageType === 'thought') continue;
     if (message.messageType === 'text' && message.authorType === 'agent') {
-      if (agentIsSpeaking) continued.add(message.id);
-      agentIsSpeaking = true;
+      if (openTurn) continued.add(message.id);
+      // Narration is a run mid-sentence; its answer is the end of the turn.
+      openTurn = message.narration === true;
       continue;
     }
-    agentIsSpeaking = false;
+    openTurn = false;
   }
   return continued;
 }

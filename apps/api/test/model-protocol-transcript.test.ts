@@ -745,7 +745,7 @@ describe("durable UI-to-model transcript projection", () => {
     const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
     const storedMessages = [
       message("00000000-0000-4000-8000-000000000020", 1, { author: "human", textContent: "Which model list is it in?" }),
-      message("00000000-0000-4000-8000-000000000022", 2, { author: "agent", textContent: "Searching the repository." }),
+      { ...message("00000000-0000-4000-8000-000000000022", 2, { author: "agent", textContent: "Searching the repository." }), harnessRunId: PRIOR_RUN_ID },
       message(searched, 3, { author: "agent", messageType: "tool", structuredContent: { invocation: {} } }),
       message("00000000-0000-4000-8000-000000000023", 4, { author: "agent", textContent: "It is in agent-models.ts." }),
     ];
@@ -776,6 +776,46 @@ describe("durable UI-to-model transcript projection", () => {
       tool_calls: [{ id: call, function: { name: "terminal_run_command" } }],
     });
     expect(projection.messages[3]).toEqual({ role: "assistant", content: "It is in agent-models.ts." });
+  });
+
+  it("never replays one run's words as the preamble of another run's tool calls", async () => {
+    // A retry, an automation, and a wake-up all start with no message of their
+    // own, so the row directly above their first tool call belongs to the run
+    // before. Merging it would tell the model it said something it never said,
+    // in a turn it never took, and would delete a turn it did take.
+    const searched = "00000000-0000-4000-8000-000000000031";
+    const earlierRun = "00000000-0000-4000-8000-000000000030";
+    const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
+    const storedMessages = [
+      { ...message("00000000-0000-4000-8000-000000000032", 1, { author: "agent", textContent: "That is the whole answer." }), harnessRunId: earlierRun },
+      message(searched, 2, { author: "agent", messageType: "tool", structuredContent: { invocation: {} } }),
+      { ...message("00000000-0000-4000-8000-000000000033", 3, { author: "agent", textContent: "And here is the new one." }), harnessRunId: PRIOR_RUN_ID },
+    ];
+    const env = projectionEnv([
+      {
+        message_id: searched,
+        harness_run_id: PRIOR_RUN_ID,
+        tool_call_id: call,
+        tool_name: "terminal_run_command",
+        input_json: '{"command":"git status"}',
+        output_ref: "results/status.json",
+        output_summary: "Clean",
+        status: "completed",
+        error_json: null,
+      },
+    ], { "results/status.json": { clean: true } });
+
+    const projection = await __integrationTesting.projectModelProtocolTranscript(env, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      triggerMessageId: null,
+    }, storedMessages);
+
+    expect(projection.messages.map((entry) => entry.role)).toEqual(["assistant", "assistant", "tool", "assistant"]);
+    // The earlier run keeps its own turn…
+    expect(projection.messages[0]).toEqual({ role: "assistant", content: "That is the whole answer." });
+    // …and the tool calls are made by a turn that said nothing before them.
+    expect(projection.messages[1]).toMatchObject({ content: null, tool_calls: [{ id: call }] });
   });
 
   it("reconstructs matched parallel tool protocol for a second run and omits dangling UI rows", async () => {

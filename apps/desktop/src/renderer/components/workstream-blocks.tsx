@@ -445,7 +445,12 @@ export function AssistantMessageContent({
     <>
       {text ? <MarkdownBody mentions={mentions}>{text}</MarkdownBody> : null}
       {showCopy && !streaming && text && <AssistantMessageActions mentions={mentions} text={text} />}
-      {streaming && <span className="streaming-caret" aria-hidden="true" />}
+      {/* Only ever trailing words. A row that has opened but has no text yet —
+          the gap between a turn's tool results and its first token — would
+          otherwise be a lone blinking bar attributed to nobody, which is the
+          shape the automation composer was hardened against. The timer under
+          the transcript is what says the run is working. */}
+      {streaming && text ? <span className="streaming-caret" aria-hidden="true" /> : null}
     </>
   );
 }
@@ -910,7 +915,7 @@ export function MessageBlock({
   const sending = message.deliveryState === 'sending';
   return (
     <article
-      aria-label={sending ? 'Sending message' : human ? `Message from ${humanAuthorName}` : undefined}
+      aria-label={sending ? 'Sending message' : human ? `Message from ${humanAuthorName}` : 'Message from Avalon'}
       aria-busy={message.streaming || sending || undefined}
       className={clsx(
         'message-block',
@@ -930,9 +935,13 @@ export function MessageBlock({
           came from is the only thing standing between them and a turn they do
           not remember typing. The name stays suppressed; only the label and the
           time appear. */}
-      {!sending && !continuesTurn && (!human || !ownHumanMessage || message.contextLabel) && (
+      {!sending && (!human || !ownHumanMessage || message.contextLabel) && (
         <header>
-          {!ownHumanMessage && (
+          {/* A continuation keeps the clock and drops the name. Suppressing the
+              whole line would leave the reader no way to tell whether the last
+              paragraph of a long run arrived a second ago or an hour ago, which
+              is the one thing the header is carrying by then. */}
+          {!ownHumanMessage && !continuesTurn && (
             <>
               {human && <span aria-hidden="true" className="message-author-dot" />}
               <span className="message-author">{human ? humanAuthorName : 'Avalon'}</span>
@@ -968,8 +977,12 @@ export function MessageBlock({
                   onOpen={onOpenAttachment}
                 />
               ) : null}
+              {/* Copy, Image, and PDF belong to the answer, not to each thing
+                  the run said on the way to it: five footers under five
+                  fragments make "copy the response" mean copy a fifth of it. */}
               <AssistantMessageContent
                 mentions={message.mentions}
+                showCopy={message.narration !== true}
                 streaming={message.streaming}
                 text={message.text ?? ''}
               />

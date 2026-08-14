@@ -208,7 +208,7 @@ On a prompt Avalon:
 3. creates or resumes the durable workstream;
 4. starts a `chat.startStream` reply when the surface supports it;
 5. executes the ordinary authorized Avalon harness;
-6. appends the complete persisted final message — the row the run ended on, not the narration it settled along the way, per [`agent-harness.md`](agent-harness.md#narration-segments) — in Slack's required 12,000-character chunks, and stops the stream;
+6. appends the complete persisted final message — the row the lifecycle checkpoint names, which is the text the run ended on, or the row it settled last when it *completed* on a tool call, per [`agent-harness.md`](agent-harness.md#narration-segments) — in Slack's required 12,000-character chunks, and stops the stream. A run that stopped, failed, or is waiting on a person has no answer to append, and the outcome sentence stands in its place;
 7. falls back to complete 40,000-character Slack message chunks if streaming is unavailable;
 8. links to the canonical Avalon workstream and offers feedback.
 
