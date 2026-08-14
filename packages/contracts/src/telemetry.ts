@@ -1855,12 +1855,14 @@ export const TELEMETRY_BATCH_MAX_BYTES = 256 * 1024;
 
 export const TelemetryBootstrapRequestSchema = z.object({
   anonymousEpochId: UuidV7Schema,
+  routeToken: z.string().min(32).max(2_048).optional(),
 }).strict();
 export type TelemetryBootstrapRequest = z.infer<typeof TelemetryBootstrapRequestSchema>;
 
 export const TelemetryRouteResponseSchema = z.object({
   route: z.enum(["global", "eu"]),
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
+  routeToken: z.string().min(32).max(2_048),
 }).strict();
 export type TelemetryRouteResponse = z.infer<typeof TelemetryRouteResponseSchema>;
 

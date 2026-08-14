@@ -463,6 +463,7 @@ describe('public Avalon site', () => {
 
     expect(telemetry).toContain('/telemetry/route');
     expect(telemetry).toContain("route.route === 'global' ? globalAnonymousEpochId() : transientAnonymousEpochId");
+    expect(telemetry).toContain('routeToken: route.routeToken');
     expect(telemetry).not.toContain('sessionStorage');
     expect(telemetry).toContain("report('site_page_viewed'");
     expect(telemetry).toContain("report('site_page_left'");

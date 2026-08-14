@@ -60,9 +60,10 @@ product funnel disconnected from the product it feeds.
 ## Product behavior
 
 The visible site does not gain analytics UI. On each page load, the site obtains
-a coarse Cloudflare route, then a signed anonymous telemetry capability. Global
-may retain a random first-party anonymous ID so page-to-page funnels work. EU
-uses a page-scoped ID held only in memory.
+a coarse Cloudflare route with a short-lived signed decision, chooses identity
+from that route, then exchanges both for a signed anonymous telemetry
+capability. Global may retain a random first-party anonymous ID so page-to-page
+funnels work. EU uses a page-scoped ID held only in memory.
 
 The reporter records the classified page and safe pathname, external referring
 domain, allowlisted UTM values, and a bounded leave-duration bucket. Landing,
@@ -85,8 +86,10 @@ None yet.
 ## Key design decisions
 
 1. **Route before choosing browser identity.** Global gets cross-page funnels;
-   EU gets page-scoped aggregate measurement. A single persistent identity was
-   rejected because moving networks could merge residency histories.
+   EU gets page-scoped aggregate measurement. Bootstrap consumes the same signed
+   route decision that selected identity, so a network change between requests
+   cannot reclassify the epoch. A single persistent identity was rejected
+   because moving networks could merge residency histories.
 2. **Use Avalon's contract and adapter, not a browser provider SDK.** Global
    still receives idiomatic reserved PostHog web events, while the site keeps
    provider tokens and unrestricted capture out of the browser.
@@ -97,8 +100,9 @@ None yet.
 ## Regional impact
 
 `GET /telemetry/route` runs only on the Global edge and reduces Cloudflare's
-country value to `eu` or `global` without retaining country or IP. The subsequent
-capability fixes the event route. EU projections cross only the existing named
+country value to `eu` or `global` without retaining country or IP. Its
+short-lived signed decision is authoritative for the subsequent bootstrap,
+whose capability fixes the event route. EU projections cross only the existing named
 `EU_TELEMETRY_BRIDGE`, land in EU D1, and never call PostHog. Global events use
 the existing regional outbox and US PostHog destination.
 
