@@ -597,6 +597,23 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-13 — Digest telemetry cannot interrupt required settlement
+
+**What changed:** Every terminal digest telemetry call now isolates its entire
+context lookup and emission. A telemetry query failure after delivery cannot
+skip the occurrence transcript's delivered note.
+
+**Why:** The provider delivery and status update are authoritative product work.
+Only the final emitter had been caught, leaving its preceding context queries
+able to throw after the digest was already marked delivered.
+
+**Considered and rejected:** Retrying the settlement step. Its terminal-status
+guard correctly prevents duplicate email, but would also return before writing
+the omitted transcript note.
+
+**Consequences:** Digest telemetry remains best effort around the whole helper;
+required settlement work must never be placed after an uncaught analytics read.
+
 ### 2026-08-13 — Digest configuration and delivery become one measurable lifecycle
 
 **What changed:** Durable schedule replacement and terminal delivery settlement

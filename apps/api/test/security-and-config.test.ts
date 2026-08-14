@@ -588,29 +588,32 @@ describe("environment guardrails", () => {
     expect(allowedHeaders).toContain("x-avalon-draft-id");
   });
 
-  it("allows the desktop operation header on work-stream mutation preflights", async () => {
-    const response = await createApp().request(
-      "https://api.example.com/workstreams",
-      {
-        method: "OPTIONS",
-        headers: {
-          origin: "app://avalon",
-          "access-control-request-method": "POST",
-          "access-control-request-headers": "authorization,content-type,x-avalon-operation-id",
+  it.each(['global', 'eu'] as const)(
+    "allows the deployed desktop correlation header on %s mutation preflights",
+    async (region) => {
+      const response = await createApp().request(
+        "https://api.example.com/workstreams",
+        {
+          method: "OPTIONS",
+          headers: {
+            origin: "app://avalon",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "authorization,content-type,x-avalon-operation-id",
+          },
         },
-      },
-      createTestEnv({
-        ALLOWED_ORIGINS: "app://avalon",
-        AVALON_REGION: "global",
-        LOG_LEVEL: "error",
-      }),
-    );
+        createTestEnv({
+          ALLOWED_ORIGINS: "app://avalon",
+          AVALON_REGION: region,
+          LOG_LEVEL: "error",
+        }),
+      );
 
-    expect(response.status).toBe(204);
-    expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
-    const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase();
-    expect(allowedHeaders).toContain("x-avalon-operation-id");
-  });
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
+      const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase();
+      expect(allowedHeaders).toContain("x-avalon-operation-id");
+    },
+  );
 
   it("allows HyperSight PUT requests in CORS preflights", async () => {
     const response = await createApp().request(

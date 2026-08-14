@@ -1939,21 +1939,18 @@ export class AvalonApi {
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<ConnectorOAuthStart> {
-    const tracked = provider === 'granola' ? null : provider;
-    const operationId = tracked ? uuidV7() : null;
-    if (tracked && operationId) {
-      reportTelemetryProductIntent({ kind: 'connector_setup_requested', connector: tracked, operationId });
-    }
+    const operationId = uuidV7();
     reportTelemetryProductIntent({
       kind: 'connector_setup_requested_v2',
       connector: provider,
       scope: scope === 'you' ? 'personal' : 'workspace',
       method: 'oauth',
       capabilityCount: telemetryCountBucket(capabilities.length),
+      operationId,
     });
-    return this.request(`/connections/${provider}/start`, {
+    return this.request(`/connections/${provider}/start?telemetryVersion=2`, {
       method: 'POST',
-      ...(operationId ? { headers: { 'X-Avalon-Operation-Id': operationId } } : {}),
+      headers: { 'X-Avalon-Operation-Id': operationId },
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
       schema: WireConnectorOAuthStartSchema,
     });
@@ -2043,14 +2040,14 @@ export class AvalonApi {
   ): Promise<ConnectorOAuthStart> {
     const operationId = provider ? uuidV7() : null;
     if (provider && operationId) {
-      reportTelemetryProductIntent({ kind: 'connector_setup_requested', connector: provider, operationId });
       reportTelemetryProductIntent({
         kind: 'connector_setup_requested_v2', connector: provider,
         scope: scope === 'you' ? 'personal' : 'workspace', method: 'oauth',
         capabilityCount: telemetryCountBucket(capabilityCount),
+        operationId,
       });
     }
-    return this.request(`/connections/${encodeURIComponent(id)}/reconnect`, {
+    return this.request(`/connections/${encodeURIComponent(id)}/reconnect?telemetryVersion=2`, {
       method: 'POST',
       ...(operationId ? { headers: { 'X-Avalon-Operation-Id': operationId } } : {}),
       schema: WireConnectorOAuthStartSchema,

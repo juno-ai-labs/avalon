@@ -7,6 +7,7 @@ import {
   reportTelemetryProductIntent,
   reportTelemetryScreen,
   telemetryScreenForPath,
+  telemetrySurfaceForPath,
   telemetryVisibility,
   uuidV7,
   workstreamNavigation,
@@ -19,11 +20,14 @@ afterEach(() => vi.useRealTimers());
 
 describe('renderer semantic telemetry helpers', () => {
   it('maps only planned router destinations to stable screen enums', () => {
+    expect(telemetryScreenForPath('/')).toBeNull();
     expect(telemetryScreenForPath('/workstreams/new')).toBe('workspace_home');
     expect(telemetryScreenForPath('/workstreams/opaque-id')).toBe('workstream');
     expect(telemetryScreenForPath('/settings')).toBe('application_settings');
     expect(telemetryScreenForPath('/notes/private-id')).toBeNull();
     expect(telemetryScreenForPath('/unknown')).toBeNull();
+    expect(telemetrySurfaceForPath('/')).toBeNull();
+    expect(telemetrySurfaceForPath('/workstreams/new')).toEqual({ surface: 'workspace_home' });
   });
 
   it('creates time-ordered UUIDv7 operation identifiers', () => {

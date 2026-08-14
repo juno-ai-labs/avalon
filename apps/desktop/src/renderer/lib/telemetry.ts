@@ -62,7 +62,7 @@ export function telemetrySurfaceForPath(pathname: string): {
   resourceType?: 'workstream' | 'note' | 'automation';
   resourceId?: string;
 } | null {
-  if (pathname === '/' || pathname === '/workstreams/new') return { surface: 'workspace_home' };
+  if (pathname === '/workstreams/new') return { surface: 'workspace_home' };
   if (pathname === '/meeting') return { surface: 'meeting_capture' };
   if (pathname === '/automations/new') return { surface: 'automation_builder' };
   if (pathname === '/settings') return { surface: 'settings_application' };
@@ -117,7 +117,7 @@ function shouldReportNetworkError(candidate: DesktopJavascriptErrorCandidate): b
 }
 
 export function telemetryScreenForPath(pathname: string): DesktopTelemetryScreen | null {
-  if (pathname === '/workstreams/new' || pathname === '/') return 'workspace_home';
+  if (pathname === '/workstreams/new') return 'workspace_home';
   if (/^\/workstreams\/[^/]+$/u.test(pathname)) return 'workstream';
   if (pathname === '/settings') return 'application_settings';
   return null;

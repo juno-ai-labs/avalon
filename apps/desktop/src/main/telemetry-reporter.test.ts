@@ -339,6 +339,56 @@ describe('TelemetryReporter', () => {
     expect(row?.event).toMatchObject({ eventId, properties: { state: 'installed' } });
   });
 
+  it('accepts only authenticated sanitized JavaScript exception reports', async () => {
+    const unauthenticated = await harness({ auth: null });
+    await unauthenticated.reporter.javascriptException(
+      'renderer', 'type_error', 'a'.repeat(32), 'available', ['renderer.js:12:4'],
+    );
+    expect(await unauthenticated.spool.ready(new Date('2026-08-12T20:00:01.000Z'))).toEqual([]);
+
+    const authenticated = await harness({
+      auth: {
+        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+      },
+    });
+    await authenticated.reporter.javascriptException(
+      'renderer', 'type_error', 'b'.repeat(32), 'available', ['renderer.js:12:4'],
+    );
+    const [row] = await authenticated.spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(row?.event).toMatchObject({
+      name: 'javascript_exception',
+      source: 'desktop-main',
+      identityScope: 'workspace-user',
+      properties: {
+        process: 'renderer', errorCode: 'type_error', breadcrumbStatus: 'available',
+        fingerprint: 'b'.repeat(32), generatedFrames: ['renderer.js:12:4'],
+      },
+    });
+  });
+
+  it('correlates one rich connector intent without emitting its legacy version', async () => {
+    const { reporter, spool } = await harness({
+      auth: {
+        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+      },
+    });
+    const operationId = '018f0000-0000-7000-8000-000000000099';
+
+    await reporter.semanticProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'linear', scope: 'personal',
+      method: 'oauth', capabilityCount: 'one',
+    }, undefined, operationId);
+
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.event).toMatchObject({
+      name: 'connector_setup_requested_v2', context: { operationId },
+      properties: {
+        connector: 'linear', scope: 'personal', method: 'oauth', capabilityCount: 'one',
+      },
+    });
+  });
+
   it('uploads authenticated rows to only their regional API and acknowledges durable results', async () => {
     const { reporter, spool, fetch } = await harness({
       auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
