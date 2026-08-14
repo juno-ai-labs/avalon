@@ -302,6 +302,11 @@ export function WorkstreamComposer({
         model={{
           kind: 'settled',
           model: workstream.latestHarnessRun?.model ?? workstream.modelOverride ?? null,
+          // The pin decides what the control may claim about the future, which
+          // is not the same question as what it shows. Only a pinned work
+          // stream is fixed to this model; an unpinned one re-resolves the flag
+          // on every launch and may land somewhere else next run.
+          pinned: workstream.modelOverride != null,
         }}
         onMention={beginMention}
         onOpenAttachment={onOpenAttachment}

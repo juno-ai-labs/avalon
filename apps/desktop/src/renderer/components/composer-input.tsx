@@ -65,10 +65,10 @@ interface ComposerInputProps {
    * the flag's answer, and this process cannot see the served variation.
    *
    * `settled` is the same control with its trigger disabled: it shows the model
-   * already in force and does not open. The pin is read once, when the work
-   * stream is created, and every run of it resolves from that same row — so
-   * there is no decision left to offer, and offering one would promise a change
-   * the next run would not honour. The control stays anyway because the question
+   * already in force and does not open. The pin is written once, when the work
+   * stream is created, and nothing afterwards edits it — so there is no decision
+   * left to offer, and offering one would promise a change the next run would
+   * not honour. The control stays anyway because the question
    * it answers survives the decision: a developer reading a transcript wants to
    * know which model wrote it, and until this existed the only way to find out
    * was the database.
@@ -90,6 +90,14 @@ interface ComposerInputProps {
        * composer does.
        */
       model: string | null;
+      /**
+       * Whether the work stream carries a pin. It changes what the control may
+       * honestly claim, not what it shows: a pinned work stream runs on `model`
+       * every time, while an unpinned one re-resolved the flag to get there and
+       * may resolve differently next launch. Both are equally unchangeable
+       * *here* — that is the disable — but only one of them is fixed.
+       */
+      pinned: boolean;
     };
   onAttach: (files: FileList | File[]) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -406,7 +414,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                     )}
                     disabled={model.kind === 'settled' || submitting}
                     label={model.kind === 'settled'
-                      ? agentModelInUseTriggerLabel(model.model)
+                      ? agentModelInUseTriggerLabel(model.model, model.pinned)
                       : agentModelTriggerLabel(model.value)}
                   >
                     <span>{model.kind === 'settled' ? agentModelInUseLabel(model.model) : agentModelLabel(model.value)}</span>
