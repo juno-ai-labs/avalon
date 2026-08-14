@@ -100,18 +100,22 @@ slug reuses Avalon's existing work-stream address vocabulary and a previously
 stored valid branch remains stable. Before a different selection
 destroys an existing sandbox, the harness creates and verifies a compressed
 recovery resource containing source, untracked files, databases, and artifacts,
-while excluding credentials, Git internals, and regenerable dependency trees.
+plus a portable Git bundle of local refs. It excludes credentials, the live
+`.git` directory, and regenerable dependency trees.
 If the copy fails, changes during transfer, or exceeds 50 MiB compressed, the
 existing workspace remains untouched.
 
-Before any model-facing repository file or command tool runs, Avalon mints a
+Before initial model-facing repository access, Avalon mints a
 one-hour installation token narrowed to that repository and the connector's
-current access level, mounts it through Daytona host-scoped secret substitution,
+current access level and the model's durable requested ceiling, mounts it through Daytona host-scoped secret substitution,
 creates or restores the recorded branch, switches to it, and exports the exact
-name as `AVALON_GIT_BRANCH` and base as `AVALON_GIT_BASE_BRANCH`. If the branch already exists remotely, bootstrap
-restores that head so later sessions continue the same PR history; otherwise a
-`full_access` bootstrap creates the remote branch at the recorded base and sets
-its upstream. A `read_only` token technically blocks remote mutation while still
+name as `AVALON_GIT_BRANCH` and base as `AVALON_GIT_BASE_BRANCH`. If the branch
+already exists remotely, bootstrap restores that head so later sessions continue
+the same PR history; otherwise Avalon creates the branch locally at the recorded
+base and defers remote creation until the model first pushes. Later tools attempt
+to restore the prepared branch, but an active merge, rebase, bisect, or conflicting
+local edit does not lock the model out of the Terminal tools it needs to inspect
+and repair that Git state. A `read_only` token technically blocks remote mutation while still
 allowing local edits and commits. A `full_access` token permits ordinary trained
 `git push` and `gh pr` workflows. The plugin prompt tells the model to remain on
 the prepared branch, push only it, and target the prepared base branch. GitHub
@@ -268,7 +272,8 @@ Migration `0075_terminal_workspaces.sql` adds:
   retention, and final-diff state;
 - `sandbox_tasks` for durable command submission and one final result;
 - `sandbox_imported_resources` for generation-scoped deterministic imports;
-- `workstream_terminal_repositories` for the exact GitHub repository and refs;
+- `workstream_terminal_repositories` for the exact GitHub repository, refs, and
+  selected remote-access ceiling;
 - `terminal_publication_grants` for run/principal provenance retained by the
   optional typed publisher; and
 - `repository_publications` for convergent trusted-write reconciliation.
@@ -368,7 +373,11 @@ before it backs up or replaces state. A stopped or archived sandbox that is
 started only for backup is restored to its prior lifecycle on failure. Repeating
 checkout refreshes an advanced default-branch SHA while retaining the existing
 `avalon/adjective-adjective-adjective-noun` head ref, and recoverable connector
-statuses are revalidated rather than preemptively omitted.
+statuses are revalidated rather than preemptively omitted. A requested
+`read_only` level is stored as a credential ceiling, checkout receipts are
+recoverable, backups carry local Git refs, initial bootstrap no longer pushes an
+empty remote branch, and later branch restoration is repairable rather than a
+Terminal-wide lockout.
 
 **Why:** A command-table check did not cover file tools from another run; checkout
 could delete their sandbox. Backup failure could also leave an archived sandbox
@@ -382,7 +391,8 @@ existing work-stream word generator already express the required boundaries.
 **Consequences:** Any future repository replacement path must hold the shared
 operation lease through backup and the generation-fenced D1 update. Temporary
 lifecycle changes require compensation, and a branch ref remains stable across
-base refreshes and sandbox generations.
+base refreshes and sandbox generations. Remote branch creation belongs to an
+actual model push, and recovery archives must retain local commit history.
 
 ### 2026-08-13 — Standard Git and GitHub CLI replace a second publication gate
 

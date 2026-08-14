@@ -276,8 +276,9 @@ export function createTerminalFinalDiffPreserver(
 
 /**
  * Creates the durable recovery point required before repository replacement.
- * Provider credentials and Git internals are excluded; source files,
- * untracked files, databases, and generated artifacts remain in the archive.
+ * Provider credentials and the live .git directory are excluded; source files,
+ * untracked files, databases, generated artifacts, and a portable Git bundle
+ * of local refs remain in the archive.
  */
 export function createTerminalWorkspaceBackup(
   env: Pick<Env, "AVALON_REGION" | "DB" | "PAYLOADS">,
@@ -320,7 +321,9 @@ export function createTerminalWorkspaceBackup(
       };
     }
 
-    const archivePath = `/tmp/avalon-workspace-backup-${input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 64)}.tar.gz`;
+    const safeCallId = input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 64);
+    const archivePath = `/tmp/avalon-workspace-backup-${safeCallId}.tar.gz`;
+    const stagingPath = `/tmp/avalon-workspace-backup-${safeCallId}-staging`;
     const result = await provider.runCommand(input.providerSandboxId, {
       taskName: `avalon-workspace-backup-${input.generation}-${input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 48)}`,
       cwd: "/workspace",
@@ -329,8 +332,18 @@ export function createTerminalWorkspaceBackup(
       command: [
         "set -euo pipefail",
         `archive='${archivePath}'`,
-        "if ! find . -mindepth 1 -maxdepth 1 ! -name .avalon ! -name .git -print -quit | grep -q .; then printf 'EMPTY\\n'; exit 0; fi",
-        "tar --exclude='./.avalon' --exclude='*/.avalon' --exclude='./.git' --exclude='*/.git' --exclude='./node_modules' --exclude='*/node_modules' --exclude='./.venv' --exclude='*/.venv' --exclude='./vendor/bundle' --exclude='*/vendor/bundle' -czf \"$archive\" .",
+        `staging='${stagingPath}'`,
+        "rm -rf -- \"$staging\"",
+        "mkdir -p -- \"$staging/.avalon-recovery\"",
+        "has_bundle=0",
+        "if [ -d .git ] && git show-ref --quiet; then git bundle create \"$staging/.avalon-recovery/repository.bundle\" --all; has_bundle=1; fi",
+        "if ! find . -mindepth 1 -maxdepth 1 ! -name .avalon ! -name .git -print -quit | grep -q . && [ \"$has_bundle\" -eq 0 ]; then rm -rf -- \"$staging\"; printf 'EMPTY\\n'; exit 0; fi",
+        "if [ \"$has_bundle\" -eq 1 ]; then",
+        "  tar --exclude='./.avalon' --exclude='*/.avalon' --exclude='./.git' --exclude='*/.git' --exclude='./node_modules' --exclude='*/node_modules' --exclude='./.venv' --exclude='*/.venv' --exclude='./vendor/bundle' --exclude='*/vendor/bundle' -czf \"$archive\" . -C \"$staging\" .avalon-recovery",
+        "else",
+        "  tar --exclude='./.avalon' --exclude='*/.avalon' --exclude='./.git' --exclude='*/.git' --exclude='./node_modules' --exclude='*/node_modules' --exclude='./.venv' --exclude='*/.venv' --exclude='./vendor/bundle' --exclude='*/vendor/bundle' -czf \"$archive\" .",
+        "fi",
+        "rm -rf -- \"$staging\"",
         "size=$(stat -c %s -- \"$archive\")",
         `if [ "$size" -gt ${MAX_WORKSPACE_BACKUP_BYTES} ]; then rm -f -- "$archive"; printf 'TOO_LARGE %s\\n' "$size"; exit 0; fi`,
         "digest=$(sha256sum -- \"$archive\" | cut -d ' ' -f 1)",
@@ -412,6 +425,7 @@ export function createTerminalWorkspaceBackup(
           generation: input.generation,
           size: bytes.byteLength,
           excluded: [".avalon", ".git", "node_modules", ".venv", "vendor/bundle"],
+          gitHistory: ".avalon-recovery/repository.bundle",
         }),
         createdAt,
         createdAt,

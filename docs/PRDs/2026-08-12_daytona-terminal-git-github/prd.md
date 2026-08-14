@@ -131,8 +131,8 @@ Repository choice is a model tool call, not a participant transcript gate.
 remote access, then records the repository, canonical name, refs, and connection
 server-side. Before a different choice destroys an existing sandbox, Avalon
 creates a verified attached recovery archive of source, untracked files,
-databases, and generated artifacts. Git internals, credentials, and regenerable
-dependencies are excluded. Backup failure, mutation during transfer, or a
+databases, generated artifacts, and a portable Git bundle of local refs. The live
+`.git` directory, credentials, and regenerable dependencies are excluded. Backup failure, mutation during transfer, or a
 compressed size above 50 MiB leaves the current sandbox and selection untouched.
 
 An active GitHub connection with settings adds a slightly indented **GitHub**
@@ -561,9 +561,9 @@ model tool accepts it.
 Use when repository work needs one exact GitHub `owner/name`. The model chooses
 from GitHub repository discovery; Avalon resolves the choice through the current
 connector policy and records the immutable provider identity and fixed work-
-stream refs. `requiredRemoteAccess` defaults to the least authority. The model
-sets `full_access` when the task needs a push, pull request, or other remote
-mutation.
+stream refs. `requiredRemoteAccess` defaults to the least authority and is stored
+as a durable ceiling even when connector policy permits more. The model sets
+`full_access` when the task needs a push, pull request, or other remote mutation.
 
 ```ts
 type CheckoutRepositoryArguments = {
@@ -897,11 +897,14 @@ alongside the tool descriptions:
 > `remoteAccess` is the remote boundary: `read_only` allows local edits and
 > commits but its credential cannot push or mutate GitHub; `full_access`
 > provides a repository-scoped credential for ordinary `git` and `gh` commands.
-> Before every repository tool Avalon creates or restores
-> `$AVALON_GIT_BRANCH` and switches to it. Stay on that branch, commit normally,
+> Before initial repository access Avalon creates or restores
+> `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that
+> branch; if an active Git operation prevents the switch, inspect and repair Git
+> state before pushing. Stay on the prepared branch, commit normally,
 > push only that branch, and create or update its pull request against
 > `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. Avalon
-> creates a durable recovery backup before
+> creates a durable recovery backup, including a portable bundle of local Git
+> refs, before
 > replacing nonempty workspace state. For deliberate text changes, read first
 > with `terminal_read_file` and use
 > `terminal_edit_file` or `terminal_apply_patch`; use `terminal_write_file` only
@@ -1015,11 +1018,14 @@ The model uses real `git status`, `git diff`, tests, `git add`, `git commit`,
 `git push`, and `gh pr` commands. Commits use the Avalon bot identity. Before the
 model receives terminal control, Avalon creates or restores the recorded
 `avalon/adjective-adjective-adjective-noun` branch, switches to it, sets its
-upstream, and exposes its exact name as `AVALON_GIT_BRANCH` and base as
+upstream when the remote branch already exists, and exposes its exact name as `AVALON_GIT_BRANCH` and base as
 `AVALON_GIT_BASE_BRANCH`. Multiple commits and
 pushes update that same branch and open PR. The prompt tells the model not to
 push the default branch or another ref. GitHub cannot encode that branch rule in
-an installation token, and this design intentionally does not add a proxy.
+an installation token, and this design intentionally does not add a proxy. A new
+remote branch is created by the model's first actual push, not as a checkout side
+effect. If later automatic branch restoration is blocked by an in-progress Git
+operation, Terminal remains available so the model can inspect and repair it.
 
 `publish_branch_and_pr({ title, body })` remains an optional typed convenience
 for a clean committed branch. It is not required for standard Git/CLI use.

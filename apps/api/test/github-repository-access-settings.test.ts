@@ -6,6 +6,7 @@ import type { AuthContext, Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import {
+  createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
@@ -215,6 +216,59 @@ describe("GitHub repository access settings", () => {
     ).get(CONNECTION_ID)).toEqual({ read_token_expires_at: "2099-01-01T00:00:00.000Z" });
   });
 
+  it("updates only the repository-policy subtree when another connector field changes concurrently", async () => {
+    const database = migratedDatabase();
+    await seedConnection(database);
+    vi.mocked(fetch).mockImplementationOnce(async () => {
+      database.prepare(
+        "UPDATE connector_connections SET config_json = json_set(config_json, '$.pollCursor', 'new-cursor') WHERE id = ?",
+      ).run(CONNECTION_ID);
+      return jsonResponse({ total_count: 0, repositories: [] });
+    });
+    const service = new ConnectionService(environment(database), authorization());
+
+    await service.updateGitHubRepositoryAccess(CONNECTION_ID, {
+      expectedRevision: 0,
+      mode: "all_repositories",
+      defaultRemoteAccess: "read_only",
+      repositories: [],
+    });
+
+    expect(JSON.parse(String(database.prepare(
+      "SELECT config_json FROM connector_connections WHERE id = ?",
+    ).get(CONNECTION_ID)?.config_json))).toMatchObject({
+      installationId: "9001",
+      pollCursor: "new-cursor",
+      githubRepositoryAccess: { revision: 1, defaultAccess: "read_only" },
+    });
+  });
+
+  it("revokes selected Terminal state when its GitHub connection is disabled", async () => {
+    const database = migratedDatabase();
+    await seedConnection(database);
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-000000000046', '${WORKSPACE_ID}', 'Terminal',
+              'Terminal', 'ad_hoc', '${USER_ID}', 'idle', '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO workstream_terminal_repositories
+        (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
+         base_ref, base_sha, head_ref, state, read_token_expires_at, selected_by_user_id,
+         created_at, updated_at)
+      VALUES ('${WORKSPACE_ID}', '00000000-0000-7000-8000-000000000046', '${CONNECTION_ID}',
+              101, 'with-avalon/avalon', 'main', '${"a".repeat(40)}',
+              'avalon/bright-coastal-exact-heron', 'selected', '2099-01-01T00:00:00.000Z',
+              '${USER_ID}', '2026-01-01', '2026-01-01');
+    `);
+
+    await new ConnectionService(environment(database), authorization()).disable(CONNECTION_ID);
+
+    expect(database.prepare(
+      "SELECT state, read_token_expires_at FROM workstream_terminal_repositories WHERE connection_id = ?",
+    ).get(CONNECTION_ID)).toEqual({ state: "revoked", read_token_expires_at: null });
+  });
+
   it("lets members inspect workspace policy but reserves changes for administrators", async () => {
     const database = migratedDatabase();
     await seedConnection(database);
@@ -309,6 +363,10 @@ function environment(database: DatabaseSync): Env {
     GITHUB_APP_CLIENT_SECRET: "secret",
     GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nunused\n-----END PRIVATE KEY-----",
     GITHUB_WEBHOOK_SECRET: "webhook-secret",
+    WORKSPACE_SCHEDULERS: {
+      idFromName: () => createTestDurableObjectId("github-settings-scheduler"),
+      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+    },
   });
 }
 

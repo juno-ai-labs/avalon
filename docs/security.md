@@ -572,7 +572,9 @@ incident response that may prompt it.
 **What changed:** GitHub authorization distinguishes absent legacy policy from
 present malformed policy, resolves immutable repository IDs before applying
 overrides, refuses settings discovery for disabled connections, and commits a
-policy change with Terminal credential invalidation atomically. Repository
+policy subtree change with Terminal credential invalidation atomically. Disabling
+a GitHub connection atomically revokes its selected Terminal rows and cached
+credential expiry. Repository
 replacement also claims the shared sandbox operation lease and compensates a
 temporary stopped/archive wake on failure.
 
@@ -587,7 +589,9 @@ for immutable identity. GitHub does not issue branch-scoped tokens; connector
 `disabled`, provider IDs, the D1 batch, and the existing sandbox lease supply the
 enforceable primitives.
 
-**Consequences:** A policy downgrade and credential expiry are indivisible.
+**Consequences:** A policy downgrade and credential expiry are indivisible, and
+no later Terminal acquisition may treat a disabled or missing connection as an
+absent permissive policy.
 Malformed present policy denies use until repaired, and every destructive
 workspace replacement must participate in the same mutation lease as ordinary
 Terminal tools.

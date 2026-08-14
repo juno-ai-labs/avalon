@@ -1,3 +1,7 @@
+ALTER TABLE workstream_terminal_repositories
+  ADD COLUMN remote_access TEXT NOT NULL DEFAULT 'full_access'
+  CHECK (remote_access IN ('read_only', 'full_access'));
+
 DROP TRIGGER workstream_terminal_repositories_workspace_guard_insert;
 
 CREATE TRIGGER workstream_terminal_repositories_workspace_guard_insert
