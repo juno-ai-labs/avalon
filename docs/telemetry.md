@@ -188,10 +188,12 @@ handled network failure is diagnostic only: unlike a real JavaScript exception o
 rejection, it does not emit an essential `process_health` transition.
 
 The public site uses the same anonymous capability boundary but has its own
-identity rule. It first obtains a content-free Cloudflare `eu`/`global` route.
-Global then reads or creates one random first-party `localStorage` epoch for
-multi-page acquisition paths. EU uses an in-memory epoch for that page and does
-not read or write a persistent analytics identifier. Registered events cover
+identity rule. It first obtains a content-free Cloudflare `eu`/`global` route and
+a five-minute signed decision token. Global then reads or creates one random
+first-party `localStorage` epoch for multi-page acquisition paths. EU uses an
+in-memory epoch for that page and does not read or write a persistent analytics
+identifier. Bootstrap consumes the signed first decision instead of
+independently routing its second request. Registered events cover
 safe page/path/referrer/campaign fields, bounded actions and placements, and
 handoff type/method/validity. URL query strings/fragments, tickets, provider
 state, resource IDs, forms, and page content are never sent. See
@@ -474,8 +476,9 @@ also owns the canonical preference/version and opaque projection handle.
 receipts, profile jobs, identity links, replay audits, rejection/rate buckets, and
 destination circuit state live in regional D1. `telemetry_eu_events` is the EU
 query projection with release/platform/channel/correlation dimensions.
-Public-site Global epochs reuse the journey table; the content-free route probe
-does not create a row. EU site epochs are page-scoped and therefore do not join
+Public-site Global epochs reuse the journey table; the content-free, signed
+route probe does not create a row. Its short-lived token is not persisted as
+identity or authority. EU site epochs are page-scoped and therefore do not join
 separate page loads.
 
 `telemetry_crash_reports` is the content-free raw-object index plus the sanitized
@@ -559,6 +562,25 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-13 — Public-site bootstrap is bound to its pre-identity route
+
+**What changed:** Global now signs the coarse public-site route probe and
+bootstrap consumes that exact short-lived decision. A different Cloudflare
+country on the second request cannot re-route the selected anonymous epoch, and
+an existing conflicting journey is rejected.
+
+**Why:** Region-before-identity is only true when the decision that controls
+browser storage is also authoritative at persistence. Two independent edge
+classifications left a race during network changes.
+
+**Considered and rejected:** Browser-only response comparison, which detects the
+problem after persistence, and a persistent region cookie, which would create
+another residency-bearing browser identifier.
+
+**Consequences:** The public route response and site bootstrap request share a
+strict signed-token contract. Desktop's one-request bootstrap remains unchanged,
+and route-token failures stay isolated from page behavior.
 
 ### 2026-08-13 — Pico-level journeys use authoritative outcomes without duplicate events
 

@@ -20,7 +20,7 @@ import { ApiError } from "../lib/api-error";
 import { getIdentityAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { acceptAuthenticatedTelemetry } from "../telemetry/authenticated";
-import { coarseTelemetryRoute, TelemetryBootstrapService } from "../telemetry/bootstrap";
+import { TelemetryBootstrapService } from "../telemetry/bootstrap";
 import { CrashIngestService } from "../telemetry/crash-ingest";
 import { purgeIneligibleCrashReports } from "../telemetry/crash-delivery";
 import { ProductAnalyticsPreferenceService } from "../telemetry/preference";
@@ -48,13 +48,15 @@ const crashUploadBodyLimit = bodyLimit({
   },
 });
 
-publicTelemetryRoutes.get("/route", (c) => {
+publicTelemetryRoutes.get("/route", async (c) => {
   if (c.env.AVALON_REGION !== "global") {
     throw new ApiError(404, "not_found", "The requested API route does not exist");
   }
   const cf = c.req.raw.cf as { country?: string } | undefined;
   c.header("Cache-Control", "no-store");
-  return c.json(TelemetryRouteResponseSchema.parse(coarseTelemetryRoute(cf?.country)));
+  return c.json(TelemetryRouteResponseSchema.parse(
+    await new TelemetryBootstrapService(c.env).route(cf?.country),
+  ));
 });
 
 const CrashUploadMetadataSchema = z.object({
@@ -161,11 +163,18 @@ publicTelemetryRoutes.post(
       response = await new TelemetryBootstrapService(c.env).bootstrap(
         c.req.valid("json").anonymousEpochId,
         cf?.country,
+        c.req.valid("json").routeToken,
       );
     } catch (error) {
       const code = error instanceof Error ? error.message : 'telemetry_bootstrap_failed';
       if (code === 'telemetry_journey_closed') {
         throw new ApiError(409, code, 'The onboarding telemetry journey is closed');
+      }
+      if (code === 'telemetry_route_decision_conflict') {
+        throw new ApiError(409, code, 'The telemetry route changed before the journey started');
+      }
+      if (code === 'telemetry_route_decision_invalid' || code === 'telemetry_route_decision_expired') {
+        throw new ApiError(400, code, 'The telemetry route decision is invalid or expired');
       }
       throw new ApiError(500, 'internal_error', 'Telemetry routing could not be resolved');
     }

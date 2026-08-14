@@ -75,10 +75,13 @@ async function coarseRoute(): Promise<TelemetryRouteResponse> {
   if (!response.ok) throw new Error('site_telemetry_route_failed');
   const value = await response.json() as Record<string, unknown>;
   if ((value.route !== 'global' && value.route !== 'eu')
-    || (value.routingBasis !== 'ip_geolocation' && value.routingBasis !== 'geolocation_fallback')) {
+    || (value.routingBasis !== 'ip_geolocation' && value.routingBasis !== 'geolocation_fallback')
+    || typeof value.routeToken !== 'string'
+    || value.routeToken.length < 32
+    || value.routeToken.length > 2_048) {
     throw new Error('site_telemetry_route_invalid');
   }
-  return { route: value.route, routingBasis: value.routingBasis };
+  return { route: value.route, routingBasis: value.routingBasis, routeToken: value.routeToken };
 }
 
 async function capability(): Promise<CapabilityState> {
@@ -90,7 +93,7 @@ async function capability(): Promise<CapabilityState> {
   const response = await fetch(`${apiBaseUrl()}/telemetry/bootstrap`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ anonymousEpochId: epochId }),
+    body: JSON.stringify({ anonymousEpochId: epochId, routeToken: route.routeToken }),
   });
   if (!response.ok) throw new Error('site_telemetry_bootstrap_failed');
   const value = { ...(await response.json() as TelemetryBootstrapResponse), anonymousEpochId: epochId };

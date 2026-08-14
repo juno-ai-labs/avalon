@@ -2,8 +2,10 @@ import { newId } from "@avalon/db";
 import {
   TelemetryBootstrapResponseSchema,
   TelemetryEnvelopeSchema,
+  TelemetryRouteResponseSchema,
   type TelemetryBootstrapResponse,
   type TelemetryEnvelope,
+  type TelemetryRouteResponse,
 } from "@avalon/contracts/telemetry";
 import type { Env } from "../env";
 import { hmacSha256, timingSafeEqualText } from "../lib/crypto";
@@ -15,6 +17,7 @@ const EU_COUNTRIES = new Set([
   "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK",
 ]);
 const CAPABILITY_LIFETIME_MS = 60 * 60 * 1_000;
+const ROUTE_DECISION_LIFETIME_MS = 5 * 60 * 1_000;
 const CONTROL_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 const ANONYMOUS_EVENT_NAMES = new Set([
   "screen_viewed",
@@ -31,6 +34,14 @@ interface CapabilityClaims {
   version: 1;
   journeyId: string;
   anonymousEpochId: string;
+  route: "global" | "eu";
+  routingBasis: "ip_geolocation" | "geolocation_fallback";
+  expiresAt: number;
+}
+
+interface RouteDecisionClaims {
+  version: 1;
+  purpose: "telemetry_route";
   route: "global" | "eu";
   routingBasis: "ip_geolocation" | "geolocation_fallback";
   expiresAt: number;
@@ -75,6 +86,33 @@ async function verifyCapability(secret: string, token: string): Promise<Capabili
   }
 }
 
+async function signRouteDecision(secret: string, claims: RouteDecisionClaims): Promise<string> {
+  const payload = base64UrlEncode(JSON.stringify(claims));
+  return `${payload}.${await hmacSha256(secret, payload)}`;
+}
+
+async function verifyRouteDecision(secret: string, token: string): Promise<RouteDecisionClaims> {
+  const parts = token.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) throw new Error("telemetry_route_decision_invalid");
+  const expected = await hmacSha256(secret, parts[0]);
+  if (!timingSafeEqualText(expected, parts[1])) throw new Error("telemetry_route_decision_invalid");
+  let claims: RouteDecisionClaims;
+  try {
+    claims = JSON.parse(base64UrlDecode(parts[0])) as RouteDecisionClaims;
+  } catch (error) {
+    throw new Error("telemetry_route_decision_invalid", { cause: error });
+  }
+  if (
+    claims.version !== 1
+    || claims.purpose !== "telemetry_route"
+    || (claims.route !== "global" && claims.route !== "eu")
+    || (claims.routingBasis !== "ip_geolocation" && claims.routingBasis !== "geolocation_fallback")
+    || !Number.isSafeInteger(claims.expiresAt)
+  ) throw new Error("telemetry_route_decision_invalid");
+  if (Date.now() > claims.expiresAt) throw new Error("telemetry_route_decision_expired");
+  return claims;
+}
+
 export function coarseTelemetryRoute(country: string | undefined): {
   route: "global" | "eu";
   routingBasis: "ip_geolocation" | "geolocation_fallback";
@@ -113,9 +151,35 @@ export class TelemetryBootstrapService {
     return this.env.TELEMETRY_CAPABILITY_SIGNING_KEY ?? this.env.SESSION_SIGNING_KEY;
   }
 
-  async bootstrap(anonymousEpochId: string, country: string | undefined): Promise<TelemetryBootstrapResponse> {
+  async route(country: string | undefined): Promise<TelemetryRouteResponse> {
+    if (this.env.AVALON_REGION !== "global") throw new Error("telemetry_bootstrap_global_only");
+    const route = coarseTelemetryRoute(country);
+    const claims: RouteDecisionClaims = {
+      version: 1,
+      purpose: "telemetry_route",
+      ...route,
+      expiresAt: Date.now() + ROUTE_DECISION_LIFETIME_MS,
+    };
+    return TelemetryRouteResponseSchema.parse({
+      ...route,
+      routeToken: await signRouteDecision(this.signingKey(), claims),
+    });
+  }
+
+  async bootstrap(
+    anonymousEpochId: string,
+    country: string | undefined,
+    routeToken?: string,
+  ): Promise<TelemetryBootstrapResponse> {
     if (this.env.AVALON_REGION !== "global") throw new Error("telemetry_bootstrap_global_only");
     const now = new Date();
+    const verifiedRoute = routeToken
+      ? await verifyRouteDecision(this.signingKey(), routeToken)
+      : coarseTelemetryRoute(country);
+    const requestedRoute = {
+      route: verifiedRoute.route,
+      routingBasis: verifiedRoute.routingBasis,
+    };
     const existing = await this.env.DB.prepare(
       `SELECT journey_id, route, routing_basis, closed_at, delete_at
        FROM telemetry_onboarding_journeys WHERE anonymous_epoch_id = ?`,
@@ -128,6 +192,10 @@ export class TelemetryBootstrapService {
     }>();
     if (existing && Date.parse(existing.delete_at) > now.getTime()) {
       if (existing.closed_at) throw new Error('telemetry_journey_closed');
+      if (routeToken && (
+        existing.route !== requestedRoute.route
+        || existing.routing_basis !== requestedRoute.routingBasis
+      )) throw new Error("telemetry_route_decision_conflict");
       const expiresAt = new Date(Math.min(
         Date.parse(existing.delete_at),
         now.getTime() + CAPABILITY_LIFETIME_MS,
@@ -158,7 +226,7 @@ export class TelemetryBootstrapService {
       ).bind(anonymousEpochId, now.toISOString()).run();
     }
     const journeyId = newId(now.getTime());
-    const route = coarseTelemetryRoute(country);
+    const route = requestedRoute;
     const expiresAt = new Date(now.getTime() + CAPABILITY_LIFETIME_MS);
     const deleteAt = new Date(now.getTime() + CONTROL_RETENTION_MS);
     const inserted = await this.env.DB.prepare(
@@ -179,7 +247,7 @@ export class TelemetryBootstrapService {
       // A concurrent bootstrap won the anonymous-epoch uniqueness race. Reuse
       // its fixed route rather than returning a capability for an unpersisted
       // journey or replacing its coarse-location decision.
-      return this.bootstrap(anonymousEpochId, country);
+      return this.bootstrap(anonymousEpochId, country, routeToken);
     }
     const claims: CapabilityClaims = {
       version: 1,

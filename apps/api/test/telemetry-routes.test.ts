@@ -42,10 +42,12 @@ describe('telemetry HTTP bounds', () => {
     const prepare = vi.fn();
     const response = await publicApp().request('/telemetry/route', {}, createTestEnv({
       AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: createTestD1Database({ prepare }),
+      TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
     }));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       route: 'global', routingBasis: 'geolocation_fallback',
+      routeToken: expect.any(String),
     });
     expect(prepare).not.toHaveBeenCalled();
 
@@ -53,6 +55,52 @@ describe('telemetry HTTP bounds', () => {
       AVALON_REGION: 'eu', LOG_LEVEL: 'error', DB: createTestD1Database({ prepare }),
     }));
     expect(regional.status).toBe(404);
+  });
+
+  it('binds bootstrap to the signed route decision when Cloudflare country changes', async () => {
+    const database = migratedSqliteDatabase();
+    const environment = createTestEnv({
+      AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
+      TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
+    });
+    const routeRequest = new Request('https://api.with-avalon.com/telemetry/route');
+    Object.defineProperty(routeRequest, 'cf', { value: { country: 'US' } });
+    const routeResponse = await publicApp().request(routeRequest, undefined, environment);
+    const route = await routeResponse.json() as { route: string; routeToken: string };
+    expect(route.route).toBe('global');
+
+    const bootstrapRequest = new Request('https://api.with-avalon.com/telemetry/bootstrap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.1' },
+      body: JSON.stringify({ anonymousEpochId: epochId, routeToken: route.routeToken }),
+    });
+    Object.defineProperty(bootstrapRequest, 'cf', { value: { country: 'DE' } });
+    const bootstrapResponse = await publicApp().request(bootstrapRequest, undefined, environment);
+    const bootstrapBody = await bootstrapResponse.json();
+
+    expect(bootstrapResponse.status, JSON.stringify(bootstrapBody)).toBe(201);
+    expect(bootstrapBody).toMatchObject({
+      route: 'global', routingBasis: 'ip_geolocation',
+    });
+    expect(database.prepare(
+      'SELECT route FROM telemetry_onboarding_journeys WHERE anonymous_epoch_id = ?',
+    ).get(epochId)).toEqual({ route: 'global' });
+
+    const rejectedEpochId = '018f22f2-4c22-7abc-8def-0123456789bb';
+    const tamperedRouteToken = `${route.routeToken.slice(0, -1)}${route.routeToken.endsWith('a') ? 'b' : 'a'}`;
+    const tampered = await publicApp().request('/telemetry/bootstrap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ anonymousEpochId: rejectedEpochId, routeToken: tamperedRouteToken }),
+    }, environment);
+    expect(tampered.status).toBe(400);
+    await expect(tampered.json()).resolves.toMatchObject({
+      error: { code: 'telemetry_route_decision_invalid' },
+    });
+    expect(database.prepare(
+      'SELECT route FROM telemetry_onboarding_journeys WHERE anonymous_epoch_id = ?',
+    ).get(rejectedEpochId)).toBeUndefined();
+    database.close();
   });
 
   it('rejects an oversized anonymous batch before validation or persistence', async () => {
