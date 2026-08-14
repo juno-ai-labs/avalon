@@ -147,6 +147,9 @@ describe("Terminal repository publication", () => {
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringContaining("printf 'export GIT_SSL_CAINFO=%q\\n' \"$GIT_SSL_CAINFO\" >> '/workspace/.avalon/session.env'"),
     }));
+    const bootstrapCommand = vi.mocked(provider.runCommand).mock.calls.at(-1)?.[1].command ?? "";
+    expect(bootstrapCommand.indexOf('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'))
+      .toBeLessThan(bootstrapCommand.indexOf("clone --no-checkout"));
     expect(database.prepare(
       "SELECT bootstrapped_sandbox_generation, read_token_expires_at FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
     ).get(W, S)).toEqual({ bootstrapped_sandbox_generation: 1, read_token_expires_at: "2026-08-13T13:00:00.000Z" });

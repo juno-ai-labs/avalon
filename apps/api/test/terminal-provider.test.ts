@@ -18,10 +18,10 @@ describe("Daytona Terminal provider", () => {
       const caPath = join(directory, "proxy ca's bundle.pem");
       const sessionEnvPath = join(directory, "session.env");
       writeFileSync(caPath, "test certificate bundle");
-      execFileSync("bash", ["-c", terminalGitCaSetupCommands({
-        required: false,
-        sessionEnvPath,
-      }).join("\n")], {
+      execFileSync("bash", ["-c", [
+        "set -euo pipefail",
+        ...terminalGitCaSetupCommands({ required: false, sessionEnvPath }),
+      ].join("\n")], {
         env: { ...process.env, CURL_CA_BUNDLE: caPath },
       });
 
@@ -40,20 +40,22 @@ describe("Daytona Terminal provider", () => {
     const directory = mkdtempSync(join(tmpdir(), "avalon-terminal-ca-"));
     try {
       const markerPath = join(directory, "operation-ran");
-      const command = [
-        "set -euo pipefail",
-        ...terminalGitCaSetupCommands({ required: true }),
-        'printf invoked > "$AVALON_TEST_MARKER"',
-      ].join("\n");
+      for (const required of [false, true]) {
+        const command = [
+          "set -euo pipefail",
+          ...terminalGitCaSetupCommands({ required }),
+          'printf invoked > "$AVALON_TEST_MARKER"',
+        ].join("\n");
 
-      expect(() => execFileSync("bash", ["-c", command], {
-        env: {
-          ...process.env,
-          AVALON_TEST_MARKER: markerPath,
-          CURL_CA_BUNDLE: join(directory, "missing-ca.pem"),
-        },
-      })).toThrow();
-      expect(existsSync(markerPath)).toBe(false);
+        expect(() => execFileSync("bash", ["-c", command], {
+          env: {
+            ...process.env,
+            AVALON_TEST_MARKER: markerPath,
+            CURL_CA_BUNDLE: join(directory, "missing-ca.pem"),
+          },
+        })).toThrow();
+        expect(existsSync(markerPath)).toBe(false);
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
