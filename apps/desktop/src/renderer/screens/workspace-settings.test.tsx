@@ -500,6 +500,51 @@ describe('Workspace settings', () => {
     expect(screen.getByRole('combobox', { name: 'Default remote access' })).toBeDisabled();
   });
 
+  it('lets a member switch from a workspace GitHub policy to personal settings', async () => {
+    const workspaceConnectionId = '00000000-0000-7000-8000-000000000020';
+    const personalConnectionId = '00000000-0000-7000-8000-000000000021';
+    api.getConnections.mockResolvedValue([{
+      id: workspaceConnectionId,
+      connectorType: 'github',
+      scope: 'workspace',
+      displayName: 'GitHub · Avalon',
+      capabilities: ['github.metadata.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }, {
+      id: personalConnectionId,
+      connectorType: 'github',
+      scope: 'you',
+      ownerUserId: member.id,
+      displayName: 'GitHub · Sam',
+      capabilities: ['github.metadata.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }]);
+    api.getGitHubRepositoryAccessSettings.mockImplementation(async (connectionId: string) => ({
+      connectionId,
+      connectionName: connectionId === personalConnectionId ? 'GitHub · Sam' : 'GitHub · Avalon',
+      revision: 3,
+      mode: 'all_repositories',
+      defaultRemoteAccess: 'full_access',
+      repositories: [],
+      availableRepositories: [],
+    }));
+    renderSettings({ ...workspace, currentUser: member });
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
+
+    const connection = await screen.findByRole('combobox', { name: 'GitHub connection' });
+    expect(connection).toBeEnabled();
+    fireEvent.change(connection, { target: { value: personalConnectionId } });
+
+    await waitFor(() => expect(api.getGitHubRepositoryAccessSettings).toHaveBeenCalledWith(
+      personalConnectionId,
+      expect.any(AbortSignal),
+    ));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Repository availability' })).toBeEnabled());
+  });
+
   it('updates repository selection and remote access without restricting local edits', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000020',
@@ -536,6 +581,7 @@ describe('Workspace settings', () => {
       },
     ));
     expect(screen.getByText(/Terminal harness always permits local edits and local commits/iu)).toBeVisible();
+    expect(screen.queryByText(/participant explicitly requested/iu)).not.toBeInTheDocument();
   });
 
   it('refreshes members whenever settings opens even when the cached list is fresh', async () => {

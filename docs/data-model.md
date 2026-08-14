@@ -509,6 +509,28 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-13 — Recoverable GitHub status remains a valid Terminal reference
+
+**What changed:** Migration
+`0076_terminal_recoverable_github_connections.sql` replaces the Terminal
+repository insert guard so every non-disabled GitHub connection remains a valid
+reference. Repository policy updates atomically invalidate cached mounted-token
+expiry in the same D1 batch.
+
+**Why:** `error` and `needs_reconnect` are cached observations that provider
+revalidation may recover, but the original trigger treated them as permanent
+revocation and contradicted the connector contract. Separating a policy write
+from token invalidation also admitted a broader credential after interruption.
+
+**Considered and rejected:** Removing the trigger or permitting disabled rows.
+The workspace/type guard remains valuable, and `disabled` is the one intentional
+durable stop state.
+
+**Consequences:** Code may attempt current provider verification for every
+non-disabled connection, while database writes still reject disabled and
+cross-workspace references. Policy and mounted-credential state must continue to
+move transactionally.
+
 ### 2026-08-13 — Publication grants become compatibility provenance
 
 **What changed:** Existing Terminal publication-grant rows no longer parse
