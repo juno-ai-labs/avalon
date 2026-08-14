@@ -171,6 +171,7 @@ describe("Terminal model repository selection", () => {
     const archiveCommand = vi.mocked(provider.runCommand).mock.calls.find(([, command]) => (
       command.taskName.includes("workspace-backup") && !command.taskName.includes("cleanup")
     ))?.[1].command;
+    expect(archiveCommand).toContain("git bundle create");
     expect(archiveCommand).toContain("--exclude='*/.git'");
     expect(archiveCommand).toContain("--exclude='*/node_modules'");
     expect(provider.runCommand).toHaveBeenCalledBefore(vi.mocked(provider.deleteSandbox));
@@ -196,6 +197,24 @@ describe("Terminal model repository selection", () => {
       headRef: "avalon/bright-coastal-exact-heron",
       backup: null,
     });
+  });
+
+  it("treats a read-only request as a durable ceiling even when the policy allows full access", async () => {
+    const { database, context, selector } = await fixture();
+    database.prepare("UPDATE connector_connections SET status = 'disabled' WHERE id = ?")
+      .run(PERSONAL);
+
+    await expect(selector.checkout(context, {
+      repositoryFullName: "acme/widget",
+      requiredRemoteAccess: "read_only",
+    })).resolves.toMatchObject({
+      connectionId: WORKSPACE,
+      remoteAccess: "read_only",
+      remoteWritesAllowed: false,
+    });
+    expect(database.prepare(
+      "SELECT remote_access FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
+    ).get(W, S)).toEqual({ remote_access: "read_only" });
   });
 
   it("reuses the shared four-word Avalon naming scheme when no work-stream address exists", async () => {

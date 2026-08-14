@@ -238,6 +238,14 @@ model to push only that branch. Full access does not broaden the GitHub App's
 installed permission ceiling, but GitHub does not technically scope that token
 to the prepared branch.
 
+A connection with no stored repository policy deliberately begins as **all
+repositories / full access**. This is the requested rollout compatibility mode,
+and means enabling this Terminal release immediately makes native remote
+`git`/`gh` writes available across that connection's existing App installation;
+an administrator can change the default or select individual repositories on
+the GitHub Settings child page. A present but malformed policy does not receive
+that compatibility default and fails closed.
+
 GitHub delivery signatures are verified against the exact raw body before
 installation-aware normalization and queueing. Webhooks also discover durable
 repository, commit, file, issue, pull-request, release, workflow-run, and
@@ -603,15 +611,17 @@ repositories while retaining its revision for repair; only a wholly absent
 policy receives the legacy all-repositories default. Authorization resolves the
 provider's immutable repository ID before applying name-based defaults, and
 renamed repositories retain their configured override. Disabled connections
-never perform settings discovery, while recoverable `error` and
-`needs_reconnect` rows may be tried and revalidated at GitHub. Policy writes and
-mounted Terminal-credential invalidation commit in one D1 batch.
+never perform settings discovery and revoke selected Terminal rows, while
+recoverable `error` and `needs_reconnect` rows may be tried and revalidated at
+GitHub. Policy writes update only their JSON subtree and commit mounted
+Terminal-credential invalidation in one D1 batch.
 
 **Why:** Review found four ways cached or mutable state could outrank the durable
 administrator choice: malformed JSON failed open, a rename missed a read-only
 override, a disabled credential could still enumerate repositories, and a
 Worker interruption between policy persistence and token invalidation could
-leave a broader credential mounted.
+leave a broader credential mounted, and a whole-document rewrite could erase
+connector metadata written concurrently.
 
 **Considered and rejected:** Treating every non-healthy observation as a durable
 revocation, adding a repository-ID lint rule, and introducing another policy

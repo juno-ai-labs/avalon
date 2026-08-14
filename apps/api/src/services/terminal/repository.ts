@@ -31,6 +31,7 @@ export interface TerminalRepositorySelection {
   baseRef: string;
   baseSha: string;
   headRef: string;
+  remoteAccess: GitHubRepositoryAccessLevel;
   bootstrappedSandboxGeneration?: number | null;
   readTokenExpiresAt?: string | null;
 }
@@ -90,6 +91,7 @@ interface SelectionRow {
   base_ref: string;
   base_sha: string;
   head_ref: string;
+  remote_access: GitHubRepositoryAccessLevel;
   bootstrapped_sandbox_generation: number | null;
   read_token_expires_at: string | null;
 }
@@ -124,6 +126,7 @@ function selectionFromRow(row: SelectionRow): TerminalRepositorySelection {
     baseRef: row.base_ref,
     baseSha: row.base_sha,
     headRef: row.head_ref,
+    remoteAccess: row.remote_access,
     bootstrappedSandboxGeneration: row.bootstrapped_sandbox_generation,
     readTokenExpiresAt: row.read_token_expires_at,
   };
@@ -133,14 +136,9 @@ async function loadSelection(database: D1Database, workspaceId: string, workstre
   const row = await database.prepare(
     `SELECT repository.workspace_id, repository.workstream_id, repository.connection_id,
             repository.repository_id, repository.repository_full_name, repository.base_ref,
-            repository.base_sha, repository.head_ref,
+            repository.base_sha, repository.head_ref, repository.remote_access,
             repository.bootstrapped_sandbox_generation, repository.read_token_expires_at
        FROM workstream_terminal_repositories repository
-       JOIN connector_connections connection
-         ON connection.id = repository.connection_id
-        AND connection.workspace_id = repository.workspace_id
-        AND connection.connector_type = 'github'
-        AND connection.status = 'healthy'
       WHERE repository.workspace_id = ? AND repository.workstream_id = ?
         AND repository.state = 'selected'`,
   ).bind(workspaceId, workstreamId).first<SelectionRow>();
@@ -155,11 +153,18 @@ async function assertRepositoryRemoteAccess(
   const row = await database.prepare(
     `SELECT COALESCE(config_json, '{}') AS config_json
        FROM connector_connections
-      WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status = 'healthy'`,
+      WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'`,
   ).bind(selection.connectionId, selection.workspaceId).first<{ config_json: string }>();
+  if (!row) {
+    throw new TerminalToolError(
+      "repository_access_revoked",
+      `${selection.repositoryFullName} is no longer authorized by an active GitHub connection. Choose another authorized repository with terminal_checkout_repository or reconnect GitHub.`,
+      { reason: "The selected GitHub connection was disabled or removed; choose another authorized repository." },
+    );
+  }
   let config: Record<string, unknown> = {};
   try {
-    const parsed = JSON.parse(row?.config_json ?? "{}") as unknown;
+    const parsed = JSON.parse(row.config_json) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) config = parsed as Record<string, unknown>;
   } catch {
     // Invalid connector policy fails closed through the missing authorization.
@@ -176,14 +181,17 @@ async function assertRepositoryRemoteAccess(
       { reason: "Repository connector policy changed; choose an authorized repository before retrying." },
     );
   }
-  if (required === "full_access" && authorization.access !== "full_access") {
+  const effectiveAccess = selection.remoteAccess === "read_only"
+    ? "read_only"
+    : authorization.access;
+  if (required === "full_access" && effectiveAccess !== "full_access") {
     throw new TerminalToolError(
       "repository_remote_read_only",
       `${selection.repositoryFullName} has read-only remote access. Local file edits and local commits are allowed, but push and pull-request publication are blocked. Ask a connector administrator for full access before retrying publication.`,
       { reason: "Continue local work, but do not retry a remote mutation until the repository has full access." },
     );
   }
-  return authorization.access;
+  return effectiveAccess;
 }
 
 export async function bootstrapTerminalRepository(
@@ -258,25 +266,23 @@ export async function bootstrapTerminalRepository(
       "git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'",
       `test "$(git rev-parse ${shellQuote(`origin/${selection.baseRef}`)})" = ${shellQuote(selection.baseSha)}`,
     ]),
-    `if git show-ref --verify --quiet ${shellQuote(`refs/heads/${selection.headRef}`)}; then`,
-    `  git checkout ${shellQuote(selection.headRef)}`,
-    `elif git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${selection.headRef}`)}; then`,
-    `  git checkout -b ${shellQuote(selection.headRef)} --track ${shellQuote(`origin/${selection.headRef}`)}`,
-    "else",
-    `  git checkout -b ${shellQuote(selection.headRef)} ${shellQuote(selection.baseSha)}`,
-    "fi",
-    ...(remoteAccess === "full_access" ? [
-      `if git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${selection.headRef}`)}; then`,
-      `  git branch --set-upstream-to=${shellQuote(`origin/${selection.headRef}`)} ${shellQuote(selection.headRef)}`,
-      "else",
-      `  git push --set-upstream origin ${shellQuote(`${selection.headRef}:${selection.headRef}`)}`,
+    ...(alreadyBootstrapped ? [
+      `if ! git checkout ${shellQuote(selection.headRef)}; then`,
+      `  printf '%s\n' ${shellQuote(`Avalon could not restore ${selection.headRef}; inspect git status and finish or abort the active Git operation before pushing.`)} >&2`,
       "fi",
     ] : [
-      `if git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${selection.headRef}`)}; then`,
-      `  git branch --set-upstream-to=${shellQuote(`origin/${selection.headRef}`)} ${shellQuote(selection.headRef)}`,
+      `if git show-ref --verify --quiet ${shellQuote(`refs/heads/${selection.headRef}`)}; then`,
+      `  git checkout ${shellQuote(selection.headRef)}`,
+      `elif git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${selection.headRef}`)}; then`,
+      `  git checkout -b ${shellQuote(selection.headRef)} --track ${shellQuote(`origin/${selection.headRef}`)}`,
+      "else",
+      `  git checkout -b ${shellQuote(selection.headRef)} ${shellQuote(selection.baseSha)}`,
       "fi",
+      `test "$(git branch --show-current)" = ${shellQuote(selection.headRef)}`,
     ]),
-    `test "$(git branch --show-current)" = ${shellQuote(selection.headRef)}`,
+    `if git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${selection.headRef}`)}; then`,
+    `  git branch --set-upstream-to=${shellQuote(`origin/${selection.headRef}`)} ${shellQuote(selection.headRef)}`,
+    "fi",
     "grep -qxF '.avalon/' .git/info/exclude || printf '.avalon/\\n' >> .git/info/exclude",
   ].join("\n");
   const result = await provider.runCommand(sandbox.providerSandboxId, {

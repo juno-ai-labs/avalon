@@ -221,7 +221,6 @@ export class ConnectionService {
     }
     const nextRevision = current.revision + 1;
     const updatedAt = nowIso();
-    const priorConfig = parseJson<Record<string, unknown>>(connection.config_json, {});
     const nextPolicy = {
       version: 1 as const,
       revision: nextRevision,
@@ -233,15 +232,16 @@ export class ConnectionService {
         access: repository.remoteAccess,
       })),
     };
-    const nextConfigJson = JSON.stringify({ ...priorConfig, githubRepositoryAccess: nextPolicy });
+    const nextPolicyJson = JSON.stringify(nextPolicy);
     const [update] = await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE connector_connections
-            SET config_json = ?, updated_at = ?
+            SET config_json = json_set(COALESCE(config_json, '{}'), '$.githubRepositoryAccess', json(?)),
+                updated_at = ?
           WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'
             AND COALESCE(CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER), 0) = ?`,
       ).bind(
-        nextConfigJson,
+        nextPolicyJson,
         updatedAt,
         connection.id,
         connection.workspace_id,
@@ -257,7 +257,7 @@ export class ConnectionService {
             AND EXISTS (
               SELECT 1 FROM connector_connections connection
                WHERE connection.id = ? AND connection.workspace_id = ?
-                 AND connection.config_json = ?
+                 AND json_extract(connection.config_json, '$.githubRepositoryAccess') = json(?)
             )`,
       ).bind(
         updatedAt,
@@ -265,7 +265,7 @@ export class ConnectionService {
         connection.id,
         connection.id,
         connection.workspace_id,
-        nextConfigJson,
+        nextPolicyJson,
       ),
     ]);
     if (Number(update?.meta.changes ?? 0) !== 1) {
@@ -1380,10 +1380,18 @@ export class ConnectionService {
     } catch {
       remoteRevocation = "failed";
     } finally {
-      await this.env.DB.prepare(
-        `UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL,
-         credential_iv = NULL, next_poll_at = NULL, updated_at = ? WHERE id = ?`,
-      ).bind(nowIso(), id).run();
+      const disabledAt = nowIso();
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          `UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL,
+           credential_iv = NULL, next_poll_at = NULL, updated_at = ? WHERE id = ?`,
+        ).bind(disabledAt, id),
+        this.env.DB.prepare(
+          `UPDATE workstream_terminal_repositories
+              SET state = 'revoked', read_token_expires_at = NULL, updated_at = ?
+            WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'`,
+        ).bind(disabledAt, connection.workspace_id, id),
+      ]);
       await this.env.DB.prepare("UPDATE schedules SET enabled = 0, updated_at = ? WHERE connector_connection_id = ?")
         .bind(nowIso(), id).run();
       await this.refreshScheduler(connection.workspace_id);

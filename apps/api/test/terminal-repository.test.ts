@@ -133,7 +133,7 @@ describe("Terminal repository publication", () => {
       command: expect.stringContaining("grep -qxF '.avalon/' .git/info/exclude || printf '.avalon/\\n' >> .git/info/exclude"),
     }));
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
-      command: expect.stringContaining(`git push --set-upstream origin '${HEAD_REF}:${HEAD_REF}'`),
+      command: expect.not.stringContaining("git push --set-upstream"),
     }));
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringContaining(`export AVALON_GIT_BRANCH=${HEAD_REF}`),
@@ -144,6 +144,53 @@ describe("Terminal repository publication", () => {
     expect(database.prepare(
       "SELECT bootstrapped_sandbox_generation, read_token_expires_at FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
     ).get(W, S)).toEqual({ bootstrapped_sandbox_generation: 1, read_token_expires_at: "2026-08-13T13:00:00.000Z" });
+  });
+
+  it("fails closed with a revoked-access error when the selected connection is disabled", async () => {
+    const { database, env, provider, context } = fixture();
+    database.prepare("UPDATE connector_connections SET status = 'disabled' WHERE id = ?")
+      .run(CONNECTION);
+    const gateway = {
+      mintRepositoryToken: vi.fn(async () => ({ accessToken: "token", expiresAt: "2099-01-01T00:00:00.000Z" })),
+      verifyRepositoryIdentity: vi.fn(async () => undefined),
+      resolveBaseRef: vi.fn(async () => BASE),
+    };
+
+    await expect(bootstrapTerminalRepository(
+      env,
+      context,
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      provider,
+      gateway,
+    )).rejects.toMatchObject({ code: "repository_access_revoked" });
+    expect(gateway.mintRepositoryToken).not.toHaveBeenCalled();
+    expect(provider.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps an already-bootstrapped workspace repairable when branch restoration cannot switch", async () => {
+    const { database, env, provider, context } = fixture();
+    database.prepare(
+      `UPDATE workstream_terminal_repositories
+          SET bootstrapped_sandbox_generation = 1, read_token_expires_at = '2099-01-01T00:00:00.000Z'
+        WHERE workspace_id = ? AND workstream_id = ?`,
+    ).run(W, S);
+    const gateway = {
+      mintRepositoryToken: vi.fn(async () => ({ accessToken: "token", expiresAt: "2099-01-01T00:00:00.000Z" })),
+      verifyRepositoryIdentity: vi.fn(async () => undefined),
+      resolveBaseRef: vi.fn(async () => BASE),
+    };
+
+    await expect(bootstrapTerminalRepository(
+      env,
+      context,
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      provider,
+      gateway,
+    )).resolves.toMatchObject({ outcome: "refreshed" });
+    const command = vi.mocked(provider.runCommand).mock.calls.at(-1)?.[1].command ?? "";
+    expect(command).toContain(`if ! git checkout '${HEAD_REF}'; then`);
+    expect(command).not.toContain('test "$(git branch --show-current)"');
+    expect(gateway.mintRepositoryToken).not.toHaveBeenCalled();
   });
 
   it("keeps read-only repositories locally editable without creating a remote branch", async () => {
@@ -413,6 +460,7 @@ describe("Terminal repository publication", () => {
       baseRef: "main",
       baseSha: BASE,
       headRef: HEAD_REF,
+      remoteAccess: "full_access",
     }, "read-token", new AbortController().signal)).rejects.toMatchObject({
       code: "connection_revoked",
       message: expect.stringContaining("identity changed"),

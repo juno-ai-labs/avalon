@@ -5309,6 +5309,9 @@ async function reconcileRecoverableTerminalWrite(input: {
   ) || (
     input.expectedPolicy.definition.name === "publish_branch_and_pr"
     && input.expectedPolicy.definition.capability === "terminal.repository.publish"
+  ) || (
+    input.expectedPolicy.definition.name === "checkout_repository"
+    && input.expectedPolicy.definition.capability === "terminal.repository.checkout"
   );
   if (
     (input.row.status !== "started" && input.row.status !== "ambiguous")
