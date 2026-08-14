@@ -1,5 +1,5 @@
 export interface TerminalSnapshotProbe {
-  id: "bash" | "python" | "javascript" | "typescript" | "sqlite" | "apt" | "dpkg" | "pip" | "uv" | "npm" | "pnpm" | "git" | "gh" | "sudo";
+  id: "bash" | "python" | "javascript" | "typescript" | "sqlite" | "apt" | "dpkg" | "pip" | "uv" | "npm" | "pnpm" | "git" | "git-ca" | "gh" | "sudo";
   command: string;
 }
 
@@ -20,6 +20,7 @@ export const TERMINAL_SNAPSHOT_PROBES: readonly TerminalSnapshotProbe[] = [
   { id: "npm", command: "npm --version" },
   { id: "pnpm", command: "pnpm --version" },
   { id: "git", command: "git --version" },
+  { id: "git-ca", command: "test -n \"${CURL_CA_BUNDLE:-}\" && test -f \"$CURL_CA_BUNDLE\" && test -s \"$CURL_CA_BUNDLE\" && test -r \"$CURL_CA_BUNDLE\"" },
   { id: "gh", command: "gh --version" },
   { id: "sudo", command: "sudo -n true" },
 ] as const;
@@ -107,5 +108,6 @@ export function terminalBaselineHostAcceptanceCommand(): string {
   return [
     "set -euo pipefail",
     ...urls.map((url) => `curl --silent --show-error --location --max-redirs 3 --max-time 20 --output /dev/null '${url}'`),
+    "GIT_SSL_CAINFO=\"$CURL_CA_BUNDLE\" git ls-remote https://github.com/github/gitignore.git HEAD >/dev/null",
   ].join("\n");
 }

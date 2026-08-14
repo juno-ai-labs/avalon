@@ -23,6 +23,7 @@ describe("Terminal snapshot manifest", () => {
       "npm",
       "pnpm",
       "git",
+      "git-ca",
       "gh",
       "sudo",
     ]);
@@ -80,5 +81,6 @@ describe("Terminal snapshot manifest", () => {
       "files.pythonhosted.org",
       "registry.npmjs.org",
     ]) expect(command).toContain(host);
+    expect(command).toContain('GIT_SSL_CAINFO="$CURL_CA_BUNDLE" git ls-remote');
   });
 });
