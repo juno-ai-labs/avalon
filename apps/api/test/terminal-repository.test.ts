@@ -145,7 +145,7 @@ describe("Terminal repository publication", () => {
       command: expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
     }));
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
-      command: expect.stringContaining("printf 'export GIT_SSL_CAINFO=%q\\n' \"$GIT_SSL_CAINFO\" >> /workspace/.avalon/session.env"),
+      command: expect.stringContaining("printf 'export GIT_SSL_CAINFO=%q\\n' \"$GIT_SSL_CAINFO\" >> '/workspace/.avalon/session.env'"),
     }));
     expect(database.prepare(
       "SELECT bootstrapped_sandbox_generation, read_token_expires_at FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
