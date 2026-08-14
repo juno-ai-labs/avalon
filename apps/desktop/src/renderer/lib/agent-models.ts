@@ -1,5 +1,10 @@
 import { AGENT_MODEL_OVERRIDES, type AgentModelOverride } from '@avalon/contracts';
 
+/** Whether a served model id is one the selector's closed list admits. */
+function isAgentModelOverride(model: string): model is AgentModelOverride {
+  return (AGENT_MODEL_OVERRIDES as readonly string[]).includes(model);
+}
+
 export type { AgentModelOverride };
 
 /**
@@ -84,4 +89,61 @@ export const AGENT_MODEL_GROUPS: ReadonlyArray<{ provider: string; models: Agent
 /** The name a pinned model wears, or `Default` where nothing is pinned. */
 export function agentModelLabel(id: AgentModelOverride | null): string {
   return id === null ? UNPINNED_AGENT_MODEL_LABEL : PRESENTATION[id].label;
+}
+
+/**
+ * The name to show for the model a work stream is *already* running on.
+ *
+ * That id is not necessarily one of the nine a pin may name: it is read off the
+ * work stream's latest run, and an unpinned work stream runs on whatever
+ * `agent-model-workstream` served it — any OpenRouter id the flag's variation
+ * carries. A known id gets the same short name the menu gives it, so a pinned
+ * work stream reads identically to the composer that pinned it; anything else
+ * falls back to the id's own model segment, because the vendor prefix costs
+ * half a pill's width to repeat what the name already implies. The full id
+ * stays in the tooltip either way.
+ *
+ * Null is a work stream with neither a recorded run model nor a pin, where the
+ * honest answer is the same as an untouched composer's: the flag decides, and
+ * this process cannot see the served variation.
+ */
+export function agentModelInUseLabel(model: string | null): string {
+  // Blank counts as absent. Nothing constrains `harness_runs.model` to be
+  // non-empty, and a pill showing an empty string is worse than one saying it
+  // does not know.
+  if (model === null || model.trim() === '') return UNPINNED_AGENT_MODEL_LABEL;
+  if (isAgentModelOverride(model)) return PRESENTATION[model].label;
+  return model.slice(model.lastIndexOf('/') + 1);
+}
+
+/**
+ * The accessible name and tooltip for that same pill once its trigger is
+ * disabled. It carries the exact id rather than the shortened name — the pill
+ * is a glance, this is the answer — and says why the control does not open,
+ * because a control that looks like the composer's and does nothing has to
+ * explain itself.
+ *
+ * `pinned` is the difference between two claims only one of which is true of any
+ * given work stream, and conflating them is a promise the server does not keep.
+ * A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and never
+ * consults the flag, so every run of that work stream uses it. An **unpinned**
+ * work stream re-evaluates `agent-model-workstream` on *every* launch, so the
+ * id shown is what the latest run happened to get and a later run may differ.
+ * What is immutable there is the setting, not the model.
+ *
+ * The tooltip still fires on the disabled trigger. That is worth knowing rather
+ * than assuming: a disabled button swallows clicks, which is what keeps the menu
+ * shut, but Radix's tooltip is driven by pointer movement that still reaches it.
+ * Keyboard focus is the route that does go — Tab skips a disabled button — so
+ * this string has to stand on its own as the accessible name too.
+ */
+export function agentModelInUseTriggerLabel(model: string | null, pinned: boolean): string {
+  if (model !== null && model.trim() === '') model = null;
+  if (pinned && model !== null) {
+    return `Model: ${model} — pinned when this work stream was created, so every run uses it. It cannot be changed.`;
+  }
+  const subject = model === null
+    ? `${UNPINNED_AGENT_MODEL_LABEL} (no run yet)`
+    : `${model} (the latest run's)`;
+  return `Model: ${subject} — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.`;
 }

@@ -59,6 +59,7 @@ const detail = {
   archivedAt: null,
   scope: 'workspace' as const,
   systemKind: null,
+  modelOverride: null,
   nextPendingWakeup: null,
   pinPosition: null,
   participants: [{ user, participationReason: 'creator' as const, joinedAt: timestamp }],
@@ -272,6 +273,16 @@ describe('Avalon API wire adapter', () => {
         { role: 'user', content: 'Only report meaningful changes.' },
       ],
     });
+  });
+
+  it('carries a work stream’s model pin through to the renderer detail', () => {
+    // Every realtime snapshot replaces the cached detail through this mapper, so
+    // a pin dropped here is a pin that survives the first load and disappears on
+    // the next socket update — taking the composer's fallback with it for the
+    // work streams whose run recorded no model of its own.
+    expect(mapWorkstreamDetail({ ...detail, modelOverride: 'deepseek/deepseek-v4-pro' }))
+      .toMatchObject({ modelOverride: 'deepseek/deepseek-v4-pro' });
+    expect(mapWorkstreamDetail(detail).modelOverride).toBeUndefined();
   });
 
   it('maps representative work-stream and message wire records into renderer models', () => {
