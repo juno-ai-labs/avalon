@@ -1,11 +1,66 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
   createDaytonaTerminalProvider,
+  terminalGitCaSetupCommands,
   type TerminalProviderOperationMeasurement,
 } from "../src/services/terminal/daytona-provider";
 
 describe("Daytona Terminal provider", () => {
+  it("round-trips Daytona's Git CA path through a fresh Bash session", () => {
+    const directory = mkdtempSync(join(tmpdir(), "avalon-terminal-ca-"));
+    try {
+      const caPath = join(directory, "proxy ca's bundle.pem");
+      const sessionEnvPath = join(directory, "session.env");
+      writeFileSync(caPath, "test certificate bundle");
+      execFileSync("bash", ["-c", [
+        "set -euo pipefail",
+        ...terminalGitCaSetupCommands({ required: false, sessionEnvPath }),
+      ].join("\n")], {
+        env: { ...process.env, CURL_CA_BUNDLE: caPath },
+      });
+
+      const restored = execFileSync(
+        "bash",
+        ["-c", '. "$1"; printf "%s" "$GIT_SSL_CAINFO"', "_", sessionEnvPath],
+        { encoding: "utf8" },
+      );
+      expect(restored).toBe(caPath);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails before the next operation when Daytona advertises an unreadable Git CA path", () => {
+    const directory = mkdtempSync(join(tmpdir(), "avalon-terminal-ca-"));
+    try {
+      const markerPath = join(directory, "operation-ran");
+      for (const required of [false, true]) {
+        const command = [
+          "set -euo pipefail",
+          ...terminalGitCaSetupCommands({ required }),
+          'printf invoked > "$AVALON_TEST_MARKER"',
+        ].join("\n");
+
+        expect(() => execFileSync("bash", ["-c", command], {
+          env: {
+            ...process.env,
+            AVALON_TEST_MARKER: markerPath,
+            CURL_CA_BUNDLE: join(directory, "missing-ca.pem"),
+          },
+        })).toThrow();
+        expect(existsSync(markerPath)).toBe(false);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("creates a private managed sandbox with native policy and lifecycle backstops", async () => {
     const executeCommand = vi.fn()
       .mockResolvedValueOnce({ exitCode: 0, result: "AVALON_BOOTSTRAP_INSTALLED=sqlite3,gh,pnpm,tsx\n" })
@@ -555,6 +610,9 @@ describe("Daytona Terminal provider", () => {
     expect(uploadFile).toHaveBeenCalledWith(expect.any(Uint8Array), "/workspace/publication.bundle", 120);
     expect(executeSessionCommand).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       command: expect.stringContaining("git fsck --strict"),
+    }), 180);
+    expect(executeSessionCommand).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      command: expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
     }), 180);
     expect(removePublisher).toHaveBeenCalledWith(60, true);
     expect(deleteSecret).toHaveBeenCalledWith("secret-1");
