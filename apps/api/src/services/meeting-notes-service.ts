@@ -259,6 +259,11 @@ export class MeetingNotesService {
         ttftTimeoutMs: numericEnv(this.env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
         streamIdleTimeoutMs: numericEnv(this.env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
         sameModelRetries: 0,
+        // The live pass owns a one-minute cadence, so it never waits and
+        // re-asks: a briefing that lands late is worth less than the next one
+        // landing on time, and the pass after it reads the same transcript
+        // window anyway. The final pass has no successor to defer to.
+        transportRetries: final ? 1 : 0,
         reasoningEffort: final ? "medium" : "low",
       },
       workspaceId: this.auth.workspaceId,

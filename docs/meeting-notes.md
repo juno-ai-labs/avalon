@@ -248,10 +248,14 @@ what happens when a note's scope changes, which is
 | Previous briefing context | 50,000 chars | `MAX_NOTES_CONTEXT_CHARACTERS` |
 | Harness wall clock | 60s live, 120s final | `meeting-notes-service.ts` |
 | Cost ceiling | 100¢ live, 200¢ final | `meeting-notes-service.ts` |
+| Transport retries | 0 live, 1 final | `meeting-notes-service.ts` |
 
 - **Inference fails or times out.** The screen shows "Avalon could not update
-  Control Tower" and keeps the previous briefing. Nothing is retried at the same
-  model; the next refresh is the retry.
+  Control Tower" and keeps the previous briefing. The live pass does not wait
+  and re-ask even when the harness would otherwise retry a provider fault: it
+  has a successor a minute away that reads the same transcript window, so a
+  briefing that lands late is worth less than the next one landing on time. The
+  final pass has no successor and takes the one retry.
 - **The cadence cannot be fetched, or Flagship is unreachable.** Recording starts
   regardless; the segment timer waits out
   `MEETING_CADENCE_REQUEST_TIMEOUT_MS` and the meeting settles on

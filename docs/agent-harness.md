@@ -483,6 +483,10 @@ whole-file read.
 
 Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded` when one of their explicit ceilings is reached. Those codes remain in the public failure contract so historical runs and bounded subsystems stay readable. A limit never silently reinterprets a write as successful.
 
+When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, or a 5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. The distinction is the whole point of the code: `harness_execution_failed` means Avalon's own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
+
+Before that failure is reached, the harness re-executes the **whole route plan** up to `HARNESS_TRANSPORT_RETRIES` times (default 1), waiting a clamped backoff that honours `Retry-After` when one was sent. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt writes its own `agent_inference_payload_logs` row, so a retried turn is visible as more than one row sharing a `turn_id`.
+
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
 When an executor throws a Zod error and its normalized arguments also fail the
@@ -568,6 +572,50 @@ ownership, while the actual authorization boundary is the author of each message
 the principal of a single run. A future connector cannot reintroduce a claim flow through prompt
 copy alone.
 
+### 2026-08-14 — A provider outage is retried once and named as the provider's
+
+**What changed:** A route plan that exhausts with a transport fault the provider
+owns is re-executed up to `HARNESS_TRANSPORT_RETRIES` times (default 1) after a
+clamped, `Retry-After`-aware backoff, and a run that still fails that way now
+reports `provider_unavailable` / kind `provider` instead of
+`harness_execution_failed`.
+
+**Why it changed:** A pinned work stream spent eight and a half minutes and 17
+successful model turns checking out a repository, bootstrapping a sandbox,
+installing, and typechecking — and then discarded all of it because turn 18's
+single request produced no first token for 45 seconds. Bind classified that
+correctly as a retriable transport fault and its disposition said to traverse to
+the next provider or the fallback model. `pinnedModelRouting` gives an override
+no fallbacks on purpose, so there was neither, and the disposition matrix
+deliberately withholds a same-endpoint budget from a fault it expects to
+traverse away from. Nothing was left. The gap was not in Bind's ordering — it was
+that Avalon never implemented the host-side retry `isRetriableAttemptError`
+exists to prompt.
+
+The pin itself was not relaxed, and must not be: an override is a request to
+observe one specific model, and quietly answering from another would invalidate
+the comparison it was created to make. Retrying *the same pinned model* keeps
+that promise, which is why the retry lives at the plan level rather than in the
+route.
+
+The second half is a diagnostic debt the first half would otherwise have hidden.
+The exhaustion path rethrew the transport's own error verbatim — right for
+preserving a message, but it dropped the classification, so the outer catch saw
+an unrecognized error and filed an upstream outage as `harness_execution_failed`:
+*"The Avalon harness could not complete this run."* The member was told Avalon
+broke, and the only way to learn otherwise was the raw-inference runbook. One
+predicate now decides both the retry and the code, so the failures Avalon retries
+are exactly the failures it names as the provider's, and the two lists cannot
+drift apart.
+
+**What a future change has to respect:** The retry budget is small because each
+re-execution records a failure against the per-workspace circuit breaker, whose
+threshold is 3 — raising it past 2 makes a single unlucky run open the endpoint
+for the whole workspace. Do not widen `isProviderTransportFailure` to cover 400,
+401, 402, or 403: those are Avalon's request shape and Avalon's credentials, a
+repeat cannot fix them, and naming them as the provider's would point an operator
+at the wrong system. Meeting notes' live pass sets the budget to 0 on purpose;
+its one-minute cadence is worth more than any single briefing.
 ### 2026-08-13 — Telemetry attributes automation only to automation-origin runs
 
 **What changed:** Run and tool telemetry resolves an automation only when the

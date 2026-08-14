@@ -183,6 +183,14 @@ The pin carries **no fallbacks**. It is a request to observe one specific model,
 and routing onward would answer a question nobody asked — the same reasoning
 that keeps HyperSight pinned rather than routed.
 
+That leaves a pinned run's route plan with nowhere to traverse when the provider
+faults, so recovery has to come from somewhere else: the harness re-executes the
+plan against **the same pinned model** after a retriable transport failure, which
+keeps the pin's promise while stopping one stalled request from discarding a
+whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
+the budget and the failure code. Do not answer a pinned run's provider outage by
+adding fallbacks here.
+
 It reaches only the work-stream agent. The inline subagent, the automation
 architect that drafts the automation, and HyperSight keep their own flags: each
 is a distinct agent, and the whole point of giving it a flag was that it can be
@@ -535,7 +543,9 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `createRun` looks correct under **Run now** and is silently ignored by every
   scheduled run — which is how it shipped in review.
 - **A pin carries no fallbacks.** It is a request to observe one specific model,
-  and routing onward would answer a question nobody asked.
+  and routing onward would answer a question nobody asked. A provider fault on a
+  pinned run is recovered by retrying that same model, never by widening the
+  route — see [`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 - **The set of pinnable ids is closed** (`AGENT_MODEL_OVERRIDES`), validated on
   write *and* on read, which is what lets a model be retired without a migration.
 - **Identity is spread over the loaded attributes, never under them**, so nothing

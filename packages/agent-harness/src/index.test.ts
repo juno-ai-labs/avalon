@@ -1353,6 +1353,68 @@ describe("agent harness", () => {
     expect(stopped.failure).toBeUndefined();
   });
 
+  // A work stream pinned from the developer-mode model selector routes with no
+  // fallback models at all, which is deliberate — an override asks to observe
+  // one model, and traversing would answer a question nobody asked. What it
+  // also meant, until these three, was that a plan with nowhere to traverse had
+  // no recovery whatsoever: one stalled request discarded an entire run.
+  it("re-executes a fallback-less plan after a provider transport failure", async () => {
+    const fetcher = vi.fn(async () => (fetcher.mock.calls.length === 1
+      ? Response.json({ error: { message: "upstream stalled" } }, { status: 503 })
+      : streamResponse([{ choices: [{ delta: { content: "recovered" }, finish_reason: "stop" }] }]))) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 20_000,
+      workspaceId: "workspace-transport-recovers",
+    }));
+
+    expect(outcome).toMatchObject({ status: "completed", content: "recovered" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("names an exhausted transport budget as the provider's failure, not the harness's", async () => {
+    const fetcher = vi.fn(async () => Response.json(
+      { error: { message: "upstream stalled" } },
+      { status: 503 },
+    )) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 20_000,
+      transportRetries: 2,
+      workspaceId: "workspace-transport-exhausted",
+    }));
+
+    // `harness_execution_failed` here would tell a member Avalon broke and give
+    // them no reason to retry, which is what this run was told before.
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "provider", code: "provider_unavailable" },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not retry or reattribute a request-shaped rejection", async () => {
+    const fetcher = vi.fn(async () => Response.json(
+      { error: { message: "unsupported tool schema" } },
+      { status: 400 },
+    )) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 20_000,
+      transportRetries: 2,
+      workspaceId: "workspace-transport-bad-request",
+    }));
+
+    // A 400 is our request, not the provider's health: repeating it verbatim
+    // cannot fix it, and calling it a provider outage would point whoever reads
+    // the failure at the wrong system.
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "execution", code: "harness_execution_failed" },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("supports model-only loops without any plugin or discovery tools", async () => {
     let body: Record<string, unknown> | undefined;
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
@@ -3713,6 +3775,12 @@ function testCorePlugin(tools: HarnessTool[]): HarnessPlugin {
 function runInput(fetcher: typeof fetch, overrides: Partial<{
   maxWallClockMs: number;
   toolTimeoutMs: number;
+  transportRetries: number;
+  // The route circuit breaker is module-scoped and keyed by workspace and
+  // model, so a test that deliberately fails the same endpoint three times
+  // opens it for every test that runs after it. Give such a test its own
+  // workspace.
+  workspaceId: string;
 }> = {}) {
   return {
     config: {
@@ -3724,8 +3792,9 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
       maxWallClockMs: overrides.maxWallClockMs ?? 1_000,
       toolTimeoutMs: overrides.toolTimeoutMs ?? 100,
       maxWebResults: 4,
+      ...(overrides.transportRetries === undefined ? {} : { transportRetries: overrides.transportRetries }),
     },
-    workspaceId: "workspace-1",
+    workspaceId: overrides.workspaceId ?? "workspace-1",
     workstreamId: "workstream-1",
     harnessRunId: "run-1",
     executionPrincipal: { type: "user" as const, userId: "user-1" },
