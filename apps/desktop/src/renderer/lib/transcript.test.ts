@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from './types';
 import {
+  continuedAgentTurns,
   createElicitationMessage,
   createTextMessage,
   createToolEventMessage,
@@ -42,5 +43,32 @@ describe('transcript messages', () => {
 
     expect(upsertTranscriptMessage([optimistic, trailing], persisted)).toEqual([persisted, trailing]);
     expect(removeTranscriptMessage([persisted, trailing], persisted.id)).toEqual([trailing]);
+  });
+
+  it('groups the rows of one agent turn and starts a new one after anybody else speaks', () => {
+    const agent = (id: string, sequenceNumber: number): Message =>
+      createTextMessage({ ...base, id, sequenceNumber, authorType: 'agent', text: id });
+    const tool = (id: string, sequenceNumber: number): Message => createToolEventMessage({
+      ...base,
+      id,
+      sequenceNumber,
+      authorType: 'agent',
+      toolEvent: { id, name: 'Search', status: 'completed' },
+    });
+    const human = (id: string, sequenceNumber: number): Message =>
+      createTextMessage({ ...base, id, sequenceNumber, authorType: 'human', text: id });
+
+    const grouped = continuedAgentTurns([
+      human('asked', 1),
+      agent('said', 2),
+      tool('ran', 3),
+      agent('said-again', 4),
+      human('replied', 5),
+      agent('answered', 6),
+    ]);
+
+    // The work between two things the run said is its own; a person speaking
+    // between them is not.
+    expect([...grouped]).toEqual(['said-again']);
   });
 });

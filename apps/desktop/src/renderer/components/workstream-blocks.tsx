@@ -848,6 +848,12 @@ export function ElicitationPanel({
 }
 
 interface MessageBlockProps {
+  /**
+   * This agent turn carries on the one above it — the run said something,
+   * called its tools, and is speaking again — so it is shown without an
+   * identity line. `continuedAgentTurns` decides which rows those are.
+   */
+  continuesTurn?: boolean;
   currentUserId?: string;
   message: Message;
   loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
@@ -857,6 +863,7 @@ interface MessageBlockProps {
 }
 
 export function MessageBlock({
+  continuesTurn = false,
   currentUserId,
   loadAttachmentContent,
   message,
@@ -911,6 +918,7 @@ export function MessageBlock({
         human && (ownHumanMessage ? 'own-human-message' : 'coworker-message'),
         message.streaming && 'is-streaming',
         sending && 'is-sending',
+        continuesTurn && 'continues-turn',
       )}
       id={`message-${message.id}`}
       style={human ? { '--person-accent': personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id) } as React.CSSProperties : undefined}
@@ -922,7 +930,7 @@ export function MessageBlock({
           came from is the only thing standing between them and a turn they do
           not remember typing. The name stays suppressed; only the label and the
           time appear. */}
-      {!sending && (!human || !ownHumanMessage || message.contextLabel) && (
+      {!sending && !continuesTurn && (!human || !ownHumanMessage || message.contextLabel) && (
         <header>
           {!ownHumanMessage && (
             <>

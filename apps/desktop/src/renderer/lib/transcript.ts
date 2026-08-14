@@ -8,6 +8,33 @@ export function visibleTranscriptMessages(messages: Message[]): Message[] {
   return messages.filter((message) => message.messageType !== 'activity_suggestion');
 }
 
+/**
+ * The agent turns that continue the one above them rather than starting a new
+ * one, by id.
+ *
+ * A run now writes its words in several rows — what it said before each set of
+ * tool calls, and what it ended on — so one answer arrives as a column of
+ * bubbles rather than as a single one. Repeating "Avalon" and a timestamp over
+ * each of them would read as several people answering in turn. The tool and
+ * timing rows between them are the run's own work and do not interrupt it;
+ * anything else — a person, a question, a note about the work stream — does,
+ * and the next thing the agent says starts a new turn.
+ */
+export function continuedAgentTurns(messages: Message[]): Set<string> {
+  const continued = new Set<string>();
+  let agentIsSpeaking = false;
+  for (const message of messages) {
+    if (message.messageType === 'tool_event' || message.messageType === 'thought') continue;
+    if (message.messageType === 'text' && message.authorType === 'agent') {
+      if (agentIsSpeaking) continued.add(message.id);
+      agentIsSpeaking = true;
+      continue;
+    }
+    agentIsSpeaking = false;
+  }
+  return continued;
+}
+
 export function createTextMessage({ text, ...message }: TextMessageInput): Message {
   return { ...message, messageType: 'text', text };
 }

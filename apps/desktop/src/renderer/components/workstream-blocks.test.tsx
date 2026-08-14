@@ -186,6 +186,31 @@ describe('ElicitationPanel', () => {
   });
 });
 
+describe('MessageBlock agent turns', () => {
+  const agentMessage: Message = {
+    id: 'message-agent',
+    workstreamId: 'workstream-one',
+    sequenceNumber: 2,
+    authorType: 'agent',
+    messageType: 'text',
+    text: 'Searching the repository.',
+    createdAt: '2026-07-31T19:21:00.000Z',
+  };
+
+  it('names Avalon once per turn instead of over every row the run writes', () => {
+    // A run writes what it said before each set of tool calls as its own row.
+    // Repeating the identity line over each of them reads as several people
+    // answering rather than one run still working.
+    const { container, rerender } = render(<MessageBlock {...actions} message={agentMessage} />);
+    expect(screen.getByText('Avalon')).toBeTruthy();
+
+    rerender(<MessageBlock {...actions} continuesTurn message={agentMessage} />);
+    expect(screen.queryByText('Avalon')).toBeNull();
+    expect(container.querySelector('.agent-message.continues-turn')).toBeTruthy();
+    expect(screen.getByText('Searching the repository.')).toBeTruthy();
+  });
+});
+
 describe('MessageBlock human identity', () => {
   it('renders a completed elicitation as a right-side human response', () => {
     const elicitationMessage: Message = {

@@ -63,10 +63,6 @@ function compareMessages(a: Message, b: Message): number {
   const bAnchor = b.realtimeOrder?.anchorSequenceNumber ?? b.sequenceNumber;
   if (aAnchor !== bAnchor) return aAnchor - bAnchor;
 
-  const aPlacement = a.realtimeOrder?.placement === 'before_anchor' ? 0 : 1;
-  const bPlacement = b.realtimeOrder?.placement === 'before_anchor' ? 0 : 1;
-  if (aPlacement !== bPlacement) return aPlacement - bPlacement;
-
   const aRealtimeSequence = a.realtimeOrder?.eventSequence;
   const bRealtimeSequence = b.realtimeOrder?.eventSequence;
   if (aRealtimeSequence !== undefined && bRealtimeSequence !== undefined && aRealtimeSequence !== bRealtimeSequence) {
@@ -86,13 +82,6 @@ export function nextTranscriptSequence(messages: Message[] | undefined): number 
     ),
     0,
   ) + 1;
-}
-
-function activeStreamAnchor(messages: Message[] | undefined): number | undefined {
-  return [...(messages ?? [])]
-    .reverse()
-    .find((message) => message.streaming && message.authorType === 'agent')
-    ?.realtimeOrder?.anchorSequenceNumber;
 }
 
 export function orderTranscript(messages: Message[]): Message[] {
@@ -116,9 +105,10 @@ function streamingMessageId(event: StreamingSocketEvent): string {
  * Applies a model stream frame independently of room replay ordering. Bind can
  * retry a turn or switch routes after already emitting text, so room sequence
  * de-duplication alone is insufficient: a newer epoch must replace only that
- * turn's prior attempt and repeated chunks must not be appended twice. Bind
- * assigns a new turn ID after tool execution; that is a continuation of the
- * same assistant message, not an implicit reset.
+ * turn's prior attempt and repeated chunks must not be appended twice. A new
+ * turn ID is not an implicit reset either: the run opens a new message for the
+ * text that follows a tool call, so a turn that arrives under the id already
+ * streaming is continuing that same row and appends to it.
  */
 export function applyStreamingSocketEvent(
   messages: Message[] | undefined,
@@ -185,7 +175,6 @@ export function applyStreamingSocketEvent(
       realtimeOrder: {
         anchorSequenceNumber,
         eventSequence: event.sequence,
-        placement: 'at_anchor',
       },
     }));
   }
@@ -203,7 +192,6 @@ export function applyStreamingSocketEvent(
       realtimeOrder: {
         anchorSequenceNumber,
         eventSequence: event.sequence,
-        placement: 'at_anchor',
       },
     }));
   }
@@ -276,7 +264,6 @@ export function applyActiveStreamCheckpoints(
       realtimeOrder: {
         anchorSequenceNumber,
         eventSequence: checkpoint.roomSequence,
-        placement: 'at_anchor',
       },
     }));
   }
@@ -698,8 +685,11 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
           const messageId = `tool-${event.invocation.id}`;
           const existing = (current ?? []).find((message) => message.id === messageId);
+          // A tool row belongs below everything already on screen, including
+          // the narration that announced it: the run settles that text into a
+          // persisted row before it records the tool, so the words have already
+          // arrived by the time this does.
           const anchorSequenceNumber = existing?.realtimeOrder?.anchorSequenceNumber
-            ?? activeStreamAnchor(current)
             ?? nextTranscriptSequence(current);
           return insertMessage(current, createToolEventMessage({
             id: messageId,
@@ -712,7 +702,6 @@ export function useWorkstreamSocket(
               // A completion update must not move the tool below tools that
               // started later in the same turn.
               eventSequence: existing?.realtimeOrder?.eventSequence ?? event.sequence,
-              placement: 'before_anchor',
             },
             toolEvent: mapToolInvocation(event.invocation),
           }));

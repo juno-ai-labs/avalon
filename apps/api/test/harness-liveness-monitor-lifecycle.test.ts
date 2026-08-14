@@ -47,6 +47,39 @@ describe("what a run may consult, and what it may do", () => {
     expect(inlineChild).toContain("skills: [...BUILT_IN_SKILLS]");
   });
 
+  it("settles what a turn said before it records the tool that turn called", () => {
+    const root = section(
+      "export async function runWorkstreamHarness(",
+      "function inlineChildOutcomeAsToolResult(",
+    );
+    const settle = section(
+      "const settleNarrationSegment = async ()",
+      "const recordToolTranscriptRow = async (",
+    );
+
+    // The order here is the transcript's order. A tool row takes the work
+    // stream's next sequence number the moment it is written, so the words the
+    // model streamed on its way to that call have to claim theirs first or they
+    // land underneath every tool the run made.
+    expectOrdered(settle, [
+      // The batched deltas carry the id of the row being settled, and that id
+      // is about to change.
+      "await streamDeltaBatcher.flush();",
+      "await persistHarnessNarrationSegment(",
+      'type: "stream_completed"',
+      "messageId = await narrationSegmentMessageId(",
+    ]);
+    expectOrdered(root, [
+      "const recordToolTranscriptRow = async (",
+      "await settleNarrationSegment();",
+      "await persistToolTranscriptMessage(env, input, invocation);",
+    ]);
+
+    // And there is one way in. A tool row written past the settle would be one
+    // the run's own narration is filed behind.
+    expect(root.match(/persistToolTranscriptMessage\(/gu)).toHaveLength(1);
+  });
+
   it("takes a HyperSight block from a tool call, and asks again when the turn ends without one", () => {
     const root = section(
       "export async function runWorkstreamHarness(",

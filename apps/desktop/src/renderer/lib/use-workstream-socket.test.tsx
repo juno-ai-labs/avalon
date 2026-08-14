@@ -292,7 +292,6 @@ describe('useWorkstreamSocket', () => {
       realtimeOrder: {
         anchorSequenceNumber: 8,
         eventSequence: Number.MAX_SAFE_INTEGER,
-        placement: 'at_anchor',
       },
     };
 
@@ -491,7 +490,7 @@ describe('useWorkstreamSocket', () => {
       text: 'The response so far',
       createdAt: '2026-07-31T19:20:00.000Z',
       streaming: true,
-      realtimeOrder: { anchorSequenceNumber: 9, eventSequence: 12, placement: 'at_anchor' },
+      realtimeOrder: { anchorSequenceNumber: 9, eventSequence: 12 },
     };
 
     expect(mergeCanonicalTranscript([streaming], [])).toEqual([streaming]);
@@ -603,7 +602,6 @@ describe('useWorkstreamSocket', () => {
       realtimeOrder: {
         anchorSequenceNumber: 12,
         eventSequence: 91,
-        placement: 'before_anchor',
       },
     };
 
@@ -722,13 +720,18 @@ describe('useWorkstreamSocket', () => {
     expect(transcript.find((message) => message.id === messageId)?.text).toBe('Hello world');
   });
 
-  it('appends Bind post-tool turns and keeps tool order across REST refreshes', async () => {
+  it('interleaves each turn\'s narration with the tools it announced, live and after a refresh', async () => {
+    // The run settles the words of a turn into their own transcript row as it
+    // records that turn's first tool call, then opens a new row for what it
+    // says next. The reader should see that sequence — said, did, said —
+    // rather than every tool followed by everything the run ever said.
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000021';
     const workspaceId = '00000000-0000-7000-8000-000000000002';
     const harnessRunId = '00000000-0000-7000-8000-000000000051';
-    const assistantMessageId = harnessRunId;
+    const firstSegmentId = harnessRunId;
+    const secondSegmentId = '00000000-0000-8000-8000-000000000054';
     const toolOneId = '00000000-0000-7000-8000-000000000052';
     const toolTwoId = '00000000-0000-7000-8000-000000000053';
     const humanMessage: Message = {
@@ -752,13 +755,37 @@ describe('useWorkstreamSocket', () => {
       wrapper: createWrapper(queryClient),
     });
 
+    const settled = (id: string, sequenceNumber: number, text: string, createdAt: string): Message => ({
+      id,
+      workstreamId,
+      sequenceNumber,
+      authorType: 'agent',
+      messageType: 'text',
+      text,
+      createdAt,
+    });
+    const settledWire = (message: Message) => ({
+      id: message.id,
+      clientMessageId: null,
+      workspaceId,
+      workstreamId,
+      author: { type: 'agent' },
+      messageType: 'text',
+      textContent: message.text,
+      structuredContent: null,
+      mentions: [],
+      sequenceNumber: message.sequenceNumber,
+      createdAt: message.createdAt,
+      editedAt: null,
+    });
+
     await flushPromises();
     act(() => FakeWebSocket.instances[0]?.open());
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'stream_started',
       sequence: 204,
       occurredAt: '2026-07-31T19:21:00.000Z',
-      messageId: assistantMessageId,
+      messageId: firstSegmentId,
       harnessRunId,
       turnId: 'turn-one',
       epoch: 0,
@@ -769,13 +796,22 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 205,
       occurredAt: '2026-07-31T19:21:00.500Z',
-      messageId: assistantMessageId,
+      messageId: firstSegmentId,
       turnId: 'turn-one',
       epoch: 0,
       streamSeq: 1,
       reset: false,
-      delta: 'I will check. ',
+      delta: 'I will check.',
     }));
+
+    const firstSegment = settled(firstSegmentId, 18, 'I will check.', '2026-07-31T19:21:00.900Z');
+    act(() => FakeWebSocket.instances[0]?.message({
+      type: 'stream_completed',
+      sequence: 206,
+      occurredAt: firstSegment.createdAt,
+      message: settledWire(firstSegment),
+    }));
+
     const invocation = (id: string, toolCallId: string, toolName: string, status: 'started' | 'completed') => ({
       id,
       harnessRunId,
@@ -791,13 +827,13 @@ describe('useWorkstreamSocket', () => {
     });
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'tool_started',
-      sequence: 206,
+      sequence: 207,
       occurredAt: '2026-07-31T19:21:01.000Z',
       invocation: invocation(toolOneId, 'tool-one', 'First tool', 'started'),
     }));
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'tool_started',
-      sequence: 207,
+      sequence: 208,
       occurredAt: '2026-07-31T19:21:02.000Z',
       invocation: invocation(toolTwoId, 'tool-two', 'Second tool', 'started'),
     }));
@@ -805,21 +841,21 @@ describe('useWorkstreamSocket', () => {
     // place rather than moving it below the second tool.
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'tool_completed',
-      sequence: 208,
+      sequence: 209,
       occurredAt: '2026-07-31T19:21:05.000Z',
       invocation: invocation(toolTwoId, 'tool-two', 'Second tool', 'completed'),
     }));
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'tool_completed',
-      sequence: 209,
+      sequence: 210,
       occurredAt: '2026-07-31T19:21:06.000Z',
       invocation: invocation(toolOneId, 'tool-one', 'First tool', 'completed'),
     }));
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'stream_started',
-      sequence: 210,
+      sequence: 211,
       occurredAt: '2026-07-31T19:21:06.500Z',
-      messageId: assistantMessageId,
+      messageId: secondSegmentId,
       harnessRunId,
       turnId: 'turn-two',
       epoch: 0,
@@ -828,9 +864,9 @@ describe('useWorkstreamSocket', () => {
     }));
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'stream_delta',
-      sequence: 211,
+      sequence: 212,
       occurredAt: '2026-07-31T19:21:06.750Z',
-      messageId: assistantMessageId,
+      messageId: secondSegmentId,
       turnId: 'turn-two',
       epoch: 0,
       streamSeq: 1,
@@ -838,42 +874,31 @@ describe('useWorkstreamSocket', () => {
       delta: 'Here is the result.',
     }));
 
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])
-      ?.find((message) => message.id === assistantMessageId)?.text).toBe('I will check. Here is the result.');
+    // The post-tool turn is its own row, below the tools, and does not reopen
+    // the row that was already settled.
+    const streaming = queryClient.getQueryData<Message[]>(['messages', workstreamId]) ?? [];
+    expect(streaming.map((message) => message.id)).toEqual([
+      humanMessage.id,
+      firstSegmentId,
+      `tool-${toolOneId}`,
+      `tool-${toolTwoId}`,
+      secondSegmentId,
+    ]);
+    expect(streaming.find((message) => message.id === firstSegmentId)?.text).toBe('I will check.');
+    expect(streaming.find((message) => message.id === secondSegmentId)?.text).toBe('Here is the result.');
 
-    const assistantMessage: Message = {
-      id: assistantMessageId,
-      workstreamId,
-      sequenceNumber: 20,
-      authorType: 'agent',
-      messageType: 'text',
-      text: 'I will check. Here is the result.',
-      createdAt: '2026-07-31T19:21:07.000Z',
-    };
+    const secondSegment = settled(secondSegmentId, 21, 'Here is the result.', '2026-07-31T19:21:07.000Z');
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'stream_completed',
-      sequence: 212,
-      occurredAt: '2026-07-31T19:21:07.000Z',
-      message: {
-        id: assistantMessage.id,
-        clientMessageId: null,
-        workspaceId,
-        workstreamId,
-        author: { type: 'agent' },
-        messageType: 'text',
-        textContent: assistantMessage.text,
-        structuredContent: null,
-        mentions: [],
-        sequenceNumber: assistantMessage.sequenceNumber,
-        createdAt: assistantMessage.createdAt,
-        editedAt: null,
-      },
+      sequence: 213,
+      occurredAt: secondSegment.createdAt,
+      message: settledWire(secondSegment),
     }));
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'stream_delta',
-      sequence: 213,
+      sequence: 214,
       occurredAt: '2026-07-31T19:21:08.000Z',
-      messageId: assistantMessageId,
+      messageId: secondSegmentId,
       turnId: 'turn-two',
       epoch: 0,
       streamSeq: 2,
@@ -884,17 +909,20 @@ describe('useWorkstreamSocket', () => {
     const live = queryClient.getQueryData<Message[]>(['messages', workstreamId]) ?? [];
     expect(live.map((message) => message.id)).toEqual([
       humanMessage.id,
+      firstSegmentId,
       `tool-${toolOneId}`,
       `tool-${toolTwoId}`,
-      assistantMessage.id,
+      secondSegmentId,
     ]);
+    expect(live.find((message) => message.id === secondSegmentId)?.text).toBe('Here is the result.');
 
-    const refreshedBeforePersistence = mergeCanonicalTranscript(live, [humanMessage, assistantMessage]);
+    const refreshedBeforePersistence = mergeCanonicalTranscript(live, [humanMessage, firstSegment, secondSegment]);
     expect(refreshedBeforePersistence.map((message) => message.id)).toEqual([
       humanMessage.id,
+      firstSegmentId,
       `tool-${toolOneId}`,
       `tool-${toolTwoId}`,
-      assistantMessage.id,
+      secondSegmentId,
     ]);
 
     const canonicalToolMessages = live
@@ -902,17 +930,18 @@ describe('useWorkstreamSocket', () => {
       .map((message, index): Message => ({
         ...message,
         id: message.toolEvent!.id,
-        sequenceNumber: 18 + index,
+        sequenceNumber: 19 + index,
         realtimeOrder: undefined,
       }));
-    const canonical = [humanMessage, ...canonicalToolMessages, assistantMessage];
+    const canonical = [humanMessage, firstSegment, ...canonicalToolMessages, secondSegment];
 
     // A cold load needs no realtime history to reconstruct the turn.
     expect(canonical.map((message) => message.id)).toEqual([
       humanMessage.id,
+      firstSegmentId,
       toolOneId,
       toolTwoId,
-      assistantMessage.id,
+      secondSegmentId,
     ]);
 
     // A REST refresh that lands while realtime rows are still cached replaces
@@ -920,12 +949,67 @@ describe('useWorkstreamSocket', () => {
     const reconciled = mergeCanonicalTranscript(live, canonical);
     expect(reconciled.map((message) => message.id)).toEqual([
       humanMessage.id,
+      firstSegmentId,
       toolOneId,
       toolTwoId,
-      assistantMessage.id,
+      secondSegmentId,
     ]);
     expect(reconciled.filter((message) => message.messageType === 'tool_event')).toHaveLength(2);
-    expect(reconciled.find((message) => message.id === assistantMessage.id)?.text).toBe('I will check. Here is the result.');
+    expect(reconciled.find((message) => message.id === secondSegmentId)?.text).toBe('Here is the result.');
+  });
+
+  it('keeps a tool row below text that is still streaming', async () => {
+    // The frame that settles a segment is published best-effort, so a tool row
+    // can arrive while the row it belongs under is still open. It still belongs
+    // under it: the model said those words on the way to this call.
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000024';
+    const harnessRunId = '00000000-0000-7000-8000-000000000055';
+    const toolId = '00000000-0000-7000-8000-000000000056';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    act(() => FakeWebSocket.instances[0]?.open());
+    act(() => FakeWebSocket.instances[0]?.message({
+      type: 'stream_delta',
+      sequence: 301,
+      occurredAt: '2026-07-31T19:21:00.500Z',
+      messageId: harnessRunId,
+      turnId: 'turn-one',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'Searching the repository.',
+    }));
+    act(() => FakeWebSocket.instances[0]?.message({
+      type: 'tool_started',
+      sequence: 302,
+      occurredAt: '2026-07-31T19:21:01.000Z',
+      invocation: {
+        id: toolId,
+        harnessRunId,
+        toolCallId: 'tool-one',
+        toolName: 'Terminal run command',
+        connectionId: null,
+        status: 'started',
+        inputSummary: 'git grep',
+        outputSummary: null,
+        startedAt: '2026-07-31T19:21:01.000Z',
+        completedAt: null,
+        error: null,
+      },
+    }));
+
+    expect((queryClient.getQueryData<Message[]>(['messages', workstreamId]) ?? []).map((message) => message.id))
+      .toEqual([harnessRunId, `tool-${toolId}`]);
   });
 
   it('retains per-epoch stream cursors across a socket reconnect', async () => {
@@ -1015,7 +1099,7 @@ describe('useWorkstreamSocket', () => {
       authorType: 'agent',
       messageType: 'tool_event',
       createdAt: '2026-07-31T19:20:00.000Z',
-      realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
+      realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8 },
       toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'started' },
     };
     const canonicalTool: Message = {
@@ -1416,7 +1500,7 @@ describe('useWorkstreamSocket', () => {
       authorType: 'agent',
       messageType: 'tool_event',
       createdAt: '2026-07-31T19:20:00.000Z',
-      realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
+      realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8 },
       toolEvent: { id: invocationId, name: 'avalon.ask', status: 'started' },
     };
     const canonicalTool: Message = {

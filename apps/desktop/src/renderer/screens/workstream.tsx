@@ -37,6 +37,7 @@ import { formatDateTime } from '../lib/format';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import {
+  continuedAgentTurns,
   createTextMessage,
   visibleTranscriptMessages,
 } from '../lib/transcript';
@@ -1199,7 +1200,6 @@ export function WorkstreamScreen(): React.JSX.Element {
         realtimeOrder: {
           anchorSequenceNumber,
           eventSequence: Number.MAX_SAFE_INTEGER,
-          placement: 'at_anchor',
         },
       });
       return insertMessage(current, optimistic);
@@ -1332,6 +1332,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const detail = workstream.data;
   const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
   const visibleTranscript = transcript;
+  const continuedTurns = continuedAgentTurns(visibleTranscript);
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
     ? -1
@@ -1454,6 +1455,7 @@ export function WorkstreamScreen(): React.JSX.Element {
                       <div className="unread-divider" role="separator"><span>Unread messages</span></div>
                     )}
                     <MessageBlock
+                      continuesTurn={continuedTurns.has(message.id)}
                       currentUserId={session?.user.id}
                       loadAttachmentContent={loadAttachmentContent}
                       message={message}

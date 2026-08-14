@@ -157,8 +157,10 @@ import {
   InlineChildRunLiveness,
   loadInlineChildResult,
   loadPersistedHarnessFinalOutcome,
+  narrationSegmentMessageId,
   persistImmutableRunScope,
   persistHarnessFinalMessage,
+  persistHarnessNarrationSegment,
   persistInlineChildScope,
   persistRunPluginActivation,
   persistToolExecutionPlan,
@@ -167,6 +169,7 @@ import {
   type AttemptLease,
   type HarnessRunCoordinates,
   type InlineChildResult,
+  type PersistedNarrationSegment,
 } from "../runtime/harness-run-runtime";
 import {
   createMemoryTools,
@@ -404,16 +407,16 @@ async function publishRuntimeEventBestEffort(
 
 function workstreamHarnessTerminalResult(input: {
   outcome: Pick<Awaited<ReturnType<typeof runHarness>>, "status" | "failure">;
-  streamedText: string;
-  messageId: string;
+  /** The row the run's answer is in, whether it ended on it or settled it earlier. */
+  durableMessageId: string | undefined;
   ambiguousToolOutcome: boolean;
   stoppedByUser: boolean;
 }): WorkstreamHarnessResult {
-  const { outcome, streamedText, messageId, ambiguousToolOutcome, stoppedByUser } = input;
-  const durableMessage = streamedText ? { messageId } : {};
+  const { outcome, durableMessageId, ambiguousToolOutcome, stoppedByUser } = input;
+  const durableMessage = durableMessageId ? { messageId: durableMessageId } : {};
   if (ambiguousToolOutcome) return { status: "needs_input", ...durableMessage };
   if (stoppedByUser) return { status: "stopped", ...durableMessage };
-  if (outcome.status === "completed" && streamedText) return { status: "completed", messageId };
+  if (outcome.status === "completed" && durableMessageId) return { status: "completed", messageId: durableMessageId };
   if (outcome.status === "completed") {
     return {
       status: "failed",
@@ -907,17 +910,32 @@ async function projectModelProtocolTranscript(
   const projected: ModelMessage[] = [];
   let pendingTools: ProjectedProtocolTool[] = [];
   let pendingGroupKey: string | null = null;
+  /**
+   * The narration row immediately above a tool group, held back so it can be
+   * replayed as what it was: the text of the same assistant turn that made
+   * those calls. Rebuilding it as a separate assistant message would put two
+   * assistant turns where the model produced one, and would tell the model it
+   * once answered without calling anything.
+   */
+  let pendingAssistantText: string | null = null;
   const flushTools = () => {
     if (pendingTools.length === 0) return;
     pendingTools.sort((left, right) => left.order - right.order);
     projected.push({
       role: "assistant",
-      content: null,
+      content: pendingAssistantText,
       tool_calls: pendingTools.map((tool) => tool.call),
     });
     projected.push(...pendingTools.map((tool) => tool.result));
+    pendingAssistantText = null;
     pendingTools = [];
     pendingGroupKey = null;
+  };
+  /** Narration that turned out to have no tool calls under it is its own turn. */
+  const flushAssistantText = () => {
+    if (pendingAssistantText === null) return;
+    projected.push({ role: "assistant", content: pendingAssistantText });
+    pendingAssistantText = null;
   };
 
   for (const message of storedMessages) {
@@ -935,6 +953,7 @@ async function projectModelProtocolTranscript(
       continue;
     }
     flushTools();
+    flushAssistantText();
 
     // Matched on its structured content, ahead of the author dispatch below and
     // deliberately independent of it. The brief is stored as the selecting
@@ -1036,9 +1055,10 @@ async function projectModelProtocolTranscript(
         }
       }
     }
-    else if (message.author.type === "agent") projected.push({ role: "assistant", content });
+    else if (message.author.type === "agent") pendingAssistantText = content;
   }
   flushTools();
+  flushAssistantText();
   return { messages: projected, issues };
 }
 
@@ -1762,7 +1782,19 @@ export async function runWorkstreamHarness(
       ...(error ? { error } : {}),
     };
   }
-  const messageId = input.harnessRunId;
+  // The message the run is currently streaming into. A run that calls tools
+  // writes several: each turn's narration settles into its own transcript row
+  // as that turn's first tool call is recorded, so the words sit above the
+  // tools they announced instead of below all of them.
+  let messageId = input.harnessRunId;
+  let segmentIndex = 0;
+  // A holder rather than two `let`s: these are written from the run's event
+  // handler and read once it returns, which is exactly the shape narrowing
+  // gets wrong.
+  const narration: { settled: PersistedNarrationSegment | null; settledText: string } = {
+    settled: null,
+    settledText: "",
+  };
   if (!hyperSightRun) {
     const persistedHostOutcome = await loadPersistedHarnessFinalOutcome(env.DB, input);
     if (persistedHostOutcome) return persistedHostOutcome;
@@ -1985,6 +2017,64 @@ export async function runWorkstreamHarness(
     // events without paying for a Durable Object request per model token.
     await streamDeltaBatcher.flush();
     await publishEvent(event);
+  };
+
+  /**
+   * Close the narration the run has streamed so far, if any, and open the next.
+   *
+   * Called immediately before the first tool row of a turn is written, which is
+   * what puts the two in the order they happened. The batched deltas are
+   * flushed first: they carry the message id this text belongs to, and the id
+   * changes here. Readers are told the row is finished the same way they are
+   * told about the final message — `stream_completed` carries the persisted
+   * row, so the live transcript stops treating it as an open stream and the
+   * next `stream_started` opens a new one below the tools.
+   */
+  const settleNarrationSegment = async (): Promise<void> => {
+    if (hyperSightRun || !streamedText) return;
+    await streamDeltaBatcher.flush();
+    const clientMessageId = `harness:${input.harnessRunId}:segment:${segmentIndex}`;
+    const persisted = await persistHarnessNarrationSegment(env.DB, input, liveness.lease, {
+      id: messageId,
+      clientMessageId,
+      text: streamedText,
+      createdAt: nowIso(),
+    });
+    narration.settled = persisted;
+    narration.settledText += persisted.text;
+    await publishEvent({
+      type: "stream_completed",
+      message: {
+        id: persisted.id,
+        clientMessageId,
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        author: { type: "agent" },
+        messageType: "text",
+        textContent: persisted.text,
+        structuredContent: null,
+        mentions: [],
+        attachments: [],
+        sequenceNumber: persisted.sequenceNumber,
+        createdAt: persisted.createdAt,
+        editedAt: null,
+      },
+    });
+    streamedText = "";
+    streamStarted = false;
+    segmentIndex += 1;
+    messageId = await narrationSegmentMessageId(input.harnessRunId, segmentIndex);
+  };
+
+  /**
+   * Put one tool row in the transcript, behind whatever the model said on its
+   * way to calling it. Every tool lifecycle update goes through here, and only
+   * the first of them for a turn has narration to settle.
+   */
+  const recordToolTranscriptRow = async (invocation: ToolInvocation): Promise<void> => {
+    if (hyperSightRun) return;
+    await settleNarrationSegment();
+    await persistToolTranscriptMessage(env, input, invocation);
   };
 
   // A HyperSight block is configured with its own model and never inherits the
@@ -2286,7 +2376,7 @@ export async function runWorkstreamHarness(
         if (attachmentReplay === null) return null;
         const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
         if (invocation) {
-          if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
+          await recordToolTranscriptRow(invocation);
           await emit({ type: "tool_completed", invocation });
         }
         const replayedOutput = attachmentReplay?.output ?? (row.output_ref
@@ -2334,7 +2424,7 @@ export async function runWorkstreamHarness(
           });
           const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
           if (invocation) {
-            if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
+            await recordToolTranscriptRow(invocation);
             await emit({ type: "tool_completed", invocation });
             await recordToolAudit(env, input, invocation.id, row.tool_name, "write", "completed");
           }
@@ -2388,7 +2478,7 @@ export async function runWorkstreamHarness(
         }
         const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
         if (invocation) {
-          if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
+          await recordToolTranscriptRow(invocation);
           await emit({ type: "tool_failed", invocation });
           if (newlyAmbiguous) {
             await recordToolAudit(env, input, invocation.id, row.tool_name, mode, "ambiguous");
@@ -2481,7 +2571,7 @@ export async function runWorkstreamHarness(
             ambiguousToolOutcome = true;
             const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
             if (invocation) {
-              if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
+              await recordToolTranscriptRow(invocation);
               await emit({ type: "tool_failed", invocation });
             }
             stopController.abort("ambiguous_external_write");
@@ -2496,7 +2586,7 @@ export async function runWorkstreamHarness(
           }
           const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (invocation) {
-            if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
+            await recordToolTranscriptRow(invocation);
             await emit({ type: "tool_started", invocation });
           }
           break;
@@ -2534,7 +2624,7 @@ export async function runWorkstreamHarness(
           // only after this awaited boundary may Bind observe the tool result.
           const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (invocation) {
-            if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
+            await recordToolTranscriptRow(invocation);
             await emit({ type: "tool_completed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, "completed");
           }
@@ -2599,7 +2689,7 @@ export async function runWorkstreamHarness(
           }
           const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (invocation) {
-            if (!hyperSightRun) await persistToolTranscriptMessage(env, input, invocation);
+            await recordToolTranscriptRow(invocation);
             await emit({ type: "tool_failed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed");
           }
@@ -2609,7 +2699,17 @@ export async function runWorkstreamHarness(
           await emit({ type: "harness_status_changed", status: "needs_input" });
           break;
         case "stream_completed":
-          streamedText = event.content;
+          // Bind's content is every assistant turn of the run concatenated, and
+          // it is authoritative over the deltas. Only the tail past what has
+          // already been settled into its own row belongs to the message this
+          // run ends on; a prefix that does not match means the two accounts
+          // disagree, and the delta stream is the one that knows where the
+          // settled rows ended.
+          streamedText = narration.settledText.length === 0
+            ? event.content
+            : event.content.startsWith(narration.settledText)
+              ? event.content.slice(narration.settledText.length)
+              : streamedText;
           break;
       }
     },
@@ -2621,10 +2721,15 @@ export async function runWorkstreamHarness(
   await streamDeltaBatcher.flush();
 
   const stoppedByUser = await isHarnessStopped(env, input.harnessRunId);
+  // What the run leaves behind as its answer. Usually the text it ended on; for
+  // a run that stopped, was interrupted, or ran out of turns after its last
+  // words were already settled, the last row it wrote is the answer it has.
+  const durableMessageId = streamedText
+    ? messageId
+    : narration.settled?.id;
   const terminalResult = workstreamHarnessTerminalResult({
     outcome,
-    streamedText,
-    messageId,
+    durableMessageId,
     ambiguousToolOutcome,
     stoppedByUser,
   });
@@ -2663,17 +2768,20 @@ export async function runWorkstreamHarness(
       liveness.lease.owner,
     ).run();
     if (Number(result.meta.changes ?? 0) !== 1) throw new Error("hypersight_result_ownership_lost");
-  } else if (streamedText) {
-    const at = nowIso();
-    await persistHarnessFinalMessage(env.DB, input, liveness.lease, {
-      id: messageId,
-      sequenceNumber: await ensureSequence(),
-      text: streamedText,
-      createdAt: at,
-    }, {
-      status: terminalResult.status,
-      ...(terminalResult.error ? { error: terminalResult.error } : {}),
-    });
+  } else {
+    // A run that ended on words writes them here. A run whose last words were
+    // settled before its last tool call has nothing left to write and names
+    // that row instead: the checkpoint has to exist either way, because it is
+    // what lets terminalization commit a completed run.
+    const finalMessage = streamedText
+      ? { id: messageId, sequenceNumber: await ensureSequence(), text: streamedText, createdAt: nowIso() }
+      : narration.settled;
+    if (finalMessage) {
+      await persistHarnessFinalMessage(env.DB, input, liveness.lease, finalMessage, {
+        status: terminalResult.status,
+        ...(terminalResult.error ? { error: terminalResult.error } : {}),
+      });
+    }
   }
   // Workflow terminalization owns the monotonic state transition and publishes
   // terminal realtime state only after the final message + lifecycle event are

@@ -1223,6 +1223,129 @@ export async function assertInlineChildAttemptOwned(
   }
 }
 
+/**
+ * One settled narration segment of a run.
+ *
+ * A run writes as many of these as it has turns that ended in tool calls, plus
+ * the final message the run ends on. `sequenceNumber` is the transcript
+ * position the row actually took, which is what the realtime frame announcing
+ * it has to carry.
+ */
+export interface PersistedNarrationSegment {
+  id: string;
+  sequenceNumber: number;
+  text: string;
+  createdAt: string;
+}
+
+/**
+ * The transcript row a run's narration lands in before it calls its tools.
+ *
+ * The id is derived rather than random because a replayed attempt streams the
+ * same turns again: a random id would leave the previous attempt's copy of the
+ * same words sitting above the new one, with no key to recognize it by. Segment
+ * zero keeps the run's own id, so a run that never calls a tool writes exactly
+ * the one message it always did.
+ */
+export async function narrationSegmentMessageId(harnessRunId: string, segmentIndex: number): Promise<string> {
+  if (segmentIndex === 0) return harnessRunId;
+  const digest = await sha256Hex(`avalon:narration-segment:${harnessRunId}:${segmentIndex}`);
+  // Version 8 (custom) with the RFC 9562 variant bits, so the derived id is a
+  // valid UUID rather than a hex string shaped like one.
+  return [
+    digest.slice(0, 8),
+    digest.slice(8, 12),
+    `8${digest.slice(13, 16)}`,
+    `8${digest.slice(17, 20)}`,
+    digest.slice(20, 32),
+  ].join("-");
+}
+
+/**
+ * Persist the text a run streamed before this tool call, at the transcript
+ * position it belongs in.
+ *
+ * The position is the whole point. The row is written *before* the tool rows of
+ * the turn that produced it, so the sequence it takes is lower than theirs and
+ * the transcript reads in the order the work happened — narration, the tools it
+ * announced, the next narration — rather than as every tool followed by every
+ * word. Waiting until the turn was over and writing it afterwards would put the
+ * words below the tools they introduced, which is the shape this exists to fix.
+ *
+ * The guarded sequence increment is shared with tool rows: the counter advances
+ * only when this row is the one that claimed the number, so a replayed attempt
+ * rewrites its segment in place instead of consuming a second position.
+ */
+export async function persistHarnessNarrationSegment(
+  db: D1Database,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  lease: AttemptLease,
+  segment: { id: string; clientMessageId: string; text: string; createdAt: string },
+): Promise<PersistedNarrationSegment> {
+  await db.batch([
+    db.prepare(
+      `INSERT INTO messages
+       (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
+        text_content, sequence_number, created_at, harness_run_id, harness_attempt_id)
+       SELECT ?6, ?7, ?2, w.id, 'agent', 'text', ?8, w.next_sequence_number, ?9, ?1, ?4
+         FROM workstreams w
+         JOIN harness_runs run
+           ON run.id = ?1 AND run.workspace_id = w.workspace_id AND run.workstream_id = w.id
+        WHERE w.id = ?3 AND w.workspace_id = ?2
+          AND run.parent_tool_call_id IS NULL
+          AND run.attempt_id = ?4 AND run.lease_owner = ?5 AND run.status = 'running'
+          AND run.terminalized_at IS NULL
+          AND run.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       ON CONFLICT(id) DO UPDATE SET
+         text_content = excluded.text_content,
+         harness_attempt_id = excluded.harness_attempt_id
+       WHERE messages.workspace_id = excluded.workspace_id
+         AND messages.workstream_id = excluded.workstream_id
+         AND messages.harness_run_id = excluded.harness_run_id`,
+    ).bind(
+      input.harnessRunId,
+      input.workspaceId,
+      input.workstreamId,
+      lease.attemptId,
+      lease.owner,
+      segment.id,
+      segment.clientMessageId,
+      segment.text,
+      segment.createdAt,
+    ),
+    db.prepare(
+      `UPDATE workstreams
+          SET next_sequence_number = next_sequence_number + 1, updated_at = ?1
+        WHERE id = ?2 AND workspace_id = ?3
+          AND next_sequence_number = (
+            SELECT sequence_number FROM messages
+             WHERE id = ?4 AND workspace_id = ?3 AND workstream_id = ?2
+               AND author_type = 'agent' AND message_type = 'text'
+          )`,
+    ).bind(new Date().toISOString(), input.workstreamId, input.workspaceId, segment.id),
+  ]);
+  const persisted = await db.prepare(
+    `SELECT id, sequence_number, text_content, created_at
+       FROM messages
+      WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
+        AND harness_run_id = ?4 AND harness_attempt_id = ?5
+        AND author_type = 'agent' AND message_type = 'text'`,
+  ).bind(
+    segment.id,
+    input.workspaceId,
+    input.workstreamId,
+    input.harnessRunId,
+    lease.attemptId,
+  ).first<{ id: string; sequence_number: number; text_content: string; created_at: string }>();
+  if (!persisted) throw new RunOwnershipLostError();
+  return {
+    id: persisted.id,
+    sequenceNumber: persisted.sequence_number,
+    text: persisted.text_content,
+    createdAt: persisted.created_at,
+  };
+}
+
 export async function persistHarnessFinalMessage(
   db: D1Database,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
@@ -1264,7 +1387,11 @@ export async function persistHarnessFinalMessage(
           AND terminalized_at IS NULL
           AND (?11 = 'stopped' OR cancellation_requested_at IS NULL)
           AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
+       -- Untargeted, because this row may already exist: a run whose last words
+       -- were streamed before its last tool call has them durable as a
+       -- narration segment, and finishing it means naming that row as the final
+       -- message rather than writing a second copy of it.
+       ON CONFLICT DO NOTHING`,
     ).bind(
       input.harnessRunId,
       input.workspaceId,
@@ -1373,12 +1500,15 @@ export async function loadPersistedHarnessFinalOutcome(
         AND lifecycle.event_type = 'final_message_persisted'
       WHERE message.workspace_id = ?1 AND message.workstream_id = ?2
         AND message.harness_run_id = ?3
-        AND message.client_message_id = ?4`,
+        -- The checkpoint names its own message. A run's final message used to
+        -- be findable by client message id alone, but a run that ends on a
+        -- narration segment finishes on a row named for the segment it is, so
+        -- the lifecycle payload is the only thing that identifies it.
+        AND message.id = json_extract(lifecycle.member_safe_payload_json, '$.finalMessageId')`,
   ).bind(
     input.workspaceId,
     input.workstreamId,
     input.harnessRunId,
-    `harness:${input.harnessRunId}`,
   ).first<{
     message_id: string;
     status: string | null;

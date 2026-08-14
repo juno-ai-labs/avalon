@@ -158,6 +158,7 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
 6. Leave the socket idle through at least two jittered heartbeat intervals. Confirm exact text `ping` receives `pong` through Cloudflare auto-response and does not require application-level room work.
 7. Simulate a missing `pong`, offline/online transitions, and a burst of reconnecting clients. Confirm the desktop closes the stale socket, applies capped jittered backoff, resumes immediately when online, and keeps the last cursor.
 8. Attempt an upgrade without `Origin`, from an unconfigured origin, and with an allowed-origin suffix lookalike. Confirm all are rejected; then connect from the exact desktop or development origin with a fresh ticket.
+9. Run a request that makes the agent call tools between two things it says. Confirm each turn's words appear above the tool rows that turn called and stay there — while the run is going, after it ends, and after a reload that reads the transcript back from D1 — and that the identity line appears once for the run rather than over every row.
 
 ## Desktop dictation acceptance
 

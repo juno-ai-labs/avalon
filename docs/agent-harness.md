@@ -227,7 +227,19 @@ OpenRouter SSE comments are ignored and function-call fragments are combined by 
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and retry boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
-The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset while preserving completed text from earlier tool turns. The shell keeps a background subscriber only for running work streams that are not open, and a canonical refresh retains the active transient assistant row until its final row arrives. D1 stores only the complete final assistant message; terminal REST resynchronization remains canonical.
+The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset. The shell keeps a background subscriber only for running work streams that are not open, and a canonical refresh retains the active transient assistant row until its final row arrives. Terminal REST resynchronization remains canonical.
+
+### Narration segments
+
+A run's words are not one message. What the model said before a set of tool calls is settled into its own transcript row as that turn's first tool row is recorded, and the run opens a new streaming message for what it says next. The transcript therefore reads in the order the work happened — said, did, said — instead of as every tool followed by everything the run ever said.
+
+The sequence number is the whole mechanism. Tool rows take the work stream's next sequence at the moment they are written, so a segment has to claim its own before them; waiting for the turn to end and writing the text afterwards would file it below the tools it introduced. Segment ids are derived from the run id and the segment index rather than minted, so a replayed attempt rewrites its own rows instead of leaving the reader two copies of the same words, and the guarded increment shared with tool rows means a replay consumes no second position.
+
+The run's *final message* is unchanged in kind: it is the text the run ends on, written with its lifecycle checkpoint under the attempt lease. A run whose last words were settled before its last tool call has nothing left to write and names that settled row as its final message instead, so `completed` still commits against a durable agent message. Bind's `stream_completed` content is every assistant turn concatenated; only the tail past what has already been settled belongs to the message the run ends on.
+
+Replay puts the two back together: a narration row immediately above a tool group is projected as the `content` of the assistant message carrying those `tool_calls`, because that is the single turn the model actually took. A narration row with no tool group under it stays its own assistant message.
+
+The desktop places every realtime block at the anchor above everything already in the transcript, tool rows included — the settle frame arrives first, so nothing has to be threaded back above anything. Consecutive agent rows are one turn in the reading: only the first carries the identity line.
 
 ### Transcript row attribution
 
@@ -353,7 +365,12 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   activation, receipt-plan and completion, checkpoint, and terminal commits all
   require the same attempt ID, lease owner, and expiry. An obsolete executor cannot
   publish a terminal result.
-- **`completed` cannot commit until the final agent message is durable.**
+- **`completed` cannot commit until the final agent message is durable.** That
+  message is either the text the run ended on or the last narration segment it
+  settled; either way the lifecycle checkpoint names it.
+- **A turn's narration is durable before that turn's first tool row is
+  written.** The two share one sequence counter, and the order they claim it in
+  is the order the transcript is read in.
 - **A launch is never split across the response that asked for it.** The
   `harness_runs` row, the `running` status, and the Workflows start all complete
   before `launchWorkstreamHarness` returns, because `attempt_id` and
@@ -531,6 +548,47 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-14 — A run's words are settled per turn, in the order they were said
+
+**What changed:** A run no longer streams into one assistant message. The
+narration of each turn is persisted as its own transcript row at the moment that
+turn's first tool row is recorded, and the run opens a new streaming message for
+what it says next. Segment ids are derived from the run id and index; the final
+message is the text the run ends on, or the last settled segment when it ended
+on a tool. Replay projects a narration row directly above a tool group as the
+`content` of the assistant message carrying those calls. The desktop places tool
+rows at the tail like every other realtime block rather than above the active
+stream, and shows the identity line only on the first row of a turn.
+
+**Why:** Everything a run said arrived as one message that could only be written
+at the end, so it was ordered after every tool row — the reader saw a column of
+tool calls followed by a wall of text mixing the plan, the reasoning between
+each call, and the answer. The words that explain a tool call are worth little
+once separated from it. Nothing about the model's output required this: the text
+of a turn is complete before that turn's tools run, which is precisely when a
+sequence number can still be claimed ahead of them.
+
+**Considered and rejected:** Splitting the accumulated text in the renderer by
+`turnId` — the live view would interleave and then collapse back into two blocks
+the moment the canonical transcript replaced it, because D1 would still hold one
+row. Settling a segment after its turn finished, which is simpler but files the
+words below the tools they announced. Reserving a sequence number at the first
+delta and writing the row later, which leaves an empty row behind whenever a run
+dies mid-turn.
+
+**Consequences:** A work stream now has several agent text rows per run, and
+anything reading "the run's message" must read the row the lifecycle checkpoint
+names rather than assume the message id equals the run id. Everything that
+delivers "the answer" outward — the Slack stream, an automation's result email —
+now carries what the run ended on rather than that text preceded by its own
+narration, which is what those surfaces meant by it. `client_message_id`
+no longer identifies a run's final message on its own, so the recovery lookup
+goes through the checkpoint payload. A change that adds another way to write a
+tool row has to settle the pending narration first; the run loop keeps exactly
+one such path for that reason.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
 

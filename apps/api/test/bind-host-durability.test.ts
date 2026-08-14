@@ -60,8 +60,7 @@ describe("Bind host durability boundaries", () => {
     const messageId = "00000000-0000-4000-8000-000000000003";
     const result = __integrationTesting.workstreamHarnessTerminalResult({
       outcome: { status: "needs_input" },
-      streamedText: "",
-      messageId,
+      durableMessageId: undefined,
       ambiguousToolOutcome: false,
       stoppedByUser: false,
     });
@@ -70,8 +69,7 @@ describe("Bind host durability boundaries", () => {
     expect("messageId" in result).toBe(false);
     expect(__integrationTesting.workstreamHarnessTerminalResult({
       outcome: { status: "needs_input" },
-      streamedText: "I need one detail before continuing.",
-      messageId,
+      durableMessageId: messageId,
       ambiguousToolOutcome: false,
       stoppedByUser: false,
     })).toEqual({ status: "needs_input", messageId });

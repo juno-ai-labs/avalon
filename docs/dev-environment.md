@@ -78,6 +78,22 @@ same crash-symbolicator Container image; concurrent Wrangler image builds can
 remove one another's transient local tag and leave both Workers unable to start.
 The runner forwards `SIGINT`/`SIGTERM` to both child processes.
 
+That image build needs a Docker CLI, and a sandbox without one fails before
+either Worker starts — `The Docker CLI is needed to build the configured image`,
+followed by both regions exiting. Nothing in the work-stream product needs the
+container, so pass `--enable-containers=false` and start the region you need
+directly:
+
+```bash
+pnpm exec wrangler dev --local --config wrangler.global.jsonc \
+  --env-file .dev.vars.global --persist-to .wrangler/state/global \
+  --port 8787 --inspector-port 9230 --enable-containers=false
+```
+
+The same absence fails `pnpm --filter @avalon/api build`, which is a CI gate:
+`--containers-rollout=none` builds the Worker bundle without the image, and that
+is what the dry run is checking locally.
+
 `wrangler.global.jsonc` declares an `ai` binding, and Workers AI has no local
 implementation — wrangler reports it as `Mode: remote` and opens a remote proxy
 session to Cloudflare to serve it. Without Cloudflare credentials, or behind a
@@ -134,6 +150,15 @@ Electron's own `--no-sandbox` and `--remote-debugging-port` when it spawns the
 app (`electron-vite/dist/cli.js`, `dist/chunks/lib-*.js`). Do not "correct" them
 to the Chromium spellings — electron-vite does not define those options, and the
 flags would stop reaching Electron.
+
+`error during start dev server and electron app: Error: Electron uninstall`
+means the package is installed but its binary was never downloaded, which the
+renderer's dev server starting first can disguise. Fetch it once and start
+again:
+
+```bash
+(cd node_modules/.pnpm/electron@*/node_modules/electron && node install.js)
+```
 
 The renderer's Vite server comes up on `http://localhost:5173/` and the app
 window opens on the virtual display. `Failed to connect to the bus` errors from

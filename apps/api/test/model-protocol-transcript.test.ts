@@ -736,6 +736,48 @@ describe("durable UI-to-model transcript projection", () => {
     },
   );
 
+  it("replays a turn's narration on the assistant message that made its tool calls", async () => {
+    // The run settles narration into its own transcript row so the reader sees
+    // it above the tools it announced. Replaying that row as a separate
+    // assistant message would tell the model it once answered without calling
+    // anything, and would put two assistant turns where it took one.
+    const searched = "00000000-0000-4000-8000-000000000021";
+    const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
+    const storedMessages = [
+      message("00000000-0000-4000-8000-000000000020", 1, { author: "human", textContent: "Which model list is it in?" }),
+      message("00000000-0000-4000-8000-000000000022", 2, { author: "agent", textContent: "Searching the repository." }),
+      message(searched, 3, { author: "agent", messageType: "tool", structuredContent: { invocation: {} } }),
+      message("00000000-0000-4000-8000-000000000023", 4, { author: "agent", textContent: "It is in agent-models.ts." }),
+    ];
+    const env = projectionEnv([
+      {
+        message_id: searched,
+        harness_run_id: PRIOR_RUN_ID,
+        tool_call_id: call,
+        tool_name: "terminal_run_command",
+        input_json: '{"command":"git grep model"}',
+        output_ref: "results/grep.json",
+        output_summary: "One match",
+        status: "completed",
+        error_json: null,
+      },
+    ], { "results/grep.json": { matches: ["agent-models.ts"] } });
+
+    const projection = await __integrationTesting.projectModelProtocolTranscript(env, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      triggerMessageId: null,
+    }, storedMessages);
+
+    expect(projection.messages.map((entry) => entry.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+    expect(projection.messages[1]).toMatchObject({
+      role: "assistant",
+      content: "Searching the repository.",
+      tool_calls: [{ id: call, function: { name: "terminal_run_command" } }],
+    });
+    expect(projection.messages[3]).toEqual({ role: "assistant", content: "It is in agent-models.ts." });
+  });
+
   it("reconstructs matched parallel tool protocol for a second run and omits dangling UI rows", async () => {
     const completedOne = "00000000-0000-4000-8000-000000000011";
     const completedTwo = "00000000-0000-4000-8000-000000000012";

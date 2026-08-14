@@ -242,8 +242,10 @@ atomically checkpoints its accumulated text and Bind cursor with each sequenced,
 batched stream frame, and includes that checkpoint in both an initial snapshot
 and a `history_unavailable` resync. This lets a first-time or post-hibernation
 subscriber cross into catch-up and live delivery without a missing or duplicated
-chunk. The checkpoint is removed at terminal state; D1 still stores only the
-complete final assistant message.
+chunk. The checkpoint is removed when the row it belongs to is persisted, and at
+terminal state; D1 stores each completed row rather than every partial frame — a
+run writes one for the narration of each turn that called tools, and one for the
+message it ends on, per [`agent-harness.md`](agent-harness.md#narration-segments).
 
 If hibernation discarded the replay window or the gap cannot be proved complete,
 the server sends `resync_required` and the client refreshes its canonical REST

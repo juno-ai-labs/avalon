@@ -314,12 +314,14 @@ export interface Message {
    * Durable Object events and D1 transcript rows have independent sequence
    * counters. Realtime-only blocks use this anchor so their observed order can
    * be retained without treating an event sequence as a persisted message
-   * sequence.
+   * sequence. A block takes the anchor above everything already in the
+   * transcript when it arrives, which is the order the run produced it in:
+   * the agent's words settle into a persisted row before the tools they
+   * announced are recorded, so nothing has to be threaded back above anything.
    */
   realtimeOrder?: {
     anchorSequenceNumber: number;
     eventSequence: number;
-    placement: 'before_anchor' | 'at_anchor';
   };
   toolEvent?: ToolEventData;
   thoughtEvent?: ThoughtEventData;

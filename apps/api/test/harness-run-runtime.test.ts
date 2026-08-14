@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { runHarness, type HarnessTool } from "@avalon/agent-harness";
+import { IdSchema } from "@avalon/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -18,7 +19,9 @@ import {
   loadInlineChildResult,
   loadPersistedHarnessFinalOutcome,
   markToolInvocationTimedOut,
+  narrationSegmentMessageId,
   persistHarnessFinalMessage,
+  persistHarnessNarrationSegment,
   persistInlineChildScope,
   persistImmutableRunScope,
   persistRunPluginActivation,
@@ -379,6 +382,102 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.database.prepare(
       "SELECT harness_status FROM workstreams WHERE id = ?",
     ).get(WORKSTREAM_ID)).toEqual({ harness_status: "completed" });
+  });
+
+  it("settles each narration segment at its own transcript position", async () => {
+    // The position is what the segment is for: the words a turn streamed have
+    // to sit above the tool rows the same turn writes next, and a run writes
+    // several of these before the message it ends on.
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-narration",
+      owner: "owner-narration",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    const first = await persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), claim.lease, {
+      id: await narrationSegmentMessageId(RUN_ONE, 0),
+      clientMessageId: `harness:${RUN_ONE}:segment:0`,
+      text: "Let me look at the repository.",
+      createdAt: "2026-08-03T00:00:00.000Z",
+    });
+    expect(first.id).toBe(RUN_ONE);
+    expect(first.sequenceNumber).toBe(1);
+    expect(sqlite.database.prepare(
+      "SELECT next_sequence_number FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toEqual({ next_sequence_number: 2 });
+
+    // A replayed attempt streams the same turn again. It rewrites its own row
+    // rather than leaving the reader two copies of the same words, and the
+    // position it already claimed is not spent twice.
+    const replayed = await persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), claim.lease, {
+      id: first.id,
+      clientMessageId: `harness:${RUN_ONE}:segment:0`,
+      text: "Let me look at the repository first.",
+      createdAt: "2026-08-03T00:00:02.000Z",
+    });
+    expect(replayed.sequenceNumber).toBe(1);
+    expect(replayed.text).toBe("Let me look at the repository first.");
+    expect(sqlite.database.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE harness_run_id = ?",
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+
+    const secondId = await narrationSegmentMessageId(RUN_ONE, 1);
+    expect(secondId).not.toBe(first.id);
+    expect(secondId).toBe(await narrationSegmentMessageId(RUN_ONE, 1));
+    expect(IdSchema.safeParse(secondId).success).toBe(true);
+    const second = await persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), claim.lease, {
+      id: secondId,
+      clientMessageId: `harness:${RUN_ONE}:segment:1`,
+      text: "That file is where the models are listed.",
+      createdAt: "2026-08-03T00:00:03.000Z",
+    });
+    expect(second.sequenceNumber).toBe(2);
+
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+    await expect(persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), claim.lease, {
+      id: await narrationSegmentMessageId(RUN_ONE, 2),
+      clientMessageId: `harness:${RUN_ONE}:segment:2`,
+      text: "Must not persist",
+      createdAt: "2026-08-03T00:00:04.000Z",
+    })).rejects.toThrow("durable attempt lease");
+  });
+
+  it("finishes a run on the last narration segment it settled", async () => {
+    // A run whose last words were streamed before its last tool call has
+    // nothing left to write at the end. It names that row as its final message
+    // instead of writing a second copy of it, and terminalization has to accept
+    // that row as the durable answer.
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-settled-final",
+      owner: "owner-settled-final",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    const segment = await persistHarnessNarrationSegment(sqlite.binding, input(RUN_ONE), claim.lease, {
+      id: await narrationSegmentMessageId(RUN_ONE, 0),
+      clientMessageId: `harness:${RUN_ONE}:segment:0`,
+      text: "Posted the update to the channel.",
+      createdAt: "2026-08-03T00:00:00.000Z",
+    });
+    await persistHarnessFinalMessage(sqlite.binding, input(RUN_ONE), claim.lease, segment, {
+      status: "completed",
+    });
+
+    expect(sqlite.database.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE harness_run_id = ?",
+    ).get(RUN_ONE)).toEqual({ count: 1 });
+    expect(await loadPersistedHarnessFinalOutcome(sqlite.binding, input(RUN_ONE)))
+      .toEqual({ messageId: segment.id, status: "completed" });
+    expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
+      status: "completed",
+      finalMessageId: segment.id,
+    })).toBe("terminalized");
   });
 
   it("fences final-message writes and recovers a final persisted before terminalization", async () => {
