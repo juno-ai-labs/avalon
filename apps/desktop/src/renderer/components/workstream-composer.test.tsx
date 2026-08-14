@@ -481,6 +481,21 @@ describe('WorkstreamComposer model readout', () => {
     await screen.findByRole('button', { name: /^Model: x-ai\/grok-4\.5/u });
   });
 
+  it('treats a blank recorded model as no model at all', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    // `harness_runs.model` is not constrained to be non-empty, and a Worker with
+    // an unset OPENROUTER_* variable resolves to `""` and stores it. Believing
+    // that would render a pill with nothing in it; it falls through to the pin
+    // instead, exactly as a null would.
+    renderComposer(undefined, false, undefined, {
+      ...ranOn('   '),
+      modelOverride: 'deepseek/deepseek-v4-pro',
+    });
+
+    const readout = await screen.findByRole('button', { name: /^Model: deepseek\/deepseek-v4-pro/u });
+    expect(readout).toHaveTextContent('DeepSeek V4 Pro');
+  });
+
   it('claims no model before the work stream has a run to read one off', async () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderComposer(undefined, false, undefined, ranOn(undefined));
