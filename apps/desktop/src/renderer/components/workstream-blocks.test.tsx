@@ -9,9 +9,10 @@ const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => 
   async () => ({ saved: true }),
 ));
 const desktopServicesAvailable = vi.hoisted(() => vi.fn(() => true));
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ copyText, exportMessage }),
+  desktopBridge: () => ({ copyText, exportMessage, reportTelemetryProductIntent }),
   desktopServicesAvailable,
 }));
 vi.mock('thinking-orbs', () => ({
@@ -320,6 +321,28 @@ describe('MessageBlock human identity', () => {
 });
 
 describe('MessageBlock markdown', () => {
+  it('reports a successful response copy by opaque message and work-stream id', async () => {
+    copyText.mockReset().mockResolvedValue(undefined);
+    reportTelemetryProductIntent.mockReset().mockResolvedValue(undefined);
+    const message: Message = {
+      ...baseMessage,
+      id: '00000000-0000-4000-8000-000000000301',
+      workstreamId: '00000000-0000-4000-8000-000000000302',
+      authorType: 'agent',
+      author: undefined,
+      text: 'The bounded response.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy response' }));
+
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(message.text));
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: message.id, workstreamId: message.workstreamId,
+    });
+  });
+
   it('renders person links as non-navigating chips resolved from mention metadata', () => {
     const personId = '00000000-0000-7000-8000-000000000042';
     const message: Message = {

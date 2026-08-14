@@ -334,7 +334,10 @@ describe('menu bar content', () => {
     expect(started).toBe('created');
     expect(subject.requestJson).toHaveBeenCalledWith(
       '/work-opportunities/o1/start',
-      expect.objectContaining({ method: 'POST', body: expect.objectContaining({ version: 5 }) }),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({ version: 5, surface: 'menu_bar' }),
+      }),
     );
     // Starting consumes the suggestion. A second click would be refused by the
     // version check with nothing on screen to explain it.
@@ -358,7 +361,7 @@ describe('menu bar content', () => {
     expect(subject.requestJson).toHaveBeenCalledTimes(1);
     expect(subject.requestJson).toHaveBeenCalledWith('/work-opportunities/impressions', {
       method: 'POST',
-      body: { opportunityIds: ['o1'] },
+      body: { opportunityIds: ['o1'], surface: 'menu_bar' },
     });
   });
 

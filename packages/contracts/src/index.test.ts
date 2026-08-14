@@ -28,6 +28,7 @@ import {
   RefreshRequestSchema,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  StartWorkOpportunityRequestSchema,
   UpdateHyperSightPreferenceRequestSchema,
   UpdateHyperSightRequestSchema,
   UpdateWorkspaceRequestSchema,
@@ -39,6 +40,19 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("adds a bounded optional suggested-work surface without breaking older clients", () => {
+    const legacy = { version: 3, idempotencyKey: "legacy-attempt" };
+    expect(StartWorkOpportunityRequestSchema.safeParse(legacy).success).toBe(true);
+    expect(StartWorkOpportunityRequestSchema.parse({
+      ...legacy,
+      surface: "menu_bar",
+    })).toMatchObject({ surface: "menu_bar" });
+    expect(StartWorkOpportunityRequestSchema.safeParse({
+      ...legacy,
+      surface: "private-screen-name",
+    }).success).toBe(false);
+  });
+
   it("uses one connector OAuth provider catalog across protocol consumers", () => {
     expect(ConnectorOAuthProviderSchema.options).toEqual(ConnectorOAuthProviders);
     expect(ConnectorOAuthProviders).toContain("granola");

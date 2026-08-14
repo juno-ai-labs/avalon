@@ -21,6 +21,10 @@ const ANONYMOUS_EVENT_NAMES = new Set([
   "onboarding_region_selected",
   "workspace_create_requested",
   "workspace_activation_requested",
+  "site_page_viewed",
+  "site_page_left",
+  "site_action_selected",
+  "desktop_handoff_attempted",
 ]);
 
 interface CapabilityClaims {
@@ -71,7 +75,7 @@ async function verifyCapability(secret: string, token: string): Promise<Capabili
   }
 }
 
-function coarseRoute(country: string | undefined): {
+export function coarseTelemetryRoute(country: string | undefined): {
   route: "global" | "eu";
   routingBasis: "ip_geolocation" | "geolocation_fallback";
 } {
@@ -154,7 +158,7 @@ export class TelemetryBootstrapService {
       ).bind(anonymousEpochId, now.toISOString()).run();
     }
     const journeyId = newId(now.getTime());
-    const route = coarseRoute(country);
+    const route = coarseTelemetryRoute(country);
     const expiresAt = new Date(now.getTime() + CAPABILITY_LIFETIME_MS);
     const deleteAt = new Date(now.getTime() + CONTROL_RETENTION_MS);
     const inserted = await this.env.DB.prepare(

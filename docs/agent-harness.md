@@ -500,6 +500,24 @@ The harness reads that half by shape through `readStructuredFailure` in `@avalon
 
 Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
+Separately, Product analytics records a content-free `agent_tool_started` only
+after the execution plan is durable and replay/ambiguity checks permit a new
+invocation. It carries the canonical tool, plugin, capability, mode, run kind,
+execution scope, and opaque work-stream/run/automation IDs. It never carries an
+argument, output, summary, provider payload, or error. User-owned runs retain
+person/workspace attribution; unattended workspace runs are grouped under a
+personless workspace analytics identity. Failure to record telemetry never
+changes tool execution.
+
+When the durable invocation receipt reaches `completed`, `failed`, or
+`ambiguous`, `agent_tool_terminal` adds only a bounded result, duration, and
+replay flag to the same canonical identity. A root harness run likewise emits
+`run_terminal` after its terminal commit with trigger, lifecycle result,
+time-to-first-output, turn/tool/write-call buckets, model route, and fallback
+state. Child runs are represented through their parent tool invocation rather
+than counted as root outcomes. Prompt/message text, error JSON, arguments,
+outputs, summaries, token content, and provider responses remain excluded.
+
 ## Testing
 
 | Suite | Covers |
@@ -508,6 +526,7 @@ Workspace admins may opt into **Log agent inference** from Workspace preferences
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
+| `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
 | `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
@@ -531,6 +550,30 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 ## Changelog
+
+### 2026-08-13 — Durable tool and run receipts emit content-free product usage
+
+**What changed:** Root, HyperSight, automation, system, and inline-child runs now
+emit one typed `agent_tool_started` event after a new invocation plan is durable,
+then one terminal outcome from its receipt. Root runs emit a terminal lifecycle
+event with bounded value/performance dimensions. Events record canonical taxonomy
+and opaque resource correlations; unattended workspace execution uses a
+personless workspace analytics identity.
+
+**Why:** Tool catalogs show what a model could call, not what the product
+actually used or whether it succeeded. Product analysis needs capability
+adoption and run value tied to work streams and automations without turning
+prompts or provider payloads into analytics.
+
+**Considered and rejected:** Emitting when tools are loaded, capturing arguments
+or results, attributing workspace automations to their creator, and letting
+telemetry failure abort a tool. Those respectively inflate usage, expose content,
+misstate agency, or make observation part of product correctness.
+
+**Consequences:** Replay and ambiguous-write branches emit no new start, while a
+replayed terminal receipt is explicitly labeled. The regional runtime—not
+desktop ingest—owns workspace-only events. Any future run/tool dimension must
+remain a bounded canonical taxonomy and must not add content.
 
 ### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
 

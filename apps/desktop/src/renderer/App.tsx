@@ -10,10 +10,12 @@ import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
 import {
   installRendererErrorTelemetry,
+  consumeSurfaceEntrypoint,
   reportJavascriptError,
   reportTelemetryProductIntent,
   reportTelemetryScreen,
   telemetryScreenForPath,
+  telemetrySurfaceForPath,
   uuidV7,
 } from './lib/telemetry';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
@@ -121,11 +123,22 @@ function NotFoundScreen(): React.JSX.Element {
 function TelemetryRouteObserver(): null {
   const location = useLocation();
   const lastScreen = useRef<ReturnType<typeof telemetryScreenForPath>>(null);
+  const lastSurfacePath = useRef<string | null>(null);
   useEffect(() => {
     const screen = telemetryScreenForPath(location.pathname);
-    if (screen === lastScreen.current) return;
-    lastScreen.current = screen;
-    if (screen) reportTelemetryScreen(screen);
+    const surface = telemetrySurfaceForPath(location.pathname);
+    if (!surface && screen !== lastScreen.current) {
+      lastScreen.current = screen;
+      if (screen) reportTelemetryScreen(screen);
+    }
+    if (surface && lastSurfacePath.current !== location.pathname) {
+      lastSurfacePath.current = location.pathname;
+      reportTelemetryProductIntent({
+        kind: 'surface_viewed',
+        ...surface,
+        entrypoint: consumeSurfaceEntrypoint(),
+      });
+    }
   }, [location.pathname]);
   return null;
 }

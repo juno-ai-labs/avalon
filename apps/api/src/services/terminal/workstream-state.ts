@@ -3,13 +3,17 @@ import {
   discoverGitHubConnectionRepositories,
   type ConnectorConnectionContext,
 } from "@avalon/connectors";
-import { nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { connectorRegistryForEnv, githubConnectorConfig } from "../../lib/connector-registry";
 import { WORKSTREAM_VISIBILITY_SQL, workstreamVisibilityBindings } from "../../lib/workstream-visibility";
 import { logWarn } from "../../observability/logger";
+import {
+  emitProductUsageTelemetry,
+  telemetryJourneyDuration,
+} from "../../telemetry/product-usage";
 import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { withAuthorizedConnection } from "../connector-connection-access";
@@ -119,6 +123,7 @@ export class TerminalWorkstreamService {
   }
 
   async startFresh(workstreamId: string) {
+    const telemetryStartedAt = Date.now();
     await this.requireParticipant(workstreamId);
     const state = await this.env.DB.prepare(
       "SELECT state FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
@@ -127,7 +132,24 @@ export class TerminalWorkstreamService {
       throw new ApiError(409, "terminal_workspace_still_retained", "This Terminal workspace is still retained. Continue using it instead of starting a fresh workspace.");
     }
     await this.destroyCurrentSandbox(workstreamId);
-    return this.get(workstreamId);
+    const next = await this.get(workstreamId);
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: "terminal_workspace_terminal",
+      properties: {
+        workstreamId,
+        action: "start_fresh",
+        result: "success",
+        duration: telemetryJourneyDuration(Date.now() - telemetryStartedAt),
+        repositorySelected: next.repository !== null,
+        connectorType: next.repository ? "github" : "none",
+        localFilesRetained: false,
+      },
+      operationId: workstreamId,
+      eventId: newId(),
+    }).catch(() => undefined);
+    return next;
   }
 
   private async destroyCurrentSandbox(workstreamId: string): Promise<void> {

@@ -68,6 +68,436 @@ describe("telemetry registry", () => {
     }))).toMatchObject({ name: "onboarding_region_selected" });
   });
 
+  it.each([
+    ["menu_bar_opened", "desktop-main", {
+      signedIn: true, suggestionCount: 4, recentCount: 5, pinnedCount: 2,
+    }],
+    ["menu_bar_action_selected", "desktop-main", { action: "new_workstream" }],
+    ["command_shortcuts_revealed", "desktop-renderer", { availableCount: 9 }],
+    ["command_shortcut_used", "desktop-renderer", {
+      shortcutNumber: 2, destinationType: "pinned_workstream",
+    }],
+    ["application_settings_state", "desktop-main", {
+      launchAtLoginEnabled: true,
+      launchAtLoginAvailable: true,
+      lockdownModeEnabled: false,
+      lockdownModeAvailable: true,
+      applicationIcon: "ruby",
+      applicationIconAutomatic: false,
+      applicationIconAvailable: true,
+    }],
+    ["application_setting_change_completed", "desktop-main", {
+      setting: "launch_at_login",
+      previousEnabled: false,
+      requestedEnabled: true,
+      appliedEnabled: false,
+    }],
+    ["application_setting_change_completed", "desktop-main", {
+      setting: "lockdown_mode",
+      previousEnabled: false,
+      requestedEnabled: true,
+      appliedEnabled: true,
+    }],
+    ["application_icon_changed", "desktop-main", {
+      previousIcon: "dark",
+      previousAutomatic: true,
+      selectedIcon: "sunset-sherbet",
+      automatic: false,
+    }],
+    ["application_opened", "desktop-main", {
+      entrypoint: "system_start",
+      phase: "cold_start",
+    }],
+    ["application_opened", "desktop-main", {
+      entrypoint: "dock",
+      phase: "activation",
+    }],
+    ["application_opened", "desktop-main", {
+      entrypoint: "push_notification",
+      phase: "activation",
+    }],
+    ["suggested_work_started", "api", { surface: "menu_bar" }],
+    ["suggested_work_started", "api", { surface: "workspace_home" }],
+    ["workstream_opened", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      visibility: "private",
+      navigation: "switched",
+      origin: "ad_hoc",
+      pinned: true,
+    }],
+    ["workstream_created", "api", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      visibility: "public",
+      creationSource: "composer",
+      origin: "ad_hoc",
+      connectorType: "none",
+      connectorTypes: [],
+      connectorTypeCount: 0,
+      participantCount: 3,
+      attachmentCount: 2,
+      modelOverride: true,
+    }],
+    ["workstream_action_completed", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      action: "make_private",
+      visibility: "private",
+      origin: "ad_hoc",
+      pinned: false,
+    }],
+    ["automation_created", "desktop-renderer", {
+      automationId: "00000000-0000-4000-8000-000000000102",
+      visibility: "public",
+      creationMethod: "custom",
+      pluginCount: 4,
+      activityTriggerEnabled: true,
+      deliveryEnabled: true,
+    }],
+    ["automation_action_completed", "desktop-renderer", {
+      automationId: "00000000-0000-4000-8000-000000000102",
+      action: "archive_draft",
+      visibility: "private",
+      status: "draft",
+    }],
+    ["message_sent", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      messageId: "00000000-0000-4000-8000-000000000103",
+      visibility: "private",
+      workstreamOrigin: "automation",
+      messageKind: "message",
+      attachmentCount: 2,
+      mentionCount: 1,
+      participantAddedCount: 1,
+    }],
+    ["content_copied", "desktop-renderer", {
+      contentType: "message_response",
+      resourceType: "message",
+      resourceId: "00000000-0000-4000-8000-000000000103",
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+    }],
+    ["note_opened", "desktop-renderer", {
+      noteId: "00000000-0000-4000-8000-000000000104",
+      visibility: "public",
+      recordingState: "complete",
+      navigation: "reopened",
+    }],
+    ["note_created", "desktop-renderer", {
+      noteId: "00000000-0000-4000-8000-000000000104",
+      visibility: "private",
+      noteType: "meeting_or_voice",
+      entrypoint: "sidebar",
+    }],
+    ["note_action_completed", "desktop-renderer", {
+      noteId: "00000000-0000-4000-8000-000000000104",
+      action: "make_public",
+      visibility: "public",
+      recordingState: "recording",
+    }],
+    ["transcription_state_changed", "desktop-renderer", {
+      noteId: "00000000-0000-4000-8000-000000000104",
+      state: "paused",
+      visibility: "private",
+      audioSource: "microphone_and_system",
+    }],
+    ["agent_tool_started", "api", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      harnessRunId: "00000000-0000-4000-8000-000000000105",
+      automationId: "00000000-0000-4000-8000-000000000102",
+      toolName: "google_drive_search",
+      pluginId: "google-drive",
+      capability: "drive.search",
+      mode: "read",
+      runKind: "automation",
+      executionScope: "workspace",
+    }],
+  ] as const)("accepts the closed %s product event", (name, source, properties) => {
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope(name, properties),
+      source,
+      identityScope: "workspace-user",
+    }).success).toBe(true);
+  });
+
+  it("rejects shortcut and menu dimensions outside their bounded taxonomies", () => {
+    expect(TelemetryEnvelopeSchema.safeParse(envelope("command_shortcut_used", {
+      shortcutNumber: 0,
+      destinationType: "private/workstream/42",
+    })).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("menu_bar_opened", {
+        signedIn: true, suggestionCount: 5, recentCount: 5, pinnedCount: 0,
+      }),
+      source: "desktop-main",
+    }).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("menu_bar_action_selected", { action: "private-row-label" }),
+      source: "desktop-main",
+    }).success).toBe(false);
+  });
+
+  it("rejects unknown application settings and icon values", () => {
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("application_settings_state", {
+        launchAtLoginEnabled: true,
+        launchAtLoginAvailable: true,
+        lockdownModeEnabled: false,
+        lockdownModeAvailable: true,
+        applicationIcon: "../../private-icon",
+        applicationIconAutomatic: false,
+        applicationIconAvailable: true,
+      }),
+      source: "desktop-main",
+    }).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("application_setting_change_completed", {
+        setting: "private_setting",
+        previousEnabled: false,
+        requestedEnabled: true,
+        appliedEnabled: true,
+      }),
+      source: "desktop-main",
+    }).success).toBe(false);
+  });
+
+  it("rejects unclassified application-open sources", () => {
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("application_opened", {
+        entrypoint: "some-arbitrary-url",
+        phase: "activation",
+      }),
+      source: "desktop-main",
+    }).success).toBe(false);
+  });
+
+  it("rejects copied content and tool arguments while retaining opaque resource correlations", () => {
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("content_copied", {
+        contentType: "message_response",
+        resourceType: "message",
+        resourceId: "00000000-0000-4000-8000-000000000103",
+        workstreamId: "00000000-0000-4000-8000-000000000101",
+        content: "private message text",
+      }),
+      source: "desktop-renderer",
+      identityScope: "workspace-user",
+    }).success).toBe(false);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("agent_tool_started", {
+        workstreamId: "00000000-0000-4000-8000-000000000101",
+        harnessRunId: "00000000-0000-4000-8000-000000000105",
+        toolName: "google_drive_search",
+        pluginId: "google-drive",
+        capability: "drive.search",
+        mode: "read",
+        runKind: "workstream",
+        executionScope: "user",
+        arguments: { query: "confidential acquisition" },
+      }),
+      source: "api",
+      identityScope: "workspace-user",
+    }).success).toBe(false);
+  });
+
+  it.each([
+    ["surface_viewed", "desktop-renderer", "workspace-user", {
+      surface: "automation_detail", entrypoint: "sidebar_automation",
+      resourceType: "automation", resourceId: "00000000-0000-4000-8000-000000000102",
+    }],
+    ["run_terminal", "api", "workspace", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      harnessRunId: "00000000-0000-4000-8000-000000000105",
+      automationId: "00000000-0000-4000-8000-000000000102",
+      runKind: "automation", triggerType: "scheduled", terminalState: "needs_input",
+      duration: "2m_10m", timeToFirstOutput: "30s_2m", turnCount: "two_to_five",
+      toolCallCount: "six_to_twenty", writeToolCallCount: "one",
+      modelRoute: "anthropic/claude-sonnet-4", fallbackUsed: true,
+    }],
+    ["agent_tool_terminal", "api", "workspace", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      harnessRunId: "00000000-0000-4000-8000-000000000105",
+      automationId: "00000000-0000-4000-8000-000000000102",
+      toolName: "linear_issue_create", pluginId: "linear", capability: "linear.issue.create",
+      mode: "write", runKind: "automation", executionScope: "workspace",
+      result: "provider_error", duration: "5s_30s", replayed: false,
+    }],
+    ["suggested_work_impression", "api", "workspace-user", {
+      opportunityId: "00000000-0000-4000-8000-000000000106", version: 3,
+      surface: "workspace_home", position: 2, audienceScope: "personal",
+      connectorTypes: ["linear"], freshness: "1h_24h", priorImpressionCount: "two_to_five",
+    }],
+    ["suggested_work_dismissed", "api", "workspace-user", {
+      opportunityId: "00000000-0000-4000-8000-000000000106", version: 3,
+      surface: "workspace_home", position: 2, audienceScope: "personal",
+      connectorTypes: ["linear"], timeSinceFirstImpression: "2m_10m",
+    }],
+    ["suggested_work_started_v2", "api", "workspace-user", {
+      opportunityId: "00000000-0000-4000-8000-000000000106",
+      workstreamId: "00000000-0000-4000-8000-000000000101", version: 3,
+      surface: "menu_bar", position: 1, audienceScope: "workspace",
+      connectorTypes: ["linear", "slack"], priorImpressionCount: "six_to_twenty",
+    }],
+    ["automation_builder_started", "desktop-renderer", "workspace-user", {
+      entrypoint: "sidebar_automation", resumedDraft: false,
+    }],
+    ["automation_draft_turn_completed", "api", "workspace-user", {
+      draftId: "00000000-0000-4000-8000-000000000107", turnNumber: "two_to_five",
+      result: "success", duration: "5s_30s", inputMode: "suggested_prompt",
+      attachmentCount: 1, connectorMentionCount: 2, readyToCreate: true,
+    }],
+    ["automation_draft_ready", "api", "workspace-user", {
+      draftId: "00000000-0000-4000-8000-000000000107", turnsToReady: "two_to_five",
+      visibility: "private", triggerTypes: ["manual", "calendar"],
+      connectorTypes: ["google"], pluginCount: 2, deliveryTargetTypes: ["email"],
+    }],
+    ["automation_created_v2", "api", "workspace-user", {
+      automationId: "00000000-0000-4000-8000-000000000102",
+      draftId: "00000000-0000-4000-8000-000000000107", creationMethod: "custom",
+      visibility: "private", triggerTypes: ["manual"], connectorTypes: ["google"],
+      pluginCount: 2, deliveryTargetTypes: ["email"], modelOverride: true,
+    }],
+    ["automation_opened", "desktop-renderer", "workspace-user", {
+      automationId: "00000000-0000-4000-8000-000000000102", visibility: "private",
+      status: "active", entrypoint: "sidebar_automation", runCount: "six_to_twenty",
+    }],
+    ["automation_action_completed_v2", "api", "workspace-user", {
+      automationId: "00000000-0000-4000-8000-000000000102", action: "pause",
+      visibility: "public", previousStatus: "active", appliedStatus: "paused", result: "success",
+    }],
+    ["elicitation_presented", "api", "workspace-user", {
+      elicitationId: "00000000-0000-4000-8000-000000000108",
+      runId: "00000000-0000-4000-8000-000000000105",
+      workstreamId: "00000000-0000-4000-8000-000000000101", responseType: "single_select",
+      optionCount: "two_to_five", surface: "workstream",
+    }],
+    ["elicitation_resolved", "api", "workspace-user", {
+      elicitationId: "00000000-0000-4000-8000-000000000108",
+      runId: "00000000-0000-4000-8000-000000000105",
+      workstreamId: "00000000-0000-4000-8000-000000000101", responseType: "single_select",
+      resolution: "answered", customResponseUsed: false, responseLatency: "2m_10m", surface: "workstream",
+    }],
+    ["workstream_participant_changed", "api", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101", action: "added",
+      method: "picker", participantCount: "two_to_five", result: "success",
+    }],
+    ["workstream_resource_action_completed", "api", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      resourceId: "00000000-0000-4000-8000-000000000109", resourceType: "document",
+      connectorType: "google", relationshipType: "reference", action: "watch", result: "success",
+      surface: "resource_inspector",
+    }],
+    ["run_action_completed", "api", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      harnessRunId: "00000000-0000-4000-8000-000000000105", action: "retry", result: "success",
+    }],
+    ["hypersight_opened", "desktop-renderer", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101", blockCount: "two_to_five",
+    }],
+    ["hypersight_configuration_changed", "api", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101", action: "reorder",
+      blockCount: "six_to_twenty", result: "success",
+    }],
+    ["hypersight_run_terminal", "api", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      harnessRunId: "00000000-0000-4000-8000-000000000105", result: "success",
+      duration: "30s_2m", staleAtCompletion: false,
+    }],
+    ["terminal_workspace_terminal", "api", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101", action: "start",
+      result: "success", duration: "5s_30s", repositorySelected: true,
+      connectorType: "github", localFilesRetained: false,
+    }],
+    ["attention_consumed", "api", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101", unreadCount: "six_to_twenty",
+      hadMention: true, neededInput: false, entrypoint: "sidebar_recent", timeToRead: "2m_10m",
+    }],
+    ["human_message_created", "api", "workspace-user", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      messageId: "00000000-0000-4000-8000-000000000103", channel: "slack",
+      visibility: "public", workstreamOrigin: "ad_hoc", attachmentCount: 1,
+      mentionCount: 2, participantAddedCount: 1,
+    }],
+    ["recording_start_completed", "desktop-renderer", "workspace-user", {
+      noteId: "00000000-0000-4000-8000-000000000104", result: "permission_denied",
+      permissionClass: "both_blocked", audioSource: "unknown", entrypoint: "sidebar",
+    }],
+    ["recording_terminal", "desktop-renderer", "workspace-user", {
+      noteId: "00000000-0000-4000-8000-000000000104", result: "partial_transcript",
+      duration: "2m_10m", segmentCount: "six_to_twenty", pauseCount: "two_to_five",
+      finalSummaryResult: "success", audioSource: "microphone_only",
+    }],
+    ["note_summary_generation_completed", "api", "workspace-user", {
+      noteId: "00000000-0000-4000-8000-000000000104", mode: "final", result: "success",
+      duration: "5s_30s", transcriptStatus: "partial", segmentCount: "six_to_twenty",
+      refreshCadence: "one_minute",
+    }],
+    ["note_opened_v2", "desktop-renderer", "workspace-user", {
+      noteId: "00000000-0000-4000-8000-000000000104", visibility: "private",
+      entrypoint: "sidebar_note", navigation: "reopened", recordingState: "complete",
+      hasSummary: true, hasTranscript: true,
+      duration: "2m_10m", segmentCount: "six_to_twenty",
+    }],
+    ["connector_setup_requested_v2", "desktop-renderer", "workspace-user", {
+      connector: "granola", scope: "workspace", method: "api_key", capabilityCount: "two_to_five",
+    }],
+    ["connector_setup_completed_v2", "api", "workspace-user", {
+      connector: "generic_webhook", scope: "workspace", method: "webhook", result: "success",
+      duration: "1s_5s", capabilityCount: "two_to_five", reconnect: false,
+    }],
+    ["connector_action_completed", "api", "workspace-user", {
+      connectorId: "00000000-0000-4000-8000-000000000110", connector: "slack",
+      scope: "workspace", action: "test", previousHealth: "healthy", appliedHealth: "healthy",
+      result: "success",
+    }],
+    ["connector_health_changed", "api", "workspace", {
+      connectorId: "00000000-0000-4000-8000-000000000110", connector: "slack",
+      scope: "workspace", previousHealth: "healthy", appliedHealth: "needs_reconnect", cause: "provider_auth",
+    }],
+    ["connector_activity_ingested", "api", "workspace", {
+      connector: "slack", activityType: "message", result: "accepted", itemCount: "six_to_twenty",
+    }],
+    ["application_settings_state_v2", "desktop-main", "workspace-user", {
+      launchAtLoginEnabled: true, launchAtLoginAvailable: true, lockdownModeEnabled: false,
+      lockdownModeAvailable: true, menuBarEnabled: true, menuBarAvailable: true,
+      menuBarPresent: true, applicationIcon: "ruby", applicationIconAutomatic: false,
+      applicationIconAvailable: true,
+    }],
+    ["application_setting_change_completed_v2", "desktop-main", "workspace-user", {
+      setting: "menu_bar", previousEnabled: false, requestedEnabled: true,
+      appliedEnabled: true, result: "success",
+    }],
+    ["digest_schedule_updated", "api", "workspace-user", {
+      enabled: true, dayCount: "six_to_twenty", timeCount: "two_to_five",
+      cadence: "multiple_weekly", deliveryTargetTypes: ["email", "slack_agent_dm"], result: "success",
+    }],
+    ["digest_delivery_terminal", "api", "workspace-user", {
+      deliveryId: "00000000-0000-4000-8000-000000000111", result: "success",
+      activityCount: "twenty_one_to_one_hundred", targetTypes: ["email"], firstDelivery: true,
+    }],
+    ["workspace_invitation_terminal", "api", "workspace-user", {
+      invitationId: "00000000-0000-4000-8000-000000000112", action: "accepted", role: "member",
+      deliveryResult: "success", timeToTerminal: "2m_10m",
+    }],
+    ["terminal_policy_changed", "api", "workspace-user", {
+      previousMode: "restricted", appliedMode: "custom", customDomainCount: "two_to_five",
+      activeSandboxCount: "one", result: "success",
+    }],
+    ["site_page_viewed", "site", "anonymous-epoch", {
+      page: "landing", pathname: "/", referringDomain: "example.com", campaignSource: "launch",
+    }],
+    ["site_page_left", "site", "anonymous-epoch", {
+      page: "landing", pathname: "/", duration: "30s_2m",
+    }],
+    ["site_action_selected", "site", "anonymous-epoch", {
+      page: "landing", action: "download", placement: "hero",
+    }],
+    ["desktop_handoff_attempted", "site", "anonymous-epoch", {
+      handoffType: "auth", method: "automatic", validity: "valid",
+    }],
+  ] as const)("accepts the new closed %s event", (name, source, identityScope, properties) => {
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope(name, properties), source, identityScope,
+    }).success).toBe(true);
+  });
+
   it("accepts legacy context v1 while requiring native desktop fields to declare context v2", () => {
     const current = envelope("onboarding_region_selected", {
       selectedRegion: "eu",

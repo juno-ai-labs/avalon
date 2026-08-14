@@ -13,6 +13,10 @@ import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
 import {
+  emitProductUsageTelemetry,
+  telemetryCountBucket,
+} from "../../telemetry/product-usage";
+import {
   compileTerminalNetworkPolicy,
   TERMINAL_NETWORK_MANIFEST_VERSION,
   type TerminalNetworkMode,
@@ -161,7 +165,8 @@ export class TerminalSettingsService {
     }
     const customDomains = JSON.parse(mutation.proposed_domains_json) as string[];
     const effectiveDomains = JSON.parse(mutation.effective_domains_json) as string[];
-    const currentDomains = compileTerminalNetworkPolicy(current.mode, await this.customDomains()).effectiveDomains;
+    const previousCustomDomains = await this.customDomains();
+    const currentDomains = compileTerminalNetworkPolicy(current.mode, previousCustomDomains).effectiveDomains;
     const resultingRevision = current.revision + 1;
     const timestamp = nowIso();
     const claimed = await this.env.DB.prepare(
@@ -378,6 +383,23 @@ export class TerminalSettingsService {
       ).bind(timestamp, timestamp, this.auth.workspaceId, mutation.id),
       ...verifiedSandboxUpdates,
     ]);
+    const telemetryMode = (mode: TerminalNetworkMode, domains: string[]) => mode === "full_internet"
+      ? "unrestricted" as const
+      : domains.length > 0 ? "custom" as const : "restricted" as const;
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: "terminal_policy_changed",
+      properties: {
+        previousMode: telemetryMode(current.mode, previousCustomDomains),
+        appliedMode: telemetryMode(mutation.proposed_mode, customDomains),
+        customDomainCount: telemetryCountBucket(customDomains.length),
+        activeSandboxCount: telemetryCountBucket(affected.length),
+        result: "success",
+      },
+      operationId: mutation.id,
+      eventId: mutation.id,
+    }).catch(() => undefined);
     return this.get();
   }
 

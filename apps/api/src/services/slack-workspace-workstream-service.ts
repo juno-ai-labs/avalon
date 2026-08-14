@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { publishWorkstreamEvent } from "./integrations";
 import { launchWorkstreamHarness } from "./workstream-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
@@ -86,6 +87,15 @@ export class SlackWorkspaceWorkstreamService {
       openingMessage: input.text,
       clientMessageId: input.clientMessageId,
       participantUserIds: [],
+    });
+    await recordWorkstreamCreatedTelemetry(this.env, {
+      workspaceId: this.workspaceId,
+      workstreamId: created.workstream.id,
+      creationSource: "slack_agent",
+      connectorTypes: ["slack"],
+      principal: input.creatorUserId
+        ? { type: "user", userId: input.creatorUserId }
+        : { type: "workspace" },
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
     const message = await this.database.workstreams.getMessageByClientId(

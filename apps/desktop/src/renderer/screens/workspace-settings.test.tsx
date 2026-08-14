@@ -724,6 +724,8 @@ describe('Workspace settings', () => {
     expect(api.reconnectConnection).toHaveBeenCalledWith(
       '00000000-0000-7000-8000-000000000010',
       'google',
+      'you',
+      1,
     );
     expect(api.getConnectorOAuthAttempt).toHaveBeenNthCalledWith(1, 'b'.repeat(43));
   });
@@ -747,6 +749,8 @@ describe('Workspace settings', () => {
     await waitFor(() => expect(api.reconnectConnection).toHaveBeenCalledWith(
       '00000000-0000-7000-8000-000000000010',
       'google',
+      'you',
+      1,
     ));
     expect(openExternal).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
   });
