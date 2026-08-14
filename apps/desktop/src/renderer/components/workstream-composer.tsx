@@ -301,7 +301,14 @@ export function WorkstreamComposer({
         // it does not consult.
         model={{
           kind: 'settled',
-          model: workstream.latestHarnessRun?.model ?? workstream.modelOverride ?? null,
+          // Trimmed before it is believed. `harness_runs.model` is not
+          // constrained to be non-empty, and a Worker whose `OPENROUTER_*`
+          // variable is unset resolves to `""` — `modelId` in
+          // `agent-model-flags.ts` normalizes an absent variable to the empty
+          // string — which is stored and reaches here. Empty means the same
+          // thing null does, so it falls through to the pin rather than
+          // rendering a pill with no name in it.
+          model: workstream.latestHarnessRun?.model?.trim() || workstream.modelOverride || null,
           // The pin decides what the control may claim about the future, which
           // is not the same question as what it shows. Only a pinned work
           // stream is fixed to this model; an unpinned one re-resolves the flag

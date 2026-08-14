@@ -108,7 +108,10 @@ export function agentModelLabel(id: AgentModelOverride | null): string {
  * this process cannot see the served variation.
  */
 export function agentModelInUseLabel(model: string | null): string {
-  if (model === null) return UNPINNED_AGENT_MODEL_LABEL;
+  // Blank counts as absent. Nothing constrains `harness_runs.model` to be
+  // non-empty, and a pill showing an empty string is worse than one saying it
+  // does not know.
+  if (model === null || model.trim() === '') return UNPINNED_AGENT_MODEL_LABEL;
   if (isAgentModelOverride(model)) return PRESENTATION[model].label;
   return model.slice(model.lastIndexOf('/') + 1);
 }
@@ -135,6 +138,7 @@ export function agentModelInUseLabel(model: string | null): string {
  * this string has to stand on its own as the accessible name too.
  */
 export function agentModelInUseTriggerLabel(model: string | null, pinned: boolean): string {
+  if (model !== null && model.trim() === '') model = null;
   if (pinned && model !== null) {
     return `Model: ${model} — pinned when this work stream was created, so every run uses it. It cannot be changed.`;
   }
