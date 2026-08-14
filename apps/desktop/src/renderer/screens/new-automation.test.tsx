@@ -48,6 +48,9 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: () => () => undefined,
   }),
+  // Avalon's turns in this conversation carry the same actions the work-stream
+  // feed does, including the two that save one to a file.
+  desktopServicesAvailable: () => true,
 }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, state }: { paused?: boolean; state: string }) => (
