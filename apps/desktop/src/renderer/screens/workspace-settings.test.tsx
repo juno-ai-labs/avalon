@@ -12,6 +12,8 @@ const api = vi.hoisted(() => ({
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getConnections: vi.fn(),
+  getGitHubRepositoryAccessSettings: vi.fn(),
+  updateGitHubRepositoryAccessSettings: vi.fn(),
   getAvailableConnectorTypes: vi.fn(),
   createGranolaWorkspaceConnection: vi.fn(),
   createWebhookConnection: vi.fn(),
@@ -132,7 +134,7 @@ function renderSettings(
   );
 }
 
-function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'Application'): void {
+function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'GitHub' | 'Application'): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
 }
@@ -151,6 +153,53 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    api.getGitHubRepositoryAccessSettings.mockResolvedValue({
+      connectionId: '00000000-0000-7000-8000-000000000020',
+      connectionName: 'GitHub · Avalon',
+      revision: 3,
+      mode: 'all_repositories',
+      defaultRemoteAccess: 'full_access',
+      repositories: [],
+      availableRepositories: [
+        {
+          repositoryId: '101',
+          repositoryFullName: 'with-avalon/avalon',
+          private: true,
+          remoteAccess: 'full_access',
+        },
+        {
+          repositoryId: '102',
+          repositoryFullName: 'with-avalon/docs',
+          private: false,
+          remoteAccess: 'full_access',
+        },
+      ],
+    });
+    api.updateGitHubRepositoryAccessSettings.mockImplementation(async (_connectionId: string, input: {
+      expectedRevision: number;
+      mode: 'all_repositories' | 'selected_repositories';
+      defaultRemoteAccess: 'read_only' | 'full_access';
+      repositories: Array<{ repositoryId: string; repositoryFullName: string; remoteAccess: 'read_only' | 'full_access' }>;
+    }) => ({
+      connectionId: '00000000-0000-7000-8000-000000000020',
+      connectionName: 'GitHub · Avalon',
+      revision: input.expectedRevision + 1,
+      mode: input.mode,
+      defaultRemoteAccess: input.defaultRemoteAccess,
+      repositories: input.repositories,
+      availableRepositories: [
+        {
+          repositoryId: '101', repositoryFullName: 'with-avalon/avalon', private: true,
+          remoteAccess: input.repositories.find((entry) => entry.repositoryId === '101')?.remoteAccess
+            ?? (input.mode === 'all_repositories' ? input.defaultRemoteAccess : null),
+        },
+        {
+          repositoryId: '102', repositoryFullName: 'with-avalon/docs', private: false,
+          remoteAccess: input.repositories.find((entry) => entry.repositoryId === '102')?.remoteAccess
+            ?? (input.mode === 'all_repositories' ? input.defaultRemoteAccess : null),
+        },
+      ],
+    }));
     api.getAvailableConnectorTypes.mockResolvedValue([
       'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
     ]);
@@ -404,6 +453,89 @@ describe('Workspace settings', () => {
     expect(within(navigation).getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
     expect(await screen.findByText('Sam')).toBeVisible();
+  });
+
+  it('adds a nested GitHub settings page only for a configurable active connection', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000020',
+      connectorType: 'github',
+      scope: 'workspace',
+      displayName: 'GitHub · Avalon',
+      capabilities: ['github.metadata.read', 'github.contents.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }]);
+    renderSettings();
+
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    const githubNavigation = await within(navigation).findByRole('button', { name: 'GitHub' });
+    expect(githubNavigation).toHaveClass('settings-navigation-child');
+    fireEvent.click(githubNavigation);
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Repository access' })).toBeVisible();
+    expect(await screen.findByText('with-avalon/avalon')).toBeVisible();
+    expect(screen.getByText(/Read-only still allows Avalon to edit and commit locally/u)).toBeVisible();
+    expect(api.getGitHubRepositoryAccessSettings).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000020',
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('shows workspace GitHub policy read-only to non-admin members', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000020',
+      connectorType: 'github',
+      scope: 'workspace',
+      displayName: 'GitHub · Avalon',
+      capabilities: ['github.metadata.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }]);
+    renderSettings({ ...workspace, currentUser: member });
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
+
+    expect(await screen.findByText(/Ask a workspace administrator to change it/u)).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Repository availability' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Default remote access' })).toBeDisabled();
+  });
+
+  it('updates repository selection and remote access without restricting local edits', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000020',
+      connectorType: 'github',
+      scope: 'workspace',
+      displayName: 'GitHub · Avalon',
+      capabilities: ['github.metadata.read', 'github.contents.read'],
+      status: 'healthy',
+      settingsKind: 'github_repository_access',
+    }]);
+    renderSettings();
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
+
+    const availability = await screen.findByRole('combobox', { name: 'Repository availability' });
+    fireEvent.change(availability, { target: { value: 'selected_repositories' } });
+    await waitFor(() => expect(api.updateGitHubRepositoryAccessSettings).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000020',
+      { expectedRevision: 3, mode: 'selected_repositories', defaultRemoteAccess: 'full_access', repositories: [] },
+    ));
+    const add = await screen.findAllByRole('button', { name: 'Add' });
+    fireEvent.click(add[0]!);
+    await waitFor(() => expect(api.updateGitHubRepositoryAccessSettings).toHaveBeenLastCalledWith(
+      '00000000-0000-7000-8000-000000000020',
+      {
+        expectedRevision: 4,
+        mode: 'selected_repositories',
+        defaultRemoteAccess: 'full_access',
+        repositories: [{
+          repositoryId: '101',
+          repositoryFullName: 'with-avalon/avalon',
+          remoteAccess: 'read_only',
+        }],
+      },
+    ));
+    expect(screen.getByText(/Terminal harness always permits local edits and local commits/iu)).toBeVisible();
   });
 
   it('refreshes members whenever settings opens even when the cached list is fresh', async () => {

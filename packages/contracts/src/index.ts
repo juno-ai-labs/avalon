@@ -482,6 +482,7 @@ export const ConnectionSchema = z.object({
   displayName: z.string().min(1).max(180),
   grantedCapabilities: z.array(z.string()),
   status: z.enum(["healthy", "needs_reconnect", "error", "disabled"]),
+  settingsKind: z.enum(["github_repository_access"]).nullable().default(null),
   /**
    * Set when this connection can deliver automation results to the requesting
    * user right now — the connector declares the surface and, where the
@@ -496,6 +497,34 @@ export const ConnectionSchema = z.object({
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });
+
+export const GitHubRepositoryRemoteAccessSchema = z.enum(["read_only", "full_access"]);
+export const GitHubRepositoryAccessModeSchema = z.enum(["all_repositories", "selected_repositories"]);
+export const GitHubRepositoryAccessEntrySchema = z.object({
+  repositoryId: z.string().min(1).max(100),
+  repositoryFullName: z.string().regex(/^[^/\s]{1,100}\/[^/\s]{1,100}$/u),
+  remoteAccess: GitHubRepositoryRemoteAccessSchema,
+}).strict();
+export const GitHubRepositoryAccessSettingsSchema = z.object({
+  connectionId: IdSchema,
+  connectionName: z.string().min(1).max(180),
+  revision: z.number().int().nonnegative(),
+  mode: GitHubRepositoryAccessModeSchema,
+  defaultRemoteAccess: GitHubRepositoryRemoteAccessSchema,
+  repositories: z.array(GitHubRepositoryAccessEntrySchema).max(1_000),
+  availableRepositories: z.array(z.object({
+    repositoryId: z.string().min(1).max(100),
+    repositoryFullName: z.string().regex(/^[^/\s]{1,100}\/[^/\s]{1,100}$/u),
+    private: z.boolean(),
+    remoteAccess: GitHubRepositoryRemoteAccessSchema.nullable(),
+  }).strict()).max(1_000),
+}).strict();
+export const UpdateGitHubRepositoryAccessSettingsSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  mode: GitHubRepositoryAccessModeSchema,
+  defaultRemoteAccess: GitHubRepositoryRemoteAccessSchema,
+  repositories: z.array(GitHubRepositoryAccessEntrySchema).max(1_000),
+}).strict();
 
 export const ModelPluginIdSchema = z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u);
 export const ActivitySourceBindingKeySchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/u);
@@ -2041,6 +2070,11 @@ export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
 export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
 export type AppendNoteTranscriptSegmentRequest = z.infer<typeof AppendNoteTranscriptSegmentRequestSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
+export type GitHubRepositoryRemoteAccess = z.infer<typeof GitHubRepositoryRemoteAccessSchema>;
+export type GitHubRepositoryAccessMode = z.infer<typeof GitHubRepositoryAccessModeSchema>;
+export type GitHubRepositoryAccessEntry = z.infer<typeof GitHubRepositoryAccessEntrySchema>;
+export type GitHubRepositoryAccessSettings = z.infer<typeof GitHubRepositoryAccessSettingsSchema>;
+export type UpdateGitHubRepositoryAccessSettings = z.infer<typeof UpdateGitHubRepositoryAccessSettingsSchema>;
 export type AutomationDeliveryTargetType = z.infer<typeof AutomationDeliveryTargetTypeSchema>;
 export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
@@ -2137,10 +2171,6 @@ export const TerminalSelectedRepositorySchema = z.object({
   baseSha: z.string().regex(/^[0-9a-f]{40}$/u),
   headRef: z.string().min(1).max(240),
 }).strict();
-export const TerminalRepositoryRequestSchema = z.object({
-  id: IdSchema,
-  harnessRunId: IdSchema,
-}).strict();
 export const TerminalWorkstreamStateSchema = z.object({
   availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
   state: TerminalSandboxStateSchema,
@@ -2151,32 +2181,10 @@ export const TerminalWorkstreamStateSchema = z.object({
   finalDiffResourceId: IdSchema.nullable(),
   failureCode: z.string().min(1).max(160).nullable(),
   repository: TerminalSelectedRepositorySchema.nullable(),
-  repositoryRequest: TerminalRepositoryRequestSchema.nullable().default(null),
-}).strict();
-export const TerminalCatalogRepositorySchema = z.object({
-  id: z.number().int().positive(),
-  fullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
-  defaultBranch: z.string().min(1).max(240),
-  private: z.boolean(),
-}).strict();
-export const TerminalRepositoryCatalogSchema = z.object({
-  state: z.enum(["disconnected", "empty", "available", "revoked"]),
-  connections: z.array(z.object({
-    connectionId: IdSchema,
-    displayName: z.string().min(1).max(240),
-    repositories: z.array(TerminalCatalogRepositorySchema).max(1_000),
-  }).strict()).max(20),
-}).strict();
-export const SelectTerminalRepositoryRequestSchema = z.object({
-  connectionId: IdSchema,
-  repositoryFullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
-  confirmDiscardLocalFiles: z.boolean().optional(),
-  repositoryRequestId: IdSchema.optional(),
 }).strict();
 export type TerminalWorkspaceSettings = z.infer<typeof TerminalWorkspaceSettingsSchema>;
 export type TerminalNetworkPolicyPreview = z.infer<typeof TerminalNetworkPolicyPreviewSchema>;
 export type TerminalWorkstreamState = z.infer<typeof TerminalWorkstreamStateSchema>;
-export type TerminalRepositoryCatalog = z.infer<typeof TerminalRepositoryCatalogSchema>;
 export type SlackSearchAuthorization = z.infer<typeof SlackSearchAuthorizationSchema>;
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;

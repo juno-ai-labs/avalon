@@ -6,6 +6,8 @@ import {
   createGitHubConnector,
   discoverGitHubConnectionRepositories,
   discoverGitHubWebhookResources,
+  githubRepositoryAccessPolicy,
+  githubRepositoryAuthorization,
   GitHubCapabilities,
   GitHubWebhookResourceLimits,
   mintGitHubInstallationToken,
@@ -23,6 +25,117 @@ import {
 const FIXED_NOW = 1_788_000_000_000;
 
 describe("GitHub connector", () => {
+  it("defaults existing connections to all repositories and resolves immutable overrides", () => {
+    expect(githubRepositoryAccessPolicy({})).toEqual({
+      version: 1,
+      revision: 0,
+      mode: "all_repositories",
+      defaultAccess: "full_access",
+      repositories: [],
+    });
+    const config = {
+      githubRepositoryAccess: {
+        version: 1,
+        revision: 3,
+        mode: "all_repositories",
+        defaultAccess: "read_only",
+        repositories: [{
+          repositoryId: "41",
+          repositoryFullName: "acme/widget",
+          access: "full_access",
+        }],
+      },
+    };
+    expect(githubRepositoryAuthorization(config, "ACME/widget", 41)).toEqual({
+      access: "full_access",
+      expectedRepositoryId: "41",
+    });
+    expect(githubRepositoryAuthorization(config, "acme/widget", 99)).toBeNull();
+    expect(githubRepositoryAuthorization(config, "acme/other", 42)).toEqual({
+      access: "read_only",
+      expectedRepositoryId: null,
+    });
+  });
+
+  it("denies repositories outside a selected-repository policy", () => {
+    const config = {
+      githubRepositoryAccess: {
+        version: 1,
+        revision: 1,
+        mode: "selected_repositories",
+        defaultAccess: "read_only",
+        repositories: [{
+          repositoryId: "41",
+          repositoryFullName: "acme/widget",
+          access: "read_only",
+        }],
+      },
+    };
+    expect(githubRepositoryAuthorization(config, "acme/widget", "41")).toEqual({
+      access: "read_only",
+      expectedRepositoryId: "41",
+    });
+    expect(githubRepositoryAuthorization(config, "acme/widget", "99")).toBeNull();
+    expect(githubRepositoryAuthorization(config, "acme/other", "42")).toBeNull();
+  });
+
+  it("filters repository discovery and refuses writes under connector repository policy", async () => {
+    const repositories = [
+      { id: 41, name: "widget", full_name: "acme/widget" },
+      { id: 42, name: "private", full_name: "acme/private" },
+    ];
+    const adapter = githubAdapter(async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/user/installations/42/repositories") {
+        return jsonResponse({ total_count: repositories.length, repositories });
+      }
+      if (url.pathname === "/graphql") return jsonResponse({ data: {} });
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    });
+    const connection = personalConnection([
+      GitHubCapabilities.metadataRead,
+      GitHubCapabilities.issuesWrite,
+    ]);
+    connection.config.githubRepositoryAccess = {
+      version: 1,
+      revision: 2,
+      mode: "selected_repositories",
+      defaultAccess: "read_only",
+      repositories: [{
+        repositoryId: "41",
+        repositoryFullName: "acme/widget",
+        access: "read_only",
+      }],
+    };
+    const context = {
+      connection,
+      principal: { type: "user" as const, userId: "user-1" },
+      signal: AbortSignal.timeout(1_000),
+    };
+
+    await expect(adapter.executeTool("repositories.list", {}, context)).resolves.toMatchObject({
+      output: {
+        totalCount: 1,
+        repositories: [{ id: 41, full_name: "acme/widget", access: "read_only" }],
+      },
+    });
+    await expect(adapter.executeTool("issues.create", {
+      owner: "acme",
+      repo: "widget",
+      title: "Blocked write",
+    }, context)).rejects.toMatchObject({
+      code: "unauthorized",
+      message: expect.stringContaining("read-only"),
+    });
+    await expect(adapter.executeTool("repository.get", {
+      owner: "acme",
+      repo: "private",
+    }, context)).rejects.toMatchObject({
+      code: "unauthorized",
+      message: expect.stringContaining("outside this GitHub connection's repository access policy"),
+    });
+  });
+
   it("publishes bounded tools and begins with installation before user authorization", async () => {
     const adapter = githubAdapter(async () => jsonResponse({}));
     expect(adapter.manifest).toMatchObject({
@@ -40,7 +153,8 @@ describe("GitHub connector", () => {
       expect.objectContaining({ name: "issues.create", capability: GitHubCapabilities.issuesWrite, mode: "write" }),
       expect.objectContaining({ name: "pull_requests.create_review", capability: GitHubCapabilities.pullRequestsWrite }),
     ]));
-    expect(adapter.agentPlugin.systemMessage).toContain("ask the user which repository to use");
+    expect(adapter.agentPlugin.systemMessage).toContain("search the authorized repositories and choose the best match");
+    expect(adapter.agentPlugin.systemMessage).toContain("read_only permits reads and local Terminal edits or commits");
     expect(adapter.agentPlugin.systemMessage).toContain("at least one code file was successfully returned");
     expect(adapter.agentPlugin.systemMessage).toContain("_contents_get");
     const contentsList = adapter.manifest.tools.find((candidate) => candidate.name === "contents.list");

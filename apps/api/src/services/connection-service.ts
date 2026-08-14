@@ -12,6 +12,7 @@ import {
   deleteGranolaWebhookEndpoint,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
+  githubRepositoryAccessPolicy,
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
@@ -25,6 +26,8 @@ import type {
   ConnectorOAuthProvider,
   ConnectorOAuthStart,
   CreateWebhookConnectionRequestSchema,
+  GitHubRepositoryAccessSettings,
+  UpdateGitHubRepositoryAccessSettings,
   Scope,
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
@@ -174,6 +177,106 @@ export class ConnectionService {
       rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
     );
     return rows.map((row) => connectionFromRow(row, userDelivery.get(String(row.id)) ?? null));
+  }
+
+  async getGitHubRepositoryAccess(id: string): Promise<GitHubRepositoryAccessSettings> {
+    const connection = await this.loadVisible(id);
+    if (connection.connector_type !== "github") {
+      throw new ApiError(422, "connector_settings_unsupported", "This connector does not provide repository access settings");
+    }
+    return this.loadGitHubRepositoryAccessSettings(connection);
+  }
+
+  async updateGitHubRepositoryAccess(
+    id: string,
+    input: UpdateGitHubRepositoryAccessSettings,
+  ): Promise<GitHubRepositoryAccessSettings> {
+    const connection = await this.loadAuthorized(id);
+    if (connection.connector_type !== "github") {
+      throw new ApiError(422, "connector_settings_unsupported", "This connector does not provide repository access settings");
+    }
+    const current = await this.loadGitHubRepositoryAccessSettings(connection);
+    if (current.revision !== input.expectedRevision) {
+      throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
+    }
+    const available = new Map(current.availableRepositories.map((repository) => [
+      `${repository.repositoryId}:${repository.repositoryFullName.toLowerCase()}`,
+      repository,
+    ]));
+    const seenIds = new Set<string>();
+    const seenNames = new Set<string>();
+    for (const repository of input.repositories) {
+      const normalizedName = repository.repositoryFullName.toLowerCase();
+      if (seenIds.has(repository.repositoryId) || seenNames.has(normalizedName)) {
+        throw new ApiError(422, "github_repository_access_duplicate", "Each configured GitHub repository must appear exactly once.");
+      }
+      seenIds.add(repository.repositoryId);
+      seenNames.add(normalizedName);
+      if (!available.has(`${repository.repositoryId}:${normalizedName}`)) {
+        throw new ApiError(422, "github_repository_identity_changed", `${repository.repositoryFullName} is no longer available with the approved repository identity. Reload GitHub settings and choose it again.`);
+      }
+    }
+    const nextRevision = current.revision + 1;
+    const updatedAt = nowIso();
+    const priorConfig = parseJson<Record<string, unknown>>(connection.config_json, {});
+    const nextPolicy = {
+      version: 1 as const,
+      revision: nextRevision,
+      mode: input.mode,
+      defaultAccess: input.defaultRemoteAccess,
+      repositories: input.repositories.map((repository) => ({
+        repositoryId: repository.repositoryId,
+        repositoryFullName: repository.repositoryFullName,
+        access: repository.remoteAccess,
+      })),
+    };
+    const update = await this.env.DB.prepare(
+      `UPDATE connector_connections
+          SET config_json = ?, updated_at = ?
+        WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'
+          AND COALESCE(CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER), 0) = ?`,
+    ).bind(
+      JSON.stringify({ ...priorConfig, githubRepositoryAccess: nextPolicy }),
+      updatedAt,
+      connection.id,
+      connection.workspace_id,
+      input.expectedRevision,
+    ).run();
+    if (Number(update.meta.changes ?? 0) !== 1) {
+      throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
+    }
+    // The next Terminal tool refreshes the mounted repository credential with
+    // the new read-only/full-access policy before the model can run a command.
+    await this.env.DB.prepare(
+      `UPDATE workstream_terminal_repositories
+          SET read_token_expires_at = NULL, updated_at = ?
+        WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'`,
+    ).bind(updatedAt, connection.workspace_id, connection.id).run();
+    await this.recordConnectionAudit(
+      connection.workspace_id,
+      this.requireAuth().userId,
+      "connector.github_repository_access.updated",
+      connection.id,
+      {
+        revision: nextRevision,
+        mode: input.mode,
+        defaultRemoteAccess: input.defaultRemoteAccess,
+        repositoryCount: input.repositories.length,
+      },
+    );
+    return {
+      ...current,
+      revision: nextRevision,
+      mode: input.mode,
+      defaultRemoteAccess: input.defaultRemoteAccess,
+      repositories: input.repositories,
+      availableRepositories: current.availableRepositories.map((repository) => ({
+        ...repository,
+        remoteAccess: input.repositories.find((candidate) => (
+          candidate.repositoryId === repository.repositoryId
+        ))?.remoteAccess ?? (input.mode === "all_repositories" ? input.defaultRemoteAccess : null),
+      })),
+    };
   }
 
   async bindOAuthTelemetry(attemptId: string, operationId: string): Promise<void> {
@@ -2286,16 +2389,78 @@ export class ConnectionService {
   }
 
   private async loadAuthorized(id: string): Promise<StoredConnection> {
+    const row = await this.loadVisible(id);
+    const auth = this.requireAuth();
+    if (row.scope === "workspace" && auth.role !== "owner" && auth.role !== "admin") {
+      throw new ApiError(403, "workspace_admin_required", "Only administrators can modify workspace connections");
+    }
+    return row;
+  }
+
+  private async loadVisible(id: string): Promise<StoredConnection> {
     const auth = this.requireAuth();
     const row = await this.env.DB.prepare(
       `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ?
        AND (scope = 'workspace' OR owner_user_id = ?)`,
     ).bind(id, auth.workspaceId, auth.userId).first<StoredConnection>();
     if (!row) throw new ApiError(404, "connection_not_found", "Connection not found");
-    if (row.scope === "workspace" && auth.role !== "owner" && auth.role !== "admin") {
-      throw new ApiError(403, "workspace_admin_required", "Only administrators can modify workspace connections");
-    }
     return row;
+  }
+
+  private async loadGitHubRepositoryAccessSettings(
+    row: StoredConnection,
+  ): Promise<GitHubRepositoryAccessSettings> {
+    const context = await this.context(row);
+    const adapter = this.registry().get("github");
+    const connectorConfig = githubConnectorConfig(this.env);
+    if (!connectorConfig) {
+      throw new ApiError(503, "github_app_unavailable", "The Avalon GitHub App is not configured in this region");
+    }
+    const discovery = await withAuthorizedConnection(
+      this.env,
+      { connection: context, adapter, signal: AbortSignal.timeout(30_000) },
+      (authorized) => discoverGitHubConnectionRepositories(
+        connectorConfig,
+        authorized,
+        AbortSignal.timeout(30_000),
+        1_000,
+      ),
+    );
+    const policy = githubRepositoryAccessPolicy(context.config);
+    const configured = policy.repositories.map((repository) => ({
+      repositoryId: repository.repositoryId,
+      repositoryFullName: repository.repositoryFullName,
+      remoteAccess: repository.access,
+    }));
+    const configuredByIdentity = new Map(configured.map((repository) => [
+      `${repository.repositoryId}:${repository.repositoryFullName.toLowerCase()}`,
+      repository.remoteAccess,
+    ]));
+    const availableRepositories = discovery.resources.flatMap((resource) => {
+      const repositoryId = typeof resource.metadata.repositoryId === "string"
+        ? resource.metadata.repositoryId
+        : typeof resource.metadata.repositoryId === "number"
+          ? String(resource.metadata.repositoryId)
+          : null;
+      if (!repositoryId) return [];
+      const remoteAccess = configuredByIdentity.get(`${repositoryId}:${resource.providerResourceId.toLowerCase()}`)
+        ?? (policy.mode === "all_repositories" ? policy.defaultAccess : null);
+      return [{
+        repositoryId,
+        repositoryFullName: resource.providerResourceId,
+        private: resource.metadata.private === true,
+        remoteAccess,
+      }];
+    }).sort((left, right) => left.repositoryFullName.localeCompare(right.repositoryFullName));
+    return {
+      connectionId: row.id,
+      connectionName: typeof row.display_name === "string" ? row.display_name : "GitHub",
+      revision: policy.revision,
+      mode: policy.mode,
+      defaultRemoteAccess: policy.defaultAccess,
+      repositories: configured,
+      availableRepositories,
+    };
   }
 
   private async context(row: StoredConnection): Promise<ConnectorConnectionContext> {

@@ -57,7 +57,7 @@ describe("Terminal Bind integration", () => {
     expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "terminal" });
     expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual([
       "read_file", "edit_file", "write_file", "apply_patch", "run_command",
-      "import_resource", "publish_resource", "publish_branch_and_pr",
+      "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",
     ]);
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 0 });
   });
@@ -80,7 +80,7 @@ describe("Terminal Bind integration", () => {
     const { env, input } = fixture("supported", true);
     const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "avalon:terminal");
-    expect(plugin?.tools).toHaveLength(8);
+    expect(plugin?.tools).toHaveLength(9);
     await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
       { filePath: "README.md" },
       {

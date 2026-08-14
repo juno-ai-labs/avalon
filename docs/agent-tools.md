@@ -394,7 +394,7 @@ that remediation.
 ## Terminal tool contract registry
 
 The deferred `avalon:terminal` plugin is the concrete file/command family that
-follows these rules. All eight tools are exposed together after plugin load and
+follows these rules. All nine tools are exposed together after plugin load and
 execute serially against one authority-fenced work-stream workspace. Model-facing
 names are prefixed by Bind as `terminal_<name>`. The runtime retains internal
 hashes and an exclusive mutation lease, but none of these arguments or outputs
@@ -408,7 +408,8 @@ model-actionable drift check. See
 | `terminal_edit_file` | `{ filePath: string, oldString: string, newString: string, replaceAll?: boolean }` | `{ filePath, replacements, additions, deletions }`. `oldString` must match exactly once unless `replaceAll` is intentional. |
 | `terminal_write_file` | `{ filePath: string, content: string }` | `{ filePath, created, bytes, additions, deletions }`; this is deliberate complete replacement, not an edit fallback. |
 | `terminal_apply_patch` | `{ patch: string }` | `{ files: [{ path, previousPath?, operation, additions, deletions }], additions, deletions }`; `operation` is `created`, `edited`, `renamed`, or `deleted`. |
-| `terminal_run_command` | `{ command: string, cwd?: string, timeoutMs?: integer, description?: string }` | `{ state, terminationReason, exitCode, stdout, stderr, outputResourceId?, startedAt, completedAt, stdoutTruncated, stderrTruncated, durationMs }`. Nonzero exit is a completed command result, not an executor exception. |
+| `terminal_run_command` | `{ command: string, cwd?: string, timeoutMs?: integer, description?: string }` | `{ state, terminationReason, exitCode, stdout, stderr, outputResourceId?, startedAt, completedAt, stdoutTruncated, stderrTruncated, durationMs }`. Nonzero exit is a completed command result, not an executor exception. Standard `git` and `gh` commands are available after repository checkout; `read_only` credentials reject remote mutation, while `full_access` may push and manage a PR. |
+| `terminal_checkout_repository` | `{ repositoryFullName: string, requiredRemoteAccess?: "read_only" | "full_access" }` | `{ repository, repositoryId, connectionId, connectionName, baseRef, baseSha, headRef, remoteAccess, localEditsAllowed: true, remoteWritesAllowed, outcome, backup }`; `backup` is the attached recovery resource created before replacing prior workspace state, or `null` when there was nothing to preserve. |
 | `terminal_import_resource` | `{ resourceId: UUID }` or `{ resourceId: UUID, destinationPath: string, overwrite?: boolean }` | `{ resourceId, filePath, outcome, mimeType, sizeBytes, sourceSha256 }`; `outcome` is `created`, `replaced`, or deterministic `reused`. |
 | `terminal_publish_resource` | `{ filePath: string, displayName?: string, description?: string }` | `{ resourceId, title, resourceType: "generated_file", provider: "avalon_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`; replay returns the same durable identity. |
 | `terminal_publish_branch_and_pr` | `{ title: string, body: string }` | `{ repository, baseRef, headRef, commitSha, publishedSha, outcome, pullRequest: { number, url, title, state: "open" } }`; `outcome` is `created`, convergent `updated`, or recovered `unchanged`. |
@@ -431,12 +432,16 @@ Common failures are designed as loop repairs:
 | `destination_not_regular` | Choose an absent destination or a regular file; Avalon will not write through links, devices, or directories. |
 | `limit_exceeded`, `resource_limit_exceeded` | Narrow/split the operation or reduce the input/output size before retrying. Archives and unfamiliar binary types still publish as download-only `other` resources. |
 | `resource_empty`, `resource_not_ready` | Regenerate a non-empty file beneath `AVALON_RESOURCE_DIR`, wait for its producer to finish, then publish the stable final path with a new invocation. |
-| `command_rejected` | Use one bounded foreground command, a dedicated file tool, or `terminal_publish_branch_and_pr`; do not retry a PTY, background process, `git push`, or mutating `gh` spelling. |
+| `command_rejected` | Use one bounded foreground command or a dedicated file tool; do not retry a PTY, detached/background process, or remote shell. Git and GitHub CLI are ordinary bounded commands whose actual authority comes from the selected repository credential. |
 | command `timed_out`, `cancelled`, `output_limit_exceeded` | Inspect the final bounded output or `outputResourceId`, reduce the job, and rerun as a new bounded command only when doing so is safe. |
-| `repository_not_configured`, `connection_revoked` | Ask a participant to select/reselect a repository or reconnect the GitHub App before another repository operation. |
+| `repository_not_configured`, `repository_access_revoked` | Search the authorized GitHub repositories, call `terminal_checkout_repository` with an exact `owner/name`, then retry the repository operation. If policy changed, choose another authorized repository or ask a connector administrator to restore access. |
+| `repository_not_authorized` | Use GitHub repository search and choose a result whose effective access satisfies `requiredRemoteAccess`; do not guess an inaccessible repository or retry unchanged. |
+| `repository_remote_read_only` | Continue local edits and local commits, but do not push, publish a PR, or attempt another remote mutation until connector settings grant `full_access`. |
+| `workspace_backup_failed`, `workspace_backup_changed` | Stop workspace writers and retry checkout; Avalon leaves the existing repository and sandbox untouched until the durable recovery copy is verified. |
+| `workspace_backup_too_large` | Remove regenerable dependency/output directories or publish large artifacts, then retry once the compressed recoverable state is at most 50 MiB. |
 | `working_tree_dirty`, `publication_conflict`, `nothing_to_publish` | Use local `git status`, check out the host-selected branch, commit intended changes, or rebase onto the selected base, then retry publication only after local state is valid. |
 | `publication_policy_denied`, publication size/path limits | Remove GitHub Actions workflow changes or split/reduce the committed change; a Terminal run cannot elevate this boundary. |
-| `publication_not_authorized`, `publication_target_closed` | Ask a current participant to explicitly request publication again, or use a fresh work stream when the convergent PR is closed/merged. |
+| `publication_not_authorized`, `publication_target_closed` | Continue from an active participant run with current full repository access, or use standard `git`/`gh`; use a fresh work stream when the typed publisher's convergent PR is closed/merged. |
 | `command_outcome_unknown`, `tool_receipt_missing`, retryable provider failures | Retry the exact deterministic call so Avalon can reconcile its durable receipt; do not invent a new command, id, or branch. |
 
 Adding or changing a Terminal tool requires this input/output/recovery registry,

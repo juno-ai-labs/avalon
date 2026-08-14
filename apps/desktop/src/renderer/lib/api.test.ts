@@ -75,6 +75,7 @@ const detail = {
     displayName: 'Google Drive',
     grantedCapabilities: ['search'],
     status: 'needs_reconnect' as const,
+    settingsKind: null,
     userDelivery: null,
     lastSyncAt: null,
     createdAt: timestamp,
