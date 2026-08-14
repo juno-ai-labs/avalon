@@ -222,6 +222,31 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/gu, `'"'"'`)}'`;
 }
 
+export function terminalGitCaSetupCommands(input: {
+  required: boolean;
+  sessionEnvPath?: string;
+}): string[] {
+  const setup = [
+    "if [ ! -f \"$CURL_CA_BUNDLE\" ] || [ ! -s \"$CURL_CA_BUNDLE\" ] || [ ! -r \"$CURL_CA_BUNDLE\" ]; then",
+    "  printf '%s\\n' 'Daytona advertised a missing, empty, or unreadable Git CA bundle.' >&2",
+    "  exit 1",
+    "fi",
+    "export GIT_SSL_CAINFO=\"$CURL_CA_BUNDLE\"",
+    ...(input.sessionEnvPath
+      ? [`printf 'export GIT_SSL_CAINFO=%q\\n' "$GIT_SSL_CAINFO" >> ${shellQuote(input.sessionEnvPath)}`]
+      : []),
+  ];
+  return input.required
+    ? [
+        "if [ -z \"${CURL_CA_BUNDLE:-}\" ]; then",
+        "  printf '%s\\n' 'Daytona did not advertise the Git CA bundle required for publication.' >&2",
+        "  exit 1",
+        "fi",
+        ...setup,
+      ]
+    : ["if [ -n \"${CURL_CA_BUNDLE:-}\" ]; then", ...setup.map((command) => `  ${command}`), "fi"];
+}
+
 const MANAGED_BOOTSTRAP_CAPABILITIES = ["sqlite3", "gh", "pnpm", "tsx"] as const;
 
 function parseInstalledCapabilities(output: string): TerminalManagedBootstrapCapability[] {
@@ -745,6 +770,7 @@ export function createDaytonaTerminalProvider(
         const command = [
           "set -euo pipefail",
           "export GIT_CONFIG_NOSYSTEM=1 HOME=/tmp/avalon-publisher-home",
+          ...terminalGitCaSetupCommands({ required: true }),
           'mkdir -p "$HOME"',
           "git init --bare /workspace/repository.git >/dev/null",
           `git -C /workspace/repository.git fetch /workspace/publication.bundle ${shellQuote(`refs/heads/${input.headRef}`)}:${shellQuote(`refs/heads/${input.headRef}`)}`,
