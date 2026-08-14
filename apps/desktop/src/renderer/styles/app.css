@@ -2341,6 +2341,15 @@ pre {
 /* Nothing pinned is the quiet state: it reads as a control nobody has used
    rather than as a model name, which is what it is not. */
 .model-selector-trigger.is-unpinned { color: var(--muted); }
+/* The one disabled control on screen that exists to be *read*. The global rule
+   dims a disabled button to .48, under which a 10.5px model name stops being
+   legible — and being legible is the whole reason this pill is shown on a
+   screen where nothing can be chosen. Lifted only far enough to read: it still
+   sits below every live control in the toolbar, and the not-allowed cursor and
+   the chevron that never opens keep saying it is not one. Scoped to this state
+   rather than to `:disabled`, so the launch composer still dims normally while
+   a work stream is being created. */
+.model-selector-trigger.is-settled:disabled { opacity: .74; }
 .model-selector-menu { max-width: min(300px, calc(100vw - 24px)); min-width: 220px; }
 .model-selector-menu .menu-label { color: var(--muted); font-size: 11px; }
 /* Scoped to the menu so it outweighs the rule above rather than tying with it:

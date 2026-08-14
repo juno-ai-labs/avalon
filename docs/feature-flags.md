@@ -48,6 +48,9 @@ The rest:
 | `apps/api/src/routes/feature-flags.ts` | `GET /feature-flags`, answered under identity auth. |
 | `packages/contracts` — `AGENT_MODEL_OVERRIDES`, `CONTROL_TOWER_REFRESH_SECONDS` | The closed set of pinnable models, and the one definition of the cadence both ends read. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
+| `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the work stream's read-only pill applies to an id the closed set does not admit. |
+| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream being started, and the locked pill inside one that already exists. |
+| `apps/api/src/mappers/workstream.ts` | Where the stored pin is re-validated on the way out, so `modelOverride` on the wire is what the resolver would actually apply. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | The `FLAGS` binding on each deployment. |
 
 ## How it works
@@ -193,6 +196,62 @@ retired from the list without a migration: the work streams still naming it log
 `workstream_model_override_unknown` and return to the flag. `resolveWorkstreamModelRouting`
 is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
 about flags.
+
+#### Reading it back inside the work stream
+
+The composer of a work stream that already exists shows the same control in the
+same place, behind the same **Debug enabled** preference — the identical
+dropdown, trigger and pill and chevron, with the trigger `disabled`. That is what
+stops it opening, and its menu is left unrendered because a disabled trigger can
+never reach one. Disabled rather than merely quiet is the honest shape here: the
+pin is written once, when the work stream is created, and nothing afterwards
+edits it, so a menu would offer a change the next run would not honour.
+
+The accessible name and the tooltip carry the full model id and say what may
+truthfully be said about it, **which is not the same sentence for every work
+stream**. A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and
+never reads the flag, so every run uses it. An unpinned work stream re-evaluates
+`agent-model-workstream` on *every* launch, so the id shown is what the latest
+run happened to resolve and a later run may differ. What is immutable there is
+the setting, not the model — an earlier draft of this control said a work stream
+keeps the model it started on, which is a stability guarantee the server does
+not make for the unpinned majority. The renderer therefore takes `pinned`
+alongside the id and picks the claim from it.
+
+The tooltip survives the disable — checked in a real window rather than assumed,
+because the reverse is the intuitive guess: a disabled button swallows the click
+that would open the menu, but Radix's tooltip is driven by pointer movement that
+still reaches it. What the disable does cost is keyboard focus, since Tab skips a
+disabled button, which is why the id has to be in the accessible name and not
+only in the tooltip.
+
+What it names is **`latestHarnessRun.model` first, and the pin only as a
+fallback**. The pin alone would answer for almost nobody: an unpinned work
+stream is nearly all of them, and the flag's served variation is not visible to
+a client at all — but every parent run records a model, which is the pin where
+there is one and the flag's answer where there is not. That column is the only
+place a client can see which model a given work stream is actually running. It
+follows that the id shown need not be one `AGENT_MODEL_OVERRIDES` admits; the
+pill shortens an unknown id to its model segment and the tooltip carries it
+whole.
+
+The pin sits behind it because of one case the run cannot cover. The column is
+written twice: `launchWorkstreamHarness` records the model it resolved at
+schedule time, and the run host may overwrite it at settle — while its lease is
+live and before terminalization — with the model that actually streamed. A run
+that failed before its first token streams nothing, so that second write puts
+**null** there. On a pinned work stream that is exactly where a run-only pill
+would fall back to **Default** and describe it as following a flag it never
+consults. `WorkstreamDetail` therefore carries `modelOverride`, re-validated
+against the closed set on the way out exactly as `resolveWorkstreamModelRouting`
+re-validates it, and the pill reads it when the run has nothing to say. Only a
+work stream that is both unpinned and has no recorded model reads **Default**,
+for the same reason an untouched composer does.
+
+What the pill still cannot show is a run whose attempts did not agree: the
+column holds one id, and the inference ledger is what records the model behind
+every attempt. See the `harness_runs.model` entry under [Failure modes and
+limits](#failure-modes-and-limits).
 
 ### Evaluation
 
@@ -576,8 +635,10 @@ correctly provisioned flag.
   passing quietly.
 - **`harness_runs.model` is an expectation, not a guarantee.** It records the model
   a scheduled run was expected to use, resolved at schedule time; a flag changed
-  between scheduling and execution makes it wrong. The inference ledger records what
-  each attempt actually used.
+  between scheduling and execution makes it wrong. The run host overwrites it at
+  settle with the model that actually streamed, but only while its lease is live
+  and the run is not yet terminalized — and a run that never streamed overwrites
+  it with **null**. The inference ledger records what each attempt actually used.
 - **A desktop poll that cannot reach the service leaves the last answer standing.**
   Only an answer, a sign-out, or a shutdown turns the Developer section off; a flag
   change takes up to `DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` (one minute) to
@@ -602,6 +663,9 @@ correctly provisioned flag.
 | `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
+| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
+| `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a work stream: the same gate, the run's model ahead of the pin, the pin where a run recorded none, an id outside the closed set, and that it opens no menu. |
+| `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/agent-model-flags.test.ts` — the
@@ -850,12 +914,58 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
 
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one). The reasoning behind
-each failure direction, the attribute boundary, and the pin's precedence is
-recorded inline above, but it was not kept as dated entries and was not
-reconstructed into them. The next substantial change to the flag surface starts the
-record, and that entry is that change, written in full.
+Entries before the one below were never written. This document predates the
+changelog rule in [`module-documents.md`](module-documents.md#starting-one), and
+the reasoning behind each failure direction, the attribute boundary, and the
+pin's precedence is recorded inline above rather than as dated entries; it was
+not reconstructed into them.
 
 Note that a *flag value* change is not a change to this module and gets no entry
 here — the Flagship console is the audit record for who was rolled out to and when.
+
+### 2026-08-13 — A work stream shows the model it is running on, read off its latest run
+
+**What changed:** The composer inside an existing work stream now shows the model
+control too, behind the same **Debug enabled** preference as the launch
+composers: the same dropdown, with its trigger `disabled` and its menu
+unrendered. It names `latestHarnessRun.model`, falling back to the pin — newly on
+`WorkstreamDetail` as `modelOverride` — when a run recorded none.
+
+**Why:** The selector existed only where a model could still be *chosen*, so the
+moment a work stream started, the answer to "which model wrote this?" left the
+screen — and that question is asked far more often than the pinning one, because
+it is asked about every work stream rather than the handful somebody pinned.
+Recovering it meant querying D1 by hand for a fact the client was already
+holding. The one control anybody had learned to read was the natural place to put
+it, so it is the same component, minus the input.
+
+**Considered and rejected:** Showing only the *pin*, the exact mirror of the
+composer. It answers for almost nobody: an unpinned work stream — nearly all of
+them — would read **Default** forever, which is true and useless, and the flag's
+served variation is not visible to a client at all. The run row is the one place
+the resolved model is legible from the renderer. Also rejected in the other
+direction: showing only the run, and leaving `WorkstreamDetail` alone. A run that
+fails before its first token settles with `model` null, and a pinned work stream
+described as following the flag is not an incomplete answer but a false one —
+which is what the pin fallback exists to prevent, and why it is worth a field on
+the wire.
+
+This first shipped as a distinct read-only pill — `aria-disabled`, a lock icon,
+no dropdown around it — and was rejected in review for the plainer thing: the
+launch composer's own dropdown with `disabled` set. Two renderings of one control
+drift, and `aria-disabled` is a control that only claims to be off. The argument
+for the first shape was that a disabled button cannot fire a tooltip, and that
+turned out to be false here — it does — so the cost was keyboard focus alone.
+`.model-selector-trigger.is-settled:disabled` lifts the global `.48` dim to
+`.74`, because a 10.5px model name at `.48` cannot be read and being read is the
+entire point of showing it.
+
+**Consequences:** The pill can now show an id that is not in
+`AGENT_MODEL_OVERRIDES`, because a flag variation may serve any OpenRouter model
+— anything reading that string must not assume the closed set. `modelOverride`
+is on `WorkstreamSchema`, so every work stream on the wire carries it, and the
+mapper narrows an unrecognized stored value to null rather than failing the
+response — a model retired from the list must not make the work streams pinned
+to it unopenable. Retiring one no longer only affects pins: the work streams that
+ran on it keep naming it in the pill, shortened to its model segment, which is
+correct — that is what they ran on.

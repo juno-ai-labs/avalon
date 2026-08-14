@@ -1227,7 +1227,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   fileInputRef={fileInputRef}
                   mentionLabel="Mention a connection"
                   mentionLabels={mentionLabels}
-                  modelOverride={{ value: modelOverride, onChange: setModelOverride }}
+                  model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
                   onAttach={attachmentDraft.addFiles}
                   onMention={beginConnectionMention}
                   onKeyDown={(event) => {

@@ -400,6 +400,14 @@ export interface WorkstreamAutomationSubscription {
 
 export interface WorkstreamDetail extends WorkstreamSummary {
   createdAt: string;
+  /**
+   * The model this work stream is pinned to, or absent for the unpinned case
+   * the flag decides. Read by the composer's model pill as the answer of last
+   * resort — the latest run's model is what it prefers, because that is what
+   * actually ran — so that a pinned work stream whose only run failed before it
+   * streamed is never described as following the flag.
+   */
+  modelOverride?: AgentModelOverride | null;
   createdBy?: WorkspaceMember;
   participants: Participant[];
   viewers: Participant[];

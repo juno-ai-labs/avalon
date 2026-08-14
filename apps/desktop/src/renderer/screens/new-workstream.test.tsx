@@ -412,6 +412,29 @@ describe('New work-stream home', () => {
     ]);
   });
 
+  it('carries a pinned model onto the seeded run so the arrival does not read Default', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    const queryClient = renderScreen();
+
+    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
+    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'DeepSeek V4 Pro' }));
+    await screen.findByRole('button', { name: 'Model: DeepSeek V4 Pro' });
+
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    // The work-stream screen reads the model off this seeded run. Without it the
+    // pill the composer was just showing reads **Default** for the frames
+    // between the navigation and the first refetch, which is the flash this
+    // seeding exists to prevent — and the pin is the only thing on the client
+    // that can answer before the server has recorded a run model.
+    await waitFor(() => expect(queryClient.getQueryData(['workstream', 'new-workstream'])).toMatchObject({
+      latestHarnessRun: { model: 'deepseek/deepseek-v4-pro' },
+    }));
+  });
+
   it('opens the work stream on the keystroke rather than on the response', async () => {
     api.createWorkstream.mockReturnValue(new Promise(() => undefined));
     renderScreen();
