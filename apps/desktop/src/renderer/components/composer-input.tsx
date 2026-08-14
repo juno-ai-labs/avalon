@@ -19,6 +19,8 @@ import {
   AGENT_MODEL_GROUPS,
   UNPINNED_AGENT_MODEL,
   UNPINNED_AGENT_MODEL_LABEL,
+  agentModelInUseLabel,
+  agentModelInUseTriggerLabel,
   agentModelLabel,
   agentModelTriggerLabel,
   type AgentModelOverride,
@@ -47,22 +49,56 @@ interface ComposerInputProps {
   /** Labels of the resources an `@` can name here; typing one highlights it in the draft. */
   mentionLabels?: readonly string[];
   /**
-   * Offers the model this composer's work will run on, pinning it ahead of the
-   * `agent-model-workstream` flag. Composers that pass nothing show no selector;
-   * those that do still only show it while Application → Developer → **Debug
-   * enabled** is on, because choosing a model is a developer's question rather
+   * The model pill in the toolbar. Composers that pass nothing show none; those
+   * that do still only show it while Application → Developer → **Debug enabled**
+   * is on, because which model the work runs on is a developer's question rather
    * than part of describing work.
    *
-   * `value` is `null` until something is chosen, which is what keeps an
-   * untouched composer on the flag rather than silently pinning every work
-   * stream a developer starts. That state is shown as **Default** rather than
-   * as a model name: which model it resolves to is the flag's answer, and this
-   * process cannot see the served variation.
+   * Two shapes, because the two composers stand at different points in a work
+   * stream's life and only one of them still has a decision to make.
+   *
+   * `choice` offers the model this composer's work will run on, pinning it ahead
+   * of the `agent-model-workstream` flag. `value` is `null` until something is
+   * chosen, which is what keeps an untouched composer on the flag rather than
+   * silently pinning every work stream a developer starts. That state is shown
+   * as **Default** rather than as a model name: which model it resolves to is
+   * the flag's answer, and this process cannot see the served variation.
+   *
+   * `settled` is the same control with its trigger disabled: it shows the model
+   * already in force and does not open. The pin is written once, when the work
+   * stream is created, and nothing afterwards edits it — so there is no decision
+   * left to offer, and offering one would promise a change the next run would
+   * not honour. The control stays anyway because the question
+   * it answers survives the decision: a developer reading a transcript wants to
+   * know which model wrote it, and until this existed the only way to find out
+   * was the database.
    */
-  modelOverride?: {
-    value: AgentModelOverride | null;
-    onChange: (model: AgentModelOverride | null) => void;
-  };
+  model?:
+    | {
+      kind: 'choice';
+      value: AgentModelOverride | null;
+      onChange: (model: AgentModelOverride | null) => void;
+    }
+    | {
+      kind: 'settled';
+      /**
+       * The model this work stream is on: what its latest run recorded, or its
+       * pin where that run recorded nothing. Any OpenRouter id, not only one the
+       * pin list admits — an unpinned work stream runs on whatever the flag
+       * served. Null where neither is known, which is only a work stream with no
+       * run and no pin, and reads as **Default** for the same reason a fresh
+       * composer does.
+       */
+      model: string | null;
+      /**
+       * Whether the work stream carries a pin. It changes what the control may
+       * honestly claim, not what it shows: a pinned work stream runs on `model`
+       * every time, while an unpinned one re-resolved the flag to get there and
+       * may resolve differently next launch. Both are equally unchangeable
+       * *here* — that is the disable — but only one of them is fixed.
+       */
+      pinned: boolean;
+    };
   onAttach: (files: FileList | File[]) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onMention: () => void;
@@ -108,7 +144,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   mentionDisabled = false,
   mentionLabel = 'Mention a participant or connection',
   mentionLabels = NO_MENTION_LABELS,
-  modelOverride,
+  model,
   onAttach,
   onKeyDown,
   onMention,
@@ -139,9 +175,11 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   // Turning Debug enabled off takes the control away; it has to take the choice
   // with it. A pin left behind in the parent's state would keep pinning every
   // work stream started from this screen with nothing on screen saying so, and
-  // no way to clear it.
-  const releaseModelOverride = modelOverride?.onChange;
-  const modelOverrideValue = modelOverride?.value ?? null;
+  // no way to clear it. A settled pill holds no choice to release.
+  const releaseModelOverride = model?.kind === 'choice' ? model.onChange : undefined;
+  const modelOverrideValue = model?.kind === 'choice' ? model.value : null;
+  // What the pill is naming, whichever shape it is in — only `null` is quiet.
+  const selectedModel = model?.kind === 'settled' ? model.model : modelOverrideValue;
   useEffect(() => {
     if (!debugEnabled && modelOverrideValue !== null) releaseModelOverride?.(null);
   }, [debugEnabled, modelOverrideValue, releaseModelOverride]);
@@ -357,51 +395,67 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
             </div>
-            {modelOverride && debugEnabled && (
+            {model && debugEnabled && (
+              /* One control in both shapes. A settled work stream gets the same
+                 dropdown — same trigger, same pill, same chevron — with the
+                 trigger `disabled`, which is what stops it opening; its menu is
+                 left unrendered because a disabled trigger can never reach it.
+                 The tooltip carrying the full model id survives the disable and
+                 was checked in a real window, so the id is reachable by hover
+                 and not only as the accessible name — Tab skips a disabled
+                 button, which is the one route it does lose. */
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton
-                    className={clsx('model-selector-trigger', !modelOverride.value && 'is-unpinned')}
-                    disabled={submitting}
-                    label={agentModelTriggerLabel(modelOverride.value)}
+                    className={clsx(
+                      'model-selector-trigger',
+                      model.kind === 'settled' && 'is-settled',
+                      !selectedModel && 'is-unpinned',
+                    )}
+                    disabled={model.kind === 'settled' || submitting}
+                    label={model.kind === 'settled'
+                      ? agentModelInUseTriggerLabel(model.model, model.pinned)
+                      : agentModelTriggerLabel(model.value)}
                   >
-                    <span>{agentModelLabel(modelOverride.value)}</span>
+                    <span>{model.kind === 'settled' ? agentModelInUseLabel(model.model) : agentModelLabel(model.value)}</span>
                     <ChevronDown aria-hidden="true" size={13} />
                   </IconButton>
                 </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content align="start" className="menu-content model-selector-menu" sideOffset={8}>
-                    <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
-                    {/* Unpinned is its own value rather than the first model:
-                        the flag decides which model it resolves to, and naming
-                        one here would be a claim the renderer cannot make. */}
-                    <DropdownMenu.RadioGroup
-                      onValueChange={(model) =>
-                        modelOverride.onChange(model === UNPINNED_AGENT_MODEL ? null : model as AgentModelOverride)}
-                      value={modelOverride.value ?? UNPINNED_AGENT_MODEL}
-                    >
-                      <DropdownMenu.RadioItem className="menu-item model-selector-item" value={UNPINNED_AGENT_MODEL}>
-                        <span>{UNPINNED_AGENT_MODEL_LABEL}</span>
-                        <DropdownMenu.ItemIndicator asChild>
-                          <Check aria-hidden="true" size={15} />
-                        </DropdownMenu.ItemIndicator>
-                      </DropdownMenu.RadioItem>
-                      {AGENT_MODEL_GROUPS.map((group) => (
-                        <Fragment key={group.provider}>
-                          <DropdownMenu.Label className="menu-label model-selector-provider">{group.provider}</DropdownMenu.Label>
-                          {group.models.map((choice) => (
-                            <DropdownMenu.RadioItem className="menu-item model-selector-item" key={choice.id} value={choice.id}>
-                              <span>{choice.label}</span>
-                              <DropdownMenu.ItemIndicator asChild>
-                                <Check aria-hidden="true" size={15} />
-                              </DropdownMenu.ItemIndicator>
-                            </DropdownMenu.RadioItem>
-                          ))}
-                        </Fragment>
-                      ))}
-                    </DropdownMenu.RadioGroup>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
+                {model.kind === 'choice' && (
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content align="start" className="menu-content model-selector-menu" sideOffset={8}>
+                      <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
+                      {/* Unpinned is its own value rather than the first model:
+                          the flag decides which model it resolves to, and naming
+                          one here would be a claim the renderer cannot make. */}
+                      <DropdownMenu.RadioGroup
+                        onValueChange={(chosen) =>
+                          model.onChange(chosen === UNPINNED_AGENT_MODEL ? null : chosen as AgentModelOverride)}
+                        value={model.value ?? UNPINNED_AGENT_MODEL}
+                      >
+                        <DropdownMenu.RadioItem className="menu-item model-selector-item" value={UNPINNED_AGENT_MODEL}>
+                          <span>{UNPINNED_AGENT_MODEL_LABEL}</span>
+                          <DropdownMenu.ItemIndicator asChild>
+                            <Check aria-hidden="true" size={15} />
+                          </DropdownMenu.ItemIndicator>
+                        </DropdownMenu.RadioItem>
+                        {AGENT_MODEL_GROUPS.map((group) => (
+                          <Fragment key={group.provider}>
+                            <DropdownMenu.Label className="menu-label model-selector-provider">{group.provider}</DropdownMenu.Label>
+                            {group.models.map((choice) => (
+                              <DropdownMenu.RadioItem className="menu-item model-selector-item" key={choice.id} value={choice.id}>
+                                <span>{choice.label}</span>
+                                <DropdownMenu.ItemIndicator asChild>
+                                  <Check aria-hidden="true" size={15} />
+                                </DropdownMenu.ItemIndicator>
+                              </DropdownMenu.RadioItem>
+                            ))}
+                          </Fragment>
+                        ))}
+                      </DropdownMenu.RadioGroup>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                )}
               </DropdownMenu.Root>
             )}
           </div>
