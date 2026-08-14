@@ -371,7 +371,9 @@ update lag before changing the default.
 map Daytona's `CURL_CA_BUNDLE` to Git's `GIT_SSL_CAINFO` before their first
 authenticated remote operation. Bootstrap persists that mapping in the Terminal
 session environment for later fetches and pushes. Both paths fail if Daytona
-advertises a CA bundle that is not readable.
+advertises a CA bundle that is not readable. An executed Bash regression proves
+that a quoted CA path survives the session-file round trip and that an invalid
+path stops execution before the next operation.
 
 **Why:** Live production testing proved that authenticated `curl` requests using
 a mounted Daytona Secret succeeded while the identical Git request failed with
