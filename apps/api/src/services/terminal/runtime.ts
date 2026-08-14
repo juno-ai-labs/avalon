@@ -13,6 +13,7 @@ import type {
   TerminalRuntime,
 } from "./tools";
 import { sanitizeTerminalOutput, TerminalToolError } from "./tools";
+import type { TerminalRepositorySelector } from "./repository-selection";
 
 const ROOT = "/workspace";
 const RESOURCE_ROOT = ".avalon/resources";
@@ -165,6 +166,7 @@ export function createDaytonaTerminalRuntime(
   provider: TerminalSandboxProvider,
   resources: TerminalResourceBridge,
   publisher: TerminalRepositoryPublisher,
+  selector: TerminalRepositorySelector | null = null,
   prepareSandbox?: (
     context: HarnessToolContext,
     sandbox: AcquiredTerminalSandbox,
@@ -248,6 +250,12 @@ export function createDaytonaTerminalRuntime(
   }
 
   return {
+    async checkoutRepository(context, input) {
+      if (!selector) {
+        throw new TerminalToolError("repository_checkout_unavailable", "Repository checkout is unavailable in this Terminal runtime.");
+      }
+      return selector.checkout(context, input);
+    },
     async readFile(context, filePath) {
       const sandbox = await acquire(context);
       const path = await resolveInsideRoot(context, sandbox, filePath);

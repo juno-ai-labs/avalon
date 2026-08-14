@@ -5,6 +5,7 @@ import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-p
 import {
   admitTerminalPublicationGrant,
   bootstrapTerminalRepository,
+  createGitHubRestPublicationGateway,
   createGitHubRestReadGateway,
   createTerminalRepositoryPublisher,
   type TerminalGitHubPublicationGateway,
@@ -21,6 +22,7 @@ const CONNECTION = "20000000-0000-4000-8000-000000000006";
 const MESSAGE = "20000000-0000-4000-8000-000000000007";
 const BASE = "a".repeat(40);
 const HEAD = "b".repeat(40);
+const SECOND_HEAD = "c".repeat(40);
 const HEAD_REF = "avalon/workstream-20000000";
 
 const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];
@@ -71,6 +73,7 @@ function fixture(message = "Please publish these changes and open a pull request
   const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
   const gateway: TerminalGitHubPublicationGateway = {
     mintWriteToken: vi.fn(async () => ({ accessToken: "write-token" })),
+    revokeWriteToken: vi.fn(async () => undefined),
     verifyRepositoryIdentity: vi.fn(async () => undefined),
     getRef: vi.fn(async (_selection, ref) => ref === HEAD_REF ? null : BASE),
     findPullRequest: vi.fn(async () => null),
@@ -99,10 +102,10 @@ function fixture(message = "Please publish these changes and open a pull request
 }
 
 describe("Terminal repository publication", () => {
-  it("bootstraps the selected repository with read-only secret placeholders and the fixed branch", async () => {
+  it("bootstraps full-access repositories with scoped secret placeholders and a prepared branch", async () => {
     const { database, env, provider, context } = fixture();
     const readGateway = {
-      mintReadToken: vi.fn(async () => ({ accessToken: "read-token", expiresAt: "2026-08-13T13:00:00.000Z" })),
+      mintRepositoryToken: vi.fn(async () => ({ accessToken: "write-token", expiresAt: "2026-08-13T13:00:00.000Z" })),
       verifyRepositoryIdentity: vi.fn(async () => undefined),
       resolveBaseRef: vi.fn(async () => BASE),
     };
@@ -115,21 +118,71 @@ describe("Terminal repository publication", () => {
       readGateway,
     )).resolves.toMatchObject({ repositoryFullName: "owner/repo", baseSha: BASE, headRef: HEAD_REF, outcome: "cloned" });
     expect(provider.configureGitHubReadAccess).toHaveBeenCalledWith("sandbox", {
-      gitBasicCredential: btoa("x-access-token:read-token"),
-      ghToken: "read-token",
+      gitBasicCredential: btoa("x-access-token:write-token"),
+      ghToken: "write-token",
     });
+    expect(readGateway.mintRepositoryToken).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryFullName: "owner/repo" }),
+      "full_access",
+      context.signal,
+    );
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringMatching(/rm -rf -- \/workspace\/repository\.tmp\n.*clone --no-checkout 'https:\/\/github\.com\/owner\/repo\.git'/su),
     }));
     expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringContaining("grep -qxF '.avalon/' .git/info/exclude || printf '.avalon/\\n' >> .git/info/exclude"),
     }));
+    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+      command: expect.stringContaining(`git push --set-upstream origin '${HEAD_REF}:${HEAD_REF}'`),
+    }));
+    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+      command: expect.stringContaining(`export AVALON_GIT_BRANCH=${HEAD_REF}`),
+    }));
+    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+      command: expect.stringContaining("export AVALON_GIT_BASE_BRANCH=main"),
+    }));
     expect(database.prepare(
       "SELECT bootstrapped_sandbox_generation, read_token_expires_at FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
     ).get(W, S)).toEqual({ bootstrapped_sandbox_generation: 1, read_token_expires_at: "2026-08-13T13:00:00.000Z" });
   });
 
-  it("admits a two-hour single-use grant only from explicit current participant intent", async () => {
+  it("keeps read-only repositories locally editable without creating a remote branch", async () => {
+    const { database, env, provider, context } = fixture();
+    database.prepare("UPDATE connector_connections SET config_json = ? WHERE id = ?").run(JSON.stringify({
+      githubRepositoryAccess: {
+        version: 1,
+        revision: 1,
+        mode: "all_repositories",
+        defaultAccess: "read_only",
+        repositories: [],
+      },
+    }), CONNECTION);
+    const gateway = {
+      mintRepositoryToken: vi.fn(async () => ({ accessToken: "read-token", expiresAt: "2099-01-01T00:00:00.000Z" })),
+      verifyRepositoryIdentity: vi.fn(async () => undefined),
+      resolveBaseRef: vi.fn(async () => BASE),
+    };
+
+    await bootstrapTerminalRepository(
+      env,
+      context,
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      provider,
+      gateway,
+    );
+
+    expect(gateway.mintRepositoryToken).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryFullName: "owner/repo" }),
+      "read_only",
+      context.signal,
+    );
+    const command = vi.mocked(provider.runCommand).mock.calls.at(-1)?.[1].command ?? "";
+    expect(command).toContain(`git checkout -b '${HEAD_REF}' --track 'origin/${HEAD_REF}'`);
+    expect(command).not.toContain("git push --set-upstream");
+    expect(command).toContain("export AVALON_REMOTE_ACCESS=read_only");
+  });
+
+  it("records current-participant publication provenance without parsing the request prose", async () => {
     const explicit = fixture();
     await expect(admitTerminalPublicationGrant(explicit.env, {
       workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
@@ -143,21 +196,7 @@ describe("Terminal repository publication", () => {
     await expect(admitTerminalPublicationGrant(generic.env, {
       workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
       executionPrincipal: { type: "user", userId: U },
-    }, new Date("2026-08-13T12:00:00.000Z"))).resolves.toEqual({ admitted: false, reason: "intent_not_explicit" });
-
-    for (const deniedText of [
-      "Do not create or open a PR; only make local edits",
-      "Can you explain how to open a pull request?",
-      "Publish the changes without creating a PR",
-      "The ticket says \"open a PR\" after the edit",
-      "Here is an example instruction: publish and open a PR",
-    ]) {
-      const denied = fixture(deniedText);
-      await expect(admitTerminalPublicationGrant(denied.env, {
-        workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
-        executionPrincipal: { type: "user", userId: U },
-      }, new Date("2026-08-13T12:00:00.000Z"))).resolves.toEqual({ admitted: false, reason: "intent_not_explicit" });
-    }
+    }, new Date("2026-08-13T12:00:00.000Z"))).resolves.toMatchObject({ admitted: true });
   });
 
   it("validates committed repository state, consumes the grant, and converges one PR", async () => {
@@ -182,6 +221,7 @@ describe("Terminal repository publication", () => {
       githubBasicCredential: btoa("x-access-token:write-token"),
     }));
     expect(gateway.createPullRequest).toHaveBeenCalledOnce();
+    expect(gateway.revokeWriteToken).toHaveBeenCalledOnce();
     expect(gateway.verifyRepositoryIdentity).toHaveBeenCalledWith(
       expect.objectContaining({ repositoryId: 42, repositoryFullName: "owner/repo" }),
       "write-token",
@@ -204,6 +244,70 @@ describe("Terminal repository publication", () => {
     ).get(W, I)).toEqual({ count: 1 });
   });
 
+  it("publishes later commits from the same authorized run to the existing open PR", async () => {
+    const { database, env, gateway, provider, context } = fixture();
+    await admitTerminalPublicationGrant(env, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
+      executionPrincipal: { type: "user", userId: U },
+    }, new Date(Date.now() - 1_000));
+    const publisher = createTerminalRepositoryPublisher(env, gateway);
+    const sandbox = {
+      providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running" as const,
+      authorityFingerprint: "authority", networkRevision: 1,
+    };
+
+    await publisher.publishBranchAndPr(context, { title: "Ship it", body: "First commit" }, sandbox, provider);
+
+    const secondInvocationId = "20000000-0000-4000-8000-000000000008";
+    database.prepare(
+      `INSERT INTO tool_invocations
+       (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, input_hash, input_json, status)
+       VALUES (?, ?, ?, ?, 'publish-call-2', 'terminal_publish_branch_and_pr', 'hash-2', '{}', 'started')`,
+    ).run(secondInvocationId, W, S, R);
+    const runCommand = vi.mocked(provider.runCommand);
+    const firstImplementation = runCommand.getMockImplementation()!;
+    runCommand.mockImplementation(async (sandboxId, input) => input.command.includes("rev-parse HEAD")
+      ? { exitCode: 0, stdout: `${SECOND_HEAD}\n`, stderr: "" }
+      : firstImplementation(sandboxId, input));
+    vi.mocked(gateway.getRef).mockResolvedValue(HEAD);
+    vi.mocked(gateway.findPullRequest).mockResolvedValue({
+      number: 9,
+      url: "https://github.com/owner/repo/pull/9",
+      state: "open",
+      headSha: SECOND_HEAD,
+      title: "Ship it",
+    });
+    vi.mocked(gateway.updatePullRequest).mockResolvedValue({
+      number: 9,
+      url: "https://github.com/owner/repo/pull/9",
+      state: "open",
+      headSha: SECOND_HEAD,
+      title: "Ship it again",
+    });
+
+    await expect(publisher.publishBranchAndPr(
+      { ...context, toolCallId: "publish-call-2" },
+      { title: "Ship it again", body: "Second commit" },
+      sandbox,
+      provider,
+    )).resolves.toMatchObject({
+      outcome: "updated",
+      publishedSha: SECOND_HEAD,
+      pullRequest: { number: 9, title: "Ship it again" },
+    });
+    expect(provider.publishGitBundle).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      headSha: SECOND_HEAD,
+      expectedOldSha: HEAD,
+    }));
+    expect(gateway.createPullRequest).toHaveBeenCalledOnce();
+    expect(gateway.updatePullRequest).toHaveBeenCalledOnce();
+    expect(gateway.mintWriteToken).toHaveBeenCalledTimes(2);
+    expect(gateway.revokeWriteToken).toHaveBeenCalledTimes(2);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM repository_publications WHERE workspace_id = ? AND grant_id = (SELECT id FROM terminal_publication_grants WHERE workspace_id = ?)",
+    ).get(W, W)).toEqual({ count: 2 });
+  });
+
   it("refuses a dirty tree with actionable guidance", async () => {
     const dirty = fixture();
     await admitTerminalPublicationGrant(dirty.env, {
@@ -216,6 +320,35 @@ describe("Terminal repository publication", () => {
       { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
       dirty.provider,
     )).rejects.toMatchObject({ code: "working_tree_dirty", message: expect.stringContaining("commit") });
+  });
+
+  it("allows local repository work but blocks remote publication under read-only access", async () => {
+    const readOnly = fixture();
+    readOnly.database.prepare(
+      `UPDATE connector_connections SET config_json = ? WHERE id = ?`,
+    ).run(JSON.stringify({
+      githubRepositoryAccess: {
+        version: 1,
+        revision: 2,
+        mode: "all_repositories",
+        defaultAccess: "read_only",
+        repositories: [],
+      },
+    }), CONNECTION);
+    await admitTerminalPublicationGrant(readOnly.env, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
+      executionPrincipal: { type: "user", userId: U },
+    }, new Date(Date.now() - 1_000));
+
+    await expect(createTerminalRepositoryPublisher(readOnly.env, readOnly.gateway).publishBranchAndPr(
+      readOnly.context, { title: "Ship", body: "" },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      readOnly.provider,
+    )).rejects.toMatchObject({
+      code: "repository_remote_read_only",
+      message: expect.stringContaining("Local file edits and local commits are allowed"),
+    });
+    expect(readOnly.gateway.mintWriteToken).not.toHaveBeenCalled();
   });
 
   it("refuses committed GitHub Actions workflow changes", async () => {
@@ -287,6 +420,21 @@ describe("Terminal repository publication", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.github.com/repositories/42",
       expect.objectContaining({ headers: expect.objectContaining({ authorization: "Bearer read-token" }) }),
+    );
+  });
+
+  it("revokes a trusted publisher token instead of waiting for its expiry", async () => {
+    const { env } = fixture();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createGitHubRestPublicationGateway(env).revokeWriteToken("write-token")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/installation/token",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ authorization: "Bearer write-token" }),
+      }),
     );
   });
 });

@@ -3,6 +3,7 @@ import type { AttachmentKind } from "@avalon/contracts";
 import type { z } from "zod";
 
 import { TerminalArgumentSchemas, type TerminalToolExecutors } from "./contract";
+import type { TerminalCheckoutRepositoryOutput } from "./repository-selection";
 
 const MAX_FILE_BYTES = 10 * 1_048_576;
 const MAX_READ_BYTES = 256 * 1_024;
@@ -13,6 +14,7 @@ type EditFileInput = z.infer<typeof TerminalArgumentSchemas.edit_file>;
 type WriteFileInput = z.infer<typeof TerminalArgumentSchemas.write_file>;
 type ApplyPatchInput = z.infer<typeof TerminalArgumentSchemas.apply_patch>;
 type RunCommandInput = z.infer<typeof TerminalArgumentSchemas.run_command>;
+type CheckoutRepositoryInput = z.infer<typeof TerminalArgumentSchemas.checkout_repository>;
 type ImportResourceInput = z.infer<typeof TerminalArgumentSchemas.import_resource>;
 type PublishResourceInput = z.infer<typeof TerminalArgumentSchemas.publish_resource>;
 type PublishBranchAndPrInput = z.infer<typeof TerminalArgumentSchemas.publish_branch_and_pr>;
@@ -88,6 +90,7 @@ export interface TerminalRuntime {
     timeoutMs: number;
     description?: string;
   }): Promise<TerminalCommandOutput>;
+  checkoutRepository(context: HarnessToolContext, input: CheckoutRepositoryInput): Promise<TerminalCheckoutRepositoryOutput>;
   importResource(context: HarnessToolContext, input: ImportResourceInput): Promise<TerminalImportResourceOutput>;
   publishResource(context: HarnessToolContext, input: PublishResourceInput): Promise<TerminalPublishedResourceOutput>;
   publishBranchAndPr(context: HarnessToolContext, input: PublishBranchAndPrInput): Promise<TerminalPublishedBranchAndPrOutput>;
@@ -193,12 +196,6 @@ function truncateHeadTail(value: string): { value: string; truncated: boolean } 
 
 function rejectCommand(command: string): void {
   const reason = (() => {
-    if (/(?:^|[;&|\s])git\s+(?:-[^\s]+\s+)*push(?:\s|$)/iu.test(command)) {
-      return "Remote Git writes must use terminal_publish_branch_and_pr.";
-    }
-    if (/(?:^|[;&|\s])gh\s+(?:pr\s+(?:create|edit|close|merge|reopen)|issue\s+(?:create|edit|close|reopen|delete)|release\s+(?:create|edit|delete|upload)|repo\s+(?:create|delete|edit|archive)|workflow\s+run)(?:\s|$)/iu.test(command)) {
-      return "Mutating GitHub CLI commands are unavailable; pull request publication must use terminal_publish_branch_and_pr.";
-    }
     if (/\b(?:nohup|setsid|disown|tmux|screen)\b/iu.test(command) || /(?<!&)&\s*$/u.test(command)) {
       return "Background processes and detached sessions are unavailable; use one bounded foreground command.";
     }
@@ -210,7 +207,7 @@ function rejectCommand(command: string): void {
   if (reason) {
     throw new TerminalToolError(
       "command_rejected",
-      "This command requests forbidden behavior. Use one bounded non-interactive command, dedicated file tools, or the authorized publication tool instead.",
+      "This command requests unsupported terminal behavior. Use one bounded non-interactive command or a dedicated file tool instead.",
       { reason },
     );
   }
@@ -357,6 +354,14 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
         },
         summary: summarizeCommand(input, result),
       };
+    },
+    async checkout_repository(rawInput, context): Promise<HarnessToolResult> {
+      const input: CheckoutRepositoryInput = TerminalArgumentSchemas.checkout_repository.parse(rawInput);
+      const output = await runtime.checkoutRepository(context, input);
+      const access = output.remoteAccess === "full_access"
+        ? "full remote access"
+        : "read-only remote access; local edits remain allowed";
+      return { output, summary: `Checked out ${output.repository} with ${access}` };
     },
     async import_resource(rawInput, context): Promise<HarnessToolResult> {
       const input: ImportResourceInput = TerminalArgumentSchemas.import_resource.parse(rawInput);

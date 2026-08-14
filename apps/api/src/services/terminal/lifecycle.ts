@@ -3,6 +3,18 @@ import { newId } from "@avalon/db";
 import type { Env } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
 import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
+import { TerminalToolError } from "./tools";
+
+const MAX_WORKSPACE_BACKUP_BYTES = 50 * 1_048_576;
+
+export interface TerminalWorkspaceBackup {
+  resourceId: string;
+  title: string;
+  mimeType: "application/gzip";
+  sizeBytes: number;
+  sourceSha256: string;
+  createdAt: string;
+}
 
 interface LifecycleRow {
   state: string;
@@ -260,4 +272,167 @@ export function createTerminalFinalDiffPreserver(
       ).bind(workspaceId, objectRef),
     ]);
   };
+}
+
+/**
+ * Creates the durable recovery point required before repository replacement.
+ * Provider credentials and Git internals are excluded; source files,
+ * untracked files, databases, and generated artifacts remain in the archive.
+ */
+export function createTerminalWorkspaceBackup(
+  env: Pick<Env, "AVALON_REGION" | "DB" | "PAYLOADS">,
+  provider: TerminalSandboxProvider,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    toolCallId: string;
+    repositoryFullName: string;
+    providerSandboxId: string;
+    generation: number;
+    signal: AbortSignal;
+  },
+): Promise<TerminalWorkspaceBackup | null> {
+  return createWorkspaceBackup();
+
+  async function createWorkspaceBackup(): Promise<TerminalWorkspaceBackup | null> {
+    const providerResourceId = `terminal-workspace-backup:${input.toolCallId}`;
+    const existing = await env.DB.prepare(
+      `SELECT id, title, mime_type, content_sha256, metadata_json, created_at
+         FROM resources
+        WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
+    ).bind(input.workspaceId, providerResourceId).first<{
+      id: string;
+      title: string;
+      mime_type: string;
+      content_sha256: string;
+      metadata_json: string;
+      created_at: string;
+    }>();
+    if (existing) {
+      const metadata = JSON.parse(existing.metadata_json) as { size?: unknown };
+      return {
+        resourceId: existing.id,
+        title: existing.title,
+        mimeType: "application/gzip",
+        sizeBytes: Number(metadata.size ?? 0),
+        sourceSha256: existing.content_sha256,
+        createdAt: existing.created_at,
+      };
+    }
+
+    const archivePath = `/tmp/avalon-workspace-backup-${input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 64)}.tar.gz`;
+    const result = await provider.runCommand(input.providerSandboxId, {
+      taskName: `avalon-workspace-backup-${input.generation}-${input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 48)}`,
+      cwd: "/workspace",
+      timeoutMs: 120_000,
+      signal: input.signal,
+      command: [
+        "set -euo pipefail",
+        `archive='${archivePath}'`,
+        "if ! find . -mindepth 1 -maxdepth 1 ! -name .avalon ! -name .git -print -quit | grep -q .; then printf 'EMPTY\\n'; exit 0; fi",
+        "tar --exclude='./.avalon' --exclude='*/.avalon' --exclude='./.git' --exclude='*/.git' --exclude='./node_modules' --exclude='*/node_modules' --exclude='./.venv' --exclude='*/.venv' --exclude='./vendor/bundle' --exclude='*/vendor/bundle' -czf \"$archive\" .",
+        "size=$(stat -c %s -- \"$archive\")",
+        `if [ "$size" -gt ${MAX_WORKSPACE_BACKUP_BYTES} ]; then rm -f -- "$archive"; printf 'TOO_LARGE %s\\n' "$size"; exit 0; fi`,
+        "digest=$(sha256sum -- \"$archive\" | cut -d ' ' -f 1)",
+        "printf 'READY %s %s\\n' \"$size\" \"$digest\"",
+      ].join("\n"),
+    });
+    if (result.exitCode !== 0) {
+      throw new TerminalToolError(
+        "workspace_backup_failed",
+        "Avalon could not create a recovery backup, so the repository was not changed. Inspect free space and retry repository checkout.",
+        { reason: "Repository replacement is blocked until Avalon can create its recovery backup." },
+      );
+    }
+    if (result.stdout.trim() === "EMPTY") return null;
+    const tooLarge = /^TOO_LARGE (\d+)$/u.exec(result.stdout.trim());
+    if (tooLarge) {
+      throw new TerminalToolError(
+        "workspace_backup_too_large",
+        `The recoverable workspace state is ${tooLarge[1]} bytes compressed, above the ${MAX_WORKSPACE_BACKUP_BYTES}-byte backup limit. Remove regenerable dependency directories or publish large artifacts, then retry repository checkout.`,
+        { expected: `compressed backup at most ${MAX_WORKSPACE_BACKUP_BYTES} bytes` },
+      );
+    }
+    const ready = /^READY (\d+) ([0-9a-f]{64})$/u.exec(result.stdout.trim());
+    if (!ready) {
+      throw new TerminalToolError(
+        "workspace_backup_failed",
+        "Avalon could not verify the recovery backup, so the repository was not changed. Retry repository checkout.",
+        { reason: "Repository replacement is blocked until the backup size and digest can be verified." },
+      );
+    }
+    const expectedSize = Number(ready[1]);
+    const expectedSha256 = ready[2]!;
+    const bytes = await provider.readFile(input.providerSandboxId, archivePath);
+    await provider.runCommand(input.providerSandboxId, {
+      taskName: `avalon-workspace-backup-cleanup-${input.generation}-${input.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 40)}`,
+      cwd: "/workspace",
+      timeoutMs: 10_000,
+      signal: input.signal,
+      command: `rm -f -- '${archivePath}'`,
+    }).catch(() => undefined);
+    const actualSha256 = await sha256Hex(bytes);
+    if (bytes.byteLength !== expectedSize || actualSha256 !== expectedSha256) {
+      throw new TerminalToolError(
+        "workspace_backup_changed",
+        "The recovery backup changed while Avalon read it, so the repository was not changed. Stop workspace writers and retry repository checkout.",
+        { reason: "Wait for active writes to finish, then retry repository checkout." },
+      );
+    }
+    const resourceId = newId();
+    const createdAt = new Date().toISOString();
+    const title = `Terminal backup before ${input.repositoryFullName}`;
+    const objectRef = `${env.AVALON_REGION}/${input.workspaceId}/resources/${resourceId}/terminal-workspace-backup/${actualSha256}`;
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO resource_object_deletion_outbox
+       (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+       VALUES (?, ?, ?, 'original', ?, ?)`,
+    ).bind(objectRef, input.workspaceId, resourceId, createdAt, createdAt).run();
+    await env.PAYLOADS.put(objectRef, bytes, {
+      httpMetadata: { contentType: "application/gzip" },
+      customMetadata: { source: "terminal_repository_replacement", sandboxGeneration: String(input.generation) },
+    });
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+          content_ref, content_sha256, metadata_json, last_hydrated_at, attachment_status,
+          model_content_status, created_at, updated_at)
+         VALUES (?, ?, 'generated_file', 'avalon_generated', ?, ?, 'application/gzip', ?, ?, ?, ?,
+                 'attached', 'unsupported', ?, ?)`,
+      ).bind(
+        resourceId,
+        input.workspaceId,
+        providerResourceId,
+        title,
+        objectRef,
+        actualSha256,
+        JSON.stringify({
+          source: "terminal_repository_replacement",
+          generation: input.generation,
+          size: bytes.byteLength,
+          excluded: [".avalon", ".git", "node_modules", ".venv", "vendor/bundle"],
+        }),
+        createdAt,
+        createdAt,
+        createdAt,
+      ),
+      env.DB.prepare(
+        `INSERT INTO workstream_resources
+         (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+         VALUES (?, ?, NULL, 0, 'generated', ?)`,
+      ).bind(input.workstreamId, resourceId, createdAt),
+      env.DB.prepare(
+        "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+      ).bind(input.workspaceId, objectRef),
+    ]);
+    return {
+      resourceId,
+      title,
+      mimeType: "application/gzip",
+      sizeBytes: bytes.byteLength,
+      sourceSha256: actualSha256,
+      createdAt,
+    };
+  }
 }

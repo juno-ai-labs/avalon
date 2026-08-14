@@ -1384,23 +1384,6 @@ export class WorkstreamService {
     ).bind(position, at, id, this.auth.userId, this.auth.workspaceId)));
   }
 
-  async continueTerminalRepositoryRequest(
-    id: string,
-    input: { repositoryRequestId: string; harnessRunId: string; repositoryFullName: string },
-  ) {
-    return this.createMessage(id, {
-      text: `Continue the requested repository work using ${input.repositoryFullName}.`,
-      clientMessageId: input.repositoryRequestId,
-      mentions: [],
-      confirmedParticipantUserIds: [],
-      attachmentIds: [],
-      forcedHarnessOrigin: "terminal_repository_answer",
-      parentHarnessRunId: input.harnessRunId,
-      expectedLatestHarnessRunId: input.harnessRunId,
-      expectedToolInvocationId: input.repositoryRequestId,
-    });
-  }
-
   async createMessage(
     id: string,
     input: CreateMessageInput,
