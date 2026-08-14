@@ -2447,6 +2447,26 @@ export interface RunHarnessInput {
     maxActiveSkillBodyTokens?: number;
     maxStreamResets?: number;
     completionDefectRetries?: number;
+    /**
+     * Whole-plan re-executions after **every** route candidate failed with a
+     * transport fault the provider owns (no response, 408, 429, 5xx).
+     *
+     * Bind's disposition matrix answers such a failure by traversing to the next
+     * provider and then the fallback model; it has no same-endpoint budget for
+     * one, because with somewhere to traverse to there is no reason to wait.
+     * That leaves a plan with nowhere to go — a work stream pinned to one model
+     * from the developer-mode selector, whose route carries no fallbacks by
+     * design — with no recovery at all, so a single stalled request discards the
+     * whole run. `isRetriableAttemptError` is Bind saying a fresh attempt later
+     * could plausibly succeed and expecting the host to be the one that makes
+     * it; this is that retry.
+     *
+     * Defaults to 1. Higher is not obviously better: each re-execution records
+     * another failure against the shared per-workspace circuit breaker, whose
+     * threshold is 3, so a large budget trades one run's recovery for opening
+     * the endpoint on everyone else's.
+     */
+    transportRetries?: number;
     /** Model reasoning effort passed consistently through Bind's routed turns. */
     reasoningEffort?: "low" | "medium" | "high";
   };
@@ -2582,7 +2602,17 @@ export interface HarnessRunStats {
 }
 
 export interface HarnessFailure {
-  kind: "deadline" | "execution" | "context" | "limit" | "authorization" | "ambiguous_external_write";
+  kind:
+    | "deadline"
+    | "execution"
+    | "context"
+    | "limit"
+    | "authorization"
+    | "ambiguous_external_write"
+    // The model provider, not Avalon. Its own arm rather than `execution` so a
+    // caller deciding whether to retry does not have to re-derive from the code
+    // what the harness already classified.
+    | "provider";
   code: HarnessFailureCode;
   message: string;
 }
@@ -2596,6 +2626,7 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   context_limit_exceeded: "This run could not fit safely in the selected model context",
   tool_surface_too_large: "The authorized tool surface is too large for one run",
   ambiguous_external_write: "An external write may have completed, so Avalon did not retry it",
+  provider_unavailable: "The model provider did not respond, so this run could not continue",
 });
 
 export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): string {

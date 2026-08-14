@@ -77,7 +77,14 @@ export const HarnessFailureCodeSchema = z.enum([
   "harness_execution_failed",
   "context_limit_exceeded",
   "tool_surface_too_large",
-  "ambiguous_external_write"
+  "ambiguous_external_write",
+  // Every route candidate answered with a transport fault the provider owns —
+  // no response, a 408/429, or a 5xx. Distinct from `harness_execution_failed`
+  // because the two send a reader to different places: this one is the
+  // provider's outage and is worth retrying, that one is Avalon's own defect
+  // and is not. Collapsing them cost an investigation once already; see
+  // `docs/agent-harness.md`.
+  "provider_unavailable"
 ]);
 export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 

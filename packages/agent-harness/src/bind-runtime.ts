@@ -27,9 +27,11 @@ import {
   createCircuitBreaker,
   executeRoutePlan,
   failureDisposition,
+  isRetriableAttemptError,
   providerIdSchema,
   retryAfterMsFromHeaders,
   type AttemptTarget,
+  type InferenceAttemptError,
   type RouteCandidate,
   type RoutePlan,
 } from "@juno-ai/bind/routing";
@@ -206,9 +208,31 @@ type RenderedSystemPrompt = {
 };
 
 class HarnessLimitError extends Error {
-  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "ambiguous_external_write" | "tool_surface_too_large">, message: string) {
+  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
+  }
+}
+
+/**
+ * Every route candidate answered with a transport fault the provider owns, and
+ * the host's transport retries are spent.
+ *
+ * It exists to carry one fact across the throw: that the classifier already
+ * knew whose fault this was. The exhaustion path used to rethrow the transport's
+ * own error verbatim, which is right for preserving a message but loses the
+ * classification — and the outer catch, seeing an error it recognized as none of
+ * its own kinds, filed a provider outage as `harness_execution_failed`, the
+ * bucket that means *Avalon broke*. A member read "the Avalon harness could not
+ * complete this run" for a stalled model and had no reason to retry.
+ *
+ * The original rides in `cause`, so logs and the message a transport wrote
+ * survive untouched — only the *code* changes.
+ */
+class ProviderUnavailableError extends Error {
+  constructor(readonly attemptError: InferenceAttemptError) {
+    super(attemptError.cause.message, { cause: attemptError.cause });
+    this.name = "ProviderUnavailableError";
   }
 }
 
@@ -231,6 +255,55 @@ class OpenRouterCompletionDefectError extends Error {
     super(`OpenRouter returned a ${defect.replaceAll("_", " ")}`);
     this.name = "OpenRouterCompletionDefectError";
   }
+}
+
+/**
+ * Whether a failed attempt is the provider's fault and worth another request.
+ *
+ * One predicate decides both the retry and the code deliberately: the failures
+ * Avalon retries are exactly the failures it names as the provider's, so a
+ * reader never has to hold two overlapping lists in their head. Bind's
+ * `isRetriableAttemptError` is the authority for "a fresh attempt later could
+ * plausibly succeed"; a completion defect satisfies that but is the *model*
+ * answering badly rather than the provider failing to answer, and the executor
+ * already spent its same-endpoint budget on it, so it is excluded here.
+ *
+ * The categories this leaves out are the ones a retry cannot fix and a member
+ * should not see blamed on the provider: a 400 is our request shape, and
+ * 401/402/403 are Avalon's credentials or credit. Those stay
+ * `harness_execution_failed` and stay operator-actionable through the logs.
+ */
+function isProviderTransportFailure(error: InferenceAttemptError): boolean {
+  return error.kind !== "completion_defect" && isRetriableAttemptError(error);
+}
+
+/**
+ * How long to wait before re-executing an exhausted plan.
+ *
+ * `Retry-After` wins when the provider sent one, because a 429 with a stated
+ * delay is the one case where the provider knows better than we do — but it is
+ * clamped: Bind's own note on `retryAfterMsFromHeaders` warns the value is
+ * attacker-influenceable and RFC 9110 puts no ceiling on it, so an upstream
+ * having a bad day must not be able to park a run for hours.
+ */
+function transportRetryDelayMs(error: InferenceAttemptError, retryNumber: number): number {
+  const backoff = Math.min(4_000, 500 * 2 ** (retryNumber - 1));
+  const retryAfterMs = error.kind === "http" ? error.retryAfterMs : null;
+  return Math.min(30_000, Math.max(backoff, retryAfterMs ?? 0));
+}
+
+/** A cancellable sleep: a timer left armed holds the Workflow invocation open. */
+async function delayUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const settle = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", settle);
+      resolve();
+    };
+    const timer = setTimeout(settle, ms);
+    signal.addEventListener("abort", settle, { once: true });
+  });
 }
 
 export async function runHarnessWithBind(input: RunHarnessInput): Promise<HarnessOutcome> {
@@ -929,12 +1002,18 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     if (input.signal?.aborted && !timedOut && !(error instanceof AmbiguousExternalWriteError)) {
       return outcome("stopped", content || streamedContent, model, state, routedAttempts);
     }
+    // `timedOut` outranks the provider arm: when the run's own deadline fired
+    // during a stalled request, the wall clock is the truer cause and the one
+    // the member can act on. Below it, a provider outage is named as such
+    // rather than falling into the generic bucket.
     const code = error instanceof HarnessLimitError
       ? error.code
       : error instanceof AmbiguousExternalWriteError
         ? "ambiguous_external_write"
       : timedOut
         ? "run_wall_time_limit_exceeded"
+      : error instanceof ProviderUnavailableError
+        ? "provider_unavailable"
         : "harness_execution_failed";
     const failure: HarnessFailure = {
       kind: timedOut
@@ -945,7 +1024,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             : "limit"
           : error instanceof AmbiguousExternalWriteError
             ? "ambiguous_external_write"
-            : "execution",
+            : error instanceof ProviderUnavailableError
+              ? "provider"
+              : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",
     };
@@ -1019,7 +1100,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       args.fallbackModels ?? args.input.config.fallbackModels ?? [],
       args.input.workspaceId,
     );
-    const routed = await executeRoutePlan({
+    const executePlan = () => executeRoutePlan({
       plan,
       completionDefectRetries: args.input.config.completionDefectRetries ?? 2,
       breaker: circuitBreaker,
@@ -1155,11 +1236,40 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         }
       },
     });
+
+    let routed = await executePlan();
+    // The most recent classified failure, kept across re-executions so the throw
+    // below can still say what went wrong. A retry that finds the breaker open
+    // returns `no_viable_endpoints` and carries no error of its own; without
+    // this, retrying would *lose* the diagnosis it was trying to recover from.
+    let lastAttemptError = !routed.ok && routed.reason === "attempts_exhausted" ? routed.error : null;
+    const transportRetryBudget = Math.max(0, args.input.config.transportRetries ?? 1);
+    for (let retryNumber = 1; retryNumber <= transportRetryBudget; retryNumber += 1) {
+      if (routed.ok || routed.reason !== "attempts_exhausted") break;
+      if (!isProviderTransportFailure(routed.error)) break;
+      // The same rule the executor applies to traversal: never replay a turn the
+      // reader is already looking at. A retractable surface keeps this false by
+      // wiping on the retry's first byte, so in practice it stops us only once
+      // the reset budget is spent.
+      if (textStream.producedOutput) break;
+      if (args.signal.aborted) break;
+      await delayUnlessAborted(transportRetryDelayMs(routed.error, retryNumber), args.signal);
+      if (args.signal.aborted) break;
+      routed = await executePlan();
+      if (!routed.ok && routed.reason === "attempts_exhausted") lastAttemptError = routed.error;
+    }
+
     if (!routed.ok) {
       textStream.finish("failed");
       await streamEventChain;
-      const error = routed.reason === "attempts_exhausted" ? routed.error.cause : new Error("No viable OpenRouter endpoint");
-      throw error;
+      const attemptError = routed.reason === "attempts_exhausted" ? routed.error : lastAttemptError;
+      if (attemptError && isProviderTransportFailure(attemptError)) {
+        throw new ProviderUnavailableError(attemptError);
+      }
+      // Unchanged for everything else: Bind rethrows the transport's own error so
+      // a host's error classes and messages survive routing, and the outer catch
+      // still reads them.
+      throw attemptError ? attemptError.cause : new Error("No viable OpenRouter endpoint");
     }
     textStream.finish("succeeded");
     await streamEventChain;
