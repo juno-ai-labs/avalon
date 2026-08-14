@@ -556,6 +556,9 @@ describe("Daytona Terminal provider", () => {
     expect(executeSessionCommand).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       command: expect.stringContaining("git fsck --strict"),
     }), 180);
+    expect(executeSessionCommand).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      command: expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
+    }), 180);
     expect(removePublisher).toHaveBeenCalledWith(60, true);
     expect(deleteSecret).toHaveBeenCalledWith("secret-1");
   });
