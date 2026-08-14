@@ -8,7 +8,7 @@ import type { ToolDefinition } from "@avalon/contracts";
 import { z } from "zod";
 
 export const TERMINAL_PLUGIN_ID = "avalon:terminal";
-export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Daytona terminal workspace with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, or archive. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. For deliberate text changes, read first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch`; use `terminal_write_file` only for intentional complete replacement. To create a durable artifact, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then call `terminal_publish_resource` with a path relative to that directory. A nonzero command exit, timeout, cancellation, or output limit is a successful tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone. Tool availability does not require you to start a sandbox unless the task benefits from it.";
+export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Daytona terminal workspace with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, or archive. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. To work in an authorized GitHub repository, choose the exact owner/name yourself and call `terminal_checkout_repository`; use GitHub repository search first when needed, and set `requiredRemoteAccess` to `full_access` when the task needs a push or pull request. That request is a durable ceiling: choosing `read_only` keeps the sandbox credential read-only even when connector policy permits full access. The checkout result's `remoteAccess` is the remote boundary: `read_only` allows local edits and commits but its credential cannot push or mutate GitHub; `full_access` provides a repository-scoped credential for ordinary `git` and `gh` commands. Before initial repository access Avalon creates or restores `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that branch; if an in-progress merge, rebase, bisect, or local edit prevents the switch, inspect and repair Git state before pushing. Stay on the prepared branch, commit normally, push only that branch, and create or update its pull request against `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. Avalon creates a durable recovery backup, including a portable bundle of local Git refs, before replacing nonempty workspace state. For deliberate text changes, read first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch`; use `terminal_write_file` only for intentional complete replacement. To create a durable artifact, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then call `terminal_publish_resource` with a path relative to that directory. A nonzero command exit, timeout, cancellation, or output limit is a successful tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone. Tool availability does not require you to start a sandbox unless the task benefits from it.";
 
 export const TERMINAL_TOOL_NAMES = [
   "read_file",
@@ -16,6 +16,7 @@ export const TERMINAL_TOOL_NAMES = [
   "write_file",
   "apply_patch",
   "run_command",
+  "checkout_repository",
   "import_resource",
   "publish_resource",
   "publish_branch_and_pr",
@@ -50,6 +51,10 @@ const runCommandArguments = z.object({
   timeoutMs: z.number().int().positive().max(900_000).optional(),
   description: z.string().min(1).max(240).optional(),
 }).strict();
+const checkoutRepositoryArguments = z.object({
+  repositoryFullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
+  requiredRemoteAccess: z.enum(["read_only", "full_access"]).default("read_only"),
+}).strict();
 const importResourceArguments = z.union([
   z.object({ resourceId: z.string().uuid() }).strict(),
   z.object({
@@ -74,6 +79,7 @@ export const TerminalArgumentSchemas = {
   write_file: writeFileArguments,
   apply_patch: applyPatchArguments,
   run_command: runCommandArguments,
+  checkout_repository: checkoutRepositoryArguments,
   import_resource: importResourceArguments,
   publish_resource: publishResourceArguments,
   publish_branch_and_pr: publishBranchAndPrArguments,
@@ -154,7 +160,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   run_command: {
     name: "run_command",
-    description: "Run one bounded non-interactive Bash command and return one final result. Use ls, find, rg --files, and rg for discovery. No PTY, background service, polling, git push, or mutating gh command is allowed.",
+    description: "Run one bounded non-interactive Bash command and return one final result. Use ls, find, rg --files, and rg for discovery. Authorized repositories support standard git and gh commands; no PTY, background service, or polling command is allowed.",
     capability: "terminal.command.run",
     mode: "write",
     idempotency: "record_before_execute",
@@ -165,6 +171,18 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       timeoutMs: { type: "integer", minimum: 1, maximum: 900_000, default: 120_000, description: "Command wall-clock deadline in milliseconds." },
       description: { type: "string", minLength: 1, maxLength: 240, description: "Short participant-facing activity label; it does not affect execution." },
     }, ["command"]),
+  },
+  checkout_repository: {
+    name: "checkout_repository",
+    description: "Choose and materialize one exact GitHub repository for this work stream. The model chooses within connector policy; Avalon backs up recoverable workspace state before replacement. read_only remote access still permits local edits and commits but never push or remote mutation.",
+    capability: "terminal.repository.checkout",
+    mode: "write",
+    idempotency: "record_before_execute",
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 180_000,
+    inputSchema: objectSchema({
+      repositoryFullName: { type: "string", pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", description: "Exact GitHub owner/name chosen by the model from authorized repository context." },
+      requiredRemoteAccess: { type: "string", enum: ["read_only", "full_access"], default: "read_only", description: "Request full_access when the task needs a push, pull request, or other remote mutation. Both levels permit local edits and local commits." },
+    }, ["repositoryFullName"]),
   },
   import_resource: {
     name: "import_resource",
@@ -203,7 +221,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   publish_branch_and_pr: {
     name: "publish_branch_and_pr",
-    description: "Publish the validated committed work-stream branch and create or update its one authorized pull request. Call only after explicit participant publication intent; repository and refs are host-fixed.",
+    description: "Optionally publish the committed work-stream branch and create or update its pull request through Avalon's typed publisher. Standard git push and gh pr commands are also available for full-access repositories.",
     capability: "terminal.repository.publish",
     mode: "write",
     idempotency: "record_before_execute",

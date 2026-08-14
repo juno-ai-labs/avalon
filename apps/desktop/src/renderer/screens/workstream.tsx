@@ -53,7 +53,7 @@ import {
 } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, TerminalRepositoryCatalog, TerminalWorkstreamState, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -88,44 +88,6 @@ export function workstreamRunTiming(
   const canonicalCompletedAt = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
   const completedAt = Number.isFinite(canonicalCompletedAt) ? canonicalCompletedAt : now;
   return { active: false, durationMs: Math.max(0, completedAt - startedAt) };
-}
-
-export function TerminalRepositoryRequestCard({
-  catalog,
-  disabled,
-  onSelect,
-  request,
-}: {
-  catalog: TerminalRepositoryCatalog | undefined;
-  disabled: boolean;
-  onSelect: (connectionId: string, repositoryFullName: string, requestId: string) => void;
-  request: TerminalWorkstreamState['repositoryRequest'];
-}): React.JSX.Element | null {
-  if (!request || catalog?.state !== 'available') return null;
-  return (
-    <section aria-label="Repository required" className="terminal-repository-request-card">
-      <div>
-        <strong>Choose a repository to continue</strong>
-        <p>The Terminal run needs one GitHub App-authorized repository. Your choice resumes the request once.</p>
-      </div>
-      <select
-        aria-label="Repository for Terminal request"
-        defaultValue=""
-        disabled={disabled}
-        onChange={(event) => {
-          const [connectionId, repositoryFullName] = event.target.value.split('::', 2);
-          if (connectionId && repositoryFullName) onSelect(connectionId, repositoryFullName, request.id);
-        }}
-      >
-        <option disabled value="">Choose one repository…</option>
-        {catalog.connections.flatMap((connection) => connection.repositories.map((repository) => (
-          <option key={`${connection.connectionId}:${repository.id}`} value={`${connection.connectionId}::${repository.fullName}`}>
-            {repository.fullName} · {connection.displayName}
-          </option>
-        )))}
-      </select>
-    </section>
-  );
 }
 
 /**
@@ -738,7 +700,6 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
-  const [replacingTerminalRepository, setReplacingTerminalRepository] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
@@ -810,53 +771,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       return state.localFilesRetained ? 30_000 : false;
     },
   });
-  const terminalParticipant = Boolean(
-    session?.user.id && workstream.data?.participants.some((participant) => participant.id === session.user.id),
-  );
-  const terminalRepositoryCatalog = useQuery({
-    queryKey: ['terminal-repository-catalog', id],
-    queryFn: ({ signal }) => api!.getTerminalRepositoryCatalog(id, signal),
-    enabled: Boolean(
-      api
-      && id
-      && terminalParticipant
-      && terminalWorkspace.data?.availability === 'supported'
-      && (
-        !terminalWorkspace.data.repository
-        || Boolean(terminalWorkspace.data.repositoryRequest)
-        || replacingTerminalRepository
-      ),
-    ),
-    staleTime: 30_000,
-  });
-  const selectTerminalRepository = useMutation({
-    mutationFn: async (input: { connectionId: string; repositoryFullName: string; confirmDiscardLocalFiles: boolean; repositoryRequestId: string | null }) => {
-      const state = await api!.selectTerminalRepository(id, {
-        connectionId: input.connectionId,
-        repositoryFullName: input.repositoryFullName,
-        confirmDiscardLocalFiles: input.confirmDiscardLocalFiles,
-        ...(input.repositoryRequestId ? { repositoryRequestId: input.repositoryRequestId } : {}),
-      });
-      return state;
-    },
-    onSuccess: (state) => {
-      queryClient.setQueryData(['terminal-workstream', id], state);
-      setReplacingTerminalRepository(false);
-      void queryClient.invalidateQueries({ queryKey: ['terminal-repository-catalog', id] });
-      void queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true });
-      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
-    },
-    onError: () => {
-      void queryClient.invalidateQueries({ queryKey: ['terminal-workstream', id], exact: true });
-      void queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true });
-      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
-    },
-  });
-  const chooseTerminalRepository = (connectionId: string, repositoryFullName: string, repositoryRequestId = terminalWorkspace.data?.repositoryRequest?.id ?? null): void => {
-    const retained = terminalWorkspace.data?.localFilesRetained === true;
-    if (retained && !window.confirm('Replacing this repository destroys retained local Terminal files after Avalon saves the final Git diff. Unpublished scratch files cannot be recovered. Continue?')) return;
-    selectTerminalRepository.mutate({ connectionId, repositoryFullName, confirmDiscardLocalFiles: retained, repositoryRequestId });
-  };
   const startFreshTerminal = useMutation({
     mutationFn: () => api!.startFreshTerminalWorkspace(id),
     onSuccess: (state) => queryClient.setQueryData(['terminal-workstream', id], state),
@@ -1552,14 +1466,6 @@ export function WorkstreamScreen(): React.JSX.Element {
               })}
             </div>
           )}
-          {terminalParticipant && (
-            <TerminalRepositoryRequestCard
-              catalog={terminalRepositoryCatalog.data}
-              disabled={selectTerminalRepository.isPending}
-              onSelect={chooseTerminalRepository}
-              request={terminalWorkspace.data?.repositoryRequest ?? null}
-            />
-          )}
           {runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
@@ -1605,8 +1511,6 @@ export function WorkstreamScreen(): React.JSX.Element {
         dropTarget={railDrop}
         error={deferredContext.error?.message
           ?? terminalWorkspace.error?.message
-          ?? terminalRepositoryCatalog.error?.message
-          ?? selectTerminalRepository.error?.message
           ?? startFreshTerminal.error?.message
           ?? watchResource.error?.message
           ?? detachResource.error?.message
@@ -1617,11 +1521,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         onDetachResource={(resource) => detachResource.mutate(resource)}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
-        onReplaceTerminalRepository={() => setReplacingTerminalRepository(true)}
-        onSelectTerminalRepository={chooseTerminalRepository}
         onStartFreshTerminal={() => startFreshTerminal.mutate()}
-        terminalRepositoryCatalog={terminalRepositoryCatalog.data}
-        terminalRepositorySelectionPending={selectTerminalRepository.isPending}
         terminalWorkspace={terminalWorkspace.data}
         workstream={displayedDetail}
       />

@@ -214,12 +214,37 @@ every numeric tool field, inherit the exact numeric-string normalization in
 [`agent-tools.md`](agent-tools.md).
 
 The GitHub plugin prompt treats metadata and code evidence as different things.
-When more than one repository is plausible, the model asks the user to choose
-instead of selecting the first result. It may say that verification was
+When a repository is not named, the model searches the authorized set and
+chooses the best match from the request, work-stream context, pinned status,
+and recent activity rather than handing repository selection back to the
+participant or taking an arbitrary first result. It may say that verification was
 incomplete without a readable code file, but it may not conclude that there are
 no discrepancies until `contents.get` has successfully returned at least one
 code file in that run. Repository, tree, commit, issue, and pull-request reads do
 not satisfy that evidence condition.
+
+An active GitHub connection advertises a connector-specific **GitHub** child
+page immediately below Connections in Settings. A personal connection is
+configurable by its owner; a workspace connection is configurable by an admin.
+The versioned policy either permits every App-installation repository with a
+default access level or only named immutable repository IDs, with per-repository
+overrides. Repository list/search results return the effective `access` so the
+model can plan before acting. `read_only` is a remote boundary: it still permits
+Terminal file changes and local commits, while its repository token cannot push
+or mutate GitHub. `full_access` supplies the Terminal sandbox a short-lived,
+single-repository App token for ordinary `git` and `gh` writes. Avalon prepares
+a stable word-based work-stream branch first and the plugin prompt directs the
+model to push only that branch. Full access does not broaden the GitHub App's
+installed permission ceiling, but GitHub does not technically scope that token
+to the prepared branch.
+
+A connection with no stored repository policy deliberately begins as **all
+repositories / full access**. This is the requested rollout compatibility mode,
+and means enabling this Terminal release immediately makes native remote
+`git`/`gh` writes available across that connection's existing App installation;
+an administrator can change the default or select individual repositories on
+the GitHub Settings child page. A present but malformed policy does not receive
+that compatibility default and fails closed.
 
 GitHub delivery signatures are verified against the exact raw body before
 installation-aware normalization and queueing. Webhooks also discover durable
@@ -578,6 +603,81 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-13 — Repository policy stays authoritative through drift and recovery
+
+**What changed:** A present malformed GitHub repository policy now denies all
+repositories while retaining its revision for repair; only a wholly absent
+policy receives the legacy all-repositories default. Authorization resolves the
+provider's immutable repository ID before applying name-based defaults, and
+renamed repositories retain their configured override. Disabled connections
+never perform settings discovery and revoke selected Terminal rows, while
+recoverable `error` and `needs_reconnect` rows may be tried and revalidated at
+GitHub. Policy writes update only their JSON subtree and commit mounted
+Terminal-credential invalidation in one D1 batch.
+
+**Why:** Review found four ways cached or mutable state could outrank the durable
+administrator choice: malformed JSON failed open, a rename missed a read-only
+override, a disabled credential could still enumerate repositories, and a
+Worker interruption between policy persistence and token invalidation could
+leave a broader credential mounted, and a whole-document rewrite could erase
+connector metadata written concurrently.
+
+**Considered and rejected:** Treating every non-healthy observation as a durable
+revocation, adding a repository-ID lint rule, and introducing another policy
+store. Connector status already defines only `disabled` as an intentional stop;
+the existing provider metadata and transactional regional rows are enough.
+
+**Consequences:** Repository-aware operations must resolve immutable identity
+before falling back to an all-repositories default. Settings repair must preserve
+the malformed row's revision, and future credential caches must be invalidated
+in the same transaction as any policy downgrade.
+
+### 2026-08-13 — Full access means native repository CLI access
+
+**What changed:** Terminal maps connector `full_access` to a short-lived
+single-repository GitHub App token inside the Daytona sandbox, while
+`read_only` remains technically enforced by token permissions. The harness
+prepares the work-stream branch and tells the model to stay on it.
+
+**Why:** Models already know Git and GitHub CLI, PRs routinely receive multiple
+commits, and GitHub offers no branch-scoped installation token. A second publish
+authorization parser and custom write path added friction without expressing a
+provider primitive that exists.
+
+**Considered and rejected:** A smart-HTTP/API proxy and a per-push participant
+gate. Connector Settings is the explicit durable access decision.
+
+**Consequences:** `full_access` is repository-wide at the provider. Policy
+updates must invalidate Terminal credential freshness before another command,
+and model guidance must continue to name the prepared branch behavior.
+
+### 2026-08-13 — Repository policy becomes connector-owned model context
+
+**What changed:** GitHub connections now persist a revisioned all-or-selected
+repository policy with read-only or full remote access, expose a dynamic
+connector Settings child page, filter repository discovery, return effective
+access to the model, and reject remote writes outside that policy. When no
+repository is named, the plugin tells the model to search and choose from
+context instead of delegating a chooser to the participant.
+
+**Why:** Repository selection was presented as an interruption even when the
+model already had installation-scoped discovery and enough context to make the
+choice. At the same time, App installation access was too coarse to express
+that a repository could be inspected and edited locally without authorizing a
+remote push or pull request.
+
+**Considered and rejected:** Keeping one participant chooser per work stream,
+and equating read-only with an immutable sandbox checkout. The former stranded
+runs and made ordinary code tasks interactive; the latter prevented useful
+local analysis and edits even though only the remote repository needed the
+narrower boundary.
+
+**Consequences:** New GitHub operations must resolve the current policy and,
+for explicitly configured repositories, revalidate the immutable repository ID.
+Every model-visible repository listing must carry effective access. A future
+connector with settings can reuse the dynamic navigation contract, but must own
+its own typed settings endpoint and authorization semantics.
 
 ### 2026-08-12 — Code-only tool refinements remain argument errors
 
