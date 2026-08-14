@@ -349,6 +349,20 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 
 ## Invariants
 
+- **One predicate decides both the transport retry and the failure code**, so the
+  failures Avalon retries are exactly the ones it names as the provider's.
+  Splitting them lets a member be told Avalon broke for an outage Avalon had just
+  spent a retry on, which is the pairing that made the original incident hard to
+  read.
+- **A request Avalon owns is never named as the provider's.** A 400 is our
+  request shape and 401/402/403 are our credential and credit; they stay
+  `harness_execution_failed`, and `provider_circuit_open` says only that Avalon
+  stopped calling — never why — because the breaker opens on those too. Widening
+  the provider arm to cover them points an operator at the wrong system.
+- **A retry never replays output a reader has already seen.** The transport retry
+  checks the same `producedOutput` flag the route executor clamps traversal on;
+  re-rendering a turn someone is part-way through reading is worse than the
+  failure it recovers.
 - **At most one unexpired harness lease runs in a work stream**, and scope,
   activation, receipt-plan and completion, checkpoint, and terminal commits all
   require the same attempt ID, lease owner, and expiry. An obsolete executor cannot
@@ -483,9 +497,9 @@ whole-file read.
 
 Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded` when one of their explicit ceilings is reached. Those codes remain in the public failure contract so historical runs and bounded subsystems stay readable. A limit never silently reinterprets a write as successful.
 
-When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, or a 5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. The distinction is the whole point of the code: `harness_execution_failed` means Avalon's own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
+When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, or a 5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, also kind `provider`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Avalon. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Avalon's own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
 
-Before that failure is reached, the harness re-executes the **whole route plan** up to `HARNESS_TRANSPORT_RETRIES` times (default 1), waiting a clamped backoff that honours `Retry-After` when one was sent. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt writes its own `agent_inference_payload_logs` row, so a retried turn is visible as more than one row sharing a `turn_id`.
+Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host and the inline child set from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus another time-to-first-token window — otherwise a bounded caller's retry manufactures the deadline it defers to, and the outage is reported as `run_wall_time_limit_exceeded`. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt writes its own `agent_inference_payload_logs` row, so a retried turn is visible as more than one row sharing a `turn_id`.
 
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
@@ -539,19 +553,29 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, the pending sidebar marker, and claim-before-launch. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
 | `apps/api/test/agent-inference-logging.test.ts` | That the diagnostic path is best-effort and cannot fail a run. |
-| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, and `toolActivityName`. |
+| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function. |
 
 Run one with
 `pnpm --filter @avalon/api exec vitest run test/harness-run-runtime.test.ts` — the
 path is package-relative.
 
-Three traps. The prompts are byte-stable and golden-hashed, so an edit fails the
+Four traps. The prompts are byte-stable and golden-hashed, so an edit fails the
 hash assertion by design — update it deliberately rather than regenerating it.
 Anything that leases or heartbeats compares against `Date.now()`, so stub the clock
-and assert on the stored attempt and expiry rather than on elapsed time. And the
+and assert on the stored attempt and expiry rather than on elapsed time. The
 harness package's portability boundary is enforced by ESLint, not by the type
 checker: a test that imports a database or Node-only module to build a fixture will
 pass locally and fail `pnpm lint`.
+
+And **the route circuit breaker is module-scoped**, keyed by provider, model,
+credential source, and workspace. A test that deliberately fails one endpoint
+three times opens it for every test that runs afterwards under the same
+`workspaceId`, which then receive `no_viable_endpoints` — a failure carrying no
+attempt error at all — in file order. Give any such test its own `workspaceId`;
+the transport-retry tests do, and one of them depends on a sibling having opened
+the breaker first, which is stated in the test rather than left to be inferred.
+Nothing pins `breakerScope`, so deleting that one property from `routePlan` would
+silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
@@ -580,7 +604,7 @@ clamped, `Retry-After`-aware backoff, and a run that still fails that way now
 reports `provider_unavailable` / kind `provider` instead of
 `harness_execution_failed`.
 
-**Why it changed:** A pinned work stream spent eight and a half minutes and 17
+**Why:** A pinned work stream spent eight and a half minutes and 17
 successful model turns checking out a repository, bootstrapping a sandbox,
 installing, and typechecking — and then discarded all of it because turn 18's
 single request produced no first token for 45 seconds. Bind classified that
@@ -608,10 +632,22 @@ predicate now decides both the retry and the code, so the failures Avalon retrie
 are exactly the failures it names as the provider's, and the two lists cannot
 drift apart.
 
-**What a future change has to respect:** The retry budget is small because each
-re-execution records a failure against the per-workspace circuit breaker, whose
-threshold is 3 — raising it past 2 makes a single unlucky run open the endpoint
-for the whole workspace. Do not widen `isProviderTransportFailure` to cover 400,
+**Considered and rejected:** giving a pinned route fallback models, which would
+have fixed the outage in one line and destroyed the feature — an override exists
+to observe one specific model, so answering from another invalidates the
+comparison it was created to make. Also rejected: retrying at the Workflow step
+instead, which re-enters the whole run; the unit that failed was one request that
+had produced no output and committed nothing, and replaying 17 turns of completed
+side effects to recover it is the wrong granularity.
+
+**Consequences:** The retry budget is small because each re-execution records a
+failure against the per-workspace circuit breaker, whose threshold is 3 —
+**raising it to 2 or more lets a single unlucky run open the endpoint for the
+whole workspace**, since a budget of N means N+1 executions and N+1 consecutive
+failures. The breaker is also process-local (Bind's own `circuit-breaker.d.ts`
+says so), so that ceiling is per-isolate and the fleet-wide request volume during
+an outage is a multiple of it; real fleet-wide protection would need D1 or a
+Durable Object and is not what this is. Do not widen `isProviderTransportFailure` to cover 400,
 401, 402, or 403: those are Avalon's request shape and Avalon's credentials, a
 repeat cannot fix them, and naming them as the provider's would point an operator
 at the wrong system. Meeting notes' live pass sets the budget to 0 on purpose;

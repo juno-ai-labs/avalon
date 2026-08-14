@@ -67,7 +67,7 @@ function memberSafeFailure(error: unknown): HarnessWorkflowOutcome {
         ? "The run was superseded by another durable executor"
         : code === "run_cancelled"
           ? "The run was cancelled"
-          : "The Avalon harness could not complete this run",
+          : "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
     },
   };
 }

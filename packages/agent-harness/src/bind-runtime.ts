@@ -208,7 +208,7 @@ type RenderedSystemPrompt = {
 };
 
 class HarnessLimitError extends Error {
-  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable">, message: string) {
+  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
   }
@@ -233,6 +233,30 @@ class ProviderUnavailableError extends Error {
   constructor(readonly attemptError: InferenceAttemptError) {
     super(attemptError.cause.message, { cause: attemptError.cause });
     this.name = "ProviderUnavailableError";
+  }
+}
+
+/**
+ * The circuit breaker refused every candidate, so no request was sent at all.
+ *
+ * Bind's executor returns `no_viable_endpoints` for this with no error attached
+ * — correctly, since nothing was attempted — and that emptiness used to fall
+ * through to `harness_execution_failed`, reinstating the very misattribution
+ * `ProviderUnavailableError` exists to remove. During a real outage that meant
+ * the *first* run in a workspace was named accurately and every run behind it
+ * for the breaker's cooldown was blamed on Avalon.
+ *
+ * It is deliberately **not** `provider_unavailable`. The breaker also opens
+ * `open_immediately` on a credential or credit failure, which is Avalon's, and
+ * this class cannot tell which kind of failure opened it — the breaker records
+ * that a key is open, not why. Asserting the provider's fault here would be the
+ * mirror of the bug being fixed. What is certainly true, and all this says, is
+ * that Avalon stopped calling the endpoint.
+ */
+class ProviderCircuitOpenError extends Error {
+  constructor() {
+    super("Every route candidate was refused by the circuit breaker");
+    this.name = "ProviderCircuitOpenError";
   }
 }
 
@@ -286,10 +310,40 @@ function isProviderTransportFailure(error: InferenceAttemptError): boolean {
  * attacker-influenceable and RFC 9110 puts no ceiling on it, so an upstream
  * having a bad day must not be able to park a run for hours.
  */
-function transportRetryDelayMs(error: InferenceAttemptError, retryNumber: number): number {
+export function transportRetryDelayMs(error: InferenceAttemptError, retryNumber: number): number {
   const backoff = Math.min(4_000, 500 * 2 ** (retryNumber - 1));
   const retryAfterMs = error.kind === "http" ? error.retryAfterMs : null;
-  return Math.min(30_000, Math.max(backoff, retryAfterMs ?? 0));
+  return Math.min(TRANSPORT_RETRY_MAX_DELAY_MS, Math.max(backoff, retryAfterMs ?? 0));
+}
+
+/**
+ * The ceiling on a single backoff. Named because it is the bound Bind's
+ * `retryAfterMsFromHeaders` explicitly refuses to impose and tells the host to
+ * supply, and because the test that pins it should fail against the number
+ * rather than against a literal repeated in two places.
+ */
+export const TRANSPORT_RETRY_MAX_DELAY_MS = 30_000;
+
+/**
+ * Whether waiting `delayMs` and attempting again can still fit in what the run
+ * has left, given a stalled attempt can burn the whole time-to-first-token
+ * window before failing.
+ *
+ * A bounded caller — the inline child at 90s, the meeting-notes final pass at
+ * 120s — can otherwise have the retry *manufacture* the deadline it defers to:
+ * the run sleeps, re-requests, crosses its wall clock mid-attempt, and
+ * `timedOut` outranks the provider arm, so an outage is reported as
+ * `run_wall_time_limit_exceeded`. That points the reader at Avalon's ceiling
+ * instead of the provider, which is a different wrong label, not a better one.
+ * Root work-stream runs set no wall clock, so `remainingMs` is null and this is
+ * always true for them.
+ */
+function retryFitsRemainingBudget(
+  remainingMs: number | null,
+  delayMs: number,
+  ttftTimeoutMs: number,
+): boolean {
+  return remainingMs === null || remainingMs > delayMs + ttftTimeoutMs;
 }
 
 /** A cancellable sleep: a timer left armed holds the Workflow invocation open. */
@@ -315,6 +369,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         timeoutMs: input.config.maxWallClockMs,
         label: "Avalon Bind run",
       });
+  // `RunDeadline` exposes only "has it fired", so the wall clock is tracked
+  // alongside it: the transport retry has to know whether a wait plus another
+  // attempt still fits before it decides to spend one. Null for a run with no
+  // wall clock, which is every root work-stream run.
+  const runStartedAt = Date.now();
+  const remainingWallClockMs = (): number | null =>
+    input.config.maxWallClockMs === undefined
+      ? null
+      : Math.max(0, input.config.maxWallClockMs - (Date.now() - runStartedAt));
   const signal = deadline?.withExternal(input.signal)
     ?? input.signal
     ?? new AbortController().signal;
@@ -1002,31 +1065,39 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     if (input.signal?.aborted && !timedOut && !(error instanceof AmbiguousExternalWriteError)) {
       return outcome("stopped", content || streamedContent, model, state, routedAttempts);
     }
-    // `timedOut` outranks the provider arm: when the run's own deadline fired
-    // during a stalled request, the wall clock is the truer cause and the one
-    // the member can act on. Below it, a provider outage is named as such
-    // rather than falling into the generic bucket.
+    // `timedOut` outranks the two provider arms but not an explicit limit error:
+    // a run that hit its iteration ceiling names that ceiling even if the clock
+    // then expired, while a provider fault that ran out the clock is reported as
+    // the deadline, because the wall clock is the thing the member can act on.
+    //
+    // The two chains agree on that ordering. They did not always: `code` used to
+    // check `timedOut` third and `kind` first, so a `HarnessLimitError` thrown
+    // after the deadline fired reported `run_iteration_limit_exceeded` with kind
+    // `deadline` — a pairing no consumer could make sense of.
+    const providerCode = error instanceof ProviderUnavailableError
+      ? "provider_unavailable" as const
+      : error instanceof ProviderCircuitOpenError
+        ? "provider_circuit_open" as const
+        : null;
     const code = error instanceof HarnessLimitError
       ? error.code
       : error instanceof AmbiguousExternalWriteError
         ? "ambiguous_external_write"
       : timedOut
         ? "run_wall_time_limit_exceeded"
-      : error instanceof ProviderUnavailableError
-        ? "provider_unavailable"
-        : "harness_execution_failed";
+      : providerCode ?? "harness_execution_failed";
     const failure: HarnessFailure = {
-      kind: timedOut
-        ? "deadline"
-        : error instanceof HarnessLimitError
-          ? error.code === "context_limit_exceeded"
-            ? "context"
-            : "limit"
-          : error instanceof AmbiguousExternalWriteError
-            ? "ambiguous_external_write"
-            : error instanceof ProviderUnavailableError
-              ? "provider"
-              : "execution",
+      kind: error instanceof HarnessLimitError
+        ? error.code === "context_limit_exceeded"
+          ? "context"
+          : "limit"
+        : error instanceof AmbiguousExternalWriteError
+          ? "ambiguous_external_write"
+        : timedOut
+          ? "deadline"
+        : providerCode
+          ? "provider"
+          : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",
     };
@@ -1238,6 +1309,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     });
 
     let routed = await executePlan();
+    // Every execution's attempts, not just the surviving one's. `routed` is
+    // reassigned by the loop, so reading `attemptCount` after it would drop the
+    // requests that actually went out — leaving a recovered turn reporting the
+    // same numbers as one that succeeded first try, and hiding the retry from
+    // the only run-level signal that is on for every workspace.
+    let planAttemptCount = routed.attemptCount;
     // The most recent classified failure, kept across re-executions so the throw
     // below can still say what went wrong. A retry that finds the breaker open
     // returns `no_viable_endpoints` and carries no error of its own; without
@@ -1253,9 +1330,16 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       // the reset budget is spent.
       if (textStream.producedOutput) break;
       if (args.signal.aborted) break;
-      await delayUnlessAborted(transportRetryDelayMs(routed.error, retryNumber), args.signal);
+      const delayMs = transportRetryDelayMs(routed.error, retryNumber);
+      if (!retryFitsRemainingBudget(
+        remainingWallClockMs(),
+        delayMs,
+        args.input.config.ttftTimeoutMs ?? 120_000,
+      )) break;
+      await delayUnlessAborted(delayMs, args.signal);
       if (args.signal.aborted) break;
       routed = await executePlan();
+      planAttemptCount += routed.attemptCount;
       if (!routed.ok && routed.reason === "attempts_exhausted") lastAttemptError = routed.error;
     }
 
@@ -1266,6 +1350,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       if (attemptError && isProviderTransportFailure(attemptError)) {
         throw new ProviderUnavailableError(attemptError);
       }
+      // No error to read and the plan was not empty: Bind's executor returns
+      // `no_viable_endpoints` for "candidates existed but every one was skipped
+      // by the breaker" as well as for "there were none", and only the first is
+      // reachable here — `routePlan` always builds one candidate per model.
+      if (!attemptError && plan.stages.length > 0) throw new ProviderCircuitOpenError();
       // Unchanged for everything else: Bind rethrows the transport's own error so
       // a host's error classes and messages survive routing, and the outer catch
       // still reads them.
@@ -1273,7 +1362,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     }
     textStream.finish("succeeded");
     await streamEventChain;
-    return { result: routed.value, attemptCount: routed.attemptCount };
+    return { result: routed.value, attemptCount: planAttemptCount };
   }
 }
 

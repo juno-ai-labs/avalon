@@ -248,14 +248,17 @@ what happens when a note's scope changes, which is
 | Previous briefing context | 50,000 chars | `MAX_NOTES_CONTEXT_CHARACTERS` |
 | Harness wall clock | 60s live, 120s final | `meeting-notes-service.ts` |
 | Cost ceiling | 100¢ live, 200¢ final | `meeting-notes-service.ts` |
-| Transport retries | 0 live, 1 final | `meeting-notes-service.ts` |
+| Transport retries | 0 live; `HARNESS_TRANSPORT_RETRIES` (default 1) final | `meeting-notes-service.ts` |
 
 - **Inference fails or times out.** The screen shows "Avalon could not update
   Control Tower" and keeps the previous briefing. The live pass does not wait
   and re-ask even when the harness would otherwise retry a provider fault: it
   has a successor a minute away that reads the same transcript window, so a
   briefing that lands late is worth less than the next one landing on time. The
-  final pass has no successor and takes the one retry.
+  final pass has no successor and takes the deployment's budget — shared with
+  its 120s wall clock, so the harness declines the retry outright when what
+  remains cannot hold another attempt, and the failure then reads as the
+  provider's rather than as a time limit.
 - **The cadence cannot be fetched, or Flagship is unreachable.** Recording starts
   regardless; the segment timer waits out
   `MEETING_CADENCE_REQUEST_TIMEOUT_MS` and the meeting settles on
@@ -382,6 +385,32 @@ knob.
 
 ## Changelog
 
+### 2026-08-14 — The live pass declines the harness's transport retry
+
+**What changed:** `transportRetries` is `0` for the live pass and the
+deployment's `HARNESS_TRANSPORT_RETRIES` (default `1`) for the final one. The
+harness now waits out a clamped backoff and re-requests when a provider fails a
+turn; the live pass opts out of that.
+
+**Why:** the recovery for a live pass is the *next* pass, not this one. Refreshes
+are a minute apart and each reads the same transcript window, so a briefing that
+lands late is worth less than the next one landing on time — and the wait is not
+free against a 60s wall clock, since the backoff honours `Retry-After` up to 30
+seconds. The final pass has no successor, so a lost summary is lost.
+
+**Considered and rejected:** letting both passes take the default. That spends up
+to half the live wall clock waiting to deliver a briefing the next tick
+supersedes, and on a stalled provider it turns a skipped refresh into a refresh
+that misses its slot. Also rejected: hardcoding `1` for the final pass, which
+read the same but silently outranked an operator setting the variable to `0` to
+damp load during an incident.
+
+**Consequences:** anyone raising the live budget is trading the cadence for a
+single briefing, which is the wrong trade at 60 seconds; if the cadence ever
+becomes long enough that a missed pass matters, revisit this together with
+`CONTROL_TOWER_REFRESH_SECONDS` rather than on its own. The retry also shares the
+final pass's 120s wall clock, and the harness declines it outright when what
+remains cannot hold another attempt.
 ### 2026-08-13 — Recording adoption is measurable without meeting content
 
 **What changed:** Note creation, start permission/capture outcome,
