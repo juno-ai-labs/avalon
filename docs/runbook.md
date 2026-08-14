@@ -840,7 +840,10 @@ did not happen, and it cannot be turned on retroactively.
    SELECT id, title, workspace_id FROM workstreams WHERE id = '<uuid>';
    ```
 3. **List the turns.** One row per model request, with its `turn_id`, model,
-   outcome, token counts, and the R2 `object_key`. Lead with the `workspace_id`
+   outcome, token counts, and the R2 `object_key`. A `turn_id` may repeat: each
+   row is one *attempt*, so a turn that fell back to another model or was
+   re-executed after a transport fault has several, and duplicates are the retry
+   trail rather than a data defect. Lead with the `workspace_id`
    from step 2 — the index is `(workspace_id, workstream_id, created_at DESC)`,
    so a filter on the work stream alone still answers but scans:
 
@@ -1047,6 +1050,28 @@ iteration ceilings. If all models fail, the run becomes `failed`
 and the work stream retains its persisted context. Check redacted structured
 logs by request, workspace, work-stream, and harness-run IDs; never add prompt
 bodies or credentials to logs.
+
+When every candidate answers with a transport fault the provider owns, the
+harness re-executes the **whole route plan** up to `HARNESS_TRANSPORT_RETRIES`
+times (declared as `1` in both regional Wrangler configs) after a backoff that
+honours `Retry-After` up to 30 seconds. So during an outage elevated latency may
+be Avalon waiting rather than a run hanging. **Set `HARNESS_TRANSPORT_RETRIES` to
+`0` and redeploy to stop it** — worth doing when a provider is failing broadly,
+because each re-execution charges another failure to the per-workspace circuit
+breaker whose threshold is 3.
+
+Two failure codes an operator will see, both distinct from
+`harness_execution_failed`, which means Avalon's own defect:
+
+| Code | Meaning | Triage |
+| --- | --- | --- |
+| `provider_unavailable` | Avalon called and got nothing — no response, a 408, a 429, or a 5xx — and its retries are spent. | The provider. Runs are safe to retry once it recovers. |
+| `provider_circuit_open` | Avalon did not call: the breaker had already opened, so the run was refused before a request went out. | Read the *earlier* failures that opened it. The breaker also opens on 401/402/403, which are Avalon's credential or credit, so this code does not by itself accuse the provider. |
+
+A run failing with either while the provider is healthy points at credentials or
+at the breaker's cooldown (60–120 seconds), not at a model outage. The reasoning
+behind the split and the retry is
+[`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 
 ### Ambiguous external write
 

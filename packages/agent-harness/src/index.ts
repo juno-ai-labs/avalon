@@ -2617,16 +2617,33 @@ export interface HarnessFailure {
   message: string;
 }
 
+/**
+ * What a member reads when a run fails.
+ *
+ * Two rules hold across the whole set, and both were learned from a real
+ * failure rather than chosen. **Every string names a next action or says
+ * plainly that there is none**: a sentence that only diagnoses leaves a reader
+ * staring at a Retry button with no basis for pressing it, and during a
+ * provider outage that means pressing it repeatedly into a failing upstream.
+ * And **no string uses a word that only exists inside Avalon** — "harness" is
+ * an implementation detail a member has no model of, so blaming it says only
+ * that something they cannot see went wrong.
+ *
+ * Keep them separable *by cause and by remedy*, not by the code printed beside
+ * them. Two sentences that differ only in wording but imply different advice
+ * are worse than one sentence, because the reader cannot tell which they got.
+ */
 const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, string>> = Object.freeze({
   run_wall_time_limit_exceeded: "This run reached its time limit",
   run_iteration_limit_exceeded: "This run reached its model-turn limit",
   run_tool_call_limit_exceeded: "This run reached its tool-call limit",
   run_cost_limit_exceeded: "This run reached its cost limit",
-  harness_execution_failed: "The Avalon harness could not complete this run",
+  harness_execution_failed: "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
   context_limit_exceeded: "This run could not fit safely in the selected model context",
   tool_surface_too_large: "The authorized tool surface is too large for one run",
   ambiguous_external_write: "An external write may have completed, so Avalon did not retry it",
-  provider_unavailable: "The model provider did not respond, so this run could not continue",
+  provider_unavailable: "The model did not respond. This usually clears on its own — try again in a moment",
+  provider_circuit_open: "Avalon paused requests to this model after repeated failures. Try again in a moment",
 });
 
 export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): string {

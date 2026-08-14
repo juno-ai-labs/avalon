@@ -4,12 +4,11 @@ import {
   type MeetingNotesResponse,
 } from "@avalon/contracts";
 import {
-  memberSafeHarnessFailureMessage,
   runHarness,
   type RunHarnessInput,
 } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
-import { numericEnv } from "../env";
+import { countEnv, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting } from "./agent-model-flags";
@@ -262,8 +261,11 @@ export class MeetingNotesService {
         // The live pass owns a one-minute cadence, so it never waits and
         // re-asks: a briefing that lands late is worth less than the next one
         // landing on time, and the pass after it reads the same transcript
-        // window anyway. The final pass has no successor to defer to.
-        transportRetries: final ? 1 : 0,
+        // window anyway. The final pass has no successor to defer to, so it
+        // takes the deployment's budget rather than a second copy of the
+        // default — an operator turning the retry off during an incident has to
+        // reach every caller, and a literal here would silently outrank them.
+        transportRetries: final ? countEnv(this.env, "HARNESS_TRANSPORT_RETRIES", 1) : 0,
         reasoningEffort: final ? "medium" : "low",
       },
       workspaceId: this.auth.workspaceId,
@@ -286,11 +288,14 @@ export class MeetingNotesService {
 
     const notes = outcome.content.trim();
     if (outcome.status !== "completed" || !notes) {
-      const message = outcome.failure
-        ? memberSafeHarnessFailureMessage(outcome.failure.code)
-        : final
-          ? "Avalon could not create the final meeting summary"
-          : "Avalon could not update Control Tower";
+      // This surface has no "runs" — someone sitting in a meeting sees this in
+      // the Control Tower panel — so it keeps its own sentence rather than
+      // borrowing the harness's, which is written for a work stream and names a
+      // thing that has no meaning here. A live pass says what happens next,
+      // because something does: the refresh a minute from now.
+      const message = final
+        ? "Avalon could not create the final meeting summary"
+        : "Avalon could not update Control Tower. The next refresh will try again";
       throw new ApiError(502, "meeting_notes_generation_failed", message);
     }
     return { notes, generatedAt: new Date().toISOString() };
