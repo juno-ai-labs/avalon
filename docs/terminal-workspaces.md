@@ -360,6 +360,30 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-13 — Repository replacement joins the sandbox lease and lifecycle
+
+**What changed:** Model-driven checkout now reserves and claims the same
+work-stream operation lease used by every file, resource, and command tool
+before it backs up or replaces state. A stopped or archived sandbox that is
+started only for backup is restored to its prior lifecycle on failure. Repeating
+checkout refreshes an advanced default-branch SHA while retaining the existing
+`avalon/adjective-adjective-adjective-noun` head ref, and recoverable connector
+statuses are revalidated rather than preemptively omitted.
+
+**Why:** A command-table check did not cover file tools from another run; checkout
+could delete their sandbox. Backup failure could also leave an archived sandbox
+running and accruing cost, while an unchanged-identity shortcut made ordinary
+default-branch advancement impossible to repair.
+
+**Considered and rejected:** A second repository-only lock, polling active tasks
+as the sole fence, and a new branch naming system. The existing sandbox lease and
+existing work-stream word generator already express the required boundaries.
+
+**Consequences:** Any future repository replacement path must hold the shared
+operation lease through backup and the generation-fenced D1 update. Temporary
+lifecycle changes require compensation, and a branch ref remains stable across
+base refreshes and sandbox generations.
+
 ### 2026-08-13 — Standard Git and GitHub CLI replace a second publication gate
 
 **What changed:** Full-access repository sandboxes now receive a short-lived,

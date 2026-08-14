@@ -83,6 +83,7 @@ interface StoredConnection extends Record<string, unknown> {
   scope: Scope;
   owner_user_id: string | null;
   model_plugin_id: string;
+  status?: string;
   encrypted_credentials?: string | null;
   credential_iv?: string | null;
   credential_key_version?: number;
@@ -184,6 +185,7 @@ export class ConnectionService {
     if (connection.connector_type !== "github") {
       throw new ApiError(422, "connector_settings_unsupported", "This connector does not provide repository access settings");
     }
+    this.assertConnectionEnabled(connection);
     return this.loadGitHubRepositoryAccessSettings(connection);
   }
 
@@ -195,6 +197,7 @@ export class ConnectionService {
     if (connection.connector_type !== "github") {
       throw new ApiError(422, "connector_settings_unsupported", "This connector does not provide repository access settings");
     }
+    this.assertConnectionEnabled(connection);
     const current = await this.loadGitHubRepositoryAccessSettings(connection);
     if (current.revision !== input.expectedRevision) {
       throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
@@ -230,28 +233,44 @@ export class ConnectionService {
         access: repository.remoteAccess,
       })),
     };
-    const update = await this.env.DB.prepare(
-      `UPDATE connector_connections
-          SET config_json = ?, updated_at = ?
-        WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'
-          AND COALESCE(CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER), 0) = ?`,
-    ).bind(
-      JSON.stringify({ ...priorConfig, githubRepositoryAccess: nextPolicy }),
-      updatedAt,
-      connection.id,
-      connection.workspace_id,
-      input.expectedRevision,
-    ).run();
-    if (Number(update.meta.changes ?? 0) !== 1) {
+    const nextConfigJson = JSON.stringify({ ...priorConfig, githubRepositoryAccess: nextPolicy });
+    const [update] = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE connector_connections
+            SET config_json = ?, updated_at = ?
+          WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'
+            AND COALESCE(CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER), 0) = ?`,
+      ).bind(
+        nextConfigJson,
+        updatedAt,
+        connection.id,
+        connection.workspace_id,
+        input.expectedRevision,
+      ),
+      // D1 batches are transactional. Credential expiry therefore changes in
+      // the same commit as the policy, and the EXISTS guard keeps a losing CAS
+      // from touching credentials refreshed by the winning writer.
+      this.env.DB.prepare(
+        `UPDATE workstream_terminal_repositories
+            SET read_token_expires_at = NULL, updated_at = ?
+          WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'
+            AND EXISTS (
+              SELECT 1 FROM connector_connections connection
+               WHERE connection.id = ? AND connection.workspace_id = ?
+                 AND connection.config_json = ?
+            )`,
+      ).bind(
+        updatedAt,
+        connection.workspace_id,
+        connection.id,
+        connection.id,
+        connection.workspace_id,
+        nextConfigJson,
+      ),
+    ]);
+    if (Number(update?.meta.changes ?? 0) !== 1) {
       throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
     }
-    // The next Terminal tool refreshes the mounted repository credential with
-    // the new read-only/full-access policy before the model can run a command.
-    await this.env.DB.prepare(
-      `UPDATE workstream_terminal_repositories
-          SET read_token_expires_at = NULL, updated_at = ?
-        WHERE workspace_id = ? AND connection_id = ? AND state = 'selected'`,
-    ).bind(updatedAt, connection.workspace_id, connection.id).run();
     await this.recordConnectionAudit(
       connection.workspace_id,
       this.requireAuth().userId,
@@ -2395,6 +2414,16 @@ export class ConnectionService {
       throw new ApiError(403, "workspace_admin_required", "Only administrators can modify workspace connections");
     }
     return row;
+  }
+
+  private assertConnectionEnabled(row: StoredConnection): void {
+    if (row.status === "disabled") {
+      throw new ApiError(
+        409,
+        "connection_disabled",
+        "This GitHub connection is disabled. Reconnect it before loading or changing repository access settings.",
+      );
+    }
   }
 
   private async loadVisible(id: string): Promise<StoredConnection> {

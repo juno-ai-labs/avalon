@@ -117,16 +117,35 @@ const githubRepositoryAccessPolicySchema = z.object({
 export function githubRepositoryAccessPolicy(
   config: Record<string, unknown>,
 ): GitHubRepositoryAccessPolicy {
-  const parsed = githubRepositoryAccessPolicySchema.safeParse(config.githubRepositoryAccess);
-  return parsed.success
-    ? parsed.data
-    : {
-        version: 1,
-        revision: 0,
-        mode: "all_repositories",
-        defaultAccess: "full_access",
-        repositories: [],
-      };
+  const stored = config.githubRepositoryAccess;
+  if (stored === undefined) {
+    return {
+      version: 1,
+      revision: 0,
+      mode: "all_repositories",
+      defaultAccess: "full_access",
+      repositories: [],
+    };
+  }
+  const parsed = githubRepositoryAccessPolicySchema.safeParse(stored);
+  if (parsed.success) return parsed.data;
+  const revision = isRecord(stored)
+    && typeof stored.revision === "number"
+    && Number.isInteger(stored.revision)
+    && stored.revision >= 0
+    ? stored.revision
+    : 0;
+  // An absent policy retains the legacy all-repository behavior above. Once
+  // the setting exists, malformed or newer data is an authorization fault:
+  // deny repository use while preserving the revision so an admin can repair
+  // it without bypassing optimistic concurrency.
+  return {
+    version: 1,
+    revision,
+    mode: "selected_repositories",
+    defaultAccess: "read_only",
+    repositories: [],
+  };
 }
 
 export function githubRepositoryAuthorization(
@@ -137,12 +156,18 @@ export function githubRepositoryAuthorization(
   const policy = githubRepositoryAccessPolicy(config);
   const normalizedName = repositoryFullName.trim().toLowerCase();
   const normalizedId = repositoryId == null ? null : String(repositoryId);
-  const configured = policy.repositories.find((candidate) => (
+  const configuredById = normalizedId == null
+    ? undefined
+    : policy.repositories.find((candidate) => candidate.repositoryId === normalizedId);
+  if (configuredById) {
+    return { access: configuredById.access, expectedRepositoryId: configuredById.repositoryId };
+  }
+  const configuredByName = policy.repositories.find((candidate) => (
     candidate.repositoryFullName.toLowerCase() === normalizedName
   ));
-  if (configured) {
-    if (normalizedId != null && configured.repositoryId !== normalizedId) return null;
-    return { access: configured.access, expectedRepositoryId: configured.repositoryId };
+  if (configuredByName) {
+    if (normalizedId != null && configuredByName.repositoryId !== normalizedId) return null;
+    return { access: configuredByName.access, expectedRepositoryId: configuredByName.repositoryId };
   }
   if (policy.mode === "selected_repositories") return null;
   return { access: policy.defaultAccess, expectedRepositoryId: null };
@@ -1147,7 +1172,24 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
         ? `${rawRepositoryArgs.owner}/${rawRepositoryArgs.repo}`
         : null;
       if (repositoryIdentity) {
-        const authorization = githubRepositoryAuthorization(context.connection.config, repositoryIdentity);
+        const policy = githubRepositoryAccessPolicy(context.connection.config);
+        let authorization = githubRepositoryAuthorization(context.connection.config, repositoryIdentity);
+        if (authorization?.expectedRepositoryId || policy.repositories.length > 0) {
+          const [owner, repo] = repositoryIdentity.split("/", 2) as [string, string];
+          const observed = requiredRecordValue(
+            await request(context.connection, context.signal, "GET", repoPath({ owner, repo })),
+            "GitHub did not return repository metadata for the configured repository",
+          );
+          const observedId = recordIdentity(observed);
+          if (!observedId) {
+            throw new ConnectorError("provider_error", "GitHub did not return the repository's immutable identity");
+          }
+          authorization = githubRepositoryAuthorization(
+            context.connection.config,
+            repositoryIdentity,
+            observedId,
+          );
+        }
         if (!authorization) {
           throw new ConnectorError(
             "unauthorized",
@@ -1159,19 +1201,6 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
             "unauthorized",
             `${repositoryIdentity} is read-only in this GitHub connection. Use read tools only or ask a connector administrator to grant full access.`,
           );
-        }
-        if (authorization.expectedRepositoryId) {
-          const [owner, repo] = repositoryIdentity.split("/", 2) as [string, string];
-          const observed = requiredRecordValue(
-            await request(context.connection, context.signal, "GET", repoPath({ owner, repo })),
-            "GitHub did not return repository metadata for the configured repository",
-          );
-          if (recordIdentity(observed) !== authorization.expectedRepositoryId) {
-            throw new ConnectorError(
-              "unauthorized",
-              `${repositoryIdentity} no longer has the repository identity approved in GitHub settings. Refresh the connector's repository policy before using it.`,
-            );
-          }
         }
       }
       return executeGitHubTool(name, rawArgs, context, request);

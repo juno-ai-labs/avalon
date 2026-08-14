@@ -596,6 +596,33 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-08-13 — Repository policy stays authoritative through drift and recovery
+
+**What changed:** A present malformed GitHub repository policy now denies all
+repositories while retaining its revision for repair; only a wholly absent
+policy receives the legacy all-repositories default. Authorization resolves the
+provider's immutable repository ID before applying name-based defaults, and
+renamed repositories retain their configured override. Disabled connections
+never perform settings discovery, while recoverable `error` and
+`needs_reconnect` rows may be tried and revalidated at GitHub. Policy writes and
+mounted Terminal-credential invalidation commit in one D1 batch.
+
+**Why:** Review found four ways cached or mutable state could outrank the durable
+administrator choice: malformed JSON failed open, a rename missed a read-only
+override, a disabled credential could still enumerate repositories, and a
+Worker interruption between policy persistence and token invalidation could
+leave a broader credential mounted.
+
+**Considered and rejected:** Treating every non-healthy observation as a durable
+revocation, adding a repository-ID lint rule, and introducing another policy
+store. Connector status already defines only `disabled` as an intentional stop;
+the existing provider metadata and transactional regional rows are enough.
+
+**Consequences:** Repository-aware operations must resolve immutable identity
+before falling back to an all-repositories default. Settings repair must preserve
+the malformed row's revision, and future credential caches must be invalidated
+in the same transaction as any policy downgrade.
+
 ### 2026-08-13 — Full access means native repository CLI access
 
 **What changed:** Terminal maps connector `full_access` to a short-lived

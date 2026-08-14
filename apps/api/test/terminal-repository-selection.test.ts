@@ -2,6 +2,7 @@ import type { HarnessToolContext } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString, sha256Hex } from "../src/lib/crypto";
+import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTerminalRepositorySelector } from "../src/services/terminal/repository-selection";
 import {
@@ -24,9 +25,12 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-async function fixture(input?: { backupResult?: string }) {
+async function fixture(input?: { backupResult?: string; baseSha?: string; emailAddress?: string | null }) {
   const database = migratedSqliteDatabase();
   databases.push(database);
+  const emailAddressSql = input?.emailAddress === null
+    ? "NULL"
+    : `'${input?.emailAddress ?? "bright-coastal-exact-heron@automation.with-avalon.com"}'`;
   const readPolicy = JSON.stringify({
     githubRepositoryAccess: {
       version: 1,
@@ -56,7 +60,7 @@ async function fixture(input?: { backupResult?: string }) {
       (id, workspace_id, title, objective, origin_type, created_by_user_id,
        harness_status, email_address, last_activity_at, created_at, updated_at)
     VALUES ('${S}', '${W}', 'Repo', 'Repo', 'ad_hoc', '${U}', 'running',
-            'bright-coastal-exact-heron@automation.with-avalon.com',
+            ${emailAddressSql},
             '2026-08-13', '2026-08-13', '2026-08-13');
     INSERT INTO workstream_participants
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
@@ -105,7 +109,7 @@ async function fixture(input?: { backupResult?: string }) {
       id: 41,
       fullName: "acme/widget",
       defaultBranch: "main",
-      baseSha: "a".repeat(40),
+      baseSha: input?.baseSha ?? "a".repeat(40),
       private: true,
     })),
   };
@@ -125,10 +129,17 @@ async function fixture(input?: { backupResult?: string }) {
   };
   return {
     database,
+    env,
     provider,
     payloadPut,
     context,
-    selector: createTerminalRepositorySelector(env, provider, catalog),
+    catalog,
+    selector: createTerminalRepositorySelector(
+      env,
+      provider,
+      catalog,
+      new TerminalSandboxCoordinator(env.DB, provider),
+    ),
   };
 }
 
@@ -186,6 +197,126 @@ describe("Terminal model repository selection", () => {
       backup: null,
     });
   });
+
+  it("reuses the shared four-word Avalon naming scheme when no work-stream address exists", async () => {
+    const { context, selector } = await fixture({ emailAddress: null });
+
+    await expect(selector.checkout(context, {
+      repositoryFullName: "acme/widget",
+      requiredRemoteAccess: "read_only",
+    })).resolves.toMatchObject({
+      headRef: expect.stringMatching(/^avalon\/[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u),
+    });
+  });
+
+  it("tries recoverable connector states and skips only disabled connections", async () => {
+    const { database, context, selector, catalog } = await fixture();
+    database.prepare("UPDATE connector_connections SET status = 'needs_reconnect' WHERE id = ?")
+      .run(PERSONAL);
+    database.prepare("UPDATE connector_connections SET status = 'disabled' WHERE id = ?")
+      .run(WORKSPACE);
+
+    await expect(selector.checkout(context, {
+      repositoryFullName: "acme/widget",
+      requiredRemoteAccess: "read_only",
+    })).resolves.toMatchObject({ connectionId: PERSONAL, remoteAccess: "read_only" });
+    expect(catalog.resolveRepository).toHaveBeenCalledOnce();
+    expect(catalog.resolveRepository).toHaveBeenCalledWith(
+      PERSONAL,
+      W,
+      "acme/widget",
+      context.signal,
+    );
+  });
+
+  it("refreshes an existing repository selection when its default branch advances", async () => {
+    const nextBase = "b".repeat(40);
+    const { database, context, selector } = await fixture({ baseSha: nextBase });
+    database.prepare(
+      `INSERT INTO workstream_terminal_repositories
+       (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
+        base_ref, base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, 41, 'acme/widget', 'main', ?, ?, 'selected', ?, ?, ?)`,
+    ).run(
+      W,
+      S,
+      PERSONAL,
+      "a".repeat(40),
+      "avalon/bright-coastal-exact-heron",
+      U,
+      "2026-08-13",
+      "2026-08-13",
+    );
+
+    await expect(selector.checkout(context, {
+      repositoryFullName: "acme/widget",
+      requiredRemoteAccess: "read_only",
+    })).resolves.toMatchObject({
+      outcome: "selected",
+      baseSha: nextBase,
+      headRef: "avalon/bright-coastal-exact-heron",
+    });
+    expect(database.prepare(
+      "SELECT base_sha FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
+    ).get(W, S)).toEqual({ base_sha: nextBase });
+  });
+
+  it("claims the shared sandbox lease before replacing repository state", async () => {
+    const { database, provider, context, selector } = await fixture();
+    const otherRun = "71000000-0000-4000-8000-000000000099";
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+       VALUES (?, ?, ?, 'manual', ?, 'running', ?)`,
+    ).run(otherRun, W, S, JSON.stringify({ type: "user", userId: U }), "2026-08-13");
+    database.prepare(
+      `INSERT INTO workstream_sandboxes
+       (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
+        authority_fingerprint, applied_network_revision, version, operation_run_id,
+        operation_lease_expires_at, last_activity_at, created_at, updated_at)
+       VALUES (?, ?, 'running', 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?, ?, ?)`,
+    ).run(
+      W,
+      S,
+      otherRun,
+      "2099-01-01T00:00:00.000Z",
+      "2026-08-13",
+      "2026-08-13",
+      "2026-08-13",
+    );
+
+    await expect(selector.checkout(context, {
+      repositoryFullName: "acme/widget",
+      requiredRemoteAccess: "read_only",
+    })).rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(provider.startSandbox).not.toHaveBeenCalled();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each(["stopped", "archived"] as const)(
+    "restores a %s sandbox when backup fails after temporary startup",
+    async (state) => {
+      const { database, provider, context, selector } = await fixture();
+      database.prepare(
+        `INSERT INTO workstream_sandboxes
+         (workspace_id, workstream_id, state, stable_name, provider_sandbox_id, generation,
+          authority_fingerprint, applied_network_revision, version, last_activity_at,
+          created_at, updated_at)
+         VALUES (?, ?, ?, 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+      ).run(W, S, state, "2026-08-13", "2026-08-13", "2026-08-13");
+      vi.mocked(provider.runCommand).mockRejectedValueOnce(new Error("R2 backup failed"));
+
+      await expect(selector.checkout(context, {
+        repositoryFullName: "acme/widget",
+        requiredRemoteAccess: "read_only",
+      })).rejects.toThrow("R2 backup failed");
+      expect(provider.startSandbox).toHaveBeenCalledWith("provider-1");
+      expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
+      if (state === "archived") expect(provider.archiveSandbox).toHaveBeenCalledWith("provider-1");
+      else expect(provider.archiveSandbox).not.toHaveBeenCalled();
+      expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    },
+  );
 
   it("fails closed without deleting the sandbox when the harness backup exceeds its limit", async () => {
     const { database, provider, context, selector } = await fixture({ backupResult: "TOO_LARGE 60000000\n" });

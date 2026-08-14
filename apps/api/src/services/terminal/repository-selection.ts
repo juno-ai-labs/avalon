@@ -6,7 +6,10 @@ import {
 import { nowIso } from "@avalon/db";
 
 import type { Env } from "../../env";
+import { sha256 } from "../../lib/crypto";
 import { allocateWorkstreamEmailAddressCandidate } from "../../lib/workstream-email-address";
+import { logWarn } from "../../observability/logger";
+import type { TerminalSandboxCoordinator } from "./coordinator";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { createTerminalWorkspaceBackup, type TerminalWorkspaceBackup } from "./lifecycle";
 import { admitTerminalPublicationGrant } from "./repository";
@@ -22,12 +25,6 @@ interface ConnectionRow {
   config_json: string;
   scope: "personal" | "workspace";
   owner_user_id: string | null;
-}
-
-interface SandboxRow {
-  provider_sandbox_id: string | null;
-  state: string;
-  generation: number;
 }
 
 interface CurrentRepositoryRow {
@@ -99,16 +96,17 @@ async function workstreamBranchRef(
   const slug = localPart && /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u.test(localPart)
     ? localPart
     : await allocateWorkstreamEmailAddressCandidate({
-      secretKey: `terminal-branch:${env.SESSION_SIGNING_KEY}`,
+      secretKey: await sha256(`terminal-branch:${env.SESSION_SIGNING_KEY}`),
       workstreamId: `${workspaceId}:${workstreamId}`,
     });
   return `avalon/${slug}`;
 }
 
 export function createTerminalRepositorySelector(
-  env: Pick<Env, "AVALON_REGION" | "DB" | "PAYLOADS" | "SESSION_SIGNING_KEY">,
+  env: Env,
   provider: TerminalSandboxProvider,
   catalog: TerminalRepositoryCatalogGateway,
+  coordinator: TerminalSandboxCoordinator,
 ): TerminalRepositorySelector {
   return {
     async checkout(context, input) {
@@ -138,7 +136,7 @@ export function createTerminalRepositorySelector(
       const connections = await env.DB.prepare(
         `SELECT id, display_name, COALESCE(config_json, '{}') AS config_json, scope, owner_user_id
            FROM connector_connections
-          WHERE workspace_id = ? AND connector_type = 'github' AND status = 'healthy'
+          WHERE workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'
             AND (scope = 'workspace' OR owner_user_id = ?)
           ORDER BY CASE scope WHEN 'personal' THEN 0 ELSE 1 END, created_at, id`,
       ).bind(context.workspaceId, context.executionPrincipal.userId).all<ConnectionRow>();
@@ -150,8 +148,6 @@ export function createTerminalRepositorySelector(
       }> = [];
       for (const connection of connections.results ?? []) {
         const config = parseConfig(connection.config_json);
-        const configured = githubRepositoryAuthorization(config, input.repositoryFullName);
-        if (!configured || !accessSatisfies(configured.access, input.requiredRemoteAccess)) continue;
         let repository: TerminalResolvedRepository;
         try {
           repository = await catalog.resolveRepository(
@@ -188,23 +184,30 @@ export function createTerminalRepositorySelector(
            FROM workstream_terminal_repositories
           WHERE workspace_id = ? AND workstream_id = ?`,
       ).bind(context.workspaceId, context.workstreamId).first<CurrentRepositoryRow>();
-      const sameRepository = (
+      const sameRepositoryIdentity = (
         current?.state === "selected"
         && current.connection_id === selected.connection.id
         && current.repository_id === selected.repository.id
-        && current.repository_full_name === selected.repository.fullName
       );
-      const headRef = sameRepository
-        ? current.head_ref
+      const unchangedSelection = (
+        sameRepositoryIdentity
+        && current.repository_full_name === selected.repository.fullName
+        && current.base_ref === selected.repository.defaultBranch
+        && current.base_sha === selected.repository.baseSha
+      );
+      const headRef = sameRepositoryIdentity
+        ? current!.head_ref
         : await workstreamBranchRef(
           env,
           context.workspaceId,
           context.workstreamId,
           current?.head_ref ?? null,
         );
-      if (sameRepository) {
+      if (unchangedSelection) {
         return output("already_selected", null);
       }
+
+      const sandbox = await coordinator.claimMutation(context);
 
       const activeTasks = await env.DB.prepare(
         `SELECT COUNT(*) AS count FROM sandbox_tasks
@@ -218,43 +221,83 @@ export function createTerminalRepositorySelector(
           { reason: "Retry after every active Terminal command has completed." },
         );
       }
-      const sandbox = await env.DB.prepare(
-        `SELECT provider_sandbox_id, state, generation FROM workstream_sandboxes
-          WHERE workspace_id = ? AND workstream_id = ?`,
-      ).bind(context.workspaceId, context.workstreamId).first<SandboxRow>();
       let backup: TerminalWorkspaceBackup | null = null;
-      if (sandbox?.provider_sandbox_id) {
-        if (sandbox.state === "stopped" || sandbox.state === "archived") {
-          await provider.startSandbox(sandbox.provider_sandbox_id);
-        } else if (sandbox.state !== "running") {
-          throw new TerminalToolError(
-            "workspace_busy",
-            `The Terminal workspace is currently ${sandbox.state}. Wait for that lifecycle transition to finish, then retry repository checkout.`,
-            { reason: "Retry after the Terminal workspace is running, stopped, or archived." },
-          );
+      if (sandbox.providerSandboxId) {
+        const priorState = sandbox.state;
+        let temporarilyStarted = false;
+        let providerDeleted = false;
+        const restorePriorState = async (): Promise<void> => {
+          if (!temporarilyStarted || providerDeleted) return;
+          await provider.stopSandbox(sandbox.providerSandboxId!);
+          if (priorState === "archived") await provider.archiveSandbox(sandbox.providerSandboxId!);
+        };
+        try {
+          if (sandbox.state === "stopped" || sandbox.state === "archived") {
+            await provider.startSandbox(sandbox.providerSandboxId);
+            temporarilyStarted = true;
+          } else if (sandbox.state !== "running") {
+            throw new TerminalToolError(
+              "workspace_busy",
+              `The Terminal workspace is currently ${sandbox.state}. Wait for that lifecycle transition to finish, then retry repository checkout.`,
+              { reason: "Retry after the Terminal workspace is running, stopped, or archived." },
+            );
+          }
+          backup = await createTerminalWorkspaceBackup(env, provider, {
+            workspaceId: context.workspaceId,
+            workstreamId: context.workstreamId,
+            toolCallId: context.toolCallId,
+            repositoryFullName: selected.repository.fullName,
+            providerSandboxId: sandbox.providerSandboxId,
+            generation: sandbox.generation,
+            signal: context.signal,
+          });
+          try {
+            await provider.clearGitHubReadAccess(sandbox.providerSandboxId);
+          } catch (error) {
+            logWarn(env, "terminal_github_credential_cleanup_failed", {
+              workspace_id: context.workspaceId,
+              workstream_id: context.workstreamId,
+              sandbox_id: sandbox.providerSandboxId,
+              reason: error instanceof Error ? error.message : String(error),
+            });
+          }
+          await provider.deleteSandbox(sandbox.providerSandboxId);
+          providerDeleted = true;
+        } catch (error) {
+          try {
+            await restorePriorState();
+          } catch (restoreError) {
+            logWarn(env, "terminal_repository_replacement_restore_failed", {
+              workspace_id: context.workspaceId,
+              workstream_id: context.workstreamId,
+              sandbox_id: sandbox.providerSandboxId,
+              prior_state: priorState,
+              reason: restoreError instanceof Error ? restoreError.message : String(restoreError),
+            });
+          }
+          throw error;
         }
-        backup = await createTerminalWorkspaceBackup(env, provider, {
-          workspaceId: context.workspaceId,
-          workstreamId: context.workstreamId,
-          toolCallId: context.toolCallId,
-          repositoryFullName: selected.repository.fullName,
-          providerSandboxId: sandbox.provider_sandbox_id,
-          generation: sandbox.generation,
-          signal: context.signal,
-        });
-        await provider.clearGitHubReadAccess(sandbox.provider_sandbox_id).catch(() => undefined);
-        await provider.deleteSandbox(sandbox.provider_sandbox_id);
       }
       const timestamp = nowIso();
-      await env.DB.batch([
+      const [sandboxDeletion] = await env.DB.batch([
         env.DB.prepare(
-          "DELETE FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
-        ).bind(context.workspaceId, context.workstreamId),
+          `DELETE FROM workstream_sandboxes
+            WHERE workspace_id = ? AND workstream_id = ?
+              AND generation = ?`,
+        ).bind(
+          context.workspaceId,
+          context.workstreamId,
+          sandbox.generation,
+        ),
         env.DB.prepare(
           `INSERT INTO workstream_terminal_repositories
            (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
             base_ref, base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'selected', ?, ?, ?)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'selected', ?, ?, ?
+            WHERE NOT EXISTS (
+              SELECT 1 FROM workstream_sandboxes sandbox
+               WHERE sandbox.workspace_id = ? AND sandbox.workstream_id = ?
+            )
            ON CONFLICT(workspace_id, workstream_id) DO UPDATE SET
              connection_id = excluded.connection_id,
              repository_id = excluded.repository_id,
@@ -279,8 +322,17 @@ export function createTerminalRepositorySelector(
           context.executionPrincipal.userId,
           timestamp,
           timestamp,
+          context.workspaceId,
+          context.workstreamId,
         ),
       ]);
+      if (Number(sandboxDeletion?.meta.changes ?? 0) !== 1) {
+        throw new TerminalToolError(
+          "sandbox_busy",
+          "The Terminal workspace changed while its repository was being replaced. Retry checkout so Avalon can reconcile the current sandbox generation.",
+          { reason: "Retry repository checkout against the current Terminal workspace generation." },
+        );
+      }
       const run = await env.DB.prepare(
         "SELECT trigger_message_id FROM harness_runs WHERE workspace_id = ? AND workstream_id = ? AND id = ?",
       ).bind(context.workspaceId, context.workstreamId, context.harnessRunId)

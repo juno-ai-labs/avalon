@@ -567,6 +567,31 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-08-13 — GitHub policy drift fails closed without inventing a new gate
+
+**What changed:** GitHub authorization distinguishes absent legacy policy from
+present malformed policy, resolves immutable repository IDs before applying
+overrides, refuses settings discovery for disabled connections, and commits a
+policy change with Terminal credential invalidation atomically. Repository
+replacement also claims the shared sandbox operation lease and compensates a
+temporary stopped/archive wake on failure.
+
+**Why:** Mutable names, cached health, partial D1 commits, and a command-only busy
+check could each expose authority or bytes different from the administrator's
+current policy. These are enforcement gaps in existing boundaries, not reasons
+to add participant prompts or a bespoke Git proxy.
+
+**Considered and rejected:** A new branch-scoped authorization service, treating
+transient connector errors as revocation, and relying on system-prompt guidance
+for immutable identity. GitHub does not issue branch-scoped tokens; connector
+`disabled`, provider IDs, the D1 batch, and the existing sandbox lease supply the
+enforceable primitives.
+
+**Consequences:** A policy downgrade and credential expiry are indivisible.
+Malformed present policy denies use until repaired, and every destructive
+workspace replacement must participate in the same mutation lease as ordinary
+Terminal tools.
+
 ### 2026-08-13 — Full repository access uses the native trained CLI path
 
 **What changed:** A connector's `full_access` setting now gives the Daytona

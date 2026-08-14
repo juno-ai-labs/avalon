@@ -9,6 +9,7 @@ import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { connectorRegistryForEnv, githubConnectorConfig } from "../../lib/connector-registry";
 import { WORKSTREAM_VISIBILITY_SQL, workstreamVisibilityBindings } from "../../lib/workstream-visibility";
+import { logWarn } from "../../observability/logger";
 import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { withAuthorizedConnection } from "../connector-connection-access";
@@ -135,17 +136,49 @@ export class TerminalWorkstreamService {
     ).bind(this.auth.workspaceId, workstreamId).first<{ provider_sandbox_id: string | null; state: string; generation: number }>();
     if (row?.provider_sandbox_id) {
       if (!this.provider) throw new ApiError(503, "terminal_provider_unavailable", "The existing Terminal workspace could not be cleared in this region. Retry when Terminal is available.");
-      await this.provider.clearGitHubReadAccess(row.provider_sandbox_id).catch(() => undefined);
+      try {
+        await this.provider.clearGitHubReadAccess(row.provider_sandbox_id);
+      } catch (error) {
+        logWarn(this.env, "terminal_github_credential_cleanup_failed", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: workstreamId,
+          sandbox_id: row.provider_sandbox_id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
       await this.provider.deleteSandbox(row.provider_sandbox_id);
     }
-    await this.env.DB.batch([
-      this.env.DB.prepare("DELETE FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?").bind(this.auth.workspaceId, workstreamId),
+    const [deleted] = await this.env.DB.batch([
+      row
+        ? this.env.DB.prepare(
+          "DELETE FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ? AND generation = ?",
+        ).bind(this.auth.workspaceId, workstreamId, row.generation)
+        : this.env.DB.prepare(
+          "DELETE FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
+        ).bind(this.auth.workspaceId, workstreamId),
       this.env.DB.prepare(
         `UPDATE workstream_terminal_repositories
             SET bootstrapped_sandbox_generation = NULL, read_token_expires_at = NULL, updated_at = ?
-          WHERE workspace_id = ? AND workstream_id = ?`,
-      ).bind(nowIso(), this.auth.workspaceId, workstreamId),
+          WHERE workspace_id = ? AND workstream_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM workstream_sandboxes sandbox
+               WHERE sandbox.workspace_id = ? AND sandbox.workstream_id = ?
+            )`,
+      ).bind(
+        nowIso(),
+        this.auth.workspaceId,
+        workstreamId,
+        this.auth.workspaceId,
+        workstreamId,
+      ),
     ]);
+    if (row && Number(deleted?.meta.changes ?? 0) !== 1) {
+      throw new ApiError(
+        409,
+        "terminal_workspace_changed",
+        "The Terminal workspace changed while it was being cleared. Reload it before starting fresh.",
+      );
+    }
   }
 
   private async requireVisible(workstreamId: string): Promise<void> {
@@ -221,7 +254,7 @@ export function createGitHubTerminalCatalogGateway(env: Env): TerminalRepository
               granted_scopes_json, cursor_json, config_json, encrypted_credentials,
               credential_iv, credential_key_version
          FROM connector_connections
-        WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status = 'healthy'`,
+        WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'`,
     ).bind(connectionId, workspaceId).first<GitHubConnection>();
     if (!connection?.provider_account_id || !/^\d+$/u.test(connection.provider_account_id)) {
       throw new ApiError(409, "github_connection_revoked", "The GitHub App connection is unavailable. Reconnect GitHub and retry.");

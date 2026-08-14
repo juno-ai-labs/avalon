@@ -64,6 +64,12 @@ export interface AcquiredTerminalSandbox {
   networkRevision: number;
 }
 
+export interface TerminalSandboxMutationLease {
+  providerSandboxId: string | null;
+  state: string;
+  generation: number;
+}
+
 function plusMinutes(now: Date, minutes: number): string {
   return new Date(now.getTime() + minutes * 60_000).toISOString();
 }
@@ -102,6 +108,43 @@ export class TerminalSandboxCoordinator {
     private readonly lifecycleChanged?: (workspaceId: string) => Promise<void>,
     private readonly emergencyDisabled = false,
   ) {}
+
+  async claimMutation(context: HarnessToolContext): Promise<TerminalSandboxMutationLease> {
+    if (this.emergencyDisabled) {
+      throw new TerminalToolError(
+        "sandbox_unavailable",
+        "Terminal is temporarily disabled by an operator. Do not retry until a workspace owner confirms service has resumed.",
+        { reason: "Wait for an operator to re-enable Terminal before trying another tool." },
+      );
+    }
+    if (context.signal.aborted) {
+      throw new TerminalToolError("cancelled", "The Terminal operation was cancelled before workspace mutation.");
+    }
+    const timestamp = this.clock.now().toISOString();
+    let row = await this.loadSandbox(context.workspaceId, context.workstreamId);
+    if (!row) {
+      const [policy, repositoryAuthority] = await Promise.all([
+        this.loadOrCreatePolicy(context.workspaceId, timestamp),
+        this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
+      ]);
+      const authorityFingerprint = await sha256(JSON.stringify({
+        principal: executionPrincipalKey(context.executionPrincipal),
+        repository: repositoryAuthority ?? "scratch",
+      }));
+      row = await this.reserveFirstGeneration(
+        context,
+        authorityFingerprint,
+        policy.revision,
+        timestamp,
+      );
+    }
+    const claimed = await this.claimOperation(context, row, timestamp);
+    return {
+      providerSandboxId: claimed.provider_sandbox_id,
+      state: claimed.state,
+      generation: claimed.generation,
+    };
+  }
 
   async acquire(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
     if (this.emergencyDisabled) {
@@ -273,7 +316,7 @@ export class TerminalSandboxCoordinator {
          JOIN connector_connections connection
            ON connection.id = repository.connection_id
           AND connection.workspace_id = repository.workspace_id
-          AND connection.status = 'healthy'
+          AND connection.status <> 'disabled'
         WHERE repository.workspace_id = ? AND repository.workstream_id = ?
           AND repository.state = 'selected'`,
     ).bind(workspaceId, workstreamId).first<RepositoryAuthorityRow>();

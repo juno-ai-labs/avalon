@@ -265,7 +265,8 @@ stable reason; it is never represented as an empty successful workspace.
 
 Scratch mode begins with an empty task directory and host-owned resource output
 directory. Repository mode clones over HTTPS, records the requested base ref and
-SHA, and creates `avalon/<work-stream-suffix>/<slug>`. The model may change the
+SHA, and creates `avalon/adjective-adjective-adjective-noun` by reusing Avalon's
+existing work-stream address vocabulary. The model may change the
 repository only through `checkout_repository`; the server fixes its immutable
 identity, base, and branch, and repository instructions cannot expand tools,
 weaken network policy, or relax server limits.
