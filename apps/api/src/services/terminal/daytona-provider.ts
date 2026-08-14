@@ -227,14 +227,23 @@ export function terminalGitCaSetupCommands(input: {
   sessionEnvPath?: string;
 }): string[] {
   const setup = [
-    "test -r \"$CURL_CA_BUNDLE\"",
+    "if [ ! -f \"$CURL_CA_BUNDLE\" ] || [ ! -s \"$CURL_CA_BUNDLE\" ] || [ ! -r \"$CURL_CA_BUNDLE\" ]; then",
+    "  printf '%s\\n' 'Daytona advertised a missing, empty, or unreadable Git CA bundle.' >&2",
+    "  exit 1",
+    "fi",
     "export GIT_SSL_CAINFO=\"$CURL_CA_BUNDLE\"",
     ...(input.sessionEnvPath
       ? [`printf 'export GIT_SSL_CAINFO=%q\\n' "$GIT_SSL_CAINFO" >> ${shellQuote(input.sessionEnvPath)}`]
       : []),
   ];
   return input.required
-    ? ["test -n \"${CURL_CA_BUNDLE:-}\"", ...setup]
+    ? [
+        "if [ -z \"${CURL_CA_BUNDLE:-}\" ]; then",
+        "  printf '%s\\n' 'Daytona did not advertise the Git CA bundle required for publication.' >&2",
+        "  exit 1",
+        "fi",
+        ...setup,
+      ]
     : ["if [ -n \"${CURL_CA_BUNDLE:-}\" ]; then", ...setup.map((command) => `  ${command}`), "fi"];
 }
 
