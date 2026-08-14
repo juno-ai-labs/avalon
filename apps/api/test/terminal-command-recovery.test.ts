@@ -99,4 +99,34 @@ describe("Terminal command receipt recovery", () => {
     })).resolves.toMatchObject({ summary: "Recovered PR" });
     expect(execute).toHaveBeenCalledOnce();
   });
+
+  it("also re-enters repository checkout so an interrupted replacement can converge", async () => {
+    const execute = vi.fn(async () => ({ output: { outcome: "already_selected" }, summary: "Recovered checkout" }));
+    const definition = {
+      name: "checkout_repository",
+      description: "Checkout",
+      capability: "terminal.repository.checkout",
+      mode: "write" as const,
+      idempotency: "record_before_execute" as const,
+      inputSchema: { type: "object", additionalProperties: true },
+    };
+    const plugin: HarnessPlugin = {
+      canonicalId: "avalon:terminal",
+      modelId: "avalon_terminal",
+      shortWireName: "terminal",
+      description: "Terminal",
+      preload: false,
+      tools: [{ definition, execute }],
+    };
+
+    await expect(__integrationTesting.reconcileRecoverableTerminalWrite({
+      row: { status: "ambiguous", inputHash: "same", inputJson: '{"repositoryFullName":"owner/repo","requiredRemoteAccess":"read_only"}' },
+      expectedInputHash: "same",
+      policyMatches: true,
+      expectedPolicy: { pluginId: "avalon:terminal", definition },
+      plugins: [plugin],
+      context,
+    })).resolves.toMatchObject({ summary: "Recovered checkout" });
+    expect(execute).toHaveBeenCalledOnce();
+  });
 });

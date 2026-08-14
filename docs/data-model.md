@@ -252,8 +252,8 @@ includes it. Knowing an object ID is never sufficient authorization.
   pre-existing sandbox bytes. `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
   own the revision-fenced preview/confirm/read-back protocol.
   `workstream_terminal_repositories` stores the immutable numeric GitHub
-  repository ID, canonical name, selected base/ref/SHA, fixed head ref, and healthy
-  connection; `terminal_publication_grants` retains run/principal provenance for
+  repository ID, canonical name, selected base/ref/SHA, fixed head ref, durable
+  requested remote-access ceiling, and connection; `terminal_publication_grants` retains run/principal provenance for
   the optional typed publisher; `repository_publications` converges its
   branch/PR writes. Standard full-access Git/CLI writes do not depend on these
   receipt tables. Provider IDs and
@@ -514,8 +514,10 @@ service's suite under `apps/api`, not here.
 **What changed:** Migration
 `0076_terminal_recoverable_github_connections.sql` replaces the Terminal
 repository insert guard so every non-disabled GitHub connection remains a valid
-reference. Repository policy updates atomically invalidate cached mounted-token
-expiry in the same D1 batch.
+reference. It also records the model's selected `remote_access` ceiling on the
+work-stream repository row. Repository policy updates atomically invalidate
+cached mounted-token expiry in the same D1 batch, while connection disable
+atomically revokes affected selections.
 
 **Why:** `error` and `needs_reconnect` are cached observations that provider
 revalidation may recover, but the original trigger treated them as permanent
@@ -528,8 +530,9 @@ durable stop state.
 
 **Consequences:** Code may attempt current provider verification for every
 non-disabled connection, while database writes still reject disabled and
-cross-workspace references. Policy and mounted-credential state must continue to
-move transactionally.
+cross-workspace references. The stored checkout ceiling and current connector
+policy both constrain token minting. Policy, disable, and mounted-credential
+state must continue to move transactionally.
 
 ### 2026-08-13 — Publication grants become compatibility provenance
 

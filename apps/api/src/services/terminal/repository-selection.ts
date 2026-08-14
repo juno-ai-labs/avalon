@@ -34,6 +34,7 @@ interface CurrentRepositoryRow {
   base_ref: string;
   base_sha: string;
   head_ref: string;
+  remote_access: GitHubRepositoryAccessLevel;
   state: "selected" | "revoked";
 }
 
@@ -145,6 +146,7 @@ export function createTerminalRepositorySelector(
         connection: ConnectionRow;
         repository: TerminalResolvedRepository;
         remoteAccess: GitHubRepositoryAccessLevel;
+        policyAccess: GitHubRepositoryAccessLevel;
       }> = [];
       for (const connection of connections.results ?? []) {
         const config = parseConfig(connection.config_json);
@@ -161,7 +163,12 @@ export function createTerminalRepositorySelector(
         }
         const verified = githubRepositoryAuthorization(config, repository.fullName, repository.id);
         if (!verified || !accessSatisfies(verified.access, input.requiredRemoteAccess)) continue;
-        candidates.push({ connection, repository, remoteAccess: verified.access });
+        candidates.push({
+          connection,
+          repository,
+          remoteAccess: input.requiredRemoteAccess,
+          policyAccess: verified.access,
+        });
       }
       if (candidates.length === 0) {
         const requirement = input.requiredRemoteAccess === "full_access"
@@ -176,11 +183,12 @@ export function createTerminalRepositorySelector(
       // A read-only request prefers a read-only connection. Asking for full
       // access is an explicit model choice and filters candidates above.
       candidates.sort((left, right) => (
-        Number(left.remoteAccess === "full_access") - Number(right.remoteAccess === "full_access")
+        Number(left.policyAccess === "full_access") - Number(right.policyAccess === "full_access")
       ));
       const selected = candidates[0]!;
       const current = await env.DB.prepare(
-        `SELECT connection_id, repository_id, repository_full_name, base_ref, base_sha, head_ref, state
+        `SELECT connection_id, repository_id, repository_full_name, base_ref, base_sha, head_ref,
+                remote_access, state
            FROM workstream_terminal_repositories
           WHERE workspace_id = ? AND workstream_id = ?`,
       ).bind(context.workspaceId, context.workstreamId).first<CurrentRepositoryRow>();
@@ -194,6 +202,7 @@ export function createTerminalRepositorySelector(
         && current.repository_full_name === selected.repository.fullName
         && current.base_ref === selected.repository.defaultBranch
         && current.base_sha === selected.repository.baseSha
+        && current.remote_access === selected.remoteAccess
       );
       const headRef = sameRepositoryIdentity
         ? current!.head_ref
@@ -292,8 +301,8 @@ export function createTerminalRepositorySelector(
         env.DB.prepare(
           `INSERT INTO workstream_terminal_repositories
            (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
-            base_ref, base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'selected', ?, ?, ?
+            base_ref, base_sha, head_ref, remote_access, state, selected_by_user_id, created_at, updated_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'selected', ?, ?, ?
             WHERE NOT EXISTS (
               SELECT 1 FROM workstream_sandboxes sandbox
                WHERE sandbox.workspace_id = ? AND sandbox.workstream_id = ?
@@ -305,6 +314,7 @@ export function createTerminalRepositorySelector(
              base_ref = excluded.base_ref,
              base_sha = excluded.base_sha,
              head_ref = excluded.head_ref,
+             remote_access = excluded.remote_access,
              state = 'selected',
              bootstrapped_sandbox_generation = NULL,
              read_token_expires_at = NULL,
@@ -319,6 +329,7 @@ export function createTerminalRepositorySelector(
           selected.repository.defaultBranch,
           selected.repository.baseSha,
           headRef,
+          selected.remoteAccess,
           context.executionPrincipal.userId,
           timestamp,
           timestamp,
