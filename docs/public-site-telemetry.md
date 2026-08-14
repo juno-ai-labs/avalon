@@ -28,17 +28,21 @@ and destination mechanics remain in [`telemetry.md`](telemetry.md).
 ## How it works
 
 Every page first requests `GET /telemetry/route` from the Global edge. The
-response is only the coarse `eu`/`global` route and whether it came from
-Cloudflare geolocation or the conservative Global fallback; it creates no D1
-journey and returns `Cache-Control: no-store`. The site then selects an identity:
+response carries the coarse `eu`/`global` route, whether it came from Cloudflare
+geolocation or the conservative Global fallback, and a five-minute signed route
+token. It creates no D1 journey and returns `Cache-Control: no-store`. The site
+then selects an identity:
 
 - Global reads or creates one random UUIDv7 in first-party `localStorage`, so
   landing, download, and handoff pages can form one anonymous acquisition path.
 - EU creates one in-memory UUIDv7 for this page load and never reads or writes a
   persistent analytics identifier.
 
-That ID enters the ordinary `/telemetry/bootstrap` exchange. The signed,
-one-hour capability fixes the route and anonymous epoch. Events then enter
+That ID and the signed route token enter the ordinary `/telemetry/bootstrap`
+exchange. Bootstrap consumes the token's route rather than independently
+classifying the second request; a pre-existing journey with a conflicting route
+is rejected. The signed, one-hour capability then fixes the route and anonymous
+epoch. Events enter
 `/telemetry/anonymous`; the Global Worker either accepts them locally or sends
 an already validated EU projection through the named EU telemetry RPC. The
 country and source IP are not event properties and are not retained by this
@@ -67,7 +71,9 @@ navigation or opening the desktop.
 ## Invariants
 
 - **Routing precedes browser identity selection.** EU must not read a Global
-  persistent anonymous ID, and a later location change never moves an event.
+  persistent anonymous ID. The signed decision used for identity selection is
+  the decision bootstrap consumes, so a network/location change between the two
+  requests cannot move the epoch or event.
 - **One observed page produces one web event.** The adapter translates the
   Avalon event to the reserved PostHog name; it does not deliver a custom copy.
 - **Handoff analytics never carries the handoff.** Tokens, fragments, query
@@ -91,6 +97,9 @@ linked to an Avalon login.
 
 - If route lookup or capability bootstrap fails, events for that page are lost;
   product behavior continues.
+- A route token expires after five minutes and a token/journey route conflict is
+  rejected. The page does not retry with a newly inferred route or reuse the
+  selected epoch across that conflict.
 - `pagehide` delivery is best effort. A browser that terminates before the
   keepalive request begins can omit `site_page_left`.
 - EU paths cannot be joined across full page loads because EU uses a page-scoped
@@ -111,10 +120,13 @@ pnpm --filter @avalon/contracts test
 ```
 
 Site tests prove every HTML entry receives the shared reporter, legal copy
-matches the implemented storage boundary, and EU selection cannot use the
-persistent Global epoch. API tests prove the route endpoint creates no journey,
-site events pass only the anonymous allowlist, and the Global destination gets
-the exact reserved web-event mapping.
+matches the implemented storage boundary, and bootstrap receives the signed
+decision used before identity selection. API tests force different Cloudflare
+country values between route lookup and bootstrap and prove the signed first
+decision wins without creating an EU journey for a persistent Global epoch.
+They also prove the route endpoint creates no journey, site events pass only the
+anonymous allowlist, and the Global destination gets the exact reserved
+web-event mapping.
 
 ## Regional impact
 
@@ -128,13 +140,14 @@ explicit choice elsewhere in the product.
 
 ## Security and trust model
 
-The site is an untrusted anonymous producer. The capability authorizes only its
-fixed epoch, route, and the pre-authentication event allowlist. Both the shared
-envelope and each event use strict schemas; accepted events still pass regional
-collection validation and retention. CORS permits only the production Avalon
-site origins and explicit local development origins. The reporter never receives
-a PostHog token, regional service credential, account session, or cross-region
-bridge authority.
+The site is an untrusted anonymous producer. The route token proves only one
+short-lived content-free routing decision; it grants no ingest or account
+authority. The capability authorizes only its fixed epoch, route, and the
+pre-authentication event allowlist. Both the shared envelope and each event use
+strict schemas; accepted events still pass regional collection validation and
+retention. CORS permits only the production Avalon site origins and explicit
+local development origins. The reporter never receives a PostHog token,
+regional service credential, account session, or cross-region bridge authority.
 
 ## Operations
 
@@ -154,6 +167,28 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-08-13 — Identity selection and bootstrap consume one signed route decision
+
+**What changed:** The content-free route response now includes a five-minute
+signed decision token. The site submits that token with its selected anonymous
+epoch, and bootstrap uses the token's route instead of re-reading Cloudflare
+country on the second request. Existing journey state must match the decision.
+
+**Why:** The site previously selected persistent versus memory-only identity
+from the first request while bootstrap independently routed the second. A
+network change between them could therefore admit a persistent epoch to an EU
+journey despite the region-before-identity promise.
+
+**Considered and rejected:** Merely comparing bootstrap's response in the
+browser. That detects the mismatch only after the server has persisted the
+wrong journey. Combining identity selection into bootstrap was also rejected
+because the server cannot safely read or write browser storage.
+
+**Consequences:** Public-site bootstrap must carry the signed route token, route
+tokens remain content-free and short-lived, and token/journey conflicts fail
+closed without retrying the product action. Desktop bootstrap may continue to
+use its single authoritative Cloudflare request without this site-only preflight.
 
 ### 2026-08-13 — The public acquisition path becomes region-aware product telemetry
 
