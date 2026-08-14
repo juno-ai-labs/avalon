@@ -403,11 +403,29 @@ describe('WorkstreamComposer model readout', () => {
     renderComposer(undefined, false, undefined, ranOn('x-ai/grok-4.5'));
 
     // The pill is the same one the launch composer offers, so a pinned work
-    // stream reads here exactly as it read when it was pinned.
+    // stream reads here exactly as it read when it was pinned. Unpinned, the
+    // name says the id is the latest run's rather than a standing property:
+    // this work stream re-resolves the flag on every launch.
     const readout = await screen.findByRole('button', {
-      name: 'Model: x-ai/grok-4.5 — a work stream keeps the model it started on, so this cannot be changed',
+      name: "Model: x-ai/grok-4.5 (the latest run's) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.",
     });
     expect(readout).toHaveTextContent('Grok 4.5');
+  });
+
+  it('promises a fixed model only where one is actually pinned', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    // The pin is the only thing that makes the model a property of the work
+    // stream rather than of its last run: `resolveWorkstreamModelRouting` stops
+    // at the row and never reads the flag. Saying so on an unpinned work stream
+    // would be a stability guarantee the server does not keep.
+    renderComposer(undefined, false, undefined, {
+      ...ranOn('deepseek/deepseek-v4-pro'),
+      modelOverride: 'deepseek/deepseek-v4-pro',
+    });
+
+    await screen.findByRole('button', {
+      name: 'Model: deepseek/deepseek-v4-pro — pinned when this work stream was created, so every run uses it. It cannot be changed.',
+    });
   });
 
   it('is the launch composer’s dropdown with its trigger disabled', async () => {
@@ -470,7 +488,7 @@ describe('WorkstreamComposer model readout', () => {
     // Same answer an untouched launch composer gives, for the same reason: the
     // flag decides and the renderer cannot see the served variation.
     const readout = await screen.findByRole('button', {
-      name: 'Model: Default (follows the agent-model-workstream flag) — a work stream keeps the model it started on, so this cannot be changed',
+      name: 'Model: Default (no run yet) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.',
     });
     expect(readout).toHaveTextContent('Default');
   });

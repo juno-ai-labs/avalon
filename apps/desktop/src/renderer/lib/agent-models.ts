@@ -120,15 +120,26 @@ export function agentModelInUseLabel(model: string | null): string {
  * because a control that looks like the composer's and does nothing has to
  * explain itself.
  *
+ * `pinned` is the difference between two claims only one of which is true of any
+ * given work stream, and conflating them is a promise the server does not keep.
+ * A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and never
+ * consults the flag, so every run of that work stream uses it. An **unpinned**
+ * work stream re-evaluates `agent-model-workstream` on *every* launch, so the
+ * id shown is what the latest run happened to get and a later run may differ.
+ * What is immutable there is the setting, not the model.
+ *
  * The tooltip still fires on the disabled trigger. That is worth knowing rather
  * than assuming: a disabled button swallows clicks, which is what keeps the menu
  * shut, but Radix's tooltip is driven by pointer movement that still reaches it.
  * Keyboard focus is the route that does go — Tab skips a disabled button — so
  * this string has to stand on its own as the accessible name too.
  */
-export function agentModelInUseTriggerLabel(model: string | null): string {
+export function agentModelInUseTriggerLabel(model: string | null, pinned: boolean): string {
+  if (pinned && model !== null) {
+    return `Model: ${model} — pinned when this work stream was created, so every run uses it. It cannot be changed.`;
+  }
   const subject = model === null
-    ? `${UNPINNED_AGENT_MODEL_LABEL} (follows the agent-model-workstream flag)`
-    : model;
-  return `Model: ${subject} — a work stream keeps the model it started on, so this cannot be changed`;
+    ? `${UNPINNED_AGENT_MODEL_LABEL} (no run yet)`
+    : `${model} (the latest run's)`;
+  return `Model: ${subject} — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.`;
 }

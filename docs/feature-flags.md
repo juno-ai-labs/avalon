@@ -204,16 +204,26 @@ same place, behind the same **Debug enabled** preference — the identical
 dropdown, trigger and pill and chevron, with the trigger `disabled`. That is what
 stops it opening, and its menu is left unrendered because a disabled trigger can
 never reach one. Disabled rather than merely quiet is the honest shape here: the
-pin is read once, when the work stream is created, and every run resolves from
-that row, so a menu would offer a change the next run would not honour.
+pin is written once, when the work stream is created, and nothing afterwards
+edits it, so a menu would offer a change the next run would not honour.
 
-The accessible name and the tooltip both carry the full model id and say a work
-stream keeps the model it started on. The tooltip survives the disable — checked
-in a real window rather than assumed, because the reverse is the intuitive guess:
-a disabled button swallows the click that would open the menu, but Radix's
-tooltip is driven by pointer movement that still reaches it. What the disable
-does cost is keyboard focus, since Tab skips a disabled button, which is why the
-id has to be in the accessible name and not only in the tooltip.
+The accessible name and the tooltip carry the full model id and say what may
+truthfully be said about it, **which is not the same sentence for every work
+stream**. A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and
+never reads the flag, so every run uses it. An unpinned work stream re-evaluates
+`agent-model-workstream` on *every* launch, so the id shown is what the latest
+run happened to resolve and a later run may differ. What is immutable there is
+the setting, not the model — an earlier draft of this control said a work stream
+keeps the model it started on, which is a stability guarantee the server does
+not make for the unpinned majority. The renderer therefore takes `pinned`
+alongside the id and picks the claim from it.
+
+The tooltip survives the disable — checked in a real window rather than assumed,
+because the reverse is the intuitive guess: a disabled button swallows the click
+that would open the menu, but Radix's tooltip is driven by pointer movement that
+still reaches it. What the disable does cost is keyboard focus, since Tab skips a
+disabled button, which is why the id has to be in the accessible name and not
+only in the tooltip.
 
 What it names is **`latestHarnessRun.model` first, and the pin only as a
 fallback**. The pin alone would answer for almost nobody: an unpinned work
