@@ -10,7 +10,7 @@ import { newId, nowIso } from "@avalon/db";
 import type { Env } from "../../env";
 import { githubConnectorConfig } from "../../lib/connector-registry";
 import { executionPrincipalKey } from "../workstream-resource-visibility";
-import type { TerminalSandboxProvider } from "./daytona-provider";
+import { terminalGitCaSetupCommands, type TerminalSandboxProvider } from "./daytona-provider";
 import type { AcquiredTerminalSandbox } from "./coordinator";
 import type { TerminalRepositoryPublisher } from "./runtime";
 import { TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
@@ -252,6 +252,10 @@ export async function bootstrapTerminalRepository(
     "mkdir -p /workspace/.avalon",
     `printf '%s\\n' ${sessionExports} > /workspace/.avalon/session.env`,
     "chmod 600 /workspace/.avalon/session.env",
+    ...terminalGitCaSetupCommands({
+      required: false,
+      sessionEnvPath: "/workspace/.avalon/session.env",
+    }),
     "if [ ! -d /workspace/.git ]; then",
     "  rm -rf -- /workspace/repository.tmp",
     `  git -c ${shellQuote(canonicalHeader)}="Authorization: Basic $GITHUB_READ_BASIC" clone --no-checkout ${shellQuote(repositoryUrl)} /workspace/repository.tmp`,
