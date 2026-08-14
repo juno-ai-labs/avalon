@@ -1425,7 +1425,7 @@ export function WorkspaceSettingsScreen({
                     <span>Connection</span>
                     <select
                       aria-label="GitHub connection"
-                      disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                      disabled={updateGitHubRepositorySettings.isPending}
                       onChange={(event) => {
                         setGitHubSettingsConnectionId(event.currentTarget.value);
                         setGitHubRepositorySearch('');
@@ -1555,7 +1555,7 @@ export function WorkspaceSettingsScreen({
                       )}
                     </div>
                     <p className="settings-section-copy settings-github-footnote">
-                      Models see the effective remote access when they search or check out a repository. The Terminal harness always permits local edits and local commits, and independently blocks remote publication unless access is full and the participant explicitly requested it.
+                      Models see the effective remote access when they search or check out a repository. The Terminal harness always permits local edits and local commits; read-only blocks remote publication, while full access allows native Git and GitHub remote operations.
                     </p>
                   </>
                 ) : null}

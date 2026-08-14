@@ -59,7 +59,12 @@ export async function createAvalonTerminalPlugin(
     provider,
     createTerminalResourceBridge(env),
     createRepositoryPublisher(env, createGitHubRestPublicationGateway(env)),
-    createTerminalRepositorySelector(env, provider, createGitHubTerminalCatalogGateway(env)),
+    createTerminalRepositorySelector(
+      env,
+      provider,
+      createGitHubTerminalCatalogGateway(env),
+      coordinator,
+    ),
     async (context, sandbox, sandboxProvider) => {
       try {
         await bootstrapTerminalRepository(env, context, sandbox, sandboxProvider, readGateway);

@@ -55,6 +55,31 @@ describe("GitHub connector", () => {
       access: "read_only",
       expectedRepositoryId: null,
     });
+    expect(githubRepositoryAuthorization(config, "acme/renamed-widget", 41)).toEqual({
+      access: "full_access",
+      expectedRepositoryId: "41",
+    });
+  });
+
+  it("fails closed for a present malformed repository policy while preserving its revision", () => {
+    expect(githubRepositoryAccessPolicy({
+      githubRepositoryAccess: {
+        version: 2,
+        revision: 7,
+        mode: "all_repositories",
+        defaultAccess: "full_access",
+        repositories: [],
+      },
+    })).toEqual({
+      version: 1,
+      revision: 7,
+      mode: "selected_repositories",
+      defaultAccess: "read_only",
+      repositories: [],
+    });
+    expect(githubRepositoryAuthorization({
+      githubRepositoryAccess: { revision: 7, mode: "all_repositories" },
+    }, "acme/widget", 41)).toBeNull();
   });
 
   it("denies repositories outside a selected-repository policy", () => {
@@ -89,6 +114,8 @@ describe("GitHub connector", () => {
       if (url.pathname === "/user/installations/42/repositories") {
         return jsonResponse({ total_count: repositories.length, repositories });
       }
+      if (url.pathname === "/repos/acme/widget") return jsonResponse(repositories[0]);
+      if (url.pathname === "/repos/acme/private") return jsonResponse(repositories[1]);
       if (url.pathname === "/graphql") return jsonResponse({ data: {} });
       throw new Error(`Unexpected GitHub URL: ${url}`);
     });
@@ -133,6 +160,47 @@ describe("GitHub connector", () => {
     }, context)).rejects.toMatchObject({
       code: "unauthorized",
       message: expect.stringContaining("outside this GitHub connection's repository access policy"),
+    });
+  });
+
+  it("uses immutable repository identity when a configured repository is renamed", async () => {
+    const adapter = githubAdapter(async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/repos/acme/renamed-widget") {
+        return jsonResponse({ id: 41, full_name: "acme/renamed-widget" });
+      }
+      if (url.pathname === "/repos/acme/renamed-widget/issues") {
+        return jsonResponse({ number: 1, title: "Created" }, 201);
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    });
+    const connection = personalConnection([
+      GitHubCapabilities.metadataRead,
+      GitHubCapabilities.issuesWrite,
+    ]);
+    connection.config.githubRepositoryAccess = {
+      version: 1,
+      revision: 2,
+      mode: "all_repositories",
+      defaultAccess: "full_access",
+      repositories: [{
+        repositoryId: "41",
+        repositoryFullName: "acme/widget",
+        access: "read_only",
+      }],
+    };
+
+    await expect(adapter.executeTool("issues.create", {
+      owner: "acme",
+      repo: "renamed-widget",
+      title: "Must stay read-only",
+    }, {
+      connection,
+      principal: { type: "user" as const, userId: "user-1" },
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toMatchObject({
+      code: "unauthorized",
+      message: expect.stringContaining("read-only"),
     });
   });
 

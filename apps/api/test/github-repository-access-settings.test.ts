@@ -1,17 +1,14 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import {
-  createTestD1Database,
-  createTestD1PreparedStatement,
-  createTestD1Result,
-  createTestD1Results,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import { sqliteD1 } from "./helpers/sqlite-d1";
 
 const CONNECTION_ID = "00000000-0000-7000-8000-000000000041";
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000042";
@@ -179,6 +176,45 @@ describe("GitHub repository access settings", () => {
     })).rejects.toMatchObject({ status: 422, code: "github_repository_identity_changed" });
   });
 
+  it("rolls back a policy change when mounted Terminal credential invalidation fails", async () => {
+    const database = migratedDatabase();
+    await seedConnection(database);
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-000000000045', '${WORKSPACE_ID}', 'Terminal',
+              'Terminal', 'ad_hoc', '${USER_ID}', 'idle', '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO workstream_terminal_repositories
+        (workspace_id, workstream_id, connection_id, repository_id, repository_full_name,
+         base_ref, base_sha, head_ref, state, read_token_expires_at, selected_by_user_id,
+         created_at, updated_at)
+      VALUES ('${WORKSPACE_ID}', '00000000-0000-7000-8000-000000000045', '${CONNECTION_ID}',
+              101, 'with-avalon/avalon', 'main', '${"a".repeat(40)}',
+              'avalon/bright-coastal-exact-heron', 'selected', '2099-01-01T00:00:00.000Z',
+              '${USER_ID}', '2026-01-01', '2026-01-01');
+      CREATE TRIGGER reject_terminal_credential_invalidation
+      BEFORE UPDATE OF read_token_expires_at ON workstream_terminal_repositories
+      BEGIN
+        SELECT RAISE(ABORT, 'invalidation failed');
+      END;
+    `);
+    const service = new ConnectionService(environment(database), authorization());
+
+    await expect(service.updateGitHubRepositoryAccess(CONNECTION_ID, {
+      expectedRevision: 0,
+      mode: "all_repositories",
+      defaultRemoteAccess: "read_only",
+      repositories: [],
+    })).rejects.toThrow("invalidation failed");
+    expect(JSON.parse(String(database.prepare(
+      "SELECT config_json FROM connector_connections WHERE id = ?",
+    ).get(CONNECTION_ID)?.config_json))).toEqual({ installationId: "9001" });
+    expect(database.prepare(
+      "SELECT read_token_expires_at FROM workstream_terminal_repositories WHERE connection_id = ?",
+    ).get(CONNECTION_ID)).toEqual({ read_token_expires_at: "2099-01-01T00:00:00.000Z" });
+  });
+
   it("lets members inspect workspace policy but reserves changes for administrators", async () => {
     const database = migratedDatabase();
     await seedConnection(database);
@@ -195,6 +231,32 @@ describe("GitHub repository access settings", () => {
       repositories: [],
     })).rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });
   });
+
+  it.each(["workspace", "personal"] as const)(
+    "never calls GitHub for a disabled %s connection's settings",
+    async (scope) => {
+      const database = migratedDatabase();
+      await seedConnection(database);
+      database.prepare(
+        "UPDATE connector_connections SET scope = ?, owner_user_id = ?, status = 'disabled' WHERE id = ?",
+      ).run(scope, scope === "personal" ? USER_ID : null, CONNECTION_ID);
+      const service = new ConnectionService(environment(database), authorization());
+      const providerFetch = vi.mocked(fetch);
+      providerFetch.mockClear();
+
+      await expect(service.getGitHubRepositoryAccess(CONNECTION_ID)).rejects.toMatchObject({
+        status: 409,
+        code: "connection_disabled",
+      });
+      await expect(service.updateGitHubRepositoryAccess(CONNECTION_ID, {
+        expectedRevision: 0,
+        mode: "all_repositories",
+        defaultRemoteAccess: "read_only",
+        repositories: [],
+      })).rejects.toMatchObject({ status: 409, code: "connection_disabled" });
+      expect(providerFetch).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function authorization(): AuthContext {
@@ -259,42 +321,6 @@ function migratedDatabase(): DatabaseSync {
     database.exec(readFileSync(new URL(fileName, migrations), "utf8"));
   }
   return database;
-}
-
-function sqliteD1(database: DatabaseSync): D1Database {
-  const prepare = (sql: string) => {
-    let values: unknown[] = [];
-    const statement = {
-      bind(...next: unknown[]) { values = next; return statement; },
-      async first<T>() {
-        return (database.prepare(sql).get(...values as SQLInputValue[]) as T | undefined) ?? null;
-      },
-      async all<T>() {
-        return createTestD1Result<T>({
-          success: true,
-          results: database.prepare(sql).all(...values as SQLInputValue[]) as T[],
-          meta: { changes: 0 },
-        });
-      },
-      async run<T>() {
-        const result = database.prepare(sql).run(...values as SQLInputValue[]);
-        return createTestD1Result<T>({
-          success: true,
-          results: [],
-          meta: { changes: Number(result.changes) },
-        });
-      },
-    };
-    return createTestD1PreparedStatement(statement);
-  };
-  return createTestD1Database({
-    prepare,
-    async batch<T>(statements: D1PreparedStatement[]) {
-      const results: D1Result<unknown>[] = [];
-      for (const statement of statements) results.push(await statement.run());
-      return createTestD1Results<T>(results);
-    },
-  });
 }
 
 function jsonResponse(value: unknown): Response {
