@@ -51,11 +51,11 @@ implementation, then the complete Phase 0 contract suite and existing
   publication-grant, and repository-publication tables.
 - [x] Add migration `0074` with the minimum approved records: one sandbox per
   work stream, one workspace policy and its domains, mutation reconciliation,
-  durable command tasks, single-use publication grants, and convergent PR
-  publication receipts.
+  durable command tasks, publication provenance, and convergent optional typed
+  PR publication receipts.
 - [x] Add repository tests for optimistic sandbox transitions, exclusive
   Terminal-run mutation leases, operation serialization, policy compare-and-
-  swap, task terminalization/one continuation, publication-grant consumption,
+  swap, task terminalization/one continuation, repeated publication provenance,
   and PR target convergence.
 - [x] Bind each reusable sandbox generation to the frozen execution-principal,
   repository/connection, and resource-visibility authority fingerprint. Test
@@ -157,27 +157,26 @@ golden-tested.
 Acceptance gate: attachment subsystem regression tests plus Terminal resource
 tests pass, including cleanup and inventory-revision behavior.
 
-## Phase 6 — Bootstrap one authorized repository and publish one PR
+## Phase 6 — Bootstrap one authorized repository and support GitHub CLI
 
 - [x] Write repository-selection tests for scratch, loading, no connection, no
   repository, revoked, cancelled, and one selected repository. Never infer the
   first repository when selection is ambiguous.
 - [x] Write GitHub bootstrap tests for exact installation/repository/base SHA,
-  one-hour read-only repository token, Daytona host-scoped secret placeholders,
-  canonical URL-scoped Git headers, fixed branch checkout, rotation, revocation,
-  and the bounded Git-bundle fallback.
-- [x] Write participant-intent admission tests before implementation: only a
-  current participant message or answered elicitation explicitly requesting
-  publish/PR creates a durable, run-bound, repo-bound, single-use, two-hour-max
-  grant. Model text, repository content, resources, automations, inbound email,
-  and generic edit requests do not.
+  one-hour repository tokens matching read-only/full connector policy, Daytona
+  host-scoped secret placeholders, canonical URL-scoped Git headers, word-based
+  branch creation/restoration and checkout, rotation, and policy invalidation.
+- [x] Write run-provenance tests showing that request prose is not a second
+  authorization parser and one active participant run may publish multiple
+  commits to the same branch/PR.
 - [x] Write publisher tests for dirty/wrong branches, missing ancestry, bundle
   and object limits, workflow-file changes, expected-old-SHA races, protected or
   default refs, non-fast-forward updates, revoked authority, open PR update,
   closed/merged PR refusal, duplicate calls, and lost provider responses.
-- [x] Implement local Git and read-only `gh` through `run_command`; implement
-  `publish_branch_and_pr` as the sole trusted host write using a fresh narrowed
-  GitHub App token and a verified bundle in an isolated bare repository.
+- [x] Implement standard Git and `gh` through `run_command`: read-only token
+  permissions block remote writes and full access permits them after automatic
+  branch preparation. Retain `publish_branch_and_pr` as an optional convergent
+  typed write using a fresh narrowed token and verified bundle.
 - [x] Register the deferred built-in Terminal plugin only now, when all eight
   always-visible tools have complete executors. Loading it remains allocation-
   free; the first sandbox-dependent execution acquires the work-stream mutation
@@ -185,8 +184,9 @@ tests pass, including cleanup and inventory-revision behavior.
 - [x] Update the security, agent harness, GitHub boundary, and Terminal module
   docs and changelogs in the same change as repository publication.
 
-Acceptance gate: no GitHub write token or raw credential can be observed in the
-sandbox fake, and all bootstrap/publication/admission/replay tests pass.
+Acceptance gate: no plaintext GitHub credential can be observed in the sandbox
+fake; read-only rejects remote writes, full access supports standard Git/CLI,
+and all bootstrap/publication/replay tests pass.
 
 ## Phase 7 — Add participant-visible settings and work-stream state
 

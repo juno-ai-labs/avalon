@@ -21,13 +21,12 @@ The model can write and run Bash, Python, JavaScript, TypeScript, and SQLite,
 install packages with a deliberately small manager set, and export generated
 files such as graphs, images, datasets, reports, and archives. It can clone,
 inspect, edit, validate, and commit one authorized GitHub repository using real
-`git` and read-only `gh` commands.
-
-Publication is a separate typed operation. No GitHub write credential enters the
-sandbox. When the participant explicitly grants publication, Avalon transfers
-the committed branch to a trusted regional publisher, validates the fixed branch
-and diff, and creates or updates one pull request with a short-lived,
-single-repository GitHub App token.
+`git` and `gh` commands. Connector `read_only` technically blocks remote writes;
+`full_access` mounts a short-lived, single-repository write token behind Daytona
+secret substitution. Avalon prepares and checks out a stable word-based branch
+before the model receives terminal control. Standard Git/GitHub CLI supports
+multiple commits and PR updates; the typed convergent publisher remains an
+optional tool.
 
 Workspace administrators choose **Trusted only** or **Full internet**. Trusted
 only uses Daytona's native domain allow-list, an immutable baseline, and optional
@@ -62,11 +61,11 @@ expiry so the example cost assumptions can be replaced with observed values.
 
 1. A participant can ask Avalon to inspect, edit, validate, and locally commit a
    change to one authorized GitHub repository from an ordinary work stream.
-2. With explicit publication intent, Avalon can publish the fixed work-stream
-   branch and create or update one pull request without placing GitHub write
-   credentials in the sandbox.
+2. For a connector repository configured with full access, Avalon prepares and
+   switches to a stable work-stream branch, then the model can use ordinary
+   `git` and `gh` commands for multiple commits and PR updates.
 3. The model receives familiar typed file tools, a bounded non-interactive shell,
-   and real `git` and read-only `gh` CLIs.
+   and real `git` and `gh` CLIs whose remote authority matches connector policy.
 4. No sandbox starts because the plugin loads or code is mentioned. The first
    sandbox-dependent tool call creates or explicitly starts it exactly once.
 5. One current sandbox preserves a work stream's files across turns, stop/start,
@@ -121,17 +120,29 @@ The plugin is registered and eligible for every workspace in a supported region;
 there is no workspace, user, or server-side feature flag. Bind's normal plugin
 selection loads it when the request calls for bounded file, code, package,
 command, or artifact work. Loading does not start Daytona. Scratch work requires
-no GitHub connection. Repository work requires an active GitHub App installation
-with access to exactly one selected repository. An attached repository or PR is
-authoritative; otherwise Avalon uses an exact `owner/repo` in the request or asks
-the participant to choose.
+no GitHub connection. Repository work requires an active GitHub App connection
+and one exact repository authorized by that connection's repository policy. An
+attached repository or PR is authoritative; otherwise the model searches the
+authorized catalog and chooses the best exact `owner/repo` from the request and
+work-stream context.
 
-Repository choice is a structured transcript card, not a free-text model guess.
-It has explicit loading, repository list, no GitHub connection, no accessible
-repositories, access revoked, cancelled, and selected states. Connection states
-link to Workspace connections; selection stores the repository ID and canonical
-name server-side and resumes the run once. A cancelled chooser leaves scratch
-tools usable and repository calls return `repository_not_configured`.
+Repository choice is a model tool call, not a participant transcript gate.
+`checkout_repository` resolves the immutable provider repository ID and current
+remote access, then records the repository, canonical name, refs, and connection
+server-side. Before a different choice destroys an existing sandbox, Avalon
+creates a verified attached recovery archive of source, untracked files,
+databases, generated artifacts, and a portable Git bundle of local refs. The live
+`.git` directory, credentials, and regenerable dependencies are excluded. Backup failure, mutation during transfer, or a
+compressed size above 50 MiB leaves the current sandbox and selection untouched.
+
+An active GitHub connection with settings adds a slightly indented **GitHub**
+row below Connections in Settings. Admins configure workspace connections;
+owners configure their personal connection. A policy can expose all
+App-installation repositories with a default access or only selected immutable
+repository IDs with per-repository access. `read_only` restricts the remote
+only: the model can edit and commit locally, but GitHub writes, push, and
+pull-request publication are refused. Model discovery and checkout output
+expose this effective access so the loop does not learn it by attempting a push.
 
 In an unsupported region, Settings still shows **Terminal workspace** as disabled
 with the region name and the reason (“Daytona residency has not passed the
@@ -152,24 +163,12 @@ publication tools all remain visible so the model does not have to infer which
 tool subset a host selected.
 
 Visibility is not authorization. Repository-dependent calls require a currently
-authorized selected repository, and `publish_branch_and_pr` requires explicit
-participant publication intent plus the normal current external-write checks.
-The executor returns a model-visible precondition or authorization error when
-those conditions are absent; it does not remove the tool or ask Bind to rerun
-with a wider tool set.
-
-Publication intent is concrete and host-authored. A current participant message
-that explicitly asks Avalon to push or open/update a PR creates a durable grant
-at run admission; an answered `core_request_elicitation` asking that same
-question may create it for the resumed run. The model, repository files,
-resources, and tool arguments cannot create or widen a grant. It is bound to the
-workspace, work stream, authenticated principal, run, selected repository,
-server-derived base and head refs, and one publication action; it expires when
-the run terminalizes or after two hours, whichever comes first. The publisher
-records the source participant-message ID and revalidates the grant, current
-membership, App authority, clean committed `HEAD`, and fixed refs immediately
-before minting a write token. A general request to “make edits” is not intent to
-publish.
+authorized selected repository. Connector `read_only` supplies a technically
+read-only token; `full_access` supplies a single-repository contents/PR write
+token. The connector policy is the durable user authorization choice—Avalon does
+not parse request prose or add a one-publication gate. Existing publication
+grant rows are retained only as run/principal provenance for the optional typed
+publisher, not as a model workflow boundary.
 
 ### Workspace network access
 
@@ -195,7 +194,7 @@ groups are:
 
 | Settings group | Purpose |
 | --- | --- |
-| GitHub and Avalon | Clone/fetch, read-only GitHub CLI access, and required Avalon endpoints |
+| GitHub and Avalon | Clone/fetch, policy-scoped GitHub CLI access, and required Avalon endpoints |
 | System packages | Signed base-image `apt` repositories |
 | Python packages | PyPI package files and the reviewed `uv` distribution endpoints |
 | JavaScript packages | npm package files and the reviewed `pnpm` distribution endpoints |
@@ -266,9 +265,11 @@ stable reason; it is never represented as an empty successful workspace.
 
 Scratch mode begins with an empty task directory and host-owned resource output
 directory. Repository mode clones over HTTPS, records the requested base ref and
-SHA, and creates `avalon/<work-stream-suffix>/<slug>`. The server fixes the
-repository, base, and branch; repository instructions cannot expand tools,
-change the selected repository, weaken network policy, or relax server limits.
+SHA, and creates `avalon/adjective-adjective-adjective-noun` by reusing Avalon's
+existing work-stream address vocabulary. The model may change the
+repository only through `checkout_repository`; the server fixes its immutable
+identity, base, and branch, and repository instructions cannot expand tools,
+weaken network policy, or relax server limits.
 
 ### File tools
 
@@ -372,6 +373,7 @@ are contract-tested together with each strict argument and result schema:
 | `write_file` | `terminal_write_file` | `terminal.file.write` | `write` / `record_before_execute` | 60 seconds | yes |
 | `apply_patch` | `terminal_apply_patch` | `terminal.file.write` | `write` / `record_before_execute` | 60 seconds | yes |
 | `run_command` | `terminal_run_command` | `terminal.command.run` | `write` / `record_before_execute` | command deadline plus 30 seconds, at most 930 seconds | yes |
+| `checkout_repository` | `terminal_checkout_repository` | `terminal.repository.checkout` | `write` / `record_before_execute` | sandbox acquisition plus 180 seconds | yes |
 | `import_resource` | `terminal_import_resource` | `terminal.resource.import` | `write` / `record_before_execute` | 120 seconds | yes |
 | `publish_resource` | `terminal_publish_resource` | `terminal.resource.publish` | `write` / `provider_key` | 120 seconds | yes |
 | `publish_branch_and_pr` | `terminal_publish_branch_and_pr` | `terminal.repository.publish` | `write` / `record_before_execute` | 180 seconds | yes |
@@ -394,6 +396,7 @@ Launch constants are equally normative:
 | complete command output retained as a generated log | — | 5 MB |
 | imported or published resource | — | 25,000,000 bytes, the existing `MAX_ATTACHMENT_BYTES` ceiling |
 | imports or published resources per Terminal run | — | 20 each and 100 MiB total source bytes |
+| repository-replacement recovery backup | — | 50 MiB compressed |
 
 An implementation may lower a maximum for provider or workspace policy, but the
 tool description must advertise the effective value and the stable
@@ -553,6 +556,55 @@ is safe. A nonzero exit uses `state: "failed"` and
 The stable provider task ID stays in host reconciliation state because no later
 model tool accepts it.
 
+#### `checkout_repository`
+
+Use when repository work needs one exact GitHub `owner/name`. The model chooses
+from GitHub repository discovery; Avalon resolves the choice through the current
+connector policy and records the immutable provider identity and fixed work-
+stream refs. `requiredRemoteAccess` defaults to the least authority and is stored
+as a durable ceiling even when connector policy permits more. The model sets
+`full_access` when the task needs a push, pull request, or other remote mutation.
+
+```ts
+type CheckoutRepositoryArguments = {
+  repositoryFullName: string;
+  requiredRemoteAccess?: "read_only" | "full_access";
+};
+
+type CheckoutRepositoryOutput = {
+  repository: string;
+  repositoryId: number;
+  connectionId: string;
+  connectionName: string;
+  baseRef: string;
+  baseSha: string;
+  headRef: string;
+  remoteAccess: "read_only" | "full_access";
+  localEditsAllowed: true;
+  remoteWritesAllowed: boolean;
+  outcome: "selected" | "already_selected";
+  backup: null | {
+    resourceId: string;
+    title: string;
+    mimeType: "application/gzip";
+    sizeBytes: number;
+    sourceSha256: string;
+    createdAt: string;
+  };
+};
+```
+
+The sandbox is not acquired merely to select an empty scratch workspace. When
+another sandbox generation exists, Avalon refuses selection while commands are
+active, starts a retained stopped/archive only long enough to create the backup,
+verifies its bytes and digest through the host, attaches the generated recovery
+resource, removes sandbox-scoped credentials, and deletes the old sandbox before
+recording the new selection. Replaying the same completed tool invocation returns
+the same backup resource. Stable failures include `repository_not_authorized`,
+`repository_user_authority_required`, `workspace_busy`,
+`workspace_backup_failed`, `workspace_backup_changed`, and
+`workspace_backup_too_large`.
+
 #### `import_resource`
 
 Use to copy the original bytes of one currently authorized work-stream resource
@@ -665,9 +717,10 @@ no follow-up tool consumes an activity or work-stream ID.
 
 #### `publish_branch_and_pr`
 
-Use only after repository changes are validated and committed and the participant
-has explicitly requested publication. The tool is always exposed with the rest
-of the plugin, but its executor revalidates current publication authorization.
+This optional convenience tool may be used after repository changes are
+validated and committed. Standard `git push` and `gh pr` commands are also
+available for a `full_access` repository. The tool remains exposed with the rest
+of the plugin and revalidates current repository access.
 The repository, base, head, commit, and remote are intentionally absent from the
 model arguments.
 
@@ -776,8 +829,12 @@ Publication failures:
 | `publish_resource` | `resource_not_ready` | “The output is not a stable regular file. Wait for its command to finish, then write or rename the final file beneath `AVALON_RESOURCE_DIR` and use a new invocation.” | Bounded `reason` identifies instability without leaking a host path. |
 | `publish_resource` | `resource_empty` | “The output file is empty. Inspect its producer, regenerate a non-empty result, and publish that file.” | Bounded `reason` may identify the producing invocation. |
 | `publish_resource` | `not_found` | “No output file exists there. Use a path relative to `AVALON_RESOURCE_DIR`, not a repository-relative or absolute path.” | `field` is `filePath`. |
-| `publish_branch_and_pr` | `repository_not_configured` | “No authorized repository is selected for this work stream. Stop and ask the participant to attach or select one before publishing.” | Bounded `reason`; never retry until repository context changes. |
-| `publish_branch_and_pr` | `publication_not_authorized` | “Publication is not currently authorized. Stop and ask the participant to request publication or restore repository access; do not retry until authorization changes.” | Bounded `reason`; never retry until participant intent or connection authority changes. |
+| `checkout_repository` | `repository_not_authorized` | “That repository is not available with the requested remote access. Search authorized GitHub repositories, choose an exact matching result, and retry.” | `field` is `repositoryFullName`; `expected` names the required access. |
+| `checkout_repository` | `workspace_backup_failed`, `workspace_backup_changed` | “Avalon could not verify the recovery backup, so the repository was not changed. Stop workspace writers and retry checkout.” | Bounded `reason`; the existing sandbox and selection remain intact. |
+| `checkout_repository` | `workspace_backup_too_large` | “The recoverable workspace state exceeds the 50 MiB compressed backup limit. Remove regenerable dependencies or publish large artifacts, then retry checkout.” | `expected` names the compressed byte limit. |
+| `publish_branch_and_pr` | `repository_not_configured` | “No authorized repository is selected for this work stream. Search GitHub, call `terminal_checkout_repository` with an exact `owner/name`, then retry publishing.” | Bounded `reason`; never retry publication until checkout succeeds. |
+| `publish_branch_and_pr` | `repository_remote_read_only` | “This repository has read-only remote access. Continue local edits and commits, but do not push or publish until connector settings grant full access.” | Bounded `reason`; never retry the remote mutation until policy changes. |
+| `publish_branch_and_pr` | `publication_not_authorized` | “This run no longer has the current participant and repository authority needed to publish. Restore connector access or continue from an active participant run.” | Bounded `reason`; standard `git`/`gh` remains governed by the mounted repository credential. |
 | `publish_branch_and_pr` | `working_tree_dirty` | “The working tree is dirty. Run `git status --short`, review and validate the diff, then commit the intended changes before publishing.” | Bounded `reason` names no untrusted content. |
 | `publish_branch_and_pr` | `nothing_to_publish` | “There is no committed change to publish. Stop, or make and commit the requested change without creating an empty commit.” | Bounded `reason` may state that `HEAD` equals the base. |
 | `publish_branch_and_pr` | `publication_policy_denied` | “The committed diff contains a forbidden change. Inspect the full base diff and stop unless the request can be satisfied without it.” | Bounded `reason` names the paths. |
@@ -829,13 +886,35 @@ alongside the tool descriptions:
 > graph, image, dataset, report, or archive. Prefer Bash for simple CLI/file
 > pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript
 > for Node and web-shaped data, and SQLite for relational transforms. Supported
-> installers are apt/dpkg, pip/uv, and npm/pnpm. Do not install another runtime or
-> manager; report an unsupported requirement. Use `terminal_run_command` with
-> `ls`, `find`, `rg --files`, and `rg` for discovery and search. For deliberate
-> text changes, read first with `terminal_read_file` and use
+> installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system
+> packages; do not install another runtime or manager, and report an unsupported
+> requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and
+> `rg` for discovery and search. To work in an authorized GitHub repository,
+> choose the exact owner/name yourself and call `terminal_checkout_repository`;
+> use GitHub repository search first when needed, and set
+> `requiredRemoteAccess` to `full_access` when the task needs a push or pull
+> request. The checkout result's
+> `remoteAccess` is the remote boundary: `read_only` allows local edits and
+> commits but its credential cannot push or mutate GitHub; `full_access`
+> provides a repository-scoped credential for ordinary `git` and `gh` commands.
+> Before initial repository access Avalon creates or restores
+> `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that
+> branch; if an active Git operation prevents the switch, inspect and repair Git
+> state before pushing. Stay on the prepared branch, commit normally,
+> push only that branch, and create or update its pull request against
+> `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. Avalon
+> creates a durable recovery backup, including a portable bundle of local Git
+> refs, before
+> replacing nonempty workspace state. For deliberate text changes, read first
+> with `terminal_read_file` and use
 > `terminal_edit_file` or `terminal_apply_patch`; use `terminal_write_file` only
-> for intentional complete replacement. Tool availability does not require you
-> to start a sandbox unless the task benefits from it.
+> for intentional complete replacement. To create a durable artifact, write the
+> final stable file beneath `$AVALON_RESOURCE_DIR`, then call
+> `terminal_publish_resource` with a path relative to that directory. A nonzero
+> command exit, timeout, cancellation, or output limit is a successful tool
+> response whose `state` and `terminationReason` must be inspected; never infer
+> success from the tool call alone. Tool availability does not require you to
+> start a sandbox unless the task benefits from it.
 
 This guidance makes code execution discoverable without telling the model to start a
 sandbox speculatively. The first chosen tool call still owns lazy start.
@@ -872,9 +951,10 @@ inline cap, Avalon registers it as a generated text resource and returns its
 `outputResourceId`; an internal receipt object is never presented as a download.
 Secrets and terminal controls are scrubbed before model or participant display.
 
-`git` and read-only `gh` are ordinary commands within this boundary. The sandbox
-has no GitHub write credential, and command policy rejects `git push` and
-mutating `gh` operations. Publication uses the typed operation below.
+`git` and `gh` are ordinary commands within this boundary. Read-only token
+permissions reject remote mutation. Full-access credentials permit native Git
+and GitHub CLI writes; the prepared branch and the system prompt guide the model
+without a custom command grammar or branch proxy.
 
 ### Resource exchange and generated artifacts
 
@@ -932,17 +1012,23 @@ Daytona sandbox's 30-day filesystem expiry. Their bytes never pass through model
 context during publication. The agent uses the existing authorized resource
 tools when it later needs to read or view the result.
 
-### Local Git and host-side publication
+### Local Git and GitHub publication
 
-The model uses real `git status`, `git diff`, tests, `git add`, and `git commit`.
-Commits use the Avalon bot identity. If the participant has not requested
-publication, it stops at the local commit or diff and reports what is ready.
+The model uses real `git status`, `git diff`, tests, `git add`, `git commit`,
+`git push`, and `gh pr` commands. Commits use the Avalon bot identity. Before the
+model receives terminal control, Avalon creates or restores the recorded
+`avalon/adjective-adjective-adjective-noun` branch, switches to it, sets its
+upstream when the remote branch already exists, and exposes its exact name as `AVALON_GIT_BRANCH` and base as
+`AVALON_GIT_BASE_BRANCH`. Multiple commits and
+pushes update that same branch and open PR. The prompt tells the model not to
+push the default branch or another ref. GitHub cannot encode that branch rule in
+an installation token, and this design intentionally does not add a proxy. A new
+remote branch is created by the model's first actual push, not as a checkout side
+effect. If later automatic branch restoration is blocked by an in-progress Git
+operation, Terminal remains available so the model can inspect and repair it.
 
-When publication was explicitly requested, the model calls:
-
-```text
-publish_branch_and_pr({ title, body })
-```
+`publish_branch_and_pr({ title, body })` remains an optional typed convenience
+for a clean committed branch. It is not required for standard Git/CLI use.
 
 The repository, base ref, deterministic head ref, and current committed `HEAD`
 come from recorded server state, not model arguments. The operation requires a
@@ -1051,9 +1137,10 @@ None yet.
 8. **No launch PTY.** Bounded non-interactive commands satisfy validation and
    generation tasks while avoiding terminal input, background lease, and
    cancellation complexity.
-9. **Keep GitHub write authority host-side.** The model uses real Git locally,
-   while one typed publisher protects refs and PR convergence without a custom
-   smart-HTTP Git proxy or write token in untrusted code.
+9. **Use the native Git/GitHub CLI path.** Read-only is enforced by token
+   permissions. Full access receives a short-lived single-repository token after
+   Avalon prepares the work-stream branch; prompt guidance replaces a custom
+   smart-HTTP/API proxy because GitHub has no branch-scoped installation token.
 10. **Keep file concurrency internal.** One Terminal run owns the work-stream
     mutation lease at a time. File writes use exact-match or patch-context checks
     plus internal before/after hashes; commands use task state and
@@ -1099,9 +1186,10 @@ with it, and every work-stream/task/publication lookup has a corresponding
   termination reason, bounded output, optional generated-log resource, and
   timestamps. This is named-session reconciliation state for the existing
   harness Workflow, not a second receipt ledger.
-- `terminal_publication_grants`: source participant-message and run, selected
-  repository and fixed refs, authenticated principal, expiry, consumed action,
-  and timestamps. Only run admission or answered host elicitation can create it.
+- `terminal_publication_grants`: compatibility provenance for the optional typed
+  publisher: source participant-message/run, selected repository/refs,
+  authenticated principal, first use, and timestamps. It is not a prose-derived
+  authorization or single-action gate.
 - `repository_publications`: tool invocation, canonical request hash, repository,
   base/head refs, expected old SHA, committed SHA, pushed SHA, PR number/URL,
   state, and timestamps. Invocation/request uniqueness converges retries;
@@ -1138,28 +1226,33 @@ commands, outputs, branch data, or GitHub credentials.
 ## Security and trust model
 
 The Daytona API key and GitHub App private key remain regional Worker secrets.
-For clone/fetch and read-only `gh`, the regional API mints a short-lived,
-single-repository, read-scoped installation token and places it behind Daytona's
-host-scoped secret substitution. The sandbox sees only an opaque placeholder.
+For repository `git` and `gh`, the regional API mints a short-lived,
+single-repository installation token whose read or write permissions match the
+connector setting and places it behind Daytona's host-scoped secret
+substitution. The sandbox sees only an opaque placeholder.
 Git uses a URL-scoped pre-encoded Basic header so the placeholder itself is
 substituted; no plaintext credential helper, remote URL token, environment value,
 or command argument is created.
 
-The trusted publisher alone receives a fresh contents-write and pull-request
-token. It validates current participant intent, connection, repository, branch,
-ancestry, expected old SHA, and diff before each write. It never accepts a token
-from the sandbox or model.
+With `full_access`, that scoped token includes contents-write and
+pull-request-write so the model can use standard CLI commands. GitHub App
+installation tokens can be narrowed to one repository and minimal permissions,
+but not to one branch. Avalon prepares and switches to the work-stream branch
+and guides the model through the plugin prompt rather than adding a Git/API
+proxy. The optional typed publisher still uses a separate fresh token and
+convergent receipt when selected.
 
 The sandbox runs non-root by default and receives no Docker socket, host mount,
 metadata access, inbound public port, or Avalon infrastructure credential. A
 narrow sandbox-local elevation path may run the pinned system manager. Repository
 content, package scripts, and command output are untrusted. Paths are root-
 confined, resources are bounded, output and placeholders are scrubbed, and
-current grants remain host-enforced.
+current connector policy remains host-enforced before credential bootstrap.
 
 Full internet deliberately permits exfiltration of non-secret data visible to the
-sandbox. It never broadens secret substitution or the publisher's authorization.
-Daytona organization policy remains a ceiling in both modes.
+sandbox. It never broadens host-scoped secret substitution or connector-granted
+repository permissions. Daytona organization policy remains a ceiling in both
+modes.
 
 ## Agent behavior
 
@@ -1169,14 +1262,15 @@ The plugin surface is:
 - `import_resource` for an authorized work-stream resource;
 - `run_command` for one bounded non-interactive command;
 - `publish_resource` for a generated file; and
-- `publish_branch_and_pr` for the typed, host-authorized GitHub write.
+- standard `git` and `gh` commands for repositories with `full_access`; and
+- `publish_branch_and_pr` as an optional typed convergent GitHub write.
 
 The agent uses terminal-native discovery and search, prefers file tools for
 bounded reads and exact edits, uses the terminal for repository/package/test
-operations, checks the diff before committing, and never publishes without
-explicit participant intent and current executor authorization. A successful
-answer names changed files, validation and exit status, resource links, commit
-SHA, and PR URL when present.
+operations, checks the diff before committing, stays on
+`AVALON_GIT_BRANCH`, and follows the connector's effective remote access. A
+successful answer names changed files, validation and exit status, resource
+links, commit SHA, and PR URL when present.
 It reports unsupported runtimes, managers, network denials, and unrun validation
 instead of silently substituting another environment.
 
@@ -1266,15 +1360,14 @@ work. A call blocked by the breaker returns the normal model-visible
 7. A private fixture repository can clone, edit, validate, diff, and commit with
    real Git while token-exposure attacks reveal at most opaque placeholders.
 8. Every Terminal tool is exposed together whenever the plugin is loaded; there
-   are no read/edit or publication tool subsets. Terminal commands still cannot
-   push or mutate a PR. `publish_branch_and_pr` fast-forwards only the fixed
-   branch and creates or updates exactly one expected PR after current
-   authorization succeeds.
-9. Publication rejects a missing/expired/model-forged grant, dirty tree, wrong repository/ref/base, non-fast-forward,
-   default-branch update, force/delete, workflow change, revoked connection, and
-   caller credential. A response-loss retry returns the same PR. A later call for
-   a closed or merged PR returns `publication_target_closed` and creates no new
-   branch, PR, or reopened PR.
+   are no read/edit or publication tool subsets. Read-only repository credentials
+   reject push and GitHub mutation. Full-access credentials let standard `git`
+   and `gh` update the automatically prepared word-based branch and its PR over
+   multiple commits and sessions.
+9. Before every model-facing repository operation, bootstrap restores or creates
+   the recorded branch, checks it out, sets `AVALON_GIT_BRANCH`, and rotates a
+   stale or policy-invalidated credential. The optional typed publisher still
+   rejects dirty/wrong/conflicting state and reconciles a response-loss retry.
 10. Attached text, image, and dataset resources import at an automatic path. An
     explicit destination is create-only unless the model supplies
     `overwrite: true`; existing, missing, unauthorized, detached, oversized, or
@@ -1338,10 +1431,12 @@ work. A call blocked by the breaker returns the normal model-visible
     rediscovery exposes only the currently authorized inventory. Complete logs
     and final diffs use generated-resource ownership and its deletion outbox, so
     lifecycle tests leave no orphan Terminal R2 key.
-20. Product tests and visible-window QA cover repository chooser loading,
-    disconnected, empty, revoked, cancelled, and selected states; unsupported
-    region Settings; command running/offline/reconnecting/full-log states; and
-    publication publishing/created/updated/unchanged/failed states.
+20. Product tests and visible-window QA cover the dynamic GitHub connector
+    settings row, all/selected policy, repository search, read-only/full remote
+    labels, model checkout, backup success/failure, revoked policy, and absence
+    of a participant chooser; unsupported region Settings; command
+    running/offline/reconnecting/full-log states; and publication
+    publishing/created/updated/unchanged/failed states.
 21. In the implementation change, this durable tool material moves into the
     owning subsystem documents and their running changelogs, and every shipped
     descriptor is rechecked against [`../../agent-tools.md`](../../agent-tools.md)

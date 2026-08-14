@@ -36,6 +36,22 @@ function runtime(initial: Record<string, string> = {}) {
         completedAt: "2026-08-13T00:00:00.010Z",
       };
     },
+    async checkoutRepository(_context, input) {
+      return {
+        repository: input.repositoryFullName,
+        repositoryId: 41,
+        connectionId: "connection-1",
+        connectionName: "GitHub",
+        baseRef: "main",
+        baseSha: "a".repeat(40),
+        headRef: "avalon/workstream-1",
+        remoteAccess: input.requiredRemoteAccess,
+        localEditsAllowed: true,
+        remoteWritesAllowed: input.requiredRemoteAccess === "full_access",
+        outcome: "selected",
+        backup: null,
+      };
+    },
     async importResource(_context, input) {
       return { resourceId: input.resourceId, filePath: ".avalon/resources/item", outcome: "created", mimeType: "text/plain", sizeBytes: 4, sourceSha256: "a".repeat(64) };
     },
@@ -70,7 +86,7 @@ function runtime(initial: Record<string, string> = {}) {
 }
 
 describe("Terminal file and command tools", () => {
-  it("freezes exact success envelopes for all eight model-facing tools", async () => {
+  it("freezes exact success envelopes for all nine model-facing tools", async () => {
     const { value } = runtime({ "notes.txt": "old\n" });
     const tools = createTerminalToolExecutors(value);
     const calls = [
@@ -94,6 +110,15 @@ describe("Terminal file and command tools", () => {
           stdoutTruncated: false, stderrTruncated: false, durationMs: 10,
         },
         summary: "Completed printf ok",
+      }],
+      ["checkout_repository", { repositoryFullName: "avalon/repo", requiredRemoteAccess: "read_only" }, {
+        output: {
+          repository: "avalon/repo", repositoryId: 41, connectionId: "connection-1", connectionName: "GitHub",
+          baseRef: "main", baseSha: "a".repeat(40), headRef: "avalon/workstream-1",
+          remoteAccess: "read_only", localEditsAllowed: true, remoteWritesAllowed: false,
+          outcome: "selected", backup: null,
+        },
+        summary: "Checked out avalon/repo with read-only remote access; local edits remain allowed",
       }],
       ["import_resource", { resourceId: "00000000-0000-4000-8000-000000000001" }, {
         output: {
@@ -182,18 +207,17 @@ describe("Terminal file and command tools", () => {
     await expect(createTerminalToolExecutors(value).read_file({ filePath }, context)).rejects.toBeInstanceOf(TerminalToolError);
   });
 
-  it("returns nonzero exits as final command results and rejects remote GitHub writes before execution", async () => {
+  it("returns nonzero exits as final results and lets repository policy govern standard GitHub CLI writes", async () => {
     const { value } = runtime();
     const tools = createTerminalToolExecutors(value);
     await expect(tools.run_command({ command: "false" }, context)).resolves.toMatchObject({
       output: { state: "failed", terminationReason: "exited", exitCode: 1, stderr: "failed\n" },
     });
-    await expect(tools.run_command({ command: "git push origin HEAD" }, context)).rejects.toMatchObject({
-      code: "command_rejected",
-      details: { reason: expect.stringContaining("publish_branch_and_pr") },
+    await expect(tools.run_command({ command: "git push origin HEAD" }, context)).resolves.toMatchObject({
+      output: { state: "completed", exitCode: 0 },
     });
-    await expect(tools.run_command({ command: "gh pr create --title nope" }, context)).rejects.toMatchObject({
-      code: "command_rejected",
+    await expect(tools.run_command({ command: "gh pr create --title ship" }, context)).resolves.toMatchObject({
+      output: { state: "completed", exitCode: 0 },
     });
   });
 });
