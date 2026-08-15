@@ -1,6 +1,7 @@
 import {
   ExternalActorSchema,
   type ExternalActor,
+  type Scope,
   type SlackOriginContext,
   type SlackSearchAuthorization,
 } from "@avalon/contracts";
@@ -64,6 +65,13 @@ export class SlackWorkspaceWorkstreamService {
     objective: string;
     creatorUserId?: string | null;
     originResource?: OriginResourceDescriptor;
+    /**
+     * The conversation's own audience, carried onto the work stream. A private
+     * Slack channel opens a private work stream whose room is
+     * `participantUserIds` — see `connector-workstream-audience.ts`.
+     */
+    scope?: Scope;
+    participantUserIds?: string[];
   }) {
     const actor = ExternalActorSchema.parse(input.actor);
     const title = input.title ?? provisionalWorkstreamTitle(input.objective, "Slack task");
@@ -86,7 +94,8 @@ export class SlackWorkspaceWorkstreamService {
       openingAuthor: { type: "external", actor },
       openingMessage: input.text,
       clientMessageId: input.clientMessageId,
-      participantUserIds: [],
+      participantUserIds: input.participantUserIds ?? [],
+      ...(input.scope ? { scope: input.scope } : {}),
     });
     await recordWorkstreamCreatedTelemetry(this.env, {
       workspaceId: this.workspaceId,
