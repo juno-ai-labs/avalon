@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString } from "../src/lib/crypto";
 import { SlackAgentService } from "../src/services/slack-agent-service";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestDurableObjectId,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 
 /**
@@ -44,7 +48,7 @@ describe("who may continue a Slack work stream", () => {
     // stream in Avalon — worse than the public work stream this replaced.
     const database = await seededDatabase();
     insertEventJob(database, "event:private", appMention("EvPrivate", { channelType: "group" }));
-    stubSlack({ privateChannel: true, members: ["U456", "UKAT", "USTRANGER"] });
+    const slack = stubSlack({ privateChannel: true, members: ["U456", "UKAT", "USTRANGER"] });
 
     await service(database).processQueuedIngress("event:private");
 
@@ -59,6 +63,9 @@ describe("who may continue a Slack work stream", () => {
       // enough to seat somebody and not enough to run as them.
       { user_id: KAT },
     ]);
+    // Taylor's account link resolves in the bulk D1 read. Only the two members
+    // with no stored mapping spend a Slack profile lookup.
+    expect(slack.methods.filter((method) => method === "users.info")).toHaveLength(2);
   });
 
   it("opens a public work stream from a public channel without reading the roster", async () => {
@@ -75,13 +82,29 @@ describe("who may continue a Slack work stream", () => {
     expect(slack.methods).not.toContain("conversations.members");
   });
 
+  it("bounds profile lookups for an unmapped private audience", async () => {
+    const database = await seededDatabase();
+    insertEventJob(database, "event:bounded", appMention("EvBounded", { channelType: "group" }));
+    const slack = stubSlack({
+      privateChannel: true,
+      members: ["U456", ...Array.from({ length: 18 }, (_, index) => `UUNKNOWN${index}`)],
+      profileDelayMs: 5,
+    });
+
+    await service(database).processQueuedIngress("event:bounded");
+
+    expect(slack.maxProfilesInFlight).toBeLessThanOrEqual(6);
+    expect(slack.methods.filter((method) => method === "users.info")).toHaveLength(18);
+  });
+
   it("lets a different linked member continue the thread, under their own authority", async () => {
     // The refusal this replaces. Adam is linked, and is not the member who
     // started the thread.
     const database = await seededDatabase();
     insertEventJob(database, "event:open", appMention("EvOpen"));
     stubSlack({ privateChannel: false, members: ["U456"] });
-    await service(database).processQueuedIngress("event:open");
+    const roomEvents: Record<string, unknown>[] = [];
+    await service(database, roomEvents).processQueuedIngress("event:open");
 
     insertEventJob(database, "event:reply", appMention("EvReply", {
       user: "UADAM",
@@ -90,7 +113,7 @@ describe("who may continue a Slack work stream", () => {
       text: "<@UBOT> Avalon, do the deep research on every Delta company too",
     }));
     stubSlack({ privateChannel: false, members: ["U456"] });
-    await service(database).processQueuedIngress("event:reply");
+    await service(database, roomEvents).processQueuedIngress("event:reply");
 
     const messages = database.prepare(
       "SELECT author_type, author_user_id, text_content FROM messages ORDER BY sequence_number",
@@ -105,6 +128,36 @@ describe("who may continue a Slack work stream", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM workstream_participants WHERE user_id = ?",
     ).get(ADAM)).toEqual({ count: 1 });
+    expect(roomEvents).toContainEqual(expect.objectContaining({
+      type: "participant_added",
+      participant: expect.objectContaining({
+        user: expect.objectContaining({ id: ADAM }),
+      }),
+    }));
+  });
+
+  it("routes needs-input delivery to the member who triggered the run", async () => {
+    const database = await seededDatabase();
+    insertEventJob(database, "event:delivery-open", appMention("EvDeliveryOpen"));
+    stubSlack({ privateChannel: false, members: ["U456"] });
+    const slackService = service(database);
+    await slackService.processQueuedIngress("event:delivery-open");
+    const workstream = database.prepare("SELECT id FROM workstreams").get() as { id: string };
+
+    const slack = stubSlack({ privateChannel: false, members: [] });
+    await slackService.deliverWorkstreamOutcome(
+      WORKSPACE,
+      workstream.id,
+      "Which connected member should approve this?",
+      "delivery:needs-input",
+      "needs_input",
+      "USTRANGER",
+    );
+
+    expect(slack.calls.find((call) => call.method === "conversations.open")?.body)
+      .toMatchObject({ users: "USTRANGER" });
+    const controls = slack.calls.find((call) => call.method === "chat.stopStream")?.body;
+    expect(JSON.stringify(controls)).toContain("Give feedback");
   });
 
   it("records a reply from a Slack member it cannot map at all", async () => {
@@ -143,7 +196,10 @@ describe("who may continue a Slack work stream", () => {
   });
 });
 
-function service(database: DatabaseSync): SlackAgentService {
+function service(
+  database: DatabaseSync,
+  roomEvents?: Record<string, unknown>[],
+): SlackAgentService {
   return new SlackAgentService(createTestEnv({
     DB: sqliteD1(database),
     ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({
@@ -159,6 +215,17 @@ function service(database: DatabaseSync): SlackAgentService {
     WORKSTREAM_LOOP_WORKFLOW: {
       create: vi.fn(async () => ({ id: "workflow-instance" })),
     },
+    ...(roomEvents ? {
+      WORKSTREAM_ROOMS: createCloudflareTestBinding<DurableObjectNamespace>({
+        idFromName: vi.fn(() => createTestDurableObjectId("room-id")),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            roomEvents.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+            return new Response(null, { status: 204 });
+          }),
+        })),
+      }),
+    } : {}),
     SLACK_APP_ID: "A1",
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
@@ -180,12 +247,26 @@ const SLACK_PEOPLE: Record<string, { name: string; email: string | null }> = {
 function stubSlack(options: {
   privateChannel: boolean;
   members: string[];
-}): { methods: string[] } {
+  profileDelayMs?: number;
+}): {
+  methods: string[];
+  calls: Array<{ method: string; body: Record<string, unknown> }>;
+  readonly maxProfilesInFlight: number;
+} {
   const methods: string[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+  const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  let profilesInFlight = 0;
+  let maxProfilesInFlight = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
     const method = url.pathname.split("/").at(-1)!;
     methods.push(method);
+    calls.push({
+      method,
+      body: init?.body
+        ? JSON.parse(String(init.body)) as Record<string, unknown>
+        : Object.fromEntries(url.searchParams),
+    });
     const body = (payload: Record<string, unknown>) => new Response(
       JSON.stringify({ ok: true, ...payload }),
       { status: 200, headers: { "content-type": "application/json" } },
@@ -202,25 +283,44 @@ function stubSlack(options: {
       });
     }
     if (method === "conversations.members") return body({ members: options.members });
+    if (method === "conversations.open") return body({ channel: { id: "D123" } });
     if (method === "users.info") {
-      const requested = url.searchParams.get("user") ?? "U456";
-      const person = SLACK_PEOPLE[requested] ?? { name: requested, email: null };
-      return body({
-        user: {
-          id: requested,
-          team_id: "T123",
-          deleted: false,
-          is_bot: false,
-          name: person.name,
-          profile: { display_name: person.name, real_name: person.name, email: person.email },
-        },
-      });
+      profilesInFlight += 1;
+      maxProfilesInFlight = Math.max(maxProfilesInFlight, profilesInFlight);
+      try {
+        if (options.profileDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, options.profileDelayMs));
+        }
+        const requested = url.searchParams.get("user") ?? "U456";
+        const person = SLACK_PEOPLE[requested] ?? { name: requested, email: null };
+        return body({
+          user: {
+            id: requested,
+            team_id: "T123",
+            deleted: false,
+            is_bot: false,
+            name: person.name,
+            profile: { display_name: person.name, real_name: person.name, email: person.email },
+          },
+        });
+      } finally {
+        profilesInFlight -= 1;
+      }
     }
     if (method === "conversations.history") return body({ messages: [], has_more: false });
     if (method === "chat.startStream") return body({ channel: "C123", ts: "2.0" });
+    if (method === "chat.appendStream" || method === "chat.stopStream" || method === "chat.postMessage") {
+      return body({ channel: "C123", ts: "2.0" });
+    }
     return body({ channel: { id: "C123" }, ts: "1.1" });
   }));
-  return { methods };
+  return {
+    methods,
+    calls,
+    get maxProfilesInFlight() {
+      return maxProfilesInFlight;
+    },
+  };
 }
 
 function appMention(eventId: string, overrides: {
@@ -271,9 +371,9 @@ async function seededDatabase(): Promise<DatabaseSync> {
   );
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
-      ('${TAYLOR}', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01'),
-      ('${ADAM}', 'google-adam', 'adam@example.com', 'Adam', '2026-01-01', '2026-01-01'),
-      ('${KAT}', 'google-kat', 'kat@example.com', 'Kat', '2026-01-01', '2026-01-01');
+      ('${TAYLOR}', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+      ('${ADAM}', 'google-adam', 'adam@example.com', 'Adam', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+      ('${KAT}', 'google-kat', 'kat@example.com', 'Kat', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
     INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES ('${WORKSPACE}', 'Slack Workspace', 'slack-workspace', 'global', '${TAYLOR}',
             '2026-01-01', '2026-01-01');
