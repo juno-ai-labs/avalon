@@ -136,13 +136,29 @@ describe("who may continue a Slack work stream", () => {
     }));
   });
 
-  it("routes needs-input delivery to the member who triggered the run", async () => {
+  it("routes needs-input delivery to the triggering member despite a stale installation link", async () => {
     const database = await seededDatabase();
     insertEventJob(database, "event:delivery-open", appMention("EvDeliveryOpen"));
     stubSlack({ privateChannel: false, members: ["U456"] });
     const slackService = service(database);
     await slackService.processQueuedIngress("event:delivery-open");
     const workstream = database.prepare("SELECT id FROM workstreams").get() as { id: string };
+    // A reinstall can leave an active identity link attached to the retired
+    // connection. It must not answer whether this installation is linked.
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, granted_scopes_json, status, cursor_json, config_json,
+         created_at, updated_at, model_plugin_id)
+      VALUES ('connection-stale', '${WORKSPACE}', 'slack', 'workspace', NULL, 'T123',
+              'Retired Slack', '[]', 'disabled', '{}', '{}', '2025-12-01', '2025-12-01',
+              'plugin_slack_stale');
+      INSERT INTO slack_user_links
+        (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
+         status, created_at, updated_at)
+      VALUES ('link-stale-stranger', '${WORKSPACE}', 'connection-stale', '${KAT}',
+              'T123', 'USTRANGER', 'active', '2025-12-01', '2025-12-01');
+    `);
 
     const slack = stubSlack({ privateChannel: false, members: [] });
     await slackService.deliverWorkstreamOutcome(
@@ -160,19 +176,20 @@ describe("who may continue a Slack work stream", () => {
     expect(JSON.stringify(controls)).toContain("Give feedback");
   });
 
-  it("records a reply from a Slack member it cannot map at all", async () => {
+  it("records an unmapped member's reply in a private conversation", async () => {
     const database = await seededDatabase();
-    insertEventJob(database, "event:open", appMention("EvOpen2"));
-    stubSlack({ privateChannel: false, members: ["U456"] });
+    insertEventJob(database, "event:open", appMention("EvOpen2", { channelType: "group" }));
+    stubSlack({ privateChannel: true, members: ["U456"] });
     await service(database).processQueuedIngress("event:open");
 
     insertEventJob(database, "event:stranger", appMention("EvStranger", {
       user: "USTRANGER",
       threadTs: "1.0",
       ts: "1.2",
+      channelType: "group",
       text: "<@UBOT> Avalon, we would get stomped in SEO by Delta Air Lines",
     }));
-    stubSlack({ privateChannel: false, members: ["U456"] });
+    stubSlack({ privateChannel: true, members: ["U456"] });
     await service(database).processQueuedIngress("event:stranger");
 
     // Under their Slack identity, with no Avalon account invented for them:
@@ -190,6 +207,8 @@ describe("who may continue a Slack work stream", () => {
       provider: "slack",
       providerUserId: "USTRANGER",
     });
+    expect(database.prepare("SELECT scope FROM workstreams").get())
+      .toEqual({ scope: "personal" });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM workstream_participants",
     ).get()).toEqual({ count: 1 });
