@@ -147,7 +147,8 @@ conversation it came from.**
   later is seated by their own message, which is what makes a private work stream answer them
   rather than 404 at them. Membership is only ever admitted, never revoked — somebody who leaves
   the provider conversation keeps the work stream, because removing them is a membership
-  decision a person makes.
+  decision a person makes. Connector admission publishes the same `participant_added` event as
+  the in-product participant picker, so connected clients see the durable room change immediately.
 - A person the connector cannot map to an Avalon account is not an obstacle. Their message is
   recorded under their external actor, because a work stream that silently drops what somebody
   said in the conversation it lives in is worse than one whose participant list is shorter than
@@ -162,6 +163,11 @@ enough to credit somebody and enough to seat them in a private room; it is not e
 their credentials. Two consecutive messages in one conversation can therefore run under
 different principals, exactly as they do when two members type into the same work stream in
 Avalon.
+
+Conversation rosters resolve as a batch. The connector asks D1 once for every identity it already
+knows, enriches only the unresolved provider members, and bounds that provider work by concurrency
+and one shared deadline. Do not turn roster size into one database query and one unconstrained API
+request per member: private conversations may legitimately reach the connector's 200-member cap.
 
 ### Delivering automation results to a person
 
@@ -656,6 +662,24 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-15 — Conversation audiences resolve in bulk and announce admissions
+
+**What changed:** Conversation rosters now resolve known identities in one D1 query. Slack enriches
+only unresolved members, at six profile requests at a time under one ten-second deadline. A member
+admitted by a later connector message also emits `participant_added` after the durable write.
+
+**Why:** A 200-member private conversation previously risked one Slack profile request and several
+D1 reads per member, which could exhaust provider or Worker limits before the prompt started.
+Writing a participant without the room event also left an already-open People rail behind D1.
+
+**Considered and rejected:** Treating the 200-member roster cap as sufficient bounding, and relying
+on a later work-stream snapshot to repair connected clients. Neither bounds concurrent external
+work nor preserves the participant service's existing live-update contract.
+
+**Consequences:** Known mappings cost no provider profile calls; email enrichment remains best
+effort within the shared deadline. Consumers must continue to handle replayed `participant_added`
+events idempotently.
 
 ### 2026-08-13 — Repository policy stays authoritative through drift and recovery
 

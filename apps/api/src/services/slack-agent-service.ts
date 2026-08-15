@@ -146,12 +146,17 @@ const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
  * stream it starts.
  *
  * A room, not an import. Slack's own page size is 200 and this deliberately
- * does not follow the cursor past it: each member costs a `users.info` call on
- * the path of somebody waiting for an answer, and a private channel larger than
- * this is not an audience a work stream can usefully mean. Everyone past the
- * limit is seated the moment they reply, by the same rule that seats anyone.
+ * does not follow the cursor past it: every member not already mapped can cost a
+ * `users.info` call on the path of somebody waiting for an answer, and a private
+ * channel larger than this is not an audience a work stream can usefully mean.
+ * Everyone past the limit is seated the moment they reply, by the same rule that
+ * seats anyone.
  */
 const SLACK_AUDIENCE_MEMBER_LIMIT = 200;
+/** Stay within the Worker fetch pool and avoid bursting Slack's profile API. */
+const SLACK_AUDIENCE_PROFILE_CONCURRENCY = 6;
+/** One shared budget, so a large private room cannot hold prompt admission indefinitely. */
+const SLACK_AUDIENCE_PROFILE_TIMEOUT_MS = 10_000;
 
 /**
  * The `error_code` values a job carries when it failed on authorization, and so
@@ -1094,6 +1099,7 @@ export class SlackAgentService {
     text: string,
     deliveryKey: string,
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped",
+    triggeringSlackUserId: string | null = null,
   ): Promise<void> {
     const session = await this.env.DB.prepare(
       `SELECT * FROM slack_agent_sessions WHERE workspace_id = ? AND workstream_id = ?`,
@@ -1110,13 +1116,15 @@ export class SlackAgentService {
         ).bind(workspaceId, workstreamId).first<{ prompt: string; target_user_id: string | null }>()
       : null;
     const responseText = openElicitation?.prompt || text || "Avalon completed the task without a text response.";
-    // Asked live rather than read off the session row. The row used to carry
-    // the member the thread was pinned to, which was also the answer to "is
-    // there an Avalon account behind this thread"; without the pin, the honest
-    // form of that question is whether the Slack member who opened it has a
-    // link *now* — they may have connected since, and one small read is worth
-    // less than a feedback button that never works.
-    const authorLinked = await this.slackUserIsLinked(session.slack_team_id, session.slack_user_id);
+    // The session row names the person who opened the thread. Runs no longer
+    // belong to that one person, so delivery follows the member whose message
+    // triggered this run. Old workflow payloads lack the field and safely fall
+    // back to the opener while they drain during deployment.
+    const deliverySlackUserId = triggeringSlackUserId ?? session.slack_user_id;
+    const deliveryUserLinked = await this.slackUserIsLinked(
+      session.slack_team_id,
+      deliverySlackUserId,
+    );
     let delivered = false;
     let streamContentComplete = false;
     let deliveryError: unknown;
@@ -1129,7 +1137,7 @@ export class SlackAgentService {
         await slackApi(token, "chat.stopStream", {
           channel: session.slack_channel_id,
           ts: session.slack_stream_ts,
-          blocks: responseActionBlocks(workstreamId, this.env.PUBLIC_WEB_BASE_URL, authorLinked),
+          blocks: responseActionBlocks(workstreamId, this.env.PUBLIC_WEB_BASE_URL),
         }, AbortSignal.timeout(10_000));
         delivered = true;
       }
@@ -1168,15 +1176,16 @@ export class SlackAgentService {
           thread_ts: session.slack_thread_ts,
           client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:controls`),
           text: "Avalon task controls",
-          blocks: responseActionBlocks(workstreamId, this.env.PUBLIC_WEB_BASE_URL, authorLinked),
+          blocks: responseActionBlocks(workstreamId, this.env.PUBLIC_WEB_BASE_URL),
         }, AbortSignal.timeout(10_000));
       }
-      // A run that asked for something only a connected member can give, in a
-      // thread whose author is not one. There is nothing to *claim* any more —
-      // the reply itself carries whoever sends it — so this is a nudge to
-      // connect and an invitation to answer, not a gate in front of the thread.
-      if (outcomeStatus === "needs_input" && !authorLinked) {
-        const dmChannel = await this.openDm(token, session.slack_user_id);
+      // A run that asked for something only a connected member can give, when
+      // the member who triggered this run is not connected. There is nothing
+      // to *claim* any more — the reply itself carries whoever sends it — so
+      // this is a nudge to connect and an invitation to answer, not a gate in
+      // front of the thread.
+      if (outcomeStatus === "needs_input" && !deliveryUserLinked) {
+        const dmChannel = await this.openDm(token, deliverySlackUserId);
         // A button rather than a minted URL: this DM is a notification a member
         // may open hours later, and a challenge embedded in it would be long
         // dead by then with nothing on screen to say so.
@@ -2367,8 +2376,8 @@ export class SlackAgentService {
    *
    * Bounded at {@link SLACK_AUDIENCE_MEMBER_LIMIT} because this is a room, not
    * an import: a 2,000-person private channel is not a work stream's audience in
-   * any useful sense, and paging all of it would cost one `users.info` per
-   * member on the path of somebody waiting for an answer.
+   * any useful sense. Known identities resolve in one D1 read; the remaining
+   * `users.info` calls run with bounded concurrency and one shared deadline.
    */
   private async slackConversationAudience(
     token: string,
@@ -2383,36 +2392,62 @@ export class SlackAgentService {
         limit: SLACK_AUDIENCE_MEMBER_LIMIT,
       }, AbortSignal.timeout(10_000));
       const members = listed.members.slice(0, SLACK_AUDIENCE_MEMBER_LIMIT);
-      const described = await Promise.all(members.map(async (memberId): Promise<ConnectorConversationMember | null> => {
-        try {
-          const result = await slackApi(
-            token,
-            "users.info",
-            { user: memberId },
-            AbortSignal.timeout(10_000),
-          );
-          if (!validSlackHuman(result.user, teamId) || result.user.id !== memberId) return null;
-          return {
-            actor: ExternalActorSchema.parse({
-              provider: "slack",
-              providerAccountId: teamId,
-              providerUserId: memberId,
-              displayName: slackHumanDisplayName(result.user),
-              avatarUrl: result.user.profile?.image_192 ?? result.user.profile?.image_72 ?? null,
-            }),
-            verifiedEmail: result.user.profile?.email ?? null,
-          } satisfies ConnectorConversationMember;
-        } catch {
-          // The bot cannot describe this member. Everyone else still counts.
-          return null;
-        }
-      }));
-      const audience = await resolveConnectorAudience(
+      // Account links, stored identities, and personal connections need only
+      // the provider ids Slack already returned. Resolve those in one D1 read
+      // before spending a provider call on anybody.
+      const knownAudience = await resolveConnectorAudience(
         this.env,
         workspaceId,
-        described.filter((member): member is ConnectorConversationMember => member !== null),
+        members.map((memberId) => ({
+          actor: ExternalActorSchema.parse({
+            provider: "slack",
+            providerAccountId: teamId,
+            providerUserId: memberId,
+            displayName: memberId,
+            avatarUrl: null,
+          }),
+        })),
       );
-      return audience.userIds;
+      const unresolvedMemberIds = knownAudience.unresolvedIndexes.map((index) => members[index]!);
+      const described: ConnectorConversationMember[] = [];
+      const profileSignal = AbortSignal.timeout(SLACK_AUDIENCE_PROFILE_TIMEOUT_MS);
+      for (
+        let offset = 0;
+        offset < unresolvedMemberIds.length && !profileSignal.aborted;
+        offset += SLACK_AUDIENCE_PROFILE_CONCURRENCY
+      ) {
+        const batch = unresolvedMemberIds.slice(
+          offset,
+          offset + SLACK_AUDIENCE_PROFILE_CONCURRENCY,
+        );
+        const page = await Promise.all(batch.map(async (memberId): Promise<ConnectorConversationMember | null> => {
+          try {
+            const result = await slackApi(
+              token,
+              "users.info",
+              { user: memberId },
+              profileSignal,
+            );
+            if (!validSlackHuman(result.user, teamId) || result.user.id !== memberId) return null;
+            return {
+              actor: ExternalActorSchema.parse({
+                provider: "slack",
+                providerAccountId: teamId,
+                providerUserId: memberId,
+                displayName: slackHumanDisplayName(result.user),
+                avatarUrl: result.user.profile?.image_192 ?? result.user.profile?.image_72 ?? null,
+              }),
+              verifiedEmail: result.user.profile?.email ?? null,
+            } satisfies ConnectorConversationMember;
+          } catch {
+            // The bot cannot describe this member. Everyone else still counts.
+            return null;
+          }
+        }));
+        described.push(...page.filter((member): member is ConnectorConversationMember => member !== null));
+      }
+      const describedAudience = await resolveConnectorAudience(this.env, workspaceId, described);
+      return [...new Set([...knownAudience.userIds, ...describedAudience.userIds])];
     } catch (error) {
       if (slackReconnectRequired(error)) {
         await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
@@ -2477,6 +2512,7 @@ export class SlackAgentService {
     ).bind(connectionId, slackUserId).first<{ context_json: string }>();
     return SlackOriginContextSchema.parse({
       teamId,
+      actorSlackUserId: slackUserId,
       channelId: source.channelId,
       channelName: source.channelName,
       threadTs: source.threadTs,
@@ -3308,7 +3344,7 @@ function unlinkedHome(): Record<string, unknown>[] {
   return [
     { type: "header", text: { type: "plain_text", text: "Meet Avalon" } },
     { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Avalon workspace tools and remain attributed to your Slack identity. Avalon uses bounded Slack activity and task-specific context for requested work and configured automations; it does not recreate Slack as a parallel inbox or searchable workspace." } },
-    { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account to claim tasks that need personal authority, use your personal connectors, and see assigned work in Avalon. The same step connects personal Slack tools, so Avalon can search and act in Slack with your own permissions." } },
+    { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account so messages you send can run with your personal authority, use your personal connectors, and make your Slack work visible in Avalon. The same step connects personal Slack tools, so Avalon can search and act in Slack with your own permissions." } },
     // Deliberately not a `url` button: the handoff URL carries a single-use
     // challenge, and this view outlives any expiry short enough to be safe.
     { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "avalon_connect" }] },
@@ -3365,10 +3401,10 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
   return blocks;
 }
 
-function responseActionBlocks(workstreamId: string, webBase: string, linked: boolean): Record<string, unknown>[] {
+function responseActionBlocks(workstreamId: string, webBase: string): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
     { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "avalon_open_task" },
-    ...(linked ? [{ type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "avalon_feedback", value: workstreamId }] : []),
+    { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "avalon_feedback", value: workstreamId },
   ] }, aiResponseDisclaimerBlock()];
 }
 
