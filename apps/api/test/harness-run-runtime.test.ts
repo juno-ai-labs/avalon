@@ -1184,6 +1184,144 @@ describe("durable harness attempt runtime", () => {
     ]);
   });
 
+  it("rebinds a settled read receipt whose coordinates a re-executed pass reused", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-receipt-reuse",
+      owner: "owner-receipt-reuse",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    const readPlan = {
+      pluginId: "avalon:tool-discovery",
+      canonicalToolName: "load_plugin",
+      capability: "tools.discover",
+      connectionId: null,
+      mode: "read",
+      idempotency: "safe",
+      toolSurfaceHash: "discovery-surface-v1",
+    };
+    const coordinates = {
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      // The positional receipt id a restarted pass mints again from turn one.
+      toolCallId: `${RUN_ONE}:turn:1:tool:0`,
+      mode: "read" as const,
+    };
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      invocationId: "invocation-reused-coordinate",
+      toolName: "load_plugin",
+      inputHash: "terminal-plugin",
+      input: { pluginId: "avalon_terminal" },
+      plan: readPlan,
+    })).toMatchObject({ state: "created" });
+    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-reused-coordinate",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/loaded-terminal.json",
+      outputSummary: "Loaded Terminal; 9 tools are now available",
+    })).toBe("persisted");
+
+    // The identical call still replays. Rebinding may never cost a pass the
+    // result it already paid for.
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      toolName: "load_plugin",
+      inputHash: "terminal-plugin",
+      input: { pluginId: "avalon_terminal" },
+      plan: readPlan,
+    })).toMatchObject({ state: "replay_completed", invocationId: "invocation-reused-coordinate" });
+
+    // A different read landing on the same coordinate executes instead of
+    // halting the run: nothing external moved, so nothing is ambiguous.
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      toolName: "search_code",
+      inputHash: "github-search",
+      input: { query: "debug model list" },
+      plan: {
+        ...readPlan,
+        pluginId: "connection:connection-github",
+        canonicalToolName: "search_code",
+        capability: "code.read",
+        connectionId: "connection-github",
+        toolSurfaceHash: "github-surface-v1",
+      },
+    })).toMatchObject({ state: "created", invocationId: "invocation-reused-coordinate" });
+    expect(sqlite.database.prepare(
+      `SELECT tool_name, status, input_hash, output_ref, output_summary, error_json
+         FROM tool_invocations WHERE id = 'invocation-reused-coordinate'`,
+    ).get()).toEqual({
+      tool_name: "search_code",
+      status: "started",
+      input_hash: "github-search",
+      output_ref: null,
+      output_summary: null,
+      error_json: null,
+    });
+    expect(sqlite.database.prepare(
+      `SELECT phase FROM tool_invocation_checkpoints
+        WHERE tool_invocation_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
+    ).all()).toEqual([
+      { phase: "execution_planned" },
+      { phase: "result_persisted" },
+      { phase: "execution_replanned" },
+    ]);
+
+    // A write landing on a settled read coordinate still fails closed, and a
+    // read landing on a settled write coordinate reports the ambiguity rather
+    // than raising a lease failure that never happened.
+    await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-reused-coordinate",
+      checkpointIndex: 3,
+      outputRef: "payloads/runtime/searched-code.json",
+      outputSummary: "Found 3 matches",
+    });
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      mode: "write",
+      toolName: "publish_branch_and_pr",
+      inputHash: "publish",
+      input: { branch: "add-model" },
+      plan: { ...readPlan, canonicalToolName: "publish_branch_and_pr", mode: "write" },
+    })).toMatchObject({ state: "ambiguous_external_write" });
+
+    const settledWrite = `${RUN_ONE}:turn:2:tool:0`;
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      toolCallId: settledWrite,
+      invocationId: "invocation-settled-write",
+      mode: "write",
+      toolName: "publish_branch_and_pr",
+      inputHash: "publish",
+      input: { branch: "add-model" },
+      plan: { ...readPlan, canonicalToolName: "publish_branch_and_pr", mode: "write" },
+    });
+    await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-settled-write",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/published.json",
+      outputSummary: "Opened pull request",
+    });
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      toolCallId: settledWrite,
+      toolName: "load_plugin",
+      inputHash: "github-plugin",
+      input: { pluginId: "plugin_github" },
+      plan: readPlan,
+    })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-settled-write" });
+    expect(sqlite.database.prepare(
+      "SELECT status FROM tool_invocations WHERE id = 'invocation-settled-write'",
+    ).get()).toEqual({ status: "completed" });
+  });
+
   it("does not publish an R2 result reference when its lease is lost after upload", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
