@@ -56,15 +56,28 @@ filters), attendees with join/leave times, duration, analytics, media URLs,
 and the meeting link — the source material for the PRD's three static tools
 and the poll checkpoint (`fromDate` cursor).
 
+The `transcripts` query paginates **transcripts** with `limit`/`skip`; there
+is no server-side pagination of a single transcript's `sentences` array, and
+no documented stable ordering or tie-breaker within a timestamp boundary —
+which is why the PRD's transcript tool re-fetches the whole document per page
+and the poll uses an overlap window with insert-level dedupe rather than
+trusting the ordering.
+
 ## Webhooks
 
 Two generations. **Webhooks V2**
 (<https://docs.fireflies.ai/graphql-api/webhooks-v2>) is the one the PRD
 targets:
 
-- Registered **in the Fireflies dashboard UI only** (HTTPS URL + optional
-  signing secret); there is no registration API. Hence the PRD's
-  webhooks-optional, polling-authoritative design.
+- Registered **on Fireflies' dedicated Webhooks V2 configuration page in the
+  dashboard only** (HTTPS URL + optional signing secret + per-event
+  subscription); there is no registration API. This page is distinct from the
+  legacy Developer-settings webhook and from the Enterprise Super-Admin
+  team-wide webhook. Hence the PRD's webhooks-optional,
+  polling-authoritative design.
+- V2 events are emitted for meetings owned by the webhook's account, while a
+  Super Admin key can *query* the wider team-visible set — another reason the
+  webhook cannot drive the poll checkpoint.
 - Events: `meeting.transcribed`, `meeting.summarized`, `meeting.bot_joined`,
   individually selectable.
 - Payload: JSON `{ event, timestamp, meeting_id, client_reference_id? }` —
@@ -87,6 +100,13 @@ Per <https://docs.fireflies.ai/getting-started/mcp-configuration> and
 - Remote server at `https://api.fireflies.ai/mcp`, HTTP transport, supporting
   **OAuth against the Fireflies account** (the PRD's personal flow) or a
   Bearer API key.
+- **Build precondition, unverified:** the docs say "OAuth" but do not
+  establish that the server publishes `/.well-known/oauth-protected-resource`
+  metadata or accepts dynamic client registration, both of which
+  `createHostedMcpPassthrough`'s `oauth` block requires. Verify before the
+  personal scope is built; if Fireflies requires a pre-registered client, the
+  flow instead needs per-region `FIREFLIES_OAUTH_CLIENT_ID/SECRET` Worker
+  secrets, per-region redirect URIs, and a conditional registry entry.
 - Read tools: `fireflies_search` (experimental), `fireflies_get_transcripts`,
   `fireflies_get_transcript`, `fireflies_fetch` (experimental),
   `fireflies_get_summary`, `fireflies_get_active_meetings`,
