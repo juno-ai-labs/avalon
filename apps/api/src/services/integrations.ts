@@ -1301,6 +1301,7 @@ export async function compileAutomationDraft(
       workspaceId: input.workspaceId,
       userId: input.userId,
       fallbackModels: routing.fallbackModels,
+      transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       messages: input.messages,
       ...(draftAttachments.parts.length > 0 ? { latestUserAttachmentParts: draftAttachments.parts } : {}),
       ...(architectTools.length > 0 ? { architectTools } : {}),

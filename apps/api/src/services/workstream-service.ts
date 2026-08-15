@@ -194,12 +194,21 @@ const WORKSTREAM_TOOL_TASKS_SQL = `SELECT ti.*, hr.created_at AS harness_created
   LIMIT 500`;
 
 // Codes that reach the same member surface without being harness failure codes —
-// connector-layer and run-lifecycle outcomes. They are held to the same two
-// rules as `MEMBER_SAFE_HARNESS_FAILURE_MESSAGES`: name a next action, and use
-// no word that only exists inside Avalon. `provider_error` is a *connector*
-// provider, not the model one, and used to say "the model provider could not
-// complete this run" — a sentence a reader could not tell apart from the model
-// codes it sits beside.
+// connector-layer and run-lifecycle outcomes.
+//
+// The model-facing entries were brought up to the two rules that govern
+// `MEMBER_SAFE_HARNESS_FAILURE_MESSAGES` — name a next action, and use no word
+// that only exists inside Avalon. `provider_error` is a *connector* provider,
+// not the model one, and used to say "the model provider could not complete this
+// run", a sentence a reader could not tell apart from the model codes beside it.
+//
+// **The lifecycle entries below do not meet those rules yet**, and the claim is
+// scoped rather than stated over them: `run_ownership_lost` and
+// `stale_run_reaped` still say "executor" and "execution lease", and neither
+// they nor `provider_error` name a next action. They are left as they are
+// because each needs a product answer about what a member should actually do
+// when a run is superseded or its lease expires, which is not this change's to
+// invent. Do not read the rules above as already enforced here.
 const ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS = Object.freeze({
   empty_completion: "The model returned an empty response. Try again in a moment",
   model_output_invalid: "The model returned a response Avalon could not read. Try again in a moment",

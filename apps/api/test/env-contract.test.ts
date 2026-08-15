@@ -56,6 +56,21 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(productionEnv())).not.toThrow();
   });
 
+  it("refuses a malformed retry budget rather than parsing a prefix out of it", () => {
+    // `countEnv` reads this key with `Number.parseInt`, which would take `1` out
+    // of `"1oops"` and out of `"1.5"`. It never sees either: the contract holds
+    // the key to `/^\d+$/u` and the Worker answers a 503 naming it, so a typo
+    // fails loudly at boot instead of quietly enabling a retry budget nobody
+    // configured. Zero is the one value that must pass — it is the operator's
+    // lever for stopping the harness re-requesting into a failing provider.
+    expect(() => assertEnvContract(productionEnv({ HARNESS_TRANSPORT_RETRIES: "0" }))).not.toThrow();
+    expect(() => assertEnvContract(productionEnv({ HARNESS_TRANSPORT_RETRIES: "2" }))).not.toThrow();
+    for (const malformed of ["1oops", "1.5", "-1", " 1", ""]) {
+      expect(() => assertEnvContract(productionEnv({ HARNESS_TRANSPORT_RETRIES: malformed })))
+        .toThrow(/HARNESS_TRANSPORT_RETRIES is invalid/u);
+    }
+  });
+
   it("disables Terminal gracefully when Daytona configuration is incomplete", () => {
     const incomplete = productionEnv({ TERMINAL_REGION_CAPABILITY: "supported" });
     expect(() => assertEnvContract(incomplete)).not.toThrow();

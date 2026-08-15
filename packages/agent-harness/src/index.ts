@@ -1340,6 +1340,14 @@ export async function compileAutomation(input: {
   /** Request-scoped tools owned by the preloaded automation architect. */
   architectTools?: HarnessTool[];
   maxResearchIterations?: number;
+  /**
+   * The host's transport-retry budget. Threaded in rather than defaulted here
+   * because every caller shares one module-scoped circuit breaker keyed by
+   * workspace: a compiler that kept retrying while an operator had set the
+   * deployment budget to 0 would go on charging failures against the breaker
+   * of the very work streams that switch was thrown to protect.
+   */
+  transportRetries?: number;
   maxWebResults?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
@@ -1621,6 +1629,7 @@ export async function compileAutomation(input: {
       maxToolCalls: 80,
       maxWallClockMs: 180_000,
       toolTimeoutMs: 10_000,
+      ...(input.transportRetries === undefined ? {} : { transportRetries: input.transportRetries }),
       maxWebResults: Math.max(1, Math.min(20, input.maxWebResults ?? 8)),
       maxCostCents: 1_000,
       maxCatalogTokens: 2_500,
@@ -2611,8 +2620,16 @@ export interface HarnessFailure {
     | "ambiguous_external_write"
     // The model provider, not Avalon. Its own arm rather than `execution` so a
     // caller deciding whether to retry does not have to re-derive from the code
-    // what the harness already classified.
-    | "provider";
+    // what the harness already classified. Use it only where provider ownership
+    // is *known* — see `routing` below for the case where it is not.
+    | "provider"
+    // Avalon declined to reach an endpoint: the circuit breaker was open, so no
+    // request went out. Deliberately not `provider`, even though it usually
+    // follows provider faults, because the breaker also opens on a credential or
+    // credit failure and records only that a key is open, never why. Filing that
+    // under `provider` would tell a caller branching on `kind` that an
+    // operator-actionable configuration problem is transient provider trouble.
+    | "routing";
   code: HarnessFailureCode;
   message: string;
 }
@@ -2642,8 +2659,17 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   context_limit_exceeded: "This run could not fit safely in the selected model context",
   tool_surface_too_large: "The authorized tool surface is too large for one run",
   ambiguous_external_write: "An external write may have completed, so Avalon did not retry it",
-  provider_unavailable: "The model did not respond. This usually clears on its own — try again in a moment",
-  provider_circuit_open: "Avalon paused requests to this model after repeated failures. Try again in a moment",
+  // Not "did not respond": this code also covers a 429 and a 5xx, where the
+  // service answered and the answer was an error. Naming the symptom it does not
+  // have would hand a member a diagnosis that contradicts the logs.
+  provider_unavailable: "The model service could not complete this request. This usually clears on its own — try again in a moment",
+  // Deliberately cause-neutral, and deliberately not confident that waiting is
+  // the fix. The breaker opens `open_immediately` on a credential or credit
+  // failure as readily as it does on repeated outages, and it records only that
+  // a key is open — never why. So this may not say "after repeated failures",
+  // which can be false, and may not stop at "try again", which sends someone
+  // retrying an operator-actionable problem indefinitely.
+  provider_circuit_open: "Avalon has paused requests to this model. Try again shortly — if it keeps happening, copy the request ID for support",
 });
 
 export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): string {

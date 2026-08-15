@@ -411,6 +411,7 @@ becomes long enough that a missed pass matters, revisit this together with
 `CONTROL_TOWER_REFRESH_SECONDS` rather than on its own. The retry also shares the
 final pass's 120s wall clock, and the harness declines it outright when what
 remains cannot hold another attempt.
+
 ### 2026-08-13 — Recording adoption is measurable without meeting content
 
 **What changed:** Note creation, start permission/capture outcome,

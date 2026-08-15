@@ -115,14 +115,14 @@ describe("API security utilities", () => {
       message: "upstream body that must never be shown",
     }))).toEqual({
       code: "provider_unavailable",
-      message: "The model did not respond. This usually clears on its own — try again in a moment",
+      message: "The model service could not complete this request. This usually clears on its own — try again in a moment",
     });
     expect(__workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
       code: "provider_circuit_open",
       message: "upstream body that must never be shown",
     }))).toEqual({
       code: "provider_circuit_open",
-      message: "Avalon paused requests to this model after repeated failures. Try again in a moment",
+      message: "Avalon has paused requests to this model. Try again shortly — if it keeps happening, copy the request ID for support",
     });
   });
 
