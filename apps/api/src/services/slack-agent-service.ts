@@ -1122,6 +1122,8 @@ export class SlackAgentService {
     // back to the opener while they drain during deployment.
     const deliverySlackUserId = triggeringSlackUserId ?? session.slack_user_id;
     const deliveryUserLinked = await this.slackUserIsLinked(
+      session.connection_id,
+      workspaceId,
       session.slack_team_id,
       deliverySlackUserId,
     );
@@ -1886,8 +1888,9 @@ export class SlackAgentService {
       // them in the same change as the code would break every new Slack thread
       // for the length of a deploy. A later migration may remove them after this
       // Worker has shipped everywhere. The pair written is the permissive one —
-      // an old Worker reading these rows treats the thread as workspace-owned,
-      // which is what this change makes every thread.
+      // an old Worker reading these rows treats the thread as workspace-authorized
+      // by default. The work stream's separate `scope` still controls who may
+      // read it.
       `INSERT INTO slack_agent_sessions
        (id, workspace_id, connection_id, linked_user_id, execution_scope,
         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
@@ -2813,16 +2816,22 @@ export class SlackAgentService {
    * without decrypting the installation's credentials, which the delivery path
    * has no other reason to touch.
    */
-  private async slackUserIsLinked(teamId: string, slackUserId: string): Promise<boolean> {
+  private async slackUserIsLinked(
+    connectionId: string,
+    workspaceId: string,
+    teamId: string,
+    slackUserId: string,
+  ): Promise<boolean> {
     const row = await this.env.DB.prepare(
       `SELECT 1 AS linked
          FROM slack_user_links l
          JOIN workspace_members wm
            ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
-        WHERE l.slack_team_id = ? AND l.slack_user_id = ? AND l.status = 'active'
+        WHERE l.connection_id = ? AND l.workspace_id = ?
+          AND l.slack_team_id = ? AND l.slack_user_id = ? AND l.status = 'active'
           AND wm.status = 'active'
         LIMIT 1`,
-    ).bind(teamId, slackUserId).first<{ linked: number }>();
+    ).bind(connectionId, workspaceId, teamId, slackUserId).first<{ linked: number }>();
     return row !== null;
   }
 
