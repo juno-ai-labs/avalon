@@ -74,6 +74,13 @@ includes it. Knowing an object ID is never sufficient authorization.
   parameterized by the SQL expression naming the reader so the work-stream room
   can bind by position and its eviction sweep can ask it of a whole column; a call
   site that pastes the rule instead of importing it is how it lost `scope` before.
+- A work stream born from a connector conversation uses that same scope rather
+  than introducing a second visibility model: a public conversation starts as
+  `workspace`, while a private or unclassified one starts as `personal` with the
+  conversation's resolved members seated as participants. This seeds the room at
+  creation; later speakers may join it, and the ordinary right-click scope toggle
+  may still change it. See
+  [`connectors.md`](connectors.md#a-work-streams-audience-is-the-conversation-it-started-in).
 - **A work stream moves between the two, and privacy is not ownership.**
   `PATCH /workstreams/:id` takes `scope`, and the sidebar's right-click menu offers
   it as **Make private** / **Make public to workspace**, named for the state it
@@ -508,6 +515,28 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-15 — Connector conversations seed the existing work-stream scope
+
+**What changed:** A work stream started from a connector conversation now chooses
+the existing `workstreams.scope` from that conversation: public maps to
+`workspace`, while private or unknown maps to `personal` and starts with the
+resolved conversation members as participants. Later speakers are admitted to
+the same room.
+
+**Why:** A Slack thread previously belonged to the first linked member, so other
+members of the conversation could not continue it. The work-stream scope already
+expressed the needed public/private split: `personal` has always meant active
+participants only, not one owner.
+
+**Considered and rejected:** Renaming `scope` to a second `visibility` column and
+renaming the API and socket contract around it. That duplicated an existing
+authorization model, introduced a migration window for the same two states, and
+broke released desktop clients without enabling the connector behavior.
+
+**Consequences:** Connector code translates provider-facing public/private words
+once at creation. The database, PATCH endpoint, socket event, right-click menu,
+and feature-flag targeting attribute keep their existing scope contract.
 
 ### 2026-08-13 — OAuth attempts retain one bounded telemetry contract shape
 

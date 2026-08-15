@@ -8,6 +8,7 @@ import type {
   CreateWorkstreamRequestSchema,
   ExecutionPrincipal,
   Message,
+  Scope,
   SlackOriginContext,
   SlackSearchAuthorization,
   UpdateWorkstreamRequestSchema,
@@ -110,6 +111,13 @@ type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema> & {
   originResource?: OriginResourceDescriptor;
   /** Validated request-header correlation injected by the API route. */
   telemetryOperationId?: string;
+  /**
+   * Who may read it from birth. Same reasoning as `originResource`: a request
+   * on the wire cannot claim it, because it is decided by where the work stream
+   * started — a private connector conversation opens a private work stream
+   * whose room is that conversation's members. Omitted means `workspace`.
+   */
+  scope?: Scope;
 };
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
 type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema> & {
@@ -782,6 +790,7 @@ export class WorkstreamService {
       openingMessage: input.openingMessage,
       clientMessageId: input.clientMessageId,
       participantUserIds: input.participantUserIds,
+      ...(input.scope ? { scope: input.scope } : {}),
       attachmentIds,
       // Written before the harness is launched below, which is what lets the
       // run this create starts already resolve to the pinned model.
