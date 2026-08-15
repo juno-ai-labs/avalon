@@ -204,7 +204,8 @@ The triggering Slack member travels with the workflow input through delivery. If
 input that requires a connected account, Avalon sends the connect prompt to that member rather
 than to whoever opened the work stream. Result controls are shared Slack content, so the feedback
 button is shown to everyone; the feedback submission still revalidates that the submitting member
-has an active Avalon link.
+has an active Avalon link on the installation that owns this work stream. A link left on a retired
+installation cannot suppress the current installation's connect prompt.
 
 #### Work stream attribution
 
@@ -604,11 +605,11 @@ was not recorded and is not reconstructed here.
 ### 2026-08-15 — Multi-member delivery follows the run, not the opener
 
 **What changed:** Workflow input now carries the Slack member who triggered the run, and a
-needs-input connect prompt goes to that member. Shared result blocks always show feedback while
-submission remains link-authorized. Private rosters resolve known identities in bulk, enrich only
-unresolved profiles at six requests at a time under one ten-second deadline, and later admissions
-publish `participant_added`. App Home and manifest copy now describe per-message personal
-authority instead of task claiming.
+needs-input connect prompt goes to that member, with link status scoped to the exact installation
+and workspace. Shared result blocks always show feedback while submission remains link-authorized.
+Private rosters resolve known identities in bulk, enrich only unresolved profiles at six requests
+at a time under one ten-second deadline, and later admissions publish `participant_added`. App Home
+and manifest copy now describe per-message personal authority instead of task claiming.
 
 **Why:** Once authority became per-message, session-opener state was no longer a safe proxy for
 the person whose run needed input or for every viewer of a shared Slack message. Unbounded roster
@@ -620,9 +621,9 @@ controls according to one viewer's link state. Both make one member's state gove
 run or view.
 
 **Consequences:** Old in-flight workflow payloads retain the opener fallback; new runs route to
-their actual triggering member. An unlinked viewer may open the feedback modal but cannot submit
-it. Roster enrichment is best effort within the shared deadline, and participant-event consumers
-must remain idempotent.
+their actual triggering member. A stale link on a retired installation cannot suppress the connect
+prompt. An unlinked viewer may open the feedback modal but cannot submit it. Roster enrichment is
+best effort within the shared deadline, and participant-event consumers must remain idempotent.
 
 ### 2026-08-12 — Slack MCP tools come from the active server
 
