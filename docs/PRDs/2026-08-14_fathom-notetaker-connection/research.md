@@ -13,10 +13,10 @@ asked that *Fathom's* technical documentation be referenced. Fireflies.ai and
 Fathom are different products: Fireflies exposes a GraphQL API
 (`api.fireflies.ai/graphql`, per-user API keys), while Fathom exposes the
 REST/MCP surface documented below. This PRD follows the link and the
-documentation instruction and targets **Fathom**. The ambiguity is carried as
-[`prd.md`](prd.md) Open question 1; if Fireflies was intended, the PRD is
-marked abandoned per [`../../prds.md`](../../prds.md) and rewritten against
-Fireflies' API.
+documentation instruction and targets **Fathom**. The ambiguity was resolved
+when, on being shown the discrepancy, the requester renamed the working
+branch to `fathom-connection-prd`; the resolution is recorded as
+[`prd.md`](prd.md) Key design decision 1.
 
 ## Fathom's developer surface
 
@@ -97,10 +97,32 @@ those pages on 2026-08-14.
   `webhook-timestamp`, `webhook-signature` headers; HMAC-SHA256 over
   `${id}.${timestamp}.${rawBody}`; base64 secret prefixed `whsec_`;
   space-delimited version-prefixed signatures; constant-time comparison.
-  **Identical to Granola's scheme**, so Avalon's existing verification code
-  path is reusable as-is.
+  **Identical to Granola's scheme.** Fathom is therefore the second consumer
+  of that verification procedure, which is the repository's stated trigger
+  for extracting a shared helper rather than copying it —
+  [`design.md`](design.md) specifies the shared `verifyStandardWebhook`.
 - Retry behavior on failed delivery is not documented —
   [`prd.md`](prd.md) Open question 3.
+
+### What the public docs did not record
+
+Named here so nobody mistakes the design's placeholders for verified facts;
+each is carried in [`prd.md`](prd.md)'s Open questions and resolved against
+the OpenAPI spec (or a live call) before the implementing schemas freeze:
+
+- The **API key format** — no prefix or length is documented (Open
+  question 6).
+- The **recording-identifier format** — needed for id-family validation on
+  tool inputs (Open question 8).
+- The **result ordering** of `GET /meetings` — the docs do not state
+  newest-first (Open question 8).
+- The **transcript endpoint's exact response shape**, including whether any
+  range parameter exists (Open question 8; the truncation recovery path
+  assumes none).
+- Whether the **webhook payload carries an event identifier** to cross-check
+  against `webhook-id` (Open question 7).
+- Whether **webhook endpoints can be created under an OAuth token** or only
+  under an API key (Open question 5).
 
 ## Pattern fit against Avalon's existing connectors
 
