@@ -130,6 +130,39 @@ untouched — the opening message keeps its external actor, so the transcript st
 provider identity wrote it. A connector that cannot map its actor leaves the work stream
 ownerless instead of guessing a member.
 
+### A work stream's audience is the conversation it started in
+
+`connector-workstream-audience.ts` holds the second half of the same idea, and it is
+connector-wide for the same reason: **a work stream starts with the audience of the
+conversation it came from.**
+
+- A conversation the provider calls public opens a public work stream by storing the existing
+  `workspace` scope, readable by the workspace like any other.
+- A private conversation — a private channel, a direct message, a group message — opens a
+  private work stream by storing the existing `personal` scope, whose participant room starts
+  with that conversation's resolved members. A conversation the connector cannot classify is
+  treated as private: that is the fail-closed direction, and the two mistakes do not cost the
+  same.
+- Anybody who can reach the conversation may continue the work stream. A member who arrives
+  later is seated by their own message, which is what makes a private work stream answer them
+  rather than 404 at them. Membership is only ever admitted, never revoked — somebody who leaves
+  the provider conversation keeps the work stream, because removing them is a membership
+  decision a person makes.
+- A person the connector cannot map to an Avalon account is not an obstacle. Their message is
+  recorded under their external actor, because a work stream that silently drops what somebody
+  said in the conversation it lives in is worse than one whose participant list is shorter than
+  the channel's.
+
+**Each message runs under the authority of whoever sent it**, resolved per message rather than
+per conversation: a member with an *account link* runs as themselves, and everybody else runs
+under the workspace principal. This is the one place the strength tiers above are load-bearing
+rather than descriptive — a run spends personal connectors, memory, and approvals made in
+somebody's name, so nothing weaker than a link may authorize one. A `verified_email` match is
+enough to credit somebody and enough to seat them in a private room; it is not enough to spend
+their credentials. Two consecutive messages in one conversation can therefore run under
+different principals, exactly as they do when two members type into the same work stream in
+Avalon.
+
 ### Delivering automation results to a person
 
 A connector that can hand a finished result to a specific person declares `userDelivery` in its manifest: the frozen `targetType` stored on the automation, the label and one-line description the create screen shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the "Deliver results" list, and a connector that declares nothing is never offered. The same declaration serves every personal destination Avalon has: personal automation results and the scheduled digest ([`digests.md`](digests.md)) read the same list, so a connector that starts declaring a surface becomes a destination for both without either surface changing.
@@ -488,6 +521,10 @@ or a log-based handoff a persistent credential in observability.*
 **Every rotation goes through the host, proactive and reactive alike.** A rotating refresh token is single-use, so two calls that refresh at the same moment leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. Use `withProviderReauthorization` on the rejection route and `refreshExpiringCredentials` on the near-expiry route; neither redeems a token beside the coordinator.
 
 **Say where the things you produce live.** A work stream that exists because of a place in a connected tool attaches that place, and the connector is the only thing that knows what the place is. Every adapter gets this for its activities without writing code — `connectorOriginFromActivity` reads the object normalization already recorded — so implement `ConnectorAdapter.origin` only for a place no activity describes, such as a provider-hosted agent session, or when the activity's own object is not the place a person would want to be sent back to. A described `resourceType` must be one the manifest declares in `resourceTypes`, and `describeConnectorOrigin` refuses one that is not: a typo there forks the resource identity for every work stream started from that place afterwards, and nothing downstream would notice. See [work-stream origin attachments](workstream-origin-attachments.md).
+
+**A work stream started from a conversation is that conversation's, not one member's.** Its visibility is the conversation's own — public for a public channel, private for anything else, including anything the connector could not classify — and a private one's participants are that conversation's members. Anybody in the conversation may continue it, and a member who arrives later is seated by their own message. *A Slack thread used to belong to whichever member happened to be linked first, and every other person in the channel — the workspace owner included — was answered with "this thread is already running with another Avalon member's personal authority", in a public channel, in front of everyone.*
+
+**Authority is resolved per message, and only an account link grants it.** A run spends personal connectors, memory, and approvals made in somebody's name, so it may run as a member only where that member has authenticated to Avalon and bound their provider identity to it. A `verified_email` match credits and seats somebody; it never authorizes a run as them, and a connector must not promote it to one because it makes a thread work more smoothly.
 
 **Do not spend a provider round trip on something Avalon already knows.** Revalidation between model turns is answered from D1; only an activation goes to the provider. *Eight model iterations against a workspace Granola connection made roughly twenty-four provider calls per run purely to re-establish authority already recorded locally.*
 
@@ -899,6 +936,46 @@ the provider supplies or accepts a secret through an authenticated configuration
 path, its existing setup remains sufficient. A second matching provider is the
 point to evaluate a shared adapter facet and storage model, while retaining the
 same observability and plaintext-handoff boundaries.
+
+### 2026-08-12 — A work stream belongs to the conversation it started in, not to one member
+
+**What changed:** Two connector-wide rules moved into `connector-workstream-audience.ts`. A work
+stream started from a provider conversation now maps that conversation onto the existing
+work-stream scope — public channel to `workspace`, anything else to `personal` — and a private
+one is seated with the conversation's members, resolved through the actor mapping this document
+already owned. Anybody
+in the conversation may continue it, and each message runs under the authority of whoever sent
+it: an account-linked member's own, the workspace principal for everyone else. Slack's
+per-thread pin, its claim button, and `claimWorkspaceSession` are gone.
+
+**Why:** The pin answered a real question with the wrong scope. Whose credentials a run spends
+has to be settled — that part was right and is kept, per message — but it does not require the
+*conversation* to have an owner, and making it one produced a public-channel thread that
+refused everybody except the first member who happened to be linked. In production that meant a
+workspace owner asking Avalon for deep research and being told the thread was already running
+with another member's personal authority, and a member Avalon knew by verified email being told
+an unlinked Slack member cannot continue it — both in channel, both with no way forward but
+starting a new task and losing the thread. Claiming was the sanctioned escape hatch and nobody
+used it: it moved the whole conversation's authority to the claimer rather than answering the
+one message they had just sent.
+
+**Considered and rejected:** Letting a `verified_email` match authorize a run as that member,
+which would have made every one of those refusals disappear. It inverts the tier ordering this
+document spends a section establishing — a provider profile address can belong to somebody other
+than the member that identity is linked to, and a run spends real credentials — so the match
+seats somebody in the room and credits them, and nothing more. Also rejected: keeping the pin
+and adding a "take over" button next to the refusal. It is the claim flow again with better
+copy, and it still asks a conversation to have one owner.
+
+**Consequences:** A private conversation's roster is read once, at creation, bounded at 200
+members and best-effort: `conversations.members` needs `groups:read`, which an installation that
+has not reconnected does not have, and an admitted prompt must not be dropped over a roster. The
+cost of failing is a smaller starting room, because every member is seated on their own first
+reply anyway. Membership is admitted and never revoked, so leaving the provider conversation
+does not remove somebody from the work stream — removal stays a decision a person makes.
+`slack_agent_sessions.linked_user_id` and `execution_scope` are written as fixed compatibility
+values for the previous Worker; nothing in the new Worker reads them. A later migration may
+drop them after this code has shipped everywhere.
 
 ### 2026-08-12 — A connector says where the things it produces live
 

@@ -262,82 +262,6 @@ describe("Slack workspace workstream assignment", () => {
     ]);
   });
 
-  it("changes authority only after an explicit eligible claim", async () => {
-    const database = migratedDatabase();
-    seedClaimableSession(database, "user-taylor");
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
-    const session = database.prepare(
-      "SELECT * FROM slack_agent_sessions WHERE id = 'session-claim'",
-    ).get();
-    const identity = {
-      auth: {
-        sessionId: "slack:T123:U456",
-        userId: "user-taylor",
-        workspaceId: "workspace-slack",
-        region: "global" as const,
-        role: "member" as const,
-      },
-      connection: {
-        id: "connection-slack",
-        workspace_id: "workspace-slack",
-        provider_account_id: "T123",
-        encrypted_credentials: "encrypted",
-        credential_iv: "iv",
-        granted_scopes_json: '["slack.agent"]',
-        status: "healthy",
-      },
-      slackUserId: "U456",
-      teamId: "T123",
-      token: "xoxb-test",
-    };
-    const wrongIdentity = {
-      ...identity,
-      auth: { ...identity.auth, userId: "user-owner", role: "owner" as const },
-      slackUserId: "UOWNER",
-    };
-
-    await expect(__slackAgentTesting.claimWorkspaceSession(
-      env,
-      wrongIdentity,
-      session as never,
-    )).rejects.toMatchObject({ code: "slack_claim_target_mismatch" });
-    expect(database.prepare(
-      "SELECT execution_scope FROM slack_agent_sessions WHERE id = 'session-claim'",
-    ).get()).toEqual({ execution_scope: "workspace" });
-
-    await expect(__slackAgentTesting.claimWorkspaceSession(
-      env,
-      identity,
-      session as never,
-    )).resolves.toBe("claimed");
-    await expect(__slackAgentTesting.claimWorkspaceSession(
-      env,
-      identity,
-      session as never,
-    )).resolves.toBe("already_claimed");
-
-    expect(database.prepare(
-      `SELECT execution_scope, linked_user_id, assigned_user_id, assignment_method,
-              claimed_by_slack_user_id
-       FROM slack_agent_sessions WHERE id = 'session-claim'`,
-    ).get()).toEqual({
-      execution_scope: "user",
-      linked_user_id: "user-taylor",
-      assigned_user_id: "user-taylor",
-      assignment_method: "explicit_link",
-      claimed_by_slack_user_id: "U456",
-    });
-    expect(database.prepare(
-      "SELECT user_id, participation_reason FROM workstream_participants WHERE workstream_id = 'workstream-claim'",
-    ).get()).toEqual({ user_id: "user-taylor", participation_reason: "creator" });
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM audit_events WHERE action = 'slack.workspace_workstream.claimed'",
-    ).get()).toEqual({ count: 1 });
-    expect(database.prepare(
-      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-claim'",
-    ).get()).toEqual({ created_by_user_id: "user-taylor" });
-  });
-
   it("lets an explicit account link correct a creator its own email guess produced", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
@@ -440,52 +364,6 @@ describe("Slack workspace workstream assignment", () => {
     expect(database.prepare(
       "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-elsewhere'",
     ).get()).toEqual({ created_by_user_id: "user-owner" });
-  });
-
-  it("makes a claimer who did not start the Slack task a participant, not its creator", async () => {
-    const database = migratedDatabase();
-    seedClaimableSession(database, null);
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
-    const session = database.prepare(
-      "SELECT * FROM slack_agent_sessions WHERE id = 'session-claim'",
-    ).get();
-
-    await expect(__slackAgentTesting.claimWorkspaceSession(
-      env,
-      {
-        auth: {
-          sessionId: "slack:T123:UOWNER",
-          userId: "user-owner",
-          workspaceId: "workspace-slack",
-          region: "global" as const,
-          role: "owner" as const,
-        },
-        connection: {
-          id: "connection-slack",
-          workspace_id: "workspace-slack",
-          provider_account_id: "T123",
-          encrypted_credentials: "encrypted",
-          credential_iv: "iv",
-          granted_scopes_json: '["slack.agent"]',
-          status: "healthy",
-        },
-        // A different Slack member than the one the session belongs to.
-        slackUserId: "UOWNER",
-        teamId: "T123",
-        token: "xoxb-test",
-      },
-      session as never,
-    )).resolves.toBe("claimed");
-
-    expect(database.prepare(
-      "SELECT execution_scope, linked_user_id FROM slack_agent_sessions WHERE id = 'session-claim'",
-    ).get()).toEqual({ execution_scope: "user", linked_user_id: "user-owner" });
-    expect(database.prepare(
-      "SELECT user_id, participation_reason FROM workstream_participants WHERE workstream_id = 'workstream-claim'",
-    ).get()).toEqual({ user_id: "user-owner", participation_reason: "explicit" });
-    expect(database.prepare(
-      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-claim'",
-    ).get()).toEqual({ created_by_user_id: null });
   });
 });
 
@@ -1453,54 +1331,6 @@ function slackMembershipEnvironment(
   });
 }
 
-function seedClaimableSession(database: DatabaseSync, elicitationTargetUserId: string | null): void {
-  database.exec(`
-      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES
-        ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
-        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
-      INSERT INTO workspaces
-        (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
-              'user-owner', '2026-01-01', '2026-01-01');
-      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
-      VALUES
-        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
-        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-02-01');
-      INSERT INTO connector_connections
-        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
-         display_name, encrypted_credentials, credential_iv, credential_key_version,
-         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
-         model_plugin_id)
-      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
-              'Slack', 'encrypted', 'iv', 1, '["slack.agent"]', 'healthy', '{}', '{}',
-              '2026-01-01', '2026-01-01', 'plugin_slack_workspace');
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id,
-         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-claim', 'workspace-slack', 'Investigate', 'Investigate',
-              'ad_hoc', NULL, 'needs_input', 1, '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO slack_agent_sessions
-        (id, workspace_id, connection_id, linked_user_id, execution_scope,
-         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
-         opening_client_message_id, workstream_id, invocation_kind, channel_type,
-         context_json, created_at, updated_at)
-      VALUES ('session-claim', 'workspace-slack', 'connection-slack', NULL, 'workspace',
-              'T123', 'U456', 'C123', '1.0', 'event:opening', 'workstream-claim',
-              'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
-      INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-claim', 'workspace-slack', 'workstream-claim', 'test', '{}',
-              'needs_input', '2026-01-01');
-  `);
-  database.prepare(
-    `INSERT INTO elicitations
-     (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
-      options_json, minimum_selections, maximum_selections, target_user_id, status, created_at)
-     VALUES ('elicitation-claim', 'workspace-slack', 'workstream-claim', 'run-claim',
-             'Taylor must approve', 'text', '[]', 0, NULL, ?, 'open', '2026-01-01')`,
-  ).run(elicitationTargetUserId);
-}
 
 function migratedDatabase(): DatabaseSync {
   const database = new DatabaseSync(":memory:");
