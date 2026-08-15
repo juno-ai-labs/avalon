@@ -1056,7 +1056,8 @@ harness re-executes the **whole route plan** up to `HARNESS_TRANSPORT_RETRIES`
 times (declared as `1` in both regional Wrangler configs) after a backoff that
 honours `Retry-After` up to 30 seconds. So during an outage elevated latency may
 be Avalon waiting rather than a run hanging. **Set `HARNESS_TRANSPORT_RETRIES` to
-`0` and redeploy to stop it** — worth doing when a provider is failing broadly,
+`0` and redeploy to stop it everywhere — work streams, inline children, the final
+meeting-notes pass, and the automation compiler all read it** — worth doing when a provider is failing broadly,
 because each re-execution charges another failure to the per-workspace circuit
 breaker whose threshold is 3.
 

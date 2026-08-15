@@ -310,10 +310,21 @@ function isProviderTransportFailure(error: InferenceAttemptError): boolean {
  * attacker-influenceable and RFC 9110 puts no ceiling on it, so an upstream
  * having a bad day must not be able to park a run for hours.
  */
-export function transportRetryDelayMs(error: InferenceAttemptError, retryNumber: number): number {
+export function transportRetryDelayMs(
+  error: InferenceAttemptError,
+  retryNumber: number,
+  random: () => number = Math.random,
+): number {
   const backoff = Math.min(4_000, 500 * 2 ** (retryNumber - 1));
   const retryAfterMs = error.kind === "http" ? error.retryAfterMs : null;
-  return Math.min(TRANSPORT_RETRY_MAX_DELAY_MS, Math.max(backoff, retryAfterMs ?? 0));
+  const target = Math.min(TRANSPORT_RETRY_MAX_DELAY_MS, Math.max(backoff, retryAfterMs ?? 0));
+  // Equal jitter, the same shape `firecrawl.ts` uses. Without it the delay is a
+  // pure function of the retry number, so every run that failed at the same
+  // instant wakes at the same instant — and the `Retry-After` branch makes that
+  // a guarantee rather than a coincidence, because a provider hands the same
+  // header to every caller. Jitter only ever shortens the target, so the clamp
+  // above still bounds a hostile header.
+  return Math.round(target / 2 + random() * (target / 2));
 }
 
 /**
@@ -325,9 +336,32 @@ export function transportRetryDelayMs(error: InferenceAttemptError, retryNumber:
 export const TRANSPORT_RETRY_MAX_DELAY_MS = 30_000;
 
 /**
- * Whether waiting `delayMs` and attempting again can still fit in what the run
- * has left, given a stalled attempt can burn the whole time-to-first-token
- * window before failing.
+ * The longest a whole plan re-execution can take before it gives up.
+ *
+ * Two things make this larger than it first looks, and both were missed in
+ * review. A single attempt spends its **establishment** timeout waiting for the
+ * response head and only *then* starts the time-to-first-token watchdog —
+ * `OpenRouterClient` calls `watchdog.open()` after `fetch` resolves — so the two
+ * are sequential rather than alternative. And a re-execution replays the *plan*,
+ * not the failed candidate, so an unpinned route pays that sum once per
+ * candidate before the plan exhausts again.
+ *
+ * Reserving less than this is what lets a retry manufacture the deadline it
+ * defers to. Reserving it is deliberately conservative: a caller whose budget
+ * cannot hold a worst-case second pass declines the retry rather than gambling
+ * that this one will be fast, because losing the gamble costs the accurate
+ * failure code, which is the thing the retry existed to protect.
+ */
+function planWorstCaseMs(plan: RoutePlan, config: RunHarnessInput["config"]): number {
+  const candidates = plan.stages.reduce((total, stage) => total + stage.candidates.length, 0);
+  const perCandidateMs = (config.requestEstablishmentTimeoutMs ?? 30_000)
+    + (config.ttftTimeoutMs ?? 120_000);
+  return Math.max(1, candidates) * perCandidateMs;
+}
+
+/**
+ * Whether waiting `delayMs` and replaying the whole plan can still fit in what
+ * the run has left.
  *
  * A bounded caller — the inline child at 90s, the meeting-notes final pass at
  * 120s — can otherwise have the retry *manufacture* the deadline it defers to:
@@ -341,9 +375,9 @@ export const TRANSPORT_RETRY_MAX_DELAY_MS = 30_000;
 function retryFitsRemainingBudget(
   remainingMs: number | null,
   delayMs: number,
-  ttftTimeoutMs: number,
+  worstCaseMs: number,
 ): boolean {
-  return remainingMs === null || remainingMs > delayMs + ttftTimeoutMs;
+  return remainingMs === null || remainingMs > delayMs + worstCaseMs;
 }
 
 /** A cancellable sleep: a timer left armed holds the Workflow invocation open. */
@@ -1095,8 +1129,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ? "ambiguous_external_write"
         : timedOut
           ? "deadline"
-        : providerCode
+        : error instanceof ProviderUnavailableError
           ? "provider"
+        : error instanceof ProviderCircuitOpenError
+          ? "routing"
           : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",
@@ -1334,7 +1370,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       if (!retryFitsRemainingBudget(
         remainingWallClockMs(),
         delayMs,
-        args.input.config.ttftTimeoutMs ?? 120_000,
+        planWorstCaseMs(plan, args.input.config),
       )) break;
       await delayUnlessAborted(delayMs, args.signal);
       if (args.signal.aborted) break;

@@ -43,17 +43,27 @@ describe("transport retry backoff", () => {
   } as InferenceAttemptError);
 
   it("backs off exponentially and caps the curve", () => {
-    expect(transportRetryDelayMs(httpFailure(null), 1)).toBe(500);
-    expect(transportRetryDelayMs(httpFailure(null), 2)).toBe(1_000);
-    expect(transportRetryDelayMs(httpFailure(null), 3)).toBe(2_000);
-    expect(transportRetryDelayMs(httpFailure(null), 9)).toBe(4_000);
+    // `() => 1` is the top of the jitter window, so these pin the curve itself.
+    expect(transportRetryDelayMs(httpFailure(null), 1, () => 1)).toBe(500);
+    expect(transportRetryDelayMs(httpFailure(null), 2, () => 1)).toBe(1_000);
+    expect(transportRetryDelayMs(httpFailure(null), 3, () => 1)).toBe(2_000);
+    expect(transportRetryDelayMs(httpFailure(null), 9, () => 1)).toBe(4_000);
   });
 
   it("prefers a stated Retry-After over the curve", () => {
-    expect(transportRetryDelayMs(httpFailure(2_000), 1)).toBe(2_000);
+    expect(transportRetryDelayMs(httpFailure(2_000), 1, () => 1)).toBe(2_000);
     // Never *below* the curve: a provider asking for less than the backoff does
     // not get to shorten it.
-    expect(transportRetryDelayMs(httpFailure(10), 2)).toBe(1_000);
+    expect(transportRetryDelayMs(httpFailure(10), 2, () => 1)).toBe(1_000);
+  });
+
+  it("spreads simultaneous retries instead of waking them together", () => {
+    // Every run that failed at the same instant would otherwise wake at the same
+    // instant, and a provider handing one `Retry-After` to all of them turns
+    // that from a coincidence into a guarantee.
+    expect(transportRetryDelayMs(httpFailure(null), 3, () => 0)).toBe(1_000);
+    expect(transportRetryDelayMs(httpFailure(null), 3, () => 0.5)).toBe(1_500);
+    expect(transportRetryDelayMs(httpFailure(null), 3, () => 1)).toBe(2_000);
   });
 
   it("clamps a hostile Retry-After", () => {
@@ -61,8 +71,11 @@ describe("transport retry backoff", () => {
     // attacker-influenceable, RFC 9110 puts no ceiling on it, and a host that
     // sleeps on it must impose its own bound. This is that bound; without it a
     // malfunctioning upstream parks a run for as long as it likes.
-    expect(transportRetryDelayMs(httpFailure(365 * 24 * 60 * 60 * 1_000), 1))
+    expect(transportRetryDelayMs(httpFailure(365 * 24 * 60 * 60 * 1_000), 1, () => 1))
       .toBe(TRANSPORT_RETRY_MAX_DELAY_MS);
+    // Jitter only shortens, so it cannot carry a hostile header past the clamp.
+    expect(transportRetryDelayMs(httpFailure(365 * 24 * 60 * 60 * 1_000), 1, () => 0))
+      .toBe(TRANSPORT_RETRY_MAX_DELAY_MS / 2);
     expect(TRANSPORT_RETRY_MAX_DELAY_MS).toBe(30_000);
   });
 });
@@ -1491,9 +1504,12 @@ describe("agent harness", () => {
     // outage the first run in a workspace was attributed correctly and every run
     // behind it was blamed on Avalon.
     expect(fetcher.mock.calls.length).toBe(callsBefore);
+    // `routing`, not `provider`: the breaker also opens on a credential or credit
+    // failure and does not record which opened it, so this must not tell a caller
+    // branching on `kind` that an operator-actionable problem is transient.
     expect(refused).toMatchObject({
       status: "failed",
-      failure: { kind: "provider", code: "provider_circuit_open" },
+      failure: { kind: "routing", code: "provider_circuit_open" },
     });
   });
 
@@ -1551,6 +1567,37 @@ describe("agent harness", () => {
     }));
     expect(tight).toMatchObject({ failure: { code: "provider_unavailable" } });
     expect(cramped).toHaveBeenCalledTimes(1);
+  });
+
+  it("reserves the whole plan, not one attempt, before spending a retry", async () => {
+    // A re-execution replays every candidate, and each one may spend its
+    // establishment timeout *and then* its time-to-first-token timeout — the
+    // watchdog only opens once the response head lands. Reserving one TTFT
+    // window let a two-candidate plan pass this guard and then overrun,
+    // reporting the outage as `run_wall_time_limit_exceeded`.
+    //
+    // Two candidates x (20s + 30s) = 100s of worst case against a 90s budget, so
+    // the retry is declined even though a single attempt would have fit.
+    const fetcher = vi.fn(async () => Response.json(
+      { error: { message: "upstream stalled" } },
+      { status: 503 },
+    )) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      maxWallClockMs: 90_000,
+      requestEstablishmentTimeoutMs: 20_000,
+      ttftTimeoutMs: 30_000,
+      fallbackModels: ["fallback/model"],
+      transportRetries: 2,
+      workspaceId: "workspace-transport-multi-candidate",
+    }));
+
+    // Both candidates tried once; the plan is not replayed.
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "provider", code: "provider_unavailable" },
+    });
   });
 
   it("supports model-only loops without any plugin or discovery tools", async () => {
@@ -3915,6 +3962,8 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
   toolTimeoutMs: number;
   transportRetries: number;
   ttftTimeoutMs: number;
+  requestEstablishmentTimeoutMs: number;
+  fallbackModels: string[];
   // The route circuit breaker is module-scoped and keyed by workspace and
   // model, so a test that deliberately fails the same endpoint three times
   // opens it for every test that runs after it. Give such a test its own
@@ -3936,6 +3985,10 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
       // time-to-first-token window, so a test exercising the retry has to state
       // both numbers rather than inherit a 120s default it never meant.
       ...(overrides.ttftTimeoutMs === undefined ? {} : { ttftTimeoutMs: overrides.ttftTimeoutMs }),
+      ...(overrides.requestEstablishmentTimeoutMs === undefined
+        ? {}
+        : { requestEstablishmentTimeoutMs: overrides.requestEstablishmentTimeoutMs }),
+      ...(overrides.fallbackModels === undefined ? {} : { fallbackModels: overrides.fallbackModels }),
     },
     workspaceId: overrides.workspaceId ?? "workspace-1",
     workstreamId: "workstream-1",

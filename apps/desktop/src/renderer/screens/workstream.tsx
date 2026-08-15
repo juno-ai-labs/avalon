@@ -1528,7 +1528,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
-              message={detail.latestHarnessRun.error?.message ?? 'Avalon could not complete this run. Retry it, or copy the request ID for support.'}
+              message={detail.latestHarnessRun.error?.message ?? 'Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support.'}
               onCopyRequestId={() => void desktopBridge().copyText(detail.latestHarnessRun?.requestId ?? detail.latestHarnessRun!.id)}
               onRetry={() => retry.mutate()}
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}

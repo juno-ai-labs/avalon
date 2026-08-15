@@ -10,6 +10,7 @@ import {
 import type { AuthContext, Env } from "../env";
 import { countEnv, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
@@ -296,7 +297,23 @@ export class MeetingNotesService {
       const message = final
         ? "Avalon could not create the final meeting summary"
         : "Avalon could not update Control Tower. The next refresh will try again";
-      throw new ApiError(502, "meeting_notes_generation_failed", message);
+      // The member sentence is surface-specific, but the *cause* still has to go
+      // somewhere. Only transport faults leave an `agent_inference_attempt_failed`
+      // row behind; the limit class — cost, context, wall clock — is thrown after
+      // attempts that succeeded, so without this line a summary lost to a
+      // provider outage and one lost to Avalon's own ceiling are indistinguishable
+      // to everyone, member and operator alike.
+      logStructuredEvent(this.env, "warn", "meeting_notes_generation_failed", {
+        request_id: requestId,
+        workspace_id: this.auth.workspaceId,
+        pass: final ? "final" : "live",
+        status: outcome.status,
+        code: outcome.failure?.code ?? "empty_completion",
+        failure_kind: outcome.failure?.kind,
+      });
+      throw new ApiError(502, "meeting_notes_generation_failed", message, {
+        ...(outcome.failure ? { harnessFailureCode: outcome.failure.code } : {}),
+      });
     }
     return { notes, generatedAt: new Date().toISOString() };
   }
