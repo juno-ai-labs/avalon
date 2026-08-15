@@ -1,9 +1,10 @@
-import type { ExternalActor, Scope } from "@avalon/contracts";
+import { ParticipantSchema, type ExternalActor, type Scope } from "@avalon/contracts";
 import { buildParticipantUpsertStatement } from "@avalon/db";
 
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";
-import { resolveConnectorActorIdentity } from "./connector-actor-identity";
+import { publishWorkstreamEvent } from "./integrations";
+import { resolveConnectorActorIdentities } from "./connector-actor-identity";
 
 /**
  * Who a work stream started from a connector conversation belongs to.
@@ -82,28 +83,32 @@ export async function resolveConnectorAudience(
   env: Env,
   workspaceId: string,
   members: readonly ConnectorConversationMember[],
-): Promise<{ userIds: string[]; unresolved: number }> {
-  const resolved = await Promise.all(members.map(async (member) => {
-    try {
-      const identity = await resolveConnectorActorIdentity(
-        env,
-        workspaceId,
-        member.actor,
-        member.verifiedEmail ?? null,
-      );
-      return identity?.userId ?? null;
-    } catch (error) {
-      // One unreadable member must not cost the work stream its whole room.
-      logWarn(env, "connector_audience_member_unresolved", {
-        workspace_id: workspaceId,
-        provider: member.actor.provider,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-      return null;
-    }
-  }));
+): Promise<{ userIds: string[]; unresolved: number; unresolvedIndexes: number[] }> {
+  let resolved: Array<string | null>;
+  try {
+    const identities = await resolveConnectorActorIdentities(
+      env,
+      workspaceId,
+      members.map((member) => ({
+        actor: member.actor,
+        verifiedEmail: member.verifiedEmail ?? null,
+      })),
+    );
+    resolved = identities.map((identity) => identity?.userId ?? null);
+  } catch (error) {
+    // Audience discovery is best effort, but its query is deliberately one
+    // operation: one D1 outage produces one bounded log rather than one per
+    // conversation member.
+    logWarn(env, "connector_audience_unresolved", {
+      workspace_id: workspaceId,
+      member_count: members.length,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+    resolved = members.map(() => null);
+  }
   const userIds = [...new Set(resolved.filter((id): id is string => id !== null))];
-  return { userIds, unresolved: resolved.length - userIds.length };
+  const unresolvedIndexes = resolved.flatMap((id, index) => id === null ? [index] : []);
+  return { userIds, unresolved: unresolvedIndexes.length, unresolvedIndexes };
 }
 
 /**
@@ -134,13 +139,56 @@ export async function admitConnectorAudience(
 ): Promise<void> {
   const userIds = [...new Set(input.userIds)];
   if (userIds.length === 0) return;
-  await env.DB.batch(userIds.map((userId) => buildParticipantUpsertStatement(env.DB, {
+  const active = await env.DB.prepare(
+    `SELECT user_id FROM workstream_participants
+     WHERE workstream_id = ? AND removed_at IS NULL
+       AND user_id IN (SELECT value FROM json_each(?))`,
+  ).bind(input.workstreamId, JSON.stringify(userIds)).all<{ user_id: string }>();
+  const activeUserIds = new Set((active.results ?? []).map((row) => row.user_id));
+  const newlyAdmittedUserIds = userIds.filter((userId) => !activeUserIds.has(userId));
+  const results = await env.DB.batch(userIds.map((userId) => buildParticipantUpsertStatement(env.DB, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     userId,
     addedByUserId: input.addedByUserId ?? userId,
     reason: "explicit",
   })));
+  if (results.some((result) => !result.success)) {
+    throw new Error("Could not admit the connector conversation audience");
+  }
+  if (newlyAdmittedUserIds.length === 0) return;
+  const participants = await env.DB.prepare(
+    `SELECT user.*, participant.participation_reason, participant.joined_at
+     FROM workstream_participants participant
+     JOIN users user ON user.id = participant.user_id
+     JOIN workstreams workstream ON workstream.id = participant.workstream_id
+     WHERE participant.workstream_id = ? AND workstream.workspace_id = ?
+       AND participant.removed_at IS NULL
+       AND participant.user_id IN (SELECT value FROM json_each(?))
+     ORDER BY participant.joined_at, participant.user_id`,
+  ).bind(
+    input.workstreamId,
+    input.workspaceId,
+    JSON.stringify(newlyAdmittedUserIds),
+  ).all<Record<string, unknown>>();
+  for (const row of participants.results ?? []) {
+    const participant = ParticipantSchema.parse({
+      user: {
+        id: row.id,
+        email: row.email,
+        name: row.name,
+        avatarUrl: row.avatar_url ?? null,
+        timezone: row.timezone,
+        createdAt: row.created_at,
+      },
+      participationReason: row.participation_reason,
+      joinedAt: row.joined_at,
+    });
+    await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+      type: "participant_added",
+      participant,
+    });
+  }
 }
 
 /**

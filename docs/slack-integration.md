@@ -183,10 +183,11 @@ by the connector-wide rule in
 [the connector document](connectors.md#a-work-streams-audience-is-the-conversation-it-started-in).
 A mention in a public channel opens a **public** work stream. A private channel, a DM, a group
 message, or a conversation the installation could not classify opens a **private** one, seated
-with the members `conversations.members` returns — up to 200, each resolved through the shared
-actor mapping, and best effort: a roster Slack refuses costs a smaller starting room rather
-than the prompt. These are the existing work-stream scope states underneath: public stores
-`workspace`, and private stores participant-only `personal`.
+with the members `conversations.members` returns — up to 200, resolved through one shared actor
+mapping read. Only unresolved members need `users.info`, six at a time under one shared ten-second
+deadline. Resolution remains best effort: a roster Slack refuses or cannot finish costs a smaller
+starting room rather than the prompt. These are the existing work-stream scope states underneath:
+public stores `workspace`, and private stores participant-only `personal`.
 
 **Every member of that Slack conversation can continue the work stream.** A reply from somebody
 the work stream has not seen seats them first and is then recorded, so a private work stream
@@ -198,6 +199,12 @@ link runs as themselves, and everybody else runs under the workspace principal. 
 than a link authorizes a run — a `users.lookupByEmail`-grade match seats and credits somebody
 and cannot spend their credentials — so two replies in one thread can run under different
 principals, exactly as they do when two members type into the same work stream in Avalon.
+
+The triggering Slack member travels with the workflow input through delivery. If a run needs
+input that requires a connected account, Avalon sends the connect prompt to that member rather
+than to whoever opened the work stream. Result controls are shared Slack content, so the feedback
+button is shown to everyone; the feedback submission still revalidates that the submitting member
+has an active Avalon link.
 
 #### Work stream attribution
 
@@ -280,7 +287,9 @@ Home is updated on `app_home_opened`, after account linking, and after settings 
 - **Connect Avalon**: mint a link challenge and open it in a modal whose single
   button is the desktop handoff. Not refused on a stored status; a grant that is
   really gone fails on Slack's answer.
-- Result buttons: open the canonical task or provide feedback. Feedback is open to any linked member of the installation, not only whoever started the thread.
+- Result buttons: open the canonical task or provide feedback. The shared message shows feedback
+  to everyone; submission is accepted from any linked member of the installation, not only whoever
+  started the thread.
 - Avalon person mention: notify the matched member in the Avalon Agent DM, falling back to email.
 - Avalon links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Avalon authorization for its contents.
 
@@ -459,9 +468,11 @@ not own:
   the workspace principal, the same as any unlinked member.
 - **A private conversation's roster is read once and best effort.**
   `conversations.members` needs `groups:read`, which an installation that has not
-  reconnected does not have, and it is bounded at 200 members. A failure or a
-  larger channel costs a smaller starting room, not the prompt: everybody else is
-  seated when they first reply.
+  reconnected does not have, and it is bounded at 200 members. Known identities
+  resolve in one D1 read; only unresolved members call `users.info`, six at a time
+  under one shared ten-second deadline. A failure or a larger channel costs a
+  smaller starting room, not the prompt: everybody else is seated when they first
+  reply.
 - **Existing workspace installations must reconnect after a scope expansion**
   before health checks and tool calls succeed. Until the identity scopes arrive,
   lookup-based mentions fall back to email.
@@ -488,7 +499,7 @@ not own:
 | `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, and the manifest read from `config/provider-apps/slack.json`. |
 | `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
 | `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution and the one case where an existing creator is rewritten. |
-| `apps/api/test/slack-thread-audience.test.ts` | The conversation's visibility and room, a second linked member continuing a thread, and a reply from a Slack member Avalon cannot map. |
+| `apps/api/test/slack-thread-audience.test.ts` | The conversation's visibility and room, bounded roster enrichment, participant events, per-message delivery routing, shared feedback controls, a second linked member continuing a thread, and an unmapped Slack member's reply. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
 | `apps/api/test/slack-mention-service.test.ts` | The lookup-based mention path and its email fallback. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
@@ -589,6 +600,29 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entry below; the reasoning behind everything above it
 was not recorded and is not reconstructed here.
+
+### 2026-08-15 — Multi-member delivery follows the run, not the opener
+
+**What changed:** Workflow input now carries the Slack member who triggered the run, and a
+needs-input connect prompt goes to that member. Shared result blocks always show feedback while
+submission remains link-authorized. Private rosters resolve known identities in bulk, enrich only
+unresolved profiles at six requests at a time under one ten-second deadline, and later admissions
+publish `participant_added`. App Home and manifest copy now describe per-message personal
+authority instead of task claiming.
+
+**Why:** Once authority became per-message, session-opener state was no longer a safe proxy for
+the person whose run needed input or for every viewer of a shared Slack message. Unbounded roster
+lookups could also exhaust provider or Worker limits, while silent participant writes left live
+clients stale.
+
+**Considered and rejected:** Keeping the opener as a delivery approximation and rendering shared
+controls according to one viewer's link state. Both make one member's state govern somebody else's
+run or view.
+
+**Consequences:** Old in-flight workflow payloads retain the opener fallback; new runs route to
+their actual triggering member. An unlinked viewer may open the feedback modal but cannot submit
+it. Roster enrichment is best effort within the shared deadline, and participant-event consumers
+must remain idempotent.
 
 ### 2026-08-12 — Slack MCP tools come from the active server
 

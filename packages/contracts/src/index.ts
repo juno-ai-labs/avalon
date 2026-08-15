@@ -1638,6 +1638,8 @@ export const SlackOriginNearbyMessageSchema = z.object({
 
 export const SlackOriginContextSchema = z.object({
   teamId: z.string().min(1).max(255),
+  /** Slack member whose message triggered this run; server-owned delivery routing metadata. */
+  actorSlackUserId: z.string().min(1).max(255).optional(),
   channelId: z.string().min(1).max(255).nullable(),
   channelName: z.string().min(1).max(255).nullable(),
   threadTs: z.string().min(1).max(80).nullable(),

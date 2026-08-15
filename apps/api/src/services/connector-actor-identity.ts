@@ -18,6 +18,11 @@ export interface ConnectorActorIdentity {
   verification: ConnectorActorVerification;
 }
 
+export interface ConnectorActorResolutionInput {
+  actor: ExternalActor;
+  verifiedEmail?: string | null;
+}
+
 /**
  * Resolves the Avalon member behind a connector's external actor. This is the
  * one mapping every connector uses — Slack today, Linear and the rest as their
@@ -35,56 +40,126 @@ export async function resolveConnectorActorIdentity(
   actorInput: ExternalActor,
   verifiedEmail?: string | null,
 ): Promise<ConnectorActorIdentity | null> {
-  const actor = ExternalActorSchema.parse(actorInput);
-  const linked = await env.DB.prepare(
-    `SELECT i.user_id, i.verification_source FROM external_user_identities i
-     JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = i.user_id
-     WHERE i.workspace_id = ? AND i.provider = ? AND i.provider_tenant_id = ?
-       AND i.provider_user_id = ? AND wm.status = 'active'
-     LIMIT 1`,
-  ).bind(workspaceId, actor.provider, actor.providerAccountId, actor.providerUserId)
-    .first<{ user_id: string; verification_source: string }>();
-  if (linked) {
+  const [identity] = await resolveConnectorActorIdentities(env, workspaceId, [{
+    actor: actorInput,
+    ...(verifiedEmail === undefined ? {} : { verifiedEmail }),
+  }]);
+  return identity ?? null;
+}
+
+/**
+ * Resolve a whole provider audience with one D1 read.
+ *
+ * The precedence is the single-actor resolver's: an explicit Slack account
+ * link, a stored connector identity, one unambiguous personal connection, then
+ * one unambiguous verified-email member. `json_each` carries the variable-sized
+ * input as one bound value, avoiding both SQLite's placeholder ceiling and an
+ * N-by-three query fan-out for connector conversations.
+ */
+export async function resolveConnectorActorIdentities(
+  env: Env,
+  workspaceId: string,
+  inputs: readonly ConnectorActorResolutionInput[],
+): Promise<Array<ConnectorActorIdentity | null>> {
+  if (inputs.length === 0) return [];
+  const requested = inputs.map((input) => {
+    const actor = ExternalActorSchema.parse(input.actor);
     return {
-      userId: String(linked.user_id),
-      verification: storedVerification(String(linked.verification_source)),
+      provider: actor.provider,
+      providerTenantId: actor.providerAccountId,
+      providerUserId: actor.providerUserId,
+      verifiedEmail: input.verifiedEmail?.trim().toLowerCase() || null,
+    };
+  });
+  const result = await env.DB.prepare(
+    `WITH requested AS (
+       SELECT CAST(entry.key AS INTEGER) AS request_index,
+              CAST(json_extract(entry.value, '$.provider') AS TEXT) AS provider,
+              CAST(json_extract(entry.value, '$.providerTenantId') AS TEXT) AS provider_tenant_id,
+              CAST(json_extract(entry.value, '$.providerUserId') AS TEXT) AS provider_user_id,
+              CAST(json_extract(entry.value, '$.verifiedEmail') AS TEXT) AS verified_email
+       FROM json_each(?) entry
+     ), candidate_rows AS (
+       SELECT requested.request_index, link.user_id, 1 AS priority,
+              'account_link' AS verification_source
+       FROM requested
+       JOIN slack_user_links link
+         ON requested.provider = 'slack'
+        AND link.slack_team_id = requested.provider_tenant_id
+        AND link.slack_user_id = requested.provider_user_id
+       JOIN workspace_members member
+         ON member.workspace_id = link.workspace_id AND member.user_id = link.user_id
+       WHERE link.workspace_id = ? AND link.status = 'active' AND member.status = 'active'
+       UNION ALL
+       SELECT requested.request_index, identity.user_id, 2 AS priority,
+              identity.verification_source
+       FROM requested
+       JOIN external_user_identities identity
+         ON identity.provider = requested.provider
+        AND identity.provider_tenant_id = requested.provider_tenant_id
+        AND identity.provider_user_id = requested.provider_user_id
+       JOIN workspace_members member
+         ON member.workspace_id = identity.workspace_id AND member.user_id = identity.user_id
+       WHERE identity.workspace_id = ? AND member.status = 'active'
+       UNION ALL
+       SELECT requested.request_index, connection.owner_user_id, 3 AS priority,
+              'personal_connection' AS verification_source
+       FROM requested
+       JOIN connector_connections connection
+         ON connection.connector_type = requested.provider
+        AND COALESCE(json_extract(connection.config_json, '$.providerUserId'), connection.provider_account_id)
+            = requested.provider_user_id
+        AND COALESCE(json_extract(connection.config_json, '$.providerTenantId'), connection.provider_account_id)
+            = requested.provider_tenant_id
+       JOIN workspace_members member
+         ON member.workspace_id = connection.workspace_id AND member.user_id = connection.owner_user_id
+       WHERE connection.workspace_id = ? AND connection.scope = 'personal'
+         AND connection.status <> 'disabled' AND connection.owner_user_id IS NOT NULL
+         AND member.status = 'active'
+       UNION ALL
+       SELECT requested.request_index, user.id AS user_id, 4 AS priority,
+              'verified_email' AS verification_source
+       FROM requested
+       JOIN users user ON lower(user.email) = requested.verified_email
+       JOIN workspace_members member ON member.user_id = user.id
+       WHERE member.workspace_id = ? AND member.status = 'active'
+         AND requested.verified_email IS NOT NULL
+     ), distinct_candidates AS (
+       SELECT DISTINCT request_index, user_id, priority, verification_source
+       FROM candidate_rows
+     ), counted AS (
+       SELECT request_index, user_id, priority, verification_source,
+              COUNT(*) OVER (PARTITION BY request_index, priority) AS tier_count
+       FROM distinct_candidates
+     ), ranked AS (
+       SELECT request_index, user_id, verification_source,
+              ROW_NUMBER() OVER (PARTITION BY request_index ORDER BY priority) AS choice
+       FROM counted
+       WHERE tier_count = 1
+     )
+     SELECT request_index, user_id, verification_source
+     FROM ranked WHERE choice = 1`,
+  ).bind(
+    JSON.stringify(requested),
+    workspaceId,
+    workspaceId,
+    workspaceId,
+    workspaceId,
+  ).all<{
+    request_index: number;
+    user_id: string;
+    verification_source: string;
+  }>();
+  const identities: Array<ConnectorActorIdentity | null> = inputs.map(() => null);
+  for (const row of result.results ?? []) {
+    const index = Number(row.request_index);
+    if (!Number.isInteger(index) || index < 0 || index >= identities.length) continue;
+    identities[index] = {
+      userId: String(row.user_id),
+      verification: storedVerification(String(row.verification_source)),
     };
   }
-
-  // A healthy personal connection is that member's own provider account, so an
-  // actor matching it is that member by the same authorization they granted.
-  // Connections are matched on the normalized identity every OAuth callback
-  // writes to `config_json` — `provider_account_id` is provider-shaped
-  // (`<team>:<user>` for Slack, an organization for Linear) and is not the
-  // actor's identity on its own.
-  const personal = await env.DB.prepare(
-    `SELECT c.owner_user_id FROM connector_connections c
-     JOIN workspace_members wm ON wm.workspace_id = c.workspace_id AND wm.user_id = c.owner_user_id
-     WHERE c.workspace_id = ? AND c.connector_type = ? AND c.scope = 'personal'
-       AND c.status <> 'disabled' AND c.owner_user_id IS NOT NULL AND wm.status = 'active'
-       AND COALESCE(json_extract(c.config_json, '$.providerUserId'), c.provider_account_id) = ?
-       AND COALESCE(json_extract(c.config_json, '$.providerTenantId'), c.provider_account_id) = ?
-     LIMIT 2`,
-  ).bind(workspaceId, actor.provider, actor.providerUserId, actor.providerAccountId)
-    .all<{ owner_user_id: string }>();
-  const personalMatches = personal.results ?? [];
-  if (personalMatches.length === 1 && personalMatches[0]) {
-    return { userId: String(personalMatches[0].owner_user_id), verification: "personal_connection" };
-  }
-
-  const email = verifiedEmail?.trim().toLowerCase();
-  if (!email) return null;
-  // Exactly one active member may claim an address. An ambiguous or unknown
-  // address resolves to nobody rather than to a plausible member.
-  const matches = await env.DB.prepare(
-    `SELECT u.id FROM users u
-     JOIN workspace_members wm ON wm.user_id = u.id
-     WHERE wm.workspace_id = ? AND wm.status = 'active' AND lower(u.email) = ?
-     LIMIT 2`,
-  ).bind(workspaceId, email).all<{ id: string }>();
-  const emailMatches = matches.results ?? [];
-  if (emailMatches.length !== 1 || !emailMatches[0]) return null;
-  return { userId: String(emailMatches[0].id), verification: "verified_email" };
+  return identities;
 }
 
 /**
