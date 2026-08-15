@@ -2436,11 +2436,13 @@ export async function runWorkstreamHarness(
       if (mode === "write" || row.input_hash !== inputHash || !policyMatches) {
         ambiguousToolOutcome = true;
         const newlyAmbiguous = row.status !== "ambiguous";
-        // A terminal receipt cannot be finalized again: the update matches no
-        // row and the attempt raises `RunOwnershipLost`, which the harness
-        // reports as a fatal port failure. The ambiguity is still recorded
-        // below, against the receipt as it stands.
-        if (row.status !== "ambiguous" && row.status !== "completed" && row.status !== "failed") {
+        // A completed receipt cannot be finalized again: an ambiguous finalize
+        // moves `('pending', 'started', 'failed')`, so the update matches no row
+        // and the attempt raises `RunOwnershipLost`, which the harness reports
+        // as a fatal port failure. The ambiguity is still recorded below,
+        // against the receipt as it stands. A `failed` row is still mutable and
+        // still flips — a write may have reached the provider before failing.
+        if (row.status !== "ambiguous" && row.status !== "completed") {
           await finalizeToolInvocationFailure(env.DB, liveness.lease, {
             harnessRunId: input.harnessRunId,
             invocationId: row.id,

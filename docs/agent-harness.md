@@ -198,7 +198,16 @@ call in hand: nothing external moved, the recorded result belongs to a pass that
 is gone, and the row is replanned in place under an `execution_replanned`
 checkpoint. Identical input replays as before, a receipt whose recorded identity
 cannot be proven compatible still fails closed, and `record_before_execute`
-writes never rebind — for them the coordinate *is* the idempotency key. An
+writes never rebind — for them the coordinate *is* the idempotency key.
+
+A receipt is not always the only record of its call, and one that owns durable
+state elsewhere does not rebind either: a delegated child run keyed by the
+parent's coordinate, or attachment dependency rows keyed by the invocation id.
+Those are asked as questions about state, not about tool names, so a tool that
+starts keying either is covered without being listed. Because a rebound receipt
+carries checkpoints past the static index its completion path passes, the
+completion derives its own index from the row rather than trusting that number —
+otherwise the replanned read executes and then cannot persist its result. An
 ambiguity that halts a run is recorded as an audit event and as the run's own
 error, because a collision with a settled receipt leaves the row itself
 untouched and would otherwise reach the person as a bare `needs_input`.
@@ -619,6 +628,15 @@ row matched no mutable status and raised `RunOwnershipLost`: a lease failure
 that had not happened, reported to the person as "waiting on an answer" on a run
 that could not be retried. The same fingerprint had already stranded a second
 work stream.
+
+Review of the first cut caught three ways the reused row is not as free as it
+looks, all now fenced: `run_subagent` declares `mode: "read"` but keys its child
+run by the coordinate and admits one objective there; an attachment read leaves
+dependency rows whose lifecycle triggers delete the invocation the rebind has
+since handed to a different call; and `persistSuccessfulToolResult` passes a
+static `checkpointIndex: 1`, which a replanned receipt is already past, so the
+completion inserted nothing and raised `RunOwnershipLost` — the same misreported
+failure this change exists to remove, one step later.
 
 **Considered and rejected:** Scoping receipt IDs per attempt, which is the
 obvious fix and removes the collision entirely — but positional stability across

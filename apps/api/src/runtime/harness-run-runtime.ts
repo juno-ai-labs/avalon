@@ -1450,9 +1450,11 @@ function completedReadReceipt(
   existing: { status: string; input_hash: string; execution_plan_json: string | null },
   plan: ToolExecutionPlan,
 ): boolean {
-  // Both statements of the incoming call's mode have to agree. They diverge
-  // exactly when a receipt is being rebound to a different canonical tool, and
-  // that is the case this must not relax for.
+  // Both statements of the incoming call's mode have to agree. Every current
+  // caller derives them from one `receiptPolicy.definition`, so they cannot
+  // disagree today; the pair is checked because the plan is what gets persisted
+  // and compared on the next pass, and a caller that ever sets them separately
+  // must not be able to widen this by disagreeing with itself.
   if (existing.status !== "completed" || plan.mode !== "read" || plan.plan.mode !== "read") return false;
   // Only a demonstrably different call rebinds. Identical input whose recorded
   // policy cannot be proven compatible is the receipt-identity fence — one call
@@ -1468,6 +1470,40 @@ function completedReadReceipt(
   }
 }
 
+/**
+ * Is durable state outside the receipt row keyed to this receipt?
+ *
+ * A receipt is not always the only record of its call. `run_subagent` keys its
+ * child run by the parent's coordinate and refuses a second objective there
+ * (`inline_child_objective_mismatch`), and an attachment read records the
+ * resource derivatives it depended on against the invocation id — rows whose
+ * lifecycle triggers delete the invocation when the old resource changes, which
+ * after a rebind would delete the row a *different*, possibly in-flight read
+ * now owns.
+ *
+ * Both are asked as questions about state rather than about tool names, so a
+ * tool that starts keying either one is covered without being enumerated here.
+ * A receipt that owns any of it keeps failing closed.
+ */
+async function receiptOwnsDependentState(
+  db: D1Database,
+  plan: ToolExecutionPlan,
+  invocationId: string,
+): Promise<boolean> {
+  const dependents = await db.prepare(
+    `SELECT
+       EXISTS (
+         SELECT 1 FROM harness_runs
+          WHERE parent_harness_run_id = ?1 AND parent_tool_call_id = ?2
+       ) AS child_run,
+       EXISTS (
+         SELECT 1 FROM attachment_tool_receipts WHERE tool_invocation_id = ?3
+       ) AS attachment_dependency`,
+  ).bind(plan.harnessRunId, plan.toolCallId, invocationId)
+    .first<{ child_run: number; attachment_dependency: number }>();
+  return Boolean(dependents?.child_run) || Boolean(dependents?.attachment_dependency);
+}
+
 /** Rebind a settled read receipt to the call that landed on its coordinates. */
 async function replanCompletedReadReceipt(
   db: D1Database,
@@ -1478,9 +1514,11 @@ async function replanCompletedReadReceipt(
     executionPlanJson: string;
     executionPlanHash: string;
     now: string;
-    checkpointId: string;
   },
 ): Promise<ToolPlanClaim> {
+  // Its own id rather than the one the planning batch minted: that one is bound
+  // to an insert that did not land here, and keeping the two apart costs a UUID.
+  const checkpointId = crypto.randomUUID();
   const results = await db.batch([
     db.prepare(
       `INSERT INTO tool_invocation_checkpoints
@@ -1496,7 +1534,7 @@ async function replanCompletedReadReceipt(
           AND hr.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        ON CONFLICT(tool_invocation_id, checkpoint_index) DO NOTHING`,
     ).bind(
-      bind.checkpointId,
+      checkpointId,
       bind.invocationId,
       lease.attemptId,
       bind.now,
@@ -1532,7 +1570,7 @@ async function replanCompletedReadReceipt(
       bind.now,
       bind.invocationId,
       lease.attemptId,
-      bind.checkpointId,
+      checkpointId,
       plan.harnessRunId,
     ),
   ]);
@@ -1632,19 +1670,23 @@ export async function persistToolExecutionPlan(
       && !compatiblePriorPlanHashes.has(existing.execution_plan_hash ?? "")
     )
   ) {
-    if (completedReadReceipt(existing, plan)) {
+    if (
+      completedReadReceipt(existing, plan)
+      && !(await receiptOwnsDependentState(db, plan, existing.id))
+    ) {
       return replanCompletedReadReceipt(db, lease, plan, {
         invocationId: existing.id,
         executionPlanJson,
         executionPlanHash,
         now,
-        checkpointId,
       });
     }
-    // Only a receipt that can still move is finalized here. A terminal row
-    // matches no mutable status, so the attempt would report `RunOwnershipLost`
-    // — a lease failure that never happened — and take the run down with it.
-    if (existing.status !== "completed" && existing.status !== "ambiguous" && existing.status !== "failed") {
+    // `completed` is the one status this cannot finalize: an ambiguous finalize
+    // moves `('pending', 'started', 'failed')`, so a completed row matches
+    // nothing and the attempt reports `RunOwnershipLost` — a lease failure that
+    // never happened — taking the run down with it. A `failed` row still moves,
+    // and still should: a write that failed may have reached the provider first.
+    if (existing.status !== "completed" && existing.status !== "ambiguous") {
       await finalizeToolInvocationFailure(db, lease, {
         harnessRunId: plan.harnessRunId,
         invocationId: existing.id,
@@ -1778,7 +1820,8 @@ export async function completeToolInvocation(
       `INSERT INTO tool_invocation_checkpoints
        (id, tool_invocation_id, harness_run_id, attempt_id, checkpoint_index,
         phase, member_safe_payload_json, created_at)
-       SELECT ?1, ti.id, ti.harness_run_id, ?4, ?5, 'result_persisted', ?6, ?7
+       SELECT ?1, ti.id, ti.harness_run_id, ?4, MAX(?5, ti.checkpoint_index + 1),
+              'result_persisted', ?6, ?7
          FROM tool_invocations ti
          JOIN harness_runs hr ON hr.id = ti.harness_run_id
         WHERE ti.id = ?2 AND ti.harness_run_id = ?3 AND ti.attempt_id = ?4
@@ -1799,10 +1842,17 @@ export async function completeToolInvocation(
       input.allowAmbiguousReconciliation ? 1 : 0,
     ),
     db.prepare(
+      // The index comes from the checkpoint that was just written, not from the
+      // caller's number. A receipt that has been replanned in place already
+      // carries checkpoints past the caller's static index, and binding that
+      // number here would look for a checkpoint the insert above never wrote.
       `UPDATE tool_invocations
           SET status = 'completed', output_ref = ?1, output_summary = ?2,
               provider_operation_id = ?3, completed_at = ?4,
-              checkpoint_index = ?5, last_checkpoint_at = ?4,
+              checkpoint_index = (
+                SELECT checkpoint_index FROM tool_invocation_checkpoints WHERE id = ?10
+              ),
+              last_checkpoint_at = ?4,
               lease_expires_at = NULL, error_json = NULL
         WHERE id = ?6 AND harness_run_id = ?7 AND attempt_id = ?8
           AND (status IN ('pending', 'started') OR (?11 = 1 AND status = 'ambiguous'))
@@ -1816,7 +1866,7 @@ export async function completeToolInvocation(
           AND EXISTS (
             SELECT 1 FROM tool_invocation_checkpoints
              WHERE id = ?10 AND tool_invocation_id = ?6
-               AND attempt_id = ?8 AND checkpoint_index = ?5
+               AND attempt_id = ?8 AND checkpoint_index >= ?5
           )`,
     ).bind(
       input.outputRef,
