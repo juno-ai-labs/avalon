@@ -1,15 +1,27 @@
-export const applicationIconChoices = [
-  { id: 'light', label: 'Light', fileName: 'light.icns', artworkFileName: 'light.png' },
-  { id: 'dark', label: 'Dark', fileName: 'dark.icns', artworkFileName: 'dark.png' },
-  { id: 'sunset-sherbet', label: 'Sunset sherbet', fileName: 'sunset-sherbet.icns', artworkFileName: 'sunset-sherbet.png' },
-  { id: 'ludicrous-speed', label: 'Ludicrous speed', fileName: 'ludicrous-speed.icns', artworkFileName: 'ludicrous-speed.png' },
-  { id: 'ruby', label: 'Ruby', fileName: 'ruby.icns', artworkFileName: 'ruby.png' },
-  { id: 'holographic', label: 'Holographic', fileName: 'holographic.icns', artworkFileName: 'holographic.png' },
-  { id: 'leather', label: 'Leather', fileName: 'leather.icns', artworkFileName: 'leather.png' },
-  { id: 'blueprint', label: 'Blueprint', fileName: 'blueprint.icns', artworkFileName: 'blueprint.png' },
-] as const;
+import {
+  TELEMETRY_APPLICATION_ICON_IDS,
+  type TelemetryApplicationIconId,
+} from '@avalon/contracts/telemetry';
 
-export type ApplicationIconId = (typeof applicationIconChoices)[number]['id'];
+const applicationIconLabels: Record<TelemetryApplicationIconId, string> = {
+  light: 'Light',
+  dark: 'Dark',
+  'sunset-sherbet': 'Sunset sherbet',
+  'ludicrous-speed': 'Ludicrous speed',
+  ruby: 'Ruby',
+  holographic: 'Holographic',
+  leather: 'Leather',
+  blueprint: 'Blueprint',
+};
+
+export const applicationIconChoices = TELEMETRY_APPLICATION_ICON_IDS.map((id) => ({
+  id,
+  label: applicationIconLabels[id],
+  fileName: `${id}.icns`,
+  artworkFileName: `${id}.png`,
+}));
+
+export type ApplicationIconId = TelemetryApplicationIconId;
 
 export interface DesktopApplicationIconState {
   activeIcon: ApplicationIconId;

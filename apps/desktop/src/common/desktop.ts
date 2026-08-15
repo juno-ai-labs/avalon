@@ -1,8 +1,16 @@
 import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
+import type { TelemetryEventProperties } from '@avalon/contracts';
 
 export type AvalonRegion = 'global' | 'eu';
+
+export type DesktopDeepLinkEntrypoint = 'deep_link' | 'menu_bar' | 'notification' | 'in_app_link';
+
+export interface DesktopDeepLinkNavigation {
+  url: string;
+  entrypoint: DesktopDeepLinkEntrypoint;
+}
 
 export interface RuntimeConfig {
   appVersion: string;
@@ -92,13 +100,118 @@ export type DesktopTelemetryScreen =
   | 'application_settings'
   | 'developer_settings';
 
+export type DesktopTelemetrySemanticEventName =
+  | 'surface_viewed'
+  | 'automation_builder_started'
+  | 'automation_opened'
+  | 'hypersight_opened'
+  | 'workstream_resource_action_completed'
+  | 'recording_start_completed'
+  | 'recording_terminal'
+  | 'note_opened_v2';
+
+export type DesktopTelemetrySemanticIntent = {
+  [Name in DesktopTelemetrySemanticEventName]: { kind: Name } & TelemetryEventProperties<Name>;
+}[DesktopTelemetrySemanticEventName];
+
+export type DesktopTelemetryConnectorSetupIntent = {
+  kind: 'connector_setup_requested_v2';
+  operationId?: string;
+} & TelemetryEventProperties<'connector_setup_requested_v2'>;
+
 export type DesktopTelemetryProductIntent =
   | { kind: 'onboarding_region_selected'; selectedRegion: AvalonRegion; entrypoint: 'first_run' | 'settings' | 'invitation' }
   | { kind: 'workspace_create_requested'; selectedRegion: AvalonRegion; entrypoint: 'first_run' | 'settings'; operationId: string }
   | { kind: 'workspace_activation_requested'; selectedRegion: AvalonRegion; entrypoint: 'invitation' | 'workspace_switcher'; operationId: string }
   | { kind: 'workstream_create_requested'; entrypoint: 'composer'; operationId: string }
   | { kind: 'run_requested'; entrypoint: 'composer'; operationId: string }
-  | { kind: 'connector_setup_requested'; connector: 'github' | 'google' | 'linear' | 'notion' | 'slack'; operationId: string };
+  | DesktopTelemetryConnectorSetupIntent
+  | { kind: 'command_shortcuts_revealed'; availableCount: number }
+  | {
+    kind: 'command_shortcut_used';
+    shortcutNumber: number;
+    destinationType: 'pinned_workstream' | 'recent_workstream' | 'recent_note';
+  }
+  | {
+    kind: 'workstream_opened';
+    workstreamId: string;
+    visibility: 'private' | 'public';
+    navigation: 'opened' | 'switched' | 'reopened';
+    origin: 'ad_hoc' | 'automation' | 'system';
+    pinned: boolean;
+  }
+  | {
+    kind: 'workstream_action_completed';
+    workstreamId: string;
+    action: 'pin' | 'unpin' | 'make_public' | 'make_private' | 'mark_unread' | 'rename' | 'archive';
+    visibility: 'private' | 'public';
+    origin: 'ad_hoc' | 'automation' | 'system';
+    pinned: boolean;
+  }
+  | {
+    kind: 'automation_created';
+    automationId: string;
+    visibility: 'private' | 'public';
+    creationMethod: 'custom' | 'template';
+    pluginCount: number;
+    activityTriggerEnabled: boolean;
+    deliveryEnabled: boolean;
+  }
+  | {
+    kind: 'automation_action_completed';
+    automationId: string;
+    action: 'run_now' | 'archive_draft' | 'delete';
+    visibility: 'private' | 'public';
+    status: 'draft' | 'active' | 'paused' | 'error';
+  }
+  | {
+    kind: 'message_sent';
+    workstreamId: string;
+    messageId?: string;
+    visibility: 'private' | 'public';
+    workstreamOrigin: 'ad_hoc' | 'automation';
+    messageKind: 'message' | 'elicitation_response';
+    attachmentCount: number;
+    mentionCount: number;
+    participantAddedCount: number;
+  }
+  | {
+    kind: 'content_copied';
+    contentType: 'workstream_link' | 'workstream_email' | 'workstream_id' | 'message_response' | 'code_block'
+      | 'note_summary' | 'note_transcript' | 'note_id' | 'automation_email' | 'automation_id';
+    resourceType: 'workstream' | 'message' | 'note' | 'automation';
+    resourceId: string;
+    workstreamId?: string;
+  }
+  | {
+    kind: 'note_opened';
+    noteId: string;
+    visibility: 'private' | 'public';
+    recordingState: 'idle' | 'recording' | 'complete';
+    navigation: 'opened' | 'reopened';
+  }
+  | {
+    kind: 'note_created';
+    noteId: string;
+    visibility: 'private' | 'public';
+    noteType: 'meeting_or_voice';
+    entrypoint: 'sidebar' | 'menu_bar' | 'unknown';
+  }
+  | {
+    kind: 'note_action_completed';
+    noteId: string;
+    action: 'make_public' | 'make_private' | 'archive';
+    visibility: 'private' | 'public';
+    recordingState: 'idle' | 'recording' | 'complete';
+  }
+  | {
+    kind: 'transcription_state_changed';
+    noteId: string;
+    state: 'started' | 'paused' | 'resumed' | 'completed';
+    visibility: 'private' | 'public';
+    audioSource: 'microphone_and_system' | 'microphone_only' | 'system_only' | 'unknown';
+  }
+  | DesktopTelemetrySemanticIntent;
 
 export interface DesktopTelemetryInspectorEntry {
   name: string;
@@ -236,7 +349,7 @@ export interface AvalonDesktopBridge {
   openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
   onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
-  consumePendingDeepLinks: () => Promise<string[]>;
-  onDeepLink: (listener: (url: string) => void) => () => void;
+  consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
+  onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
 }

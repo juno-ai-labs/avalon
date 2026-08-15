@@ -454,6 +454,17 @@ pnpm --filter @avalon/api exec wrangler d1 export DB --remote \
 sqlite3 /tmp/global.sqlite < /tmp/global.sql
 ```
 
+### Product measurement
+
+Saving a schedule emits its actual durable enabled state, cadence class, bounded
+day/time counts, delivery target types, and result. A delivery emits once when
+settlement reaches a terminal state, with its opaque delivery ID, bounded
+activity count, target types, and whether it is the member's first delivery.
+Schedule times, timezones, email addresses, activity IDs/content, generated
+digest text, work-stream title, and delivery-provider responses never enter
+telemetry. The schedule/delivery tables remain authoritative; reporting failure
+cannot change a saved schedule, cursor, or settlement.
+
 ## Invariants
 
 - **Audience is resolved against the reader at read time**, in
@@ -585,6 +596,42 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-13 — Digest telemetry cannot interrupt required settlement
+
+**What changed:** Every terminal digest telemetry call now isolates its entire
+context lookup and emission. A telemetry query failure after delivery cannot
+skip the occurrence transcript's delivered note.
+
+**Why:** The provider delivery and status update are authoritative product work.
+Only the final emitter had been caught, leaving its preceding context queries
+able to throw after the digest was already marked delivered.
+
+**Considered and rejected:** Retrying the settlement step. Its terminal-status
+guard correctly prevents duplicate email, but would also return before writing
+the omitted transcript note.
+
+**Consequences:** Digest telemetry remains best effort around the whole helper;
+required settlement work must never be placed after an uncaught analytics read.
+
+### 2026-08-13 — Digest configuration and delivery become one measurable lifecycle
+
+**What changed:** Durable schedule replacement and terminal delivery settlement
+now emit bounded product events with cadence, target, activity-count, result, and
+first-delivery dimensions.
+
+**Why:** A configured schedule did not show whether it ever delivered, while a
+delivery row alone could not explain the cadence and destination choices that led
+to it.
+
+**Considered and rejected:** Exact schedule times, recipient addresses, activity
+identifiers or bodies, generated summaries, and provider error text. None is
+needed to measure adoption or reliability, and each adds sensitive or
+high-cardinality content.
+
+**Consequences:** Product analytics can join configuration cohorts to delivery
+outcomes without becoming the cursor or delivery source of truth. A retry keeps
+the delivery's stable event identity.
 
 ### 2026-08-12 — The schedule's work-stream pointer is dropped, now that the window it was waiting on has closed
 

@@ -18,6 +18,10 @@ import {
 } from "../lib/workstream-visibility";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import {
+  emitProductUsageTelemetry,
+  telemetryCountBucket,
+} from "../telemetry/product-usage";
+import {
   publishPersonalWorkstreamEvent,
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
@@ -245,6 +249,29 @@ export class HyperSightService {
       type: "hypersight_configuration_updated",
       hypersight,
     });
+    const previousBlocks = current ? parseBlocks(current.blocks_json) : [];
+    const previousIds = previousBlocks.map((block) => block.id);
+    const nextIds = input.blocks.map((block) => block.id);
+    const action = nextIds.length > previousIds.length
+      ? "add" as const
+      : nextIds.length < previousIds.length
+        ? "delete" as const
+        : previousIds.some((id, index) => id !== nextIds[index])
+          ? "reorder" as const
+          : "edit" as const;
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: "hypersight_configuration_changed",
+      properties: {
+        workstreamId,
+        action,
+        blockCount: telemetryCountBucket(input.blocks.length),
+        result: "success",
+      },
+      operationId: id,
+      eventId: id,
+    }).catch(() => undefined);
     return hypersight;
   }
 }

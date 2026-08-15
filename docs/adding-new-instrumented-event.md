@@ -15,15 +15,20 @@ Before changing code, write down:
 - the product or reliability question the event answers;
 - the one authoritative producer: desktop renderer, desktop main, preload, or API;
 - whether it is `essential`, `product`, or `diagnostic`;
-- the allowed identity scopes: installation, anonymous epoch, platform user, or
-  workspace user;
+- the allowed identity scopes: installation, anonymous epoch, platform user,
+  workspace user, or personless workspace execution;
 - the smallest closed property schema needed to answer the question;
 - the classification of every property: operational, product, or diagnostic;
 - priority, retention, sample rate, and destination.
 
 Do not include prompts, messages, documents, request bodies, URLs, arbitrary
-errors, tokens, raw database identifiers, or other content. Names and email
-addresses belong in the approved profile flow, not ordinary event properties.
+errors, tokens, account/user identity IDs, or other content. An opaque UUID for
+the resource being measured—such as a work stream, message, note, automation,
+run, or tool invocation—may be included when it is required for paths, joins, or
+deduplication and is declared as a product property in the closed registry.
+Never include a resource title, body, clipboard value, tool argument, tool
+result, or provider account identifier beside it. Names and email addresses
+belong in the approved profile flow, not ordinary event properties.
 
 For a user action whose result is known by the server, use two events:
 `*_requested` for client intent and `*_completed` for the authoritative API
@@ -68,7 +73,19 @@ Choose the narrowest existing path:
   from the main-owned lifecycle or observer that knows the result.
 - **API outcome:** build the envelope with `apiTelemetryEnvelope`, then emit it
   with `emitAuthenticatedApiTelemetry` from the service or route that knows the
-  committed outcome.
+  committed outcome. Never send it back through the authenticated desktop event
+  endpoint: that route rejects `source: api` so a modified client cannot forge
+  authoritative outcomes.
+- **Workspace-owned API execution:** use `emitWorkspaceApiTelemetry` through a
+  narrow semantic helper. This scope is for background work with no responsible
+  person, uses the stable workspace analytics ID as a personless distinct ID,
+  and cannot enter through the authenticated desktop batch endpoint.
+- **Public site:** add one closed `source: site`, `anonymous-epoch` contract and
+  call the narrow reporter in `apps/site/src/telemetry.ts`. Add it to the
+  pre-authentication allowlist only when the site can produce it without an
+  account session. Preserve route-before-identity behavior: Global may use the
+  first-party epoch, while EU remains page-scoped. Never pass a URL query,
+  fragment, handoff target, token, DOM text, or resource identifier.
 - **Diagnostic or crash:** use the sanitized exception/crash pipeline. PostHog
   exception events have additional fingerprint, frame, symbol, and artifact
   requirements; they are not ordinary product events.
@@ -87,6 +104,12 @@ batch carrying `context.deviceId` must send the same random installation ID in
 the batch-level `installationId`; contract validation rejects mismatches before
 regional persistence.
 
+For agent-tool adoption, emit at the durable invocation admission boundary—not
+when a menu or model schema merely exposes the tool. Allowlist only the canonical
+tool name, plugin ID, capability, read/write mode, run kind, execution scope,
+and opaque work-stream/run/automation IDs. Arguments, outputs, summaries,
+provider payloads, and error text are prohibited.
+
 ### PostHog destination compatibility
 
 Keep the registry name provider-neutral. If PostHog has a reserved event for
@@ -102,6 +125,9 @@ responses, feature-flag exposures, logs, traces, or `$ai_*` records unless the
 corresponding runtime actually observed the complete provider-defined action
 and supplies its required properties. See the compatibility table in
 [`telemetry.md`](telemetry.md#posthog-product-compatibility).
+The public-site reporter is the approved `$pageview`/`$pageleave` producer;
+Electron routes remain `$screen` even when their internal navigation resembles a
+URL.
 
 ## 4. Test every boundary
 
@@ -113,6 +139,8 @@ Add focused tests for:
 3. regional acceptance, preference behavior, routing, and idempotency;
 4. the PostHog adapter and EU projection, including exact destination properties;
 5. failure behavior proving telemetry cannot fail or retry the product action.
+6. migration behavior proving a current occurrence does not emit both a legacy
+   and replacement contract, or both a custom and reserved destination event.
 
 Run the focused telemetry suites documented in [`telemetry.md`](telemetry.md#testing),
 then run:

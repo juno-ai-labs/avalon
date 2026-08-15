@@ -436,6 +436,22 @@ A connector's normalized `title`/`summary` is not independently bounded to the A
 
 Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Avalon's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
+### Product measurement
+
+Connector setup intent records only connector, personal/workspace scope, setup
+method, and bounded capability count. The regional service owns terminal OAuth
+outcomes and successful direct connection creation. Test, reconnect, disconnect,
+and webhook-secret rotation report previous/applied health and result; a distinct
+health transition is emitted only when health actually changes. Activity ingest
+reports canonical connector/activity type, bounded item count, and
+accepted/duplicate/filtered/failed result after admission. Connection IDs are
+allowed only on resource-lifecycle events that require a stable join. OAuth
+state, capabilities themselves, scopes returned by a provider, account/tenant
+IDs, webhook bodies, activity content, error text, and credentials remain outside
+telemetry. The established OAuth operation pair remains available to correlate a
+desktop request with denial/failure while richer connection events describe the
+configuration that was actually established.
+
 
 ## Invariants
 
@@ -679,6 +695,25 @@ Every model-visible repository listing must carry effective access. A future
 connector with settings can reuse the dynamic navigation contract, but must own
 its own typed settings endpoint and authorization semantics.
 
+### 2026-08-13 — Connector adoption separates intent, established configuration, health, and activity
+
+**What changed:** Added closed setup, action, health-transition, and activity-
+ingest events across OAuth, API-key, direct, and webhook connectors. Terminal
+outcomes are emitted by the regional service; activity is measured only after
+the shared ingestion boundary classifies it.
+
+**Why:** A connection row alone cannot show failed or denied setup, reconnect
+pressure, stale-health recovery, or whether a configured connector ever produces
+usable activity.
+
+**Considered and rejected:** Provider payload logging, provider account IDs,
+credential/scope arrays, client-reported OAuth success, and treating a health
+check as activity. They expose content or report an observation at the wrong
+authority.
+
+**Consequences:** Connector dashboards can separate acquisition, establishment,
+maintenance, and value delivery. New adapters must use the canonical connector
+taxonomy and add no free-form provider fields to product telemetry.
 ### 2026-08-12 — Code-only tool refinements remain argument errors
 
 **What changed:** `ConnectorAdapter` can expose a pure `validateToolInput`

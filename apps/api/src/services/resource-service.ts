@@ -16,6 +16,14 @@ import {
   ocrPdfWithWorkersAi,
   type AuthorizedDerivativeResource,
 } from "./attachment-derivative-service";
+import { emitProductUsageTelemetry } from "../telemetry/product-usage";
+
+function resourceTelemetryConnector(value: unknown):
+  'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
+  if (value === 'google' || value === 'generic_webhook' || value === 'github' || value === 'granola'
+    || value === 'linear' || value === 'notion' || value === 'slack' || value === 'x') return value;
+  return 'avalon';
+}
 
 export interface ResolveResourceInput {
   connectionId: string;
@@ -453,11 +461,31 @@ export class ResourceService {
       ).bind(workstreamId, id),
     ]);
     await this.refreshScheduler();
+    void emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: 'workstream_resource_action_completed',
+      properties: {
+        workstreamId,
+        resourceId: id,
+        resourceType: String(resource.resource_type),
+        connectorType: resourceTelemetryConnector(connection.connector_type),
+        relationshipType: 'context',
+        action: 'watch',
+        result: 'success',
+        surface: 'workstream',
+      },
+      operationId: id,
+      eventId: newId(),
+    }).catch(() => undefined);
     return { watchEnabled: true };
   }
 
   async unwatch(id: string, workstreamId: string): Promise<void> {
-    await this.loadResource(id);
+    const resource = await this.loadResource(id);
+    const connection = resource.connection_id == null
+      ? null
+      : await this.loadConnection(String(resource.connection_id));
     await this.env.DB.batch([
       this.env.DB.prepare(
         "UPDATE resource_watches SET enabled = 0, updated_at = ? WHERE workstream_id = ? AND resource_id = ?",
@@ -467,6 +495,23 @@ export class ResourceService {
       ).bind(workstreamId, id),
     ]);
     await this.refreshScheduler();
+    void emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: 'workstream_resource_action_completed',
+      properties: {
+        workstreamId,
+        resourceId: id,
+        resourceType: String(resource.resource_type),
+        connectorType: resourceTelemetryConnector(connection?.connector_type),
+        relationshipType: 'context',
+        action: 'unwatch',
+        result: 'success',
+        surface: 'workstream',
+      },
+      operationId: id,
+      eventId: newId(),
+    }).catch(() => undefined);
   }
 
   private async loadResource(id: string): Promise<Record<string, unknown>> {

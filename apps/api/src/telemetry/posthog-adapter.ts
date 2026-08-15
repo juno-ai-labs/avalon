@@ -132,26 +132,30 @@ function destinationEvent(envelope: TelemetryEnvelope): {
   event: string;
   properties: Record<string, unknown>;
 } {
-  if (envelope.name === "screen_viewed") {
+  if (envelope.name === "screen_viewed" || envelope.name === "surface_viewed") {
     return {
       event: "$screen",
-      properties: { $screen_name: envelope.properties["screen"] },
+      properties: { $screen_name: envelope.properties["screen"] ?? envelope.properties["surface"] },
     };
   }
+  if (envelope.name === "site_page_viewed") return { event: "$pageview", properties: webPageContext(envelope) };
+  if (envelope.name === "site_page_left") return { event: "$pageleave", properties: webPageContext(envelope) };
   if (envelope.name === "application_lifecycle") {
     const state = envelope.properties["state"];
-    if (state === "launch_started" || state === "foreground") {
-      return {
-        event: "Application Opened",
-        properties: {
-          from_background: state === "foreground",
-          ...(state === "launch_started"
-            ? { version: envelope.context.release, build: envelope.context.buildId }
-            : {}),
-        },
-      };
-    }
     if (state === "background") return { event: "Application Backgrounded", properties: {} };
+  }
+  if (envelope.name === "application_opened") {
+    const phase = envelope.properties["phase"];
+    return {
+      event: "Application Opened",
+      properties: {
+        application_open_source: envelope.properties["entrypoint"],
+        from_background: phase === "activation",
+        ...(phase === "cold_start"
+          ? { version: envelope.context.release, build: envelope.context.buildId }
+          : {}),
+      },
+    };
   }
   if (envelope.name === "application_version_changed") {
     if (envelope.properties["state"] === "installed") {
@@ -173,11 +177,76 @@ function destinationEvent(envelope: TelemetryEnvelope): {
   return { event: envelope.name, properties: {} };
 }
 
+function webPageContext(envelope: TelemetryEnvelope): Record<string, unknown> {
+  const pathname = envelope.properties["pathname"];
+  if (typeof pathname !== "string") return {};
+  const referringDomain = envelope.properties["referringDomain"];
+  return {
+    $current_url: `https://with-avalon.com${pathname}`,
+    $pathname: pathname,
+    $host: "with-avalon.com",
+    ...(typeof referringDomain === "string"
+      ? { $referrer: `https://${referringDomain}/`, $referring_domain: referringDomain }
+      : {}),
+    ...(typeof envelope.properties["campaignSource"] === "string"
+      ? { $utm_source: envelope.properties["campaignSource"] }
+      : {}),
+    ...(typeof envelope.properties["campaignMedium"] === "string"
+      ? { $utm_medium: envelope.properties["campaignMedium"] }
+      : {}),
+    ...(typeof envelope.properties["campaignName"] === "string"
+      ? { $utm_campaign: envelope.properties["campaignName"] }
+      : {}),
+  };
+}
+
+function applicationSettingsPersonProperties(envelope: TelemetryEnvelope): Record<string, unknown> | null {
+  if (envelope.name === "application_settings_state" || envelope.name === "application_settings_state_v2") {
+    return {
+      avalon_launch_at_login_enabled: envelope.properties["launchAtLoginEnabled"],
+      avalon_launch_at_login_available: envelope.properties["launchAtLoginAvailable"],
+      avalon_lockdown_mode_enabled: envelope.properties["lockdownModeEnabled"],
+      avalon_lockdown_mode_available: envelope.properties["lockdownModeAvailable"],
+      avalon_application_icon: envelope.properties["applicationIcon"],
+      avalon_application_icon_automatic: envelope.properties["applicationIconAutomatic"],
+      avalon_application_icon_available: envelope.properties["applicationIconAvailable"],
+      ...(envelope.name === "application_settings_state_v2" ? {
+        avalon_menu_bar_enabled: envelope.properties["menuBarEnabled"],
+        avalon_menu_bar_available: envelope.properties["menuBarAvailable"],
+        avalon_menu_bar_present: envelope.properties["menuBarPresent"],
+      } : {}),
+    };
+  }
+  if (envelope.name === "application_setting_change_completed"
+    || envelope.name === "application_setting_change_completed_v2") {
+    const setting = envelope.properties["setting"];
+    if (setting === "launch_at_login") {
+      return { avalon_launch_at_login_enabled: envelope.properties["appliedEnabled"] };
+    }
+    if (setting === "lockdown_mode") {
+      return { avalon_lockdown_mode_enabled: envelope.properties["appliedEnabled"] };
+    }
+    if (setting === "menu_bar") {
+      return { avalon_menu_bar_enabled: envelope.properties["appliedEnabled"] };
+    }
+  }
+  if (envelope.name === "application_icon_changed") {
+    return {
+      avalon_application_icon: envelope.properties["selectedIcon"],
+      avalon_application_icon_automatic: envelope.properties["automatic"],
+    };
+  }
+  return null;
+}
+
 export function mapPostHogCapture(row: GlobalTelemetryDeliveryRow): PostHogCapture {
   const envelope = row.envelope;
-  const personless = envelope.identityScope === "installation" || envelope.identityScope === "anonymous-epoch";
+  const personless = envelope.identityScope === "installation"
+    || envelope.identityScope === "anonymous-epoch"
+    || envelope.identityScope === "workspace";
   const mapped = destinationEvent(envelope);
-  const desktopSource = envelope.source !== "api";
+  const desktopSource = envelope.source.startsWith("desktop-");
+  const settingsPersonProperties = personless ? null : applicationSettingsPersonProperties(envelope);
   return {
     event: mapped.event,
     timestamp: row.normalizedTimestamp,
@@ -192,6 +261,7 @@ export function mapPostHogCapture(row: GlobalTelemetryDeliveryRow): PostHogCaptu
       $process_person_profile: !personless,
       $is_identified: !personless,
       ...(!personless ? { $set_once: { first_avalon_release: envelope.context.release } } : {}),
+      ...(settingsPersonProperties ? { $set: settingsPersonProperties } : {}),
       ...(desktopSource ? desktopApplicationContext({
         release: envelope.context.release,
         buildId: envelope.context.buildId,

@@ -6,6 +6,7 @@ import {
   OnboardingRegionRequestSchema,
   ProductAnalyticsPreferenceSchema,
   SessionSchema,
+  TELEMETRY_EVENTS,
   WorkspaceOnboardingStateSchema,
   type Session as WireSession,
 } from '@avalon/contracts';
@@ -39,6 +40,8 @@ import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import type {
   AvalonRegion,
   DesktopApplicationSettings,
+  DesktopDeepLinkEntrypoint,
+  DesktopDeepLinkNavigation,
   DesktopLockdownSettings,
   DesktopSession,
   DesktopTelemetryProductIntent,
@@ -63,6 +66,7 @@ import {
   responseError,
   UnusableCredentialError,
 } from './api-response-error';
+import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
 import {
   applicationIconPath,
   applicationIconPreferenceDirectoryForLaunch,
@@ -100,6 +104,7 @@ import {
   parseMessageExportRequest,
   type MessageExportWindow,
 } from './message-export';
+import { MenuBarOpenObserver } from './menu-bar-open-observer';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 import { ProductAnalyticsSettingsController } from './product-analytics-settings';
@@ -109,13 +114,18 @@ import {
   type TelemetryIdentity,
   uuidV7,
 } from './telemetry-identity';
-import { TelemetryReporter, type TelemetryWindowContext } from './telemetry-reporter';
+import {
+  TelemetryReporter,
+  type ApplicationSettingsTelemetryState,
+  type TelemetryWindowContext,
+} from './telemetry-reporter';
 import {
   refreshTelemetryCapability,
   resolveTelemetryRoute,
   type ResolvedTelemetryRoute,
 } from './telemetry-route';
 import { TelemetrySpool } from './telemetry-spool';
+import { TelemetryQuitBarrier } from './telemetry-quit-barrier';
 import { beginTelemetryLaunch, clearTelemetryLaunch, markTelemetryLaunchReady } from './telemetry-launch-marker';
 import { TelemetryBreadcrumbRing, type NewTelemetryBreadcrumb } from './telemetry-breadcrumbs';
 import { supportsSectionHeaders, type MenuBarSuggestion } from './menu-bar-menu';
@@ -272,17 +282,80 @@ function parseTelemetryProductIntent(value: unknown): DesktopTelemetryProductInt
         return { kind: candidate['kind'], entrypoint, operationId };
       }
       break;
-    case 'connector_setup_requested':
-      if (exact('kind', 'connector', 'operationId')
-        && (candidate['connector'] === 'github' || candidate['connector'] === 'google'
-          || candidate['connector'] === 'linear' || candidate['connector'] === 'notion'
-          || candidate['connector'] === 'slack')
-        && typeof operationId === 'string' && UUID_V7_PATTERN.test(operationId)) {
-        return { kind: 'connector_setup_requested', connector: candidate['connector'], operationId };
+    case 'connector_setup_requested_v2': {
+      const hasOperationId = operationId !== undefined;
+      if (!(hasOperationId
+        ? exact('kind', 'connector', 'scope', 'method', 'capabilityCount', 'operationId')
+        : exact('kind', 'connector', 'scope', 'method', 'capabilityCount'))
+        || (hasOperationId && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId)))) break;
+      const properties = { ...candidate };
+      delete properties['kind'];
+      delete properties['operationId'];
+      const parsed = TELEMETRY_EVENTS.connector_setup_requested_v2.properties.safeParse(properties);
+      if (parsed.success) return {
+        kind: 'connector_setup_requested_v2',
+        ...parsed.data,
+        ...(typeof operationId === 'string' ? { operationId } : {}),
+      };
+      break;
+    }
+    case 'command_shortcuts_revealed':
+      if (exact('kind', 'availableCount')
+        && typeof candidate['availableCount'] === 'number'
+        && Number.isInteger(candidate['availableCount'])
+        && candidate['availableCount'] >= 0 && candidate['availableCount'] <= 9) {
+        return { kind: 'command_shortcuts_revealed', availableCount: candidate['availableCount'] };
+      }
+      break;
+    case 'command_shortcut_used':
+      if (exact('kind', 'shortcutNumber', 'destinationType')
+        && typeof candidate['shortcutNumber'] === 'number'
+        && Number.isInteger(candidate['shortcutNumber'])
+        && candidate['shortcutNumber'] >= 1 && candidate['shortcutNumber'] <= 9
+        && (candidate['destinationType'] === 'pinned_workstream'
+          || candidate['destinationType'] === 'recent_workstream'
+          || candidate['destinationType'] === 'recent_note')) {
+        return {
+          kind: 'command_shortcut_used',
+          shortcutNumber: candidate['shortcutNumber'],
+          destinationType: candidate['destinationType'],
+        };
       }
       break;
   }
+  const semanticKind = candidate['kind'];
+  if (typeof semanticKind === 'string' && (
+    semanticKind === 'workstream_opened'
+    || semanticKind === 'workstream_action_completed'
+    || semanticKind === 'automation_created'
+    || semanticKind === 'automation_action_completed'
+    || semanticKind === 'message_sent'
+    || semanticKind === 'content_copied'
+    || semanticKind === 'note_opened'
+    || semanticKind === 'note_created'
+    || semanticKind === 'note_action_completed'
+    || semanticKind === 'transcription_state_changed'
+    || semanticKind === 'surface_viewed'
+    || semanticKind === 'automation_builder_started'
+    || semanticKind === 'automation_opened'
+    || semanticKind === 'hypersight_opened'
+    || semanticKind === 'workstream_resource_action_completed'
+    || semanticKind === 'recording_start_completed'
+    || semanticKind === 'recording_terminal'
+    || semanticKind === 'note_opened_v2'
+  )) {
+    const properties = { ...candidate };
+    delete properties['kind'];
+    const parsed = TELEMETRY_EVENTS[semanticKind].properties.safeParse(properties);
+    if (parsed.success) return { kind: semanticKind, ...parsed.data } as DesktopTelemetryProductIntent;
+  }
   throw new Error('Invalid telemetry intent');
+}
+
+function telemetryIntentProperties<T extends DesktopTelemetryProductIntent>(intent: T): Omit<T, 'kind'> {
+  return Object.fromEntries(
+    Object.entries(intent).filter(([key]) => key !== 'kind'),
+  ) as Omit<T, 'kind'>;
 }
 
 async function reportTelemetryProductIntent(
@@ -298,7 +371,7 @@ async function reportTelemetryProductIntent(
         ? { kind: 'operation', operation: 'workstream_create', state: 'requested' }
         : intent.kind === 'run_requested'
           ? { kind: 'operation', operation: 'run_start', state: 'requested' }
-          : intent.kind === 'connector_setup_requested'
+          : intent.kind === 'connector_setup_requested_v2'
             ? { kind: 'operation', operation: 'connector_setup', state: 'requested' }
             : null;
   if (operation) await telemetryBreadcrumbs?.add(operation).catch(() => undefined);
@@ -323,8 +396,66 @@ async function reportTelemetryProductIntent(
     case 'run_requested':
       await telemetryReporter.runRequested(intent.entrypoint, intent.operationId, windowContext);
       return;
-    case 'connector_setup_requested':
-      await telemetryReporter.connectorSetupRequested(intent.connector, intent.operationId, windowContext);
+    case 'connector_setup_requested_v2': {
+      const { operationId: connectorOperationId, ...semanticIntent } = intent;
+      await telemetryReporter.semanticProductIntent(
+        semanticIntent,
+        windowContext,
+        connectorOperationId,
+      );
+      return;
+    }
+    case 'command_shortcuts_revealed':
+      await telemetryReporter.commandShortcutsRevealed(intent.availableCount, windowContext);
+      return;
+    case 'command_shortcut_used':
+      await telemetryReporter.commandShortcutUsed(
+        intent.shortcutNumber, intent.destinationType, windowContext,
+      );
+      return;
+    case 'workstream_opened': {
+      await telemetryReporter.workstreamOpened(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'workstream_action_completed': {
+      await telemetryReporter.workstreamActionCompleted(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'automation_created': {
+      await telemetryReporter.automationCreated(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'automation_action_completed': {
+      await telemetryReporter.automationActionCompleted(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'message_sent': {
+      await telemetryReporter.messageSent(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'content_copied': {
+      await telemetryReporter.contentCopied(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'note_opened': {
+      await telemetryReporter.noteOpened(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'note_created': {
+      await telemetryReporter.noteCreated(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'note_action_completed': {
+      await telemetryReporter.noteActionCompleted(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    case 'transcription_state_changed': {
+      await telemetryReporter.transcriptionStateChanged(telemetryIntentProperties(intent), windowContext);
+      return;
+    }
+    default:
+      await telemetryReporter.semanticProductIntent(intent, windowContext);
+      return;
   }
 }
 
@@ -352,6 +483,15 @@ let telemetryRoute: ResolvedTelemetryRoute = {
 };
 let telemetryCapabilityRefresh: Promise<ResolvedTelemetryRoute['anonymous']> | null = null;
 let telemetryReporter: TelemetryReporter | null = null;
+const applicationOpenObserver = new ApplicationOpenObserver((entrypoint, phase) => {
+  const reporter = telemetryReporter;
+  if (reporter) void reporter.applicationOpened(entrypoint, phase).catch(() => undefined);
+});
+// A future native push-notification click must call
+// `applicationOpenObserver.opened('push_notification')` before raising a window;
+// ordinary deep links cannot truthfully identify which external surface sent them.
+let applicationLaunchObserved = false;
+let prelaunchDeepLinkObserved = false;
 const applicationLifecycleTelemetry = new ApplicationLifecycleTelemetry((state) => {
   const reporter = telemetryReporter;
   if (reporter) void reporter.applicationLifecycle(state).catch(() => undefined);
@@ -366,7 +506,20 @@ let telemetryLinkedCapability: string | null = null;
 let telemetryLaunchId: string | null = null;
 let telemetryBreadcrumbs: TelemetryBreadcrumbRing | null = null;
 let telemetryContinuouslyEligible = false;
-const pendingDeepLinks: string[] = [];
+const pendingDeepLinks: DesktopDeepLinkNavigation[] = [];
+const telemetryQuitBarrier = new TelemetryQuitBarrier(async () => {
+  applicationOpenObserver.destroy();
+  if (telemetryFlushTimer) clearInterval(telemetryFlushTimer);
+  telemetryFlushTimer = null;
+  await telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'graceful_exit' }).catch(() => undefined);
+  const reporter = telemetryReporter;
+  if (!reporter) return;
+  await Promise.all([
+    reporter.applicationLifecycle('graceful_exit').catch(() => undefined),
+    reporter.desktopSession('ended', telemetryContinuouslyEligible).catch(() => undefined),
+  ]);
+  await reporter.flush().catch(() => undefined);
+}, 750);
 const hardenedWebContents = new WeakSet<WebContents>();
 const telemetryWindowIds = new WeakMap<WebContents, string>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
@@ -575,7 +728,11 @@ function broadcastSessionChanged(value: WireSession | null): void {
   const nextBinding = exposed ? flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl) : null;
   if (nextBinding && nextBinding !== telemetryAccountBinding) {
     void productAnalyticsSettingsController.requireRemoteVerification()
-      .then(() => productAnalyticsSettingsController.refresh())
+      .then(async () => {
+        await productAnalyticsSettingsController.refresh();
+        await telemetryReporter?.applicationSettingsState(applicationSettingsTelemetryState());
+        flushTelemetryAndRetryLink();
+      })
       .catch((error: unknown) => {
         logWarn('avalon', 'could not synchronize the Product analytics preference', error);
       });
@@ -965,6 +1122,7 @@ function menuBarItemIsLive(): boolean {
 /** A status item click does not activate Avalon the way a Dock click does, so
  * anything opened from the menu would appear behind the frontmost app. */
 function activateFromMenuBar(): void {
+  applicationOpenObserver.opened('menu_bar');
   app.focus({ steal: true });
 }
 
@@ -978,7 +1136,9 @@ function openMainWindowFromMenuBar(): void {
 function startSuggestedWorkstreamFromMenuBar(suggestion: MenuBarSuggestion): void {
   activateFromMenuBar();
   void menuBarContentStore.startSuggestion(suggestion)
-    .then((workstreamId) => emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`))
+    .then((workstreamId) => {
+      emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
+    })
     .catch((error: unknown) => {
       // The click has to land somewhere. Opening Avalon puts the person in
       // front of the same suggestion on the home screen, where starting it
@@ -998,24 +1158,25 @@ const menuBarController = new MenuBarController({
   signedIn: () => Boolean(inMemoryAuth),
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
+    selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
     newMeetingNote: () => {
       activateFromMenuBar();
-      void createMeetingWindow().catch((error: unknown) => {
+      void createMeetingWindow(undefined, 'menu_bar').catch((error: unknown) => {
         logError('avalon', 'failed to open meeting notes from the menu bar', error);
       });
     },
     newWorkstream: () => {
       activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://workstreams/new`);
+      emitDeepLink(`${customProtocol}://workstreams/new`, 'menu_bar');
     },
     newAutomation: () => {
       activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://automations/new`);
+      emitDeepLink(`${customProtocol}://automations/new`, 'menu_bar');
     },
     startSuggestion: startSuggestedWorkstreamFromMenuBar,
     openWorkstream: (workstreamId) => {
       activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`);
+      emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
     },
     openAvalon: openMainWindowFromMenuBar,
     quit: () => app.quit(),
@@ -1050,6 +1211,23 @@ function desktopApplicationSettings(
     productAnalyticsPreferencePending: productAnalyticsSettingsController.state().pending,
     nativeCrashRestartRequired: nativeCrashGenerationActive
       && (nativeCrashGenerationInvalidated || !productAnalyticsSettingsController.state().effectiveEnabled),
+  };
+}
+
+function applicationSettingsTelemetryState(): ApplicationSettingsTelemetryState {
+  const lockdown = lockdownModeController.state();
+  const icon = applicationIconController.state();
+  return {
+    launchAtLoginEnabled: launchAtLoginController.enabled(),
+    launchAtLoginAvailable: launchAtLoginController.available(),
+    lockdownModeEnabled: lockdown.lockdownMode,
+    lockdownModeAvailable: lockdown.lockdownAvailable,
+    menuBarEnabled: menuBarController.enabled(),
+    menuBarAvailable: menuBarController.available(),
+    menuBarPresent: menuBarController.present(),
+    applicationIcon: icon.activeIcon,
+    applicationIconAutomatic: icon.isAutomatic,
+    applicationIconAvailable: icon.supported,
   };
 }
 
@@ -1990,7 +2168,8 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
   }
 }
 
-function sendDeepLink(rawUrl: string): void {
+function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): void {
+  const navigation: DesktopDeepLinkNavigation = { url: rawUrl, entrypoint };
   const connectorResult = (() => {
     try {
       const deepLink = new URL(rawUrl);
@@ -2022,10 +2201,12 @@ function sendDeepLink(rawUrl: string): void {
   // Query cache. Deliver connector completions to both renderers so the window
   // that initiated OAuth can refresh as soon as the provider redirect lands.
   // Authentication and invitation links remain exclusive to the main window.
-  connectorSettingsWindow?.webContents.send('auth:deep-link', rawUrl);
+  connectorSettingsWindow?.webContents.send('auth:deep-link', navigation);
 
   if (!mainWindow || !rendererReady) {
-    if (!pendingDeepLinks.includes(rawUrl)) pendingDeepLinks.push(rawUrl);
+    if (!pendingDeepLinks.some((pending) => (
+      pending.url === navigation.url && pending.entrypoint === navigation.entrypoint
+    ))) pendingDeepLinks.push(navigation);
     if ((!mainWindow || mainWindow.isDestroyed()) && app.isReady()) void createMainWindow();
     if (connectorSettingsWindow) {
       if (connectorSettingsWindow.isMinimized()) connectorSettingsWindow.restore();
@@ -2034,7 +2215,7 @@ function sendDeepLink(rawUrl: string): void {
     }
     return;
   }
-  mainWindow.webContents.send('auth:deep-link', rawUrl);
+  mainWindow.webContents.send('auth:deep-link', navigation);
   const targetWindow = connectorSettingsWindow ?? mainWindow;
   if (targetWindow.isMinimized()) targetWindow.restore();
   targetWindow.show();
@@ -2058,13 +2239,14 @@ function sendDeepLink(rawUrl: string): void {
  */
 function revealNoteInMainWindow(noteId: string): void {
   const target = `${customProtocol}://notes/${noteId}`;
+  const navigation: DesktopDeepLinkNavigation = { url: target, entrypoint: 'in_app_link' };
   const raise = (window: BrowserWindow): void => {
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
   };
   if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) {
-    if (!pendingDeepLinks.includes(target)) pendingDeepLinks.push(target);
+    if (!pendingDeepLinks.some((pending) => pending.url === target)) pendingDeepLinks.push(navigation);
     // Gone: a new window opens on the queued link and raises itself. Present but
     // still loading — a reload, a slow cold start — is the case that would
     // otherwise queue the link and raise nothing at all.
@@ -2075,11 +2257,11 @@ function revealNoteInMainWindow(noteId: string): void {
     }
     return;
   }
-  mainWindow.webContents.send('auth:deep-link', target);
+  mainWindow.webContents.send('auth:deep-link', navigation);
   raise(mainWindow);
 }
 
-function emitDeepLink(rawUrl: string): void {
+function acceptedDeepLink(rawUrl: string): string | null {
   try {
     const deepLink = new URL(rawUrl);
     const isAuthentication = deepLink.protocol === `${customProtocol}:`
@@ -2114,11 +2296,27 @@ function emitDeepLink(rawUrl: string): void {
     if (
       !isAuthentication && !isWorkstream && !isNewWorkstream && !isInvitation
       && !isSettings && !isAutomation && !isSlackLink
-    ) return;
-    sendDeepLink(deepLink.toString());
+    ) return null;
+    return deepLink.toString();
   } catch {
     // Ignore malformed protocol payloads from the operating system.
+    return null;
   }
+}
+
+function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
+  const deepLink = acceptedDeepLink(rawUrl);
+  if (!deepLink) return false;
+  sendDeepLink(deepLink, entrypoint);
+  return true;
+}
+
+function observeAcceptedDeepLinkOpen(): void {
+  if (!applicationLaunchObserved) {
+    prelaunchDeepLinkObserved = true;
+    return;
+  }
+  applicationOpenObserver.opened('deep_link');
 }
 
 function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
@@ -2156,7 +2354,12 @@ function registerIpc(): void {
   });
   ipcMain.handle('application-settings:set-lockdown-mode', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
-    return desktopApplicationSettings(await lockdownModeController.set(rawEnabled));
+    const previousEnabled = lockdownModeController.state().lockdownMode;
+    const lockdown = await lockdownModeController.set(rawEnabled);
+    void telemetryReporter?.applicationSettingChangeCompleted(
+      'lockdown_mode', previousEnabled, rawEnabled as boolean, lockdown.lockdownMode,
+    );
+    return desktopApplicationSettings(lockdown);
   });
   ipcMain.handle('application-settings:set-debug-enabled', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
@@ -2171,7 +2374,12 @@ function registerIpc(): void {
   });
   ipcMain.handle('application-settings:set-menu-bar-enabled', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
+    const previousEnabled = menuBarController.enabled();
     await menuBarController.set(rawEnabled);
+    const appliedEnabled = menuBarController.enabled();
+    void telemetryReporter?.applicationSettingChangeCompleted(
+      'menu_bar', previousEnabled, rawEnabled as boolean, appliedEnabled,
+    );
     // Nothing was fetched while the item was off, so an item just switched on
     // would open empty until the pointer next crossed it.
     if (menuBarItemIsLive() && inMemoryAuth) void menuBarContentStore.refresh();
@@ -2182,7 +2390,11 @@ function registerIpc(): void {
   });
   ipcMain.handle('application-settings:set-launch-at-login', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
-    await launchAtLoginController.set(rawEnabled);
+    const previousEnabled = launchAtLoginController.enabled();
+    const appliedEnabled = await launchAtLoginController.set(rawEnabled);
+    void telemetryReporter?.applicationSettingChangeCompleted(
+      'launch_at_login', previousEnabled, rawEnabled as boolean, appliedEnabled,
+    );
     // `state()` for the same reason as the two preferences above: registering a
     // login item must never run Lockdown mode's keystore fallback, which clears
     // credentials and forces a new sign-in.
@@ -2342,7 +2554,7 @@ function registerIpc(): void {
     if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
       throw new Error('Invalid note ID');
     }
-    await createMeetingWindow(rawNoteId as string | undefined);
+    await createMeetingWindow(rawNoteId as string | undefined, rawNoteId === undefined ? 'sidebar' : 'unknown');
   });
   ipcMain.handle('meeting-audio:get-permissions', (event) => {
     assertMeetingIpcSender(event);
@@ -2568,20 +2780,31 @@ function createMenuBarTray(): MenuBarTray {
   const recordImpressions = (): void => {
     void menuBarContentStore.recordImpressions();
   };
+  const openObserver = new MenuBarOpenObserver(() => {
+    recordImpressions();
+    const content = menuBarContentStore.content();
+    void telemetryReporter?.menuBarOpened({
+      signedIn: Boolean(inMemoryAuth),
+      suggestionCount: Math.min(content.suggestions.length, 4),
+      recentCount: Math.min(content.recents.length, 5),
+      pinnedCount: Math.min(content.pinned.length, 5),
+    });
+  });
   tray.on('mouse-enter', refreshContent);
   tray.on('click', () => {
     refreshContent();
-    // Both this and `menu-will-show` report the open. Which of the two macOS
+    // Both this and `menu-will-show` observe the open. Which of the two macOS
     // raises for a status item's own menu is not something this repository can
     // check — there is no menu bar in the sandbox — and reporting nothing is
-    // the failure being avoided. `recordImpressions` is keyed on the set, so
-    // the pair costs one report rather than two.
-    recordImpressions();
+    // the failure being avoided. The observer coalesces the pair for menu
+    // analytics, while `recordImpressions` separately keys on the suggestion set.
+    openObserver.opened();
   });
   return {
     setContextMenu: (template) => {
       const menu = Menu.buildFromTemplate(template);
-      menu.on('menu-will-show', recordImpressions);
+      menu.on('menu-will-show', () => openObserver.opened());
+      menu.on('menu-will-close', () => openObserver.closed());
       tray.setContextMenu(menu);
     },
     destroy: () => tray.destroy(),
@@ -2692,12 +2915,28 @@ const applicationIconController = new ApplicationIconController({
   onStateChange: broadcastApplicationIconChanged,
 });
 
-function enqueueApplicationIconChange(rawIconId: unknown): Promise<DesktopApplicationIconState> {
-  return applicationIconController.change(rawIconId);
+async function enqueueApplicationIconChange(rawIconId: unknown): Promise<DesktopApplicationIconState> {
+  const previous = applicationIconController.state();
+  const state = await applicationIconController.change(rawIconId);
+  void telemetryReporter?.applicationIconChanged({
+    previousIcon: previous.activeIcon,
+    previousAutomatic: previous.isAutomatic,
+    selectedIcon: state.activeIcon,
+    automatic: state.isAutomatic,
+  });
+  return state;
 }
 
-function enqueueApplicationIconReset(): Promise<DesktopApplicationIconState> {
-  return applicationIconController.reset();
+async function enqueueApplicationIconReset(): Promise<DesktopApplicationIconState> {
+  const previous = applicationIconController.state();
+  const state = await applicationIconController.reset();
+  void telemetryReporter?.applicationIconChanged({
+    previousIcon: previous.activeIcon,
+    previousAutomatic: previous.isAutomatic,
+    selectedIcon: state.activeIcon,
+    automatic: state.isAutomatic,
+  });
+  return state;
 }
 
 async function initializeApplicationIcon(): Promise<void> {
@@ -2790,7 +3029,12 @@ async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' 
   }
 }
 
-function rendererUrl(surface?: 'settings' | 'meeting', settingsSection?: DesktopSettingsSection, noteId?: string): string {
+function rendererUrl(
+  surface?: 'settings' | 'meeting',
+  settingsSection?: DesktopSettingsSection,
+  noteId?: string,
+  meetingEntrypoint?: 'sidebar' | 'menu_bar' | 'unknown',
+): string {
   const target = rendererDevelopmentUrl
     ? new URL(rendererDevelopmentUrl)
     : new URL(`${rendererProtocol}://${rendererHost}/index.html`);
@@ -2799,6 +3043,7 @@ function rendererUrl(surface?: 'settings' | 'meeting', settingsSection?: Desktop
   if (surface === 'settings') target.hash = '/settings';
   if (surface === 'meeting') {
     if (noteId) target.searchParams.set('noteId', noteId);
+    if (meetingEntrypoint) target.searchParams.set('meetingEntrypoint', meetingEntrypoint);
     target.hash = '/meeting';
   }
   return target.toString();
@@ -2851,7 +3096,11 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
   await loadRenderer(settingsWindow, rendererUrl('settings', section), 'settings');
 }
 
-async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promise<void> {
+async function createMeetingWindow(
+  requestedNoteId?: string,
+  entrypoint: 'sidebar' | 'menu_bar' | 'unknown' = 'unknown',
+): Promise<void> {
+  const noteId = requestedNoteId ?? crypto.randomUUID();
   const meetingWindow = new BrowserWindow({
     width: 720,
     height: 860,
@@ -2905,7 +3154,7 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
   try {
     await loadRenderer(
       meetingWindow,
-      rendererUrl('meeting', undefined, noteId),
+      rendererUrl('meeting', undefined, noteId, requestedNoteId === undefined ? entrypoint : undefined),
       'meeting',
     );
   } catch (error) {
@@ -3044,8 +3293,11 @@ if (!singleInstanceLock) {
 } else {
   app.on('second-instance', (_event, commandLine) => {
     const deepLink = commandLine.find((argument) => argument.startsWith(`${customProtocol}://`));
-    if (deepLink) emitDeepLink(deepLink);
+    if (deepLink) {
+      if (emitDeepLink(deepLink)) observeAcceptedDeepLinkOpen();
+    }
     else if (mainWindow) {
+      applicationOpenObserver.opened('user_launch');
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
@@ -3054,7 +3306,7 @@ if (!singleInstanceLock) {
 
   app.on('open-url', (event, url) => {
     event.preventDefault();
-    emitDeepLink(url);
+    if (emitDeepLink(url)) observeAcceptedDeepLinkOpen();
   });
 
   void app.whenReady().then(async () => {
@@ -3148,6 +3400,13 @@ if (!singleInstanceLock) {
       loginItemState: app.getLoginItemSettings(),
       argv: process.argv,
     });
+    const initialDeepLink = process.argv.find((argument) => acceptedDeepLink(argument) !== null);
+    const launchEntrypoint = initialApplicationOpenEntrypoint({
+      openedAtLogin,
+      hasDeepLink: initialDeepLink !== undefined || prelaunchDeepLinkObserved,
+    });
+    applicationOpenObserver.launched(launchEntrypoint);
+    applicationLaunchObserved = true;
     try {
       await menuBarController.initialize();
     } catch (error) {
@@ -3170,12 +3429,15 @@ if (!singleInstanceLock) {
       });
     }
     flushTelemetryAndRetryLink();
-    void initializeApplicationIcon();
+    void initializeApplicationIcon().then(async () => {
+      await telemetryReporter?.applicationSettingsState(applicationSettingsTelemetryState());
+      flushTelemetryAndRetryLink();
+    });
 
-    const initialDeepLink = process.argv.find((argument) => argument.startsWith(`${customProtocol}://`));
     if (initialDeepLink) emitDeepLink(initialDeepLink);
 
     app.on('activate', () => {
+      applicationOpenObserver.activated();
       if (!mainWindow || mainWindow.isDestroyed()) {
         void createMainWindow().catch((error: unknown) => {
           logError('avalon', 'failed to recreate the main window', error);
@@ -3236,21 +3498,18 @@ app.on('window-all-closed', () => {
 // the person's and answered with a dialog — vetoing the quit silently, which is
 // the one outcome this flag exists to rule out. It is cleared where the quit is
 // known to be over instead, as the last meeting window goes.
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   quitting = true;
+  if (telemetryQuitBarrier.hold(() => app.quit())) event.preventDefault();
 });
 
-// `will-quit`, not `before-quit`: the latter fires before any window is asked to
-// close, and a meeting window refuses. A quit vetoed that way would leave Avalon
-// running with the status item already destroyed and nothing that recreates it —
-// no window and no menu bar presence, which is the state the `present()` check
-// on launch exists to prevent. This fires only once the quit is going through.
+// The bounded barrier above owns asynchronous shutdown telemetry. `will-quit`
+// performs only synchronous final cleanup after Electron has accepted the
+// resumed quit; promises started here would not be awaited by the process.
 app.on('will-quit', () => {
-  void telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'graceful_exit' });
+  applicationOpenObserver.destroy();
   clearTelemetryLaunch(userDataDirectory());
   if (telemetryFlushTimer) clearInterval(telemetryFlushTimer);
   telemetryFlushTimer = null;
-  void telemetryReporter?.applicationLifecycle('graceful_exit').then(() => telemetryReporter?.flush());
-  void telemetryReporter?.desktopSession('ended', telemetryContinuouslyEligible).then(() => telemetryReporter?.flush());
   menuBarController.destroy();
 });

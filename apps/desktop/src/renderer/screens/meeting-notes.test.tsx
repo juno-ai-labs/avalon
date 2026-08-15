@@ -41,6 +41,7 @@ const state = vi.hoisted(() => ({
     systemAudio: 'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown';
   },
   prepareMeetingAudioPermissions: vi.fn(),
+  reportTelemetryProductIntent: vi.fn(async () => undefined),
   commit: vi.fn(async () => ''),
   dictationState: 'idle' as 'idle' | 'requesting' | 'connecting' | 'listening' | 'paused' | 'transcribing' | 'finalizing' | 'error',
   dictationWarning: undefined as string | undefined,
@@ -69,6 +70,7 @@ vi.mock('../lib/platform', () => ({
     getMeetingAudioPermissions: state.getMeetingAudioPermissions,
     openMeetingAudioSettings: state.openMeetingAudioSettings,
     prepareMeetingAudioPermissions: state.prepareMeetingAudioPermissions,
+    reportTelemetryProductIntent: state.reportTelemetryProductIntent,
     onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => {
       state.closeRequested = listener;
       return () => {
@@ -128,6 +130,7 @@ function noteDetail(overrides: Record<string, unknown> = {}) {
 describe('MeetingNotesScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.replaceState({}, '', '/');
     state.commit.mockResolvedValue('');
     state.pause.mockResolvedValue(undefined);
     state.resume.mockResolvedValue(undefined);
@@ -286,14 +289,33 @@ describe('MeetingNotesScreen', () => {
     expect(await screen.findByRole('heading', { name: 'Summary' })).toBeVisible();
   });
 
+  it('records a new note only when the window carries a proved creation entrypoint', async () => {
+    window.history.replaceState({}, '', '/?noteId=00000000-0000-4000-8000-000000000111&meetingEntrypoint=sidebar');
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'note_created', noteId: '00000000-0000-4000-8000-000000000111',
+      visibility: 'private', noteType: 'meeting_or_voice', entrypoint: 'sidebar',
+    }));
+  });
+
   it('offers Pause and End while recording, then Resume and End while paused', async () => {
     state.dictationState = 'listening';
     const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
 
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await waitFor(() => expect(state.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'transcription_state_changed', noteId: expect.any(String), state: 'started',
+      visibility: 'private', audioSource: 'microphone_and_system',
+    }));
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(state.pause).toHaveBeenCalledOnce());
+    expect(state.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'transcription_state_changed', noteId: expect.any(String), state: 'paused',
+      visibility: 'private', audioSource: 'microphone_and_system',
+    });
     expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
 
     state.dictationState = 'paused';
@@ -302,6 +324,10 @@ describe('MeetingNotesScreen', () => {
     expect(screen.getByText('Audio capture paused')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
     await waitFor(() => expect(state.resume).toHaveBeenCalledOnce());
+    expect(state.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'transcription_state_changed', noteId: expect.any(String), state: 'resumed',
+      visibility: 'private', audioSource: 'microphone_and_system',
+    });
     expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
   });
 
@@ -375,6 +401,10 @@ describe('MeetingNotesScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'End' }));
 
     await waitFor(() => expect(state.closeMeetingNotes).toHaveBeenCalledOnce());
+    expect(state.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'transcription_state_changed', noteId: expect.any(String), state: 'completed',
+      visibility: 'private', audioSource: 'microphone_and_system',
+    });
     // The note id, so the main window can be taken to it rather than left on
     // whatever the meeting window was covering.
     expect(state.closeMeetingNotes).toHaveBeenCalledWith(expect.stringMatching(
@@ -816,6 +846,10 @@ describe('MeetingNotesScreen', () => {
       expect.any(String),
       { scope: 'workspace' },
     ));
+    expect(state.reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'note_action_completed', noteId: expect.any(String), action: 'make_public',
+      visibility: 'public', recordingState: 'idle',
+    });
   });
 
   it('opens another creator’s public note as read-only', async () => {

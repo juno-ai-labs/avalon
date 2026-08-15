@@ -70,6 +70,13 @@ export interface TerminalSandboxMutationLease {
   generation: number;
 }
 
+export interface TerminalAcquisitionObservation {
+  action: "start" | "restore" | "repository_replace";
+  durationMs: number;
+  repositorySelected: boolean;
+  localFilesRetained: boolean;
+}
+
 function plusMinutes(now: Date, minutes: number): string {
   return new Date(now.getTime() + minutes * 60_000).toISOString();
 }
@@ -107,6 +114,10 @@ export class TerminalSandboxCoordinator {
     private readonly clock: TerminalClock = systemClock,
     private readonly lifecycleChanged?: (workspaceId: string) => Promise<void>,
     private readonly emergencyDisabled = false,
+    private readonly acquisitionObserved?: (
+      context: HarnessToolContext,
+      observation: TerminalAcquisitionObservation,
+    ) => Promise<void>,
   ) {}
 
   async claimMutation(context: HarnessToolContext): Promise<TerminalSandboxMutationLease> {
@@ -147,6 +158,7 @@ export class TerminalSandboxCoordinator {
   }
 
   async acquire(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
+    const acquisitionStartedAt = Date.now();
     if (this.emergencyDisabled) {
       throw new TerminalToolError(
         "sandbox_unavailable",
@@ -178,6 +190,14 @@ export class TerminalSandboxCoordinator {
     }));
     const domains = policy.mode === "trusted_only" ? parseEffectiveDomains(policy) : [];
     let row = await this.loadSandbox(context.workspaceId, context.workstreamId);
+    let telemetryAction: TerminalAcquisitionObservation["action"] | null = !row
+      ? "start"
+      : row.state === "stopped" || row.state === "archived"
+        ? "restore"
+        : row.state === "running" && row.provider_sandbox_id
+          ? null
+          : "start";
+    const localFilesRetained = Boolean(row?.provider_sandbox_id);
     if (!row) {
       row = await this.reserveFirstGeneration(context, authorityFingerprint, policy.revision, timestamp);
     }
@@ -185,6 +205,7 @@ export class TerminalSandboxCoordinator {
 
     const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
     if (row.authority_fingerprint !== authorityFingerprint || importedResourceRevoked) {
+      telemetryAction = "repository_replace";
       row = await this.replaceForAuthority(context, row, authorityFingerprint, policy.revision, timestamp);
     }
 
@@ -221,6 +242,14 @@ export class TerminalSandboxCoordinator {
       );
     }
     await this.lifecycleChanged?.(context.workspaceId).catch(() => undefined);
+    if (telemetryAction) {
+      await this.acquisitionObserved?.(context, {
+        action: telemetryAction,
+        durationMs: Date.now() - acquisitionStartedAt,
+        repositorySelected: repositoryAuthority !== null,
+        localFilesRetained,
+      }).catch(() => undefined);
+    }
     return {
       providerSandboxId: row.provider_sandbox_id!,
       stableName: row.stable_name,

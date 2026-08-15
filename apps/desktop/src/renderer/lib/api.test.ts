@@ -5,9 +5,11 @@ import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
 const reportJavascriptError = vi.hoisted(() => vi.fn());
+const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 vi.mock('./telemetry', async (importOriginal) => ({
   ...await importOriginal(),
   reportJavascriptError,
+  reportTelemetryProductIntent,
 }));
 
 const timestamp = '2026-07-31T20:00:00.000Z';
@@ -165,6 +167,7 @@ function sse(events: unknown[], splitAt?: number): Response {
 afterEach(() => {
   vi.unstubAllGlobals();
   reportJavascriptError.mockReset();
+  reportTelemetryProductIntent.mockReset();
 });
 
 describe('Avalon API wire adapter', () => {
@@ -1127,9 +1130,18 @@ describe('Avalon API wire adapter', () => {
       attemptId,
     });
     const startHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://api.avalon.test/connections/linear/start?telemetryVersion=2',
+    );
     expect(startHeaders.get('X-Avalon-Operation-Id')).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
     );
+    expect(startHeaders.has('X-Avalon-Telemetry-Version')).toBe(false);
+    expect(reportTelemetryProductIntent).toHaveBeenCalledOnce();
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'connector_setup_requested_v2', connector: 'linear', scope: 'personal',
+      method: 'oauth', capabilityCount: 'one', operationId: startHeaders.get('X-Avalon-Operation-Id'),
+    }));
     await expect(api.waitForConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
       status: 'succeeded',
       connectionId,
