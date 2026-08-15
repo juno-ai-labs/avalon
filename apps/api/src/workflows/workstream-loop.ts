@@ -382,6 +382,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       text,
       deliveryKey,
       outcome.status,
+      input.slackOrigin?.actorSlackUserId ?? null,
     );
     if (input.automationSubscriptionId) {
       const automation = await this.env.DB.prepare(
