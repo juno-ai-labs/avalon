@@ -13,10 +13,11 @@ asked that *Fathom's* technical documentation be referenced. Fireflies.ai and
 Fathom are different products: Fireflies exposes a GraphQL API
 (`api.fireflies.ai/graphql`, per-user API keys), while Fathom exposes the
 REST/MCP surface documented below. This PRD follows the link and the
-documentation instruction and targets **Fathom**. The ambiguity was resolved
-when, on being shown the discrepancy, the requester renamed the working
-branch to `fathom-connection-prd`; the resolution is recorded as
-[`prd.md`](prd.md) Key design decision 1.
+documentation instruction and targets **Fathom**. The ambiguity resolved to
+*both*: the requester renamed this working branch to `fathom-connection-prd`,
+and a parallel Fireflies PRD was written in its own folder,
+[`../2026-08-14_fireflies-connector/prd.md`](../2026-08-14_fireflies-connector/prd.md).
+The resolution is recorded as [`prd.md`](prd.md) Key design decision 1.
 
 ## Fathom's developer surface
 
@@ -36,6 +37,15 @@ those pages on 2026-08-14.
   and, for admins, calls shared across teams they oversee. Private calls stay
   host-only, even from admins.
   ([FAQ](https://developers.fathom.ai/faq.md))
+- Recording identifiers are **integers** (OpenAPI `type: integer`).
+  `GET /recordings/{id}/summary` returns only the summary
+  (`template_name`, `markdown_formatted`) — no title, no action items;
+  action items ride `GET /meetings` behind `include_action_items`, and
+  `/meetings` has no recording-ID filter.
+  `GET /recordings/{id}/transcript` has **no range or pagination
+  parameter**; entries are
+  `{ speaker: { display_name, matched_calendar_invitee_email? }, text, timestamp ("HH:MM:SS") }`.
+  Both endpoints also offer an async `destination_url` mode, unused here.
 - Endpoints: list meetings, list meeting types, get recording summary, get
   recording transcript, request/poll a recording download, list teams, list
   team members, list users and permissions, create/delete webhook.
@@ -88,11 +98,16 @@ those pages on 2026-08-14.
 ### Webhooks
 
 - Created in Fathom's settings UI or via `POST /webhooks`; deleted via API.
-  One event: **new meeting content ready**. `triggered_for` selects "your
-  own meetings" and/or "meetings shared with you"; payload optionally
-  includes summary, transcript, and action items (Avalon opts out of all
-  three — [`design.md`](design.md)).
-  ([Webhooks](https://developers.fathom.ai/webhooks.md))
+  One event: **new meeting content ready**. `triggered_for` is an array over
+  `my_recordings`, `shared_external_recordings`,
+  `my_shared_with_team_recordings`, and `shared_team_recordings` (the last
+  two Team Plan only). **At least one of** `include_transcript`,
+  `include_summary`, `include_action_items`, `include_crm_matches` **must be
+  true** — a fully content-free endpoint is not accepted, so Avalon
+  registers `include_summary` only and treats the delivery as a change
+  signal regardless ([`design.md`](design.md)).
+  ([Webhooks](https://developers.fathom.ai/webhooks.md),
+  [Create a webhook](https://developers.fathom.ai/api-reference/webhooks/create-a-webhook.md))
 - Signature scheme is Standard Webhooks: `webhook-id`,
   `webhook-timestamp`, `webhook-signature` headers; HMAC-SHA256 over
   `${id}.${timestamp}.${rawBody}`; base64 secret prefixed `whsec_`;
@@ -112,17 +127,19 @@ the OpenAPI spec (or a live call) before the implementing schemas freeze:
 
 - The **API key format** — no prefix or length is documented (Open
   question 6).
-- The **recording-identifier format** — needed for id-family validation on
-  tool inputs (Open question 8).
 - The **result ordering** of `GET /meetings` — the docs do not state
   newest-first (Open question 8).
-- The **transcript endpoint's exact response shape**, including whether any
-  range parameter exists (Open question 8; the truncation recovery path
-  assumes none).
-- Whether the **webhook payload carries an event identifier** to cross-check
-  against `webhook-id` (Open question 7).
+- Whether the **webhook payload carries an event identifier** — the payload
+  reference does not enumerate the body's fields, so the design treats the
+  authenticated `webhook-id` header as the delivery identity either way
+  (Open question 7).
 - Whether **webhook endpoints can be created under an OAuth token** or only
   under an API key (Open question 5).
+
+(Resolved during review, now recorded above: recording IDs are integers, the
+transcript endpoint has no range parameter, the summary endpoint returns
+only the summary, and a webhook endpoint requires at least one content
+include.)
 
 ## Pattern fit against Avalon's existing connectors
 
@@ -154,11 +171,14 @@ that matter:
 
 ## Fireflies.ai, for the record
 
-Captured only so the naming question can be settled quickly: Fireflies
-exposes a GraphQL API at `https://api.fireflies.ai/graphql` with per-user API
-keys (Business/Enterprise tiers for some capabilities), webhooks for
-transcription-complete events, and no official hosted MCP as of this
-writing. If Open question 1 resolves to Fireflies, the personal-scope story
-changes materially (no official MCP to passthrough), and the workspace story
-becomes GraphQL-backed static tools — a different design, hence a different
-PRD.
+Fireflies has its own PRD —
+[`../2026-08-14_fireflies-connector/`](../2026-08-14_fireflies-connector/prd.md)
+— whose `research.md` is the authority on that provider. In brief, and
+corrected against it (an earlier revision of this section wrongly said
+Fireflies had no official MCP): Fireflies exposes a GraphQL API at
+`https://api.fireflies.ai/graphql` with per-user API keys
+(Business/Enterprise tiers for some capabilities), webhooks for
+transcription-complete events, **and** a remote MCP server at
+`https://api.fireflies.ai/mcp` with OAuth and a read-tool surface. The two
+connectors are designed independently; the one obligation between them is
+the migration coordination named in [`design.md`](design.md).
