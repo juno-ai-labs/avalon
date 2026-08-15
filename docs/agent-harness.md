@@ -551,6 +551,23 @@ pass locally and fail `pnpm lint`.
 
 ## Changelog
 
+### 2026-08-15 — Workspace runs ask for a member reply, not a task claim
+
+**What changed:** The workspace-authority policy now tells the model to request a reply from a
+relevant connected member when personal authority is required. That member's next message runs
+under their authority; the prompt no longer describes claiming the whole task.
+
+**Why:** Connector work streams resolve execution authority per message. Claim instructions
+described a removed per-thread authority pin and could send users looking for an interaction that
+no longer exists.
+
+**Considered and rejected:** Keeping “claim” as informal shorthand. It implies persistent task
+ownership, while the actual authorization boundary is the author of each message.
+
+**Consequences:** Agent-facing explanations must distinguish durable work-stream membership from
+the principal of a single run. A future connector cannot reintroduce a claim flow through prompt
+copy alone.
+
 ### 2026-08-13 — Telemetry attributes automation only to automation-origin runs
 
 **What changed:** Run and tool telemetry resolves an automation only when the
