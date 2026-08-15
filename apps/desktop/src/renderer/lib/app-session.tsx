@@ -11,7 +11,12 @@ import {
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { IdSchema } from '@avalon/contracts';
-import type { AvalonDesktopBridge, DesktopSession, RuntimeConfig } from '../../common/desktop';
+import type {
+  AvalonDesktopBridge,
+  DesktopDeepLinkNavigation,
+  DesktopSession,
+  RuntimeConfig,
+} from '../../common/desktop';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { AvalonApi } from './api';
 import { clearAllDrafts } from './draft-cache';
@@ -21,6 +26,7 @@ import {
   setDeviceWorkspaceName,
 } from './device-preferences';
 import { desktopBridge, type DesktopWorkspaceOnboardingState } from './platform';
+import { markSurfaceEntrypoint } from './telemetry';
 import type { Region } from './types';
 
 const connectorProviderNames = {
@@ -364,10 +370,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // OAuth callback could be consumed and rejected solely because config was
     // still pending.
     if (!runtime) return undefined;
-    const handleDeepLink = (rawUrl: string): void => {
+    const handleDeepLink = (navigation: DesktopDeepLinkNavigation): void => {
       let deepLink: URL;
       try {
-        deepLink = new URL(rawUrl);
+        deepLink = new URL(navigation.url);
       } catch {
         setDeepLinkError('Avalon received an invalid sign-in link.');
         return;
@@ -378,6 +384,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           return;
         }
         setDeepLinkError(null);
+        markSurfaceEntrypoint(navigation.entrypoint);
         window.location.hash = '/workstreams/new';
         return;
       }
@@ -388,6 +395,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           return;
         }
         setDeepLinkError(null);
+        markSurfaceEntrypoint(navigation.entrypoint);
         window.location.hash = `/workstreams/${workstreamId}`;
         return;
       }
@@ -407,6 +415,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           return;
         }
         setDeepLinkError(null);
+        markSurfaceEntrypoint(navigation.entrypoint);
         window.location.hash = `/notes/${noteId}`;
         return;
       }
@@ -435,6 +444,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           return;
         }
         setDeepLinkError(null);
+        markSurfaceEntrypoint(navigation.entrypoint);
         window.location.hash = '/automations/new';
         return;
       }

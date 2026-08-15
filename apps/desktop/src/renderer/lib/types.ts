@@ -501,6 +501,7 @@ export interface AutomationDetail extends AutomationSummary {
 
 export interface AutomationDraftQuestion {
   id: string;
+  presentedAt: string;
   prompt: string;
   placeholder?: string;
   responseType: 'free_text' | 'single_select' | 'multi_select';

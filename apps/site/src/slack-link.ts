@@ -1,4 +1,4 @@
-export {};
+import { reportDesktopHandoff } from './telemetry';
 
 const button = document.querySelector<HTMLAnchorElement>('#open-avalon');
 const error = document.querySelector<HTMLElement>('#slack-link-error');
@@ -17,11 +17,14 @@ const valid =
 window.history.replaceState(null, document.title, window.location.pathname);
 
 if (button && valid && token) {
+  reportDesktopHandoff('slack', 'presented', 'valid');
   const deepLink = new URL('avalon://slack/link');
   deepLink.searchParams.set('token', token);
   button.href = deepLink.toString();
   button.removeAttribute('aria-disabled');
+  button.addEventListener('click', () => reportDesktopHandoff('slack', 'manual', 'valid'));
 } else {
+  reportDesktopHandoff('slack', 'presented', 'invalid');
   button?.setAttribute('hidden', '');
   error?.removeAttribute('hidden');
 }

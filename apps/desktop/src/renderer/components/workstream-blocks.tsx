@@ -34,6 +34,7 @@ import { messageExportDate, messageExportFileName, type MessageExportFormat } fr
 import { formatDuration, formatRelative } from '../lib/format';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
+import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { useTextClamped } from '../lib/use-text-clamped';
 import type { ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
@@ -90,7 +91,16 @@ const markdownLanguageAliases: Record<string, Language> = {
   zsh: 'bash',
 };
 
-function MarkdownCodeBlock({ code, language }: { code: string; language: string }): React.JSX.Element {
+interface MessageCopyTelemetry {
+  messageId: string;
+  workstreamId: string;
+}
+
+function MarkdownCodeBlock({ code, language, telemetry }: {
+  code: string;
+  language: string;
+  telemetry?: MessageCopyTelemetry;
+}): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   const normalizedLanguage = language.trim().toLowerCase() || 'plain';
   const requestedLanguage = markdownLanguageAliases[normalizedLanguage] ?? normalizedLanguage;
@@ -101,6 +111,10 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
   const copy = async (): Promise<void> => {
     try {
       await desktopBridge().copyText(code);
+      if (telemetry) reportTelemetryProductIntent({
+        kind: 'content_copied', contentType: 'code_block', resourceType: 'message',
+        resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
+      });
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1_500);
     } catch {
@@ -133,7 +147,9 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
   );
 }
 
-function MarkdownCode({ children, className }: React.ComponentProps<'code'>): React.JSX.Element {
+function MarkdownCode({ children, className, telemetry }: React.ComponentProps<'code'> & {
+  telemetry?: MessageCopyTelemetry;
+}): React.JSX.Element {
   const source = String(children ?? '');
   const languageMatch = /(?:^|\s)language-([\w#+.-]+)/u.exec(className ?? '');
   const isBlock = Boolean(languageMatch) || source.endsWith('\n');
@@ -144,6 +160,7 @@ function MarkdownCode({ children, className }: React.ComponentProps<'code'>): Re
     <MarkdownCodeBlock
       code={source.replace(/\n$/u, '')}
       language={languageMatch?.[1]?.toLowerCase() ?? 'plain'}
+      telemetry={telemetry}
     />
   );
 }
@@ -289,7 +306,11 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
-export function MarkdownBody({ children, mentions = [] }: { children: string; mentions?: MessageMention[] }): React.JSX.Element {
+export function MarkdownBody({ children, mentions = [], telemetry }: {
+  children: string;
+  mentions?: MessageMention[];
+  telemetry?: MessageCopyTelemetry;
+}): React.JSX.Element {
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
   const markdown = withConnectorMentionLinks(children, mentions, token);
@@ -323,7 +344,7 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
             }
             return <a {...props} href={href} rel="noopener noreferrer" target="_blank">{linkChildren}</a>;
           },
-          code: MarkdownCode,
+          code: (properties) => <MarkdownCode {...properties} telemetry={telemetry} />,
           pre: ({ children: preChildren }) => <>{preChildren}</>,
           table: MarkdownTable,
         }}
@@ -359,10 +380,22 @@ function exportStatusMessage(saving: MessageExportFormat | null, failed: Message
   return '';
 }
 
-function AssistantMessageActions({ mentions, text }: { mentions: MessageMention[]; text: string }): React.JSX.Element {
+function AssistantMessageActions({ mentions, telemetry, text }: {
+  mentions: MessageMention[];
+  telemetry?: MessageCopyTelemetry;
+  text: string;
+}): React.JSX.Element {
   const [saving, setSaving] = useState<MessageExportFormat | null>(null);
   const [failed, setFailed] = useState<MessageExportFormat | null>(null);
   const exportsAvailable = desktopServicesAvailable();
+
+  const copyResponse = async (): Promise<void> => {
+    await desktopBridge().copyText(text);
+    if (telemetry) reportTelemetryProductIntent({
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
+    });
+  };
 
   const save = async (format: MessageExportFormat): Promise<void> => {
     if (saving) return;
@@ -393,7 +426,7 @@ function AssistantMessageActions({ mentions, text }: { mentions: MessageMention[
       // as one attempt that did not work.
       onPointerLeave={() => setFailed(null)}
     >
-      <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(text)} type="button"><Clipboard size={12} /> Copy</button>
+      <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
       {exportsAvailable && (
         <>
           <button
@@ -435,16 +468,20 @@ export function AssistantMessageContent({
   showCopy = true,
   streaming = false,
   text,
+  telemetry,
 }: {
   mentions?: MessageMention[];
   showCopy?: boolean;
   streaming?: boolean;
   text: string;
+  telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   return (
     <>
-      {text ? <MarkdownBody mentions={mentions}>{text}</MarkdownBody> : null}
-      {showCopy && !streaming && text && <AssistantMessageActions mentions={mentions} text={text} />}
+      {text ? <MarkdownBody mentions={mentions} telemetry={telemetry}>{text}</MarkdownBody> : null}
+      {showCopy && !streaming && text && (
+        <AssistantMessageActions mentions={mentions} telemetry={telemetry} text={text} />
+      )}
       {streaming && <span className="streaming-caret" aria-hidden="true" />}
     </>
   );
@@ -947,7 +984,10 @@ export function MessageBlock({
               ) : null}
               {message.text ? (
                 <div className="human-message-bubble">
-                  <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody>
+                  <MarkdownBody
+                    mentions={message.mentions}
+                    telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+                  >{message.text}</MarkdownBody>
                 </div>
               ) : null}
             </div>
@@ -964,6 +1004,7 @@ export function MessageBlock({
                 mentions={message.mentions}
                 streaming={message.streaming}
                 text={message.text ?? ''}
+                telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
               />
             </>
           )}

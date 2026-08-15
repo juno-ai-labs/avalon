@@ -18,6 +18,7 @@ import {
 import { useEffect, useState } from 'react';
 import { formatDateTime, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
+import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
   AutomationRunSummary,
   TerminalWorkstreamState,
@@ -115,6 +116,10 @@ function ContextContent({
     if (!workstream.emailAddress) return;
     try {
       await desktopBridge().copyText(workstream.emailAddress);
+      reportTelemetryProductIntent({
+        kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream',
+        resourceId: workstream.id,
+      });
       setEmailCopyState('copied');
     } catch {
       setEmailCopyState('failed');
@@ -323,7 +328,14 @@ function ContextContent({
                 <dt>Work-stream ID</dt>
                 <dd className="copy-detail">
                   <span className="mono">{workstream.id}</span>
-                  <IconButton label="Copy work-stream ID" onClick={() => void desktopBridge().copyText(workstream.id)}><Copy size={12} /></IconButton>
+                  <IconButton label="Copy work-stream ID" onClick={() => {
+                    void desktopBridge().copyText(workstream.id)
+                      .then(() => reportTelemetryProductIntent({
+                        kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream',
+                        resourceId: workstream.id,
+                      }))
+                      .catch(() => undefined);
+                  }}><Copy size={12} /></IconButton>
                 </dd>
               </div>
             </>

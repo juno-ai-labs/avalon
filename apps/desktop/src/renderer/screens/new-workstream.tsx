@@ -353,7 +353,8 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     mutationFn: (opportunity: WorkOpportunity) => {
       const key = opportunityKeys.current.get(opportunity.id) ?? crypto.randomUUID();
       opportunityKeys.current.set(opportunity.id, key);
-      return api!.startWorkOpportunity(opportunity.id, opportunity.version, key);
+      const position = (opportunities.data ?? []).findIndex((item) => item.id === opportunity.id) + 1;
+      return api!.startWorkOpportunity(opportunity.id, opportunity.version, key, 'workspace_home', position);
     },
     // Suggested work opens onto the same surface, minus the opening turn. That
     // turn is attributed to the person selecting the suggestion, but its text is
@@ -398,7 +399,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   });
 
   const dismissOpportunity = useMutation({
-    mutationFn: (opportunity: WorkOpportunity) => api!.dismissWorkOpportunity(opportunity.id),
+    mutationFn: (opportunity: WorkOpportunity) => api!.dismissWorkOpportunity(
+      opportunity.id,
+      opportunity.version,
+      (opportunities.data ?? []).findIndex((item) => item.id === opportunity.id) + 1,
+    ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['work-opportunities'] }),
   });
 

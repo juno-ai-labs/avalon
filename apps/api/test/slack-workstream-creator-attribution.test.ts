@@ -82,6 +82,17 @@ describe("Slack work stream creator attribution", () => {
       author_user_id: null,
       external_actor_json: JSON.stringify(actor),
     });
+    expect(JSON.parse(String((database.prepare(
+      "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
+    ).get(created.workstream.id) as { envelope_json: string }).envelope_json))).toMatchObject({
+      name: "workstream_created",
+      identityScope: "workspace-user",
+      properties: {
+        creationSource: "slack_agent",
+        connectorType: "slack",
+        connectorTypes: ["slack"],
+      },
+    });
   });
 
   it("leaves the task ownerless when Slack cannot map the member to Avalon", async () => {
@@ -101,6 +112,13 @@ describe("Slack work stream creator attribution", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM workstream_participants WHERE workstream_id = ?",
     ).get(created.workstream.id)).toEqual({ count: 0 });
+    expect(JSON.parse(String((database.prepare(
+      "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
+    ).get(created.workstream.id) as { envelope_json: string }).envelope_json))).toMatchObject({
+      name: "workstream_created",
+      identityScope: "workspace",
+      properties: { creationSource: "slack_agent", connectorType: "slack" },
+    });
   });
 });
 

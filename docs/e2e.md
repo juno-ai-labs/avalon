@@ -76,7 +76,16 @@ use a customer dump for this acceptance run.
    `Application Installed`; on the next release, confirm one
    `Application Updated` with the
    current and previous version/build. A cold `Application Opened` must include
-   its current version/build. Upgrading a profile created before this
+   its current version/build, `from_background=false`, and the closed
+   `application_open_source`. Confirm a login-item launch is `system_start`; a
+   cold launch with neither login-item evidence nor a deep link is `user_launch`
+   rather than a guessed Dock open; clicking the Dock while Avalon is running is
+   `dock`; an accepted OS deep link is `deep_link`; and raising Avalon from its
+   status menu is `menu_bar`. Each must produce exactly one canonical
+   `Application Opened`, even when Electron also fires `activate`. A later native
+   push-notification fixture must prove `push_notification` before that producer
+   ships; email, Slack, and browser notification links remain `deep_link` without
+   such a native callback. Upgrading a profile created before this
    instrumentation must establish a baseline without emitting
    `Application Installed`.
 3. Open **Settings → Application → Privacy & diagnostics**. Confirm **Product
@@ -147,6 +156,9 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
 8. Open **System Settings → General → Login Items** and confirm Avalon is listed and enabled without anyone having added it. In **Settings → Application → Startup**, confirm **Open Avalon at login** is on, turn it off, and confirm Avalon disappears from the system list and that a relaunch does **not** re-add it. Turn it back on and confirm the toggle reflects what macOS actually holds — if macOS asks for approval, the toggle must stay off until it is given. Remove the login item from System Settings while Avalon runs, reopen Settings, and confirm the toggle reads off.
 9. With the login item enabled, restart the Mac. Confirm Avalon comes back with the menu bar item present and **no window on screen**, that the menu's recent list is already populated, and that **Open Avalon** or clicking the Dock icon opens the main window. Then quit and launch Avalon by hand and confirm the window opens as usual — a manual launch must never be treated as a login launch.
 10. Sign out. Confirm the menu keeps all three fixed actions, replaces the recent list with a disabled **Sign in to Avalon** row, drops the **Suggestions** and **Pinned** groups entirely, and shows no trace of the previous account's work-stream titles. Signed out the menu is exactly nine rows, and every one of them works.
+11. With Product analytics enabled in Global, open the menu once, select **New Work Stream**, reopen it, and successfully start one suggestion. Confirm PostHog receives one `menu_bar_opened` per visible open, the matching bounded `menu_bar_action_selected` values, and one API-originated `suggested_work_started_v2` with `surface=menu_bar` plus bounded exposure context. Make one suggested-work start fail and confirm it emits the selection but no successful-start event. Confirm no semantic event property contains the displayed suggestion or title; opportunity and work-stream UUIDs may appear only in their declared resource/correlation fields.
+12. In the sidebar, hold Command through repeated keydown events and confirm exactly one `command_shortcuts_revealed` with the visible target count. Press a valid Command+1–9 shortcut and confirm one `command_shortcut_used` with its number and destination class. Repeat a number key, press an unassigned number, and try behind a modal; confirm none produce a use event. Start suggested work from the home surface and confirm the authoritative API event instead carries `surface=workspace_home`.
+13. With Product analytics enabled in Global, launch once and confirm `application_settings_state_v2` contains the actual availability and enabled state for launch-at-login, Lockdown mode, and the menu bar plus the active closed icon identifier and automatic state. Toggle launch-at-login off and on; confirm each `application_setting_change_completed_v2` preserves previous, requested, and macOS read-back applied state, including `requestedEnabled=true` with `appliedEnabled=false` if approval remains pending. Toggle Lockdown mode and menu-bar visibility and confirm the same event uses the matching closed setting only after the native or migration operation succeeds. Select **Ruby**, then **Use the system icon**, and confirm `application_icon_changed` records the previous/applied identifier and automatic state only after each native operation succeeds. Confirm the identified PostHog person has matching `avalon_launch_at_login_*`, `avalon_lockdown_mode_*`, `avalon_application_icon_*`, and `avalon_menu_bar_*` current properties. Force each operation to fail and confirm no completion event is emitted; opt out and confirm neither snapshots, changes, nor person-property updates are sent.
 
 ## Realtime recovery acceptance
 

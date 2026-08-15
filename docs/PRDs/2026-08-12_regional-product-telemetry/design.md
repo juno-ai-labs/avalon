@@ -84,7 +84,7 @@ type TelemetryEnvelope<V extends number, N extends EventName> = {
   name: N;
   source: "desktop-main" | "desktop-renderer" | "desktop-preload" | "api";
   category: "essential" | "product" | "diagnostic";
-  identityScope: "installation" | "anonymous-epoch" | "platform-user" | "workspace-user";
+  identityScope: "installation" | "anonymous-epoch" | "platform-user" | "workspace-user" | "workspace";
   originalTimestamp: string;
   sentAt: string;
   context: {
@@ -259,7 +259,7 @@ For an API action already in progress, server telemetry is inserted through a be
 
 ## Identity design
 
-Signals use four non-overlapping identity scopes:
+Signals use five non-overlapping identity scopes:
 
 | Scope | Server knowledge | Destination identity |
 | --- | --- | --- |
@@ -267,10 +267,11 @@ Signals use four non-overlapping identity scopes:
 | `anonymous-epoch` | One bounded logged-out product journey | Random epoch identifier; automatically linked after authentication when its fixed route and account preference permit |
 | `platform-user` | Canonical Global platform identity, no explicit workspace route | Immutable random Global analytics person ID or dedicated opaque EU telemetry subject handle |
 | `workspace-user` | Authenticated regional user and workspace | Immutable random regional person ID and workspace group ID |
+| `workspace` | Unattended regional workspace execution with no responsible person | Immutable random workspace analytics ID as a personless distinct ID and workspace group ID |
 
-The desktop's session user ID is not the cross-region analytics join key: a regional user row may differ from the canonical Global row. The authoritative identity/workspace record stores one cryptographically random analytics ID per environment, region, and entity. Person and workspace IDs are immutable for that subject's lifetime, are never rotated, and are deleted with the subject; recreating a subject mints a new ID. Global, EU, staging, and production therefore cannot be joined, while one region's funnels and PostHog people/groups remain stable. The raw `platform_user_id` and raw regional database IDs never enter PostHog, a client event, or the Global-to-EU telemetry handoff. Before an EU regional user exists, the Global identity plane creates a random EU-scoped telemetry subject handle; after activation, EU links that handle to its independently minted regional analytics person without exporting either identity.
+The desktop's session user ID is not the cross-region analytics join key: a regional user row may differ from the canonical Global row. The authoritative identity/workspace record stores one cryptographically random analytics ID per environment, region, and entity. Person and workspace IDs are immutable for that subject's lifetime, are never rotated, and are deleted with the subject; recreating a subject mints a new ID. Global, EU, staging, and production therefore cannot be joined, while one region's funnels and PostHog people/groups remain stable. The raw `platform_user_id` and raw account/user/workspace-identity database IDs never enter PostHog, a client event, or the Global-to-EU telemetry handoff. Closed product schemas may carry opaque work-stream, message, note, automation, run, or invocation UUIDs as correlation properties without accompanying content. Before an EU regional user exists, the Global identity plane creates a random EU-scoped telemetry subject handle; after activation, EU links that handle to its independently minted regional analytics person without exporting either identity.
 
-For Global events, PostHog `distinct_id` is the immutable Global analytics person ID for authenticated activity, the random anonymous-epoch ID before authentication, or the random installation ID only for schemas registered for device-level reliability. Anonymous-epoch and installation-only captures set `$process_person_profile: false`. Eligible Global workspace events attach the immutable Global workspace analytics ID under the `workspace` group type. EU uses independently minted regional IDs only inside the internal sink.
+For Global events, PostHog `distinct_id` is the immutable Global analytics person ID for authenticated activity, the random anonymous-epoch ID before authentication, the random installation ID only for schemas registered for device-level reliability, or the immutable workspace analytics ID for personless workspace execution. Anonymous-epoch, installation-only, and workspace-only captures set `$process_person_profile: false`. Eligible Global workspace events attach the immutable Global workspace analytics ID under the `workspace` group type. The authenticated desktop ingest rejects the workspace-only scope; only the regional runtime can create it. EU uses independently minted regional IDs only inside the internal sink.
 
 Direct contact fields use PostHog's native identity and group-profile paths rather than semantic event enrichment. After verified authentication on an eligible Global route and account-preference enforcement, the existing ordered Global outbox receives an epoch-transition identify job containing the destination person ID, the anonymous epoch as `$anon_distinct_id`, and exactly the verified primary `email` and current display `name`. This includes the approved provisional Global fallback so the authenticated onboarding funnel remains identifiable. The transition cannot be superseded while unresolved; a later verified email/name change may coalesce into its `$set` values only while preserving the anonymous epoch. Once the transition acknowledges or terminally fails, later verified changes use coalescible person-profile identify jobs without `$anon_distinct_id`. After an explicit Global workspace is active and the user preference permits analytics, the outbox may also receive a coalescible group-identify job containing the destination workspace ID and current workspace `name`. All use the outbox's normal immutable 90-day deadline and are removed sooner after acknowledgement, opt-out, subject deletion, or eligible supersession. V1 adds no profile-specific lookup handle, mapping service, replay store, or retention engine. EU has no direct-profile job, and the three values never appear in semantic captures, exceptions, breadcrumbs, or crash reports.
 

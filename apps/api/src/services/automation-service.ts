@@ -27,9 +27,43 @@ import {
 } from "./memory-table-service";
 import { resolveFrozenDeliveryIdentity, type FrozenDeliveryIdentity } from "./user-delivery";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
+import {
+  recordWorkstreamCreatedTelemetry,
+  type WorkstreamCreationSource,
+} from "../telemetry/workstream-creation";
+import {
+  emitProductUsageTelemetry,
+  resourceTelemetryEventId,
+  telemetryCountBucket,
+  telemetryJourneyDuration,
+} from "../telemetry/product-usage";
 
 type CreateAutomationInput = z.infer<typeof CreateAutomationRequestSchema>;
 type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
+
+const AUTOMATION_TELEMETRY_CONNECTORS = new Set([
+  'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x',
+]);
+
+function automationTriggerTypes(triggers: TriggerDefinition[]): Array<TriggerDefinition['type'] | 'inbound_email'> {
+  return [...new Set(triggers.map((trigger) => trigger.type))].slice(0, 8);
+}
+
+function automationConnectorTypes(triggers: TriggerDefinition[], additional: Iterable<string> = []): Array<
+  'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'
+> {
+  const values = new Set<string>(additional);
+  for (const trigger of triggers) {
+    if (trigger.type === 'webhook') values.add('generic_webhook');
+    if ((trigger.type === 'connector_activity' || trigger.type === 'semantic_activity') && trigger.connectorType) {
+      values.add(trigger.connectorType);
+    }
+  }
+  return [...values]
+    .filter((value): value is 'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' =>
+      AUTOMATION_TELEMETRY_CONNECTORS.has(value))
+    .sort();
+}
 
 interface CompiledSchedule {
   type: "calendar" | "interval";
@@ -68,6 +102,29 @@ export interface InboundAutomationOpeningInput {
 
 export class AutomationService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+
+  private async recordAutomationAction(
+    row: Record<string, unknown>,
+    action: 'pause' | 'resume' | 'edit' | 'publish_template' | 'adopt_template_version' | 'run_now' | 'archive_draft' | 'delete',
+    appliedStatus: 'draft' | 'active' | 'paused' | 'error' | 'deleted' | 'archived',
+  ): Promise<void> {
+    const previousStatus = String(row.status) as 'draft' | 'active' | 'paused' | 'error';
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: 'automation_action_completed_v2',
+      properties: {
+        automationId: String(row.id),
+        action,
+        visibility: row.scope === 'workspace' ? 'public' : 'private',
+        previousStatus,
+        appliedStatus,
+        result: 'success',
+      },
+      operationId: String(row.id),
+      eventId: newId(),
+    }).catch(() => undefined);
+  }
 
   async list() {
     const result = await this.env.DB.prepare(
@@ -114,13 +171,28 @@ export class AutomationService {
   }
 
   async compile(
-    input: { draftId?: string | undefined; messages: Array<{ role: "user" | "assistant"; content: string }>; currentDraft?: AutomationDraft | null; attachmentIds?: string[] },
+    input: {
+      draftId?: string | undefined;
+      messages: Array<{ role: "user" | "assistant"; content: string }>;
+      currentDraft?: AutomationDraft | null;
+      attachmentIds?: string[];
+      inputMode?: 'typed' | 'suggested_prompt' | 'elicitation_response' | 'edit';
+      connectorMentionCount?: number;
+      resolvedElicitation?: {
+        id: string;
+        responseType: 'free_text' | 'single_select' | 'multi_select';
+        resolution: 'answered' | 'skipped';
+        customResponseUsed: boolean;
+        presentedAt: string;
+      } | undefined;
+    },
     requestId: string,
     options: {
       onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
       signal?: AbortSignal;
     } = {},
   ) {
+    const telemetryStartedAt = Date.now();
     const defaults = await this.env.DB.prepare(
       `SELECT u.timezone AS user_timezone, w.timezone AS workspace_timezone
        FROM users u JOIN workspaces w ON w.id = ?
@@ -130,6 +202,28 @@ export class AutomationService {
       workspace_timezone: string;
     }>();
     if (!defaults) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
+    if (input.resolvedElicitation) {
+      const elicitation = input.resolvedElicitation;
+      await emitProductUsageTelemetry(this.env, {
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        name: 'elicitation_resolved',
+        properties: {
+          elicitationId: elicitation.id,
+          runId: input.draftId ?? elicitation.id,
+          ...(input.draftId ? { draftId: input.draftId } : {}),
+          responseType: elicitation.responseType,
+          resolution: elicitation.resolution,
+          customResponseUsed: elicitation.customResponseUsed,
+          responseLatency: telemetryJourneyDuration(
+            Math.max(0, Date.now() - new Date(elicitation.presentedAt).getTime()),
+          ),
+          surface: 'automation_builder',
+        },
+        operationId: input.draftId ?? elicitation.id,
+        eventId: resourceTelemetryEventId(elicitation.id, 6),
+      }).catch(() => undefined);
+    }
     try {
       const draft = await compileAutomationDraft(this.env, {
         ...input,
@@ -145,12 +239,92 @@ export class AutomationService {
       });
       const resolved = draft.ready ? await this.withUsableActivitySources(draft) : draft;
       const assistantMessage = assistantMessageForDraft(resolved);
+      const elicitationId = resolved.followUpQuestion ? newId() : null;
+      const elicitationPresentedAt = elicitationId ? nowIso() : null;
+      const draftId = await this.saveDraft(
+        input,
+        resolved,
+        assistantMessage,
+        elicitationId,
+        elicitationPresentedAt,
+      );
+      await emitProductUsageTelemetry(this.env, {
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        name: 'automation_draft_turn_completed',
+        properties: {
+          draftId,
+          turnNumber: telemetryCountBucket(input.messages.filter((message) => message.role === 'user').length),
+          result: 'success',
+          duration: telemetryJourneyDuration(Date.now() - telemetryStartedAt),
+          inputMode: input.inputMode ?? 'typed',
+          attachmentCount: Math.min(100, input.attachmentIds?.length ?? 0),
+          connectorMentionCount: Math.min(100, input.connectorMentionCount ?? 0),
+          readyToCreate: resolved.ready,
+        },
+        operationId: draftId,
+        eventId: newId(),
+      }).catch(() => undefined);
+      if (resolved.ready && input.currentDraft?.ready !== true) {
+        await emitProductUsageTelemetry(this.env, {
+          workspaceId: this.auth.workspaceId,
+          userId: this.auth.userId,
+          name: 'automation_draft_ready',
+          properties: {
+            draftId,
+            turnsToReady: telemetryCountBucket(input.messages.filter((message) => message.role === 'user').length),
+            visibility: resolved.suggestedScope === 'workspace' ? 'public' : 'private',
+            triggerTypes: automationTriggerTypes(resolved.triggers),
+            connectorTypes: automationConnectorTypes(resolved.triggers),
+            pluginCount: Math.min(100, resolved.recommendedPlugins.length),
+            deliveryTargetTypes: [],
+          },
+          operationId: draftId,
+          eventId: resourceTelemetryEventId(draftId, 3),
+        }).catch(() => undefined);
+      }
+      if (elicitationId && elicitationPresentedAt) {
+        await emitProductUsageTelemetry(this.env, {
+          workspaceId: this.auth.workspaceId,
+          userId: this.auth.userId,
+          name: 'elicitation_presented',
+          properties: {
+            elicitationId,
+            runId: draftId,
+            draftId,
+            responseType: resolved.elicitation?.responseType ?? 'free_text',
+            optionCount: telemetryCountBucket(resolved.elicitation?.options.length ?? 0),
+            surface: 'automation_builder',
+          },
+          operationId: draftId,
+          eventId: resourceTelemetryEventId(elicitationId, 5),
+        }).catch(() => undefined);
+      }
       return {
-        draftId: await this.saveDraft(input, resolved, assistantMessage),
+        draftId,
+        elicitationId,
+        elicitationPresentedAt,
         draft: resolved,
         assistantMessage,
       };
     } catch (error) {
+      await emitProductUsageTelemetry(this.env, {
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        name: 'automation_draft_turn_completed',
+        properties: {
+          ...(input.draftId ? { draftId: input.draftId } : {}),
+          turnNumber: telemetryCountBucket(input.messages.filter((message) => message.role === 'user').length),
+          result: options.signal?.aborted ? 'cancelled' : 'failed',
+          duration: telemetryJourneyDuration(Date.now() - telemetryStartedAt),
+          inputMode: input.inputMode ?? 'typed',
+          attachmentCount: Math.min(100, input.attachmentIds?.length ?? 0),
+          connectorMentionCount: Math.min(100, input.connectorMentionCount ?? 0),
+          readyToCreate: false,
+        },
+        operationId: input.draftId ?? newId(),
+        eventId: newId(),
+      }).catch(() => undefined);
       if (error instanceof z.ZodError || (error instanceof OpenRouterError && /structured JSON/iu.test(error.message))) {
         const validationIssues = error instanceof z.ZodError
           ? error.issues.slice(0, 25).map((issue) => ({ path: issue.path.map(String).join("."), code: issue.code }))
@@ -235,11 +409,15 @@ export class AutomationService {
     input: { draftId?: string | undefined; messages: AutomationCompilerMessage[]; attachmentIds?: string[] },
     draft: AutomationDraft,
     assistantMessage: string,
+    elicitationId: string | null,
+    elicitationPresentedAt: string | null,
   ): Promise<string> {
     const at = nowIso();
     const conversation = JSON.stringify({
       messages: [...input.messages, { role: "assistant", content: assistantMessage }],
       attachmentIds: input.attachmentIds ?? [],
+      elicitationId,
+      elicitationPresentedAt,
       draft,
     } satisfies Omit<AutomationDraftState, "draftId">);
     const existing = await this.loadOwnDraft(input.draftId);
@@ -548,7 +726,29 @@ export class AutomationService {
       emailRouteNeedsReconciliation = true;
     }
     if (schedules.length > 0) await this.refreshScheduler();
-    return this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
+    const detail = await this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: 'automation_created_v2',
+      properties: {
+        automationId: subscriptionId,
+        ...(input.draftId ? { draftId: input.draftId } : {}),
+        creationMethod: 'custom',
+        visibility: input.scope === 'workspace' ? 'public' : 'private',
+        triggerTypes: automationTriggerTypes(input.draft.triggers),
+        connectorTypes: automationConnectorTypes(input.draft.triggers, connectorSelection.connectorTypes),
+        pluginCount: Math.min(100, new Set([
+          ...input.defaultPluginIds,
+          ...Object.values(input.activitySourcePluginIds),
+        ]).size),
+        deliveryTargetTypes: [...new Set(deliveryTargets.map((target) => target.type))].sort(),
+        modelOverride: Boolean(input.modelOverride),
+      },
+      operationId: subscriptionId,
+      eventId: resourceTelemetryEventId(subscriptionId, 4),
+    }).catch(() => undefined);
+    return detail;
   }
 
   async get(id: string, options: { reconcileEmail?: boolean } = {}) {
@@ -709,13 +909,17 @@ export class AutomationService {
       );
     }
     await this.env.DB.batch(statements);
-    return this.get(id);
+    const detail = await this.get(id);
+    await this.recordAutomationAction(row, 'edit', String(detail.status) as 'draft' | 'active' | 'paused' | 'error');
+    return detail;
   }
 
   async runNow(id: string, idempotencyKey: string) {
     const subscription = await this.loadSubscription(id);
     if (subscription.status !== "active") throw new ApiError(409, "automation_not_active", "Resume the automation before running it");
-    return this.createRun(subscription, "manual", null, null, true, idempotencyKey);
+    const run = await this.createRun(subscription, "manual", null, null, true, idempotencyKey);
+    await this.recordAutomationAction(subscription, 'run_now', 'active');
+    return run;
   }
 
   async runFromInboundEmail(id: string, input: InboundAutomationOpeningInput) {
@@ -767,6 +971,7 @@ export class AutomationService {
       // replaying this idempotent pause/resume mutation.
     }
     await this.refreshScheduler();
+    await this.recordAutomationAction(subscription, paused ? 'pause' : 'resume', paused ? 'paused' : 'active');
   }
 
   /** Hides an abandoned draft from the automation list; a finished automation is
@@ -793,6 +998,7 @@ export class AutomationService {
     ]);
     // The workspace alarm only needs recomputing if a draft did carry one.
     if (Number(disabled?.meta?.changes ?? 0) > 0) await this.refreshScheduler();
+    await this.recordAutomationAction(subscription, 'archive_draft', 'archived');
   }
 
   /** Removes an automation for good. The row stays so its runs, work streams,
@@ -889,6 +1095,7 @@ export class AutomationService {
       // alarm re-reads enabled schedules from D1 on every firing, so a stale
       // armed alarm wakes, finds nothing due, and clears itself.
     }
+    await this.recordAutomationAction(subscription, 'delete', 'deleted');
   }
 
   async runs(id: string, limit = 50) {
@@ -998,6 +1205,11 @@ export class AutomationService {
       `UPDATE automation_templates SET sharing_state = 'workspace', updated_at = ?
        WHERE id = ? AND workspace_id = ?`,
     ).bind(nowIso(), subscription.template_id, this.auth.workspaceId).run();
+    await this.recordAutomationAction(
+      subscription,
+      'publish_template',
+      String(subscription.status) as 'active' | 'paused' | 'error',
+    );
     return { templateId: String(subscription.template_id) };
   }
 
@@ -1094,7 +1306,29 @@ export class AutomationService {
       emailRouteNeedsReconciliation = true;
     }
     if (schedules.length) await this.refreshScheduler();
-    return this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
+    const detail = await this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: 'automation_created_v2',
+      properties: {
+        automationId: subscriptionId,
+        templateId,
+        creationMethod: 'template',
+        visibility: 'private',
+        triggerTypes: automationTriggerTypes(draft.triggers),
+        connectorTypes: automationConnectorTypes(draft.triggers, connectorSelection.connectorTypes),
+        pluginCount: Math.min(100, new Set([
+          ...input.defaultPluginIds,
+          ...Object.values(input.activitySourcePluginIds),
+        ]).size),
+        deliveryTargetTypes: [],
+        modelOverride: false,
+      },
+      operationId: subscriptionId,
+      eventId: resourceTelemetryEventId(subscriptionId, 4),
+    }).catch(() => undefined);
+    return detail;
   }
 
   async adoptVersion(
@@ -1147,7 +1381,13 @@ export class AutomationService {
       ).bind(newId(), this.auth.workspaceId, subscriptionId, schedule.type, schedule.rrule, schedule.intervalSeconds, schedule.timezone, schedule.nextRunAt, enabled, at, at)),
     ]);
     await this.refreshScheduler();
-    return this.get(subscriptionId);
+    const detail = await this.get(subscriptionId);
+    await this.recordAutomationAction(
+      subscription,
+      'adopt_template_version',
+      String(detail.status) as 'active' | 'paused' | 'error',
+    );
+    return detail;
   }
 
   private async createRun(
@@ -1177,6 +1417,7 @@ export class AutomationService {
       ).bind(subscription.id, plannedFor).first<{ run_id: string; workstream_id: string }>();
       if (existing) {
         await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstream_id));
+        await this.recordRunCreationTelemetry(existing.workstream_id, triggerType);
         return { runId: existing.run_id, workstreamId: existing.workstream_id, reused: true };
       }
     }
@@ -1185,6 +1426,7 @@ export class AutomationService {
       if (existing) {
         await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstreamId));
         if (start) await this.recoverIdempotentRun(subscription, existing, triggerType, activityId);
+        await this.recordRunCreationTelemetry(existing.workstreamId, triggerType);
         return this.runResponse(existing, true);
       }
     }
@@ -1267,6 +1509,7 @@ export class AutomationService {
         ).bind(harnessRunId, this.auth.workspaceId, workstreamId, JSON.stringify(principal), model, at, triggerMessageId));
       }
       await this.env.DB.batch(statements);
+      await this.recordRunCreationTelemetry(workstreamId, triggerType);
     } catch (error) {
       if (plannedFor && isConstraintError(error)) {
         const existing = await this.env.DB.prepare(
@@ -1274,6 +1517,7 @@ export class AutomationService {
         ).bind(subscription.id, plannedFor).first<{ run_id: string; workstream_id: string }>();
         if (existing) {
           await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstream_id));
+          await this.recordRunCreationTelemetry(existing.workstream_id, triggerType);
           return { runId: existing.run_id, workstreamId: existing.workstream_id, reused: true };
         }
       }
@@ -1282,6 +1526,7 @@ export class AutomationService {
         if (existing) {
           await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstreamId));
           if (start) await this.recoverIdempotentRun(subscription, existing, triggerType, activityId);
+          await this.recordRunCreationTelemetry(existing.workstreamId, triggerType);
           return this.runResponse(existing, true);
         }
       }
@@ -1300,6 +1545,18 @@ export class AutomationService {
       }, triggerType, activityId, principal);
     }
     return { runId, workstreamId, ...(start ? { harnessRunId } : {}), reused: false };
+  }
+
+  private async recordRunCreationTelemetry(workstreamId: string, triggerType: string): Promise<void> {
+    const creationSource: WorkstreamCreationSource = triggerType === "schedule"
+      ? "automation_scheduled"
+      : triggerType === "inbound_email" ? "automation_inbound_email" : "automation_manual";
+    await recordWorkstreamCreatedTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+      creationSource,
+      principal: { type: "user", userId: this.auth.userId },
+    });
   }
 
   private async loadIdempotentRun(subscriptionId: string, idempotencyKey: string, openingClientMessageId: string | null = null): Promise<IdempotentAutomationRun | null> {

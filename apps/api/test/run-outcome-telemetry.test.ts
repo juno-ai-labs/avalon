@@ -30,13 +30,54 @@ describe('authoritative run outcome telemetry', () => {
         (id, workspace_id, title, objective, origin_type, created_by_user_id, created_at, updated_at, last_activity_at)
       VALUES ('${workstreamId}', '${workspaceId}', 'Run', 'Run', 'ad_hoc', '${userId}',
               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state,
+         latest_version_number, created_at, updated_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', '${workspaceId}', '${userId}',
+              'Automation', '', 'private', 1, '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json,
+         created_by_user_id, created_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902',
+              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', 1, 'Run', '[]', '${userId}',
+              '2026-08-12T20:00:00.000Z');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, status, created_at, updated_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workspaceId}',
+              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901',
+              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', 'personal', '${userId}',
+              '{"type":"user","userId":"${userId}"}', 'active',
+              '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z');
+      UPDATE workstreams
+         SET origin_type = 'automation',
+             automation_subscription_id = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903',
+             automation_run_id = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904'
+       WHERE id = '${workstreamId}';
+      INSERT INTO automation_runs
+        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
+         started_at, completed_at, status, created_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904', '${workspaceId}',
+              '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903', '${workstreamId}', 'scheduled',
+              '2026-08-12T19:00:00.000Z', '2026-08-12T19:10:00.000Z', 'completed',
+              '2026-08-12T19:00:00.000Z');
       INSERT INTO harness_runs
         (id, workspace_id, workstream_id, origin, execution_principal_json, status,
-         started_at, completed_at, created_at)
+         started_at, completed_at, created_at, model, usage_json)
       VALUES ('${runId}', '${workspaceId}', '${workstreamId}', 'human_message',
               '{"type":"user","userId":"${userId}"}', 'completed',
               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:08.000Z',
-              '2026-08-12T20:00:00.000Z');
+              '2026-08-12T20:00:00.000Z', 'openai/gpt-5',
+              '{"run_stats":{"turns":2}}');
+      INSERT INTO inference_attempts
+        (id, harness_run_id, workspace_id, workstream_id, attempt_id, turn_id,
+         fallback_attempt, provider, model, workspace_identity_hash, outcome,
+         latency_ms, ttft_ms, started_at, completed_at, created_at)
+      VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d8', '${runId}', '${workspaceId}',
+              '${workstreamId}', 'attempt', 'turn-1', 1, 'openai', 'openai/gpt-5',
+              'workspace-hash', 'success', 4000, 1200,
+              '2026-08-12T20:00:01.000Z', '2026-08-12T20:00:05.000Z',
+              '2026-08-12T20:00:05.000Z');
     `);
     const env = createTestEnv({
       DB: sqliteD1(database),
@@ -82,6 +123,30 @@ describe('authoritative run outcome telemetry', () => {
       context: { operationId },
       properties: { result: 'success', duration: '5s_30s' },
     });
+    const terminal = database.prepare(
+      `SELECT envelope_json FROM telemetry_accepted_events
+        WHERE json_extract(envelope_json, '$.name') = 'run_terminal'`,
+    ).get() as { envelope_json: string };
+    expect(JSON.parse(terminal.envelope_json)).toMatchObject({
+      name: 'run_terminal',
+      identityScope: 'workspace-user',
+      context: { operationId },
+      properties: {
+        workstreamId,
+        harnessRunId: runId,
+        runKind: 'workstream',
+        triggerType: 'composer',
+        terminalState: 'completed',
+        duration: '5s_30s',
+        timeToFirstOutput: '1s_5s',
+        turnCount: 'two_to_five',
+        toolCallCount: 'zero',
+        writeToolCallCount: 'zero',
+        modelRoute: 'openai/gpt-5',
+        fallbackUsed: true,
+      },
+    });
+    expect(JSON.parse(terminal.envelope_json).properties).not.toHaveProperty('automationId');
     expect(database.prepare(`
       SELECT event_id, json_extract(envelope_json, '$.name') AS name
       FROM telemetry_accepted_events

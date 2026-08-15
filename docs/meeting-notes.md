@@ -153,6 +153,24 @@ can arrive later than the cascade, and a window mid-fullscreen-transition on
 macOS is where it does. Anything the preload cannot read as `user` is treated as
 a quit.
 
+### Product telemetry
+
+A newly created recording note reports its opaque note UUID, private/public
+state, and proved entrypoint (`sidebar`, `menu_bar`, or `unknown`). Successful
+capture transitions report start, pause, resume, and complete with the same note
+UUID and the microphone/system-audio availability established at start. The
+audio-source class remains stable across the recording; pause and completion do
+not discard it. A separate start outcome records only a bounded permission/result
+class, and terminal settlement records duration, pause/segment buckets, summary
+result, and complete/partial/failure class. The API records live/final summary
+generation result and cadence after each authoritative attempt. Reopening a note
+records entrypoint plus bounded duration/segments and whether durable transcript
+or summary artifacts exist. Successful visibility and copy actions report only
+closed action or content classes and the note UUID. Transcript, briefing, title,
+manual notes, clipboard value, raw permission errors, and captured audio never
+enter telemetry. These product events are best-effort and cannot alter recording,
+summary generation, or persistence.
+
 ### Landing a briefing
 
 `generateAttempt` reads `notes_through_sequence` before inference and writes the
@@ -359,6 +377,27 @@ already reads it, so that step is a scheduler and a budget rather than a new
 knob.
 
 ## Changelog
+
+### 2026-08-13 — Recording adoption is measurable without meeting content
+
+**What changed:** Note creation, start permission/capture outcome,
+transcription pause/resume, terminal completeness, summary-generation outcome,
+reopen, visibility changes, and summary/transcript copy now emit typed telemetry
+with the note UUID and bounded state/performance metadata.
+
+**Why:** A note existing after a meeting does not show which entrypoint started
+it, where capture failed, whether it paused or finalized partially, whether
+summary generation succeeded, or whether the resulting artifacts were reopened
+and useful enough to copy.
+
+**Considered and rejected:** Capturing button clicks before the operation,
+permission error strings, transcript/summary text, clipboard values, and a fresh
+unknown audio source on every transition. Those options produce false success,
+expose content, or erase the stable capture configuration.
+
+**Consequences:** Events follow Product analytics and regional routing. The
+meeting path remains authoritative; failed state changes emit nothing, and
+telemetry failure cannot affect recording or finalization.
 
 ### 2026-08-12 — Closing a recording window asks first, and Command-W can now do the closing
 

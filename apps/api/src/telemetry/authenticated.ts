@@ -48,6 +48,9 @@ export async function acceptAuthenticatedTelemetry(
   auth: IdentityAuthContext,
   batch: TelemetryBatch,
 ): Promise<TelemetryAcceptanceResult[]> {
+  if (batch.events.some((event) => event.identityScope === "workspace")) {
+    throw new ApiError(403, "telemetry_identity_scope_forbidden", "The request is invalid");
+  }
   const [personAnalyticsId, workspaceAnalyticsId] = await Promise.all([
     ensurePersonAnalyticsId(env, auth.userId),
     auth.workspaceId ? ensureWorkspaceAnalyticsId(env, auth.workspaceId) : Promise.resolve(null),

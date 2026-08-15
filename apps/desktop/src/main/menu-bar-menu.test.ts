@@ -13,6 +13,7 @@ import {
 
 function actions(): MenuBarActions {
   return {
+    selected: vi.fn(),
     newMeetingNote: vi.fn(),
     newWorkstream: vi.fn(),
     newAutomation: vi.fn(),
@@ -258,6 +259,25 @@ describe('menu bar menu', () => {
     expect(menuActions.openWorkstream).toHaveBeenCalledWith('workstream-0');
     expect(menuActions.openAvalon).toHaveBeenCalledTimes(1);
     expect(menuActions.quit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(menuActions.selected).mock.calls.map(([action]) => action)).toEqual([
+      'new_meeting_note',
+      'new_workstream',
+      'new_automation',
+      'suggested_work',
+      'recent_workstream',
+      'open_avalon',
+      'quit_avalon',
+    ]);
+  });
+
+  it('does not let failed selection reporting block the menu action', () => {
+    const menuActions = actions();
+    vi.mocked(menuActions.selected).mockImplementation(() => { throw new Error('telemetry unavailable'); });
+    const items = template(emptyMenuBarContent, { actions: menuActions });
+
+    activate(items.find((item) => item.label === 'New Work Stream'));
+
+    expect(menuActions.newWorkstream).toHaveBeenCalledOnce();
   });
 
   it('reads the macOS version that decides whether section headers exist', () => {

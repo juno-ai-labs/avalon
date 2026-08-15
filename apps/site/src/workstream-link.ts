@@ -2,6 +2,7 @@ import {
   parseWorkstreamLinkPath,
   workstreamDeepLink,
 } from '@avalon/contracts/workstream-links';
+import { reportDesktopHandoff } from './telemetry';
 
 export {};
 
@@ -22,6 +23,7 @@ function initializeWorkstreamHandoff(): void {
 
   const workstreamId = parseWorkstreamLinkPath(window.location.pathname);
   if (!workstreamId) {
+    reportDesktopHandoff('workstream', 'presented', 'invalid');
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
     error?.removeAttribute('hidden');
@@ -29,6 +31,8 @@ function initializeWorkstreamHandoff(): void {
     if (status) status.textContent = 'Ask the sender for the link again.';
     return;
   }
+
+  reportDesktopHandoff('workstream', 'presented', 'valid');
 
   const target = workstreamDeepLink(workstreamId);
   button.href = target;
@@ -38,11 +42,13 @@ function initializeWorkstreamHandoff(): void {
   const openOnce = (): void => {
     if (attempted) return;
     attempted = true;
+    reportDesktopHandoff('workstream', 'automatic', 'valid');
     window.location.assign(target);
   };
 
   button.addEventListener('click', () => {
     attempted = true;
+    reportDesktopHandoff('workstream', 'manual', 'valid');
   });
   window.setTimeout(openOnce, 120);
 }

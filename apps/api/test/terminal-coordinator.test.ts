@@ -88,7 +88,15 @@ function context(userId = USER_ID): HarnessToolContext {
 describe("Terminal sandbox coordinator", () => {
   it("creates lazily on first tool use and reuses one sandbox per work stream", async () => {
     const { database, db, provider, clock } = fixture();
-    const coordinator = new TerminalSandboxCoordinator(db, provider, clock);
+    const acquisitionObserved = vi.fn(async () => undefined);
+    const coordinator = new TerminalSandboxCoordinator(
+      db,
+      provider,
+      clock,
+      undefined,
+      false,
+      acquisitionObserved,
+    );
 
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 0 });
     const first = await coordinator.acquire(context());
@@ -98,6 +106,8 @@ describe("Terminal sandbox coordinator", () => {
     expect(second).toEqual(first);
     expect(provider.createSandbox).toHaveBeenCalledOnce();
     expect(provider.startSandbox).not.toHaveBeenCalled();
+    expect(acquisitionObserved).toHaveBeenCalledOnce();
+    expect(acquisitionObserved).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ action: "start" }));
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 1 });
   });
 

@@ -6,6 +6,7 @@ import {
   TelemetryBatchSchema,
   TelemetryBootstrapRequestSchema,
   TelemetryBootstrapResponseSchema,
+  TelemetryRouteResponseSchema,
   TelemetryAcceptanceBatchResponseSchema,
   ProductAnalyticsPreferenceSchema,
   UpdateProductAnalyticsPreferenceSchema,
@@ -45,6 +46,17 @@ const crashUploadBodyLimit = bodyLimit({
   onError: () => {
     throw new ApiError(413, 'crash_dump_too_large', 'The crash report is too large');
   },
+});
+
+publicTelemetryRoutes.get("/route", async (c) => {
+  if (c.env.AVALON_REGION !== "global") {
+    throw new ApiError(404, "not_found", "The requested API route does not exist");
+  }
+  const cf = c.req.raw.cf as { country?: string } | undefined;
+  c.header("Cache-Control", "no-store");
+  return c.json(TelemetryRouteResponseSchema.parse(
+    await new TelemetryBootstrapService(c.env).route(cf?.country),
+  ));
 });
 
 const CrashUploadMetadataSchema = z.object({
@@ -151,11 +163,18 @@ publicTelemetryRoutes.post(
       response = await new TelemetryBootstrapService(c.env).bootstrap(
         c.req.valid("json").anonymousEpochId,
         cf?.country,
+        c.req.valid("json").routeToken,
       );
     } catch (error) {
       const code = error instanceof Error ? error.message : 'telemetry_bootstrap_failed';
       if (code === 'telemetry_journey_closed') {
         throw new ApiError(409, code, 'The onboarding telemetry journey is closed');
+      }
+      if (code === 'telemetry_route_decision_conflict') {
+        throw new ApiError(409, code, 'The telemetry route changed before the journey started');
+      }
+      if (code === 'telemetry_route_decision_invalid' || code === 'telemetry_route_decision_expired') {
+        throw new ApiError(400, code, 'The telemetry route decision is invalid or expired');
       }
       throw new ApiError(500, 'internal_error', 'Telemetry routing could not be resolved');
     }
@@ -217,9 +236,19 @@ authenticatedTelemetryRoutes.post(
   "/events",
   telemetryBatchBodyLimit,
   zValidator("json", TelemetryBatchSchema),
-  async (c) => c.json(TelemetryAcceptanceBatchResponseSchema.parse({
-    results: await acceptAuthenticatedTelemetry(c.env, getIdentityAuth(c), c.req.valid("json")),
-  }), 202),
+  async (c) => {
+    const batch = c.req.valid("json");
+    // The public contract has to parse API events so internal producers can
+    // build one envelope type, but the desktop transport is not that producer.
+    // Accepting `source: api` here would let a modified client forge every
+    // authoritative completion event while retaining a valid user session.
+    if (batch.events.some((event) => event.source === "api")) {
+      throw new ApiError(403, "telemetry_source_forbidden", "The telemetry source is not allowed");
+    }
+    return c.json(TelemetryAcceptanceBatchResponseSchema.parse({
+      results: await acceptAuthenticatedTelemetry(c.env, getIdentityAuth(c), batch),
+    }), 202);
+  },
 );
 
 authenticatedTelemetryRoutes.post(

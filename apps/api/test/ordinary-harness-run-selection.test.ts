@@ -17,7 +17,7 @@ describe("ordinary harness-run selection", () => {
     // `retry` reads the trigger beside the status: it replays the failed run's
     // own trigger, and the same two exclusions decide which run that is.
     expect(service).toMatch(
-      /SELECT status, trigger_message_id FROM harness_runs WHERE workspace_id = \? AND workstream_id = \? AND parent_tool_call_id IS NULL AND origin != 'hypersight_block' ORDER BY created_at DESC LIMIT 1/u,
+      /SELECT id, status, trigger_message_id FROM harness_runs WHERE workspace_id = \? AND workstream_id = \? AND parent_tool_call_id IS NULL AND origin != 'hypersight_block' ORDER BY created_at DESC LIMIT 1/u,
     );
   });
 

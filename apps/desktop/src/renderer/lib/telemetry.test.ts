@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   javascriptErrorCandidate,
+  markWorkstreamNavigation,
+  noteNavigation,
   reportJavascriptError,
   reportTelemetryProductIntent,
   reportTelemetryScreen,
   telemetryScreenForPath,
+  telemetrySurfaceForPath,
+  telemetryVisibility,
   uuidV7,
+  workstreamNavigation,
 } from './telemetry';
 
 const desktopBridge = vi.hoisted(() => vi.fn());
@@ -15,11 +20,14 @@ afterEach(() => vi.useRealTimers());
 
 describe('renderer semantic telemetry helpers', () => {
   it('maps only planned router destinations to stable screen enums', () => {
+    expect(telemetryScreenForPath('/')).toBeNull();
     expect(telemetryScreenForPath('/workstreams/new')).toBe('workspace_home');
     expect(telemetryScreenForPath('/workstreams/opaque-id')).toBe('workstream');
     expect(telemetryScreenForPath('/settings')).toBe('application_settings');
     expect(telemetryScreenForPath('/notes/private-id')).toBeNull();
     expect(telemetryScreenForPath('/unknown')).toBeNull();
+    expect(telemetrySurfaceForPath('/')).toBeNull();
+    expect(telemetrySurfaceForPath('/workstreams/new')).toEqual({ surface: 'workspace_home' });
   });
 
   it('creates time-ordered UUIDv7 operation identifiers', () => {
@@ -27,6 +35,21 @@ describe('renderer semantic telemetry helpers', () => {
     const later = uuidV7(1_700_000_000_001);
     expect(earlier[14]).toBe('7');
     expect(earlier < later).toBe(true);
+  });
+
+  it('classifies first opens, switches, and later resource reopens without titles or routes', () => {
+    const firstWorkstream = '00000000-0000-4000-8000-000000000201';
+    const switchedWorkstream = '00000000-0000-4000-8000-000000000202';
+    const noteId = '00000000-0000-4000-8000-000000000203';
+    markWorkstreamNavigation(firstWorkstream, false);
+    expect(workstreamNavigation(firstWorkstream)).toBe('opened');
+    expect(workstreamNavigation(firstWorkstream)).toBe('reopened');
+    markWorkstreamNavigation(switchedWorkstream, true);
+    expect(workstreamNavigation(switchedWorkstream)).toBe('switched');
+    expect(noteNavigation(noteId)).toBe('opened');
+    expect(noteNavigation(noteId)).toBe('reopened');
+    expect(telemetryVisibility('personal')).toBe('private');
+    expect(telemetryVisibility('workspace')).toBe('public');
   });
 
   it('reduces renderer stacks to bounded bundle-relative frame coordinates', () => {

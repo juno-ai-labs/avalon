@@ -1,9 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
 import { AudioLines, Globe2, Lock, NotebookText, RefreshCcw } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { MarkdownBody } from '../components/workstream-blocks';
 import { Button, EmptyState, LoadingState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
+import {
+  currentSurfaceEntrypoint,
+  noteNavigation,
+  reportTelemetryProductIntent,
+  telemetryCountBucket,
+  telemetryJourneyDuration,
+  telemetryVisibility,
+} from '../lib/telemetry';
 
 function noteBody(liveNotes: string, manualNotes: string): string {
   return liveNotes.trim() || manualNotes.trim();
@@ -19,6 +28,24 @@ export function NoteDetailScreen(): React.JSX.Element {
     refetchInterval: 5_000,
     staleTime: 2_000,
   });
+  const reportedNoteId = useRef<string | null>(null);
+  useEffect(() => {
+    const detail = note.data;
+    if (!detail || reportedNoteId.current === detail.id) return;
+    reportedNoteId.current = detail.id;
+    reportTelemetryProductIntent({
+      kind: 'note_opened_v2',
+      noteId: detail.id,
+      visibility: telemetryVisibility(detail.scope),
+      entrypoint: currentSurfaceEntrypoint(),
+      navigation: noteNavigation(detail.id),
+      recordingState: detail.recordingStatus,
+      hasSummary: Boolean(noteBody(detail.liveNotes, detail.manualNotes)),
+      hasTranscript: detail.segments.length > 0,
+      duration: telemetryJourneyDuration(detail.recordedMs),
+      segmentCount: telemetryCountBucket(detail.segments.length),
+    });
+  }, [note.data]);
 
   if (note.isLoading || !note.error && !note.data) return <LoadingState label="Opening note…" />;
   if (note.error || !note.data) {

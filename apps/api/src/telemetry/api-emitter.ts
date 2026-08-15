@@ -1,7 +1,8 @@
 import { newId } from '@avalon/db';
 import { TELEMETRY_EVENTS, TelemetryEnvelopeSchema, type TelemetryEnvelope, type TelemetryEventName } from '@avalon/contracts/telemetry';
 import type { Env, IdentityAuthContext } from '../env';
-import { acceptAuthenticatedTelemetry } from './authenticated';
+import { acceptAuthenticatedTelemetry, ensureWorkspaceAnalyticsId } from './authenticated';
+import { TelemetryCollector } from './collector';
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
@@ -14,7 +15,7 @@ export function apiTelemetryEnvelope(
   name: TelemetryEventName,
   properties: Record<string, unknown>,
   operationId: string,
-  identityScope: 'platform-user' | 'workspace-user',
+  identityScope: 'platform-user' | 'workspace-user' | 'workspace',
   region: 'global' | 'eu' = env.AVALON_REGION,
   eventId?: string,
 ): TelemetryEnvelope {
@@ -47,4 +48,27 @@ export async function emitAuthenticatedApiTelemetry(
   event: TelemetryEnvelope,
 ): Promise<void> {
   await acceptAuthenticatedTelemetry(env, auth, { events: [event] });
+}
+
+/**
+ * Accepts telemetry produced by workspace-owned background execution without
+ * inventing a user identity. These events remain group-addressable in PostHog
+ * and do not create a person profile.
+ */
+export async function emitWorkspaceApiTelemetry(
+  env: Env,
+  workspaceId: string,
+  event: TelemetryEnvelope,
+): Promise<void> {
+  if (event.source !== 'api' || event.identityScope !== 'workspace') {
+    throw new Error('workspace_telemetry_identity_mismatch');
+  }
+  const workspaceAnalyticsId = await ensureWorkspaceAnalyticsId(env, workspaceId);
+  await new TelemetryCollector(env).accept(event, {
+    route: env.AVALON_REGION,
+    routingBasis: 'explicit_binding',
+    analyticsSubjectId: workspaceAnalyticsId,
+    subjectUserId: null,
+    workspaceAnalyticsId,
+  });
 }

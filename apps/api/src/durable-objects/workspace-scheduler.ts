@@ -8,6 +8,7 @@ import {
   type WorkstreamWorkflowInput
 } from "@avalon/contracts";
 import { z } from "zod";
+import { newId } from "@avalon/db";
 
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
@@ -20,6 +21,8 @@ import { WorkstreamEmailRoutingService } from "../services/workstream-email-rout
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
 import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "../services/terminal/lifecycle";
+import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
+import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
 const RETRY_STATES_KEY = "schedulerRetryStates";
@@ -443,6 +446,27 @@ export class WorkspaceScheduler {
               transition: result.transition,
             });
           }
+          if (result.transition === "expired") {
+            const repository = await this.env.DB.prepare(
+              `SELECT 1 AS selected FROM workstream_terminal_repositories
+               WHERE workspace_id = ? AND workstream_id = ? AND state = 'selected'`,
+            ).bind(workspaceId, sandbox.workstream_id).first<{ selected: number }>();
+            await emitProductUsageTelemetry(this.env, {
+              workspaceId,
+              name: "terminal_workspace_terminal",
+              properties: {
+                workstreamId: sandbox.workstream_id,
+                action: "expire",
+                result: "success",
+                duration: "unknown",
+                repositorySelected: repository !== null,
+                connectorType: repository ? "github" : "none",
+                localFilesRetained: false,
+              },
+              operationId: sandbox.workstream_id,
+              eventId: newId(),
+            }).catch(() => undefined);
+          }
           if (retryStates[key]) {
             delete retryStates[key];
             retryStatesChanged = true;
@@ -571,6 +595,7 @@ export class WorkspaceScheduler {
       .bind(subscriptionId, schedule.workspace_id)
       .first<AutomationSourceRow>();
     if (!source) throw new Error("automation_subscription_unavailable");
+    const principal = ExecutionPrincipalSchema.parse(JSON.parse(source.execution_principal_json));
 
     let run = await this.env.DB.prepare(
       `SELECT id, workstream_id, status, workflow_instance_id
@@ -676,6 +701,16 @@ export class WorkspaceScheduler {
         )
           .bind(runId, timestamp, workstreamId, schedule.workspace_id)
           .run();
+        if (createdWorkstreamId) {
+          await recordWorkstreamCreatedTelemetry(this.env, {
+            workspaceId: schedule.workspace_id,
+            workstreamId: createdWorkstreamId,
+            creationSource: "automation_scheduled",
+            principal: principal.type === "user"
+              ? { type: "user", userId: principal.userId }
+              : { type: "workspace" },
+          });
+        }
       }
     }
 
@@ -687,7 +722,6 @@ export class WorkspaceScheduler {
     });
     if (["completed", "failed", "needs_input"].includes(run.status)) return;
 
-    const principal = ExecutionPrincipalSchema.parse(JSON.parse(source.execution_principal_json));
     const harnessRunId = await this.ensureHarnessRun(
       schedule.workspace_id,
       run.workstream_id,

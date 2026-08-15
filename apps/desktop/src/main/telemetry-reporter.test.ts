@@ -55,11 +55,189 @@ describe('TelemetryReporter', () => {
     const { reporter, spool } = await harness({ enabled: false });
     await reporter.applicationLifecycle('ready');
     await reporter.screenViewed('workspace_home');
+    await reporter.applicationSettingsState({
+      launchAtLoginEnabled: true,
+      launchAtLoginAvailable: true,
+      lockdownModeEnabled: false,
+      lockdownModeAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      applicationIcon: 'dark',
+      applicationIconAutomatic: true,
+      applicationIconAvailable: true,
+    });
+    await reporter.applicationOpened('user_launch', 'cold_start');
     const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(rows.map((row) => row.event.name)).toEqual(['application_lifecycle']);
     expect(reporter.inspector()).toMatchObject([
       { name: 'application_lifecycle', validation: 'accepted' },
       { name: 'screen_viewed', validation: 'suppressed' },
+      { name: 'application_settings_state_v2', validation: 'suppressed' },
+      { name: 'application_opened', validation: 'suppressed' },
+    ]);
+  });
+
+  it('records bounded menu, Command-shortcut, and suggested-work product signals', async () => {
+    const { reporter, spool } = await harness({
+      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+    });
+    await reporter.menuBarOpened({ signedIn: true, suggestionCount: 4, recentCount: 5, pinnedCount: 2 });
+    await reporter.menuBarActionSelected('new_workstream');
+    await reporter.commandShortcutsRevealed(9);
+    await reporter.commandShortcutUsed(2, 'pinned_workstream');
+
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows.map((row) => ({
+      name: row.event.name,
+      source: row.event.source,
+      properties: row.event.properties,
+    }))).toEqual([
+      {
+        name: 'menu_bar_opened',
+        source: 'desktop-main',
+        properties: { signedIn: true, suggestionCount: 4, recentCount: 5, pinnedCount: 2 },
+      },
+      {
+        name: 'menu_bar_action_selected',
+        source: 'desktop-main',
+        properties: { action: 'new_workstream' },
+      },
+      {
+        name: 'command_shortcuts_revealed',
+        source: 'desktop-renderer',
+        properties: { availableCount: 9 },
+      },
+      {
+        name: 'command_shortcut_used',
+        source: 'desktop-renderer',
+        properties: { shortcutNumber: 2, destinationType: 'pinned_workstream' },
+      },
+    ]);
+  });
+
+  it('records applied application-settings state and successful changes', async () => {
+    const { reporter, spool } = await harness({
+      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+    });
+    await reporter.applicationSettingsState({
+      launchAtLoginEnabled: true,
+      launchAtLoginAvailable: true,
+      lockdownModeEnabled: false,
+      lockdownModeAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      menuBarPresent: true,
+      applicationIcon: 'dark',
+      applicationIconAutomatic: true,
+      applicationIconAvailable: true,
+    });
+    await reporter.applicationSettingChangeCompleted('launch_at_login', false, true, false);
+    await reporter.applicationSettingChangeCompleted('lockdown_mode', false, true, true);
+    await reporter.applicationIconChanged({
+      previousIcon: 'dark',
+      previousAutomatic: true,
+      selectedIcon: 'ruby',
+      automatic: false,
+    });
+    await reporter.applicationOpened('system_start', 'cold_start');
+    await reporter.applicationOpened('dock', 'activation');
+
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows.map((row) => ({ name: row.event.name, properties: row.event.properties }))).toEqual([
+      {
+        name: 'application_settings_state_v2',
+        properties: {
+          launchAtLoginEnabled: true,
+          launchAtLoginAvailable: true,
+          lockdownModeEnabled: false,
+          lockdownModeAvailable: true,
+          menuBarEnabled: true,
+          menuBarAvailable: true,
+          menuBarPresent: true,
+          applicationIcon: 'dark',
+          applicationIconAutomatic: true,
+          applicationIconAvailable: true,
+        },
+      },
+      {
+        name: 'application_setting_change_completed_v2',
+        properties: {
+          setting: 'launch_at_login', previousEnabled: false, requestedEnabled: true, appliedEnabled: false,
+          result: 'not_applied',
+        },
+      },
+      {
+        name: 'application_setting_change_completed_v2',
+        properties: {
+          setting: 'lockdown_mode', previousEnabled: false, requestedEnabled: true, appliedEnabled: true,
+          result: 'success',
+        },
+      },
+      {
+        name: 'application_icon_changed',
+        properties: {
+          previousIcon: 'dark', previousAutomatic: true, selectedIcon: 'ruby', automatic: false,
+        },
+      },
+      {
+        name: 'application_opened',
+        properties: { entrypoint: 'system_start', phase: 'cold_start' },
+      },
+      {
+        name: 'application_opened',
+        properties: { entrypoint: 'dock', phase: 'activation' },
+      },
+    ]);
+  });
+
+  it('records resource interactions with opaque ids and content-free metadata', async () => {
+    const { reporter, spool } = await harness({
+      auth: { apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global' },
+    });
+    const workstreamId = '00000000-0000-4000-8000-000000000101';
+    const messageId = '00000000-0000-4000-8000-000000000102';
+    const noteId = '00000000-0000-4000-8000-000000000103';
+    const automationId = '00000000-0000-4000-8000-000000000104';
+    await reporter.workstreamOpened({
+      workstreamId, visibility: 'private', navigation: 'switched', origin: 'ad_hoc', pinned: true,
+    });
+    await reporter.messageSent({
+      workstreamId, messageId, visibility: 'private', workstreamOrigin: 'ad_hoc', messageKind: 'message',
+      attachmentCount: 1, mentionCount: 2, participantAddedCount: 0,
+    });
+    await reporter.contentCopied({
+      contentType: 'message_response', resourceType: 'message', resourceId: messageId, workstreamId,
+    });
+    await reporter.automationActionCompleted({
+      automationId, action: 'archive_draft', visibility: 'private', status: 'draft',
+    });
+    await reporter.noteOpened({ noteId, visibility: 'public', recordingState: 'complete', navigation: 'reopened' });
+    await reporter.transcriptionStateChanged({
+      noteId, state: 'paused', visibility: 'public', audioSource: 'microphone_and_system',
+    });
+
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows.map((row) => ({ name: row.event.name, properties: row.event.properties }))).toEqual([
+      { name: 'workstream_opened', properties: {
+        workstreamId, visibility: 'private', navigation: 'switched', origin: 'ad_hoc', pinned: true,
+      } },
+      { name: 'message_sent', properties: {
+        workstreamId, messageId, visibility: 'private', workstreamOrigin: 'ad_hoc', messageKind: 'message',
+        attachmentCount: 1, mentionCount: 2, participantAddedCount: 0,
+      } },
+      { name: 'content_copied', properties: {
+        contentType: 'message_response', resourceType: 'message', resourceId: messageId, workstreamId,
+      } },
+      { name: 'automation_action_completed', properties: {
+        automationId, action: 'archive_draft', visibility: 'private', status: 'draft',
+      } },
+      { name: 'note_opened', properties: {
+        noteId, visibility: 'public', recordingState: 'complete', navigation: 'reopened',
+      } },
+      { name: 'transcription_state_changed', properties: {
+        noteId, state: 'paused', visibility: 'public', audioSource: 'microphone_and_system',
+      } },
     ]);
   });
 
@@ -159,6 +337,56 @@ describe('TelemetryReporter', () => {
     expect(enqueue).toHaveBeenCalledTimes(2);
     const [row] = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(row?.event).toMatchObject({ eventId, properties: { state: 'installed' } });
+  });
+
+  it('accepts only authenticated sanitized JavaScript exception reports', async () => {
+    const unauthenticated = await harness({ auth: null });
+    await unauthenticated.reporter.javascriptException(
+      'renderer', 'type_error', 'a'.repeat(32), 'available', ['renderer.js:12:4'],
+    );
+    expect(await unauthenticated.spool.ready(new Date('2026-08-12T20:00:01.000Z'))).toEqual([]);
+
+    const authenticated = await harness({
+      auth: {
+        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+      },
+    });
+    await authenticated.reporter.javascriptException(
+      'renderer', 'type_error', 'b'.repeat(32), 'available', ['renderer.js:12:4'],
+    );
+    const [row] = await authenticated.spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(row?.event).toMatchObject({
+      name: 'javascript_exception',
+      source: 'desktop-main',
+      identityScope: 'workspace-user',
+      properties: {
+        process: 'renderer', errorCode: 'type_error', breadcrumbStatus: 'available',
+        fingerprint: 'b'.repeat(32), generatedFrames: ['renderer.js:12:4'],
+      },
+    });
+  });
+
+  it('correlates one rich connector intent without emitting its legacy version', async () => {
+    const { reporter, spool } = await harness({
+      auth: {
+        apiBaseUrl: 'https://api.with-avalon.com', accessToken: 'secret', workspace: true, route: 'global',
+      },
+    });
+    const operationId = '018f0000-0000-7000-8000-000000000099';
+
+    await reporter.semanticProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'linear', scope: 'personal',
+      method: 'oauth', capabilityCount: 'one',
+    }, undefined, operationId);
+
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.event).toMatchObject({
+      name: 'connector_setup_requested_v2', context: { operationId },
+      properties: {
+        connector: 'linear', scope: 'personal', method: 'oauth', capabilityCount: 'one',
+      },
+    });
   });
 
   it('uploads authenticated rows to only their regional API and acknowledges durable results', async () => {

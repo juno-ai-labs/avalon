@@ -64,6 +64,11 @@ are canonical storage services, not authorization layers.
   and requires sign-in instead of exporting the protected session. An unavailable
   keystore also turns Lockdown off and requires sign-in automatically. The
   renderer receives short-lived access only through the narrow session bridge.
+- Product telemetry around Lockdown mode contains only availability plus the
+  previous, requested, and applied booleans after the main-owned transition
+  completes. It never contains credential state, keystore identity, encrypted
+  bytes, error bodies, or session material. Failed and rolled-back transitions
+  emit no completion event.
 - The custom `avalon://` callback carries only an opaque, expiring, single-use
   login ticket or a non-secret connector result — never provider codes or tokens.
 - Unsent composer drafts — their text and the bytes of their attachments — are
@@ -214,6 +219,15 @@ test. Otherwise Chromium rejects the request before authentication or route code
 runs, which appears to the renderer as a transport failure and leaves no API
 request log for the blocked mutation. The required implementation and test steps
 live in [When adding a new HTTP header](when-adding-a-new-http-header.md).
+
+The same exact origin policy admits `https://with-avalon.com` and
+`https://www.with-avalon.com` so the public site can call only the capability-
+bound anonymous telemetry surface from a browser. CORS is not authorization: the
+site receives no session, provider token, PostHog token, signing key, or named-RPC
+authority. Its route lookup returns only a coarse two-value decision; its
+capability permits only the registered pre-authentication event names. Handoff
+tokens and resource identifiers remain in the local page parser and never become
+telemetry properties.
 
 ### Side effects and retries
 
@@ -486,6 +500,9 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **EU telemetry has no cross-region fallback.** A routing, storage, processing,
   or support-access failure is handled inside EU and never by copying the payload
   to Global.
+- **Public-site routing happens before persistent analytics identity.** Global
+  may read a first-party random epoch; affirmative EU traffic uses an in-memory
+  page epoch and never reads the Global identifier.
 
 ## Boundary
 
@@ -504,6 +521,7 @@ does not own the subsystems on either side of them:
 | The draft cache under `userData` | [`composer-drafts.md`](composer-drafts.md) |
 | The windowless menu bar surface | [`menu-bar.md`](menu-bar.md) |
 | Telemetry contracts, opt-out, identities, crash lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
+| Public-site anonymous identity, event surface, and handoff negative space | [`public-site-telemetry.md`](public-site-telemetry.md) |
 | Rotating a key or responding to an incident | [`runbook.md`](runbook.md) |
 
 ## Failure modes and limits
@@ -559,6 +577,7 @@ no unit test standing in for them.
 | `apps/api/test/rpc-contracts.test.ts` | That a cross-region rejection names field paths and never values. |
 | `apps/desktop/src/main/telemetry-*.test.ts`, `native-crash-*.test.ts` | Sender/schema boundaries, redacted inspection, owner-only bounded spools, route-final generations, opt-out invalidation, and authenticated next-launch upload. |
 | `apps/api/test/telemetry-*.test.ts`, `crash-*.test.ts`, `posthog-adapter.test.ts` | Regional acceptance, capabilities, preference/identity ordering, immutable deadlines, raw-object access, sanitization, and exact destination negative space. |
+| `apps/site/test/site.test.ts` | Every public entry, route-before-identity behavior, storage failure isolation, and tracking disclosure. |
 | `pnpm --filter @avalon/desktop test:release` | The entitlement rules, notarization, blockmap ordering, and the final verifier. CI runs this as a separate job — `pnpm test:scripts` does **not** cover `apps/desktop/scripts/`. |
 | `scripts/gitleaks-allowlist.test.mjs` (`pnpm test:scripts`) | That every `.gitleaks.toml` pattern still rejects real key material. It fails when an exception is added without a case, because the scan itself only reports what it finds today and would not notice an exception that had been widened. |
 | The `secrets` CI job | Gitleaks over the full history, all branches. |
@@ -677,17 +696,57 @@ must fail closed after policy drift. Repository replacement has bounded R2 and
 latency cost and refuses workspaces whose compressed recovery state exceeds the
 limit.
 
+### 2026-08-13 — Public-site telemetry gains no provider or handoff authority
+
+**What changed:** The exact API origin allowlist now includes Avalon's two
+production site origins. The site can obtain a content-free route and a signed
+anonymous capability, then send only registered site events. EU identity remains
+in memory; Global may retain a first-party random epoch.
+
+**Why:** Measuring acquisition through a provider browser SDK would put
+destination credentials and a generic capture surface into pages that also
+handle OAuth, invitation, Slack, and resource handoffs.
+
+**Considered and rejected:** A PostHog token in the site bundle, wildcard CORS,
+query/fragment capture, and sharing one persistent epoch across regions. Each
+turns an anonymous measurement surface into destination, credential, or
+cross-region authority.
+
+**Consequences:** CORS still grants no API authorization. New site events must
+fit the pre-authentication allowlist and prove their negative space; handoff pages
+continue to erase or locally validate secrets independently of telemetry.
+
+### 2026-08-13 — Lockdown telemetry observes state without widening authority
+
+**What changed:** The main process contributes Lockdown enabled/available state
+to the bounded settings snapshot and reports previous, requested, and applied
+booleans only after an in-app transition succeeds.
+
+**Why:** Product analysis needs current adoption and change intent, while the
+security boundary must continue treating migration and preference persistence—not
+the renderer click—as the authoritative transition.
+
+**Considered and rejected:** Renderer autocapture, credential/keystore details,
+and failure payloads. None are needed to answer adoption, and each would widen
+the least-privilege telemetry contract.
+
+**Consequences:** Lockdown telemetry remains subject to Product analytics opt-out,
+uses a closed setting enum, and cannot influence migration, rollback, or session
+recovery.
 ### 2026-08-13 — Desktop mutation headers are proven at the CORS boundary
 
-**What changed:** The regional API now admits `X-Avalon-Operation-Id` in its
-explicit CORS header allowlist, and an app-origin preflight test covers the full
-desktop mutation header set. Caught renderer transport failures use the existing
-sanitized, main-owned exception route rather than a new renderer destination.
+**What changed:** The regional API admits `X-Avalon-Operation-Id` in its explicit
+CORS header allowlist, and app-origin preflight tests cover the desktop mutation
+header in both Global and EU. Connector telemetry-version negotiation
+deliberately uses a query marker rather than another header. Caught renderer
+transport failures use the existing sanitized, main-owned exception route
+rather than a new renderer destination.
 
-**Why:** The production desktop added the operation identifier to work-stream and
-message mutations without adding it to the Worker allowlist. Chromium stopped the
-request at preflight, so authenticated route code and API observability never saw
-the attempted mutation.
+**Why:** Chromium stops a request at preflight when any renderer header is absent
+from the Worker allowlist. Operation correlation must therefore be admitted in
+both regions. The connector version marker avoids expanding that preflight
+contract and remains safe while the independently deployed desktop and API
+briefly run different revisions.
 
 **Considered and rejected:** A wildcard CORS header policy, removing operation
 correlation, or adding a direct renderer PostHog client. Those respectively widen
