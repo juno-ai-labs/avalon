@@ -77,7 +77,14 @@ manifest: {
 The adapter serves both scopes, branching in `executeTool` exactly as Granola
 does: personal connections forward to the hosted-MCP passthrough, workspace
 connections run the static REST branch. `capabilityConnectionScopes` is
-`{ workspaceRead: ["workspace"], personalRead: ["personal"] }`.
+keyed by capability **ID**, as Granola's is:
+
+```ts
+capabilityConnectionScopes: {
+  [FathomCapabilities.workspaceRead]: ["workspace"],
+  [FathomCapabilities.personalRead]: ["personal"],
+}
+```
 
 Two Fathom connections in one workspace present as two plugins
 (`fathom` / `fathom_2` wire prefixes); their catalog presentation is
@@ -121,10 +128,15 @@ transport 401) follow the hosted-MCP contract in
 failure table below covers the static workspace scope only.
 
 If discovery shows Fathom's authorization server does not support dynamic
-client registration ([`prd.md`](prd.md) Open question 1), the passthrough's
-OAuth block instead carries the registered marketplace application's client
-credentials from `fathomConnectorConfig(env)`; the rest of this design is
-unchanged.
+client registration ([`prd.md`](prd.md) Open question 1), a registered
+marketplace application's client credentials are **not** a config toggle:
+`HostedMcpOAuthConfig` has no configured-client fields and
+`beginHostedMcpAuthorization` always registers a client dynamically. The
+fallback is a shared static-client mode added to
+`packages/connectors/src/hosted-mcp.ts` — in-scope new work, in the touch
+list — defining client authentication for both the code exchange and
+refresh-token rotation. The personal build is blocked until the question
+resolves; the workspace build does not wait.
 
 ### Registry config
 
@@ -189,15 +201,18 @@ Granola bound truncates silently: when an array or string cap fires,
 | `teams` | array of strings, max 10 | no | maps to `teams[]` |
 | `meetingType` | string ≤ 200 | no, nullable | maps to `meeting_type`; values come from `list_meeting_types` |
 | `calendarInviteesDomainsType` | `"all" \| "only_internal" \| "one_or_more_external"` | no | provider enum, passed through |
+| `includeActionItems` | boolean, default false | no | maps to `include_action_items`; the only path to action items — the summary endpoint does not return them. A heavier request; pair with narrow filters. |
 | `pageSize` | integer 1–30 | no | bounds the page against the value caps |
 | `cursor` | string ≤ 4096 | no, nullable | provider cursor, opaque |
 
-- **Output:** `{ items: [{ recordingId, title, meetingUrl, recordingUrl,
-  startedAt, endedAt, recorder: { name, email, team }, meetingType,
-  calendarInvitees: [{ name?, email }] }], nextCursor: string | null }`.
-  `nextCursor` is the continuation value for the next call; `null` means the
-  listing is complete. Exact provider field names are frozen against the
-  OpenAPI spec.
+- **Output:** `{ items: [{ recordingId (integer), title, meetingUrl,
+  recordingUrl, startedAt, endedAt, recorder: { name, email, team },
+  meetingType, calendarInvitees: [{ name?, email }],
+  actionItems?: [{ description, assignee?, completed? }] }],
+  nextCursor: string | null }` — `actionItems` present only when
+  `includeActionItems` was true. `nextCursor` is the continuation value for
+  the next call; `null` means the listing is complete. Exact provider field
+  names are frozen against the OpenAPI spec.
 
 ### `list_meeting_types`
 
@@ -211,18 +226,20 @@ Granola bound truncates silently: when an array or string cap fires,
 ### `get_meeting_summary`
 
 - **Capability:** `fathom.workspace.read`
-- **Description:** "Return the Fathom-generated summary and action items for
-  one meeting, by its recording ID from list_meetings."
-- **Backend:** `GET /recordings/{recording_id}/summary`; whether action items
-  ride this endpoint or require a single-meeting re-read with
-  `include_action_items` is resolved against the OpenAPI spec and recorded in
-  [`../../assumptions.md`](../../assumptions.md) (a low-level ambiguity with
-  no product consequence).
-- **Input:** `{ recordingId: string (required) }` — validated against the
-  recording-identifier pattern once recorded (Open question 8), with the
-  mismatch hint "expected a Fathom recording ID from list_meetings"; no other
+- **Description:** "Return the Fathom-generated summary for one meeting, by
+  its recording ID from list_meetings. For action items, call list_meetings
+  with includeActionItems instead — this endpoint does not return them."
+- **Backend:** `GET /recordings/{recording_id}/summary`, direct-response mode
+  (no `destination_url`). Verified: the response carries only the summary
+  (`template_name`, `markdown_formatted`) — no title, no action items, and
+  `/meetings` has no recording-ID filter, so there is no single-meeting
+  re-read to fall back to.
+- **Input:** `{ recordingId: positive integer (required) }` — Fathom
+  recording IDs are integers per the OpenAPI spec; the mismatch hint reads
+  "expected a numeric Fathom recording ID from list_meetings"; no other
   properties, unknown fields rejected.
-- **Output:** `{ recordingId, title, summary (markdown), actionItems: [{ description, assignee?, completed? }] }`.
+- **Output:** `{ recordingId, summary (markdown), templateName }` — the
+  meeting's title is already in the `list_meetings` item the ID came from.
 
 ### `get_meeting_transcript`
 
@@ -230,9 +247,12 @@ Granola bound truncates silently: when an array or string cap fires,
 - **Description:** "Return the transcript for one meeting, by its recording
   ID from list_meetings. Transcripts are long; request one only when the
   summary is insufficient."
-- **Backend:** `GET /recordings/{recording_id}/transcript`.
-- **Input:** `{ recordingId: string (required) }`, validated as above.
-- **Output:** `{ recordingId, transcript: [{ speaker: { name, email? }, text, timestamp? }], truncated?: true, returnedSegments?: number, totalSegments?: number }` —
+- **Backend:** `GET /recordings/{recording_id}/transcript`, direct-response
+  mode. Verified: no range or pagination parameter exists, so truncation is
+  the bounded recovery path.
+- **Input:** `{ recordingId: positive integer (required) }`, validated as
+  above.
+- **Output:** `{ recordingId, transcript: [{ speaker: { displayName, matchedCalendarInviteeEmail? }, text, timestamp ("HH:MM:SS" from meeting start) }], truncated?: true, returnedSegments?: number, totalSegments?: number }` —
   the truncation fields appear only when `boundFathomValue` cut the result.
 
 ### `list_teams`
@@ -316,8 +336,15 @@ Webhook endpoints are registered for **workspace connections only**
 
 1. `POST /webhooks` on Fathom with the regional ingress URL
    `https://<PUBLIC_API_BASE_URL host>/ingest/fathom/<connectionId>`,
-   `triggered_for` per Open question 3's answer, and **no** content includes —
-   the payload is a change signal only (Key design decision 2).
+   `triggered_for` per Open question 3's answer (the enum is
+   `my_recordings`, `shared_external_recordings`,
+   `my_shared_with_team_recordings`, `shared_team_recordings`), and the
+   smallest content payload Fathom permits: the API **requires at least one**
+   of `include_transcript` / `include_summary` / `include_action_items` /
+   `include_crm_matches` to be true, so Avalon sets `include_summary: true`
+   and the other three false. The delivery is still treated as a change
+   signal (Key design decision 2): the embedded summary is never admitted
+   into activity fields — it rides only in the raw R2 payload record.
 2. Fathom returns the endpoint ID and `whsec_…` signing secret; both enter
    the credential envelope alongside the key.
 3. Row insert + `audit_events` in one `DB.batch`; on failure, `DELETE
@@ -354,11 +381,14 @@ schemas and cross-checks layer on top. The procedure:
 4. Compute HMAC-SHA256 over `${id}.${timestamp}.${rawBody}` with the
    base64-decoded post-`whsec_` secret; compare in constant time against each
    space-delimited `v1,` signature.
-5. Parse; if Fathom's payload carries an event identifier (Open question 7),
-   assert it equals `webhook-id` — if it does not, the cross-check is
-   dropped and delivery-level dedupe rests on the `webhook_receipts`
-   signature hash.
-6. Return `{ deliveryId, eventType, providerAccountId, bodyHash, receiptKey, event }`.
+5. Parse. The per-delivery identity is the authenticated `webhook-id`
+   **header** — the public docs do not document a payload event-id field
+   ([`prd.md`](prd.md) Open question 7), so the payload is never the source
+   of delivery identity; if a live delivery shows the payload does carry
+   one, it is cross-checked against the header as an extra guard.
+   Delivery-level replay protection rests on the `webhook_receipts`
+   signature hash regardless.
+6. Return `{ deliveryId (the webhook-id header), eventType, providerAccountId, bodyHash, receiptKey, event }`.
 
 ### Normalization and admission
 
@@ -385,7 +415,7 @@ adapter contract requires:
 | `actor` | `{}` — no identity resolution from provider-supplied emails (Granola's shape; see [`prd.md`](prd.md) Security and trust model) |
 | `subject` | `{ id: recordingId, type: "fathom_meeting" }` |
 | `title` / `summary` / `textSnippet` | title from the envelope if present, truncated to the `activities` caps (title ≤ 300, summary ≤ 2 000 chars); `summary`/`textSnippet` empty — content arrives at hydration |
-| `dedupeKey` | Fathom's per-delivery event identifier — the same value the duplicate re-read keys on (`connection_id` + `provider_event_id` + `event_type`), so a suppressed insert always finds its canonical row |
+| `dedupeKey` | the authenticated `webhook-id` header value (the per-delivery identity) — the same value the duplicate re-read keys on (`connection_id` + `provider_event_id` + `event_type`), so a suppressed insert always finds its canonical row |
 | `visibility`, `targetUserIds` | `{ scope: "workspace" }`, `[]` — hardcoded, as Granola's are; personal-scope ingestion does not exist in this scope |
 
 A `normalize` called with a non-workspace connection throws `unauthorized`,
@@ -405,6 +435,15 @@ doc test enforces the pairing):
 prefix at the time of writing — **re-check against `main` immediately before
 merge**; the tree already carries duplicate-number collisions, migrations
 apply in filename order on merge, and this one is a destructive rebuild).
+
+**Coordination with the Fireflies PRD:** the parallel
+[`../2026-08-14_fireflies-connector/prd.md`](../2026-08-14_fireflies-connector/prd.md)
+also rebuilds `connector_connections` and `connector_oauth_attempts` for its
+own `connector_type`. Whichever implementation lands **second** must derive
+from the schema the first one left — carrying the first connector's CHECK
+value and its two partial unique indexes forward — or the second rebuild
+silently reverts the first. The rebase-time re-check above is where this is
+caught.
 
 The rebuild **derives everything from the schema at head — it does not copy
 `0048_granola_connector.sql`**, whose staging list is a snapshot that three
@@ -463,6 +502,9 @@ pass — the build's checklist, not new design:
   `packages/connectors/src/index.ts`.
 - Extract `verifyStandardWebhook` shared by `granola.ts` and `fathom.ts`.
 - `boundFathomValue` with the explicit truncation flag.
+- `packages/connectors/src/hosted-mcp.ts` — a static-client OAuth mode,
+  **only if** Open question 1 resolves to no-DCR (today the passthrough
+  always registers dynamically).
 
 **API**
 - `apps/api/src/lib/connector-registry.ts` — `fathomConnectorConfig(env)`,
@@ -522,6 +564,8 @@ pass — the build's checklist, not new design:
   region-specific redirect URIs, and the per-region secrets (if Open
   question 1 lands on registered-app).
 - `docs/runbook.md` — the per-region Worker secret list.
+- `docs/feature-flags.md` — the client-flag table gains the
+  `fathom-connector` row.
 - `docs/e2e.md` — the personal-connect desktop flow as a durable check.
 
 **Tests**
