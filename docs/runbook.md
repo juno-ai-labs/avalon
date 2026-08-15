@@ -535,7 +535,7 @@ The production-approved connector scopes use `gmail.modify` for the Gmail capabi
 
 Google connector ingestion currently polls Gmail history, Calendar sync/completion cursors, and Drive changes. Drive change-token polling is also the change source for Docs and Sheets. Do not configure or claim Gmail Pub/Sub watch delivery, Calendar notification channels, Drive push notifications, or any Google webhook; none is implemented.
 
-Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so identity and connector callbacks redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
+Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so identity and connector callbacks redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; public-site telemetry uses `https://with-avalon.com` and `https://www.with-avalon.com`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
 
 ## Realtime operations and cost controls
 
@@ -899,6 +899,13 @@ symbols are unavailable for a current release, or a deletion pass leaves expired
 rows or objects. Always inspect Global and EU independently. EU has no PostHog or
 Analytics Engine telemetry destination, so a Global delivery graph says nothing
 about EU health.
+
+The public site makes `GET /telemetry/route`, then the ordinary anonymous
+bootstrap/ingest calls. The route response must be `Cache-Control: no-store` and
+must not create a `telemetry_onboarding_journeys` row. A Global route may reuse a
+first-party browser epoch; an EU route must remain page-scoped. Verify both paths
+after changing CORS, the site deployment, the Global custom domain, or
+`EU_TELEMETRY_BRIDGE`; see [`public-site-telemetry.md`](public-site-telemetry.md).
 
 ### Operator access
 

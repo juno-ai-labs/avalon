@@ -5,7 +5,11 @@ import type { Env } from "../src/env";
 import { deliverDigest } from "../src/services/digest-delivery-service";
 import { settleDigestRun } from "../src/services/digest-run-settlement";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createTestD1Database,
+  createTestD1PreparedStatement,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
 const OWNER = "00000000-0000-7000-8000-000000000002";
@@ -212,6 +216,34 @@ describe("settling a digest run", () => {
     });
     expect(database.prepare("SELECT next_sequence_number FROM workstreams WHERE id = ?").get(WORKSTREAM))
       .toEqual({ next_sequence_number: 3 });
+  });
+
+  it("still notes a delivered digest when telemetry context lookup fails", async () => {
+    const database = seededDatabase();
+    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+    const env = envFor(database);
+    const databaseBinding = env.DB;
+    env.DB = createTestD1Database({
+      prepare(query: string) {
+        const statement = databaseBinding.prepare(query);
+        if (!query.includes("SELECT DISTINCT target_type")) return statement;
+        return createTestD1PreparedStatement({
+          bind(...values: unknown[]) {
+            statement.bind(...values);
+            return createTestD1PreparedStatement({
+              all: async () => { throw new Error("telemetry lookup unavailable"); },
+            });
+          },
+        });
+      },
+      batch: databaseBinding.batch.bind(databaseBinding),
+    });
+
+    await expect(settleDigestRun(env, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
+
+    expect(database.prepare(
+      "SELECT text_content FROM messages WHERE client_message_id = ?",
+    ).get(`digest-delivered:${DELIVERY}`)).toEqual({ text_content: "Delivered to 1 destination." });
   });
 
   it("notes a delivery the previous Worker claimed without the new column", async () => {

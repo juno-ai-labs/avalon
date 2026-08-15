@@ -36,6 +36,10 @@ import {
 } from '../lib/elicitation';
 import { newAutomationDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
+import {
+  currentSurfaceEntrypoint,
+  reportTelemetryProductIntent,
+} from '../lib/telemetry';
 import { useDraftText } from '../lib/use-draft-text';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -76,7 +80,15 @@ interface AutomationCompilePayload {
   startedOnDraftId: string | null;
   templateId?: string;
   turnId: string;
-  elicitation?: { id: string; answer: ElicitationAnswer };
+  inputMode: 'typed' | 'suggested_prompt' | 'elicitation_response' | 'edit';
+  elicitation?: {
+    id: string;
+    answer: ElicitationAnswer;
+    responseType: AutomationDraftQuestion['responseType'];
+    options: AutomationDraftQuestion['options'];
+    allowOther: boolean;
+    presentedAt: string;
+  };
 }
 
 function automationTextMessage(
@@ -648,6 +660,16 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   // A new entry is what actually says somebody navigated, and — unlike the id —
   // it does not appear during the renders where the bar is merely behind.
   const locationKey = useLocation().key;
+  const reportedBuilderLocation = useRef<string | null>(null);
+  useEffect(() => {
+    if (reportedBuilderLocation.current === locationKey) return;
+    reportedBuilderLocation.current = locationKey;
+    reportTelemetryProductIntent({
+      kind: 'automation_builder_started',
+      entrypoint: currentSurfaceEntrypoint(),
+      resumedDraft: resumeDraftId !== null,
+    });
+  }, [locationKey, resumeDraftId]);
   const namedLocationKey = useRef(locationKey);
   useEffect(() => {
     const previous = namedDraftId.current;
@@ -822,6 +844,23 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         ...(payload.startedOnDraftId ? { draftId: payload.startedOnDraftId } : {}),
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
         ...(payload.attachmentIds.length > 0 ? { attachmentIds: payload.attachmentIds } : {}),
+        inputMode: payload.inputMode,
+        connectorMentionCount: Math.min(100, payload.message.match(/@[A-Za-z0-9]/gu)?.length ?? 0),
+        ...(payload.elicitation ? {
+          resolvedElicitation: {
+            id: payload.elicitation.id,
+            responseType: payload.elicitation.responseType,
+            resolution: payload.elicitation.answer == null ? 'skipped' : 'answered',
+            customResponseUsed: payload.elicitation.allowOther && (
+              Array.isArray(payload.elicitation.answer)
+                ? payload.elicitation.answer.some((answer) =>
+                    !payload.elicitation!.options.some((option) => option.value === answer))
+                : payload.elicitation.answer != null
+                  && !payload.elicitation.options.some((option) => option.value === payload.elicitation!.answer)
+            ),
+            presentedAt: payload.elicitation.presentedAt,
+          },
+        } : {}),
       }, (event) => {
         // A turn belongs to the conversation it was sent from. Picking another
         // draft out of the sidebar leaves this one in flight against a screen
@@ -1007,6 +1046,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     message = input,
     turnId: string = crypto.randomUUID(),
     elicitation?: AutomationCompilePayload['elicitation'],
+    inputMode: AutomationCompilePayload['inputMode'] = elicitation ? 'elicitation_response' : 'typed',
   ): Promise<void> => {
     const readyAttachments = attachmentDraft.ready;
     const trimmed = message.trim();
@@ -1029,14 +1069,15 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         createdAt,
       })),
       message: trimmed,
+      inputMode,
       startedOnDraftId: draft?.draftId ?? null,
       turnId,
       ...(elicitation ? { elicitation } : {}),
     });
   };
 
-  const submit = (message = input): void => {
-    void submitAsync(message).catch(() => undefined);
+  const submit = (message = input, inputMode: AutomationCompilePayload['inputMode'] = 'typed'): void => {
+    void submitAsync(message, crypto.randomUUID(), undefined, inputMode).catch(() => undefined);
   };
 
   const draftId = draft?.draftId;
@@ -1069,7 +1110,12 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 className="menu-item"
                 disabled={!draftId}
                 onSelect={() => {
-                  if (draftId) void desktopBridge().copyText(draftId);
+                  if (draftId) void desktopBridge().copyText(draftId)
+                    .then(() => reportTelemetryProductIntent({
+                      kind: 'content_copied', contentType: 'automation_id', resourceType: 'automation',
+                      resourceId: draftId,
+                    }))
+                    .catch(() => undefined);
                 }}
               >
                 <Info size={14} /> Copy draft ID
@@ -1144,7 +1190,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 <p className="eyebrow">Create an automation</p>
                 <h1 id="automation-builder-heading">What should happen automatically?</h1>
                 <p>Describe the outcome. Avalon can research your plugins and will ask for the details it needs.</p>
-                <AutomationSuggestedPrompts onSelect={submit} />
+                <AutomationSuggestedPrompts onSelect={(example) => submit(example, 'suggested_prompt')} />
                 <button className="template-path" onClick={() => setTemplatesOpen(true)} type="button">Use a workspace template <ChevronRight size={13} /></button>
               </section>
             ) : (
@@ -1162,7 +1208,18 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                           submit: () => submitAsync(
                             answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer,
                             turn.id,
-                            { id: turn.elicitation!.id, answer },
+                            {
+                              id: turn.elicitation!.id,
+                              answer,
+                              responseType: turn.elicitation!.responseType === 'text'
+                                ? 'free_text'
+                                : turn.elicitation!.responseType === 'radio'
+                                  ? 'single_select'
+                                  : turn.elicitation!.responseType,
+                              options: turn.elicitation!.options ?? [],
+                              allowOther: turn.elicitation!.allowOther ?? false,
+                              presentedAt: turn.elicitation!.createdAt ?? turn.createdAt,
+                            },
                           ),
                           updateMessages: (update) => setTurns(update),
                         })

@@ -179,6 +179,8 @@ describe('New work-stream home', () => {
       '00000000-0000-7000-8000-000000000099',
       3,
       expect.any(String),
+      'workspace_home',
+      1,
     ));
   });
 
@@ -566,6 +568,9 @@ describe('New work-stream home', () => {
       id: 'new-workstream',
       latestHarnessRun: { id: 'run-new-workstream', status: 'running' },
     }));
+    expect(api.startWorkOpportunity).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000099', 3, expect.any(String), 'workspace_home', 1,
+    );
     // Empty rather than invented: the opening turn belongs to the agent and
     // arrives with the refetch.
     expect(queryClient.getQueryData(['messages', 'new-workstream'])).toEqual([]);

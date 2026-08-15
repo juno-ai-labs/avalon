@@ -1,0 +1,165 @@
+import {
+  TELEMETRY_CONNECTOR_TYPES,
+  TELEMETRY_WORKSTREAM_CREATION_SOURCES,
+  type TelemetryConnectorType,
+  type TelemetryWorkstreamCreationSource,
+} from "@avalon/contracts/telemetry";
+
+import type { Env, IdentityAuthContext } from "../env";
+import { logWarn } from "../observability/logger";
+import {
+  apiTelemetryEnvelope,
+  emitAuthenticatedApiTelemetry,
+  emitWorkspaceApiTelemetry,
+} from "./api-emitter";
+
+export const WORKSTREAM_CREATION_SOURCES = TELEMETRY_WORKSTREAM_CREATION_SOURCES;
+export type WorkstreamCreationSource = TelemetryWorkstreamCreationSource;
+
+type WorkstreamCreationPrincipal =
+  | { type: "user"; userId: string }
+  | { type: "workspace" };
+
+interface WorkstreamCreationTelemetryInput {
+  workspaceId: string;
+  workstreamId: string;
+  creationSource: WorkstreamCreationSource;
+  connectorTypes?: readonly string[];
+  operationId?: string | null;
+  principal: WorkstreamCreationPrincipal;
+}
+
+interface WorkstreamCreationRow {
+  scope: "personal" | "workspace";
+  origin_type: "ad_hoc" | "automation";
+  system_kind: string | null;
+  model_override: string | null;
+  participant_count: number;
+  attachment_count: number;
+}
+
+const connectorTypeSet = new Set<string>(TELEMETRY_CONNECTOR_TYPES);
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+function normalizedConnectorTypes(values: readonly string[]): TelemetryConnectorType[] {
+  const present = new Set(values.filter((value) => connectorTypeSet.has(value)));
+  return TELEMETRY_CONNECTOR_TYPES.filter((value) => present.has(value));
+}
+
+function count(value: number): number {
+  return Math.max(0, Math.min(100, Number(value) || 0));
+}
+
+/**
+ * Older/background work-stream producers still use UUIDv4 while telemetry ids
+ * are UUIDv7-only. Replacing only the version nibble creates a stable,
+ * event-specific insert id without mutating the resource id or persisting a
+ * second identifier. The remaining 122 random bits retain UUID collision
+ * resistance.
+ */
+export function workstreamCreationEventId(workstreamId: string): string {
+  if (!uuid.test(workstreamId)) throw new Error("workstream_creation_id_invalid");
+  return `${workstreamId.slice(0, 14)}7${workstreamId.slice(15)}`;
+}
+
+/**
+ * Resolves only activity roots actually retained for this opportunity. Provider
+ * labels are display data; the joined connection row is the canonical
+ * connector taxonomy used by product analytics.
+ */
+export async function connectorTypesForOpportunity(
+  env: Env,
+  workspaceId: string,
+  opportunityId: string,
+): Promise<TelemetryConnectorType[]> {
+  const rows = await env.DB.prepare(
+    `SELECT DISTINCT c.connector_type, nodes.provider
+     FROM work_opportunity_provenance_roots roots
+     JOIN opportunity_provenance_nodes nodes ON nodes.id = roots.node_id
+     LEFT JOIN activities activity
+       ON nodes.node_kind = 'activity' AND activity.id = nodes.source_id
+     LEFT JOIN connector_connections c ON c.id = activity.connection_id
+     WHERE roots.opportunity_id = ? AND nodes.workspace_id = ?
+       AND (activity.workspace_id IS NULL OR activity.workspace_id = ?)
+     ORDER BY c.connector_type, nodes.provider`,
+  ).bind(opportunityId, workspaceId, workspaceId).all<{
+    connector_type: string | null;
+    provider: string | null;
+  }>();
+  return normalizedConnectorTypes(rows.results.flatMap((row) =>
+    row.connector_type ? [row.connector_type] : row.provider ? [row.provider] : []));
+}
+
+/**
+ * Records the creation after its work-stream transaction commits. A stable id
+ * derived from the work-stream UUID prevents retries and idempotent provider
+ * deliveries from double-counting creation. This function deliberately absorbs
+ * all telemetry failures: observation cannot fail the product operation.
+ */
+export async function recordWorkstreamCreatedTelemetry(
+  env: Env,
+  input: WorkstreamCreationTelemetryInput,
+): Promise<void> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT w.scope, w.origin_type, w.system_kind, w.model_override,
+              (SELECT COUNT(*) FROM workstream_participants participant
+               WHERE participant.workstream_id = w.id AND participant.removed_at IS NULL) AS participant_count,
+              (SELECT COUNT(*) FROM message_attachments attachment
+               JOIN messages message ON message.id = attachment.message_id
+               WHERE message.workstream_id = w.id AND message.sequence_number = 1) AS attachment_count
+       FROM workstreams w
+       WHERE w.id = ? AND w.workspace_id = ?
+       LIMIT 1`,
+    ).bind(input.workstreamId, input.workspaceId).first<WorkstreamCreationRow>();
+    // Hidden execution machinery is not a product-created work stream.
+    if (!row || row.system_kind !== null) return;
+
+    const connectorTypes = normalizedConnectorTypes(input.connectorTypes ?? []);
+    const connectorType = connectorTypes.length === 0
+      ? "none"
+      : connectorTypes.length === 1 ? connectorTypes[0]! : "multiple";
+    const identityScope = input.principal.type === "user" ? "workspace-user" : "workspace";
+    const eventId = workstreamCreationEventId(input.workstreamId);
+    const event = apiTelemetryEnvelope(
+      env,
+      "workstream_created",
+      {
+        workstreamId: input.workstreamId,
+        visibility: row.scope === "personal" ? "private" : "public",
+        creationSource: input.creationSource,
+        origin: row.origin_type,
+        connectorType,
+        connectorTypes,
+        connectorTypeCount: connectorTypes.length,
+        participantCount: count(row.participant_count),
+        attachmentCount: count(row.attachment_count),
+        modelOverride: row.model_override !== null,
+      },
+      input.operationId ?? eventId,
+      identityScope,
+      env.AVALON_REGION,
+      eventId,
+    );
+
+    if (input.principal.type === "workspace") {
+      await emitWorkspaceApiTelemetry(env, input.workspaceId, event);
+      return;
+    }
+    const auth: IdentityAuthContext = {
+      sessionId: `telemetry:workstream-created:${input.workstreamId}`,
+      userId: input.principal.userId,
+      workspaceId: input.workspaceId,
+      region: env.AVALON_REGION,
+      role: null,
+    };
+    await emitAuthenticatedApiTelemetry(env, auth, event);
+  } catch (error) {
+    logWarn(env, "workstream_creation_telemetry_failed", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      creation_source: input.creationSource,
+      error_name: error instanceof Error ? error.name : "unknown",
+    });
+  }
+}

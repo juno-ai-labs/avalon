@@ -9,6 +9,7 @@ import {
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 const desktopReleaseValue = JSON.parse(readFileSync(new URL('./release.config.json', import.meta.url), 'utf8')) as unknown;
+const rootPackage = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 
 export default defineConfig(async () => {
   const desktopRelease = parseDesktopReleaseConfig(desktopReleaseValue);
@@ -16,6 +17,10 @@ export default defineConfig(async () => {
     ? await discoverDesktopRelease(desktopRelease)
     : undefined;
   return {
+    define: {
+      __AVALON_SITE_RELEASE__: JSON.stringify(`site+${rootPackage.version}`),
+      __AVALON_SITE_BUILD__: JSON.stringify(process.env.CF_PAGES_COMMIT_SHA?.slice(0, 40) ?? rootPackage.version),
+    },
     plugins: [
       {
         name: 'avalon-desktop-release',
@@ -23,6 +28,17 @@ export default defineConfig(async () => {
           return html.includes('<!-- avalon-desktop-release:start -->')
             ? renderDesktopRelease(html, desktopRelease, publication)
             : html;
+        },
+      },
+      {
+        name: 'avalon-site-telemetry',
+        transformIndexHtml: {
+          order: 'pre',
+          handler: () => [{
+            tag: 'script',
+            attrs: { type: 'module', src: '/src/site-entry.ts' },
+            injectTo: 'head',
+          }],
         },
       },
     ],

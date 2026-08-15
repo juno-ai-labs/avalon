@@ -1,3 +1,5 @@
+import { reportDesktopHandoff } from './telemetry';
+
 const button = document.querySelector<HTMLAnchorElement>('#open-avalon');
 const error = document.querySelector<HTMLElement>('#invite-error');
 const parameters = new URLSearchParams(window.location.hash.replace(/^#/u, ''));
@@ -19,12 +21,15 @@ const valid =
 window.history.replaceState(null, document.title, window.location.pathname);
 
 if (button && valid && token && region) {
+  reportDesktopHandoff('invite', 'presented', 'valid');
   const deepLink = new URL('avalon://invitations/accept');
   deepLink.searchParams.set('region', region);
   deepLink.searchParams.set('token', token);
   button.href = deepLink.toString();
   button.removeAttribute('aria-disabled');
+  button.addEventListener('click', () => reportDesktopHandoff('invite', 'manual', 'valid'));
 } else {
+  reportDesktopHandoff('invite', 'presented', 'invalid');
   button?.setAttribute('hidden', '');
   error?.removeAttribute('hidden');
 }

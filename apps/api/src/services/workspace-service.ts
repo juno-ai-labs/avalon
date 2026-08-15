@@ -16,6 +16,12 @@ import {
 } from "./invitation-email-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
+import {
+  emitProductUsageTelemetry,
+  resourceTelemetryEventId,
+  telemetryJourneyDuration,
+} from "../telemetry/product-usage";
+import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from "../telemetry/api-emitter";
 
 interface InvitationRow {
   id: string;
@@ -31,6 +37,53 @@ interface InvitationRow {
   accepted_by_user_id: string | null;
   revoked_at: string | null;
   created_at: string;
+}
+
+async function emitInvitationTerminal(
+  env: Env,
+  invitation: InvitationRow,
+  input: {
+    userId: string;
+    action: "created" | "revoked" | "accepted" | "declined";
+    deliveryResult: "success" | "failed" | "not_applicable";
+    workspaceBound: boolean;
+  },
+): Promise<void> {
+  const properties = {
+    invitationId: invitation.id,
+    action: input.action,
+    role: invitation.role,
+    deliveryResult: input.deliveryResult,
+    timeToTerminal: telemetryJourneyDuration(Math.max(0, Date.now() - Date.parse(invitation.created_at))),
+  } as const;
+  const namespace = { created: 11, revoked: 12, accepted: 13, declined: 14 }[input.action];
+  if (input.workspaceBound) {
+    await emitProductUsageTelemetry(env, {
+      workspaceId: invitation.workspace_id,
+      userId: input.userId,
+      name: "workspace_invitation_terminal",
+      properties,
+      operationId: invitation.id,
+      eventId: resourceTelemetryEventId(invitation.id, namespace),
+    });
+    return;
+  }
+  const auth: IdentityAuthContext = {
+    sessionId: `telemetry:${invitation.id}`,
+    userId: input.userId,
+    workspaceId: null,
+    region: env.AVALON_REGION,
+    role: null,
+  };
+  await emitAuthenticatedApiTelemetry(env, auth, apiTelemetryEnvelope(
+    env,
+    "workspace_invitation_terminal",
+    properties,
+    invitation.id,
+    "platform-user",
+    env.AVALON_REGION,
+    resourceTelemetryEventId(invitation.id, namespace),
+  ));
 }
 
 export interface ResolvedInvitation {
@@ -179,6 +232,12 @@ export async function acceptInvitationForUser(
   }
   if (transitioned) {
     await notifyInvitationResolution(env, invitation, user, "accepted");
+    await emitInvitationTerminal(env, invitation, {
+      userId: user.id,
+      action: "accepted",
+      deliveryResult: "not_applicable",
+      workspaceBound: true,
+    }).catch(() => undefined);
   }
   await adoptSlackWorkstreamsForMember(env, invitation.workspace_id, user);
   return invitation.workspace_id;
@@ -234,6 +293,12 @@ export async function declineInvitationForUser(
     throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
   }
   await notifyInvitationResolution(env, invitation, user, "declined");
+  await emitInvitationTerminal(env, invitation, {
+    userId: user.id,
+    action: "declined",
+    deliveryResult: "not_applicable",
+    workspaceBound: false,
+  }).catch(() => undefined);
 }
 
 async function notifyInvitationResolution(
@@ -443,13 +508,26 @@ export class WorkspaceService {
         `UPDATE workspace_invitations SET revoked_at = ?
          WHERE id = ? AND workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL`,
       ).bind(nowIso(), row.id, this.auth.workspaceId).run();
+      await emitInvitationTerminal(this.env, row, {
+        userId: this.auth.userId,
+        action: "created",
+        deliveryResult: "failed",
+        workspaceBound: true,
+      }).catch(() => undefined);
       throw error;
     }
+    await emitInvitationTerminal(this.env, row, {
+      userId: this.auth.userId,
+      action: "created",
+      deliveryResult: emailDelivery === "sent" ? "success" : "not_applicable",
+      workspaceBound: true,
+    }).catch(() => undefined);
     return { invitation: mapInvitation(row), inviteUrl: inviteUrl.toString(), emailDelivery };
   }
 
   async revokeInvitation(id: string): Promise<void> {
     this.requireAdmin();
+    const invitation = await loadInvitationById(this.env, id);
     const result = await this.env.DB.prepare(
       `UPDATE workspace_invitations SET revoked_at = ?
        WHERE id = ? AND workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL`,
@@ -458,6 +536,14 @@ export class WorkspaceService {
       .run();
     if (Number(result.meta.changes ?? 0) === 0) {
       throw new ApiError(404, "invitation_not_found", "No pending invitation was found");
+    }
+    if (invitation) {
+      await emitInvitationTerminal(this.env, invitation, {
+        userId: this.auth.userId,
+        action: "revoked",
+        deliveryResult: "not_applicable",
+        workspaceBound: true,
+      }).catch(() => undefined);
     }
   }
 

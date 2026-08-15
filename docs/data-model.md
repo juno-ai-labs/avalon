@@ -509,6 +509,27 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-13 — OAuth attempts retain one bounded telemetry contract shape
+
+**What changed:** Connector OAuth attempts retain the negotiated telemetry event
+version, requested scope, capability-count integer, and reconnect flag alongside
+their operation ID. Existing rows default to V1; current clients bind V2 after
+the attempt is durably created. Migration
+`0077_connector_oauth_telemetry_shape.sql` adds only these four fields after the
+already-shipped regional telemetry migration.
+
+**Why:** Terminal OAuth failures occur after the renderer is gone and often
+before a connection exists. Without the admitted shape, the API could either
+emit a sparse legacy outcome or guess the dimensions required by the V2 event.
+
+**Considered and rejected:** Provider-state payload inspection at reporting time
+and parallel V1/V2 emission. The former couples analytics to encrypted OAuth
+secrets; the latter double-counts one setup journey.
+
+**Consequences:** These columns are bounded metadata, not provider payloads.
+Future event versions must persist any terminal dimensions at admission and
+must not reinterpret an attempt after its operation binding is set.
+
 ### 2026-08-13 — Recoverable GitHub status remains a valid Terminal reference
 
 **What changed:** Migration

@@ -18,6 +18,7 @@ terminates in Avalon's EU-isolated Cloudflare resources.
 | --- | --- |
 | `packages/contracts/src/telemetry.ts` | Closed event registry, envelope/batch schemas, breadcrumb and bootstrap contracts, size limits, and prohibited-field rules. |
 | `apps/desktop/src/main/telemetry-*.ts` | Route, random identity epochs, local event spool, typed reporter, breadcrumbs, launch markers, and preference-independent reliability collection. |
+| `apps/desktop/src/main/application-open-observer.ts` | Closed cold-start attribution and activation coalescing so explicit deep-link/menu sources outrank Electron's generic Dock/reopen callback. |
 | `apps/desktop/src/main/native-crash-*.ts` | Route-final Crashpad generations and the bounded, authenticated next-launch uploader. |
 | `apps/desktop/src/main/product-analytics-settings.ts` | Local-first disable, fail-closed enable/refresh, preference synchronization, crash invalidation, and spool purge. |
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
@@ -26,8 +27,13 @@ terminates in Avalon's EU-isolated Cloudflare resources.
 | `apps/api/src/routes/telemetry-operations.ts`, `apps/api/src/telemetry/operator-auth.ts` | Bearer-authenticated, role-restricted regional status, replay, raw-crash access, and EU analysis HTTP surface. |
 | `apps/api/src/telemetry/` | Regional collector, identity/preference logic, PostHog adapter, EU sink, replay, crash processing, operations, and lifecycle jobs. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
+| `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
+| `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent work-stream creation state and connector attribution across user, Slack, suggestion, and automation paths. |
+| `apps/api/src/telemetry/product-usage.ts`, `apps/api/src/telemetry/run-outcome.ts` | Shared bounded dimensions, idempotent resource event IDs, and authoritative run/tool journey outcomes. |
+| `apps/site/src/telemetry.ts`, `apps/site/src/site-entry.ts` | Region-before-identity public-site page, action, acquisition, and browser-to-desktop handoff reporting. |
 | `apps/api/src/crash-symbolicator*.ts`, `apps/api/crash-symbolicator/` | Private Cloudflare Container boundary and pinned native stack-walking image. |
 | `packages/db/migrations/0074_regional_telemetry.sql` | Telemetry identities, preferences, outboxes, internal EU projections, crash indexes, deadlines, rate buckets, circuits, and analysis dimensions. |
+| `packages/db/migrations/0077_connector_oauth_telemetry_shape.sql` | The bounded event version, connector scope, capability count, and reconnect state admitted with an OAuth attempt for later terminal telemetry. |
 | `apps/desktop/scripts/publish-telemetry-artifacts.mjs` | Private source-map and native-symbol publication to both isolated telemetry buckets. |
 | `apps/desktop/scripts/telemetry-crashpad-fixture.mjs` | Real packaged Electron/Crashpad two-launch release gate. |
 
@@ -47,6 +53,10 @@ authoritative producer, identity scopes, category, exact property schema,
 classification, priority, sample rate, retention, and destination. Incompatible
 changes require a new schema version. There is no generic `capture(name,
 properties)` API outside the reporter internals.
+The authenticated desktop `/telemetry/events` transport rejects every envelope
+whose source is `api`; server producers call the internal emitter directly. The
+shared envelope schema accepts API events so those internal producers remain
+typed, not so a session-bearing client can claim server authority.
 
 Legacy envelopes have the frozen context v1 shape. Native desktop enrichment
 uses `contextSchemaVersion: 2`; the regional reader accepts both shapes, while
@@ -54,8 +64,11 @@ API-generated events remain on v1. The regional reader must reach both regions
 before a desktop release emits v2, and a later API rollback must retain that v2
 reader until every released desktop producer has aged out.
 
-Automatic collection is limited to bounded application install/update and
-lifecycle/session/process/update, spool, API-operation, and crash-upload states.
+Automatic collection is limited to bounded application install/update,
+lifecycle/session/process/update, application-open/settings state, spool,
+API-operation, crash-upload, and public-site page-view/page-leave signals. The
+site calls those two registered contracts from its shared entry; this is not DOM,
+history, network, or arbitrary URL autocapture.
 Main adds a closed native-desktop context: the random installation device ID,
 app/build, OS/version, locale, timezone, display dimensions, and—when an event
 comes from a live renderer—its random window ID and viewport dimensions. Router
@@ -64,6 +77,107 @@ before a state-changing request; the authoritative API emits the outcome with
 the same `operation_id`. Avalon does not capture DOM interactions, console
 output, arbitrary network traffic, URLs, request bodies, prompts, messages,
 documents, or session replay.
+
+The macOS status surface emits `menu_bar_opened` once per visible open and
+`menu_bar_action_selected` for enabled rows using closed structural properties
+only. The sidebar emits one `command_shortcuts_revealed` per Command hold and
+`command_shortcut_used` only for a valid Command+1–9 navigation. Suggested-work
+clicks pass a bounded surface to the regional API; only a successful creation
+emits the authoritative `suggested_work_started_v2` with exposure position,
+version, audience, connector types, and prior-impression bucket. Impression and
+dismissal are likewise server-owned and idempotent. Released clients that omit
+the richer position fall back to the legacy successful-start event, but one
+request never emits both versions. None of these events includes routes, titles,
+or prompts.
+
+Resource telemetry uses successful semantic operations, not generic click
+autocapture. A loaded work stream records open/switch/reopen, visibility, origin,
+and pin state. The API records creation once the work-stream row commits; its
+closed source distinguishes composer, suggested work, Slack Agent, manual,
+scheduled, activity-triggered, and inbound-email automations. It derives
+visibility, origin, participant count, opening-attachment count, and model
+override from stored rows. Connector attribution is the canonical connector type
+or a bounded unique list for a multi-source suggestion—never a connection or
+provider-account ID. Successful resource
+menus record work-stream pin/visibility/unread/rename changes, note
+visibility/archive changes, and automation run/archive/delete actions. Message
+creation is server-owned across desktop, Slack, and email channels and records
+counts but no text. Elicitation presentation and resolution carry a stable
+question ID, bounded shape, resolution class, and latency but never the question
+or response. Copy buttons record a closed content class and
+the owning resource UUID only after the clipboard write succeeds. Notes record
+create/open/reopen plus transcription start/pause/resume/complete with their
+actual audio-source class. These events may carry opaque work-stream, message,
+note, automation, and run UUIDs for pathing and joins, but never titles, bodies,
+clipboard values, prompts, transcripts, or provider content. The currently inert
+work-stream Archive menu row emits nothing; adding the actual archive operation
+must add completion telemetry at the same time.
+
+Work-stream collaboration records authoritative participant changes, resource
+attach/detach/watch/preview/open-source outcomes, stop/retry actions, unread
+attention consumption, and HyperSight open/configuration/run outcomes. Terminal
+workspace lifecycle and policy events preserve only bounded result,
+repository-present, connector-class, local-file-retention, policy-mode, and
+active-sandbox dimensions. Connector telemetry covers setup, user actions,
+health transitions, and admitted activity; digests cover schedule and delivery;
+invitations cover creation through terminal response. Provider payloads,
+connection/account IDs, invite email addresses, digest contents, and Terminal
+commands or paths remain prohibited. OAuth connector attempts persist their
+closed telemetry shape and the renderer's explicit event-contract version. A
+current client emits only `connector_setup_requested_v2`; a benign query marker
+selects V2 while the already-deployed operation header retains correlation. The
+API answers it with only `connector_setup_completed_v2` under the same operation
+ID, including terminal failures. An older client without the version marker
+retains the V1 outcome, so one attempt never emits both destination versions.
+
+Automation measurement starts when the builder becomes actionable. The API
+records each durable compiler turn, first create-ready revision, authoritative
+custom/template creation, overview reopen, and lifecycle or execution outcome.
+Trigger, connector, plugin, delivery-target, input-mode, turn-count, and duration
+dimensions are closed and content-free. Current clients emit only the richer
+contracts; legacy creation/action contracts remain accepted for released clients
+and are not duplicated.
+
+The regional agent runtime emits `agent_tool_started` only after the canonical
+execution plan has been durably admitted and replay/ambiguity checks have passed.
+It includes work-stream, run, optional automation, canonical tool/plugin/
+capability, read/write mode, run kind, and execution scope. Tool arguments,
+outputs, summaries, provider payloads, and errors never enter the telemetry
+envelope. User-owned runs use `workspace-user`; unattended workspace-owned runs
+use a personless `workspace` scope and cannot be submitted through desktop
+telemetry ingest.
+Each durable invocation also produces one terminal result with latency and replay
+state, while each root run produces an authoritative terminal event with trigger,
+time-to-first-output, turns, tool/write counts, model route, and fallback state.
+The established requested/completed pair remains a separately named admission
+funnel for correlated desktop runs; it is not mapped to the same reserved event.
+
+After main has initialized the operating-system login item, Lockdown controller,
+and application icon, it emits one `application_settings_state_v2` with the actual
+enabled and availability booleans, closed icon identifier, and menu-bar state. A
+newly authenticated account receives the same snapshot
+after its Product analytics preference has been verified. Successful Settings
+interactions emit `application_setting_change_completed_v2` for launch-at-login,
+Lockdown mode, and menu-bar visibility with previous, requested, applied, and
+result fields, or
+`application_icon_changed` with the previous and applied icon states. This
+distinguishes a macOS login-item request awaiting approval from a state that was
+actually enabled. A rejected or rolled-back mutation emits no completion event.
+
+Main emits `application_opened` once for the cold process start and again only
+when an attributable action explicitly raises the running app. Its closed
+`entrypoint` is `system_start`, `user_launch`, `dock`, `deep_link`, `menu_bar`,
+or `push_notification`, and `phase` distinguishes `cold_start` from
+`activation`. The login-item flag proves `system_start`; an accepted OS deep
+link proves `deep_link`; menu actions prove `menu_bar`; and Electron's coalesced
+`activate` callback supplies `dock` only when no neighboring explicit source
+claims the activation. For a cold ordinary GUI launch, Electron exposes no
+reliable Dock-versus-Finder-versus-Spotlight fact, so Avalon records the honest
+`user_launch` class. There is no native push-notification producer today; the
+closed value is reserved for a future native click handler, which must report it
+before raising a window. Ordinary email, Slack, and browser handoffs remain
+`deep_link` because their identical URL cannot prove which external surface sent
+it.
 
 The renderer's shared API adapter explicitly reports non-abort `fetch` failures
 and upload-XHR network failures as `network_error` because product UI handles
@@ -80,6 +194,18 @@ coalesced to one report per five minutes through a 100-entry in-memory table. A
 handled network failure is diagnostic only: unlike a real JavaScript exception or
 rejection, it does not emit an essential `process_health` transition.
 
+The public site uses the same anonymous capability boundary but has its own
+identity rule. It first obtains a content-free Cloudflare `eu`/`global` route and
+a five-minute signed decision token. Global then reads or creates one random
+first-party `localStorage` epoch for multi-page acquisition paths. EU uses an
+in-memory epoch for that page and does not read or write a persistent analytics
+identifier. Bootstrap consumes the signed first decision instead of
+independently routing its second request. Registered events cover
+safe page/path/referrer/campaign fields, bounded actions and placements, and
+handoff type/method/validity. URL query strings/fragments, tickets, provider
+state, resource IDs, forms, and page content are never sent. See
+[`public-site-telemetry.md`](public-site-telemetry.md).
+
 ### Route and identity
 
 Before the first renderer exists, main resolves telemetry routing. An existing
@@ -90,8 +216,10 @@ epoch. An affirmative EU result prevents pre-region Crashpad startup. Non-EU,
 unknown, malformed, failed, or two-second timed-out bootstrap uses Global. No
 region-pending payload store exists.
 
-Every event receives one immutable route. A later workspace choice changes future
-events only. Global can hand an already validated EU onboarding projection to the
+Every event receives one immutable route. Identity has five scopes: installation,
+anonymous epoch, platform user, workspace user, and personless workspace
+execution. A later workspace choice changes future events only. Global can hand
+an already validated EU onboarding projection to the
 named EU telemetry RPC; no EU event, identity, crash, or replay moves to Global.
 If login succeeds before a workspace exists and the Global login session does
 not match the coarse EU route, registered pre-workspace intents continue under
@@ -147,8 +275,14 @@ Global delivery uses stable `$insert_id`, `$session_id`, `$window_id`,
 `$device_id`, `distinct_id`, PostHog workspace groups, `$is_identified`,
 `$process_person_profile`, `$geoip_disable`, normalized
 timestamps, and the official exception capture path. The adapter translates only
-exact provider equivalents: `screen_viewed` becomes `$screen`, launch/foreground
-becomes `Application Opened`, and background becomes `Application Backgrounded`.
+exact provider equivalents: legacy `screen_viewed` and current
+`surface_viewed` become `$screen` without being produced for the same current
+navigation; `site_page_viewed` and `site_page_left` become `$pageview` and
+`$pageleave`; `application_opened` becomes `Application Opened`; and background becomes
+`Application Backgrounded`. Other lifecycle reliability retains
+`application_lifecycle`. The canonical open carries `application_open_source`,
+`from_background`, and version/build on cold starts. This leaves one—not
+parallel custom and reserved—PostHog open event for each attributed occurrence.
 `application_version_changed` becomes `Application Installed` or
 `Application Updated`; rollout onto an existing installation establishes a
 durable baseline without emitting a false installation event. A pending
@@ -170,6 +304,15 @@ PostHog exception SDK exposes only flush success/failure for JavaScript/native
 exceptions, so a failed flush retries without status-specific classification.
 Five consecutive transient failures open a per-stream five-minute circuit. EU
 has no PostHog token, host, adapter call, or telemetry Analytics Engine dataset.
+For identified Global settings events, the adapter also uses PostHog's event
+`$set` shape to maintain current `avalon_launch_at_login_*`,
+`avalon_lockdown_mode_*`, `avalon_application_icon_*`, and
+`avalon_menu_bar_*` person properties.
+Anonymous settings snapshots remain personless; the semantic event itself is the
+regional source of truth in both regions.
+Workspace-owned API events use the stable workspace analytics ID as both their
+personless distinct ID and `workspace` group key; they set
+`$process_person_profile: false` and never create or update a PostHog person.
 
 ### PostHog product compatibility
 
@@ -184,13 +327,13 @@ formatting only. The regional registry and EU projection keep their Avalon names
 | Dashboards, Product analytics, SQL editor | Supported | Semantic events, `$screen`, stable identities, `$session_id`, workspace `$groups`, profiles, release/app context, and request/outcome correlation support trends, paths, funnels, retention, cohorts, and HogQL. |
 | Endpoints, Inbox, Notebooks, Workflows | Supported after PostHog-side configuration | They consume the same truthful events and profiles; no new capture event should be invented merely to enable a destination, alert, notebook, or workflow. |
 | Error tracking | Supported | JavaScript and native reports use the SDK's exception capture path with fingerprints, app frames, releases, sessions, groups, and app context. |
-| Marketing analytics, Web analytics | Not an Electron event contract | These depend on real web `$pageview`/`$pageleave`, URL, referrer, and campaign context. The public site remains outside this subsystem; Electron `$screen` events must not impersonate web traffic. |
+| Marketing analytics, Web analytics | Supported for the public site | Real site observations map once to `$pageview`/`$pageleave` with safe URL, pathname, host, referrer-domain, and UTM context. Electron `$screen` events remain separate and never impersonate web traffic. |
 | Heatmaps, Replay vision, Session replay | Not enabled | They require browser/mobile interaction coordinates or `$snapshot` recording data. Semantic screen/action events cannot reconstruct a truthful replay or heatmap. |
 | Surveys, Support | Not enabled | PostHog surveys require survey retrieval/display logic and exact `survey shown`, `survey sent`, and `survey dismissed` events with provider survey IDs and responses. Emitting those events without actually rendering a PostHog survey would corrupt response data. |
 | Logs, Tracing | Not enabled | Logs and traces use their own OpenTelemetry/log ingestion protocols. `trace_id` and `span_id` correlation on a product event is useful but is not a substitute for exporting a trace or log record. |
 | Feature flags, Experiments, Early access features | Not enabled | Cloudflare Flagship is Avalon's flag authority. Do not forge `$feature_flag_called`, `$feature/<key>`, or experiment exposure properties for a flag PostHog did not evaluate. A future PostHog-owned or explicitly mirrored evaluator must emit the exact evaluated variant on exposure and attach it to downstream outcomes. |
 | AI observability, MCP analytics, Clusters, Datasets, Evaluations, Playground, Prompts | Not enabled | These require a truthful `$ai_trace` tree with `$ai_generation`, `$ai_span`, and `$ai_embedding` records. `run_requested`/`run_completed` describe product outcomes and must not be renamed into incomplete AI traces. Prompt/output capture and provider trace export need a separate content and residency decision. |
-| Toolbar, Web scripts | Not applicable to the Electron reporter | These are browser-site runtime/configuration tools, not event schemas. |
+| Toolbar, Web scripts | Partially applicable | The public site emits the required web events through Avalon's first-party reporter; it does not install PostHog's generic browser script, Toolbar injection, autocapture, or replay. Electron remains inapplicable. |
 | Skills | No capture dependency | This is a PostHog operator/agent capability and consumes the project's existing data model. |
 
 The compatibility rule is strict: use a PostHog reserved event only when Avalon
@@ -271,7 +414,7 @@ snapshots.
 
 It does not own product state, authorization for the product action being
 observed, provider content, PostHog-side retention/access/configuration, legal
-approval, or public-site analytics. The public site remains unchanged. Product
+approval, advertising, consent-law determinations, or cross-site identity. Product
 analytics are advisory and may be incomplete; D1 product records remain canonical.
 
 ## Failure modes and limits
@@ -311,11 +454,13 @@ Run focused suites from their package directories:
 ```bash
 pnpm --filter @avalon/contracts test
 pnpm --filter @avalon/db test
-pnpm --filter @avalon/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
+pnpm --filter @avalon/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/tool-usage-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
 pnpm --filter @avalon/api test:crash-symbolicator-container
 pnpm --filter @avalon/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts
 pnpm --filter @avalon/desktop test:release
 pnpm --filter @avalon/desktop test:crashpad
+pnpm --filter @avalon/site test
+pnpm --filter @avalon/site build
 ```
 
 Contract tests enforce registry exhaustiveness and prohibited negative space.
@@ -338,6 +483,10 @@ also owns the canonical preference/version and opaque projection handle.
 receipts, profile jobs, identity links, replay audits, rejection/rate buckets, and
 destination circuit state live in regional D1. `telemetry_eu_events` is the EU
 query projection with release/platform/channel/correlation dimensions.
+Public-site Global epochs reuse the journey table; the content-free, signed
+route probe does not create a row. Its short-lived token is not persisted as
+identity or authority. EU site epochs are page-scoped and therefore do not join
+separate page loads.
 
 `telemetry_crash_reports` is the content-free raw-object index plus the sanitized
 full occurrence, processing lease/retry state, and destination state.
@@ -366,8 +515,12 @@ configuration flip in this adapter.
 
 Desktop envelopes, IPC arguments, capabilities, multipart fields, dumps,
 breadcrumbs, processor output, and destination responses are untrusted. Strict
-schemas and fixed allowlists run at every hop. Direct account/workspace database
-IDs never become destination identities. Verified email/name and workspace name
+schemas and fixed allowlists run at every hop. Direct account, user, and
+workspace-identity database IDs never become destination identities or event
+properties. Closed semantic events
+may carry an opaque resource UUID for a work stream, message, note, automation,
+run, or invocation when the registry requires it for analysis. Verified
+email/name and workspace name
 appear only in eligible Global profile/group jobs so approved staff can identify
 and contact users; they are not copied onto events or crashes.
 
@@ -416,6 +569,245 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-13 — Connector telemetry negotiates one correlated contract version
+
+**What changed:** Current desktop connector starts emit only the rich V2 intent,
+carry its operation ID plus an explicit query version marker, and persist a
+closed setup shape on the OAuth attempt. The terminal API event uses that same
+version and operation ID for success or failure. Marker-less released clients
+continue to receive only the V1 outcome.
+
+**Why:** Emitting V1 and V2 for the same setup action double-counted one person
+journey, while emitting V2 only after success omitted the exact failures the
+funnel is meant to explain.
+
+**Considered and rejected:** Emitting both versions during migration, inferring
+missing failure dimensions after OAuth returns, and dropping the legacy outcome
+immediately. Those corrupt counts, fabricate context, or strand released-client
+funnels. A new header was also rejected because API and desktop deployments can
+race: an older Worker safely ignores the query marker, whereas Chromium would
+block an unknown header at CORS preflight and prevent connector setup itself.
+
+**Consequences:** A connector attempt owns one immutable telemetry contract
+version. New connector versions must negotiate at request admission and persist
+every terminal property needed later; PostHog queries never union V1 and V2 for
+one attempt.
+
+### 2026-08-13 — Shutdown and automation attribution use authoritative boundaries
+
+**What changed:** Desktop quit is held once while graceful lifecycle and session
+events enter the spool and one bounded flush runs; a 750-ms deadline always
+resumes exit. Run and tool events attach automation metadata only when the
+harness run has an automation origin and the work stream points to that exact
+automation run.
+
+**Why:** Electron does not await promises started from `will-quit`, and a work
+stream can contain later person-initiated runs after automation created it.
+Without these boundaries, normal-exit events disappeared and manual activity
+was mislabeled as automation activity.
+
+**Considered and rejected:** Fire-and-forget shutdown writes, an unbounded quit
+delay, and inferring run ownership from any automation row on the work stream.
+Those respectively lose events, harm shutdown, or corrupt attribution.
+
+**Consequences:** New shutdown telemetry belongs inside the bounded barrier, and
+new automation dimensions must be proved from the specific run rather than the
+container that happens to hold it.
+
+### 2026-08-13 — Review closes systematic overcount and misattribution paths
+
+**What changed:** Redirect-only `/` no longer reports a duplicate home surface;
+reused running Terminal sandboxes no longer report starts; native navigation
+carries a proven source; released suggestion clients retain a legacy home
+fallback; public dynamic paths and invalid handoffs use bounded truthful
+classes; and digest telemetry cannot interrupt settlement.
+
+**Why:** Each issue produced structurally plausible events, so schema validation
+could not detect the corrupted count or attribution. The authoritative producer
+already knew the missing transition, source, compatibility, or canonicalization
+fact.
+
+**Considered and rejected:** Dashboard deduplication and downstream repair.
+Those approaches encode product behavior in provider queries and cannot recover
+the omitted source or distinguish a true later transition.
+
+**Consequences:** Producers must emit only real transitions, redirect routes do
+not own observations, optional old-client context has an explicit fallback, and
+privacy canonicalization runs before the envelope is built.
+
+### 2026-08-13 — Public-site bootstrap is bound to its pre-identity route
+
+**What changed:** Global now signs the coarse public-site route probe and
+bootstrap consumes that exact short-lived decision. A different Cloudflare
+country on the second request cannot re-route the selected anonymous epoch, and
+an existing conflicting journey is rejected.
+
+**Why:** Region-before-identity is only true when the decision that controls
+browser storage is also authoritative at persistence. Two independent edge
+classifications left a race during network changes.
+
+**Considered and rejected:** Browser-only response comparison, which detects the
+problem after persistence, and a persistent region cookie, which would create
+another residency-bearing browser identifier.
+
+**Consequences:** The public route response and site bootstrap request share a
+strict signed-token contract. Desktop's one-request bootstrap remains unchanged,
+and route-token failures stay isolated from page behavior.
+
+### 2026-08-13 — Pico-level journeys use authoritative outcomes without duplicate events
+
+**What changed:** Expanded the closed registry and producers across surfaces,
+suggested work, collaboration, resources, messages and elicitations, HyperSight,
+Terminal, automation authoring, recordings, root runs, tool outcomes, connectors,
+digests, invitations, and the public acquisition path. Where a richer contract
+replaces the same semantic observation, current producers choose it once and
+legacy contracts stay readable for released clients. Distinct request/outcome,
+admission/terminal, and resource/outcome observations keep separate event names.
+Authenticated product surfaces no longer also emit the legacy screen event, so
+one navigation becomes one PostHog `$screen`.
+
+**Why:** Coarse screens and operation outcomes showed traffic but not the steps
+that explain whether people discover, configure, complete, reuse, or recover
+from the product's core workflows. Emitting both old and richer signals for one
+occurrence would make the new detail useful only by corrupting totals.
+
+**Considered and rejected:** DOM/keyboard autocapture, provider-content capture,
+client-reported server success, event-per-connector multiplication, arbitrary
+properties, and deleting legacy readers immediately. Those alternatives lose
+semantic authority, expose content, or break rolling clients.
+
+**Consequences:** Resource UUIDs and closed taxonomy values enable joins while
+titles, messages, arguments, outputs, tokens, and provider account identifiers
+remain prohibited. New journeys must declare their single authoritative producer
+and prove no parallel legacy/reserved destination event is emitted. Public-site
+regional and identity behavior is owned by
+[`public-site-telemetry.md`](public-site-telemetry.md).
+
+### 2026-08-13 — Work-stream creation moves to its authoritative server boundary
+
+**What changed:** Replaced the renderer-produced `workstream_created` event with
+one idempotent API event emitted by every user-visible creation path. The event
+records a closed creation source and derives current work-stream state from D1.
+Slack and connector-activity paths supply their canonical connector type;
+suggested work resolves every distinct connector type from its retained
+provenance roots. User-owned creations retain the person and workspace group;
+unmapped Slack and workspace-owned automations remain personless workspace
+events.
+
+**Why:** The renderer could observe only composer and suggested-work responses.
+It missed Slack and background automations entirely and could not truthfully say
+which connector caused creation. Adding a second connector-only event would have
+made creation totals depend on which path fired and corrupted funnels.
+
+**Considered and rejected:** Client-supplied connector labels, provider account
+or connection IDs, one event per connector, and parallel client/server creation
+events. Those alternatives trust the wrong boundary, create high-cardinality
+identity data, multiply a single creation, or double-count desktop paths.
+
+**Consequences:** The work-stream UUID is the stable event identity; legacy
+UUIDv4 work streams receive a deterministic UUIDv7 insert-id projection without
+changing the resource ID. A suggested-work start uses its opportunity UUID as
+its idempotent event identity, so it cannot collide with the companion creation
+event. A new creation path must
+choose one closed source, resolve connector types from server-owned provenance,
+and emit only after the durable work-stream write. API-authored events must use
+the internal emitter; the authenticated desktop batch route rejects them.
+
+### 2026-08-13 — Resource journeys and tool adoption become semantic events
+
+**What changed:** Added typed successful-operation events for work-stream
+creation/open/switch/menu actions, automation creation/menu actions, message
+send, resource copy, note creation/open/actions, and transcription state. The
+regional harness now records every durably admitted canonical tool invocation
+with resource correlations and a personless workspace scope for unattended
+execution.
+
+**Why:** Screen and API-operation signals could show entry and outcome totals but
+could not reconstruct the core resource journey or tell which agent capabilities
+were actually used. Product analysis also needs stable joins from a copied
+output, note, or automation back to its work stream.
+
+**Considered and rejected:** DOM autocapture, click-before-result events, treating
+tool availability as usage, inventing a user for workspace automations, and
+capturing messages, clipboard values, tool arguments, outputs, or summaries.
+Those alternatives respectively create ambiguous events, false completions,
+person-profile corruption, or content exposure.
+
+**Consequences:** Approved opaque resource UUIDs are product properties, while
+account/user identity IDs and all resource content remain prohibited. Completion
+events fire only after the product operation succeeds. Workspace-owned tool
+events group in PostHog without person processing, and EU keeps the equivalent
+events internally.
+
+### 2026-08-13 — Application opens carry a proved entrypoint
+
+**What changed:** Cold starts and explicit reopens now emit a closed
+`application_opened` signal with entrypoint and phase. A short main-owned
+coalescer lets an accepted deep link or menu action override Electron's generic
+activation callback. The Global adapter maps this event—not the separate
+reliability transition—to PostHog's canonical `Application Opened` with
+`application_open_source` and `from_background`.
+
+**Why:** Lifecycle data answered whether the process opened, but not whether a
+system login, ordinary user launch, Dock activation, deep link, menu action, or
+future native push brought the person in. Mapping both signals to PostHog's
+canonical name would double counts.
+
+**Considered and rejected:** Labeling every cold manual launch as Dock, deriving
+notification source from an unmarked URL, and emitting parallel custom and
+canonical open events. Electron cannot prove the first two, and the third would
+corrupt open counts.
+
+**Consequences:** Cold launches without a login-item flag or deep link are
+`user_launch`. `push_notification` remains dormant until a native notification
+callback exists. Product analytics opt-out suppresses attributed opens; bounded
+essential lifecycle events continue under their Avalon name.
+
+### 2026-08-13 — Applied desktop settings are stateful and cohortable
+
+**What changed:** The main process now emits one actual settings snapshot after
+launch initialization and after a newly authenticated account's preference is
+verified. Successful launch-at-login and Lockdown interactions preserve previous,
+requested, and applied booleans; successful icon selection preserves the closed
+previous and selected icon states. Identified Global captures update matching
+PostHog person properties with `$set`.
+
+**Why:** Toggle clicks alone cannot answer the current-state question, and macOS
+can accept a login-item request without applying it while approval is pending.
+Icon and Lockdown operations can also fail or roll back before persistence is
+authoritative.
+
+**Considered and rejected:** Renderer click capture, treating requested state as
+applied state, arbitrary setting names, and icon labels or paths. Those options
+respectively report before commit, corrupt login-item analysis, widen collection,
+or create mutable/high-cardinality values.
+
+**Consequences:** The icon analytics taxonomy and picker share one identifier
+allowlist. Product analytics opt-out suppresses snapshots, change events, and
+Global person-property updates. EU keeps the closed semantic events internally
+and makes no PostHog call.
+
+### 2026-08-13 — Menu and keyboard adoption use bounded client signals plus a server outcome
+
+**What changed:** Registered menu opens, menu actions, Command-shortcut reveals,
+valid numbered navigation, and successful suggested-work starts. Client events
+describe the observed interaction with booleans, counts, and closed enums; the
+regional API owns the successful suggested-work event after creation commits.
+
+**Why:** Screen views and suggestion impressions could not form a truthful
+menu-open → selection → successful-work funnel, and navigation alone could not
+separate shortcut discovery from use.
+
+**Considered and rejected:** Generic click autocapture, raw labels/routes/IDs,
+and client-only success reporting. They would respectively expand collection
+without a product question, create content-bearing high-cardinality data, or
+count a failed/interrupted request as adoption.
+
+**Consequences:** These events follow the Product analytics preference and the
+existing regional route. Global receives them through the ordinary PostHog
+adapter; EU retains them internally. Suggested-work clients may omit `surface`
+for backward compatibility, but an omitted surface produces no success event.
 
 ### 2026-08-13 — Native desktop events carry the applicable first-party SDK context
 

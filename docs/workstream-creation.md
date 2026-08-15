@@ -282,6 +282,28 @@ with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
 
+### 2026-08-13 — Creation analytics follows the committed server row
+
+**What changed:** The renderer no longer reports a completed creation. The
+regional API emits one stable `workstream_created` event after the work-stream
+transaction commits, deriving visibility, origin, participants, opening
+attachments, and model override from the stored row. Composer correlation keeps
+the request operation ID while the work-stream UUID supplies the idempotent event
+identity.
+
+**Why:** A renderer response covered only the desktop composer and could
+double-count a server outcome. Slack, suggestions, and automation producers know
+the durable source and connector provenance the renderer cannot see.
+
+**Considered and rejected:** Keeping the renderer event beside a connector-only
+server event. A single work stream would then create one or two events depending
+on its entry path, making totals and funnels structurally incorrect.
+
+**Consequences:** Creation telemetry remains off the correctness path and cannot
+fail creation. Any new API or ingress that commits a user-visible work stream
+must register its closed source with the server telemetry helper; hidden system
+work streams remain excluded.
+
 ### 2026-08-12 — The participant picker opens on its first option without stretching its checkboxes
 
 **What changed:** Opening Add people initially focuses the first available

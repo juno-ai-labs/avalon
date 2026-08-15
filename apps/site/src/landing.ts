@@ -1,3 +1,5 @@
+import { reportSiteAction } from './telemetry';
+
 const themes = ["runway", "valley", "proof", "afterlight"] as const;
 type Theme = (typeof themes)[number];
 
@@ -74,8 +76,36 @@ const faqItems = document.querySelectorAll<HTMLDetailsElement>(".faq-list detail
 faqItems.forEach((item) => {
   item.addEventListener("toggle", () => {
     if (!item.open) return;
+    reportSiteAction('faq_opened', 'faq');
     faqItems.forEach((other) => {
       if (other !== item) other.open = false;
     });
   });
+});
+
+function actionPlacement(element: Element): 'header' | 'hero' | 'body' | 'footer' | 'connector' | 'unknown' {
+  if (element.closest('.site-header')) return 'header';
+  if (element.closest('.hero')) return 'hero';
+  if (element.closest('#integrations')) return 'connector';
+  if (element.closest('footer')) return 'footer';
+  if (element.closest('main')) return 'body';
+  return 'unknown';
+}
+
+document.addEventListener('click', (event) => {
+  const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;
+  if (!link) return;
+  const href = link.getAttribute('href') ?? '';
+  const placement = actionPlacement(link);
+  if (href === '#download' || /\.dmg(?:$|[?#])/iu.test(href)) {
+    reportSiteAction('download', placement);
+  } else if (href.startsWith('/support/#granola')) {
+    reportSiteAction('connector_setup', 'connector');
+  } else if (href.startsWith('/support')) {
+    reportSiteAction('support_contact', placement);
+  } else if (link.classList.contains('button-primary')) {
+    reportSiteAction('primary_cta', placement);
+  } else if (link.classList.contains('button-quiet')) {
+    reportSiteAction('secondary_cta', placement);
+  }
 });

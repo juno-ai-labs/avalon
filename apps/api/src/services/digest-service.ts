@@ -13,6 +13,7 @@ import { nextRRuleOccurrence } from "../lib/recurrence";
 import { logWarn } from "../observability/logger";
 import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
 import { declaredUserDeliveryTargetType, resolveFrozenDeliveryIdentity } from "./user-delivery";
+import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
 
 /** RRULE weekday codes, indexed the way `Date#getDay` numbers them. */
 const RRULE_WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
@@ -407,7 +408,28 @@ export class DigestService {
     // The alarm is recomputed after the write, never before: the Durable Object
     // reads D1, so refreshing early would compute the alarm from the old rows.
     await refreshWorkspaceSchedulerAlarm(this.env, this.auth.workspaceId);
-    return await this.get();
+    const schedule = await this.get();
+    const cadence = !input.enabled || days.length === 0 || times.length === 0
+      ? "disabled" as const
+      : days.length === 7
+        ? times.length === 1 ? "daily" as const : "multiple_daily" as const
+        : times.length === 1 ? "weekly" as const : "multiple_weekly" as const;
+    await emitProductUsageTelemetry(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      name: "digest_schedule_updated",
+      properties: {
+        enabled: schedule.enabled,
+        dayCount: telemetryCountBucket(days.length),
+        timeCount: telemetryCountBucket(times.length),
+        cadence,
+        deliveryTargetTypes: targets.map((target) => target.type).slice(0, 2),
+        result: "success",
+      },
+      operationId: scheduleId,
+      eventId: newId(),
+    }).catch(() => undefined);
+    return schedule;
   }
 
   /** The account timezone a digest runs in. There is no second copy of it. */
@@ -506,14 +528,20 @@ export class DigestService {
   private async resolveDeliveryTargets(
     targets: UpdateDigestScheduleRequest["deliveryTargets"],
   ): Promise<Array<{
-    type: string;
+    type: DigestDeliveryTargetType;
     connectionId: string | null;
     providerTenantId: string | null;
     providerUserId: string | null;
     emailAddress: string | null;
   }>> {
     const seen = new Set<string>();
-    const resolved = [];
+    const resolved: Array<{
+      type: DigestDeliveryTargetType;
+      connectionId: string | null;
+      providerTenantId: string | null;
+      providerUserId: string | null;
+      emailAddress: string | null;
+    }> = [];
     for (const target of targets) {
       if (seen.has(target.type)) {
         throw new ApiError(422, "duplicate_delivery_target", "Each destination can only be chosen once");

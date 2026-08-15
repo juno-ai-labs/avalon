@@ -1,4 +1,5 @@
 import { ConnectorOAuthProviders } from '@avalon/contracts/connector-oauth-providers';
+import { reportDesktopHandoff } from './telemetry';
 
 const DESKTOP_PROTOCOL = 'avalon:';
 const DESKTOP_HOST = 'auth';
@@ -147,11 +148,14 @@ function initializeHandoff(): void {
   window.history.replaceState(null, document.title, window.location.pathname);
 
   if (!target) {
+    reportDesktopHandoff('auth', 'presented', 'invalid');
     status.textContent = 'This sign-in response is incomplete or invalid.';
     help.textContent = 'Return to the Avalon desktop app and start sign-in again.';
     link.removeAttribute('href');
     return;
   }
+
+  reportDesktopHandoff('auth', 'presented', 'valid');
 
   const parsedTarget = new URL(target);
   const provider = parsedTarget.searchParams.get('provider') as ConnectorProvider | null;
@@ -175,11 +179,13 @@ function initializeHandoff(): void {
   const openOnce = (): void => {
     if (attempted) return;
     attempted = true;
+    reportDesktopHandoff('auth', 'automatic', 'valid');
     window.location.assign(target);
   };
 
   link.addEventListener('click', () => {
     attempted = true;
+    reportDesktopHandoff('auth', 'manual', 'valid');
     status.textContent = 'Opening Avalon…';
   });
   window.setTimeout(openOnce, 120);

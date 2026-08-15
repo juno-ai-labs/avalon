@@ -150,6 +150,19 @@ or deletion Avalon saves a bounded Git diff (or a summary when the diff is too
 large) as a generated resource. Filesystem archives are not copied to R2; after
 expiry a participant explicitly starts fresh and the next tool gets a new root.
 
+### Product measurement
+
+Every authoritative Terminal lifecycle transition reports its work-stream UUID,
+closed action/result, bounded duration, whether a repository was selected, the
+canonical connector class or `none`, and whether local files were retained. A
+durable network-policy change reports previous/applied mode, bounded custom-domain
+and active-sandbox counts, and result. Tool invocation events separately report
+canonical Terminal capability use and terminal outcome through the shared harness
+contract. Repository names/remotes, branches, paths, domain names, commands,
+output, diffs, provider sandbox IDs, and error text never enter product telemetry.
+The existing Analytics Engine provider-phase dataset remains operational and
+personless; it is not duplicated into these product events.
+
 ## Invariants
 
 - **One regional sandbox generation belongs to one work stream and one frozen
@@ -365,6 +378,24 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-13 — Terminal lifecycle telemetry observes transitions, not tool reuse
+
+**What changed:** Sandbox acquisition reports `start`, `restore`, or
+`repository_replace` only when that acquire actually performs the corresponding
+lifecycle transition. Reusing an already-running sandbox emits no lifecycle
+event.
+
+**Why:** Every Terminal command calls `acquire`. Treating the running fast path
+as `start` multiplied adoption counts by ordinary tool usage.
+
+**Considered and rejected:** Deduplicating downstream by sandbox ID. A later
+real restore or replacement belongs to the same work stream and must remain
+observable; transition truth is available only in the coordinator.
+
+**Consequences:** Provider operation metrics and product lifecycle metrics retain
+their distinct meanings. New acquire fast paths must explicitly decide whether
+they performed a lifecycle transition before invoking the observer.
+
 ### 2026-08-13 — Git trusts Daytona's secret-substitution proxy CA
 
 **What changed:** Repository bootstrap and the ephemeral trusted publisher now
@@ -522,6 +553,25 @@ provider gate now includes file and asynchronous-session round-trip evidence,
 while the lighter interface gate can run with only the standard Daytona
 variables.
 
+### 2026-08-13 — Terminal product adoption is separate from provider operations
+
+**What changed:** Workspace lifecycle and network-policy mutations now emit
+regional product events with bounded resource, result, repository-present,
+connector, retention, policy, and active-sandbox dimensions. Canonical tool
+admission/outcome continues through the harness telemetry path.
+
+**Why:** Provider phase timings answer whether Daytona is healthy, but not whether
+people start, restore, replace, or abandon Terminal workspaces or which policy
+modes they adopt.
+
+**Considered and rejected:** Reusing the Analytics Engine operations dataset as
+product analytics, or adding repository names, remotes, domains, commands,
+output, paths, and sandbox IDs. The former has no product identity/journey
+contract; the latter exposes workspace content and infrastructure identifiers.
+
+**Consequences:** Product and platform dashboards remain separate and can be
+correlated only through bounded classes. Telemetry failure cannot alter a
+provider transition, policy revision, or cleanup decision.
 ### 2026-08-13 — Provider acceptance stops before archive
 
 **What changed:** The real-provider acceptance probe now performs the archive

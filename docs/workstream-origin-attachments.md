@@ -41,6 +41,7 @@ hydrates a currently authorized derivative only when the task needs it.
 | `apps/api/src/services/slack-agent-service.ts` | `slackSessionOrigin` hands the Slack locator to the adapter through the credential door; `createSlackWorkstreamSession` passes the result to whichever create path runs. |
 | `apps/api/src/services/workstream-service.ts` | `create` attaches `input.originResource`; `createFromOpportunity` attaches a suggestion's activity provenance roots; `describeActivityOrigin` is the shared stored-row path both it and `attachActivityResource` use. |
 | `apps/api/src/services/slack-workspace-workstream-service.ts` | `create` attaches the origin for a Slack member who is not an Avalon user. |
+| `apps/api/src/telemetry/workstream-creation.ts` | Resolves a started suggestion's canonical connector types from the same retained activity provenance roots, without copying source content or connection IDs into telemetry. |
 | `apps/api/src/queues/activity-consumer.ts` | `startActivityAutomation` attaches the activity that matched the trigger. |
 | `packages/db/migrations/0001_initial.sql` | `workstream_resources.relationship_type`, which carries the `origin` label. |
 
@@ -355,6 +356,27 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-13 — Connector provenance also attributes creation analytics
+
+**What changed:** The server's single work-stream creation event now records the
+canonical connector type for Slack and activity-triggered automations. Suggested
+work joins its retained activity roots back through their connection rows and
+emits a bounded unique connector-type list; exact retained provider values are a
+fallback only when they are already part of the closed connector taxonomy.
+
+**Why:** Origin attachments preserved where work began for people and agents,
+but product analytics still could not distinguish connector-created work or say
+which connector contributed to a multi-source suggestion.
+
+**Considered and rejected:** Sending connection IDs, provider account IDs,
+origin URLs, labels, or one creation event per root. Those either expose
+high-cardinality identifiers/content or multiply one work-stream creation.
+
+**Consequences:** The attachment and analytics paths share provenance but remain
+purpose-specific: resources preserve the navigable place, while telemetry keeps
+only canonical connector types. A new connector-origin ingress must supply its
+registered type to both boundaries without sending provider content.
 
 ### 2026-08-12 — Origin content stays behind scoped hydration
 

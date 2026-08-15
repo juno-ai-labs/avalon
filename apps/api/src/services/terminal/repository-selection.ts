@@ -3,12 +3,16 @@ import {
   githubRepositoryAuthorization,
   type GitHubRepositoryAccessLevel,
 } from "@avalon/connectors";
-import { nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 
 import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
 import { allocateWorkstreamEmailAddressCandidate } from "../../lib/workstream-email-address";
 import { logWarn } from "../../observability/logger";
+import {
+  emitProductUsageTelemetry,
+  telemetryJourneyDuration,
+} from "../../telemetry/product-usage";
 import type { TerminalSandboxCoordinator } from "./coordinator";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { createTerminalWorkspaceBackup, type TerminalWorkspaceBackup } from "./lifecycle";
@@ -111,6 +115,7 @@ export function createTerminalRepositorySelector(
 ): TerminalRepositorySelector {
   return {
     async checkout(context, input) {
+      const telemetryStartedAt = Date.now();
       if (context.executionPrincipal.type !== "user") {
         throw new TerminalToolError(
           "repository_user_authority_required",
@@ -355,6 +360,22 @@ export function createTerminalRepositorySelector(
         triggerMessageId: run?.trigger_message_id ?? null,
         executionPrincipal: context.executionPrincipal,
       });
+      await emitProductUsageTelemetry(env, {
+        workspaceId: context.workspaceId,
+        userId: context.executionPrincipal.userId,
+        name: "terminal_workspace_terminal",
+        properties: {
+          workstreamId: context.workstreamId,
+          action: current?.state === "selected" ? "repository_replace" : "repository_select",
+          result: "success",
+          duration: telemetryJourneyDuration(Date.now() - telemetryStartedAt),
+          repositorySelected: true,
+          connectorType: "github",
+          localFilesRetained: false,
+        },
+        operationId: context.harnessRunId,
+        eventId: newId(),
+      }).catch(() => undefined);
       return output("selected", backup);
 
       function output(

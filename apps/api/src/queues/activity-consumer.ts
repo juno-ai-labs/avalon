@@ -44,6 +44,9 @@ import {
 import { logDebug, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
+import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
+import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
+import { newId } from "@avalon/db";
 
 interface ActivityRow {
   id: string;
@@ -291,6 +294,24 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     )
       .bind(activity.id, activity.workspace_id, claimId)
       .run();
+    const connector = ["generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x"]
+      .includes(activity.connector_type)
+      ? activity.connector_type as "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x"
+      : null;
+    if (connector) {
+      await emitProductUsageTelemetry(env, {
+        workspaceId: activity.workspace_id,
+        name: "connector_activity_ingested",
+        properties: {
+          connector,
+          activityType: activity.event_type.slice(0, 80).replace(/[^a-z0-9_.:-]+/giu, "_").toLowerCase(),
+          result: "accepted",
+          itemCount: telemetryCountBucket(1),
+        },
+        operationId: activity.id,
+        eventId: newId(),
+      }).catch(() => undefined);
+    }
     message.ack();
   } catch (error) {
     if (claimed) {
@@ -798,6 +819,15 @@ async function startActivityAutomation(
         `UPDATE workstreams SET automation_run_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
       ).bind(runId, workstreamId, activity.workspace_id)
     ]);
+    await recordWorkstreamCreatedTelemetry(env, {
+      workspaceId: activity.workspace_id,
+      workstreamId,
+      creationSource: "automation_activity",
+      connectorTypes: [activity.connector_type],
+      principal: principal.type === "user"
+        ? { type: "user", userId: principal.userId }
+        : { type: "workspace" },
+    });
     run = { id: runId, workstream_id: workstreamId, workflow_instance_id: null, status: "running" };
   } else {
     const harness = await env.DB.prepare(
