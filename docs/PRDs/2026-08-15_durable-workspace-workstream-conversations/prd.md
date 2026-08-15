@@ -5,8 +5,10 @@
 > Workspace and work-stream product state moves into a regional Durable Object
 > hierarchy, and each work stream stores its conversations as substreams and
 > ordered message parts that project directly into model message arrays.
-> Companions: [`state.md`](state.md), [`flows.md`](flows.md), and the normative
-> [`migration-control-plane.md`](migration-control-plane.md).
+> Companions: [`state.md`](state.md), [`flows.md`](flows.md), the normative
+> [`migration-control-plane.md`](migration-control-plane.md), and the
+> technical/economic
+> [`comparison.md`](../2026-08-15_supabase-workspace-workstream-conversations/comparison.md).
 
 ## Summary
 
