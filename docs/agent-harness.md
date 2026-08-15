@@ -187,6 +187,22 @@ write, or timed-out `record_before_execute` write becomes
 `ambiguous_external_write` and is never blindly repeated. Lifecycle events are
 append-only, and terminalization is idempotent and lease-fenced.
 
+Receipt IDs are positional, so a re-executed pass of the same run mints the same
+coordinates again — that is what lets it replay the first pass's results instead
+of repeating them. A pass that restarts is given the transcript window up to its
+own trigger and cannot see the calls the earlier pass made, so it will not
+reliably reproduce them, and a *different* call landing on an occupied
+coordinate is the expected consequence. When both sides of such a collision are
+reads and the recorded receipt has settled, the receipt is **rebound** to the
+call in hand: nothing external moved, the recorded result belongs to a pass that
+is gone, and the row is replanned in place under an `execution_replanned`
+checkpoint. Identical input replays as before, a receipt whose recorded identity
+cannot be proven compatible still fails closed, and `record_before_execute`
+writes never rebind — for them the coordinate *is* the idempotency key. An
+ambiguity that halts a run is recorded as an audit event and as the run's own
+error, because a collision with a settled receipt leaves the row itself
+untouched and would otherwise reach the person as a bare `needs_input`.
+
 Failed receipts preserve the same bounded structured recovery context that Bind
 showed the model when the tool failed. A `tool_failed` event carries the
 allowlisted `data` object, the regional host commits that object beside the code
@@ -578,6 +594,49 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-15 — A settled read receipt rebinds instead of halting the run
+
+**What changed:** A completed *read* receipt whose positional coordinates are
+reused by a demonstrably different read is now replanned in place and executed,
+under an `execution_replanned` checkpoint, rather than classified
+`ambiguous_external_write`. A receipt that has already settled is never handed to
+`finalizeToolInvocationFailure`, which can only match a mutable row. When an
+ambiguity does halt a run it now records an audit event, a
+`tool_receipt_coordinate_conflict` log line, and an error on the run itself.
+
+**Why:** A production run stopped at `needs_input` with no question to answer,
+no failed tool row, no audit event, and a null error — nothing anywhere said
+why. The primary model 4xx'd on its second turn without falling back, the harness
+threw, and the Workflow's one retry of `run-authorized-bind-loop` re-entered the
+loop with the turn counter reset to 1. That pass sees only the transcript up to
+its own trigger, so it could not know two plugins had already been loaded; its
+first tool call landed on `…:turn:1:tool:0`, which a completed `load_plugin`
+receipt already held with different input. The receipt was read-mode on both
+sides — nothing external had moved — but the collision was classified as an
+ambiguous external write, and the finalize it attempted against that completed
+row matched no mutable status and raised `RunOwnershipLost`: a lease failure
+that had not happened, reported to the person as "waiting on an answer" on a run
+that could not be retried. The same fingerprint had already stranded a second
+work stream.
+
+**Considered and rejected:** Scoping receipt IDs per attempt, which is the
+obvious fix and removes the collision entirely — but positional stability across
+passes is exactly what lets a retried pass replay a completed write instead of
+repeating it, so this would trade a rare stall for duplicated external writes.
+Suffixing a colliding receipt to allocate a fresh row, which breaks the tool
+runtimes that correlate their own durable state by `tool_call_id`. Rebinding on
+any collision, which would let a write receipt be reused. And rebinding whenever
+the recorded policy cannot be proven compatible, which is the receipt-identity
+fence that stops one tool's result being served for another's call.
+
+**Consequences:** A rebound receipt discards the earlier pass's `output_ref`,
+so an R2 result object can be orphaned; the transcript row for that coordinate
+updates in place to describe the call that now owns it. Any future path that
+mints receipt coordinates must keep them stable within a pass and must not
+assume a coordinate is claimed by at most one call over a run's lifetime. The
+model-facing protocol is unaffected: rebinding is invisible to it, since the
+provider call ID never leaves the wire.
 
 ### 2026-08-15 — Workspace runs ask for a member reply, not a task claim
 
