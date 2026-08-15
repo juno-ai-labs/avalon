@@ -76,9 +76,11 @@ cost of the connector is low relative to what it unlocks.
 ## Non-goals
 
 1. **A Fireflies.ai connector.** Fireflies is a different notetaker with a
-   different (GraphQL) API; the requester confirmed Fathom as the target (Key
-   design decision 1). Deferred — a Fireflies connector would be its own PRD
-   against its own API.
+   different (GraphQL) API, and it has its own PRD, written in parallel:
+   [`../2026-08-14_fireflies-connector/prd.md`](../2026-08-14_fireflies-connector/prd.md)
+   (Key design decision 1). Out of scope here by definition, not deferred —
+   the two connectors ship independently, with one migration-coordination
+   obligation between them ([`design.md`](design.md) §Migration sketch).
 2. **Writes to Fathom through Avalon-authored tools.** The static catalog
    creates or edits nothing — no highlights, action items, meeting types, or
    team settings; the connector manages only its own webhook endpoint. (The
@@ -220,13 +222,15 @@ None yet.
 
 ## Key design decisions
 
-1. **The target is Fathom, not Fireflies.** The originating request wrote
-   "fireflies.ai" but linked fathom.ai and asked for Fathom's technical
-   documentation; when the discrepancy was raised, the requester renamed the
-   branch to `fathom-connection-prd`, confirming Fathom.
-   [`research.md`](research.md) records the provenance and what a Fireflies
-   connector would change. *Rejected:* writing for Fireflies — different API
-   (GraphQL), no official MCP, a different design.
+1. **This PRD targets Fathom; Fireflies gets its own.** The originating
+   request wrote "fireflies.ai" but linked fathom.ai and asked for Fathom's
+   technical documentation. The answer to the ambiguity turned out to be
+   *both*: the requester renamed this branch to `fathom-connection-prd` and a
+   parallel Fireflies PRD exists at
+   [`../2026-08-14_fireflies-connector/prd.md`](../2026-08-14_fireflies-connector/prd.md).
+   [`research.md`](research.md) records the provenance. *Rejected:* folding
+   both providers into one PRD — different APIs (REST/MCP vs GraphQL),
+   different designs, one folder per PRD.
 2. **Ingestion admits a change signal; content is hydrated later, in the
    queue consumer.** `ingestFathomWebhook` mirrors what `ingestGranolaWebhook`
    actually does: size check, verify, persist the raw body to R2, normalize a
@@ -234,8 +238,11 @@ None yet.
    enqueue — **no provider call in the ingress**. Meeting content enters
    through `hydrateConnectorActivitySource` at opportunity admission, where
    transient provider failures (408/429/5xx) are retried by the queue and
-   `Retry-After` is honored. The webhook endpoint is registered with no
-   content includes, so payloads stay small against
+   `Retry-After` is honored. Fathom requires at least one content include on
+   a webhook endpoint, so Avalon registers the smallest permitted payload —
+   `include_summary` only, transcript/action-items/CRM excluded — and treats
+   the delivery as a change signal regardless: embedded content is never
+   admitted into activity fields, and payloads stay small against
    `PROVIDER_WEBHOOK_MAX_BYTES`. *Rejected:* fetching the meeting inside the
    webhook ACK — Fathom's summary/transcript endpoints are limited to 30
    requests/min (5 at peak), deliveries burst on the hour, and a 429 in the
@@ -346,9 +353,11 @@ ingress route.
   where a dropped guard hides). Verification is computed over the exact
   received bytes — a fatal UTF-8 decode rejects non-UTF-8 bodies before
   verification, and nothing is parsed or persisted until the signature, size
-  bound, and replay window pass; the payload's event identifier is
-  cross-checked against `webhook-id` where Fathom's payload carries one (Open
-  question 7). The subscription handshake is classified per
+  bound, and replay window pass. The per-delivery identity is the
+  authenticated `webhook-id` header, never a payload field; a payload event
+  identifier, if Fathom's payload carries one (Open question 7), is
+  cross-checked against it as an extra guard, not relied on. The
+  subscription handshake is classified per
   [`../../security.md`](../../security.md): the signing secret is returned by
   an authenticated `POST /webhooks` call, so no unsigned-handshake pattern
   applies.
@@ -467,17 +476,26 @@ Settings that live outside this repository, and what breaks without them:
    redirect URIs, and its client credentials become per-region Worker secrets
    (`FATHOM_CLIENT_ID` / `FATHOM_CLIENT_SECRET`), declared optional in
    `env.ts` and recorded in [`../../provider-apps.md`](../../provider-apps.md)
-   and the runbook's per-region secret list. **The registry entry does not
+   and the runbook's per-region secret list — **and** the hosted-MCP
+   machinery gains a static-client mode, because
+   `beginHostedMcpAuthorization` today always registers a client dynamically
+   and its OAuth config has no configured-client fields; that mode is
+   in-scope new work named in the touch list, not a config toggle. Until
+   Open question 1 is resolved, the personal build is blocked either way.
+   **The registry entry does not
    depend on them**: `fathomConnectorConfig(env)` always returns a config
    with the credentials as optional fields (the Notion pattern), and only
    `POST /connections/fathom/start` refuses when they are absent — workspace
    connect, ingestion, and digestibility are unaffected in a region missing
    the secrets. Note the token endpoint's per-app 60 req/min budget is shared
    across all personal connections in a region.
-2. **Fathom API key (workspace).** Generated by the connecting admin in
+2. **Flagship provisioning.** The `fathom-connector` client flag must be
+   provisioned in Flagship for both regional apps before the flag can open —
+   a Cloudflare setting outside the repository.
+3. **Fathom API key (workspace).** Generated by the connecting admin in
    Fathom's settings (API Access); entered in the workspace connect modal,
    never configured server-side. Available on all Fathom plans.
-3. **Webhook reachability.** Fathom must be able to reach the regional ingress
+4. **Webhook reachability.** Fathom must be able to reach the regional ingress
    URL Avalon registers. No Fathom-side manual webhook configuration is
    required in the happy path — Avalon creates and deletes the endpoint via
    the API; a failed compensation can leave an orphan endpoint that the admin
@@ -497,8 +515,10 @@ Settings that live outside this repository, and what breaks without them:
   card only — server routes stay reachable, which is harmless while no
   connection exists to address.
 - **Order.** The migration (table rebuilds plus indexes) ships first and is
-  flag-independent; registry wiring, routes, and ingress land next; the flag
-  opens last.
+  flag-independent; registry wiring, routes, and ingress land next,
+  **unflagged** — the flag gates catalog visibility only, and everything an
+  existing connection depends on (callbacks, tools, refresh, revoke,
+  ingress) operates regardless of the flag; the flag opens last.
 - **Off switch.** Turning the flag off hides the catalog card; disabling a
   connection (or deleting the Fathom-side endpoint on revoke) stops
   ingestion. No data cleanup is required to roll back — admitted activities
@@ -562,11 +582,13 @@ Settings that live outside this repository, and what breaks without them:
    are not retried on failure, non-goal 5 (no polling fallback) may need
    revisiting; the receipt-based dedupe makes any answer safe, but coverage
    depends on it.
-3. **Does a workspace admin key's webhook fire for meetings across the teams
-   the admin oversees, or only for the admin's own and directly shared
-   meetings?** Fathom's `triggered_for` options name "your own" and "shared
-   with you". The answer sets how complete workspace-scope ingestion is and
-   how far the modal's bound-of-access copy can promise.
+3. **Which `triggered_for` set does the workspace endpoint subscribe to, and
+   what does it cover?** Fathom's enum is `my_recordings`,
+   `shared_external_recordings`, `my_shared_with_team_recordings`, and
+   `shared_team_recordings` (the last two Team Plan only). The chosen set
+   determines how complete workspace-scope ingestion is relative to what the
+   admin's key can *read*, and how far the modal's bound-of-access copy can
+   promise.
 4. **What does Fathom's MCP tool catalog contain, and how stable is it?**
    Affects grant-validation UX for personal connections and the accuracy of
    the plugin's system message on that scope. Not blocking — the passthrough
@@ -581,13 +603,16 @@ Settings that live outside this repository, and what breaks without them:
    modal's validation affordance; until answered, both check only non-empty
    plus a length bound.
 7. **Does Fathom's webhook payload carry an event identifier?** The
-   verification step that cross-checks the payload's event id against
-   `webhook-id` needs one; if absent, delivery-level dedupe rests on the
-   `webhook_receipts` signature hash, which already exists, and the
-   cross-check is dropped rather than invented.
-8. **Unverified wire details.** `list_meetings` result ordering, the
-   recording-identifier format (needed for the id-family validation and hint
-   the tool inputs should carry), and the transcript endpoint's exact shape
-   are unrecorded in [`research.md`](research.md); all are resolved against
-   the OpenAPI spec before the Zod schemas freeze, and low-level answers land
-   in [`../../assumptions.md`](../../assumptions.md).
+   per-delivery identity is the authenticated `webhook-id` header either
+   way; if the payload also carries one, it is cross-checked as an extra
+   guard, and if not the cross-check is dropped rather than invented. The
+   public payload documentation does not enumerate the body's fields, so
+   this resolves against a live delivery.
+8. **`list_meetings` result ordering.** Unrecorded in the public docs; the
+   tool description states ordering only once verified against the OpenAPI
+   spec, and the low-level answer lands in
+   [`../../assumptions.md`](../../assumptions.md). (The other wire details
+   flagged during review — recording IDs are integers, the transcript
+   endpoint has no range parameter, the summary endpoint returns only the
+   summary — were verified against the API reference and are reflected in
+   [`design.md`](design.md).)
