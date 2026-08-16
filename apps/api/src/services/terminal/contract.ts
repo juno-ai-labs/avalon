@@ -149,7 +149,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   apply_patch: {
     name: "apply_patch",
-    description: "Apply one context-bearing multi-file UTF-8 patch after inspecting the affected files. All paths and hunks are validated before any file changes; at most 100 files and 2 MiB of patch text.",
+    description: "Apply one context-bearing multi-file UTF-8 unified diff after inspecting the affected files, with `---` and `+++` headers per file rather than a `*** Begin Patch` envelope. All paths and hunks are validated before any file changes; at most 100 files and 2 MiB of patch text.",
     capability: "terminal.file.write",
     mode: "write",
     idempotency: "record_before_execute",

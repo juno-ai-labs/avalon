@@ -207,6 +207,30 @@ describe("Terminal file and command tools", () => {
     await expect(createTerminalToolExecutors(value).read_file({ filePath }, context)).rejects.toBeInstanceOf(TerminalToolError);
   });
 
+  it.each([".", "./", "./."])("runs at the workspace root when cwd names it: %s", async (cwd) => {
+    const { value } = runtime();
+    const observed: (string | undefined)[] = [];
+    const spy: TerminalRuntime = {
+      ...value,
+      async runCommand(callContext, input) {
+        observed.push(input.cwd);
+        return value.runCommand(callContext, input);
+      },
+    };
+    await expect(createTerminalToolExecutors(spy).run_command({ command: "pwd", cwd }, context)).resolves.toMatchObject({
+      output: { state: "completed", exitCode: 0 },
+    });
+    // The root is where the provider already runs, so it reaches the runtime as
+    // an absent cwd rather than as a path segment it would have to resolve.
+    expect(observed).toEqual([undefined]);
+  });
+
+  it.each(["..", "/workspace", "../sibling"])("still rejects a cwd outside the root: %s", async (cwd) => {
+    const { value } = runtime();
+    await expect(createTerminalToolExecutors(value).run_command({ command: "pwd", cwd }, context))
+      .rejects.toBeInstanceOf(TerminalToolError);
+  });
+
   it("returns nonzero exits as final results and lets repository policy govern standard GitHub CLI writes", async () => {
     const { value } = runtime();
     const tools = createTerminalToolExecutors(value);

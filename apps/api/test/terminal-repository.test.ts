@@ -480,6 +480,51 @@ describe("Terminal repository publication", () => {
     );
   });
 
+  it("names a raw provider publication fault as an unknown outcome rather than a flat failure", async () => {
+    const { database, env, gateway, provider, context } = fixture();
+    await admitTerminalPublicationGrant(env, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
+      executionPrincipal: { type: "user", userId: U },
+    }, new Date(Date.now() - 1_000));
+    // What Daytona actually returned behind Cloudflare: an unclassified string
+    // from a request that may or may not have reached GitHub.
+    vi.mocked(provider.publishGitBundle).mockRejectedValueOnce(new Error("error code: 524\n"));
+    const publisher = createTerminalRepositoryPublisher(env, gateway);
+
+    await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
+      providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
+      authorityFingerprint: "authority", networkRevision: 1,
+    }, provider)).rejects.toMatchObject({
+      name: "TerminalToolError",
+      code: "publication_outcome_unknown",
+    });
+    expect(database.prepare(
+      "SELECT state, failure_code FROM repository_publications WHERE workspace_id = ?",
+    ).get(W)).toEqual({ state: "ambiguous", failure_code: "provider_publication_failed" });
+    expect(gateway.revokeWriteToken).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a classified publication failure's own code", async () => {
+    const { env, gateway, provider, context } = fixture();
+    await admitTerminalPublicationGrant(env, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
+      executionPrincipal: { type: "user", userId: U },
+    }, new Date(Date.now() - 1_000));
+    vi.mocked(gateway.findPullRequest).mockResolvedValueOnce({
+      number: 9, url: "https://github.com/owner/repo/pull/9", state: "closed", headSha: HEAD, title: "Ship it",
+    });
+
+    await expect(createTerminalRepositoryPublisher(env, gateway).publishBranchAndPr(
+      context,
+      { title: "Ship it", body: "Automated change" },
+      {
+        providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
+        authorityFingerprint: "authority", networkRevision: 1,
+      },
+      provider,
+    )).rejects.toMatchObject({ code: "publication_target_closed" });
+  });
+
   it("revokes a trusted publisher token instead of waiting for its expiry", async () => {
     const { env } = fixture();
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));

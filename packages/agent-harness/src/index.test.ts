@@ -1688,6 +1688,41 @@ describe("agent harness", () => {
       .toBe("This run could not fit safely in the selected model context");
   });
 
+  // A run's output *is* its final message, and a run that narrates between
+  // tool calls produces that message in several pieces. Joining them with
+  // nothing ran the end of one paragraph into the start of the next — three
+  // production runs closed with "…available in the repo.The selector is driven
+  // by…" — and the same string is what a digest mails.
+  it("separates the paragraphs a run narrates across turns in its final message", async () => {
+    let turn = 0;
+    const fetcher = vi.fn(async () => {
+      turn += 1;
+      return turn === 1
+        ? streamResponse([{
+            choices: [{
+              delta: {
+                content: "I'll locate the component and run the focused validation available in the repo.",
+                tool_calls: [toolDelta(0, "provider-read", "read_once")],
+              },
+              finish_reason: "tool_calls",
+            }],
+          }])
+        : streamResponse([{
+            choices: [{ delta: { content: "The selector is driven by the shared contract." }, finish_reason: "stop" }],
+          }]);
+    }) as typeof fetch;
+    const input = runInput(fetcher);
+
+    await expect(runHarness({
+      ...input,
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
+    })).resolves.toMatchObject({
+      status: "completed",
+      content: "I'll locate the component and run the focused validation available in the repo."
+        + "\n\nThe selector is driven by the shared contract.",
+    });
+  });
+
   it("does not invent iteration, tool-call, or cost ceilings when a caller omits them", async () => {
     let turn = 0;
     const executions: string[] = [];

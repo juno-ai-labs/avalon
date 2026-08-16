@@ -647,7 +647,23 @@ export function createTerminalRepositoryPublisher(
             context.workspaceId,
             invocation.id,
           ).run();
-          throw error;
+          // Everything past this point may already have reached GitHub, so the
+          // row above is `ambiguous` by construction. A `TerminalToolError`
+          // carries a code that already says which side the attempt stopped on;
+          // anything else is a raw provider or transport fault, and rethrowing
+          // it verbatim handed the model an unclassified string — a bare
+          // `error code: 524` — with no remediation attached. Read as a flat
+          // failure, that invites the very thing this receipt exists to
+          // prevent: republishing the same branch through `git push` and
+          // `gh pr create`, leaving Avalon's publication row unresolved
+          // forever. Name the ambiguity instead, and point the retry back at
+          // the convergent typed publisher.
+          if (error instanceof TerminalToolError) throw error;
+          throw new TerminalToolError(
+            "publication_outcome_unknown",
+            "Avalon lost the outcome of this publication: the branch and pull request may or may not have reached GitHub. Retry publish_branch_and_pr, which converges on the same branch and pull request; do not push or open one through git or gh instead.",
+            { reason: "Retry publish_branch_and_pr rather than republishing the same branch by another route." },
+          );
         }
       } finally {
         // GitHub cannot scope an installation token to one branch. The exact

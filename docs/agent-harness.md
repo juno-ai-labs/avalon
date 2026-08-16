@@ -604,6 +604,36 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-16 — A run's final message keeps the paragraph breaks the model wrote
+
+**What changed:** The assistant text Bind hands back one message at a time is
+joined with a blank line instead of appended directly.
+
+**Why:** Bind fires `onAssistantMessage` once per assistant message carrying
+text — already trimmed, and once per turn, not as a stream of deltas — so a run
+that narrates before each tool call delivers its output as several separate
+paragraphs. Concatenating them ran the last sentence of one into the first word
+of the next. Three runs on 2026-08-16 closed with "…the focused validation
+available in the repo.The selector is driven by…", and one of them glued four
+preambles and its actual answer into a single unbroken block. This string is not
+incidental: [a run's output *is* its final
+message](#2026-08-12--artifacts-are-gone-a-runs-output-is-its-final-message),
+which is what the transcript shows once the run is terminal and what
+`settleDigestRun` mails.
+
+**Considered and rejected:** Keeping only the last message and discarding the
+narration. The preambles are the model explaining what it is about to do and
+why, and a run whose work spans twenty tool calls says things there that appear
+nowhere else — including, in one of these runs, that the dependency bootstrap
+had been killed and the change therefore went out unverified. Dropping that
+would trade a formatting defect for a silent loss of the only place a run
+records its own reservations.
+
+**Consequences:** The separator is a property of the accumulator, not of any
+renderer, so every surface reading `HarnessOutcome.content` gets it. A future
+change that wants to distinguish narration from the closing answer needs a
+second channel — this one deliberately keeps them in one string, in order.
+
 ### 2026-08-15 — A settled read receipt rebinds instead of halting the run
 
 **What changed:** A completed *read* receipt whose positional coordinates are

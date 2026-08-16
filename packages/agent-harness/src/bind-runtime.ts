@@ -1029,7 +1029,16 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         return harnessResultOutcome(toolCall.id, toolResult, () => { completedByTool = true; });
       },
       onAssistantMessage: (message) => {
-        content += message;
+        // Bind fires this once per assistant message carrying text, already
+        // trimmed — so a run that narrated between tool calls arrives here as
+        // several separate paragraphs, not as a stream of deltas. Appending
+        // them directly ran the last sentence of one into the first word of
+        // the next ("…available in the repo.The selector is driven by…"), and
+        // this string is the run's *final message*: the whole of its output,
+        // what the transcript shows once the run is terminal, and what a
+        // digest mails. A blank line is the separator that makes it read as
+        // the paragraphs the model wrote.
+        content = content ? `${content}\n\n${message}` : message;
       },
       ...(onTurnWouldEnd || input.compaction
         ? {

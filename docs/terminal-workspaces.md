@@ -237,6 +237,12 @@ network proxy, or a general GitHub administration surface.
   file, inspect paths with `pwd`/`ls`/`find`, narrow an ambiguous edit, repair Git
   state, reconnect or reselect GitHub, or ask a participant for fresh publication
   intent. Provider internals and credentials are never copied into that message.
+  A publication whose outcome Avalon could not observe is
+  `publication_outcome_unknown`, and the action it names is the convergent typed
+  publisher again — never the same branch pushed a second way.
+- `cwd` is workspace-relative. `.` and `./` name the workspace root, which is
+  where a command runs when `cwd` is omitted; `..`, an absolute path, and a
+  backslash separator stay refusals.
 
 ## Testing
 
@@ -377,6 +383,58 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-16 — A lost publication outcome is named, and the workspace root is a directory
+
+**What changed:** Three things the tool surface got wrong, all found in one
+batch of production runs. A publication that fails on an unclassified provider
+or transport fault now raises `publication_outcome_unknown` instead of
+rethrowing the provider's own error object. `cwd: "."` and `cwd: "./"` resolve
+to the workspace root rather than being refused as outside it. And
+`apply_patch`'s description says it takes a unified diff with `---`/`+++`
+headers, not an `*** Begin Patch` envelope.
+
+**Why:** Three concurrent runs on 2026-08-16 all called
+`publish_branch_and_pr`, and all three got back
+`{"success":false,"kind":"external","error":"error code: 524\n"}` — Daytona's
+edge timing out while the publisher sandbox was being created. Avalon recorded
+each one `ambiguous` in `repository_publications`, which is correct: the push
+may or may not have reached GitHub. But the model was handed a bare status code
+with no failure code, no remediation, and nothing distinguishing it from a flat
+refusal — and the tool's own description offers `git push` and `gh pr create` as
+an alternative. Two of the three did exactly that, publishing the same branch
+outside the typed publisher; both `repository_publications` rows are still
+`ambiguous` with no completion. An unresolved write is the one outcome that must
+not read as "try another way", and the receipt is already convergent: a retried
+`publish_branch_and_pr` re-reads the remote ref, no-ops a push that already
+landed, and updates the existing pull request rather than opening a second.
+
+The `cwd` refusal is smaller and older. `safeRelativePath` filters `.` segments
+and then rejects an empty result, which is right for a file path — nothing is
+addressable at the root — and wrong for a working directory, where the root is
+the one place that is unmistakably inside the workspace. A run spent three tool
+calls on `.` and `./` before giving up and driving the rest of its work from a
+subdirectory with `cd ..` prefixes.
+
+**Considered and rejected:** Routing the unknown publication outcome through
+`AmbiguousExternalWriteError`, the way a lost `run_command` observation goes.
+That ends the run and defers to the Workflow's retry, which is right when the
+provider ate a command whose effects Avalon cannot see at all; here the
+publisher is convergent and re-callable within the same run, so ending the run
+costs the agent its context and buys nothing. Also rejected: removing the
+`git push`/`gh pr` sentence from the tool description. Standard Git and GitHub
+CLI use is [deliberately not
+gated](#2026-08-13--standard-git-and-github-cli-replace-a-second-publication-gate);
+the defect was a failure that did not say it was unresolved, not the existence
+of the other route.
+
+**Consequences:** `publication_outcome_unknown` joins the failure codes a caller
+may see from `publish_branch_and_pr`, and a classified `TerminalToolError`
+raised inside the publication attempt still surfaces its own code unchanged —
+`publication_target_closed` must not be relabelled as unknown. An empty string
+from `safeRelativePath` now means "the root", and `run_command` translates that
+to an absent `cwd`; any future caller of that helper for a directory has to
+handle the empty case rather than assume a nonempty path.
 
 ### 2026-08-13 — Terminal lifecycle telemetry observes transitions, not tool reuse
 

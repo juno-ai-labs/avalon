@@ -126,7 +126,11 @@ function safeRelativePath(value: string, field: "filePath" | "cwd"): string {
     return pathOutsideRoot(field);
   }
   const normalized = value.split("/").filter((segment) => segment && segment !== ".").join("/");
-  if (!normalized) return pathOutsideRoot(field);
+  // `.` and `./` normalize away to nothing. For a working directory that names
+  // the workspace root — the one directory that is unambiguously *inside* the
+  // workspace — and the empty string is how `run_command` says "run at the
+  // root". Only a file path has nothing to address there.
+  if (!normalized) return field === "cwd" ? "" : pathOutsideRoot(field);
   return normalized;
 }
 
@@ -332,6 +336,8 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
     async run_command(rawInput, context): Promise<HarnessToolResult> {
       const input: RunCommandInput = TerminalArgumentSchemas.run_command.parse(rawInput);
       rejectCommand(input.command);
+      // An explicit workspace root normalizes to the empty string, which is the
+      // same request as omitting `cwd` — the provider is already rooted there.
       const cwd = input.cwd ? safeRelativePath(input.cwd, "cwd") : undefined;
       const result = await runtime.runCommand(context, {
         command: input.command,
