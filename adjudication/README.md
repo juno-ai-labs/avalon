@@ -26,8 +26,9 @@ adjudication/
    one `candidates/<candidate>/brief.md` per the template. Compress your
    existing PRD/argument; introduce no new uncited claims; UNKNOWN beats
    confident vagueness. Candidates expected: `supabase`, `cloudflare-do`,
-   `aws`, `gcp`, `managed-postgres`, and `current-stack` (the null
-   hypothesis — required).
+   `aws`, `gcp`, `managed-postgres`, `convex`, and `current-stack` (the null
+   hypothesis — required). This list is the authoritative field: barriers
+   and judge preconditions count against it.
 2. **Compliance gate.** The operator checks each brief against the template
    (sections present, caps respected, citations resolvable, scope rule
    honored) and kicks back noncompliant briefs before anyone sees them.
