@@ -16,6 +16,32 @@ const COMPOSITION_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
 
 /**
+ * Whether xAI will read one branch of a **root** union as an object.
+ *
+ * Shared by the report and the repair below so the two cannot drift: a rule
+ * that only half the codebase enforces is worse than one nobody does, because
+ * the guard goes green on exactly the schema the repair lets through.
+ *
+ * Every clause was measured against grok-4.3/4.5/4.6, and confirmed harmless on
+ * gemini-3.5/3.6/3.7-flash and gpt-5.6-terra/sol/luna:
+ *
+ * - `type: "object"` alone qualifies, and `properties` alone qualifies when the
+ *   branch declares no `type` at all.
+ * - **A declared `type` decides by itself.** `{ type: "string", properties: {…} }`
+ *   is rejected exactly like a bare `{ type: "string" }` — the `properties` does
+ *   not rescue a branch whose own `type` contradicts it.
+ * - **A branch carrying its own composition is rejected even with
+ *   `type: "object"`.** `{ type: "object", anyOf: [...] }` 400s on all three
+ *   Grok models, so nesting a union one level down inside a root branch does
+ *   not escape the rule; it is the same 400 as putting it at the root.
+ */
+function readableRootUnionBranch(branch: unknown): boolean {
+  if (!isPlainObject(branch)) return false;
+  if ("type" in branch ? branch.type !== "object" : !isPlainObject(branch.properties)) return false;
+  return !COMPOSITION_KEYWORDS.some((keyword) => Array.isArray(branch[keyword]));
+}
+
+/**
  * Keywords that assert nothing about an instance. A branch left holding only
  * these has had its constraint erased even though it is not literally empty.
  */
@@ -118,9 +144,10 @@ export function weakenedCompositionBranches(schema: Record<string, unknown>): st
  * request, every tool**, so one bad schema from one remote server takes down a
  * run that had nothing to do with it, including Avalon's own core tools.
  *
- * So the same measured rule is applied as a repair rather than a report: when a
- * root `anyOf`/`oneOf` has a branch xAI will not read as an object, the whole
- * composition is dropped and the rest of the schema is kept. Measured 27/27
+ * So the same measured rule is applied as a repair rather than a report — the
+ * literally same predicate, `readableRootUnionBranch` — and when a root
+ * `anyOf`/`oneOf` has a branch that fails it, the whole composition is dropped
+ * and the rest of the schema is kept. Measured 27/27
  * accepted across nine models, and it is the same trade the four first-party
  * tools took — the constraint was already being erased for every provider by
  * the sanitizer's `required` pruning, and a remote MCP server validates its own
@@ -138,9 +165,7 @@ export function repairRootUnionForProviders(schema: Record<string, unknown>): Re
   for (const keyword of ROOT_UNION_KEYWORDS) {
     const branches = repaired[keyword];
     if (!Array.isArray(branches)) continue;
-    const unreadable = branches.some((branch) => !isPlainObject(branch)
-      || !(branch.type === "object" || isPlainObject(branch.properties)));
-    if (!unreadable) continue;
+    if (branches.every(readableRootUnionBranch)) continue;
     repaired = Object.fromEntries(Object.entries(repaired).filter(([key]) => key !== keyword));
   }
   return repaired;
@@ -168,8 +193,9 @@ function assertsNothing(node: Record<string, unknown>): boolean {
  * The rule was measured, not inferred, against grok-4.3/4.5/4.6 plus three
  * Gemini and three GPT models:
  *
- * - A root union branch is fine when it is recognizably an object — it declares
- *   `type: "object"` **or** `properties`. Either alone is enough.
+ * - A root union branch is fine when xAI reads it as an object;
+ *   `readableRootUnionBranch` above holds the exact rule and why each clause of
+ *   it is there.
  * - A bare `{ required: [...] }` branch is not, and neither is `{}`, and neither
  *   is an annotation-only `{ description: "…" }`. All three 400, whether the
  *   sanitizer left them that way or the author wrote them that way: the
@@ -196,9 +222,7 @@ export function nonObjectRootUnionBranches(schema: Record<string, unknown>): str
     const branches = root[keyword];
     if (!Array.isArray(branches)) continue;
     branches.forEach((branch, index) => {
-      const objectTyped = isPlainObject(branch)
-        && (branch.type === "object" || isPlainObject(branch.properties));
-      if (!objectTyped) found.push(`/${keyword}/${index}`);
+      if (!readableRootUnionBranch(branch)) found.push(`/${keyword}/${index}`);
     });
   }
   return found;

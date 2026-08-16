@@ -159,6 +159,34 @@ describe("nonObjectRootUnionBranches", () => {
     })).toEqual([]);
   });
 
+  it("catches a root branch whose own `type` contradicts its `properties`", () => {
+    // Measured 0/3 on Grok: a declared `type` decides by itself, so carrying
+    // `properties` does not rescue a branch typed as something else. The guard
+    // accepted this shape until the rule was measured.
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [
+        { type: "string", properties: { a: { type: "string" } } },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    })).toEqual(["/oneOf/0"]);
+  });
+
+  it("catches a root branch that carries its own composition", () => {
+    // Also measured 0/3 on Grok, `type: "object"` notwithstanding: nesting the
+    // union one level down inside a root branch is the same rejection as
+    // putting it at the root.
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [
+        { type: "object", anyOf: [{ properties: { a: { type: "string" } } }, { properties: { b: { type: "string" } } }] },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    })).toEqual(["/oneOf/0"]);
+  });
+
   it("catches an annotation-only root branch, which Grok also rejects", () => {
     expect(nonObjectRootUnionBranches({
       type: "object",
@@ -216,6 +244,23 @@ describe("repairRootUnionForProviders", () => {
       type: "object",
       properties: { a: { type: "string" } },
       anyOf: [{ description: "choose a" }, { description: "or not" }],
+    })).toEqual({ type: "object", properties: { a: { type: "string" } } });
+  });
+
+  it("repairs the two branch shapes the guard used to miss", () => {
+    // The repair shares `readableRootUnionBranch` with the guard, so a shape
+    // the guard reports is a shape the repair fixes. A remote MCP server can
+    // serve either of these, and either fails the whole request.
+    expect(repairRootUnionForProviders({
+      type: "object",
+      properties: { a: { type: "string" } },
+      oneOf: [{ type: "string", properties: { a: { type: "string" } } }],
+    })).toEqual({ type: "object", properties: { a: { type: "string" } } });
+
+    expect(repairRootUnionForProviders({
+      type: "object",
+      properties: { a: { type: "string" } },
+      oneOf: [{ type: "object", anyOf: [{ properties: { a: { type: "string" } } }] }],
     })).toEqual({ type: "object", properties: { a: { type: "string" } } });
   });
 
