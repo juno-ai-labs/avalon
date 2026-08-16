@@ -43,6 +43,7 @@ import { readStructuredFailure, type HarnessFailureCode } from "@avalon/contract
 import {
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
+  HarnessPluginActivationError,
   OpenRouterClient,
   OpenRouterError,
   canonicalToolInputHash,
@@ -889,9 +890,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           input: args,
           ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
         });
+        const resolvedTimeoutMs = dispatched.tool.resolveTimeoutMs?.(args);
         const toolDeadline = combinedDeadline(
           signal,
-          dispatched.tool.definition.timeoutMs ?? input.config.toolTimeoutMs,
+          resolvedTimeoutMs ?? dispatched.tool.definition.timeoutMs ?? input.config.toolTimeoutMs,
         );
         const toolSignal = toolDeadline.signal;
         let toolResult: HarnessToolResult;
@@ -1511,7 +1513,6 @@ async function createPluginRuntime(
   const dynamicPluginLoads = new Map<string, Promise<void>>();
   const activatedPluginHooks = new Set<string>();
   const pluginActivationHooks = new Map<string, Promise<void>>();
-  const fallbackActivationSignal = input.signal ?? new AbortController().signal;
   const eligibleIds = new Set<string>();
   const canonicalByModelId = new Map<string, string>();
   const requireRegistry = (): ToolRegistry<BindPlugin> => {
@@ -1538,7 +1539,7 @@ async function createPluginRuntime(
   };
   const runPluginActivationHook = async (
     id: string,
-    signal: AbortSignal = fallbackActivationSignal,
+    signal: AbortSignal,
   ): Promise<void> => {
     const source = pluginSources.get(id);
     const activate = source?.onActivate;
@@ -1554,6 +1555,10 @@ async function createPluginRuntime(
         signal,
       }))
       .then(() => {
+        // `raceWithSignal` cannot cancel a hook that ignores its signal. Never
+        // cache that detached completion as successful: a later load must not
+        // skip preparation and persist an activation the model was told failed.
+        if (signal.aborted) throw abortReason(signal);
         activatedPluginHooks.add(id);
       });
     pluginActivationHooks.set(id, pending);
@@ -1582,15 +1587,19 @@ async function createPluginRuntime(
     preload: true,
     explicit: true,
     tools: AVALON_DISCOVERY_TOOL_DEFINITIONS.map((definition): HarnessTool => ({
-      definition: definition.name === "load_plugin"
+      definition,
+      ...(definition.name === "load_plugin"
         ? {
-            ...definition,
-            timeoutMs: Math.max(
-              input.config.toolTimeoutMs,
-              ...(input.plugins ?? []).map((plugin) => plugin.activationTimeoutMs ?? 0),
-            ),
+            resolveTimeoutMs: (raw: unknown): number => {
+              const modelId = typeof raw === "object" && raw !== null && "pluginId" in raw
+                ? String(raw.pluginId)
+                : "";
+              const id = canonicalByModelId.get(modelId);
+              const activationTimeoutMs = id ? pluginSources.get(id)?.activationTimeoutMs : undefined;
+              return Math.max(input.config.toolTimeoutMs, activationTimeoutMs ?? 0);
+            },
           }
-        : definition,
+        : {}),
       execute: async (raw, context) => {
         const activeRegistry = requireRegistry();
         if (definition.name === "list_plugins") {
@@ -1642,12 +1651,27 @@ async function createPluginRuntime(
         }
         try {
           await runPluginActivationHook(id, context.signal);
-        } catch {
+        } catch (error) {
+          if (error instanceof HarnessPluginActivationError) {
+            return {
+              output: {
+                error: "plugin_activation_failed",
+                reason: error.message,
+                retryable: error.retryable,
+                ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
+              },
+              summary: "Plugin could not be activated",
+            };
+          }
           return {
-            output: { error: "plugin_activation_failed" },
+            output: { error: "plugin_activation_failed", retryable: false },
             summary: "Plugin could not be activated",
           };
         }
+        // The caller can time out while a provider hook that ignores AbortSignal
+        // continues in the background. Do not cross the durable boundary after
+        // that timeout, even if preparation eventually reports success.
+        if (context.signal.aborted) throw abortReason(context.signal);
         await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
         const plugin = activeRegistry.get(id)!;
         const tools = plugin.tools.map((tool) => ({
@@ -1760,7 +1784,6 @@ async function createPluginRuntime(
       if (await reauthorize(id, "activation") !== "authorized") return "unreachable";
       try {
         await ensurePluginTools(id);
-        await runPluginActivationHook(id);
         return true;
       } catch {
         return "unreachable";

@@ -100,16 +100,23 @@ validation, and provider declaration are owned by
 
 A deferred plugin may also supply a blocking `onActivate` hook for runtime state
 that must exist before its tools become useful. Avalon's Bind adapter runs it
-after authorization and dynamic tool materialization, at most once per run, but
-before persisting a new activation or exposing the plugin on the next model
-turn. Restored hints run the same hook before they re-enter the active set. A
-rejected hook leaves the plugin inactive; an explicit load returns
-`plugin_activation_failed`, while a restored hint is dropped.
-`activationTimeoutMs` extends the discovery tool's ordinary deadline for the
-slowest eligible hook without changing any plugin's tool deadlines.
+after authorization and dynamic tool materialization but before persisting a
+new explicit activation or exposing the plugin on the next model turn.
+Successful preparation is cached for that run; a rejected hook leaves the
+plugin inactive and may run again if the model retries. A restored durable hint
+does not repeat the hook: it re-enters the active set after authorization and
+retains the plugin's ordinary first-tool preparation path.
+`activationTimeoutMs` extends `load_plugin` only when the requested plugin
+declares that deadline; it does not lengthen loads for unrelated plugins or any
+plugin's ordinary tool deadlines. If the deadline fires, a hook that ignores
+its signal may finish in the background, but the harness checks cancellation
+again and cannot persist that timed-out activation.
 The hook inherits `load_plugin`'s read-safe receipt: it may prepare convergent
 host-owned runtime infrastructure, but it must tolerate an ambiguous retry and
-must never perform an outward-facing provider or user-data write.
+must never perform an outward-facing provider or user-data write. Unknown
+failures are sanitized and non-retryable; a host may throw
+`HarnessPluginActivationError` to expose only code-authored guidance and retry
+policy.
 
 Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
@@ -119,9 +126,13 @@ it runs Terminal's activation hook: the hook acquires the separate Terminal
 mutation lease, starts or restores the Daytona sandbox, and prepares any selected
 repository before activation is persisted and its static supported-language
 prompt and complete nine-tool family become visible. Catalog discovery remains
-allocation-free. It is absent—not merely tool-filtered—when the region is
-unsupported; the emergency breaker leaves it discoverable but makes activation
-fail closed. All nine tools stay visible together after activation; current
+allocation-free. A durable hint restored in a later run does not warm the
+sandbox merely because Terminal was used in the past; that run's first Terminal
+tool performs the same coordinator acquisition instead. Repository preparation
+failures that can be repaired with `checkout_repository` do not hide that repair
+tool. It is absent—not merely tool-filtered—when the region is unsupported; the
+emergency breaker leaves it discoverable but makes explicit activation fail
+closed with host-authored non-retry guidance. All nine tools stay visible together after activation; current
 principal/resource and repository/publication checks remain executor
 preconditions rather than scopes.
 The sandbox lifecycle and authority fence are owned by
@@ -423,8 +434,9 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   the frozen scope and reauthorized before restoration.
 - **Activation is durably recorded before a plugin's tools or trusted guidance
   become visible.** A blocking activation hook must also succeed first; a failed
-  explicit hook neither persists a new activation nor enters the active set,
-  while a failed restored hint remains durable but inactive.
+  explicit hook neither persists a new activation nor enters the active set.
+  Restored durable hints do not repeat explicit preparation and still cross
+  ordinary tool preconditions before use.
 - **Activation hooks are convergent host preparation, not provider writes.**
   `load_plugin` remains a read-safe control and may be retried after response
   loss, so a hook must reconcile a stable identity and may not send, publish, or
@@ -678,14 +690,16 @@ assume a coordinate is claimed by at most one call over a run's lifetime. The
 model-facing protocol is unaffected: rebinding is invisible to it, since the
 provider call ID never leaves the wire.
 
-### 2026-08-15 — Deferred plugins can prepare runtime state during activation
+### 2026-08-16 — Deferred plugins can prepare runtime state during activation
 
-**What changed:** `HarnessPlugin` gained a once-per-run blocking `onActivate`
-hook and an optional activation deadline. Explicit loads run it after
+**What changed:** `HarnessPlugin` gained a blocking `onActivate` hook and an
+optional activation deadline. Explicit loads run it after
 authorization and dynamic tool discovery but before activation persistence and
-visibility; restored hints run it before joining the active set. Terminal uses
-the hook to start its Daytona workspace and prepare a selected repository while
-the model is between the load turn and its first Terminal tool.
+visibility. Successful preparation is cached for the run, failures may be
+retried, restored hints do not repeat the hook, and each requested plugin alone
+selects its activation deadline. Terminal uses the hook to start its Daytona
+workspace and prepare a selected repository while the model is between the load
+turn and its first Terminal tool.
 
 **Why:** The model almost always follows a Terminal load with a Terminal tool.
 Waiting until that first tool to allocate the sandbox put the entire cold-start
@@ -699,9 +713,11 @@ would race the first tool and cannot rely on a Worker invocation remaining alive
 
 **Consequences:** Catalog inspection still has no provider side effect, but
 loading a plugin may now block on an explicitly declared hook. Hook failure is
-fail-closed and sanitized, restored hints repeat the idempotent hook in a fresh
-run, and `load_plugin` adopts the longest declared activation deadline among the
-eligible plugins.
+fail-closed and sanitized; a host-authored activation error may add safe retry
+guidance. The harness rechecks cancellation before persistence so detached work
+cannot durably activate after timeout. A restored plugin pays first-tool setup
+when it is actually used instead of allocating merely because an earlier run
+used it.
 
 ### 2026-08-15 — Workspace runs ask for a member reply, not a task claim
 

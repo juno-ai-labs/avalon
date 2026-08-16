@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
 import { createAvalonTerminalPlugin } from "../src/services/terminal/plugin";
+import { TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS } from "../src/services/terminal/contract";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
+import type { TerminalGitHubReadGateway } from "../src/services/terminal/repository";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -12,6 +14,9 @@ const W = "30000000-0000-4000-8000-000000000001";
 const S = "30000000-0000-4000-8000-000000000002";
 const R = "30000000-0000-4000-8000-000000000003";
 const U = "30000000-0000-4000-8000-000000000004";
+const CONNECTION = "30000000-0000-4000-8000-000000000005";
+const BASE = "a".repeat(40);
+const HEAD_REF = "avalon/workstream-30000000";
 
 const openDatabases: ReturnType<typeof migratedSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
@@ -79,6 +84,34 @@ function provider(): TerminalSandboxProvider {
   };
 }
 
+function selectRepository(database: ReturnType<typeof migratedSqliteDatabase>): void {
+  database.exec(`
+    INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+       display_name, granted_scopes_json, model_plugin_id, status, config_json, created_at, updated_at)
+    VALUES ('${CONNECTION}', '${W}', 'github', 'workspace', NULL, '123', 'GitHub',
+            '["github.contents.read","github.pull_requests.read"]', 'plugin_github', 'healthy',
+            '{"githubRepositoryAccess":{"version":1,"revision":1,"mode":"all_repositories","defaultAccess":"full_access","repositories":[]}}',
+            '2026-08-13', '2026-08-13');
+    INSERT INTO workstream_terminal_repositories
+      (workspace_id, workstream_id, connection_id, repository_id, repository_full_name, base_ref,
+       base_sha, head_ref, state, selected_by_user_id, created_at, updated_at)
+    VALUES ('${W}', '${S}', '${CONNECTION}', 42, 'owner/repo', 'main', '${BASE}', '${HEAD_REF}',
+            'selected', '${U}', '2026-08-13', '2026-08-13');
+  `);
+}
+
+function readGateway(baseSha = BASE): TerminalGitHubReadGateway {
+  return {
+    mintRepositoryToken: vi.fn(async () => ({
+      accessToken: "read-token",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    })),
+    verifyRepositoryIdentity: vi.fn(async () => undefined),
+    resolveBaseRef: vi.fn(async () => baseSha),
+  };
+}
+
 describe("Terminal Bind integration", () => {
   it("registers the complete deferred plugin without allocating before activation", async () => {
     const { database, env, input } = fixture("supported");
@@ -99,6 +132,7 @@ describe("Terminal Bind integration", () => {
     const plugin = await createAvalonTerminalPlugin(env, input, { provider: sandboxProvider });
 
     expect(plugin?.onActivate).toBeTypeOf("function");
+    expect(plugin?.activationTimeoutMs).toBe(TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS);
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 0 });
 
     await plugin!.onActivate!({
@@ -113,6 +147,60 @@ describe("Terminal Bind integration", () => {
     expect(database.prepare(
       "SELECT state, provider_sandbox_id FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
     ).get(W, S)).toEqual({ state: "running", provider_sandbox_id: "sandbox-1" });
+  });
+
+  it("prepares a selected repository during activation", async () => {
+    const { database, env, input } = fixture("supported");
+    selectRepository(database);
+    const sandboxProvider = provider();
+    const githubReadGateway = readGateway();
+    const plugin = await createAvalonTerminalPlugin(env, input, {
+      provider: sandboxProvider,
+      readGateway: githubReadGateway,
+    });
+
+    await plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    });
+
+    expect(githubReadGateway.mintRepositoryToken).toHaveBeenCalledOnce();
+    expect(sandboxProvider.configureGitHubReadAccess).toHaveBeenCalledWith("sandbox-1", {
+      gitBasicCredential: btoa("x-access-token:read-token"),
+      ghToken: "read-token",
+    });
+    expect(sandboxProvider.runCommand).toHaveBeenCalledWith("sandbox-1", expect.objectContaining({
+      command: expect.stringContaining("clone --no-checkout 'https://github.com/owner/repo.git'"),
+      timeoutMs: 180_000,
+    }));
+    expect(database.prepare(
+      "SELECT bootstrapped_sandbox_generation FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
+    ).get(W, S)).toEqual({ bootstrapped_sandbox_generation: 1 });
+  });
+
+  it("keeps checkout available when selected-repository preparation needs repair", async () => {
+    const { database, env, input } = fixture("supported");
+    selectRepository(database);
+    const plugin = await createAvalonTerminalPlugin(env, input, {
+      provider: provider(),
+      readGateway: readGateway("b".repeat(40)),
+    });
+
+    await expect(plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    })).resolves.toBeUndefined();
+
+    expect(plugin?.tools.map((tool) => tool.definition.name)).toContain("checkout_repository");
+    expect(database.prepare(
+      "SELECT bootstrapped_sandbox_generation FROM workstream_terminal_repositories WHERE workspace_id = ? AND workstream_id = ?",
+    ).get(W, S)).toEqual({ bootstrapped_sandbox_generation: null });
   });
 
   it("omits Terminal in unsupported regions", async () => {
@@ -134,6 +222,14 @@ describe("Terminal Bind integration", () => {
     const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "avalon:terminal");
     expect(plugin?.tools).toHaveLength(9);
+    await expect(plugin!.onActivate!({
+      workspaceId: W, workstreamId: S, harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      name: "HarnessPluginActivationError",
+      message: "Wait for an operator to re-enable Terminal before trying another tool.",
+      retryable: false,
+    });
     await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
       { filePath: "README.md" },
       {
