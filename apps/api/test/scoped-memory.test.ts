@@ -305,11 +305,23 @@ describe("scoped agent memory", () => {
     const search = memoryTool(env, input("owner"), "search");
     expect(search.definition.inputSchema).toMatchObject({
       additionalProperties: false,
-      oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }],
       properties: { query: expect.any(Object), memoryItemId: expect.any(Object) },
     });
     expect(Object.keys((search.definition.inputSchema as { properties: object }).properties))
       .toEqual(["query", "memoryItemId"]);
+    // The choice between the two is exclusive, and the executor is where that
+    // holds: a `oneOf` of bare `required` branches does not survive schema
+    // sanitization, so the wire schema never carried it either. Asserted on the
+    // parse rather than the declaration for that reason — see
+    // `tool-schema-sanitization.test.ts`.
+    await expect(search.execute(
+      { query: "anything", memoryItemId: OWNER_ID },
+      toolContext(input("owner"), "search-with-both"),
+    )).rejects.toThrow();
+    await expect(search.execute(
+      {},
+      toolContext(input("owner"), "search-with-neither"),
+    )).rejects.toThrow();
     await expect(search.execute(
       { query: "anything", scopes: ["workspace"] },
       toolContext(input("owner"), "search-with-selector"),
