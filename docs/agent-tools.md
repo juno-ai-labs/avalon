@@ -87,7 +87,11 @@ not an enforcement point — nothing in the harness validates arguments against 
 rejects an undeclared key is a `.strict()` zod parse at the top of the executor,
 which is why the connector tools parse `rawArgs` per tool before doing anything
 with them. Declare both: the JSON Schema so the model sees the shape, the strict
-zod parse so a violation is an error rather than a silent drop.
+zod parse so a violation is an error rather than a silent drop. The same split
+governs a constraint *between* parameters: an exclusive choice belongs in the
+`description` and the executor's parse, because the schema sanitizer erases the
+`oneOf` idiom that looks like it would carry it (see
+[Mechanics](#mechanics--where-the-rules-are-enforced)).
 
 Then keep the parameter surface small and uniform across a family. When you must
 reject input, reject it with an error, never by dropping it.
@@ -470,6 +474,30 @@ future agent tool or plugin, not just this family.
   connector's `validateToolInput`) because `z.toJSONSchema` cannot carry the
   callback. Let a Zod rejection reach the harness so it can distinguish
   downstream validation from bad declared input. Never cast across the boundary.
+- **Never express an exclusive choice as a composition of bare `required`
+  branches.** The wire schema is not what you wrote: Bind sanitizes every
+  `inputSchema` on the way to the provider, and one of its transforms prunes a
+  `required` against *the same node's own* `properties` map, because Gemini's
+  validator resolves neither composition nor parent scope. A branch that is
+  nothing but a `required` — the ordinary "exactly one of these" idiom, with the
+  properties declared on the parent — therefore prunes to nothing:
+
+  ```jsonc
+  oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]
+    ↦  oneOf: [{}, {}]     // no instance can satisfy this
+  ```
+
+  xAI compiles tool schemas strictly and answers a provider 400 covering the
+  **whole request, every tool**; Gemini, OpenAI, and DeepSeek accept it and the
+  constraint is merely gone. State the constraint in the tool's `description`,
+  where every provider reads it, and enforce it in the executor's zod parse —
+  which is where it always held anyway, since `z.toJSONSchema` cannot carry a
+  `.refine()` across the boundary either. `schedule_wakeup`'s "Give exactly one
+  of delay or at" is the shape to copy. A choice that genuinely must be
+  structural gives each branch its own `properties` alongside its `required`, as
+  the attachment tools do. `apps/api/test/tool-schema-sanitization.test.ts`
+  walks every authored schema through the real sanitizer and fails on any branch
+  it empties.
 - **Choose `serial` deliberately.** This one is not a `ToolDefinition` field: it
   lives on the `HarnessTool` wrapper beside `definition` and `execute`, because
   it orders *execution* rather than describing policy. Bind already runs writes
@@ -493,7 +521,9 @@ future agent tool or plugin, not just this family.
    family; the canonical name does not repeat its plugin prefix.
 2. No silently ignored params: `additionalProperties: false` declared *and* a
    strict zod parse in the executor enforcing it; the surface is uniform across
-   the family.
+   the family. An exclusive or conditional choice between parameters lives in
+   the `description` and the executor's parse, never in a `oneOf`/`anyOf` of
+   bare `required` branches, which sanitization empties and xAI then rejects.
 3. References accept names where a person would use a name; ambiguity is an
    error, never a guess.
 4. There is a discovery path for any id, type, or enum the tool requires.
