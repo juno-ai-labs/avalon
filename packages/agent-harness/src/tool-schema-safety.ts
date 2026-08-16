@@ -2,8 +2,33 @@ import { sanitizeToolSchema } from "@juno-ai/bind/tools";
 
 const MAX_DEPTH = 64;
 
-/** Positions holding a list of subschemas — where an emptied branch can hide. */
+/** Positions holding a list of subschemas — where a weakened branch can hide. */
 const COMPOSITION_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
+
+/**
+ * The composition keywords xAI treats as a *union* at the parameters root.
+ *
+ * `allOf` is deliberately absent: it is an intersection, and a root `allOf` —
+ * of constraint-only branches, and of branches Bind's flatten cannot merge — is
+ * accepted by all nine models measured, Grok included. Flagging it would fail
+ * schemas no provider objects to.
+ */
+const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
+
+/**
+ * Keywords that assert nothing about an instance. A branch left holding only
+ * these has had its constraint erased even though it is not literally empty.
+ */
+const ANNOTATION_KEYWORDS: ReadonlySet<string> = new Set([
+  "title",
+  "description",
+  "$comment",
+  "examples",
+  "default",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]);
 
 /** Positions holding exactly one subschema. */
 const SUBSCHEMA_KEYWORDS = [
@@ -17,11 +42,15 @@ const SUBSCHEMA_KEYWORDS = [
   "additionalItems",
   "unevaluatedItems",
   "unevaluatedProperties",
+  "contentSchema",
 ] as const;
 
 /**
- * Positions holding a name → subschema map. A draft-07 `dependencies` value may
- * instead be a property-name list, which `collect` ignores as a non-object.
+ * Positions holding a name → subschema map. `dependentSchemas` is the 2019-09
+ * successor to the schema form of draft-07's `dependencies`, and Bind's
+ * sanitizer walks it, so a branch underneath it can be weakened exactly like
+ * any other. A draft-07 `dependencies` value may instead be a property-name
+ * list, which the walk ignores as a non-object.
  */
 const SUBSCHEMA_MAP_KEYWORDS = [
   "properties",
@@ -29,6 +58,7 @@ const SUBSCHEMA_MAP_KEYWORDS = [
   "$defs",
   "definitions",
   "dependencies",
+  "dependentSchemas",
 ] as const;
 
 /** Positions holding either one subschema or a list of them. */
@@ -39,37 +69,52 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Every `allOf`/`anyOf`/`oneOf` branch that sanitization empties, as a path.
+ * Every `allOf`/`anyOf`/`oneOf` branch that sanitization strips a constraint
+ * from, as a path with the reason.
  *
- * A branch that arrives at `{}` is a constraint the author wrote and the wire
- * schema no longer carries. Bind's sanitizer prunes a `required` against the
- * *same node's* own `properties` (Gemini's validator resolves neither
- * composition nor parent scope), so the ordinary "exactly one of these" idiom —
- * a branch that is nothing but a `required`, with the properties declared on
- * the parent — prunes to nothing:
+ * Bind's sanitizer prunes a `required` against the *same node's* own
+ * `properties` (Gemini's validator resolves neither composition nor parent
+ * scope), so the ordinary "exactly one of these" idiom — a branch that is
+ * nothing but a `required`, with the properties declared on the parent — prunes
+ * to nothing:
  *
  *   oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]
  *     ↦  oneOf: [{}, {}]
  *
- * This is silent everywhere. Measured against nine live models, an emptied
- * branch is accepted by every one of them — the constraint is simply gone, and
- * the model is free to send both parameters or neither. That is worth failing a
- * build over on its own; it is *not*, on its own, what took the fleet down.
- * `nonObjectRootUnionBranches` covers the part that does.
+ * This compares the authored schema against the sanitized one rather than
+ * looking for an empty result, because an emptied branch is only the most
+ * visible form. `{ description: "choose a", required: ["a"] }` sanitizes to
+ * `{ description: "choose a" }` and `{ type: "object", required: ["query"] }`
+ * to `{ type: "object" }` — neither is empty, and the constraint is just as
+ * gone. Both are reported here.
  *
- * The check is deliberately *empty branch*, not *unsatisfiable*: satisfiability
- * needs a solver, and a branch the sanitizer emptied is a discarded constraint
- * whether or not the result still admits some instance.
+ * The loss is silent on every provider measured: nine live models accept a
+ * weakened branch without complaint and let the model send both parameters or
+ * neither. That is worth failing a build over on its own; it is *not*, on its
+ * own, what took the fleet down. `nonObjectRootUnionBranches` covers that.
+ *
+ * The check is deliberately *constraint removed*, not *unsatisfiable*:
+ * satisfiability needs a solver, and a branch the sanitizer weakened is a
+ * discarded constraint whether or not the result still admits some instance.
  *
  * Express the constraint in the tool's `description` and enforce it in the
  * executor's zod parse instead — `z.toJSONSchema` cannot carry a `.refine()`
  * across the boundary either, so the wire schema was never where exclusivity
  * held. [`docs/agent-tools.md`](../../../docs/agent-tools.md) carries the rule.
  */
-export function emptiedCompositionBranches(schema: Record<string, unknown>): string[] {
+export function weakenedCompositionBranches(schema: Record<string, unknown>): string[] {
   const found: string[] = [];
-  collect(sanitizeToolSchema(schema), "", 0, found);
+  walkPair(schema, sanitizeToolSchema(schema), "", 0, found);
   return found;
+}
+
+function requiredNames(node: Record<string, unknown>): string[] {
+  return Array.isArray(node.required) ? node.required.filter((name): name is string => typeof name === "string") : [];
+}
+
+/** A branch left holding only annotations constrains nothing, empty or not. */
+function assertsNothing(node: Record<string, unknown>): boolean {
+  return Object.keys(node).every((key) => ANNOTATION_KEYWORDS.has(key));
 }
 
 /**
@@ -87,12 +132,17 @@ export function emptiedCompositionBranches(schema: Record<string, unknown>): str
  *
  * - A root union branch is fine when it is recognizably an object — it declares
  *   `type: "object"` **or** `properties`. Either alone is enough.
- * - A bare `{ required: [...] }` branch is not, and neither is `{}`. Both 400,
- *   whether the sanitizer emptied them or the author wrote them that way: the
+ * - A bare `{ required: [...] }` branch is not, and neither is `{}`, and neither
+ *   is an annotation-only `{ description: "…" }`. All three 400, whether the
+ *   sanitizer left them that way or the author wrote them that way: the
  *   authored `oneOf: [{ required: ["query"] }, …]` fails identically to the
  *   sanitized `oneOf: [{}, {}]`. Restoring the `required` does not help.
  * - **Only the root matters.** The same bare-`required` and emptied unions
  *   nested under a property are accepted by all nine models.
+ * - **Only a union.** `allOf` is an intersection and is not checked: a root
+ *   `allOf`, both of constraint-only branches and of branches Bind's flatten
+ *   cannot merge, is accepted by all nine models including every Grok. Treating
+ *   it as a union here would fail schemas no provider objects to.
  *
  * So the branch shape to reach for, when a choice must be structural at all, is
  * a full object schema per branch — `{ type: "object", properties: {…},
@@ -104,7 +154,7 @@ export function emptiedCompositionBranches(schema: Record<string, unknown>): str
 export function nonObjectRootUnionBranches(schema: Record<string, unknown>): string[] {
   const root = sanitizeToolSchema(schema);
   const found: string[] = [];
-  for (const keyword of COMPOSITION_KEYWORDS) {
+  for (const keyword of ROOT_UNION_KEYWORDS) {
     const branches = root[keyword];
     if (!Array.isArray(branches)) continue;
     branches.forEach((branch, index) => {
@@ -116,36 +166,59 @@ export function nonObjectRootUnionBranches(schema: Record<string, unknown>): str
   return found;
 }
 
-function collect(node: unknown, path: string, depth: number, found: string[]): void {
-  if (!isPlainObject(node) || depth > MAX_DEPTH) return;
+/**
+ * Walk the authored schema and its sanitized copy in step, reporting each
+ * composition branch the sanitizer took a constraint out of.
+ *
+ * The two trees are structurally identical — the sanitizer rebuilds the spine
+ * but never reorders or drops a branch — so the same path indexes both.
+ */
+function walkPair(
+  authored: unknown,
+  sanitized: unknown,
+  path: string,
+  depth: number,
+  found: string[],
+): void {
+  if (!isPlainObject(authored) || !isPlainObject(sanitized) || depth > MAX_DEPTH) return;
   const childDepth = depth + 1;
   for (const keyword of COMPOSITION_KEYWORDS) {
-    const branches = node[keyword];
-    if (!Array.isArray(branches)) continue;
-    branches.forEach((branch, index) => {
+    const authoredBranches = authored[keyword];
+    const sanitizedBranches = sanitized[keyword];
+    if (!Array.isArray(authoredBranches) || !Array.isArray(sanitizedBranches)) continue;
+    authoredBranches.forEach((authoredBranch, index) => {
+      const sanitizedBranch = sanitizedBranches[index];
       const branchPath = `${path}/${keyword}/${index}`;
-      if (isPlainObject(branch) && Object.keys(branch).length === 0) found.push(branchPath);
-      collect(branch, branchPath, childDepth, found);
+      if (isPlainObject(authoredBranch) && isPlainObject(sanitizedBranch)) {
+        const lost = requiredNames(authoredBranch).length - requiredNames(sanitizedBranch).length;
+        if (lost > 0) found.push(`${branchPath} (required dropped)`);
+        else if (assertsNothing(sanitizedBranch)) found.push(`${branchPath} (constrains nothing)`);
+      }
+      walkPair(authoredBranch, sanitizedBranch, branchPath, childDepth, found);
     });
   }
   for (const keyword of SUBSCHEMA_KEYWORDS) {
-    collect(node[keyword], `${path}/${keyword}`, childDepth, found);
+    walkPair(authored[keyword], sanitized[keyword], `${path}/${keyword}`, childDepth, found);
   }
   for (const keyword of SUBSCHEMA_MAP_KEYWORDS) {
-    const map = node[keyword];
-    if (!isPlainObject(map)) continue;
+    const authoredMap = authored[keyword];
+    const sanitizedMap = sanitized[keyword];
+    if (!isPlainObject(authoredMap) || !isPlainObject(sanitizedMap)) continue;
     // Keys here are property names, never keywords: a parameter literally named
     // `oneOf` is a subschema to descend into, not a composition to inspect.
-    for (const [name, value] of Object.entries(map)) {
-      collect(value, `${path}/${keyword}/${name}`, childDepth, found);
+    for (const name of Object.keys(authoredMap)) {
+      walkPair(authoredMap[name], sanitizedMap[name], `${path}/${keyword}/${name}`, childDepth, found);
     }
   }
   for (const keyword of SUBSCHEMA_OR_LIST_KEYWORDS) {
-    const value = node[keyword];
-    if (Array.isArray(value)) {
-      value.forEach((entry, index) => collect(entry, `${path}/${keyword}/${index}`, childDepth, found));
+    const authoredValue = authored[keyword];
+    const sanitizedValue = sanitized[keyword];
+    if (Array.isArray(authoredValue) && Array.isArray(sanitizedValue)) {
+      authoredValue.forEach((entry, index) => {
+        walkPair(entry, sanitizedValue[index], `${path}/${keyword}/${index}`, childDepth, found);
+      });
       continue;
     }
-    collect(value, `${path}/${keyword}`, childDepth, found);
+    walkPair(authoredValue, sanitizedValue, `${path}/${keyword}`, childDepth, found);
   }
 }

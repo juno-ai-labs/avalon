@@ -314,14 +314,18 @@ describe("scoped agent memory", () => {
     // sanitization, so the wire schema never carried it either. Asserted on the
     // parse rather than the declaration for that reason — see
     // `tool-schema-sanitization.test.ts`.
+    // The message is asserted, not just the rejection: with the constraint gone
+    // from the wire schema this is the model's only feedback, and a union's
+    // default text ("Unrecognized key: …" from each branch) reads as though
+    // neither parameter were allowed.
     await expect(search.execute(
       { query: "anything", memoryItemId: OWNER_ID },
       toolContext(input("owner"), "search-with-both"),
-    )).rejects.toThrow();
+    )).rejects.toThrow(/exactly one of query or memoryItemId/);
     await expect(search.execute(
       {},
       toolContext(input("owner"), "search-with-neither"),
-    )).rejects.toThrow();
+    )).rejects.toThrow(/exactly one of query or memoryItemId/);
     await expect(search.execute(
       { query: "anything", scopes: ["workspace"] },
       toolContext(input("owner"), "search-with-selector"),
