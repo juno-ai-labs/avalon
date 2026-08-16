@@ -49,6 +49,7 @@ interface AgentModelPresentation {
 const PRESENTATION: Readonly<Record<AgentModelOverride, AgentModelPresentation>> = {
   'x-ai/grok-4.3': { provider: 'xAI', label: 'Grok 4.3' },
   'x-ai/grok-4.5': { provider: 'xAI', label: 'Grok 4.5' },
+  'google/gemini-3.7-flash': { provider: 'Google', label: 'Gemini 3.7 Flash' },
   'google/gemini-3.6-flash': { provider: 'Google', label: 'Gemini 3.6 Flash' },
   'google/gemini-3.5-flash': { provider: 'Google', label: 'Gemini 3.5 Flash' },
   'google/gemini-3-flash-preview': { provider: 'Google', label: 'Gemini 3 Flash Preview' },
