@@ -605,6 +605,51 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-16 — `@juno-ai/bind` 12, which repairs most of what the guards were catching
+
+**What changed:** the pin moved from 11.0.0 to 12.0.0. Bind's sanitizer now
+resolves a composition branch's `required` against its parent's `properties` and
+copies the referenced subschemas down, so the "exactly one of these" idiom
+reaches the wire intact instead of as `oneOf: [{}, {}]`. Where a branch cannot be
+made usable it drops the whole root composition rather than emitting an
+unusable root. The guards did not change; their *tests* did, because most of
+their fixtures are no longer defective.
+
+**Why:** this is the upstream half of the 13 August incident, specified from
+here and measured against the same nine models. Verified against the published
+package before pinning: the headline case emits self-sufficient branches with
+`required` intact and is accepted 9/9; sanitization is idempotent; the Gemini
+dangling-`required` pruning that transform exists for is intact; unrepairable
+and conflicting-`type` branches drop the composition and are accepted 9/9; root
+`allOf` is still treated as an intersection; and at 2000 branches × 100
+properties the copy-down hits its ceiling and falls back to dropping rather than
+leaving a half-repaired branch.
+
+One shape is not fixed and is the reason both checks stay: a root union branch
+carrying **its own** composition — `{ type: "object", anyOf: [...] }` — is
+forwarded unchanged and is a hard 400 on grok-4.3/4.5/4.6. `nonObjectRootUnionBranches`
+is now the only thing in front of it, and `repairRootUnionForProviders` is the
+only thing in front of a hosted MCP server serving it. An upstream fix is
+specified; until it ships this repository is the backstop.
+
+The tests were rewritten rather than retargeted, because flipping eight
+expectations to `[]` would have left checks that pass for a function returning
+nothing. `weakenedCompositionBranches` keeps a positive case bind 12 still
+produces — a *nested* branch naming a property nothing in scope declares, which
+remains unrepairable — and the traversal test now uses unresolvable names in
+each position so it still asserts the walk reaches them. `repairRootUnionForProviders`
+never invokes the sanitizer, so its block is version-independent and is now the
+standing coverage for the measured branch rules themselves. Whoever next bumps
+bind should expect this file to move and should check *why* each expectation
+changed rather than making it green.
+
+**Note on the bump itself:** bind's versioning is a release counter, not semver
+— "each published release increments the major and resets the rest" — so 11 → 12
+implies no API break, and none was found. Resolving it did refresh five
+unrelated range dependencies, including `wrangler` and `miniflare`; a no-op
+install on the previous pin produces no drift, so that churn belongs to this
+change and not to a stale lockfile.
+
 ### 2026-08-16 — The root-branch rule, tightened to what was actually measured
 
 **What changed:** `readableRootUnionBranch` is now one predicate shared by

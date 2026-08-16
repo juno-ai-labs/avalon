@@ -33,7 +33,14 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
  * - **A branch carrying its own composition is rejected even with
  *   `type: "object"`.** `{ type: "object", anyOf: [...] }` 400s on all three
  *   Grok models, so nesting a union one level down inside a root branch does
- *   not escape the rule; it is the same 400 as putting it at the root.
+ *   not escape the rule; it is the same 400 as putting it at the root. The
+ *   objection reaches the branch's **own** keywords only — a composition under
+ *   one of its `properties` is accepted by all nine models — so this must never
+ *   become a subtree scan, which would discard legitimate constraints.
+ *
+ * Bind 12 handles every clause here except the last: a root branch carrying its
+ * own composition is forwarded unchanged, so this stays the only thing in front
+ * of that 400 until the upstream fix ships.
  */
 function readableRootUnionBranch(branch: unknown): boolean {
   if (!isPlainObject(branch)) return false;
@@ -109,10 +116,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  *
  * This compares the authored schema against the sanitized one rather than
  * looking for an empty result, because an emptied branch is only the most
- * visible form. `{ description: "choose a", required: ["a"] }` sanitizes to
- * `{ description: "choose a" }` and `{ type: "object", required: ["query"] }`
- * to `{ type: "object" }` — neither is empty, and the constraint is just as
- * gone. Both are reported here.
+ * visible form. `{ description: "choose a", required: ["a"] }` used to sanitize
+ * to `{ description: "choose a" }` and `{ type: "object", required: ["query"] }`
+ * to `{ type: "object" }` — neither empty, and the constraint just as gone.
+ *
+ * **Bind 12 repairs all of those**: a branch's `required` now resolves against
+ * its parent's `properties`, and the referenced subschemas are copied down, so
+ * the constraint reaches the wire. What still reports here is a branch naming
+ * something *nothing* in scope declares, which remains unrepairable and is
+ * still pruned away. Keep the check rather than trusting the dependency: it
+ * costs nothing when there is nothing to find, and it is what would notice a
+ * bind release that stopped repairing.
  *
  * The loss is silent on every provider measured: nine live models accept a
  * weakened branch without complaint and let the model send both parameters or

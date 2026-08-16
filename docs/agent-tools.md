@@ -520,9 +520,18 @@ future agent tool or plugin, not just this family.
 
   Gemini and OpenAI accept that without complaint and let the model send both
   parameters or neither. An emptied branch is only the most visible form:
-  `{ description: "…", required: [...] }` prunes to `{ description: "…" }` and
+  `{ description: "…", required: [...] }` pruned to `{ description: "…" }` and
   `{ type: "object", required: [...] }` to `{ type: "object" }`, neither of them
   empty and both just as unconstrained.
+
+  **Bind 12 repairs that half.** A branch's `required` now resolves against its
+  parent's `properties` and the referenced subschemas are copied down, so the
+  constraint survives to the wire. The guidance below is unchanged anyway, for
+  three reasons: the schema is still not the enforcement point, a branch naming
+  something nothing declares is still pruned away, and a root branch carrying
+  its own composition is still forwarded straight into a 400. Writing the
+  constraint where it is actually enforced does not depend on which version of
+  the sanitizer is installed.
 
   So: state the constraint in the tool's `description`, where every provider
   reads it, and enforce it in the executor's zod parse — which is where it
