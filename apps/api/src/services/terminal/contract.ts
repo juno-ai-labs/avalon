@@ -55,6 +55,9 @@ const checkoutRepositoryArguments = z.object({
   repositoryFullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
   requiredRemoteAccess: z.enum(["read_only", "full_access"]).default("read_only"),
 }).strict();
+// The wire schema no longer declares the destinationPath/overwrite pairing, so
+// this message is the model's only feedback on it; see `SearchInputSchema` in
+// `memory-service.ts` for why a union's default reads backwards.
 const importResourceArguments = z.union([
   z.object({ resourceId: z.string().uuid() }).strict(),
   z.object({
@@ -62,7 +65,7 @@ const importResourceArguments = z.union([
     destinationPath: relativePath,
     overwrite: z.boolean().optional(),
   }).strict(),
-]);
+], { error: "Send resourceId alone for deterministic placement, or resourceId with destinationPath. overwrite is only accepted alongside destinationPath." });
 const publishResourceArguments = z.object({
   filePath: relativePath,
   displayName: z.string().min(1).max(300).optional(),
@@ -186,7 +189,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   import_resource: {
     name: "import_resource",
-    description: "Copy the original bytes of one currently authorized work-stream resource into the terminal workspace. Omit destinationPath for deterministic placement; explicit destinations are create-only unless overwrite is true.",
+    description: "Copy the original bytes of one currently authorized work-stream resource into the terminal workspace. Omit destinationPath for deterministic placement; explicit destinations are create-only unless overwrite is true. Send overwrite only together with destinationPath.",
     capability: "terminal.resource.import",
     mode: "write",
     idempotency: "record_before_execute",
@@ -200,10 +203,10 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
         overwrite: { type: "boolean", default: false, description: "Replace an existing regular file only when intentional." },
       },
       required: ["resourceId"],
-      oneOf: [
-        { required: ["destinationPath"] },
-        { not: { anyOf: [{ required: ["destinationPath"] }, { required: ["overwrite"] }] } },
-      ],
+      // The destinationPath/overwrite pairing is stated in the description and
+      // enforced by `importResourceArguments`; a composition of bare `required`
+      // branches does not survive schema sanitization. See
+      // `docs/agent-tools.md`.
     },
   },
   publish_resource: {

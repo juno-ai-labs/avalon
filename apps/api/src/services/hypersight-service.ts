@@ -287,6 +287,10 @@ export async function launchHyperSightRefresh(
   const blocks = parseBlocks(configuration.blocks_json).filter((block) => block.prompt.trim().length > 0);
   if (blocks.length === 0) return [];
   const launched: HyperSightBlockRun[] = [];
+  // Only the primary is wanted here: this records the model each scheduled run
+  // is expected to use on its `harness_runs` row. The route plan's fallbacks
+  // are resolved again and passed to `runHarness` on the execution path in
+  // `integrations.ts`, which is the only place they mean anything.
   const { model } = await resolveAgentModelRouting(env, "hypersight", { workspaceId, workstreamId });
   for (const block of blocks) {
     const harnessRunId = newId();

@@ -201,7 +201,7 @@ export const notionTools: ToolDefinition[] = [
   },
   {
     name: "create_comment",
-    description: "Create a top-level page comment or reply to an existing Notion discussion.",
+    description: "Create a top-level page comment or reply to an existing Notion discussion. Give exactly one of pageId or discussionId.",
     capability: NotionCapabilities.commentInsert,
     mode: "write",
     idempotency: "record_before_execute",
@@ -214,7 +214,10 @@ export const notionTools: ToolDefinition[] = [
         markdown: { type: "string", minLength: 1, maxLength: 20_000 },
       },
       required: ["markdown"],
-      oneOf: [{ required: ["pageId"] }, { required: ["discussionId"] }],
+      // Exclusivity is stated in the description and enforced by
+      // `createCommentSchema` through `validateToolInput`; a `oneOf` of bare
+      // `required` branches does not survive schema sanitization. See
+      // `docs/agent-tools.md`.
     },
   },
 ];

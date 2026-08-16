@@ -80,10 +80,19 @@ interface MutationResult {
   invalidated: boolean;
 }
 
+/**
+ * The message matters more than usual here. The wire schema no longer declares
+ * the exclusivity — a `oneOf` of bare `required` branches does not survive
+ * sanitization — so this rejection is the model's only feedback. Left to its
+ * default a union reports each branch's own complaint, which for two `.strict()`
+ * objects reads `Unrecognized key: "memoryItemId"` and `Unrecognized key:
+ * "query"`: together, "neither key is allowed", and a model that believes it
+ * retries with `{}`, which fails too.
+ */
 const SearchInputSchema = z.union([
   z.object({ query: z.string().trim().min(1).max(2_000) }).strict(),
   z.object({ memoryItemId: z.string().uuid() }).strict(),
-]);
+], { error: "Send exactly one of query or memoryItemId: query to search, memoryItemId to reread one known item." });
 
 const AddInputSchema = z.object({
   scopeKind: z.enum(MEMORY_SCOPE_KINDS),
@@ -1006,7 +1015,9 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
             query: { type: "string", minLength: 1, maxLength: 2_000 },
             memoryItemId: { type: "string", format: "uuid" },
           },
-          oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }],
+          // Exclusivity is stated in the description and enforced by
+          // `SearchInputSchema`; a `oneOf` of bare `required` branches does not
+          // survive schema sanitization. See `docs/agent-tools.md`.
         },
       },
       execute: async (raw) => {
