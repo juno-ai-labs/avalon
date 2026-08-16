@@ -317,7 +317,11 @@ describe("agent model flags", () => {
     expect(defaultAgentModelRouting(env, "workstream").fallbackModels).not.toHaveLength(0);
   });
 
-  it("drops fallbacks a flag tries to give HyperSight, keeping the retargeted model", async () => {
+  it("gives HyperSight the fallbacks its flag serves, like every other role", async () => {
+    // HyperSight's fallbacks used to be dropped here to hold "a block pins one
+    // model" as a resolver invariant. It is a default now, not an invariant:
+    // the drop was silent apart from a warn nobody reads, so an operator who
+    // set a fallback list saw it accepted by the API and never applied.
     const env = envWithFlags(serving({
       model: "anthropic/claude-opus-4.6",
       fallbackModels: ["x-ai/grok-4.3"],
@@ -325,17 +329,17 @@ describe("agent model flags", () => {
 
     await expect(resolveAgentModelRouting(env, "hypersight")).resolves.toEqual({
       model: "anthropic/claude-opus-4.6",
-      fallbackModels: [],
+      fallbackModels: ["x-ai/grok-4.3"],
     });
   });
 
-  it("keeps the flag's fallbacks for every role that is allowed to route onward", async () => {
+  it("keeps the flag's fallbacks for every role", async () => {
     const env = envWithFlags(serving({
       model: "anthropic/claude-opus-4.6",
       fallbackModels: ["x-ai/grok-4.3"],
     }));
 
-    for (const role of AGENT_MODEL_ROLES.filter((candidate) => candidate !== "hypersight")) {
+    for (const role of AGENT_MODEL_ROLES) {
       await expect(resolveAgentModelRouting(env, role)).resolves.toEqual({
         model: "anthropic/claude-opus-4.6",
         fallbackModels: ["x-ai/grok-4.3"],

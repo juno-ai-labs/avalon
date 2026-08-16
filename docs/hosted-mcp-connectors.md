@@ -120,6 +120,20 @@ and use therefore fails closed instead of forwarding an unadvertised name.
   or a record-before-execute receipt. A future read classification must come
   from a separate Avalon-authored policy; guessing from names or trusting a
   provider hint can turn a newly introduced mutation into an unconfirmed action.
+- **A remote schema may not sink the request it arrives in.** A hosted server's
+  `inputSchema` reaches the model verbatim, and a root `anyOf`/`oneOf` branch xAI
+  will not read as an object makes that provider reject the **whole request,
+  every tool** — a run's core tools taken down by one third-party schema, on a
+  connection the person set up correctly. `validateDynamicConnectorTools` applies
+  `repairRootUnionForProviders` to every discovered definition: the offending
+  root composition is dropped, the rest of the schema is kept, and the tool stays
+  available. It repairs rather than rejects because refusing the tool spends the
+  person's capability on a judgement about a provider's schema dialect, and the
+  remote server validates its own arguments regardless. Any repair logs
+  `dynamic_tool_root_union_repaired`. This is deliberately the *only* schema
+  rewrite Avalon performs; Bind's sanitizer still owns every other dialect
+  difference. The measured rule and its limits live in
+  [`agent-tools.md`](agent-tools.md#mechanics--where-the-rules-are-enforced).
 - **The remote name is forwarded exactly.** Avalon may need a safe internal
   alias for a name outside its canonical-name grammar, but `tools/call` receives
   the original value retained at activation. A later operation whose raw name
@@ -217,6 +231,40 @@ current `tools/list` response when a formerly working prompt loses a tool—do n
 patch a historical snapshot into Avalon.
 
 ## Changelog
+
+### 2026-08-16 — A remote schema can no longer fail the request it arrives in
+
+**What changed:** `validateDynamicConnectorTools` now runs every discovered
+definition's `inputSchema` through `repairRootUnionForProviders`. A root
+`anyOf`/`oneOf` whose branches xAI will not read as objects is dropped — the rest
+of the schema is kept and the tool stays available — and the repair logs
+`dynamic_tool_root_union_repaired`. Nothing else about a remote schema is
+rewritten.
+
+**Why:** the same defect that took every x-ai call in the fleet down for three
+days was reachable from any hosted MCP server, and worse from there. xAI answers
+a root union with a non-object branch with a 400 covering the **whole request**,
+so one third-party tool's schema fails every *other* tool in the run, Avalon's
+core tools included — on a connection the person set up correctly, from a server
+Avalon does not control. The first-party half of that fix is a build-time guard
+over authored schemas; it cannot see a schema that arrives at run time, and no
+test can. The rule had to be enforced where the schema enters instead.
+
+It repairs rather than rejects because rejecting spends the person's capability
+on a judgement about a *provider's* schema dialect rather than anything they did,
+and the remote server validates its own arguments regardless — so what is given
+up is a wire-level constraint Bind's `required` pruning was already erasing for
+every provider. Dropping the composition measured 27/27 accepted across nine
+models; adding `type: "object"` to the branches instead passes xAI but the
+sanitizer then strips their `required` anyway, so it buys nothing.
+
+It lives in `validateDynamicConnectorTools` rather than in the connector adapter
+because that is Avalon's host-side gate — every dynamic source (Slack, Granola,
+Notion) funnels through it — and because putting it in `hosted-mcp.ts` would make
+`packages/connectors` depend on `@avalon/agent-harness` for one import. A future
+change must keep it the only schema rewrite here: the value of "the remote schema
+is forwarded as authored" is that a second rewrite is a second place for a
+provider's contract to silently diverge from what the model was shown.
 
 ### 2026-08-12 — Remote hints cannot downgrade write policy
 

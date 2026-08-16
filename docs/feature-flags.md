@@ -76,7 +76,7 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Inline subagent | `agent-model-inline-child` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Automation architect | `agent-model-automation-compiler` | `OPENROUTER_AUTOMATION_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| HyperSight block | `agent-model-hypersight` | `HYPERSIGHT_MODEL` (`apps/api/src/env.ts`) | none |
+| HyperSight block | `agent-model-hypersight` | `HYPERSIGHT_MODEL` (`apps/api/src/env.ts`) | none by default; a flag may add them |
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
@@ -118,12 +118,12 @@ structured-inference gateway. The exhaustiveness checks on
 declared and not wired, but nothing catches a new service that never declared
 one.
 
-HyperSight deliberately has no fallbacks. Its blocks pin one model and never
-route onward, so a refresh cannot change voice partway through a configuration.
-That invariant is enforced in the resolver rather than left to the flag: a
-`fallbackModels` served to `agent-model-hypersight` is dropped and logged as
-`agent_model_flag_fallbacks_ignored`, so the flag can retarget the model but
-cannot turn routing on.
+HyperSight has no fallbacks by default. A block that routes onward can change
+voice between refreshes of one configuration, so routing is something an
+operator turns on for it deliberately rather than the state it starts in. That
+is now a **default rather than an invariant**: `agent-model-hypersight` may
+serve a `fallbackModels` and the resolver honours it exactly as it does for
+every other role.
 
 ### Flag value
 
@@ -638,9 +638,9 @@ correctly provisioned flag.
   failed read there is a real defect rather than the expected local state.
 - **A pin naming a retired model logs `workstream_model_override_unknown` and
   returns to the flag**, rather than failing the run.
-- **A `fallbackModels` served to `agent-model-hypersight` is dropped** and logged as
-  `agent_model_flag_fallbacks_ignored`. The flag can retarget the model but cannot
-  turn routing on.
+- **A `fallbackModels` served to `agent-model-hypersight` is honoured**, like every
+  other role's. HyperSight's empty fallback list is the checked-in default, not a
+  resolver invariant.
 - **A clamped cadence logs `control_tower_refresh_flag_clamped`** rather than
   passing quietly.
 - **`harness_runs.model` is an expectation, not a guarantee.** It records the model
@@ -668,7 +668,7 @@ correctly provisioned flag.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, the four unresolved cases, the zod rejection, and the HyperSight fallback drop. |
+| `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, the four unresolved cases, the zod rejection, and that HyperSight honours its flag's fallbacks like every other role. |
 | `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
 | `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
@@ -932,6 +932,35 @@ not reconstructed into them.
 
 Note that a *flag value* change is not a change to this module and gets no entry
 here — the Flagship console is the audit record for who was rolled out to and when.
+
+### 2026-08-16 — HyperSight's empty fallback list is a default, not an invariant
+
+**What changed:** `NO_FALLBACK_ROLES` and the `agent_model_flag_fallbacks_ignored`
+warning are gone. A `fallbackModels` served by `agent-model-hypersight` is now
+honoured exactly as every other role's is. HyperSight still has no fallbacks when
+no flag answers — `defaultAgentModelRouting` is unchanged — so nothing moves
+until someone edits that flag.
+
+**Why:** the invariant was real but it was enforced in the wrong place, and the
+enforcement was invisible. An operator set a three-model fallback list on
+`agent-model-hypersight`; the Flagship API accepted it, the console showed it,
+and the resolver silently discarded it on every evaluation. The only trace was a
+`warn` in Workers Logs that nobody has a reason to read, so the flag and the
+behaviour disagreed indefinitely with nothing surfacing the disagreement. A
+control that accepts a value and does not apply it is worse than one that has no
+value to set.
+
+The product reasoning it protected still holds — a block that routes onward can
+change voice between refreshes of one configuration — but that is an argument for
+the *default* being empty, which it still is, not for overriding an operator who
+has asked for something else. The resolver cannot tell a mistake from a
+deliberate choice, and the person editing the flag can. Rejected alternative:
+keeping the drop and making it loud (surfacing it in the console or failing the
+evaluation) — that still spends an operator's time discovering that a documented,
+API-accepted field does nothing, and the flag set is small enough that a
+per-role capability table earns nothing over honouring what is served. A future
+change that wants a role's plan constrained again should constrain it where it is
+*set* rather than where it is read, so the disagreement cannot exist.
 
 ### 2026-08-13 — A work stream shows the model it is running on, read off its latest run
 
