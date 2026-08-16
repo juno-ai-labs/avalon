@@ -25,7 +25,7 @@ import { toolActivityName } from "./tool-activity";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { emptiedCompositionBranches } from "./tool-schema-safety";
+export { emptiedCompositionBranches, nonObjectRootUnionBranches } from "./tool-schema-safety";
 export {
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
