@@ -9,7 +9,11 @@ defects as standing unless the brief was amended), and `challenges.md`
 (operator-run adversarial verification, which replaces the advocate rebuttal
 round: cross-brief contradictions, mechanism challenges, and independently
 rebuilt cost figures). Wherever this protocol says a "rebuttal" challenges a
-claim, `challenges.md` plays that role. Background (read-only context, not a
+claim, `challenges.md` plays that role. Also read `../owner-notes.md`
+(owner-provided context from the founders) and obey its handling rules
+strictly: [INPUT] lines are judgeable facts, [PRIOR] lines are the opinions
+this adjudication exists to test and must never be cited as evidence, and
+[OPERATOR] annotations govern where a note conflicts with a verified fact. Background (read-only context, not a
 candidate): the two architecture PRDs, the Supabase PRD review.
 
 ## Protocol
