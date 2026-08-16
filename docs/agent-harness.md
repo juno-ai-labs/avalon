@@ -98,16 +98,32 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
+A deferred plugin may also supply a blocking `onActivate` hook for runtime state
+that must exist before its tools become useful. Avalon's Bind adapter runs it
+after authorization and dynamic tool materialization, at most once per run, but
+before persisting a new activation or exposing the plugin on the next model
+turn. Restored hints run the same hook before they re-enter the active set. A
+rejected hook leaves the plugin inactive; an explicit load returns
+`plugin_activation_failed`, while a restored hint is dropped.
+`activationTimeoutMs` extends the discovery tool's ordinary deadline for the
+slowest eligible hook without changing any plugin's tool deadlines.
+The hook inherits `load_plugin`'s read-safe receipt: it may prepare convergent
+host-owned runtime infrastructure, but it must tolerate an ambiguous retry and
+must never perform an outward-facing provider or user-data write.
+
 Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
 deferred built-in `avalon:terminal` plugin. It has no connection row and loading
-it is allocation-free: activation exposes its static supported-language prompt
-and complete eight-tool family, while the first tool execution acquires the
-separate Terminal mutation lease and Daytona sandbox. It is absent—not merely
-tool-filtered—when the region is unsupported or emergency-disabled. All eight
-tools stay visible together after activation; current principal/resource and
-repository/publication checks remain executor preconditions rather than scopes.
+it runs Terminal's activation hook: the hook acquires the separate Terminal
+mutation lease, starts or restores the Daytona sandbox, and prepares any selected
+repository before activation is persisted and its static supported-language
+prompt and complete nine-tool family become visible. Catalog discovery remains
+allocation-free. It is absent—not merely tool-filtered—when the region is
+unsupported; the emergency breaker leaves it discoverable but makes activation
+fail closed. All nine tools stay visible together after activation; current
+principal/resource and repository/publication checks remain executor
+preconditions rather than scopes.
 The sandbox lifecycle and authority fence are owned by
 [`terminal-workspaces.md`](terminal-workspaces.md), not by Bind.
 
@@ -406,7 +422,13 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   resources, and previously used plugins are activation *hints*, filtered through
   the frozen scope and reauthorized before restoration.
 - **Activation is durably recorded before a plugin's tools or trusted guidance
-  become visible.**
+  become visible.** A blocking activation hook must also succeed first; a failed
+  explicit hook neither persists a new activation nor enters the active set,
+  while a failed restored hint remains durable but inactive.
+- **Activation hooks are convergent host preparation, not provider writes.**
+  `load_plugin` remains a read-safe control and may be retried after response
+  loss, so a hook must reconcile a stable identity and may not send, publish, or
+  mutate user data outside Avalon's owned runtime.
 - **A verdict is never derived from a swallowed exception.** `denied` is a
   decision about authority; `indeterminate` means the host could not reach one.
   Reporting the second as the first sends a run off to explain a permission problem
@@ -656,6 +678,31 @@ assume a coordinate is claimed by at most one call over a run's lifetime. The
 model-facing protocol is unaffected: rebinding is invisible to it, since the
 provider call ID never leaves the wire.
 
+### 2026-08-15 — Deferred plugins can prepare runtime state during activation
+
+**What changed:** `HarnessPlugin` gained a once-per-run blocking `onActivate`
+hook and an optional activation deadline. Explicit loads run it after
+authorization and dynamic tool discovery but before activation persistence and
+visibility; restored hints run it before joining the active set. Terminal uses
+the hook to start its Daytona workspace and prepare a selected repository while
+the model is between the load turn and its first Terminal tool.
+
+**Why:** The model almost always follows a Terminal load with a Terminal tool.
+Waiting until that first tool to allocate the sandbox put the entire cold-start
+delay on the operation the person was waiting to see complete, even though the
+preceding load turn already provided a safe point to do the same work.
+
+**Considered and rejected:** Treating Terminal as a dynamic-tool plugin, which
+would conflate static code-authored tools with provider-authored discovery; and
+starting an untracked background promise after returning the load result, which
+would race the first tool and cannot rely on a Worker invocation remaining alive.
+
+**Consequences:** Catalog inspection still has no provider side effect, but
+loading a plugin may now block on an explicitly declared hook. Hook failure is
+fail-closed and sanitized, restored hints repeat the idempotent hook in a fresh
+run, and `load_plugin` adopts the longest declared activation deadline among the
+eligible plugins.
+
 ### 2026-08-15 — Workspace runs ask for a member reply, not a task claim
 
 **What changed:** The workspace-authority policy now tells the model to request a reply from a
@@ -729,7 +776,6 @@ Durable Object and is not what this is. Do not widen `isProviderTransportFailure
 repeat cannot fix them, and naming them as the provider's would point an operator
 at the wrong system. Meeting notes' live pass sets the budget to 0 on purpose;
 its one-minute cadence is worth more than any single briefing.
-
 ### 2026-08-13 — Telemetry attributes automation only to automation-origin runs
 
 **What changed:** Run and tool telemetry resolves an automation only when the
@@ -771,7 +817,7 @@ replayed terminal receipt is explicitly labeled. The regional runtime—not
 desktop ingest—owns workspace-only events. Any future run/tool dimension must
 remain a bounded canonical taxonomy and must not add content.
 
-### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
+### 2026-08-13 — Terminal originally kept activation allocation-free
 
 **What changed:** Supported regional work-stream runtimes register
 `avalon:terminal` as a deferred built-in plugin. Loading exposes one static

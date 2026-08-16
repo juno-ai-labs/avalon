@@ -1,4 +1,8 @@
-import type { HarnessPlugin } from "@avalon/agent-harness";
+import type {
+  HarnessPlugin,
+  HarnessPluginActivationContext,
+  HarnessToolContext,
+} from "@avalon/agent-harness";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { newId } from "@avalon/db";
 
@@ -9,11 +13,15 @@ import {
   createTerminalPlugin,
   parseTerminalRegionConfiguration,
   TERMINAL_PLUGIN_SYSTEM_MESSAGE,
+  TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS,
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
 import { TerminalSandboxCoordinator } from "./coordinator";
-import { createDaytonaTerminalProvider } from "./daytona-provider";
+import {
+  createDaytonaTerminalProvider,
+  type TerminalSandboxProvider,
+} from "./daytona-provider";
 import {
   admitTerminalPublicationGrant,
   bootstrapTerminalRepository,
@@ -35,6 +43,7 @@ import {
 export async function createAvalonTerminalPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
+  options: { provider?: TerminalSandboxProvider } = {},
 ): Promise<HarnessPlugin | null> {
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
@@ -47,7 +56,7 @@ export async function createAvalonTerminalPlugin(
     executionPrincipal: input.executionPrincipal,
   });
 
-  const provider = createDaytonaTerminalProvider(configuration, undefined, {
+  const provider = options.provider ?? createDaytonaTerminalProvider(configuration, undefined, {
     observe: (measurement) => recordTerminalPlatformObservation(env, measurement),
   });
   const coordinator = new TerminalSandboxCoordinator(
@@ -74,6 +83,18 @@ export async function createAvalonTerminalPlugin(
     }),
   );
   const readGateway = createGitHubRestReadGateway(env);
+  const prepareRepository = async (
+    context: HarnessToolContext,
+    sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
+    sandboxProvider: TerminalSandboxProvider,
+  ): Promise<void> => {
+    try {
+      await bootstrapTerminalRepository(env, context, sandbox, sandboxProvider, readGateway);
+    } catch (error) {
+      if (error instanceof TerminalToolError && error.code === "repository_not_configured") return;
+      throw error;
+    }
+  };
   const runtime = createDaytonaTerminalRuntime(
     env.DB,
     coordinator,
@@ -86,14 +107,7 @@ export async function createAvalonTerminalPlugin(
       createGitHubTerminalCatalogGateway(env),
       coordinator,
     ),
-    async (context, sandbox, sandboxProvider) => {
-      try {
-        await bootstrapTerminalRepository(env, context, sandbox, sandboxProvider, readGateway);
-      } catch (error) {
-        if (error instanceof TerminalToolError && error.code === "repository_not_configured") return;
-        throw error;
-      }
-    },
+    prepareRepository,
   );
   const executors = createTerminalToolExecutors(runtime);
   const observedExecutors = Object.fromEntries(TERMINAL_TOOL_NAMES.map((name) => [
@@ -133,5 +147,40 @@ export async function createAvalonTerminalPlugin(
   const egressGuidance = policy?.mode === "full_internet"
     ? " Current workspace egress is Full internet."
     : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
-  return createTerminalPlugin(observedExecutors, `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${egressGuidance}`);
+  const plugin = createTerminalPlugin(
+    observedExecutors,
+    `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${egressGuidance}`,
+  );
+  return {
+    ...plugin,
+    activationTimeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 60_000,
+    onActivate: async (context: HarnessPluginActivationContext) => {
+      const startedAt = Date.now();
+      const terminalContext: HarnessToolContext = {
+        ...context,
+        toolCallId: `${context.harnessRunId}:plugin:terminal:activation`,
+      };
+      try {
+        const sandbox = await coordinator.acquire(terminalContext);
+        await prepareRepository(terminalContext, sandbox, provider);
+        logStructuredEvent(env, "info", "terminal_plugin_activation_finished", {
+          workspace_id: context.workspaceId,
+          workstream_id: context.workstreamId,
+          harness_run_id: context.harnessRunId,
+          state: "completed",
+          duration_ms: Date.now() - startedAt,
+        });
+      } catch (error) {
+        logStructuredEvent(env, "warn", "terminal_plugin_activation_finished", {
+          workspace_id: context.workspaceId,
+          workstream_id: context.workstreamId,
+          harness_run_id: context.harnessRunId,
+          state: "failed",
+          code: error instanceof TerminalToolError ? error.code : "terminal_activation_failed",
+          duration_ms: Date.now() - startedAt,
+        });
+        throw error;
+      }
+    },
+  };
 }

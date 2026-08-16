@@ -4,14 +4,14 @@ Terminal is Avalon's deferred Bind plugin for bounded code execution, file
 mutation, resource exchange, and GitHub repository work. It gives a
 work stream one private Daytona sandbox without turning Avalon into an
 interactive coding harness: the model receives nine typed tools, not a PTY or a
-provider API, and a sandbox is allocated only when one of those tools executes.
+provider API, and the sandbox starts when the model loads Terminal into a run.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/services/terminal/contract.ts` | Canonical plugin prompt, nine tool descriptors and strict argument schemas, and regional configuration contract. |
-| `apps/api/src/services/terminal/plugin.ts` | Regional composition boundary and allocation-free deferred plugin registration. |
+| `apps/api/src/services/terminal/plugin.ts` | Regional composition boundary and activation-triggered sandbox/repository preparation. |
 | `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-work-stream acquisition, authority fencing, exclusive mutation leases, and recovery after ambiguous provider calls. |
 | `apps/api/src/services/terminal/daytona-provider.ts` | The only Daytona SDK adapter: private sandbox, process, file, network, lifecycle, and host-scoped secret primitives. |
 | `apps/api/src/services/terminal/tools.ts`, `runtime.ts` | Model-facing behavior, safe paths, bounded file/patch/command execution, durable command tasks, and self-healing failures. |
@@ -29,13 +29,16 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 ### Loading and allocation
 
 `avalon:terminal` is a built-in deferred plugin. Bind can discover and load it,
-which exposes all nine tools and the language guidance but performs no provider
-operation. The first tool execution asks `TerminalSandboxCoordinator` for the
-work stream's exclusive Terminal mutation lease. It creates, starts, or restores
-the stable private sandbox and records the provider result in D1. A later tool in
-the same work stream reuses that generation only while its execution-principal,
-selected repository, connection, and visible-resource authority fingerprint
-still match.
+but discovery alone performs no provider operation. Loading it runs a blocking
+activation hook that asks `TerminalSandboxCoordinator` for the work stream's
+exclusive Terminal mutation lease, creates, starts, or restores the stable
+private sandbox, prepares any selected repository, and records the provider
+result in D1. Only after that succeeds does Bind persist a new activation and
+expose all nine tools and the language guidance on the next model turn. A
+restored activation hint runs the same idempotent hook before becoming active.
+Later tools re-acquire the same coordinator boundary and reuse that generation
+only while its execution-principal, selected repository, connection, and
+visible-resource authority fingerprint still match.
 
 Avalon uses Daytona's managed `daytona-small` container snapshot. On first
 creation an idempotent compatibility bootstrap creates the owned `/workspace`,
@@ -169,9 +172,10 @@ personless; it is not duplicated into these product events.
   authority fingerprint.** Reusing it after a principal, resource visibility,
   GitHub connection, or repository change would make old filesystem bytes a new
   caller's unauthorized input, so a mismatch destroys and reprovisions it.
-- **Loading Terminal never allocates provider compute.** Discovery is common
-  and execution is exceptional; allocating at load would turn model routing
-  mistakes into cost and persistent state.
+- **Discovering Terminal never allocates provider compute; activating it does.**
+  The model almost always uses Terminal after choosing to load it, so activation
+  absorbs the cold start before the first operation while catalog inspection
+  remains side-effect free. A startup failure leaves the plugin inactive.
 - **Every mutation is serialized through the coordinator and every command has
   one durable task receipt.** Parallel file operations or automatic retry after
   an ambiguous write could corrupt the sandbox or repeat a side effect.
@@ -210,8 +214,9 @@ network proxy, or a general GitHub administration surface.
 - A region defaults to `unsupported`. It becomes available only with an exact
   supported configuration, the managed snapshot compatibility probe, and a passing real-provider
   probe. The emergency switch keeps the plugin and its complete tool family
-  discoverable, but new executions fail closed with `sandbox_unavailable` while
-  retained work remains available for lifecycle reconciliation.
+  discoverable, but new activations and direct executions fail closed with
+  `sandbox_unavailable` while retained work remains available for lifecycle
+  reconciliation.
 - An opted-in but incomplete Daytona environment degrades to `unsupported`
   instead of failing Worker startup. This keeps ordinary local development
   usable without provider credentials; a complete but malformed configuration
@@ -333,7 +338,8 @@ recovery ledger.
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
-`terminal_tool_finished`, `terminal_sandbox_lifecycle_transition`, and
+`terminal_plugin_activation_finished`, `terminal_tool_finished`,
+`terminal_sandbox_lifecycle_transition`, and
 `terminal_sandbox_lifecycle_failed`, plus
 `terminal_tool_receipt_recovered` or
 `terminal_tool_receipt_recovery_ambiguous` for interrupted commands and PR
@@ -352,10 +358,11 @@ reconciliation.
 
 ## Performance and cost
 
-Allocation is lazy and reuse is scoped to one work stream. Five-minute warm stop
-reduces compute time, sixty-minute archive reduces retained live-disk cost, and
-thirty-day deletion bounds provider storage. Only user-visible generated files,
-complete eligible command logs, and the last bounded Git diff are copied to R2;
+Allocation is activation-driven and reuse is scoped to one work stream.
+Five-minute warm stop reduces compute time, sixty-minute archive reduces retained
+live-disk cost, and thirty-day deletion bounds provider storage. Only
+user-visible generated files, complete eligible command logs, and the last
+bounded Git diff are copied to R2;
 Avalon does not pay to maintain a second cold filesystem archive. Provider time
 and output bytes are derivable from `workstream_sandboxes` and `sandbox_tasks`,
 so cost changes can be measured without exposing commands.
@@ -377,6 +384,31 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-15 — Terminal starts its sandbox when the plugin activates
+
+**What changed:** Terminal now uses the harness's blocking activation hook to
+acquire or restore its authority-fenced Daytona sandbox and prepare any selected
+repository before the plugin becomes active. The first Terminal tool still
+crosses the coordinator and repository checks, but normally finds the prepared
+running generation. Catalog discovery remains allocation-free, and activation
+success or failure has its own content-free structured event.
+
+**Why:** A model that chooses to load Terminal almost always calls one of its
+tools next. Deferring startup to that call made the user-visible operation pay a
+cold-start delay that could instead be completed during the preceding plugin
+load turn.
+
+**Considered and rejected:** Preloading Terminal for every run, which would
+allocate compute without a model decision; keeping first-tool allocation, which
+preserves the avoidable wait; and launching startup in the background, which
+would race the first tool and outlive no guaranteed Worker lifetime.
+
+**Consequences:** `load_plugin` may take up to Terminal's declared activation
+deadline and can fail with the plugin left inactive. Persisted activation hints
+start or restore the sandbox when a later run restores Terminal. The coordinator
+remains authoritative and idempotent, so tools still recheck authority, policy,
+lease, and provider state rather than trusting activation as authorization.
 
 ### 2026-08-13 — Terminal lifecycle telemetry observes transitions, not tool reuse
 

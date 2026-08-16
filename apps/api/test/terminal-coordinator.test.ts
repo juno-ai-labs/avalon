@@ -86,7 +86,7 @@ function context(userId = USER_ID): HarnessToolContext {
 }
 
 describe("Terminal sandbox coordinator", () => {
-  it("creates lazily on first tool use and reuses one sandbox per work stream", async () => {
+  it("creates on first acquisition and reuses one sandbox per work stream", async () => {
     const { database, db, provider, clock } = fixture();
     const acquisitionObserved = vi.fn(async () => undefined);
     const coordinator = new TerminalSandboxCoordinator(
