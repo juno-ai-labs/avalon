@@ -28,6 +28,7 @@ export {
   TelemetryBreadcrumbSidecarSchema,
   TelemetryEnvelopeSchema,
   telemetryEventNames,
+  TELEMETRY_CONNECTOR_TYPES,
   type TelemetryBatch,
   type TelemetryApplicationIconId,
   type TelemetryBreadcrumb,

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { toolActivityName } from "@avalon/agent-harness";
-import { createConnectorRegistry } from "@avalon/connectors";
 import { __integrationTesting } from "../src/services/integrations";
+import { createTestConnectorRegistry } from "./helpers/connector-registry";
 
 /**
  * Every connector tool, walked from the registry rather than listed by hand.
@@ -19,24 +19,6 @@ import { __integrationTesting } from "../src/services/integrations";
  * snapshot: a connector added next year fails here until it either names its
  * tools with a recognized verb or declares its own prose.
  */
-const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example.com/callback" };
-const registryConfig: Parameters<typeof createConnectorRegistry>[0] = {
-  granola: { redirectUri: "https://api.example.com/callback" },
-  google: oauth,
-  github: {
-    appId: "1",
-    clientId: "Iv1.client-id",
-    clientSecret: "secret",
-    privateKey: `${["-----BEGIN", "PRIVATE KEY-----"].join(" ")}\nAA==\n${["-----END", "PRIVATE KEY-----"].join(" ")}`,
-    webhookSecret: "webhook",
-    redirectUri: "https://api.example.com/callback",
-  },
-  linear: oauth,
-  notion: oauth,
-  slack: { ...oauth, signingSecret: "signing" },
-  x: { apiKey: "key" },
-};
-
 function everyConnectorTool(): {
   connector: string;
   tool: string;
@@ -44,7 +26,7 @@ function everyConnectorTool(): {
   wireName: string;
   displayName: string;
 }[] {
-  const registry = createConnectorRegistry(registryConfig);
+  const registry = createTestConnectorRegistry();
   return registry.list().flatMap((manifest) => {
     const adapter = registry.get(manifest.type);
     return adapter.agentPlugin.tools.map((definition) => ({
