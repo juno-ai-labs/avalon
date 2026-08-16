@@ -114,6 +114,7 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 export const AGENT_MODEL_OVERRIDES = [
   "x-ai/grok-4.3",
   "x-ai/grok-4.5",
+  "google/gemini-3.7-flash",
   "google/gemini-3.6-flash",
   "google/gemini-3.5-flash",
   "google/gemini-3-flash-preview",
