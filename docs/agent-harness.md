@@ -604,6 +604,50 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-16 — A tool schema is what the sanitizer emits, and that is now tested
+
+**What changed:** The four tools that expressed an exclusive choice as a
+composition of bare `required` branches — `memory_search`, Notion
+`create_comment`, X `get_user_timeline`, Terminal `import_resource` — no longer
+declare it in `inputSchema`. Each states it in its `description` and enforces it
+where it always held, in the executor's zod parse. `emptiedCompositionBranches`
+in `@avalon/agent-harness` runs a schema through Bind's real `sanitizeToolSchema`
+and reports any `allOf`/`anyOf`/`oneOf` branch that arrives empty;
+`apps/api/test/tool-schema-sanitization.test.ts` walks every authored tool schema
+in the repository — core, discovery, skills, Terminal, and every connector, from
+the registries rather than a list — through it.
+
+**Why:** `oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]` on
+`memory_search` reached the provider as `oneOf: [{}, {}]`. Bind's sanitizer
+prunes a `required` against the same node's own `properties` — correct for
+Gemini, whose validator resolves neither composition nor parent scope — and a
+branch that is *only* a `required` has no own `properties`, so both branches
+pruned to nothing. Nothing can satisfy that schema. xAI compiles tool schemas
+strictly and rejected the whole request, every tool, with a provider 400. Because
+`memory_search` is a core tool present on every request, all 253 x-ai attempts in
+the three days after it shipped failed: default routes paid a dead ~1s round trip
+per turn and fell back to Gemini, so the fleet looked healthy, while a work
+stream pinned to Grok from the composer's model picker got
+`pinnedModelRouting`'s empty `fallbackModels`, no second candidate, and a bare
+`harness_execution_failed`. The failing payload named neither the tool nor the
+reason; it took a diff against the last green payload to find.
+
+The fix is not "avoid `oneOf`" — it is that **the wire schema is not the authored
+schema**, and only a check that runs the real sanitizer can know the difference.
+Hand-writing a JSON Schema approximation of an executor's `.refine()` was the
+actual mistake; `z.toJSONSchema` already cannot carry one across that boundary,
+which is why the constraint has to live in prose the model reads and a parse that
+rejects. Rejected alternatives: pinning a `provider` preference or dropping x-ai
+from the routes would have hidden a schema defect behind routing, and every other
+provider was silently losing the constraint too; teaching Avalon to post-process
+Bind's output would fork the sanitizer. The guard asserts *empty branch* rather
+than *unsatisfiable* deliberately — satisfiability needs a solver, and a branch
+the sanitizer emptied is a discarded constraint whether or not some instance
+still validates. A future change must keep the guard walking the registries: the
+same defect in a tool added later is invisible to a hand-maintained list, and
+`packages/connectors`' hosted-MCP tools arrive from remote servers at runtime and
+are covered only by Bind's own sanitizer, not by this test.
+
 ### 2026-08-15 — A settled read receipt rebinds instead of halting the run
 
 **What changed:** A completed *read* receipt whose positional coordinates are

@@ -186,7 +186,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   import_resource: {
     name: "import_resource",
-    description: "Copy the original bytes of one currently authorized work-stream resource into the terminal workspace. Omit destinationPath for deterministic placement; explicit destinations are create-only unless overwrite is true.",
+    description: "Copy the original bytes of one currently authorized work-stream resource into the terminal workspace. Omit destinationPath for deterministic placement; explicit destinations are create-only unless overwrite is true. Send overwrite only together with destinationPath.",
     capability: "terminal.resource.import",
     mode: "write",
     idempotency: "record_before_execute",
@@ -200,10 +200,10 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
         overwrite: { type: "boolean", default: false, description: "Replace an existing regular file only when intentional." },
       },
       required: ["resourceId"],
-      oneOf: [
-        { required: ["destinationPath"] },
-        { not: { anyOf: [{ required: ["destinationPath"] }, { required: ["overwrite"] }] } },
-      ],
+      // The destinationPath/overwrite pairing is stated in the description and
+      // enforced by `importResourceArguments`; a composition of bare `required`
+      // branches does not survive schema sanitization. See
+      // `docs/agent-tools.md`.
     },
   },
   publish_resource: {

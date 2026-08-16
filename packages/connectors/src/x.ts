@@ -56,7 +56,7 @@ const userNameInputSchema = {
 export const xTools: ToolDefinition[] = [
   {
     name: "get_user_timeline",
-    description: "Get one page of posts from an X user's profile timeline by numeric ID or handle.",
+    description: "Get one page of posts from an X user's profile timeline by numeric ID or handle. Give exactly one of userId or userName.",
     capability: XCapabilities.read,
     mode: "read",
     idempotency: "safe",
@@ -70,7 +70,10 @@ export const xTools: ToolDefinition[] = [
         includeParentTweet: { type: "boolean", description: "Include parent posts for returned replies." },
         cursor: cursorInputSchema,
       },
-      oneOf: [{ required: ["userId"] }, { required: ["userName"] }],
+      // Exclusivity is stated in the description and enforced by
+      // `userTimelineSchema` through `validateToolInput`; a `oneOf` of bare
+      // `required` branches does not survive schema sanitization. See
+      // `docs/agent-tools.md`.
     },
   },
   {

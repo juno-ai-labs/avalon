@@ -1006,7 +1006,9 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
             query: { type: "string", minLength: 1, maxLength: 2_000 },
             memoryItemId: { type: "string", format: "uuid" },
           },
-          oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }],
+          // Exclusivity is stated in the description and enforced by
+          // `SearchInputSchema`; a `oneOf` of bare `required` branches does not
+          // survive schema sanitization. See `docs/agent-tools.md`.
         },
       },
       execute: async (raw) => {
