@@ -140,7 +140,8 @@ would preserve the current complexity while adding another storage system.
     idempotent, pausable, observable, and implemented only with Cloudflare
     primitives.
 13. Realtime transport uses one hibernating workspace socket and only the
-    foreground work-stream socket, with no periodic reconnect churn and no
+    foreground work-stream socket, except for a bounded ready-before-close
+    overlap while focus changes, with no periodic reconnect churn and no
     database write per model token or rendered frame.
 
 ## Non-goals
@@ -1022,10 +1023,11 @@ does not keep a run alive by itself.
 The selected workspace has one hibernating `WorkspaceDO` socket for the sidebar
 and main-screen work-streams-of-interest projection. Only the foreground-open
 work stream has a direct `WorkstreamDO` socket for transcript, active output,
-presence, and control. The desktop does not subscribe to every running,
-mentioned, unread, or pinned child. Background completion, error, mention,
-unread, and needs-input changes arrive through the child's durable projection
-outbox and the parent socket; tokens never traverse the parent.
+presence, and control, except for a bounded overlap during a foreground
+handoff. The desktop does not subscribe to every running, mentioned, unread, or
+pinned child. Background completion, error, mention, unread, and needs-input
+changes arrive through the child's durable projection outbox and the parent
+socket; tokens never traverse the parent.
 
 Both objects use the Durable Object Hibernation API, serialized versioned socket
 attachments, automatic application ping responses, cursor replay, and snapshot
@@ -1038,6 +1040,52 @@ network or stateful deployment can still disconnect it, so reconnect is
 jittered and cursor-based, but no timer intentionally ejects clients every two
 or three minutes. The detailed platform and billing contract is in
 [`migration-control-plane.md`](migration-control-plane.md).
+
+### Switching between two streaming work streams
+
+Suppose work streams A and B are both running and emitting assistant output.
+Selecting either work stream changes observation only: neither full agent loop,
+Workflow, provider request, tool, or Daytona command is restarted or cancelled.
+The Electron main process keeps independent per-work-stream caches keyed by
+`workstream_id`, with the current `run_id`, `attempt_epoch`, durable event
+cursor, through-frame cursor, content hash, and active text. The renderer never
+reuses one global streaming buffer for both work streams.
+
+For an A-to-B switch, A remains connected while the client obtains a fresh
+target-bound capability and opens B's hibernating `WorkstreamDO` socket. B
+serializes the socket admission with its local state and sends a `ready`
+envelope containing an authorized snapshot of immutable parts, the current
+`active_output_turns`/`active_output_chunks` attempt, and the durable
+`workstream_events` high watermark. Later committed events have higher
+sequences and follow on the same socket. The object does not add the new session
+to ordinary live fan-out until its `ready` envelope is queued; provisional
+frames arriving during admission are buffered/coalesced behind `ready` with
+their run, epoch, and frame coordinates. The client buffers events received
+during hydration, installs the snapshot, discards buffered durable events at or
+below the snapshot watermark, applies newer events, and requests cursor replay
+if it detects a gap. An expired cursor receives an explicit snapshot reset
+instead of silently skipping history.
+
+Only after B is ready does the renderer select B and the main process begin the
+short grace period before closing A. This ready-before-close overlap is an
+intentional exception to the one-foreground-child policy; it is bounded and
+does not authorize retaining sockets for every running, pinned, unread, or
+mentioned work stream. Rapid switching back to A may reuse its per-work-stream
+cache during the grace period. After eviction, the same capability, snapshot,
+and cursor protocol reconstructs A.
+
+A UI-only switch therefore loses no accepted message, immutable part, or
+durably checkpointed provisional byte. Direct frames newer than the last
+checkpoint remain provisional and may be held in the process-local A/B cache;
+the owner normally confirms them at the next 250-500 millisecond observed
+checkpoint or within one second after observation stops. They are not promoted
+to durable history merely because a renderer displayed them. If the executor
+or provider attempt fails, either work stream may still perform the already
+documented whole-attempt reset; the client must discard the old epoch rather
+than splice cached text into the replacement. That is inference recovery, not
+loss caused by switching. Final sealing remains atomic inside each
+`WorkstreamDO`, so hydration observes either the active attempt or its immutable
+final parts, never an invented cross-object transaction between A and B.
 
 ### Authorization, capacity, and backpressure
 
@@ -1269,10 +1317,12 @@ None yet.
     compute cost.
 27. **Realtime uses one parent socket plus the foreground child socket.** Both
     use Durable Object hibernation, versioned attachments, automatic static
-    responses, cursor replay, and snapshot reset. Keeping child sockets for all
-    running work streams, forcing periodic reconnects, and routing token frames
-    through the parent were rejected because they spend client/network/platform
-    resources without improving the background experience.
+    responses, cursor replay, and snapshot reset. A focus change permits only a
+    bounded ready-before-close overlap between the old and new child sockets.
+    Keeping child sockets for all running work streams, forcing periodic
+    reconnects, and routing token frames through the parent were rejected
+    because they spend client/network/platform resources without improving the
+    background experience.
 28. **Live steering uses an internal run-control WebSocket plus durable
     fencing.** The running Workflow step holds the client half, the hibernating
     `WorkstreamDO` holds the server half, and a committed steer sends an abort to
@@ -2483,11 +2533,18 @@ are defined in [`migration-control-plane.md`](migration-control-plane.md).
     generation and cannot run a tool, notification, projection, outbox,
     compaction, deletion, or retry before reconciliation.
 27. Realtime lifecycle tests keep one hibernating socket for the selected
-    workspace and one for only the foreground work stream. Background mode
-    closes the child and emits no application heartbeat loop; completion,
-    errors, mention/unread, and needs-input still converge through the parent.
-    No authentication or liveness timer rotates a healthy socket every two or
-    three minutes.
+    workspace and one for only the foreground work stream in steady state.
+    With A and B both streaming, an A-to-B switch opens B, receives and
+    reconciles its snapshot/cursor while A remains live, renders B's latest
+    checkpoint and any newer buffered frames, and only then closes A after the
+    grace period. Rapid A-to-B-to-A switching never mixes run/attempt caches,
+    loses accepted input or committed bytes, duplicates final output, or
+    restarts either loop. Injected disconnects, expired cursors, out-of-order
+    frames, completion during hydration, and attempt reset all converge by
+    snapshot/replay and epoch fencing. Background mode closes the child and
+    emits no application heartbeat loop; completion, errors, mention/unread,
+    and needs-input still converge through the parent. No authentication or
+    liveness timer rotates a healthy socket every two or three minutes.
 28. Streaming tests flush the first token immediately after ordinary one-to-
     five-second inference latency, coalesce later events to at most 30 frames
     per second, expose ordinary seconds-long tools, and preserve steering during
