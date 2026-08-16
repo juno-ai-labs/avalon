@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { nonObjectRootUnionBranches, weakenedCompositionBranches } from "./tool-schema-safety";
+import {
+  nonObjectRootUnionBranches,
+  repairRootUnionForProviders,
+  weakenedCompositionBranches,
+} from "./tool-schema-safety";
 
 /**
  * The production fingerprint, kept as a literal: this exact schema shipped in
@@ -182,5 +186,77 @@ describe("nonObjectRootUnionBranches", () => {
       properties: { query: { type: "string" } },
       required: ["query"],
     })).toEqual([]);
+  });
+});
+
+/**
+ * The repair a schema Avalon did not write goes through. A hosted MCP server's
+ * `inputSchema` reaches the model verbatim and no build-time check can see it,
+ * so the rule the guard reports on is applied here as a rewrite instead.
+ */
+describe("repairRootUnionForProviders", () => {
+  it("drops a root union Grok would reject, keeping the rest of the schema", () => {
+    const repaired = repairRootUnionForProviders({
+      type: "object",
+      properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
+      required: ["query"],
+      oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }],
+    });
+
+    expect(repaired).toEqual({
+      type: "object",
+      properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
+      required: ["query"],
+    });
+    expect(nonObjectRootUnionBranches(repaired)).toEqual([]);
+  });
+
+  it("drops an annotation-only root union, which Grok rejects the same way", () => {
+    expect(repairRootUnionForProviders({
+      type: "object",
+      properties: { a: { type: "string" } },
+      anyOf: [{ description: "choose a" }, { description: "or not" }],
+    })).toEqual({ type: "object", properties: { a: { type: "string" } } });
+  });
+
+  it("leaves a root union whose branches are already objects untouched", () => {
+    // Repairing this would throw away a constraint every provider honours.
+    const schema = {
+      anyOf: [
+        { type: "object", properties: { resourceId: { type: "string" } }, required: ["resourceId"] },
+        { type: "object", properties: { cursor: { type: "string" } }, required: ["cursor"] },
+      ],
+    };
+
+    expect(repairRootUnionForProviders(schema)).toBe(schema);
+  });
+
+  it("leaves a root `allOf` and a nested union untouched", () => {
+    // Both are accepted by all nine models measured; rewriting either would
+    // discard a constraint to fix a problem that does not exist.
+    const allOf = {
+      type: "object",
+      properties: { a: { type: "string" } },
+      allOf: [{ required: ["a"] }],
+    };
+    const nested = {
+      type: "object",
+      properties: { filter: { type: "object", oneOf: [{ required: ["a"] }] } },
+    };
+
+    expect(repairRootUnionForProviders(allOf)).toBe(allOf);
+    expect(repairRootUnionForProviders(nested)).toBe(nested);
+  });
+
+  it("does not mutate the schema it was given", () => {
+    const schema = {
+      type: "object",
+      properties: { a: { type: "string" } },
+      oneOf: [{ required: ["a"] }],
+    };
+
+    repairRootUnionForProviders(schema);
+
+    expect(schema.oneOf).toEqual([{ required: ["a"] }]);
   });
 });

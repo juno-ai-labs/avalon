@@ -28,6 +28,7 @@ import {
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rejectToolModesBeforeCall,
+  repairRootUnionForProviders,
   runHarness,
   type AddressingContextMessage,
   type AutomationCompilerStreamEvent,
@@ -1444,6 +1445,7 @@ async function loadAutomationCreatorPluginCatalog(
             env,
             { connection, adapter, signal },
             async (authorized) => validateDynamicConnectorTools(
+              env,
               adapter,
               scope,
               grantedScopes,
@@ -4525,6 +4527,7 @@ async function loadHarnessTools(
                 env,
                 { connection, adapter, signal },
                 async (authorized) => validateDynamicConnectorTools(
+                  env,
                   adapter,
                   scope,
                   grantedScopes,
@@ -4892,6 +4895,7 @@ function dynamicConnectorCapability(
 }
 
 function validateDynamicConnectorTools(
+  env: Env,
   adapter: ResolvedConnectorAdapter,
   scope: "personal" | "workspace",
   grantedScopes: readonly string[],
@@ -4925,6 +4929,20 @@ function validateDynamicConnectorTools(
     }
     names.add(definition.name);
     wireNames.add(wireName);
+    // A remote server's schema is the one input here Avalon did not write, and
+    // a root union branch xAI cannot read as an object fails the *whole*
+    // request — every tool in the run, including Avalon's own. The build-time
+    // guard cannot see a schema that arrives at run time, so the same measured
+    // rule is applied here as a repair. See `repairRootUnionForProviders`.
+    const inputSchema = repairRootUnionForProviders(definition.inputSchema);
+    if (inputSchema !== definition.inputSchema) {
+      logStructuredEvent(env, "warn", "dynamic_tool_root_union_repaired", {
+        connector_type: adapter.manifest.type,
+        tool: definition.name,
+        scope,
+      });
+      return { ...definition, inputSchema };
+    }
     return definition;
   });
 }
@@ -6877,6 +6895,7 @@ export const __integrationTesting = {
   installDynamicPluginTools,
   createWorkstreamCorePlugins,
   loadHarnessTools,
+  validateDynamicConnectorTools,
   loadToolInvocation,
   stableWireToolName,
   loadTriggerFencedTranscriptMessages,

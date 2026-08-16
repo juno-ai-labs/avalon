@@ -108,6 +108,44 @@ export function weakenedCompositionBranches(schema: Record<string, unknown>): st
   return found;
 }
 
+/**
+ * Make a schema Avalon did not write safe to put in front of a provider.
+ *
+ * The guard above is a build-time check over schemas this repository authors. A
+ * hosted MCP server's `inputSchema` is not one of those: it arrives at run time,
+ * from a third party, and goes to the model verbatim. Nothing in a test can see
+ * it, and the blast radius is the same or worse — xAI rejects the **whole
+ * request, every tool**, so one bad schema from one remote server takes down a
+ * run that had nothing to do with it, including Avalon's own core tools.
+ *
+ * So the same measured rule is applied as a repair rather than a report: when a
+ * root `anyOf`/`oneOf` has a branch xAI will not read as an object, the whole
+ * composition is dropped and the rest of the schema is kept. Measured 27/27
+ * accepted across nine models, and it is the same trade the four first-party
+ * tools took — the constraint was already being erased for every provider by
+ * the sanitizer's `required` pruning, and a remote MCP server validates its own
+ * arguments regardless, so what is given up here is a wire-level hint that was
+ * not being honoured, in exchange for the request surviving at all.
+ *
+ * Repair rather than reject, because rejecting is worse in both directions: it
+ * removes a capability the person connected on purpose, and it does so on a
+ * judgement about a *provider's* schema dialect rather than anything the person
+ * did. Nothing else is touched — Bind's sanitizer still runs afterwards and
+ * still owns every other dialect difference.
+ */
+export function repairRootUnionForProviders(schema: Record<string, unknown>): Record<string, unknown> {
+  let repaired = schema;
+  for (const keyword of ROOT_UNION_KEYWORDS) {
+    const branches = repaired[keyword];
+    if (!Array.isArray(branches)) continue;
+    const unreadable = branches.some((branch) => !isPlainObject(branch)
+      || !(branch.type === "object" || isPlainObject(branch.properties)));
+    if (!unreadable) continue;
+    repaired = Object.fromEntries(Object.entries(repaired).filter(([key]) => key !== keyword));
+  }
+  return repaired;
+}
+
 function requiredNames(node: Record<string, unknown>): string[] {
   return Array.isArray(node.required) ? node.required.filter((name): name is string => typeof name === "string") : [];
 }

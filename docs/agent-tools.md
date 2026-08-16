@@ -526,7 +526,11 @@ future agent tool or plugin, not just this family.
   `properties` the pruning resolves against.
   `workstream_list_resources` and `workstream_read_resource` are built that way
   and never broke. `apps/api/test/tool-schema-sanitization.test.ts` walks every
-  authored schema through the real sanitizer and fails on either defect.
+  authored schema through the real sanitizer and fails on either defect. A tool
+  schema Avalon does *not* author — a hosted MCP server's, which arrives at run
+  time and no test can see — is repaired instead, at
+  `validateDynamicConnectorTools`; see
+  [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 - **Choose `serial` deliberately.** This one is not a `ToolDefinition` field: it
   lives on the `HarnessTool` wrapper beside `definition` and `execute`, because
   it orders *execution* rather than describing policy. Bind already runs writes
