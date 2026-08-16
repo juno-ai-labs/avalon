@@ -39,8 +39,10 @@ adjudication/
 2. **Compliance gate.** The operator checks each brief against the template
    (sections present, caps respected, citations resolvable, scope rule
    honored) and kicks back noncompliant briefs before anyone sees them.
-3. **Rebuttal round.** Once all briefs are in, each advocate session receives
-   the full `candidates/` set and commits one rebuttal.
+3. **Adversarial verification.** *(Replaced the advocate rebuttal round by
+   owner decision, 2026-08-16.)* The operator runs central cross-examination
+   agents over the full field and commits `adjudication/challenges.md`;
+   judges receive it in place of rebuttals.
 4. **Judging.** Fresh-context judges (no involvement in authoring any brief,
    the review, or this packet) each run `packet/judge-prompt.md` over the
    packet + briefs + rebuttals, with candidate order shuffled per pass.

@@ -3,9 +3,14 @@
 You are adjudicating which substrate Avalon's product data plane should use.
 You receive: `decision-frame.md` (authoritative on goal, rubric, weights),
 `avalon-data-plane-cost-brief.md` (authoritative on demand), one advocate brief
-per candidate in the fixed template, and one rebuttal per candidate. Background
-(read-only context, not a candidate): the two architecture PRDs, the Supabase
-PRD review, and the primer.
+per candidate in the fixed template (the field is defined in the README), each
+candidate's `gate-report.md` (operator compliance findings — treat listed
+defects as standing unless the brief was amended), and `challenges.md`
+(operator-run adversarial verification, which replaces the advocate rebuttal
+round: cross-brief contradictions, mechanism challenges, and independently
+rebuilt cost figures). Wherever this protocol says a "rebuttal" challenges a
+claim, `challenges.md` plays that role. Background (read-only context, not a
+candidate): the two architecture PRDs, the Supabase PRD review.
 
 ## Protocol
 
