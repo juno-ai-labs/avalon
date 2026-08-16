@@ -490,6 +490,57 @@ the socket and catches up on focus. This avoids both repeated reconnect churn an
 indefinitely billing an idle user. Presence is limited to online/typing hints at
 human cadence.
 
+### Switching between two streaming work streams
+
+Suppose work streams A and B are both running and emitting assistant output.
+Selecting either work stream changes observation only: neither full agent loop,
+Workflow/queue driver, provider request, tool, nor Daytona command is restarted
+or cancelled. The Electron main process keeps independent per-work-stream
+caches keyed by `workstream_id`, with the current `run_id`, `attempt_id`,
+checkpoint revision, byte offset, content hash, durable event cursor, and active
+text. The renderer never reuses one global streaming buffer for both work
+streams.
+
+While both runs are active, the preferred path keeps A and B's private logical
+work-stream topics joined on the existing regional Realtime WebSocket. Switching
+then changes only the selected cache and is immediate; it creates neither a new
+physical connection nor a new inference request. This remains a small
+foreground/running set, not a subscription to every pinned, unread, mentioned,
+or background work stream. Supabase's paid-plan limit of 100 channels per
+connection leaves ample protocol headroom for this two-stream case, but the
+release limit must remain lower and load tested for Avalon's workspace,
+personal, work-stream, and control topics.
+
+If B's topic was evicted, the client joins it first and buffers hints before
+fetching an authorized hydration RPC. One SQL statement snapshot returns the
+visible immutable `conversation_parts` page, current `active_outputs` row if
+any, attempt/revision/offset/hash, and an authorized durable `scanned_through`
+watermark. The client installs that snapshot, discards buffered hints at or
+below its watermark/revision, applies newer hints, and calls
+`events_after(cursor)` or refetches `active_outputs` when it detects a sequence,
+revision, or offset gap. Broadcast Replay is optional acceleration only; it is
+not the recovery source.
+
+A UI-only switch therefore loses no accepted message, immutable part, or
+durably checkpointed provisional byte. The launch-safe path displays text
+fetched through live RLS only after the checkpoint transaction has stored the
+bytes and matching offset, so a lost or delayed Broadcast loses only a wake-up.
+The newest executor bytes may be up to the 250-500 millisecond observed
+checkpoint interval behind, or up to one second after observation stops, but
+appear after the next commit. Completion atomically replaces the active attempt
+with its immutable final part, so hydration sees a coherent active or sealed
+state even when completion races the switch.
+
+Hints and caches from an old `attempt_id` are discarded rather than spliced
+into a replacement. If the executor/provider cannot resume a failed
+nondeterministic attempt, either work stream may still perform the already
+documented whole-attempt reset and visibly retract provisional output. That is
+inference recovery, not loss caused by switching. A future direct token-body
+fast path cannot claim the same displayed-byte safety unless its revocable
+lease and resume protocol prove that every displayed offset is durably
+recoverable; until then, body-free coordinates plus live-RLS fetch remain the
+required path.
+
 ### Compaction while messages continue
 
 Compaction never rewrites the mutable conversation head. A transaction freezes
@@ -2333,8 +2384,15 @@ the approved boundary.
     exceeds 30 fps.
 21. Completion seals one immutable part and terminal state even if the final
     Broadcast is lost.
-22. One physical regional socket multiplexes expected topics; a background idle
-    app closes without periodic churn and restores from cursor on focus.
+22. One physical regional socket multiplexes expected topics. With A and B both
+    streaming, both logical work-stream topics update independent main-process
+    caches and A-to-B-to-A focus changes render the latest checkpoint without
+    reconnecting or restarting either loop. If either topic was evicted, the
+    subscribe-buffer-one-statement-snapshot protocol loses or duplicates no
+    accepted input, committed byte, or final part across dropped, delayed, or
+    out-of-order hints, completion during hydration, and attempt reset. A
+    background idle app closes without periodic churn and restores from cursor
+    on focus.
 23. Membership removal blocks subsequent content fetch/commands immediately and
     meets the tested stale-channel eviction bound.
 

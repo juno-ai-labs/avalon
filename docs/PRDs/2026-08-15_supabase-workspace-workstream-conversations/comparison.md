@@ -96,6 +96,7 @@ is visible rather than pretending the invoices are directly comparable.
 | Conversation storage | `substreams` and `parts` in each `WorkstreamDO` SQLite database | `substreams` and `conversation_parts` in regional Postgres | The logical model is intentionally equivalent |
 | Active agent run | `WorkstreamDO` owns run/control state; one Workflow drives the full loop | Postgres owns run/control state; one opaque Workflow normally drives the full loop | Cloudflare has a natural live actor endpoint; Supabase has easier durable inspection and generic querying |
 | Realtime | Hibernating `WorkspaceDO` and foreground `WorkstreamDO` WebSockets | One regional Supabase Realtime socket with private workspace/foreground channels | Cloudflare is more efficient for long idle sockets; Supabase is easier to multiplex but bills connections/messages/egress |
+| Two-stream focus switch | Ready-before-close handoff between two child sockets, then return to one foreground child | Keep both logical work-stream channels on the existing regional socket while both runs are active | Supabase gives the simpler instant switch; both recover committed state from snapshots and durable cursors |
 | Token path | Workflow/executor to `WorkstreamDO`, mutable chunks, up to 30 fps to clients | Mutable Postgres checkpoint, body-free Broadcast hint, live-RLS fetch; body frames require a revocable lease | Supabase's safe launch path has more database reads and latency; Cloudflare's owner can stream directly |
 | Activity and suggestions | Regional D1 authority plus Queue/Worker derivation and bounded DO projections | Same regional Postgres authority plus Queues/Cron/Edge | Supabase unifies the query plane; Cloudflare remains a deliberately hybrid data architecture |
 | Large content | Regional R2 plus opaque references | Regional Supabase Storage plus `content_refs` | Both are workable; R2 has free egress, while Supabase provides integrated RLS metadata and CDN behavior |
@@ -271,6 +272,38 @@ Cloudflare still needs explicit capability epochs and child-socket revocation;
 an object ID or stale parent grant cannot be authority. Its advantage is that
 the owner receiving the removal can stop emitting bodies on that socket without
 depending on a separately cached channel policy.
+
+#### Safety when switching between two active streams
+
+The comparison scenario is one desktop rapidly switching A-to-B-to-A while both
+agent loops continue producing output. “Restart streaming” means resuming the
+desktop's observation, never restarting either inference loop. Both designs are
+safe for accepted input, immutable parts, terminal state, and durably
+checkpointed provisional bytes. Neither promises that an incomplete
+nondeterministic model attempt survives executor/provider loss; both fence a
+replacement attempt and may retract that attempt's provisional output.
+
+| Safety property | Cloudflare Durable Objects | Supabase | Assessment |
+| --- | --- | --- | --- |
+| Normal switch with both streams active | Open B's child socket, hydrate/replay, mark ready, then close A after a bounded overlap; the process keeps separate A/B caches | Keep A and B logical channels joined on one regional socket and switch the selected cache | Supabase is operationally simpler and normally instant; Cloudflare requires a two-socket handoff but no cross-object transaction |
+| Notification lost during switch | `WorkstreamDO` replays `workstream_events` after the snapshot watermark or sends an explicit snapshot reset | A body-free Broadcast is only a hint; snapshot plus `events_after`/`active_outputs` refetch repairs the gap | Tie for committed state when both protocols are implemented; neither trusts transport delivery |
+| Snapshot/live race | One owner serializes its snapshot watermark and later child events; same-socket order plus cursor replay closes disconnect gaps | Client must subscribe and buffer before a one-statement snapshot, then discard hints at/below its attested watermark | Cloudflare has the smaller race surface; Supabase is correct but depends on more explicit client/database choreography |
+| Active-to-final race | One local SQLite transaction seals immutable parts, terminal cursor, and active-row deletion | One Postgres transaction seals the part, terminal state, projections/events, and active-row deletion | Tie inside one work stream; Supabase can additionally update relational sidebar state in the same transaction |
+| Stale attempt frames | `attempt_epoch` fences socket frames and cached provisional text | `attempt_id`, revision, offset, and hash fence hints and fetched bytes | Tie; neither may splice attempts |
+| Just-rendered uncheckpointed text | Direct owner frames can be smoother, but process-local text newer than the owner checkpoint is provisional and may rewind on failed attempt recovery | Launch-safe UI fetches only committed checkpoint bytes; it may trail generation by 250-500 ms observed or up to one second unobserved | Supabase is more conservative about what it displays; Cloudflare has lower live latency but a larger explicitly provisional visible tail |
+| Membership removed mid-stream | Owner capability epoch and targeted child-socket eviction can stop later body delivery | Already-joined channel reauthorization is not a sufficient launch guarantee, so hints contain no bodies and every body fetch uses live RLS | Cloudflare leads for prompt stream revocation; Supabase's body-free path preserves confidentiality at added read/latency cost |
+| Process or network restart | Reopen the selected child with capability, cache cursor, snapshot, and replay; old child sockets hibernate or expire independently | Recreate one regional socket, join needed topics, then subscribe-buffer-snapshot each visible stream | Tie for correctness; Supabase rejoins logical channels on one connection, while Cloudflare reconnects independently to each selected object |
+| Regional authority failure | Failure is normally isolated to the affected work-stream object; A and B fail independently unless a shared regional dependency is down | A and B share the regional Postgres/Realtime failure domain | Cloudflare has stronger per-work-stream blast-radius isolation |
+
+The strict safety verdict is therefore narrower than “one platform cannot lose
+tokens.” Both prevent transport switching from losing committed output. The
+Cloudflare owner has stronger serialization, isolation, and live revocation,
+while Supabase has the cleaner two-channel desktop handoff and a deliberately
+safer launch rule that displays only checkpointed bodies. Supabase's advantage
+disappears if Avalon sends token bodies optimistically over Broadcast without a
+durable offset/lease protocol; Cloudflare's advantage disappears if the client
+closes A before B reports a reconciled ready state. The bake-off must inject
+both failures rather than test only a healthy focus change.
 
 ### Connectors, activity, digests, and suggestions
 
