@@ -605,6 +605,38 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-16 — The root-branch rule, tightened to what was actually measured
+
+**What changed:** `readableRootUnionBranch` is now one predicate shared by
+`nonObjectRootUnionBranches` and `repairRootUnionForProviders`, and it rejects
+two shapes the previous test accepted: a branch whose own `type` contradicts its
+`properties` (`{ type: "string", properties: {…} }`), and a branch carrying its
+own composition (`{ type: "object", anyOf: [...] }`). No authored tool has
+either shape, so nothing in the surface changed — this closes false negatives
+rather than fixing a live failure.
+
+**Why:** the original rule was written from a matrix that never tested a branch
+whose `type` and `properties` disagree. Both shapes 400 on grok-4.3/4.5/4.6 with
+the same root-union error as the incident, and both were being passed — by the
+guard *and* by the run-time repair, which is the worse half: a hosted MCP server
+serving either one would have had it forwarded untouched and failed the whole
+request, which is the exact outcome that repair exists to prevent.
+
+The two rules are worth stating plainly because both are the opposite of the
+intuition. A declared `type` decides **alone** — `properties` does not rescue a
+branch typed as something else, so the check cannot be a disjunction over "has
+either marker". And nesting a union one level down inside a root branch does not
+escape the constraint, so `{ type: "object", anyOf: […] }` is not a workaround
+for a root union; it is the same rejection.
+
+Both were found by the reviewer working the corresponding fix in
+`@juno-ai/bind`, whose sanitizer faces the identical rule, and both were
+re-measured here before being adopted rather than taken on report. The predicate
+is shared between the report and the repair for the reason the split nearly
+cost: a rule only half the codebase enforces is worse than one nobody does,
+because the guard goes green on precisely the schema the repair lets through. A
+future change must keep them reading the same function.
+
 ### 2026-08-16 — A tool schema is what the sanitizer emits, and that is now tested
 
 **What changed:** The four tools that expressed an exclusive choice as a

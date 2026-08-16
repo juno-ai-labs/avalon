@@ -488,11 +488,20 @@ future agent tool or plugin, not just this family.
   ```
 
   which OpenRouter surfaces as a provider 400 covering the **whole request,
-  every tool**. A branch qualifies if it declares `type: "object"` *or*
-  `properties`; a bare `{ required: [...] }`, an empty `{}`, and an
-  annotation-only `{ description: "…" }` do not. This is not a sanitizer
-  artifact — the authored schema fails identically to the sanitized one. Two
-  limits, both measured: only the **root** is constrained, so the same union
+  every tool**. This is not a sanitizer artifact — the authored schema fails
+  identically to the sanitized one. A branch qualifies when it declares
+  `type: "object"`, or declares no `type` and carries `properties`. Everything
+  else is rejected, and three of those are easy to write by accident:
+
+  - a bare `{ required: [...] }`, an empty `{}`, or an annotation-only
+    `{ description: "…" }`;
+  - `{ type: "string", properties: {…} }` — **a declared `type` decides by
+    itself**, and `properties` does not rescue a branch typed as something else;
+  - `{ type: "object", anyOf: [...] }` — **a branch carrying its own
+    composition** is rejected despite the object type, so moving the union one
+    level down inside a branch buys nothing.
+
+  Two limits, both measured: only the **root** is constrained, so the same union
   nested under a property is fine everywhere; and only a **union** is, so a root
   `allOf` — an intersection — is accepted by all nine models including every
   Grok.
