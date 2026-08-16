@@ -20,9 +20,10 @@ conversation, participants, view waterlines, agent-run coordination, and the
 state that clients stream in real time. The existing Global identity and routing
 plane remains deliberately thin. Regional Workers remain the execution and data
 residency boundary. Regional D1 stops being the authority for workspace and
-work-stream product data, but remains available for regional workloads that
-genuinely need cross-workspace SQL, such as telemetry, operational outboxes,
-audits, and migration control.
+work-stream product data. It remains only where a workload is genuinely
+fleet-wide and product-free, such as migration inventory, operational
+telemetry, and rebuildable aggregate indexes. It is not a connector-activity,
+digest, suggestion, or cross-object outbox authority.
 
 A work-stream conversation is not stored as several product-specific tables
 that must be reconstructed into an LLM prompt. Its conversation core is two
@@ -47,14 +48,16 @@ Bind continues to call Avalon's `avalon:terminal` plugin for coding. That plugin
 is backed by Daytona; neither the Workflow nor the `WorkstreamDO` runs shell
 commands itself. Re-platforming Terminal is outside this PRD.
 
-The hierarchy does not absorb Avalon's regional activity and suggested-work
-query plane. Provider deliveries, the first-party activity log, batching,
-opportunity admission, and per-person suggestion ranking remain regional D1
-workloads because they query across connections, work streams, and sometimes a
-whole workspace. They publish bounded, rebuildable projections into the
-workspace and work-stream objects only when a product surface needs them. This
-keeps raw activity and ranking corpora out of a hot `WorkspaceDO` while letting
-the sidebar and home screen share one coherent work-stream index.
+Because every connector event belongs to exactly one workspace and is never
+shared or replicated across workspaces, the `WorkspaceDO` also owns connector
+delivery receipts, normalized activity, Avalon's ordered activity log, digest
+state, opportunity admission, and per-person suggestion ranking for that
+workspace. Regional R2 retains large exact provider bodies; regional Workers,
+Queues, and Workflows verify, normalize, wake, and execute bounded work but do
+not become product authorities. The parent delivers incorporated activity and
+suggested actions to a `WorkstreamDO` through an object-local durable outbox and
+idempotent child receipt. This removes a D1-to-object projection plane without
+making the object run provider calls or inference while holding a transaction.
 
 A Cloudflare-only fleet migration control plane makes lazy object schema
 changes, bounded data backfills, parent/child protocol upgrades, and source-
@@ -128,10 +131,10 @@ would preserve the current complexity while adding another storage system.
 9. Storage and compute cost scale with active work streams, semantic parts, and
    sidebar changes rather than streamed token count, total historical object
    count, or repeated cross-object reads.
-10. Provider and Avalon activity is ingested once in-region, remains queryable
-    for watches, automations, digests, opportunity admission, and audit, and can
-    be incorporated into a work stream without making D1 and a child object
-    co-authorities for the conversation.
+10. Provider and Avalon activity is ingested once into its owning regional
+    `WorkspaceDO`, remains queryable for watches, automations, digests,
+    opportunity admission, and audit, and can be incorporated into a work stream
+    without making D1 and a child object co-authorities for the conversation.
 11. Suggested work streams and suggested actions have explicit authorities,
     audience rules, expiry, feedback, and exactly-once promotion into a real
     work stream. A suggestion is never silently treated as an existing child.
@@ -176,8 +179,9 @@ would preserve the current complexity while adding another storage system.
    Global and EU after creation. Workspace region remains immutable; regional
    relocation is rejected for this migration.
 10. This PRD does not move the activity log, provider delivery receipts,
-    opportunity corpus, or ranking tournament into the Global plane or one
-    `WorkspaceDO`. They remain regional D1 data with bounded object projections.
+    opportunity corpus, or ranking tournament into the Global plane or a
+    fleet-wide database. They belong to the one regional `WorkspaceDO` that owns
+    the event. Large exact bodies remain in regional R2 rather than SQLite.
 11. This PRD does not make a suggested-work opportunity appear in **Work
     Streams**, **In Progress**, **Completed**, unread, or mention collections
     before its work stream has actually been created.
@@ -373,7 +377,8 @@ rule, but each names its actual authority:
 | Parent authorization or revocation | `WorkspaceDO` updates `workspace`, `members`, `grants`, affected personal projections/events, and one `durable_outbox` child command. | `WorkstreamDO` advances `workstream` epoch floors, invalidates `grant_sessions`, closes affected sockets, fences runs/tools, and records its inbox receipt. | New grants stop immediately at the parent. Active children receive high-priority commands; a missed dormant-child command is bounded by grant expiry and retried from the outbox. The same command ID returns the child receipt. |
 | Child creation | `WorkspaceDO` inserts a `workstreams.visibility=hidden` directory row, any applicable `promotion_reservations` row, and a `durable_outbox` `child_initialize` command together. | The child idempotently creates `workstream`, main `substreams` row, initial parts/resources, object versions, and its inbox receipt while remaining side-effect-free. | A repeated initialization with the same hash returns the same receipt; a different hash is rejected. Parent finalization is the only transaction that changes the directory row to visible. |
 | Suggested-work promotion | Parent records `child_ready` only after the child initialization receipt, then writes `promoted_origins`, finalizes `promotion_reservations`, exposes `workstreams`, and appends the workspace event together. | The already prepared child opens the matching parent generation/epoch on first routed request or finalization command. | Before parent finalization the child is hidden and disposable; after it, `origin_key` and the promotion receipt force forward reconciliation to exactly one visible child. |
-| Regional activity delivery | Regional D1 claims/delivers an activity under a stable `delivery_id` after a current batched parent visibility check. | The child writes `activity_delivery_receipts`, any incorporated `parts`/mentions/attention, and resulting workspace/native-activity outboxes together. | A lost result retries the delivery ID and returns the child receipt; D1 completes its delivery projection only from that receipt. The D1 activity ID alone is never child authority. |
+| Workspace activity delivery | `WorkspaceDO` commits the normalized activity/effect and an `activity_deliveries` row under a stable `delivery_id`, after validating current connection, resource, and child-directory epochs. | The child writes `activity_delivery_receipts`, any incorporated `parts`/mentions/attention, and resulting workspace/native-activity outboxes together. | A lost RPC retries the delivery ID and returns the child receipt; the parent settles its local delivery only from that receipt. The activity ID alone is never child authority, and Queue acknowledgement never settles the boundary. |
+| Suggested-action disclosure or resolution | Parent advances `workspace.source_authorization_epoch` deny-first on any relevant source/ACL narrowing, rejects older action-derived personal projections, and later emits a targeted cleanup/retraction outbox. A narrow live RPC evaluates the action's complete source vector against current selector principals. | Child rejects epochs below `workstream.source_authorization_floor`; its action-driven `needs_input` replacement carries the source epoch; and it returns a pending card or accepts a resolution only with the parent-signed, action/version/user-specific current decision. | Delayed retraction changes cleanup latency only. Parent unavailability fails closed for the optional card, ordinary transcript reads continue, and the same resolution ID is idempotent after reauthorization. |
 | Agent Workflow start/resume | `WorkstreamDO` admits or updates `runs` and records a stable Workflow instance ID and desired next action before invoking the binding. | The Workflow has no product database; each step obtains/commits owner receipts in `runs`, `run_events`, `tool_effects`, and `parts`. | A creation 429 leaves the owner in `waiting_capacity`; stable instance ID and owner status distinguish not-created, running, waiting, and terminal. A step retry asks the owner rather than replaying an effect blindly. |
 | Fleet migration | The control object writes desired state plus an outbox command; shard permit and target mutation are separate local transactions. | The target stores `_data_migrations` and `_migration_command_receipts`; the shard and regional/fleet objects store progressively coarser receipts. | Stable command IDs, expiring permits, target-first settlement, and complete aggregate replacements converge the chain. No upper-level counter can manufacture target success. |
 | Work-stream deletion or quarantine | Parent first advances `workstreams.deletion_epoch`, removes listing/card/personal visibility, revokes grants, appends a client event, and emits the child command. | Child advances its local deletion/restore floors, stops ingress/runs/outboxes, closes sockets, and records the command before bounded content cleanup. | The parent tombstone dominates every delayed child projection. Retry resumes cleanup; it never republishes the child. Physical row/object cleanup waits through replay, audit, and recovery retention. |
@@ -389,337 +394,327 @@ correctness, not an incidental retry implementation.
 
 ### Activity ingestion and storage
 
-The Durable Object hierarchy does not replace the regional activity pipeline.
-Activity is deliberately two related but distinct records:
+Every connector event has exactly one workspace owner. It is never shared,
+replicated, or queried as one product row by two workspaces. Therefore the
+workspace—not the region—is the correct atom of coordination: the regional
+`WorkspaceDO` is authoritative for provider delivery receipts, normalized
+activity, first-party activity events, digest cursors, opportunity evidence,
+suggestion rankings, and workspace-local automation/routing decisions.
+This follows Cloudflare's guidance to model a Durable Object around the
+[atom of coordination](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/);
+all of the reads described here span connections, people, work streams, and time
+windows **inside one workspace**, not across workspaces.
+
+Activity remains two related but distinct records:
 
 - `activities` is the normalized provider-ingress record: what GitHub, Linear,
   Notion, Google, Granola, a generic webhook, or another connector delivered;
 - `activity_events` is Avalon's first-party ordered activity log: what happened
   in Avalon that an authorized person, digest, or audit consumer may need to
-  read. Connector activity can project into this log, but work-stream messages,
-  mentions, and other native events can enter it without a connector delivery.
+  read. Connector activity can project into this log, while work-stream
+  messages, mentions, and other native events enter without a connector
+  delivery.
 
-Both remain in regional D1 because consumers need indexed, ordered queries
-across connections, work streams, people, and batch windows. They are not the
-authority for a work-stream transcript, sidebar read waterline, or mention
-badge. The ingestion path is:
+Neither record is the authority for a work-stream transcript, sidebar
+waterline, or mention badge. The parent owns the workspace-wide log; the child
+owns only what was actually incorporated into that work stream.
 
-1. A regional connector endpoint verifies exact raw webhook bytes, or a regional
-   polling runner advances a provider-native checkpoint. Shared ingress uses
-   Global only to resolve an opaque route and forwards content without retaining
-   it there.
-2. Large exact payload bytes are retained under a regional R2 reference with a
-   content hash and explicit retention. Regional D1 stores the idempotent
-   delivery receipt and compact normalized `activities` metadata: connection and
-   audience, provider event identity, source and receive times, actor, subject,
-   resource identity, bounded title/summary/snippet, visibility, entity keys,
-   hash, processing state, and payload reference.
-3. The producer enqueues only region, workspace ID, and activity ID. The
-   regional consumer reloads and re-authorizes the record; Queue is a wake-up,
-   not storage or an authority-bearing payload.
-4. The consumer evaluates resource watches and deterministic automation triggers
-   before semantic routing. Each claimed effect receives a durable routing
-   record and stable delivery ID. Activity not claimed by a watch or automation
-   proceeds to bounded suggested-work batching while contextual routing is
-   paused.
-5. A route into an existing work stream is delivered through a regional D1
-   outbox. Before delivery, the regional service asks the `WorkspaceDO` to
-   resolve the current directory epoch and mint a short-lived service capability
-   bound to the source connection, target child, and permitted incorporation; a
-   D1 work-stream ID is not authority. The `WorkstreamDO` deduplicates
-   `(source_kind, source_id, delivery_id)`, rechecks that capability and current
-   scope, and either appends authorized activity/attachment parts or creates an
-   audience-scoped operational suggested action. Only that child commit makes
-   the item child state and triggers any common or personal workspace projection.
-6. Independently, eligible provider and native product events are inserted
-   idempotently into `activity_events`, whose monotonic regional log sequence is
-   the digest/audit cursor. Each row carries an audience plus an event-specific
-   authorization selector and source authority revision for any connection,
-   resource, or work-stream evidence exposed by its title/body. An unknown or
-   stale selector fails closed. `activity_event_targets` records named
-   involvement such as mentioned, assigned, or review-requested without changing
-   audience.
+#### Ingestion and execution path
 
-#### Regional connector-event SQLite schema
+1. A regional connector endpoint verifies exact webhook bytes and resolves
+   exactly one immutable `{region, workspace_do_id, connection_id, route_epoch}`.
+   Shared ingress may use Global only for that opaque route; Global never retains
+   provider content. It also resolves the connector-domain generation and route
+   receipt. The parent accepts connector work only when its singleton
+   `connector_domain_authority` row is `open` for those exact values. A regional
+   poller, digest claim, replay, and background connector task follows the same
+   gate; an already-live workspace object is not evidence that its connector
+   domain has cut over.
+2. The endpoint writes large exact bytes to a workspace-prefixed,
+   content-addressed regional R2 key with SHA-256, byte length, authorization
+   selector, source revision, and `retain_until`; bytes are never deduplicated
+   across workspaces. It then calls `WorkspaceDO.acceptIngress`. In one short
+   transaction, the parent validates current route/connection/source epochs and
+   writes the authoritative ingress receipt, normalization generation `1`, a
+   `durable_outbox` Queue intent, and a `due_work` normalization watchdog keyed
+   by the three-part receipt plus generation. A
+   webhook is acknowledged only after that parent commit. If
+   the response is lost, the same delivery/hash returns the receipt; a changed
+   hash is corruption. If the parent never commits, the webhook is not
+   acknowledged and an R2 orphan reaper eventually removes the unreferenced key.
+3. The parent outbox sends a regional Queue envelope
+   `{workspace_do_id, route_epoch, connector_generation, provider, delivery_id,
+   connection_id, payload_ref, payload_hash, payload_bytes}`; its alarm retries
+   a missed send.
+   Queue is an at-least-once wake, not accepted-event storage or product
+   authority. A regional Worker reloads the exact body, normalizes under the
+   connector manifest, and calls `WorkspaceDO.completeNormalization` with a
+   stable request hash. Normalization and provider calls happen outside the
+   object. The parent transaction inserts the normalized activity and initial
+   effect/event/batch facts, advances the receipt, and schedules bounded
+   `due_work`. Only that terminal transaction clears the watchdog and permits
+   R2 retention cleanup. Queue `send()` or DLQ exhaustion never clears it: an
+   alarm resends the stable envelope. The frozen retry policy automatically
+   enters durable `dead` after its attempt or elapsed-age ceiling, cancels that
+   watchdog transactionally, and retains R2 evidence through the dead-letter
+   policy. A privileged bounded replay increments the generation and creates a
+   new run/watchdog while preserving the dead generation; it cannot reset the
+   receipt invisibly. Queue redelivery returns the existing generation receipt.
+4. Provider I/O obtains credentials through a narrow regional service RPC to
+   the parent. An authorized Worker reads only the connection's encrypted
+   credential envelope, decrypts it in Worker memory with a regional Worker
+   secret, performs the provider call, and submits a compare-and-set rotated
+   envelope. Plaintext credentials never enter SQLite, R2, Queue, Workflow
+   input/history, logs, or client responses. Refresh lease and credential
+   version make a retry adopt a sibling's completed rotation instead of
+   redeeming a single-use refresh token twice. A provider refusal updates the
+   source's stored health belief but, except for the explicit `disabled` or
+   revoked states, does not permanently suppress future attempts.
+5. Deterministic watches, routing, and automation admission run in capped parent
+   slices. Expensive provider, model, or Daytona work uses a claim/snapshot/CAS
+   protocol: a Worker or one full-loop Workflow claims a stable operation,
+   receives a bounded immutable input or R2 reference, performs external I/O,
+   then submits a result whose lease, request hash, source revisions, and
+   authorization epochs must still match. The object never holds a transaction
+   or `blockConcurrencyWhile` across external I/O.
+6. Routing into an existing work stream commits `activity_effects`,
+   `activity_deliveries`, and a `durable_outbox` command together. The parent
+   resolves its own child directory and current visibility/connection/resource
+   epochs; it does not ask D1 to authorize the child. The `WorkstreamDO`
+   idempotently commits the delivery receipt with any incorporated parts,
+   suggested action, mention/attention facts, and return outboxes. Only the child
+   receipt settles the parent delivery.
+7. Native child events travel in the inverse direction through the child's
+   durable outbox. The parent writes an inbox receipt and the deduplicated
+   `activity_events` occurrence together. A connector incorporation never emits
+   a second human-notifiable connector event.
+8. Poll cursors advance only after the parent returns the authoritative ingress
+   receipt. A poller may retain a replayable page token in R2/Queue while work is
+   pending; it may not skip a provider page because an enqueue or normalization
+   attempt occurred.
 
-These are regional D1 tables, not Durable Object tables. They stay in D1 because
-their primary reads cross connections, activities, people, time windows, and
-work streams. They use opaque regional product identifiers after the product
-authority moves into objects; a D1 `workspace_id`, `user_id`, or `workstream_id`
-is a join key and routing hint, not proof that the resource still exists or that
-the caller may read it. Domain-internal foreign keys are retained, while foreign
-keys to retired legacy workspace/work-stream authority tables are replaced by
-epoch-stamped reference projections and current `WorkspaceDO` authorization.
+The Queue consumer batches compatible envelopes by target object and caps count,
+bytes, SQL statements, and wall time per RPC. Alarms provide correctness for
+`due_work`; Queues accelerate work and DLQs make poison envelopes visible.
+No event creates its own Workflow. This keeps bursty ingestion from monopolizing
+membership, sidebar, socket, or authorization calls.
 
-D1 timestamps remain canonical UTC ISO-8601 `TEXT` during the transition so the
-existing regional query domains can migrate online. Unless explicitly marked
-nullable, every named column is `NOT NULL`; enum, boolean, audience, and
-lifecycle relationships are database `CHECK`s rather than application-only
-assumptions. Booleans are constrained zero-or-one `INTEGER`; independently
-queried state is normalized; JSON is
-canonical, versioned, bounded, and used only for values consumed as a unit.
-Provider bodies, email bodies, files, and other large or high-churn content are
-never put in these rows. They live in jurisdictional R2 behind an opaque key,
-byte length, SHA-256, authorization selector, source revision, and explicit
-`retain_until`.
+#### `WorkspaceDO` connector and activity SQLite schema
+
+These are tables in the owning `WorkspaceDO`, not D1 tables. The workspace ID
+is implicit in the object identity and is intentionally absent from every row.
+They follow the Durable Object conventions below: epoch-millisecond `INTEGER`
+timestamps, foreign keys enabled, explicit checks, bounded canonical JSON only
+for values consumed as a unit, and no large provider body in SQLite. Unless a
+column is explicitly nullable, it is `NOT NULL`.
 
 ##### Ingress, normalization, and effects
 
 | Table | Columns, key, and indexes | Contract |
 | --- | --- | --- |
-| `connector_ingress_receipts` | Composite primary key `(provider,delivery_id)`; `workspace_id TEXT`, `connection_id TEXT`, `ingress_kind TEXT` in `webhook`, `poll`, `replay`, `event_type TEXT`, nullable `payload_ref TEXT`, nullable `payload_hash TEXT`, nullable `payload_bytes INTEGER`, nullable `verification_key_version TEXT`, `status TEXT` in `accepted`, `normalized`, `processed`, `retry`, `dead`, `ignored`, nullable `activity_id TEXT`, `attempt_count INTEGER`, nullable `next_retry_at TEXT`, nullable `error_code TEXT`, `received_at TEXT`, nullable `processed_at TEXT`, `retain_until TEXT`; indexes `(status,next_retry_at,received_at)` and `(workspace_id,received_at DESC)`. | Regional replay/idempotency receipt after signature/checkpoint validation. Webhook rows require a payload reference/hash/length; a polling item may be reconstructed from the provider cursor and omit them. The row stores no signing secret or bearer token. Reusing a provider delivery ID with different bytes is corruption, not a newer delivery. Current provider-specific receipt/job tables converge behind this contract during migration rather than remaining independent authorities. |
-| `activities` | `id TEXT PRIMARY KEY`, `workspace_id TEXT`, `connection_id TEXT`, `connection_scope TEXT` in `personal`, `workspace`, nullable `connection_owner_user_id TEXT`, `provider TEXT`, `provider_event_id TEXT`, `event_type TEXT`, nullable `resource_type TEXT`, nullable `provider_resource_id TEXT`, canonical `actor_json TEXT`, `subject_json TEXT`, `occurred_at TEXT`, `received_at TEXT`, bounded `title TEXT`, `summary TEXT`, `text_snippet TEXT`, nullable `payload_ref TEXT`, nullable `payload_hash TEXT`, `visibility_json TEXT`, `target_user_ids_json TEXT`, `external_people_json TEXT`, `entity_keys_json TEXT`, `dedupe_key TEXT`, `source_revision TEXT`, `authorization_selector_hash TEXT`, `digestible INTEGER`, `processing_status TEXT` in `pending`, `processing`, `processed`, `failed`, `dead`, nullable `lease_id TEXT`, nullable `lease_expires_at TEXT`, `attempt_count INTEGER`, nullable `next_retry_at TEXT`, nullable `error_code TEXT`, nullable `processed_at TEXT`, `metadata_json TEXT`; unique `(connection_id,provider_event_id,event_type)` and `(connection_id,dedupe_key)`; indexes `(workspace_id,processing_status,next_retry_at,received_at)`, `(workspace_id,provider,provider_resource_id)`, and `(connection_id,received_at DESC)`. | Canonical normalized provider-ingress record. Personal scope requires its owner. `digestible` is frozen from the connector manifest at normalization so later manifest edits do not rewrite history. Lease columns are explicit rather than hidden inside metadata. A payload reference does not grant access: every read checks the selector and source revision first. |
-| `activity_effects` | `effect_id TEXT PRIMARY KEY`, `activity_id TEXT REFERENCES activities`, `effect_kind TEXT` in `resource_watch`, `automation`, `workstream_delivery`, `activity_event`, `opportunity_candidate`, `ignored`, `effect_key TEXT`, nullable `target_id TEXT`, `request_hash TEXT`, `source_revision TEXT`, `authorization_selector_hash TEXT`, `state TEXT` in `planned`, `delivering`, `applied`, `rejected`, `dead`, nullable `receipt_hash TEXT`, `attempt_count INTEGER`, nullable `next_retry_at TEXT`, nullable `error_code TEXT`, `created_at TEXT`, `updated_at TEXT`; unique `(activity_id,effect_kind,effect_key)` and indexes `(state,next_retry_at,created_at)` and `(activity_id,state)`. | Durable decision/effect ledger. It records why an activity was claimed and makes reprocessing produce the same deterministic effects. `opportunity_candidate` is legal only when no resource-watch, automation, or existing-work routing effect claimed the activity under the same processing revision. `ignored` records a deliberate terminal decision rather than relying on absence. |
-| `activity_deliveries` | `delivery_id TEXT PRIMARY KEY`, `effect_id TEXT UNIQUE REFERENCES activity_effects`, `activity_id TEXT REFERENCES activities`, `target_kind TEXT` in `workstream_part`, `workstream_suggested_action`, `automation_run`, `regional_projection`, `target_id TEXT`, `target_generation INTEGER`, `authority_epoch INTEGER`, `source_revision TEXT`, `authorization_selector_hash TEXT`, `request_hash TEXT`, `state TEXT` in `pending`, `inflight`, `applied`, `rejected`, `dead`, `attempt_count INTEGER`, `not_before TEXT`, nullable `receipt_hash TEXT`, nullable `error_code TEXT`, `created_at TEXT`, `updated_at TEXT`, nullable `settled_at TEXT`; indexes `(state,not_before,created_at)` and `(target_kind,target_id,state)`. | Regional D1 outbox for effects that cross an authority boundary. It contains identifiers and bounded display/locator metadata only; large provider content remains behind `activities.payload_ref`. The destination receipt, not Queue acknowledgement, settles the row. A dead row remains visible and replayable under the same delivery identity. |
+| `connector_domain_authority` | Singleton `id INTEGER PRIMARY KEY CHECK(id=1)`, `generation INTEGER`, `route_epoch INTEGER`, `state TEXT CHECK IN ('legacy_shadow','prepared','open','quarantined','deleted')`, nullable `final_hold_seq INTEGER`, nullable `prepared_hash TEXT`, nullable `route_receipt_hash TEXT`, nullable `opened_at INTEGER`, `updated_at INTEGER`; unique `(generation,route_epoch)`. | Independent authority gate for the connector/activity domain inside an otherwise-live parent. `legacy_shadow` and `prepared` generations may import and verify but cannot accept ingress, poll, refresh credentials, read product activity, schedule a digest, rank, notify, or deliver an effect. Only the D1 route CAS receipt can atomically open the exact prepared generation. Every connector task, receipt, cursor, outbox command, and provider-facing call carries and rechecks this generation. |
+| `connector_sources` | `connection_id TEXT PRIMARY KEY`, `provider TEXT`, `connection_scope TEXT CHECK IN ('personal','workspace')`, nullable `owner_user_id TEXT REFERENCES members(user_id)`, `audience_principal_key TEXT`, `connector_generation INTEGER`, `route_epoch INTEGER`, `source_epoch INTEGER`, `authorization_revision TEXT`, `resource_policy_hash TEXT`, `status TEXT CHECK IN ('active','paused','revoked','deleted','disabled','needs_reconnect','error')`, nullable bounded `poll_cursor_json TEXT`, `poll_cursor_version INTEGER`, `created_at INTEGER`, `updated_at INTEGER`; unique `(connection_id,provider)` and `(connection_id,provider,connection_scope,audience_principal_key)`; indexes `(status,provider)` and `(owner_user_id,status)`. | Local connection/routing authority required to accept or expose activity. A shape check requires personal sources to use the canonical `user:<owner_user_id>` principal key and workspace sources to have no owner and key `workspace`. Composite keys make provider and audience inseparable from the connection in imported/normalized rows. The generation/route must equal the open domain row. Cursor CAS uses `poll_cursor_version`; source or policy revocation advances the relevant epoch before cleanup. `disabled` is a user decision; `needs_reconnect` and `error` are retryable health beliefs. |
+| `connector_credentials` | `connection_id TEXT PRIMARY KEY REFERENCES connector_sources(connection_id) ON DELETE CASCADE`, `encrypted_credentials TEXT`, `credential_iv TEXT`, `credential_key_version INTEGER`, `credential_version INTEGER`, `granted_scopes_json TEXT`, nullable `expires_at INTEGER`, nullable `refresh_lease_id TEXT`, nullable `refresh_lease_expires_at INTEGER`, nullable `last_refresh_error_code TEXT`, `created_at INTEGER`, `updated_at INTEGER`; index `(expires_at)`. | Workspace-local encrypted credential authority replacing the legacy D1 credential columns. A regional Worker secret provides envelope decryption; the object exposes ciphertext only through an authenticated service-binding RPC and accepts rotated ciphertext only by credential-version/lease CAS. It never exposes this table to member APIs. This preserves Avalon's existing one-door refresh/rotation semantics without making regional D1 a product authority. |
+| `resource_selectors` | Composite primary key `(selector_id,selector_version)`; `connection_id TEXT REFERENCES connector_sources(connection_id) ON DELETE CASCADE`, `selector_kind TEXT`, `resource_type TEXT`, `provider_resource_id TEXT`, `source_revision TEXT`, `policy_epoch INTEGER`, `selector_hash TEXT`, `status TEXT CHECK IN ('active','superseded','refreshing','revoked','deleted')`, `created_at INTEGER`, `updated_at INTEGER`; unique partial `(selector_id)` and `(connection_id,resource_type,provider_resource_id)` where `status='active'`; indexes `(connection_id,status,policy_epoch)` and `(provider_resource_id,status)`. | Immutable normalized authorization versions, not merely opaque hashes. Refresh atomically supersedes the prior row and inserts one active version; no active row, or a `refreshing`/revoked head, fails closed while historical versions remain referentially valid. Narrowing provider ACLs advances the selector policy/version and `workspace.source_authorization_epoch` in the same transaction before cleanup, brief regeneration, or reranking. A historical hash detects input drift but never answers who may read now. |
+| `resource_selector_principals` | Composite primary key `(selector_id,selector_version,principal_key)` with composite foreign key `(selector_id,selector_version) REFERENCES resource_selectors(selector_id,selector_version) ON DELETE CASCADE`; `principal_kind TEXT CHECK IN ('workspace','user','workstream')`, `principal_key TEXT`, nullable `user_id TEXT REFERENCES members(user_id)`, nullable `workstream_id TEXT REFERENCES workstreams(workstream_id)`, `decision TEXT CHECK IN ('allow','deny')`, `policy_epoch INTEGER`, `updated_at INTEGER`; indexes `(principal_key,decision,selector_id)` and `(selector_id,decision,principal_key)`. | Shape checks bind workspace to key `workspace` and no IDs, user to `user:<user_id>` and only `user_id`, and work stream to `workstream:<workstream_id>` and only that ID. A trigger rejects any non-owner allow on a personal source. A current deny dominates every allow. Reads and effects require current membership plus an applicable allow and no deny; provider ACL refresh writes the new version and advances the source deny floor before old grants can be used. |
+| `connector_ingress_receipts` | Composite primary key `(connection_id,provider,delivery_id)` with `connection_id TEXT`, `provider TEXT`, composite foreign key `(connection_id,provider) REFERENCES connector_sources(connection_id,provider)`, `connector_generation INTEGER`, `ingress_kind TEXT CHECK IN ('webhook','poll','replay')`, `event_type TEXT`, nullable `payload_ref TEXT`, nullable `payload_hash TEXT`, nullable `payload_bytes INTEGER`, nullable `verification_key_version TEXT`, `request_hash TEXT`, `current_normalization_generation INTEGER`, `status TEXT CHECK IN ('accepted','normalized','processed','retry','dead','ignored')`, nullable `activity_id TEXT REFERENCES activities(id)`, `attempt_count INTEGER`, nullable `next_retry_at INTEGER`, nullable `error_code TEXT`, `received_at INTEGER`, nullable `processed_at INTEGER`, `retain_until INTEGER`; indexes `(status,next_retry_at,received_at)` and `(connection_id,received_at DESC)`. | Authoritative replay/idempotency receipt after exact-byte verification and before webhook acknowledgement. The composite source key prevents provider/connection mismatch and two installations of the same provider from colliding on a provider-local delivery ID. The current generation points to the one active/dead normalization run. Webhooks require a workspace-prefixed payload reference/hash/length; poll items may use replayable provider identity instead. A duplicate request hash under the same three-part key returns the same result; another hash is corruption. |
+| `connector_normalization_runs` | Composite primary key `(connection_id,provider,delivery_id,generation)` with composite foreign key `(connection_id,provider,delivery_id) REFERENCES connector_ingress_receipts ON DELETE CASCADE`; `generation INTEGER CHECK(generation>0)`, `request_hash TEXT`, `normalization_outbox_message_id TEXT UNIQUE REFERENCES durable_outbox(message_id)`, `retry_policy_version INTEGER`, `attempt_ceiling INTEGER`, `age_ceiling_ms INTEGER`, `status TEXT CHECK IN ('queued','running','retry','normalized','dead','superseded')`, `attempt_count INTEGER`, nullable `first_attempt_at INTEGER`, nullable `next_retry_at INTEGER`, nullable `error_code TEXT`, nullable `terminal_at INTEGER`, `created_by_kind TEXT CHECK IN ('ingress','operator_replay')`, nullable `created_by_user_id TEXT`, `created_at INTEGER`, `updated_at INTEGER`; unique partial `(connection_id,provider,delivery_id)` where `status IN ('queued','running','retry')`; index `(status,next_retry_at,first_attempt_at)`. | Durable watchdog generation and its Queue-wake intent. The attempt/age ceilings are frozen on creation. Crossing either ceiling writes `dead`, updates the receipt, cancels `due_work`, and preserves payload retention in one parent transaction. A privileged replay creates the next generation/outbox/watchdog with an audit principal and stable request hash; prior generations remain immutable evidence. |
+| `activities` | `id TEXT PRIMARY KEY`, `connection_id TEXT`, `connection_scope TEXT CHECK IN ('personal','workspace')`, `audience_principal_key TEXT`, `provider TEXT`, `provider_event_id TEXT`, `event_type TEXT`, nullable `resource_type TEXT`, nullable `provider_resource_id TEXT`, bounded canonical `actor_json TEXT`, `subject_json TEXT`, `occurred_at INTEGER`, `received_at INTEGER`, bounded `title TEXT`, `summary TEXT`, `text_snippet TEXT`, nullable `payload_ref TEXT`, nullable `payload_hash TEXT`, `visibility_json TEXT`, `target_user_ids_json TEXT`, `external_people_json TEXT`, `entity_keys_json TEXT`, `dedupe_key TEXT`, `source_revision TEXT`, `authorization_selector_id TEXT`, `authorization_selector_version INTEGER`, `authorization_selector_hash TEXT`, `digestible INTEGER CHECK IN (0,1)`, `processing_status TEXT CHECK IN ('pending','processing','processed','failed','dead')`, nullable `lease_id TEXT`, nullable `lease_expires_at INTEGER`, `attempt_count INTEGER`, nullable `next_retry_at INTEGER`, nullable `error_code TEXT`, nullable `processed_at INTEGER`, `metadata_json TEXT`; composite foreign keys `(connection_id,provider,connection_scope,audience_principal_key) REFERENCES connector_sources(connection_id,provider,connection_scope,audience_principal_key)` and `(authorization_selector_id,authorization_selector_version) REFERENCES resource_selectors(selector_id,selector_version)`; unique `(connection_id,provider_event_id,event_type)` and `(connection_id,dedupe_key)`; indexes `(processing_status,next_retry_at,received_at)`, `(authorization_selector_id,authorization_selector_version)`, `(provider,provider_resource_id)`, and `(connection_id,received_at DESC)`. | Canonical normalized provider activity. The composite source foreign key makes it impossible for a malformed normalizer/import to change provider or widen a personal connection into workspace audience. `digestible` is frozen from the manifest. A payload reference and selector hash never grant access: the active selector version for that ID, principal decisions, and source revision are rechecked first. |
+| `activity_effects` | `effect_id TEXT PRIMARY KEY`, `activity_id TEXT REFERENCES activities`, `effect_kind TEXT CHECK IN ('resource_watch','automation','workstream_delivery','activity_event','opportunity_candidate','ignored')`, `effect_key TEXT`, nullable `target_id TEXT`, `request_hash TEXT`, `source_revision TEXT`, `authorization_selector_id TEXT`, `authorization_selector_version INTEGER`, `authorization_selector_hash TEXT`, `state TEXT CHECK IN ('planned','delivering','applied','rejected','dead')`, nullable `receipt_hash TEXT`, `attempt_count INTEGER`, nullable `next_retry_at INTEGER`, nullable `error_code TEXT`, `created_at INTEGER`, `updated_at INTEGER`; composite foreign key `(authorization_selector_id,authorization_selector_version) REFERENCES resource_selectors(selector_id,selector_version)`; unique `(activity_id,effect_kind,effect_key)`; indexes `(state,next_retry_at,created_at)`, `(authorization_selector_id,authorization_selector_version)`, and `(activity_id,state)`. | Durable deterministic decision ledger. A claim must still resolve the recorded selector to a current allow before an external or child effect. `opportunity_candidate` is legal only when no watch, automation, or existing-work routing claimed that processing revision. `ignored` is an explicit terminal decision. |
+| `activity_deliveries` | `delivery_id TEXT PRIMARY KEY`, `effect_id TEXT UNIQUE REFERENCES activity_effects`, `activity_id TEXT REFERENCES activities`, `target_kind TEXT CHECK IN ('workstream_part','workstream_suggested_action','automation_run')`, `target_id TEXT`, `target_generation INTEGER`, `authority_epoch INTEGER`, `source_revision TEXT`, `authorization_selector_id TEXT`, `authorization_selector_version INTEGER`, `authorization_selector_hash TEXT`, `request_hash TEXT`, `outbox_message_id TEXT UNIQUE REFERENCES durable_outbox(message_id)`, `state TEXT CHECK IN ('pending','inflight','applied','rejected','dead')`, `attempt_count INTEGER`, `not_before INTEGER`, nullable `receipt_hash TEXT`, nullable `error_code TEXT`, `created_at INTEGER`, `updated_at INTEGER`, nullable `settled_at INTEGER`; composite foreign key `(authorization_selector_id,authorization_selector_version) REFERENCES resource_selectors(selector_id,selector_version)`; indexes `(state,not_before,created_at)`, `(authorization_selector_id,authorization_selector_version)`, and `(target_kind,target_id,state)`. | Domain delivery ledger paired with the generic local outbox. Current source, selector, target, and authority epochs are rechecked before send. The destination receipt, not an RPC or Queue acknowledgement, settles the row; a dead row remains inspectable and replayable under the same identity. |
+| `suggested_action_feedback_receipts` | `feedback_id TEXT PRIMARY KEY`, `action_id TEXT`, `action_version INTEGER`, `activity_id TEXT REFERENCES activities`, `workstream_id TEXT REFERENCES workstreams(workstream_id)`, `result TEXT CHECK IN ('accepted','dismissed','retracted','expired')`, nullable `resolved_by_user_id TEXT`, nullable `authored_part_id TEXT`, `source_revision TEXT`, `request_hash TEXT`, `receipt_hash TEXT`, `received_at INTEGER`; unique `(action_id,action_version,result,request_hash)`; index `(activity_id,received_at)`. | Parent receipt for a child-owned suggested-action outcome. It can update workspace-local routing/tuning state but cannot rewrite the child's resolved card. |
 
-An ingress handler first writes exact verified bytes to a content-addressed
-regional R2 key. It then transactionally inserts the ingress receipt and the
-normalized activity, or resolves their existing identities. If the D1
-transaction fails, the unreferenced R2 object is harmless and a bounded orphan
-reaper removes it after the maximum retry window. If R2 fails, the webhook is
-not acknowledged as accepted. Pollers similarly commit their provider cursor
-with the normalized activity or retain a replayable page token; advancing a
-cursor without the activity row is forbidden.
+Within one parent database, `connector_sources` is the authorization/cursor root;
+each ingress receipt owns immutable bounded `connector_normalization_runs` and
+points to the one normalized `activities` row, which owns stable
+`activity_effects`. A cross-child effect owns one `activity_deliveries`
+row and one generic `durable_outbox` message. After commit, the parent resolves
+the target from its local `workstreams` directory and sends that message. The
+child atomically writes its `activity_delivery_receipts` plus any part or
+operational action; the recorded receipt settles the parent delivery. Child
+resolution travels back through the child's generic outbox and lands in the
+parent feedback receipt. There is no row shared across the two SQLite databases
+and no foreign key pretending that this RPC boundary is atomic.
 
-Only after the normalized row commits does the producer send the Queue envelope
-`{region, workspace_id, activity_id}`. The regional consumer claims
-`activities.lease_id`, reloads current connection/resource policy, and records
-every deterministic decision in `activity_effects`. All D1-local facts for one
-processing revision—including the opportunity-batch reference and the
-`activity_events` projection below—commit before the activity becomes
-`processed`. Cross-object work instead commits an `activity_deliveries` row;
-delivery completion may lag without replaying the classification. A stale lease
-can be stolen, but stable effect/delivery identities prevent a second automation,
-child part, suggested action, or digest event.
+The source receipt, normalized activity, deterministic local effects, first-party
+event, and opportunity-batch membership for one revision commit in one parent
+transaction before `activities.processing_status='processed'`. Cross-object
+commands are immutable outbox intents in that transaction. A stale claim may be
+stolen, but stable effect, delivery, and inbox identities prevent a second
+automation, child part, suggested action, or digest event.
 
-##### First-party activity log and digest storage
-
-| Table | Columns, key, and indexes | Contract |
-| --- | --- | --- |
-| `activity_events` | `log_sequence INTEGER PRIMARY KEY AUTOINCREMENT`, `id TEXT UNIQUE`, `workspace_id TEXT`, `event_type TEXT`, `subject_type TEXT`, nullable `subject_id TEXT`, nullable `subject_sequence_number INTEGER`, `actor_type TEXT` in `user`, `agent`, `system`, `external`, nullable `actor_user_id TEXT`, `actor_label TEXT`, `title TEXT`, `body TEXT`, nullable `canonical_url TEXT`, `audience_kind TEXT` in `workspace`, `user`, `workstream`, nullable `audience_user_id TEXT`, nullable `audience_workstream_id TEXT`, `digestible INTEGER`, `occurred_at TEXT`, `created_at TEXT`, `source_kind TEXT`, nullable `source_id TEXT`, `source_revision TEXT`, `authorization_selector_hash TEXT`, `dedupe_key TEXT`, `metadata_json TEXT`; unique `(workspace_id,dedupe_key)`; indexes `(workspace_id,log_sequence)`, partial `(workspace_id,audience_user_id,log_sequence)`, and partial `(workspace_id,audience_workstream_id,log_sequence)`. | Append-only first-party ordered log. Audience shape requires exactly the ID selected by `audience_kind`. `log_sequence`, not provider time, is the digest cursor. Connector rows are projected once from `activities`; native Avalon events can enter without an activity. `digestible` answers whether to tell someone, while audience answers whether they may read it. |
-| `activity_event_targets` | Composite primary key `(event_id,user_id,relation)` with `event_id TEXT REFERENCES activity_events ON DELETE CASCADE`, `workspace_id TEXT`, `user_id TEXT`, open `relation TEXT`, `created_at TEXT`; index `(workspace_id,user_id,created_at DESC,event_id)`. | Named involvement—mentioned, assigned, review-requested, and future relations—used to emphasize a person's digest. A target never widens the event audience. Event plus targets are inserted in one D1 transaction; retry fills the same keys rather than creating another event. |
-| `digest_schedules` | `id TEXT PRIMARY KEY`, `workspace_id TEXT`, `user_id TEXT`, `day_mask INTEGER CHECK BETWEEN 0 AND 127`, `enabled INTEGER`, `execution_principal_json TEXT`, `version INTEGER`, `created_at TEXT`, `updated_at TEXT`; unique `(workspace_id,user_id)`. | One regional digest policy per member/workspace. Timezone remains the account authority and is not copied here. Disabling retains policy but removes derived due work. |
-| `digest_schedule_times` | Composite primary key `(digest_schedule_id,minute_of_day)` with `digest_schedule_id TEXT REFERENCES digest_schedules ON DELETE CASCADE` and `minute_of_day INTEGER CHECK BETWEEN 0 AND 1439`. | One local wall-clock minute per occurrence pattern. Derived scheduler rows may be rebuilt from this set and the user's current timezone. |
-| `digest_delivery_targets` | `id TEXT PRIMARY KEY`, `digest_schedule_id TEXT REFERENCES digest_schedules`, `workspace_id TEXT`, `user_id TEXT`, `target_type TEXT`, nullable `connection_id TEXT`, nullable `provider_tenant_id TEXT`, nullable `provider_user_id TEXT`, nullable `email_address TEXT`, `status TEXT` in `active`, `needs_input`, `disabled`, nullable `last_delivered_at TEXT`, nullable `last_delivered_delivery_id TEXT`, nullable `last_error_code TEXT`, `created_at TEXT`, `updated_at TEXT`; unique `(digest_schedule_id,target_type)` plus index `(connection_id,status)`. | Frozen destination identity. Email requires only the address; connector delivery requires connection, tenant, and provider user and forbids an email address. Destination validity is rechecked before send. |
-| `digest_deliveries` | `id TEXT PRIMARY KEY`, `workspace_id TEXT`, `digest_schedule_id TEXT REFERENCES digest_schedules`, `user_id TEXT`, `planned_for TEXT`, nullable `cursor_from INTEGER`, `cursor_through INTEGER`, `authorization_revision_hash TEXT`, `event_count INTEGER`, `highlight_count INTEGER`, nullable `brief_ref TEXT`, nullable `brief_hash TEXT`, nullable `workflow_instance_id TEXT UNIQUE`, `status TEXT` in `planned`, `running`, `delivering`, `delivered`, `partial`, `empty`, `failed`, `needs_input`, nullable `summary_markdown TEXT`, nullable `error_code TEXT`, `created_at TEXT`, `updated_at TEXT`, nullable `settled_at TEXT`; unique `(digest_schedule_id,planned_for)` and index `(digest_schedule_id,status,planned_for DESC)`. | One idempotent occurrence, frozen cursor window, generic-loop identity, and aggregate result. `brief_ref` is a bounded, encrypted regional R2 artifact containing the exact authorized model input, not a copy of all events in Workflow state. `empty` advances the cursor without inference. `partial` means at least one frozen target succeeded and at least one did not. This cursor means “already told,” never “already read,” and cannot update work-stream unread waterlines. |
-| `digest_target_deliveries` | Composite primary key `(digest_delivery_id,target_id)` with `digest_delivery_id TEXT REFERENCES digest_deliveries`, `target_id TEXT REFERENCES digest_delivery_targets`, `target_version INTEGER`, `request_hash TEXT`, nullable `provider_operation_id TEXT`, `status TEXT` in `pending`, `inflight`, `delivered`, `needs_input`, `failed`, `ambiguous`, `attempt_count INTEGER`, nullable `next_retry_at TEXT`, nullable `error_code TEXT`, nullable `receipt_hash TEXT`, `created_at TEXT`, `updated_at TEXT`, nullable `settled_at TEXT`; indexes `(status,next_retry_at,created_at)` and `(target_id,created_at DESC)`. | Per-destination idempotency and settlement for an occurrence. A retry reconciles a provider operation before sending again. Updating `digest_delivery_targets.last_delivered_*` and settling this row occurs in one D1 transaction; the aggregate occurrence is derived from all frozen target rows rather than pretending a multi-destination send is atomic. |
-
-When a digest fires, it claims the unique schedule occurrence, freezes
-`cursor_through` at the workspace's current maximum `log_sequence`, and starts
-after the newest settled delivery's `cursor_through`. It reads only digestible
-events in that half-open window, applies current workspace/work-stream audience
-and each event's source selector in bounded batches, and records the resulting
-brief hash/revision before starting the generic agent-loop Workflow. Events
-committed after the upper cursor belong to the next digest. The Workflow receives
-only the delivery ID and brief reference. Before external delivery, the digest
-owner rechecks the frozen authorization revision; revocation invalidates or
-redacts and regenerates the summary rather than sending stale source content.
-There is intentionally no per-recipient copy of every event and no per-event
-digest membership table: the cursor window plus target index provides the query
-at much lower write amplification. There is one delivery row per configured
-destination because external sends have independent receipts and failure modes.
-`activity_events` retains the existing
-ninety-day reconnect/digest window; delivery rows and summaries follow the
-user-facing delivery/audit deletion policy independently.
-
-##### Suggested-work and suggested-action derivation
+##### First-party activity log and digests
 
 | Table | Columns, key, and indexes | Contract |
 | --- | --- | --- |
-| `opportunity_batch_windows` | `id TEXT PRIMARY KEY`, `workspace_id TEXT`, `partition_key TEXT`, `audience_scope TEXT` in `personal`, `workspace`, nullable `audience_user_id TEXT`, `first_event_at TEXT`, `last_event_at TEXT`, `process_after TEXT`, `status TEXT` in `queued`, `processing`, `completed`, `failed`, nullable `lease_id TEXT`, nullable `lease_expires_at TEXT`, `attempt_count INTEGER`, nullable `error_code TEXT`, `created_at TEXT`, `updated_at TEXT`, nullable `completed_at TEXT`; unique partial `(workspace_id,partition_key)` where `status='queued'` and index `(status,process_after)`. | Debounces visibility-compatible evidence before model admission. Personal windows require one user; workspace windows forbid one. New evidence arriving while a window is processing enters a new queued window rather than changing the inference input. A failed window remains retryable/dead-letter visible rather than silently abandoning its events. |
-| `opportunity_batch_events` | `id TEXT PRIMARY KEY`, `window_id TEXT REFERENCES opportunity_batch_windows`, `workspace_id TEXT`, `partition_key TEXT`, `source_kind TEXT` in `activity`, `native_event`, `source_id TEXT`, `source_revision TEXT`, `authorization_selector_hash TEXT`, `occurred_at TEXT`, `input_characters INTEGER`, `status TEXT` in `pending`, `processing`, `completed`, `failed`, `dead`, `attempt_count INTEGER`, nullable `error_code TEXT`, `created_at TEXT`, `updated_at TEXT`; unique `(workspace_id,partition_key,source_kind,source_id,source_revision)` and index `(window_id,status,occurred_at,id)`. | Immutable membership of source evidence in a batch. It references normalized activity/native facts rather than copying provider bodies. Revised source evidence is a new revision, while a delivery retry resolves the existing row. |
-| `work_opportunities` | `id TEXT PRIMARY KEY`, `workspace_id TEXT`, `audience_scope TEXT` in `personal`, `workspace`, nullable `audience_user_id TEXT`, bounded `display_prompt TEXT`, `execution_prompt TEXT`, `admission_reasoning TEXT`, `provider_icon TEXT`, `source_label TEXT`, `source_fingerprint TEXT`, `authorization_selector_hash TEXT`, `source_revision_hash TEXT`, `version INTEGER`, `display_prompt_hash TEXT`, `execution_prompt_hash TEXT`, `status TEXT` in `active`, `starting`, `started`, `superseded`, `expired`, `revoked`, nullable `created_workstream_id TEXT`, nullable `started_by_user_id TEXT`, nullable `start_idempotency_key TEXT`, `expires_at TEXT`, `created_at TEXT`, `updated_at TEXT`, nullable `started_at TEXT`; unique `(workspace_id,source_fingerprint)` and index `(workspace_id,status,expires_at,updated_at DESC)`. | Authoritative pre-workstream suggestion. Inference may narrow but never widen the batch audience. Source revision or authorization invalidation moves the opportunity to `revoked` before display cleanup; prompts are derived display/execution artifacts, not raw provider instructions. |
-| `opportunity_provenance_nodes` / `opportunity_provenance_edges` / `work_opportunity_provenance_roots` | Nodes have `id TEXT PRIMARY KEY`, workspace, kind, nullable opaque source/provider/tenant/URL fields, bounded label, occurred time, `visibility_scope`, nullable `visibility_user_id`, locator JSON, selector/revision hashes, and creation time; unique source/visibility identity. Edges have composite `(parent_node_id,child_node_id,relationship)` and forbid self-edges. Roots map `(opportunity_id,node_id)` with stable position. | Visibility-scoped evidence graph. Every traversal intersects node visibility with opportunity audience and current source authorization. Starting a suggestion snapshots only authorized roots; graph connectivity never authorizes a node. |
-| `work_opportunity_user_links` | `id TEXT PRIMARY KEY`, `workspace_id TEXT`, `opportunity_id TEXT REFERENCES work_opportunities`, nullable `user_id TEXT`, `role TEXT`, `resolution TEXT` in `verified`, `inferred`, `ambiguous`, `unresolved`, bounded `reasoning TEXT`, nullable `provenance_node_id TEXT`, `created_at TEXT`, `updated_at TEXT`; unique `(opportunity_id,user_id,role,resolution)` and index `(workspace_id,user_id,resolution,opportunity_id)`. | Records whom evidence names and how that mapping was established. It affects ranking/emphasis but does not expand personal or resource visibility. |
-| `work_opportunity_user_states` | Composite primary key `(opportunity_id,user_id)`; `workspace_id TEXT`, `status TEXT` in `impressed`, `dismissed`, `started`, `impression_count INTEGER`, nullable `first_impressed_at TEXT`, nullable `last_impressed_at TEXT`, nullable `resolved_at TEXT`, nullable `created_workstream_id TEXT`, `updated_at TEXT`. | Per-member opinion and exposure. Dismissing a workspace opportunity for one member does not dismiss it for another; starting follows the promotion protocol and may globally terminalize a workspace-origin opportunity only after the child exists. |
-| Regional D1 `suggested_work_sets` | Composite primary key `(workspace_id,user_id)`; `candidate_fingerprint TEXT`, ordered `opportunity_ids_json TEXT`, bounded `ranking_reasoning TEXT`, nullable `model TEXT`, `status TEXT` in `stale`, `ranking`, `ready`, `failed`, nullable `lease_id TEXT`, nullable `lease_expires_at TEXT`, nullable `due_at TEXT`, nullable `last_ranked_at TEXT`, `request_seq INTEGER`, `created_at TEXT`, `updated_at TEXT`; partial index `(due_at)` where non-null. | Authoritative stored ranking read by the home API; requests never run ranking. Candidate fingerprint covers the exact eligible opportunity IDs and versions. This is distinct from the bounded `WorkspaceDO.suggested_work_sets/items` display projection, which may be deleted and rebuilt. |
-| `suggested_work_ranking_rounds` | `id TEXT PRIMARY KEY`, `workspace_id TEXT`, `user_id TEXT`, `request_seq INTEGER`, `candidate_ids_json TEXT`, `selected_ids_json TEXT`, bounded `reasoning TEXT`, nullable `model TEXT`, `round_number INTEGER`, `created_at TEXT`; index `(workspace_id,user_id,request_seq,round_number)`. | Explainable bounded tournament history. It is not the read cache and cannot make a failed or stale set current. |
-| `work_opportunity_snapshots` | `id TEXT PRIMARY KEY`, `opportunity_id TEXT REFERENCES work_opportunities`, `opportunity_version INTEGER`, `selected_by_user_id TEXT`, prompt hashes, `authorization_revision_hash TEXT`, `identity_links_json TEXT`, `provenance_json TEXT`, `created_at TEXT`; unique `(opportunity_id,opportunity_version,selected_by_user_id)`. | Immutable evidence of what an authorized member selected and what was used to initialize the child. It stores bounded provenance/identity projections, never raw provider content. |
-| `suggested_action_feedback_receipts` | `feedback_id TEXT PRIMARY KEY`, `action_id TEXT`, `action_version INTEGER`, `activity_id TEXT`, `workstream_id TEXT`, `result TEXT` in `accepted`, `dismissed`, `retracted`, `expired`, nullable `resolved_by_user_id TEXT`, nullable `authored_part_id TEXT`, `source_revision TEXT`, `request_hash TEXT`, `receipt_hash TEXT`, `received_at TEXT`; unique `(action_id,action_version,result,request_hash)` and index `(activity_id,received_at)`. | Regional receipt for a child-owned in-workstream suggested-action outcome. It updates routing/tuning state but does not control the child's card after the receipt is accepted. Replayed feedback returns the same receipt. |
+| `activity_events` | `log_sequence INTEGER PRIMARY KEY AUTOINCREMENT`, `id TEXT UNIQUE`, `event_type TEXT`, `subject_type TEXT`, nullable `subject_id TEXT`, nullable `subject_sequence_number INTEGER`, `actor_type TEXT CHECK IN ('user','agent','system','external')`, nullable `actor_user_id TEXT REFERENCES members(user_id)`, `actor_label TEXT`, `title TEXT`, `body TEXT`, nullable `canonical_url TEXT`, `audience_kind TEXT CHECK IN ('workspace','user','workstream')`, `audience_principal_key TEXT`, nullable `audience_user_id TEXT REFERENCES members(user_id)`, nullable `audience_workstream_id TEXT REFERENCES workstreams(workstream_id)`, `digestible INTEGER CHECK IN (0,1)`, `occurred_at INTEGER`, `created_at INTEGER`, `source_kind TEXT`, nullable `source_id TEXT`, `source_revision TEXT`, nullable `authorization_selector_id TEXT`, nullable `authorization_selector_version INTEGER`, `authorization_selector_hash TEXT`, `dedupe_key TEXT UNIQUE`, `metadata_json TEXT`; nullable composite foreign key `(authorization_selector_id,authorization_selector_version) REFERENCES resource_selectors(selector_id,selector_version)`; indexes `(log_sequence)`, `(authorization_selector_id,authorization_selector_version,log_sequence)`, partial `(audience_user_id,log_sequence)`, and partial `(audience_workstream_id,log_sequence)`. | Append-only ordered workspace log. A shape check binds `workspace` to principal `workspace` and no audience ID, `user` to `user:<audience_user_id>`, and `workstream` to `workstream:<audience_workstream_id>`. Native events may have no connector selector; connector-derived events require one and are hidden unless its current version authorizes the reader. `log_sequence`, not provider time, is the digest cursor. |
+| `activity_event_targets` | Composite primary key `(event_id,user_id,relation)` with `event_id TEXT REFERENCES activity_events(id) ON DELETE CASCADE`, `user_id TEXT REFERENCES members(user_id)`, open `relation TEXT`, `created_at INTEGER`; index `(user_id,created_at DESC,event_id)`. | Named involvement such as mentioned, assigned, or review-requested. A target affects emphasis and never widens audience. Event and targets commit together. |
+| `digest_schedules` | `id TEXT PRIMARY KEY`, `user_id TEXT UNIQUE REFERENCES members(user_id)`, `day_mask INTEGER CHECK BETWEEN 0 AND 127`, `enabled INTEGER CHECK IN (0,1)`, `execution_principal_json TEXT`, `version INTEGER`, `created_at INTEGER`, `updated_at INTEGER`; unique `(id,user_id)`. | One digest policy per workspace member. Timezone remains the account authority. Updating it refreshes bounded `due_work`; alarms are correctness and Queue/Cron may accelerate. The composite identity lets child rows prove that a delivery and target belong to this schedule's user. |
+| `digest_schedule_times` | Composite primary key `(digest_schedule_id,minute_of_day)` with `digest_schedule_id TEXT REFERENCES digest_schedules ON DELETE CASCADE` and `minute_of_day INTEGER CHECK BETWEEN 0 AND 1439`. | Local wall-clock occurrence set for the schedule. |
+| `digest_delivery_targets` | `id TEXT PRIMARY KEY`, `digest_schedule_id TEXT`, `user_id TEXT REFERENCES members(user_id)`, `target_type TEXT CHECK IN ('email','connector_dm')`, nullable `connection_id TEXT REFERENCES connector_sources(connection_id)`, nullable `provider_tenant_id TEXT`, nullable `provider_user_id TEXT`, nullable `email_address TEXT`, `status TEXT CHECK IN ('active','needs_input','disabled')`, `version INTEGER`, nullable `last_delivered_at INTEGER`, nullable `last_delivered_delivery_id TEXT`, nullable `last_error_code TEXT`, `created_at INTEGER`, `updated_at INTEGER`; composite foreign key `(digest_schedule_id,user_id) REFERENCES digest_schedules(id,user_id)`, unique `(digest_schedule_id,target_type)`, `(id,version)`, and `(id,version,digest_schedule_id,user_id)`; index `(connection_id,status)`. | Versioned destination identity. A shape check makes email require only `email_address` and makes connector DM require connection/tenant/provider user while forbidding email. Connector delivery also requires the source to be currently authorized for this same user. Any identity or status change increments `version`. Destination validity and version are rechecked before send. |
+| `digest_deliveries` | `id TEXT PRIMARY KEY`, `digest_schedule_id TEXT`, `user_id TEXT REFERENCES members(user_id)`, `planned_for INTEGER`, nullable `cursor_from INTEGER`, `cursor_through INTEGER`, `authorization_revision_hash TEXT`, `event_count INTEGER`, `highlight_count INTEGER`, nullable `brief_ref TEXT`, nullable `brief_hash TEXT`, nullable `workflow_instance_id TEXT UNIQUE`, `status TEXT CHECK IN ('planned','running','delivering','delivered','partial','empty','failed','needs_input')`, nullable `summary_markdown TEXT`, nullable `error_code TEXT`, `created_at INTEGER`, `updated_at INTEGER`, nullable `settled_at INTEGER`; composite foreign key `(digest_schedule_id,user_id) REFERENCES digest_schedules(id,user_id)`, unique `(digest_schedule_id,planned_for)` and `(id,digest_schedule_id,user_id)`; index `(digest_schedule_id,status,planned_for DESC)`. | Idempotent occurrence with a frozen log window and generic-loop identity. The composite schedule/user key prevents delivering one member's window through another member's schedule. A brief is a bounded encrypted R2 artifact containing exact authorized input. `empty` advances the digest cursor without inference; this cursor never advances work-stream seen state. |
+| `digest_target_deliveries` | Composite primary key `(digest_delivery_id,target_id)` with `digest_delivery_id TEXT`, `target_id TEXT`, `target_version INTEGER`, `digest_schedule_id TEXT`, `user_id TEXT`, `request_hash TEXT`, nullable `provider_operation_id TEXT`, `status TEXT CHECK IN ('pending','inflight','delivered','needs_input','failed','ambiguous')`, `attempt_count INTEGER`, nullable `next_retry_at INTEGER`, nullable `error_code TEXT`, nullable `receipt_hash TEXT`, `created_at INTEGER`, `updated_at INTEGER`, nullable `settled_at INTEGER`; composite foreign keys `(digest_delivery_id,digest_schedule_id,user_id) REFERENCES digest_deliveries(id,digest_schedule_id,user_id)` and `(target_id,target_version,digest_schedule_id,user_id) REFERENCES digest_delivery_targets(id,version,digest_schedule_id,user_id)`; indexes `(status,next_retry_at,created_at)` and `(target_id,created_at DESC)`. | Per-destination settlement frozen to one target version. Composite foreign keys make target, delivery, schedule, and user consistency a database invariant. Before send, the parent also requires that exact target version remain current and active; mismatch becomes `needs_input` or a replanned occurrence rather than delivery to a stale destination. Ambiguous external sends reconcile before retry. |
 
-An unclaimed `activity_effects.opportunity_candidate` inserts one
-`opportunity_batch_events` reference in the same D1 processing transaction.
-Admission reads a bounded, visibility-compatible window, labels connector text
-as untrusted evidence, and writes the opportunity plus provenance graph and user
-links transactionally. Ranking writes the final regional
-`suggested_work_sets`; a separate complete replacement may populate the
-`WorkspaceDO` display cache. A parent-cache miss or lag therefore affects
-freshness, not opportunity authority, and the home API can request a bounded
-refresh without running inference.
+`activity_events` and targets are the ordered, audience-aware read model derived
+from connector activity and native child inboxes; they are not copies of child
+parts. A `digest_delivery` freezes a contiguous `log_sequence` window for one
+schedule, and its target rows settle external destinations independently. The
+brief R2 reference is an immutable execution input; the parent rows remain the
+cursor and authorization authority if Workflow history expires.
 
-An in-workstream **suggested action** is different. D1 records a
-`workstream_suggested_action` delivery, then the `WorkstreamDO` transactionally
-writes its `activity_delivery_receipts` and versioned `suggested_actions` row.
-Only the child owns pending/accepted/dismissed/retracted state and any targeted
-Needs Your Input projection. Its outbox later writes one
-`suggested_action_feedback_receipts` row in D1. A lost response retries the same
-delivery or feedback ID. The normalized activity, opportunity, parent display
-projection, and child action are related by opaque IDs and revision hashes, but
-none is mutated as if it were the same cross-store row.
+A digest claim freezes `cursor_through` at the parent's current maximum sequence
+and starts after that schedule's newest settled cursor. New activity lands after
+the upper bound and belongs to the next occurrence. The parent filters the
+window using current membership, child-directory visibility, connection/source
+epochs, and the normalized current selector/principal rows, then hands an immutable bounded brief to the generic
+agent-loop Workflow. Authorization is rechecked before external delivery;
+revocation invalidates or regenerates the brief. Due digests are jittered and
+claimed in bounded workspace-local batches, not one simultaneous RPC per member.
 
-The inverse path is also asynchronous. After a work-stream commit, a child
-outbox may project a content-minimized native activity event into regional D1
-for digests. Failure or lag in that projection cannot roll back the conversation
-or control the sidebar; its dedupe key makes replay safe. Poison records move to
-a visible regional dead-letter state with bounded replay tooling. The current
-behavior that leaves admission failures permanently failed after three attempts
-without automatic repair is not sufficient for this architecture.
+##### Opportunity, ranking, and promotion state
 
-An `activity_events` page does not trust its stored audience forever. Workspace-
-and user-audience events are checked against current parent membership; for
-work-stream-audience events, the consumer collects the page's distinct work-
-stream IDs and asks the `WorkspaceDO` for a batched current-visibility filter.
-The regional connection/resource policy resolver then batch-validates each
-event's authorization selector and source revision without a provider call. An
-event is omitted unless both layers authorize it. It never fans out to children,
-and named targets affect digest emphasis but never grant audience. This keeps
-historical events useful as participants and resource access change without
-leaving D1 as the membership or connector authority.
+| Table | Columns, key, and indexes | Contract |
+| --- | --- | --- |
+| `opportunity_batch_windows` | `id TEXT PRIMARY KEY`, `partition_key TEXT`, `audience_scope TEXT CHECK IN ('personal','workspace')`, `audience_principal_key TEXT`, nullable `audience_user_id TEXT REFERENCES members(user_id)`, `first_event_at INTEGER`, `last_event_at INTEGER`, `process_after INTEGER`, `status TEXT CHECK IN ('queued','processing','completed','failed','dead')`, nullable `lease_id TEXT`, nullable `lease_expires_at INTEGER`, `attempt_count INTEGER`, nullable `error_code TEXT`, `created_at INTEGER`, `updated_at INTEGER`, nullable `completed_at INTEGER`; unique partial `(partition_key)` where `status='queued'`; index `(status,process_after)`. | Debounces visibility-compatible evidence before inference. Shape checks bind personal to `user:<audience_user_id>` and workspace to `workspace` with no user; `partition_key` includes that principal. Evidence arriving during processing enters the next window and cannot mutate frozen model input. |
+| `opportunity_batch_events` | `id TEXT PRIMARY KEY`, `window_id TEXT REFERENCES opportunity_batch_windows`, `partition_key TEXT`, `source_kind TEXT CHECK IN ('activity','native_event')`, `source_id TEXT`, `source_revision TEXT`, nullable `authorization_selector_id TEXT`, nullable `authorization_selector_version INTEGER`, `authorization_selector_hash TEXT`, `occurred_at INTEGER`, `input_characters INTEGER`, `status TEXT CHECK IN ('pending','processing','completed','failed','dead')`, `attempt_count INTEGER`, nullable `error_code TEXT`, `created_at INTEGER`, `updated_at INTEGER`; nullable composite foreign key `(authorization_selector_id,authorization_selector_version) REFERENCES resource_selectors(selector_id,selector_version)`; unique `(partition_key,source_kind,source_id,source_revision)`; index `(window_id,status,occurred_at,id)`. | Immutable batch membership. It references local facts and R2 payloads rather than copying bodies; connector evidence carries a resolvable selector/version, while native events may omit it. |
+| `work_opportunities` | `id TEXT PRIMARY KEY`, `audience_scope TEXT CHECK IN ('personal','workspace')`, `audience_principal_key TEXT`, nullable `audience_user_id TEXT REFERENCES members(user_id)`, bounded `display_prompt TEXT`, `execution_prompt TEXT`, `admission_reasoning TEXT`, `provider_icon TEXT`, `source_label TEXT`, `source_fingerprint TEXT UNIQUE`, `authorization_selector_hash TEXT`, `source_revision_hash TEXT`, `version INTEGER`, `display_prompt_hash TEXT`, `execution_prompt_hash TEXT`, `status TEXT CHECK IN ('active','starting','started','superseded','expired','revoked')`, nullable `created_workstream_id TEXT REFERENCES workstreams(workstream_id)`, nullable `started_by_user_id TEXT REFERENCES members(user_id)`, nullable `start_idempotency_key TEXT`, `expires_at INTEGER`, `created_at INTEGER`, `updated_at INTEGER`, nullable `started_at INTEGER`; index `(status,expires_at,updated_at DESC)`. | Authoritative pre-workstream suggestion. Shape checks bind personal to `user:<audience_user_id>` and workspace to `workspace` with no user. `source_fingerprint` includes that principal plus exact source IDs/revisions, so personal and workspace evidence cannot collide. Model output may narrow but cannot widen its batch audience. Source invalidation moves it to `revoked` before display or promotion. |
+| `work_opportunity_source_dependencies` | Composite primary key `(opportunity_id,source_kind,source_id,source_revision)` with `opportunity_id TEXT REFERENCES work_opportunities(id) ON DELETE CASCADE`; nullable `connection_id TEXT REFERENCES connector_sources(connection_id)`, nullable `source_epoch INTEGER`, nullable `selector_id TEXT`, nullable `selector_version INTEGER`, `authorization_hash TEXT`, `created_at INTEGER`; nullable composite foreign key `(selector_id,selector_version) REFERENCES resource_selectors(selector_id,selector_version)`; indexes `(connection_id,source_epoch,opportunity_id)` and `(selector_id,selector_version,opportunity_id)`. | Complete normalized dependency vector for a potentially multi-source opportunity. Connector dependencies require connection epoch plus selector/version; native dependencies forbid them. Display, ranking, and promotion resolve every row against current authority. A scalar source epoch can never stand in for this set. |
+| `opportunity_provenance_nodes` | `id TEXT PRIMARY KEY`, `node_kind TEXT`, `source_identity_key TEXT`, nullable `source_kind TEXT`, nullable `source_id TEXT`, nullable `provider TEXT`, nullable `provider_tenant_id TEXT`, nullable `canonical_url TEXT`, bounded `label TEXT`, `occurred_at INTEGER`, `visibility_scope TEXT CHECK IN ('personal','workspace')`, nullable `visibility_user_id TEXT REFERENCES members(user_id)`, `visibility_principal_key TEXT`, `locator_json TEXT`, `authorization_selector_hash TEXT`, `source_revision TEXT`, `created_at INTEGER`; unique `(node_kind,source_identity_key,source_revision,visibility_principal_key)`. | Visibility-scoped evidence node. `source_identity_key` is a canonical non-null source/provider identity. `visibility_principal_key` is exactly `workspace` or `user:<id>` and a shape check requires/forbids `visibility_user_id` accordingly; these keys avoid nullable-unique holes. Locator data is bounded and cannot grant access. |
+| `opportunity_provenance_edges` | Composite primary key `(parent_node_id,child_node_id,relationship)`; both node IDs reference `opportunity_provenance_nodes ON DELETE CASCADE`; `relationship TEXT`, `created_at INTEGER`; check parent differs from child; index `(child_node_id,relationship)`. | Evidence relationship only. Traversal intersects each node's visibility and current selector with the opportunity audience. |
+| `work_opportunity_provenance_roots` | Composite primary key `(opportunity_id,node_id)`; both IDs reference their owning tables on delete cascade; `position INTEGER`, `created_at INTEGER`; unique `(opportunity_id,position)`. | Stable ordered roots for explanation and promotion snapshotting. |
+| `work_opportunity_user_links` | `id TEXT PRIMARY KEY`, `opportunity_id TEXT REFERENCES work_opportunities`, `subject_key TEXT`, nullable `user_id TEXT REFERENCES members(user_id)`, `role TEXT`, `resolution TEXT CHECK IN ('verified','inferred','ambiguous','unresolved')`, bounded `reasoning TEXT`, nullable `provenance_node_id TEXT REFERENCES opportunity_provenance_nodes(id)`, `created_at INTEGER`, `updated_at INTEGER`; unique `(opportunity_id,subject_key,role,resolution)`; index `(user_id,resolution,opportunity_id)`. | Records whom evidence names and how; stable `subject_key` makes unresolved/ambiguous external identities deduplicable even when `user_id` is null. It affects ranking, never authorization. |
+| `work_opportunity_user_states` | Composite primary key `(opportunity_id,user_id)` with `opportunity_id TEXT REFERENCES work_opportunities(id) ON DELETE CASCADE`, `user_id TEXT REFERENCES members(user_id)`; `status TEXT CHECK IN ('impressed','dismissed','started')`, `impression_count INTEGER`, nullable `first_impressed_at INTEGER`, nullable `last_impressed_at INTEGER`, nullable `resolved_at INTEGER`, nullable `created_workstream_id TEXT REFERENCES workstreams(workstream_id)`, `updated_at INTEGER`; index `(user_id,status,updated_at DESC)`. | Per-member exposure and preference. One person's dismissal does not erase a workspace-audience opportunity. |
+| `suggested_work_sets` | `user_id TEXT PRIMARY KEY REFERENCES members(user_id)`, `set_id TEXT UNIQUE`, `candidate_fingerprint TEXT`, `source_set_version INTEGER`, `request_seq INTEGER`, `authorization_selector_hash TEXT`, `membership_epoch INTEGER`, `source_authorization_epoch INTEGER`, `status TEXT CHECK IN ('stale','ranking','ready','failed','revoked','expired')`, nullable `lease_id TEXT`, nullable `lease_expires_at INTEGER`, nullable `due_at INTEGER`, nullable `last_ranked_at INTEGER`, nullable `expires_at INTEGER`, bounded nullable `ranking_reasoning TEXT`, nullable `model TEXT`, `created_at INTEGER`, `updated_at INTEGER`; unique `(user_id,set_id)` and partial index `(due_at)` where non-null. | Single authoritative stored ranking returned by the workspace/home read. There is no second D1 ranking or parent cache. The workspace-wide epoch is a cheap invalidation signal: on mismatch, the bounded home read revalidates displayed candidates through their normalized dependency rows, omits only failures, marks the set stale, and queues reranking. It never renders stored labels first or scans every set in the deny transaction. |
+| `suggested_work_items` | `user_id TEXT`, `set_id TEXT`, `opportunity_id TEXT REFERENCES work_opportunities(id)`, `rank INTEGER`, `opportunity_version INTEGER`, bounded `label TEXT`, `provenance_label TEXT`, `display_hash TEXT`, `authorization_selector_hash TEXT`, `source_dependency_hash TEXT`, `expires_at INTEGER`; primary key `(user_id,set_id,opportunity_id)`, unique `(user_id,set_id,rank)`, composite foreign key `(user_id,set_id) REFERENCES suggested_work_sets(user_id,set_id) ON DELETE CASCADE`; index `(opportunity_id,user_id)`. | Bounded item data served in the same workspace snapshot. Read requires an active matching opportunity version, current set epoch, and current normalized dependency hash. Stale rows are filtered synchronously and compacted asynchronously. |
+| `suggested_work_ranking_rounds` | `id TEXT PRIMARY KEY`, `user_id TEXT REFERENCES members(user_id)`, `request_seq INTEGER`, `candidate_ids_json TEXT`, `selected_ids_json TEXT`, bounded `reasoning TEXT`, nullable `model TEXT`, `round_number INTEGER`, `created_at INTEGER`; index `(user_id,request_seq,round_number)`. | Explainable bounded tournament history; never the read authority. |
+| `work_opportunity_snapshots` | `id TEXT PRIMARY KEY`, `opportunity_id TEXT REFERENCES work_opportunities`, `opportunity_version INTEGER`, `selected_by_user_id TEXT REFERENCES members(user_id)`, `display_prompt_hash TEXT`, `execution_prompt_hash TEXT`, `authorization_revision_hash TEXT`, `identity_links_json TEXT`, `provenance_json TEXT`, `created_at INTEGER`; unique `(opportunity_id,opportunity_version,selected_by_user_id)`. | Immutable bounded evidence used to initialize a hidden child; never raw provider content and never frozen permission. |
 
-Producer identity is unambiguous. The regional activity processor is the only
-producer of the human-notifiable `connector.activity.received` event for a
-provider activity, with semantic dedupe key `provider-activity:<activity_id>`.
-A child incorporating that same activity does not emit a second digestible event
-for incorporation. Child outboxes produce only native Avalon occurrences such
-as a human message, mention, accepted suggestion, or run transition, each with a
-different semantic identity. If operations later need a separate incorporation
-event, it is explicitly non-digestible or deliberately distinct in product
-semantics; it cannot arise accidentally from both paths.
+Opportunity derivation is also local: activity/native-event references join one
+frozen batch; admitted opportunities own provenance roots and user state;
+ranking atomically replaces one person's set and items. Promotion snapshots the
+selected local opportunity into `promotion_reservations`, then crosses only the
+parent/child initialization boundary described below. No regional coordinator
+or D1 receipt sits between a suggestion card and the parent-visible child.
 
-Digest and audit readers are part of the parent capacity envelope. Due digests
-are jittered and grouped into bounded workspace batches; one parent RPC may
-filter several members and the union of their candidate work-stream IDs, subject
-to a measured size limit. The scheduler does not issue an unbounded burst of one
-parent call per member. This PRD does not define an implicit projection-shard
-class: if measurements exceed the one-parent envelope, a follow-up design must
-name that Durable Object, specify all of its tables and cross-object protocols,
-and keep it behind the stable parent facade before the larger tier is admitted.
+An unclaimed opportunity effect inserts batch membership in the same transaction
+that processes the activity. A bounded Worker/Workflow claim reads one frozen,
+visibility-compatible window, treats connector text as untrusted evidence, and
+submits derived opportunities with their provenance. Ranking likewise claims a
+person and writes `suggested_work_sets`, items, and that recipient's
+`workspace_events` notification atomically. Home reads never start inference.
 
-Storage ownership is explicit:
+A suggested-work promotion is parent-local except for side-effect-free child
+initialization:
+
+1. In one parent transaction, validate current membership, the workspace source
+   deny floor, and every `work_opportunity_source_dependencies` row; claim the
+   exact opportunity/version/idempotency key; write the immutable snapshot and
+   `promotion_reservations` with the dependency hash; reserve one hidden
+   directory row; and enqueue the stable `child_initialize` command.
+2. The child idempotently creates its work-stream row, main substream, opening
+   attributed user part, provenance attachments, and inbox receipt while
+   remaining unlistable.
+3. On that receipt, the parent revalidates every current source dependency and
+   in **one bounded** transaction marks the opportunity started, advances its
+   version, writes `promoted_origins`, resolves only the initiating user's
+   state, exposes the directory row, and emits the workspace event. Read paths
+   immediately reject the now-non-active opportunity/version from every stored
+   set. Bounded `due_work` slices subsequently invalidate or compact stale set
+   items; finalization never fans out over an unbounded member population.
+4. A retry resolves the same reservation and child. Revocation, expiry, or an
+   unrecoverable initialization error atomically changes the reservation to
+   `retiring`, hides the Starting state, and schedules bounded `due_work`.
+   Retirement sends one idempotent `child_retire` command; the hidden child
+   fences runs/outboxes, tombstones and removes its unpublished content/R2
+   references, and returns a cleanup receipt. The parent then tombstones the
+   hidden directory row, records `retired_promotion_origins`, and marks the
+   reservation `retired`. Physical rows wait through the maximum delayed-command
+   and audit window. The exact opportunity/version origin remains consumed; an
+   intentional retry requires a newly admitted opportunity version/origin and
+   can never revive the retired child. Snapshot content never overrides current
+   permission.
+
+There is therefore one parent-visible commit point and no D1 promotion
+coordinator. A workspace-audience origin creates at most one shared child;
+personal opportunities are startable only by their audience user.
+
+An in-workstream **suggested action** remains different. The parent owns its
+classifier/admission/evidence and commits one `activity_delivery`; after the
+child receipt, the child exclusively owns the pending, accepted, dismissed,
+retracted, or expired overlay. A user-audience action is absent from the shared
+transcript, other users' events, model projection, export, search, digest, and
+compaction. Acceptance authors a shared evidence part only when the source
+already covers the work-stream audience or the user explicitly confirms
+**Share with work stream**. Child feedback returns through its durable outbox
+and the parent's idempotent feedback receipt. A targeted pending action may
+drive **Needs Your Input**; a general action does not create one row per member.
+
+Suggested-work cards, suggested-action cards, and actual work-stream references
+use distinct IDs and variants. An opportunity cannot be mentioned, unread,
+pinned as a work stream, compacted, or used as a substream.
+
+#### Authorization, retention, capacity, and fallback
+
+An activity page is served directly by its `WorkspaceDO`, so it can intersect
+stored event audience with current membership, local connection/source epochs,
+the child-directory visibility index, and normalized current
+selector/principal rows without D1 or child fan-out. An opaque selector hash is
+only an integrity fingerprint. Named targets affect digest emphasis but never
+grant access. Personal connector activity stays one-user audience through
+ingestion, opportunity admission, ranking, inference, and feedback.
+
+Raw bodies and immutable inference briefs live in regional R2. SQLite retains
+bounded normalized metadata, indexes, receipts, log windows, opportunities, and
+operational state under explicit policies. Source revocation first advances a
+local deny epoch and masks affected reads/suggestions; asynchronous redaction,
+R2 deletion, and compaction cannot make stale data visible again.
+
+A workspace object is now a deliberate product and ingestion hotspot, so launch
+capacity is an admission contract rather than an assumption:
+
+- parent RPCs cap rows, bytes, SQL statements, and execution time; ingestion,
+  digest, ranking, cleanup, and outbox tasks use resumable cursors;
+- Queue batching and jitter prevent webhook or digest bursts from issuing an
+  unbounded call per event or member;
+- interactive membership/sidebar/socket work never waits for provider/model
+  calls and receives service-level latency/error telemetry separate from
+  background lag;
+- the object tracks SQLite bytes, activity rate, backlog age, batch latency, and
+  R2 retention. Product tiers have soft admission/retention limits below
+  Cloudflare's current paid
+  [10 GB SQLite-per-object limit](https://developers.cloudflare.com/durable-objects/platform/limits/);
+- the architecture must pass the launch envelope and skew tests below before
+  admitting a larger workspace tier.
+
+The synchronous receipt commit is intentionally the acceptance bottleneck and
+is not protected by downstream Queue batching. Before launch Avalon publishes,
+per connector/provider, the supported one-workspace sustained events/second,
+burst size, p95/p99 acknowledgement latency, maximum body size, and retry window,
+then tests those values while sidebar and socket SLOs are loaded concurrently.
+Over admission, the endpoint returns the provider's retryable status (normally
+`429` or `5xx`) without acknowledging or advancing a poll cursor. A provider
+whose retry contract cannot cover the measured envelope is not enabled for that
+workspace tier. The PRD does not claim admission-shard safety; exceeding this
+single-object envelope requires the separately specified shard facade below.
+
+There is no silent spill of workspace activity into D1. If measured workspace
+skew cannot satisfy the envelope, a later design may introduce a
+`WorkspaceActivityDO` or deterministic activity shards behind the stable
+`WorkspaceDO` facade, but it must specify shard keys, authorization,
+transactions, ordered-log semantics, digest/ranking queries, migration, and
+cross-object receipts before that tier launches. The default and this PRD remain
+one workspace product authority.
+
+Storage ownership is consequently:
 
 | Store | Authoritative contents |
 | --- | --- |
-| Regional R2 | Retained large provider bodies and authorized large content behind opaque, hashed references. |
-| Regional D1 `activities` family | Delivery dedupe, normalized provider activity, processing/claim state, watches, automation matching, route outboxes, retries, and dead letters. |
-| Regional D1 `activity_events` family | Ordered first-party activity log, audience, targets, and digest/audit cursors. |
-| `WorkstreamDO` | Only activity actually incorporated into that work stream, its local delivery receipt/provenance, and audience-scoped pending suggested-action state and resolution. |
-| `WorkspaceDO` | Compact work-stream cards, common/personal collection facts, and rebuildable suggestion-set display projections; never provider bodies or an activity corpus. |
-| Global plane | Opaque regional routes and bounded receipts only; no activity title, actor, subject, target, payload, suggestion, or work-stream metadata. |
-
-Personal connector activity keeps a one-user audience through ingestion,
-opportunity admission, ranking, object projection, inference, and feedback.
-Workspace connector activity may be visible to active workspace members but is
-still filtered by connection and resource authorization. Neither inference nor
-an object projection may widen the recorded audience.
-
-The D1 query domains use stable opaque regional workspace, user, and work-stream
-identifiers. Their migrations remove foreign-key dependence on legacy product-
-authority tables, or replace it with explicitly named query-domain reference
-projections carrying source epochs; retaining a D1 row for referential cleanup
-must not make it an authorization source. Parent membership/scope changes emit
-regional cleanup or invalidation work, and every read still validates the
-current parent epoch.
-
-### Suggested work streams and suggested actions
-
-A **suggested work stream** is pre-workstream regional opportunity state. The
-regional D1 opportunity domain remains authoritative for bounded batch windows,
-admission decisions, provenance graphs, active `work_opportunities`, per-person
-impression/dismissal state, candidate versions, ranking rounds, and the final
-`suggested_work_sets`. Ranking runs after activity-driven invalidation for
-members who are active enough to benefit; `GET /work-opportunities` reads the
-stored ordered set and never starts ranking on the request path.
-
-The opportunity domain may publish a complete, versioned
-`suggested-work:user:<id>` display projection to the `WorkspaceDO` so one home
-snapshot can contain the four current cards. That cache contains only opaque
-opportunity/version IDs, bounded label and provenance display fields, rank,
-expiry, authorization selector, and membership/connection/resource source
-epochs. D1 remains authoritative, and the cache is rebuildable. The parent
-persists source-epoch deny floors and rejects an older full set. Membership
-removal deletes the personal projection synchronously; connection or resource
-revocation sends a deny-first opportunity-source tombstone and waits for the
-parent to mask affected display fields before completing. D1 ranking/user-state
-cleanup may follow asynchronously and cannot restore a tombstoned source.
-Dismissal and impression are per person; dismissing a workspace-audience
-opportunity for one member does not erase it for every other member.
-
-Starting a suggestion is a crash-recoverable promotion, not a multi-store
-transaction:
-
-1. D1 claims `(opportunity_id, opportunity_version, user_id,
-   start_idempotency_key)` and writes a promotion receipt with an immutable
-   provenance snapshot/hash, expiry, audience, and current membership,
-   connection, resource, and source-policy epochs. Freezing content does not
-   freeze permission.
-2. The regional promotion coordinator revalidates those epochs, and the
-   `WorkspaceDO` idempotently reserves one **hidden** child and directory entry
-   keyed by the opportunity origin. A repeated start resolves the same child.
-3. After another current-authorization check, the `WorkstreamDO` idempotently
-   initializes hidden metadata, origin attachments, the attributed opening user
-   part, and its first common projection from the frozen snapshot. The parent
-   holds that projection behind the promotion gate.
-4. D1 revalidates again, records the created work-stream ID, finalizes the
-   opportunity as started, and issues a durable finalization receipt. The
-   `WorkspaceDO` consumes that receipt in one transaction that exposes the child,
-   installs a promoted-origin tombstone over every stale suggested-work set, and
-   changes the parent item from opportunity/Starting to work stream. Ranking-set
-   refresh may follow asynchronously.
-5. A reconciler may resume only while every receipt epoch remains current. A
-   membership, connection, resource, audience, or expiry failure terminalizes
-   the claim, masks the suggestion, and tombstones or quarantines any hidden
-   reservation; it never rolls stale authority forward into publication.
-
-The card shows `Starting` while the claim is incomplete. It enters **Work
-Streams** and, when appropriate, **In Progress** only in the parent's final
-promotion transaction; before then the initialized child is not listable. The
-same transaction masks the opportunity, so a crash cannot expose both a real
-card and an independently authoritative Starting card. A failed promotion never
-leaves two work streams or a phantom sidebar item.
-For a workspace-audience opportunity, the first authorized claim creates the
-shared child; concurrent starts by other members resolve that same origin and do
-not append another opening turn. A personal opportunity can be started only by
-its audience user.
-
-A **suggested action** (the existing Suggested context concept) targets an
-already existing work stream. Its regional classifier/admission decision,
-source activity, confidence, provenance, and cross-workstream feedback corpus
-remain in D1. Delivery to the chosen child is idempotent. The `WorkstreamDO`
-stores the pending card in an operational `suggested_actions` table, not in
-`parts` or a substream. Each row has immutable `(action_id, version)`, source
-activity/provenance references, authorization selector and revision vector,
-explicit `user` or `workstream` audience, expiry, delivery receipt, and
-`pending`, `accepted`, `dismissed`, `retracted`, or `expired` status. The child is
-the read and resolution authority after delivery; D1's copy becomes an
-eventually consistent learning/delivery projection.
-
-A user-audience pending action is a private overlay visible only to that user in
-the open work stream and interest surface. It is absent from the shared
-transcript, other users' realtime events, model projection, shared export,
-search, digest, and compaction. A workstream-audience action is visible only when
-its source authorization covers the whole work-stream audience. Current source
-authorization and expiry are rechecked on every read and accept. D1 may deliver
-an idempotent retraction; the child resolves it as `retracted` rather than
-silently rewriting open-work-stream truth.
-
-Dismissal resolves only the operational row. Acceptance also resolves it and may
-append a newly authored main-feed evidence part only when the source audience
-already covers the work stream or the user explicitly confirms a named
-**Share with work stream** disclosure. Personal evidence never becomes shared
-merely because Accept was clicked. Only that new accepted/shared part may enter
-a later model input. An accept click cannot authorize an external write unless
-the named action kind has a separately specified approval contract. Resolution
-projects back to D1 for future feedback. A targeted action can set **Needs Your
-Input** through that person's sparse projection; a general pending card does not
-create one row for every member. If contextual routing remains disabled, no
-producer may create new cards and reads return none, while historical feedback
-remains regional for a future explicit re-enable.
-
-Suggested-work cards, suggested-action cards, and actual work-stream references
-use distinct IDs and response variants. A pre-workstream opportunity cannot be
-mentioned, unread, pinned as a work stream, compacted, or used as a substream.
-Once promoted, its provenance is attached to the new child and the ordinary
-work-stream rules take over.
+| `WorkspaceDO` | Connector-domain authority generation; sources/cursors; encrypted credential envelopes and rotation leases; normalized resource selectors/principals; ingress receipts/watchdogs; normalized activity/effects; workspace activity log and targets; digest state; opportunity/provenance/ranking state; suggestion sets; local child-delivery outboxes and receipts. |
+| `WorkstreamDO` | Only activity actually incorporated into that work stream, its delivery receipt/provenance, and audience-scoped pending suggested-action state and resolution. |
+| Regional R2 | Large exact provider bodies, immutable authorized model briefs, imports, and other bounded content behind opaque hashed references. |
+| Regional Queue/Workers/Workflows | At-least-once wake/replay and bounded execution. They are never product or authorization authority. |
+| Regional D1 | Product-free fleet/migration inventory, operational telemetry, and explicitly rebuildable cross-workspace aggregates only; no connector event, digest, opportunity, suggestion, or child-delivery authority. |
+| Global plane | Opaque regional ingress routes and bounded receipts only; no activity title, actor, subject, target, payload, suggestion, or work-stream metadata. |
 
 ### Main conversation
 
@@ -1264,17 +1259,27 @@ None yet.
     Error, recency, mention, unread, and assigned-input views. Sending one child
     event per heading was rejected because it duplicates product rules, multiplies
     writes, and can leave headings disagreeing after partial delivery.
-19. **Activity and opportunities remain regional query-plane domains.** Provider
-    ingest, first-party activity, batches, provenance, ranking, and feedback need
-    ordered or relational reads across more than one child. Putting them inside
-    the workspace object was rejected as a hot, ever-growing corpus; keeping raw
-    activity in Global was rejected on residency and minimization grounds.
-20. **A suggestion is projected into, not mistaken for, product authority.** D1
-    owns pre-workstream opportunities and routing feedback, a `WorkstreamDO`
-    owns a delivered audience-scoped action overlay and its resolution, and a `WorkspaceDO`
-    may cache bounded display sets. One polymorphic suggestion/workstream row was
-    rejected because partial creation would produce phantom children and unclear
-    deletion, audience, unread, and compaction semantics.
+19. **Workspace-owned activity belongs to the `WorkspaceDO`.** Every provider
+    event has exactly one workspace owner; its cross-connection, person,
+    work-stream, and time-window reads are therefore local to that atom of
+    coordination. A regional D1 activity authority plus parent projections was
+    rejected because it adds a second product boundary without enabling a real
+    cross-workspace product query. Raw bodies still live in regional R2, and
+    bounded asynchronous slices protect the parent's interactive paths. The
+    connection's encrypted credential envelope and normalized resource ACL also
+    belong to this owner; regional D1 cannot be called product-free while
+    retaining them. Independent legacy D1 `connector_authority` and target
+    connector-domain generation gates permit safe import into an already-live
+    parent without reusing its workspace route. A larger tier may add explicitly
+    specified activity shards behind the parent facade; it may not silently
+    spill product data back to D1.
+20. **A suggestion is parent-owned but is not a work stream.** `WorkspaceDO`
+    owns pre-workstream opportunities, provenance, ranking, display, promotion,
+    and routing feedback; a `WorkstreamDO` owns a delivered audience-scoped
+    suggested-action overlay and its resolution. One polymorphic
+    suggestion/workstream row was rejected because partial creation would
+    produce phantom children and unclear deletion, audience, unread, and
+    compaction semantics.
 21. **Access reduction is parent-fenced, not eventually projected.** Ordinary
     descriptive updates may tolerate bounded child-to-parent lag; scope,
     participation, membership, and deletion reductions may not. Deny-first
@@ -1284,17 +1289,22 @@ None yet.
     grace period.
 22. **A pending suggested action is operational state, not conversation.** It has
     its own audience, version, source authorization, expiry, and resolution in a
-    child-owned table. Only explicit audience-safe acceptance authors a new
+    child-owned table, but disclosure/resolution requires a narrow live decision
+    from the parent source/selector authority; delayed retraction is cleanup, not
+    permission. Only explicit audience-safe acceptance authors a new
     conversation part. Storing the pending card in the main feed or inventing a
     private suggestion substream was rejected because either leaks it to
     participants or abuses substreams for non-conversation workflow state.
 23. **Promotion has one parent-visible commit point.** A reserved/initialized
-    child stays hidden until D1 finalization and current authorization arrive as
-    a receipt; the parent then atomically masks the opportunity and exposes the
-    child. Showing the child after initialization was rejected because a crash
-    could show both it and a D1-derived Starting card. Treating a frozen source
-    snapshot as frozen permission was rejected because membership and resource
-    access can be revoked mid-promotion.
+    child stays hidden until its initialization receipt returns and current
+    authorization is revalidated; the parent then atomically marks the local
+    opportunity/version started, resolves the initiator, and exposes the child.
+    Every set filters that version immediately and bounded background slices
+    compact stale items; atomically rewriting an unbounded member population was
+    rejected. Showing the child after initialization was rejected because a crash
+    could show both it and a Starting card. Treating a frozen source snapshot as
+    frozen permission was rejected because membership and resource access can
+    be revoked mid-promotion.
 24. **Activity-log audience is event- and source-specific.** Current parent
     visibility and regional connection/resource authorization both gate reads,
     targets never grant access, and one canonical producer owns each semantic
@@ -1383,7 +1393,7 @@ explicit rather than leaving hidden sixth and seventh product objects:
 | Existing class | Disposition in this transition |
 | --- | --- |
 | `WorkstreamRoom` | Replaced by `WorkstreamDO`. It is currently a non-canonical realtime coordinator, so authoritative D1 content is imported into the child tables and sockets reconnect with cursors. Its pending HyperSight wake, if any, becomes a `due_work` item or is reconciled from the canonical trigger; its old KV keys do not become a parallel schema. |
-| `WorkspaceScheduler` | Folded into the matching `WorkspaceDO` unified `due_work` alarm. Regional D1 continues to own automation schedules, connector watches, and digest query state; the parent stores only bounded due IDs/retry state. Dual-refresh compatibility precedes alarm cutover, and the old class is removed only in a later lifecycle campaign. |
+| `WorkspaceScheduler` | Folded into the matching `WorkspaceDO` unified `due_work` alarm. The parent also owns workspace-local automation schedules, connector watches, poll cursors, and digest query state; Workers/Queues may accelerate claimed work but do not own it. Dual-refresh compatibility precedes alarm cutover, and the old class is removed only in a later lifecycle campaign. |
 | `CrashSymbolicatorContainer` | Unchanged and outside this product-data PRD. It is the existing crash-symbolication Container binding, not a workspace/work-stream authority or a migration-control object; its storage contract remains with the crash/telemetry subsystem. |
 
 Accordingly, the complete target product/migration architecture specified here
@@ -1455,7 +1465,7 @@ rows when its state machine has nothing to deliver.
 | Table | Columns, key, and indexes | Contract |
 | --- | --- | --- |
 | `object_versions` | Singleton `id INTEGER PRIMARY KEY CHECK(id=1)`; `worker_version_id TEXT`, `contract_version INTEGER`, `schema_version INTEGER`, `data_version INTEGER`, `projection_version INTEGER`, `restore_generation INTEGER`, `updated_at INTEGER`. | The constructor updates observed code after schema compatibility succeeds. Restore generation can only increase. This row is inventory evidence, not the migration journal. |
-| `durable_outbox` | `message_id TEXT PRIMARY KEY`, `channel TEXT`, `destination_kind TEXT` in `durable_object`, `workflow`, `queue`, `regional_service`, `destination_id TEXT`, `partition_key TEXT`, `source_version INTEGER`, `source_epoch INTEGER`, `contract_version INTEGER`, exactly one of nullable bounded `payload_json TEXT` or nullable regional `payload_ref TEXT`, `payload_hash TEXT`, `state TEXT` in `pending`, `inflight`, `acked`, `superseded`, `dead`, `attempts INTEGER`, `not_before INTEGER`, `created_at INTEGER`, nullable `acked_at INTEGER`; index `(state,not_before,created_at)` and `(channel,destination_kind,destination_id,partition_key,source_version)`. | The source fact and immutable delivery intent commit in one local transaction. A newer complete replacement may supersede an unsent older row, but sent or ambiguous rows remain retryable until the destination receipt is observed. `regional_service` is allowed only for a named regional D1/R2 projection adapter, never Global product storage. Workflow and Queue payloads must also satisfy their separately allowlisted envelopes. |
+| `durable_outbox` | `message_id TEXT PRIMARY KEY`, `channel TEXT`, `destination_kind TEXT` in `durable_object`, `workflow`, `queue`, `regional_service`, `destination_id TEXT`, `partition_key TEXT`, `source_version INTEGER`, `source_epoch INTEGER`, `contract_version INTEGER`, exactly one of nullable bounded `payload_json TEXT` or nullable regional `payload_ref TEXT`, `payload_hash TEXT`, `state TEXT` in `pending`, `inflight`, `acked`, `superseded`, `dead`, `attempts INTEGER`, `not_before INTEGER`, `created_at INTEGER`, nullable `acked_at INTEGER`; index `(state,not_before,created_at)` and `(channel,destination_kind,destination_id,partition_key,source_version)`. | The source fact and immutable delivery intent commit in one local transaction. A newer complete replacement may supersede an unsent older row, but sent or ambiguous rows remain retryable until the destination receipt is observed. `regional_service` is allowed only for named R2 lifecycle, product-free telemetry, or temporary legacy-cutover adapters—never a D1 product projection. Workflow and Queue payloads must also satisfy their separately allowlisted envelopes. |
 | `durable_inbox_receipts` | Composite primary key `(channel,source_kind,source_id,source_generation,message_id)` where `source_kind` is `durable_object`, `workflow`, or `regional_service`; `partition_key TEXT`, `source_version INTEGER`, `source_epoch INTEGER`, `request_hash TEXT`, `result_code TEXT`, `result_hash TEXT`, `received_at INTEGER`; index `(channel,source_kind,source_id,partition_key,source_version DESC)`. | A duplicate with the same hash returns its recorded result. Reuse of an identity with another hash is corruption. Domain state and this receipt commit in one destination transaction. |
 | `due_work` | `job_key TEXT PRIMARY KEY`, `kind TEXT`, `due_at INTEGER`, `epoch INTEGER`, bounded `payload_json TEXT`, `attempts INTEGER`, nullable `last_error_code TEXT`, `updated_at INTEGER`; index `(due_at,job_key)`. | One table multiplexes the single native DO alarm across outbox delivery, compaction, expiry, reconciliation, and migration continuation. A handler selects bounded due rows and then schedules the next minimum `due_at`. |
 | `_sql_schema_migrations` | `version INTEGER PRIMARY KEY`, `implementation_hash TEXT`, `worker_version_id TEXT`, `applied_at INTEGER`. | Records fast constructor DDL; it replaces unsupported `PRAGMA user_version`. |
@@ -1486,25 +1496,28 @@ delivery nor RPC success is treated as authority.
 ### `WorkspaceDO` SQLite schema
 
 The workspace object is the regional authority for workspace policy,
-membership, the parent-to-child directory, pins, and the materialized sidebar
-and home-screen collection model. It never stores a child transcript, token
-stream, tool output, or a regional activity corpus.
+membership, the parent-to-child directory, pins, the materialized sidebar and
+home-screen collection model, and the workspace-owned activity/digest/
+opportunity domains specified above. It never stores a child transcript, token
+stream, tool output, or large exact provider body.
 
 | Table | Columns, key, and indexes | Contract |
 | --- | --- | --- |
-| `workspace` | Singleton `id INTEGER PRIMARY KEY CHECK(id=1)`; `workspace_key TEXT UNIQUE`, `region TEXT`, `title TEXT`, `description TEXT`, `policy_json TEXT`, `status TEXT` in `active`, `suspended`, `deleting`, `deleted`, `restoring`, `membership_epoch INTEGER`, `authority_epoch INTEGER`, `directory_generation INTEGER`, `next_client_event_seq INTEGER`, `created_at INTEGER`, `updated_at INTEGER`, `deletion_epoch INTEGER`. | Canonical workspace metadata and deny-first epochs. Region and workspace key are immutable. Deletion and restore epochs never decrease. |
+| `workspace` | Singleton `id INTEGER PRIMARY KEY CHECK(id=1)`; `workspace_key TEXT UNIQUE`, `region TEXT`, `title TEXT`, `description TEXT`, `policy_json TEXT`, `status TEXT` in `active`, `suspended`, `deleting`, `deleted`, `restoring`, `membership_epoch INTEGER`, `authority_epoch INTEGER`, `source_authorization_epoch INTEGER`, `directory_generation INTEGER`, `next_client_event_seq INTEGER`, `created_at INTEGER`, `updated_at INTEGER`, `deletion_epoch INTEGER`. | Canonical workspace metadata and deny-first epochs. Any source, selector, connector-owner, or resource-ACL narrowing increments `source_authorization_epoch` in the same parent transaction; local activity/suggestion reads fail closed on an older epoch. Region and workspace key are immutable. Deletion and restore epochs never decrease. |
 | `members` | `user_id TEXT PRIMARY KEY`, `role TEXT` in `owner`, `admin`, `member`, `status TEXT` in `invited`, `active`, `removed`, `display_name TEXT`, nullable `avatar_ref TEXT`, `membership_version INTEGER`, `grant_floor INTEGER`, `joined_at INTEGER`, nullable `removed_at INTEGER`, `updated_at INTEGER`; indexes `(status,role,user_id)` and `(updated_at,user_id)`. | Regional membership authority. Removal advances the workspace epoch and this member's grant floor before any cleanup fan-out. Profile fields are bounded workspace display projections, not global identity authority. |
-| `grants` | `grant_id TEXT PRIMARY KEY`, `grant_hash TEXT UNIQUE`, `user_id TEXT REFERENCES members`, nullable `workstream_id TEXT`, `membership_epoch INTEGER`, `authority_epoch INTEGER`, `scope_epoch INTEGER`, `issued_at INTEGER`, `expires_at INTEGER`, nullable `revoked_at INTEGER`, `session_id TEXT`; indexes `(user_id,expires_at)` and `(workstream_id,expires_at)`. | Stores hashes and revocation state for short-lived signed capabilities, never bearer-token plaintext. A current epoch and unexpired, unrevoked row are both required. |
+| `grants` | `grant_id TEXT PRIMARY KEY`, `grant_hash TEXT UNIQUE`, `user_id TEXT REFERENCES members`, nullable `workstream_id TEXT`, `membership_epoch INTEGER`, `authority_epoch INTEGER`, `scope_epoch INTEGER`, `source_authorization_epoch INTEGER`, `issued_at INTEGER`, `expires_at INTEGER`, nullable `revoked_at INTEGER`, `session_id TEXT`; indexes `(user_id,expires_at)` and `(workstream_id,expires_at)`. | Stores hashes and revocation state for short-lived signed capabilities, never bearer-token plaintext. A current epoch and unexpired, unrevoked row are both required. The source epoch alone does not authorize connector content; it fences cached decisions and is paired with exact parent selector/dependency checks for suggested-action disclosure. |
 | `workstreams` | `workstream_id TEXT PRIMARY KEY`, `child_do_id TEXT UNIQUE`, `child_generation INTEGER`, `origin_kind TEXT`, `origin_key TEXT`, `visibility TEXT` in `hidden`, `visible`, `retiring`, `deleted`, `quarantined`, `restoring`, `authority_epoch INTEGER`, `listing_epoch INTEGER`, `deletion_epoch INTEGER`, `parent_contract_version INTEGER`, `child_contract_version INTEGER`, nullable `successor_workstream_id TEXT`, `created_at INTEGER`, nullable `promoted_at INTEGER`, nullable `retired_at INTEGER`; unique partial index on live `(origin_kind,origin_key)` and index `(visibility,created_at,workstream_id)`. | Authoritative parent-to-child relationship and routing floor. A row exists before child initialization; only `visible` rows enter product collections. A deletion tombstone remains through the maximum delayed-delivery window. |
 | `workstream_cards` | `workstream_id TEXT PRIMARY KEY REFERENCES workstreams`, `title TEXT`, `description TEXT`, `preview TEXT`, `scope TEXT` in `personal`, `workspace`, `exact_state TEXT` in `scheduled`, `running`, `interrupting`, `preparing_context`, `waiting_capacity`, `needs_input`, `completed`, `cancelled`, `failed`, `budget_exhausted`, `archived`, `deleting`, `restoring`, `lifecycle_family TEXT` in `active`, `completed`, `error`, `hidden`, `state_reason_code TEXT`, `last_people_activity_at INTEGER`, `latest_attention_ordinal INTEGER`, `state_changed_at INTEGER`, nullable `completed_at INTEGER`, `common_projection_version INTEGER`, `projection_hash TEXT`, `updated_at INTEGER`; indexes `(last_people_activity_at DESC,workstream_id)`, `(lifecycle_family,last_people_activity_at DESC,workstream_id)`, and `(exact_state,last_people_activity_at DESC,workstream_id)`. | One shared card per child, joined locally to directory origin/creation fields. **Work Streams**, **In Progress**, **Completed**, Error, and date groupings are indexed predicates over this row; the card is not copied into collection tables. Dates render in the viewer's locale from the stored timestamp. |
 | `member_workstream_state` | Composite primary key `(user_id,workstream_id)` referencing `members` and `workstreams`; `listing_eligible INTEGER`, `unread_tracking_start_ordinal INTEGER`, `seen_attention_ordinal INTEGER`, nullable `manual_unread_from_ordinal INTEGER`, `latest_mention_attention_ordinal INTEGER`, `assigned INTEGER`, `needs_input INTEGER`, `notification_pending INTEGER`, `personal_projection_version INTEGER`, `projection_hash TEXT`, `updated_at INTEGER`; indexes `(user_id,listing_eligible,updated_at DESC,workstream_id)`, `(user_id,latest_mention_attention_ordinal,seen_attention_ordinal)`, `(user_id,seen_attention_ordinal,unread_tracking_start_ordinal)`, and `(user_id,assigned,needs_input,updated_at DESC)`. | Sparse per-person overlay. The base waterline is `max(seen_attention_ordinal,unread_tracking_start_ordinal-1)`; a manual-unread ordinal may lower it. Unread is `workstream_cards.latest_attention_ordinal` above that effective waterline. **You Are Mentioned** is `latest_mention_attention_ordinal > seen_attention_ordinal`; interest is the deterministic union of pin, mention, unread, assignment, needs-input, and product policy. Missing rows mean no personal signal and no historical unread, not an all-zero row created for every member/child pair. |
 | `workstream_pins` | Composite primary key `(user_id,workstream_id)`; `position INTEGER`, `version INTEGER`, `created_at INTEGER`, `updated_at INTEGER`; unique `(user_id,position)` and index `(user_id,position,workstream_id)`. | Parent-owned personal opinion. Reorder rewrites one user's dense ordered run in one transaction and appends one workspace client event. The child is never involved. |
 | `child_projection_keys` | Composite primary key `(workstream_id,projection_key)` where the key is `common` or `user:<id>`; `source_generation INTEGER`, `last_applied_version INTEGER`, `source_epoch INTEGER`, `payload_hash TEXT`, `last_message_id TEXT`, `applied_at INTEGER`. | Destination-side high-water mark for child complete replacements. Versions compare only within the same key. A directory deletion epoch dominates every row even if a delayed replacement has a larger ordinary version. |
 | `workspace_events` | `event_seq INTEGER PRIMARY KEY`, `event_id TEXT UNIQUE`, nullable `recipient_user_id TEXT REFERENCES members`, `kind TEXT`, nullable `workstream_id TEXT REFERENCES workstreams`, `projection_key TEXT` equal to `workspace`, `common`, or `user:<id>`, nullable `source_message_id TEXT`, bounded `payload_json TEXT`, `created_at INTEGER`, `expires_at INTEGER`; indexes `(recipient_user_id,event_seq)`, `(workstream_id,event_seq)`, and `(expires_at,event_seq)`. | Cursor-replay log for the hibernating workspace socket. Workspace metadata and membership events use `projection_key=workspace` and no work-stream ID; parent-local pin events use a work-stream ID but need no child source message. Shared events have no recipient; personal events are filtered before serialization. Expired cursors receive a full authorized snapshot reset. |
-| `suggested_work_sets` | Composite primary key `(user_id,set_id)`; `source_set_version INTEGER`, `authorization_selector_hash TEXT`, `membership_epoch INTEGER`, `source_epoch INTEGER`, `status TEXT` in `active`, `superseded`, `revoked`, `expired`, `expires_at INTEGER`, `created_at INTEGER`, `updated_at INTEGER`; index `(user_id,status,expires_at)`. | Bounded, rebuildable display projection of the D1 opportunity authority. A deny-first source tombstone or membership epoch makes the whole set ineligible. |
-| `suggested_work_items` | Composite primary key `(user_id,set_id,opportunity_id)` referencing `suggested_work_sets`; `rank INTEGER`, `display_title TEXT`, `display_summary TEXT`, `origin_kind TEXT`, `source_revision TEXT`, `display_hash TEXT`; unique `(user_id,set_id,rank)`. | The exact home-card snapshot returned with its set. It is never a work stream and never enters Work Streams/In Progress/Completed until promotion finalizes. |
-| `promotion_reservations` | `reservation_id TEXT PRIMARY KEY`, `origin_key TEXT UNIQUE`, `opportunity_id TEXT`, `request_user_id TEXT`, `workstream_id TEXT UNIQUE REFERENCES workstreams`, `request_hash TEXT`, `membership_epoch INTEGER`, `source_epoch INTEGER`, `phase TEXT` in `reserved`, `initializing`, `child_ready`, `finalized`, `cancelled`, `quarantined`, nullable `child_receipt_hash TEXT`, `created_at INTEGER`, `expires_at INTEGER`, `updated_at INTEGER`; index `(phase,updated_at)`. | Crash-repairable state machine for creating one hidden child from a suggestion. It records the child receipt before making the directory row visible. |
-| `promoted_origins` | `origin_key TEXT PRIMARY KEY`, `reservation_id TEXT UNIQUE`, `workstream_id TEXT UNIQUE`, `promotion_receipt_hash TEXT`, `promoted_at INTEGER`, `retire_after INTEGER`. | Durable uniqueness/tombstone preventing two people from promoting the same workspace opportunity into two work streams. |
+| Connector/activity families | Exact `connector_domain_authority`, `connector_sources`, `connector_credentials`, `resource_selectors`, `resource_selector_principals`, `connector_ingress_receipts`, `connector_normalization_runs`, `activities`, `activity_effects`, `activity_deliveries`, `activity_events`, and `activity_event_targets` fields and indexes are in **WorkspaceDO connector and activity SQLite schema** above. | Canonical workspace-local connector gate, encrypted credential envelope, current resource authorization, ingress/watchdog generations, normalized activity, effect/delivery, and ordered activity-log state. All cross-child delivery is paired with `durable_outbox`; large bodies stay in R2. |
+| Digest families | Exact `digest_schedules`, `digest_schedule_times`, `digest_delivery_targets`, `digest_deliveries`, and `digest_target_deliveries` fields and indexes are in the activity schema above. | Canonical member digest policy, frozen cursor windows, and per-destination settlement inside this workspace. |
+| Opportunity families | Exact batch, opportunity, provenance, user-state, ranking, snapshot, `suggested_work_sets`, `suggested_work_items`, and feedback-receipt fields and indexes are in the activity schema above. | Canonical pre-workstream derivation, display, promotion input, and child-feedback state. There is no external opportunity authority or duplicate display cache. |
+| `promotion_reservations` | `reservation_id TEXT PRIMARY KEY`, `origin_key TEXT UNIQUE`, `opportunity_id TEXT REFERENCES work_opportunities(id)`, `request_user_id TEXT REFERENCES members(user_id)`, `workstream_id TEXT UNIQUE REFERENCES workstreams`, `request_hash TEXT`, `membership_epoch INTEGER`, `source_authorization_epoch INTEGER`, `source_dependency_hash TEXT`, `phase TEXT` in `reserved`, `initializing`, `child_ready`, `finalized`, `retiring`, `retired`, `quarantined`, nullable `child_receipt_hash TEXT`, nullable `retirement_message_id TEXT UNIQUE REFERENCES durable_outbox(message_id)`, nullable `retirement_receipt_hash TEXT`, nullable `retired_at INTEGER`, `created_at INTEGER`, `expires_at INTEGER`, `updated_at INTEGER`; index `(phase,updated_at)`. | Crash-repairable state machine for creating or retiring one hidden child from a suggestion. Every phase rechecks the workspace deny floor and complete opportunity dependency vector; one scalar connector epoch is insufficient. `retiring` owns a resumable child-cleanup outbox, and only its receipt permits `retired`. It records the initialization receipt before making the directory row visible. |
+| `promoted_origins` | `origin_key TEXT PRIMARY KEY`, `reservation_id TEXT UNIQUE`, `workstream_id TEXT UNIQUE REFERENCES workstreams(workstream_id)`, `promotion_receipt_hash TEXT`, `promoted_at INTEGER`, `retire_after INTEGER`. | Durable uniqueness/tombstone preventing two people from promoting the same workspace opportunity into two work streams. |
+| `retired_promotion_origins` | `origin_key TEXT PRIMARY KEY`, `reservation_id TEXT UNIQUE`, `opportunity_id TEXT`, `opportunity_version INTEGER`, `workstream_id TEXT`, `terminal_reason TEXT CHECK IN ('revoked','expired','initialization_failed','cancelled')`, `cleanup_receipt_hash TEXT`, `retired_at INTEGER`, `retain_until INTEGER`. | Small non-content tombstone proving an unpublished origin/version was consumed and its hidden child settled. It survives deletion of the bulky reservation/child rows through the idempotency horizon. Retrying product intent requires a new opportunity version and origin key. |
 
 The workspace's table relationships are deliberately local. `workstreams` is
 the root for `workstream_cards`, sparse `member_workstream_state`, pins, and
@@ -1518,8 +1531,9 @@ snapshot, outbox, migration, recovery, and legal-hold windows. Expired grants
 may be removed after their audit window; `workspace_events` is retained only for
 the published reconnect window; acknowledged outbox/inbox rows are pruned only
 after both replay and reconciliation can no longer refer to them. Suggested
-display sets expire with their D1 source version. `promoted_origins` outlives the
-source opportunity long enough to preserve exactly-one promotion.
+sets are invalidated locally by membership/source epochs and expire with their
+source opportunity versions. `promoted_origins` outlives the source opportunity
+long enough to preserve exactly-one promotion.
 
 ### `WorkstreamDO` SQLite schema
 
@@ -1529,9 +1543,9 @@ derived. The physical tables are:
 
 | Table | Columns, key, and indexes | Contract |
 | --- | --- | --- |
-| `workstream` | Singleton `id INTEGER PRIMARY KEY CHECK(id=1)`; `workstream_key TEXT UNIQUE`, `parent_workspace_key TEXT`, `parent_do_id TEXT`, `parent_generation INTEGER`, `region TEXT`, `title TEXT`, `description TEXT`, `preview TEXT`, `scope TEXT` in `personal`, `workspace`, `exact_state TEXT` in `scheduled`, `running`, `interrupting`, `preparing_context`, `waiting_capacity`, `needs_input`, `completed`, `cancelled`, `failed`, `budget_exhausted`, `archived`, `deleting`, `restoring`, `state_reason_code TEXT`, `next_sequence_number INTEGER`, `next_attention_ordinal INTEGER`, `authority_epoch INTEGER`, `scope_epoch INTEGER`, `listing_epoch INTEGER`, `deletion_epoch INTEGER`, `run_revision INTEGER`, `created_at INTEGER`, `last_people_activity_at INTEGER`, `state_changed_at INTEGER`, nullable `completed_at INTEGER`, `updated_at INTEGER`. | Canonical child identity, metadata, state, local counters, and parent fencing values. Title/state/activity changes originate here; the parent stores only a versioned projection. Region, keys, and parent relationship cannot change through an ordinary update. |
+| `workstream` | Singleton `id INTEGER PRIMARY KEY CHECK(id=1)`; `workstream_key TEXT UNIQUE`, `parent_workspace_key TEXT`, `parent_do_id TEXT`, `parent_generation INTEGER`, `region TEXT`, `title TEXT`, `description TEXT`, `preview TEXT`, `scope TEXT` in `personal`, `workspace`, `exact_state TEXT` in `scheduled`, `running`, `interrupting`, `preparing_context`, `waiting_capacity`, `needs_input`, `completed`, `cancelled`, `failed`, `budget_exhausted`, `archived`, `deleting`, `restoring`, `state_reason_code TEXT`, `next_sequence_number INTEGER`, `next_attention_ordinal INTEGER`, `authority_epoch INTEGER`, `scope_epoch INTEGER`, `source_authorization_floor INTEGER`, `listing_epoch INTEGER`, `deletion_epoch INTEGER`, `run_revision INTEGER`, `created_at INTEGER`, `last_people_activity_at INTEGER`, `state_changed_at INTEGER`, nullable `completed_at INTEGER`, `updated_at INTEGER`. | Canonical child identity, metadata, state, local counters, and parent fencing values. The source floor rejects stale connector-derived delivery/disclosure decisions but cannot itself prove current authorization. Title/state/activity changes originate here; the parent stores only a versioned projection. Region, keys, and parent relationship cannot change through an ordinary update. |
 | `participants` | `user_id TEXT PRIMARY KEY`, `participation_reason TEXT` in `creator`, `explicit`, `message`, `elicitation`, `action`, nullable `added_by_user_id TEXT`, `status TEXT` in `active`, `removed`, `participant_epoch INTEGER`, `added_at INTEGER`, nullable `removed_at INTEGER`, `updated_at INTEGER`; index `(status,participation_reason,user_id)`. | Child scope, subordinate to current workspace membership. Being a participant never restores a member removed by the parent. |
-| `grant_sessions` | `grant_id TEXT PRIMARY KEY`, `grant_hash TEXT UNIQUE`, `user_id TEXT`, `membership_epoch INTEGER`, `authority_epoch INTEGER`, `scope_epoch INTEGER`, `session_id TEXT`, `issued_at INTEGER`, `expires_at INTEGER`, nullable `revoked_at INTEGER`; indexes `(user_id,expires_at)` and `(expires_at)`. | Bounded cache of parent-issued authority used for socket attachment and child calls. Parent revocation advances local floors and invalidates matching rows/sockets/runs. |
+| `grant_sessions` | `grant_id TEXT PRIMARY KEY`, `grant_hash TEXT UNIQUE`, `user_id TEXT`, `membership_epoch INTEGER`, `authority_epoch INTEGER`, `scope_epoch INTEGER`, `source_authorization_epoch INTEGER`, `session_id TEXT`, `issued_at INTEGER`, `expires_at INTEGER`, nullable `revoked_at INTEGER`; indexes `(user_id,expires_at)` and `(expires_at)`. | Bounded cache of parent-issued authority used for socket attachment and child calls. Parent revocation advances local floors and invalidates matching rows/sockets/runs. A cached session never independently authorizes disclosure or acceptance of a connector-derived suggested action. |
 | `substreams` | Exact fields and indexes in the dedicated section below. | Defines which conversation exists, inheritance, audience, tool policy, and publish-back behavior. |
 | `parts` | Exact fields and indexes in the dedicated section below. | Immutable semantic conversation/control order after finalization. |
 | `part_mentions` | Composite primary key `(part_id,mention_index)` with `part_id TEXT REFERENCES parts`, `mention_kind TEXT` in `person`, `connector`, nullable `target_user_id TEXT`, nullable `connector_type TEXT`, `start_offset INTEGER`, `end_offset INTEGER`, `attention_ordinal INTEGER`; indexes `(target_user_id,attention_ordinal)` and `(part_id,mention_index)`, plus shape checks for the selected kind. | Normalized mention index validated against the authored text. Personal parent projections derive from these rows, never by reparsing markdown. |
@@ -1545,7 +1559,7 @@ derived. The physical tables are:
 | `active_output_turns` | `run_id TEXT PRIMARY KEY REFERENCES runs`, `attempt_epoch INTEGER`, `turn_id TEXT`, `substream_id TEXT`, `status TEXT` in `streaming`, `finalizing`, `resetting`, `durable_event_seq INTEGER`, `durable_through_frame_seq INTEGER`, `next_chunk_index INTEGER`, `started_at INTEGER`, `checkpointed_at INTEGER`, `updated_at INTEGER`; unique `(run_id,attempt_epoch)` and `(turn_id,attempt_epoch)`. | One mutable assistant attempt. The durable event and frame cursors advance only in the transaction that stores all text through the frame. |
 | `active_output_chunks` | Composite primary key `(run_id,attempt_epoch,chunk_index)` referencing `active_output_turns`; `text TEXT`, `byte_length INTEGER`, `first_frame_seq INTEGER`, `through_frame_seq INTEGER`, `content_hash TEXT`, `updated_at INTEGER`; index `(run_id,attempt_epoch,chunk_index)`. | Bounded mutable chunks avoid one ever-growing row and token-sized inserts. Finalization atomically emits immutable text parts and deletes the active rows; executor loss resets the entire incomplete attempt. |
 | `compaction_jobs` | `job_id TEXT PRIMARY KEY`, `substream_id TEXT`, `projection_key TEXT`, `source_fence_seq INTEGER`, `through_turn_id TEXT`, `projected_input_hash TEXT`, `authorization_revision_hash TEXT`, `status TEXT` in `pending`, `running`, `completed`, `invalidated`, `failed`, `start_part_id TEXT UNIQUE`, nullable `completion_part_id TEXT UNIQUE`, `attempts INTEGER`, `created_at INTEGER`, `updated_at INTEGER`; unique partial index `(substream_id,projection_key)` for pending/running jobs. | Operational lock and retry state around the immutable compaction control parts. New messages never mutate its source fence and never block on this row. |
-| `activity_delivery_receipts` | `delivery_id TEXT PRIMARY KEY`, `activity_id TEXT`, `source_revision TEXT`, `authorization_selector_hash TEXT`, `request_hash TEXT`, nullable `incorporated_part_id TEXT`, `result_code TEXT`, `received_at INTEGER`; index `(activity_id,source_revision)`. | Makes D1-to-child activity delivery idempotent. Current parent authorization is checked before incorporation; the D1 activity ID itself grants no access. |
+| `activity_delivery_receipts` | `delivery_id TEXT PRIMARY KEY`, `activity_id TEXT`, `source_revision TEXT`, `source_authorization_epoch INTEGER`, `authorization_selector_hash TEXT`, `request_hash TEXT`, nullable `incorporated_part_id TEXT`, `result_code TEXT`, `received_at INTEGER`; index `(activity_id,source_revision)`. | Makes parent-to-child activity delivery idempotent. The parent checks current normalized selector authority before incorporation and the child rejects an epoch below its floor; the workspace activity ID itself grants no access. |
 | `suggested_actions` | Exact fields and indexes in the dedicated section below. | Audience-scoped operational overlay; not conversation content. |
 | `projection_keys` | `projection_key TEXT PRIMARY KEY` where the key is `common` or `user:<id>`; `next_version INTEGER`, `last_payload_hash TEXT`, `last_enqueued_message_id TEXT`, `updated_at INTEGER`. | Child-side monotonic sequence for complete parent replacements. Common and each personal key advance independently, preventing an unrelated update from suppressing another key. |
 | `workstream_events` | `event_seq INTEGER PRIMARY KEY`, `event_id TEXT UNIQUE`, nullable `recipient_user_id TEXT`, `kind TEXT`, nullable `run_id TEXT`, nullable `attempt_epoch INTEGER`, bounded `payload_json TEXT`, `created_at INTEGER`, `expires_at INTEGER`; indexes `(recipient_user_id,event_seq)` and `(expires_at,event_seq)`. | Cursor-replay log for the foreground child socket. Provider frames may be coalesced before insertion; semantic boundaries and reset/final events are immediate. |
@@ -1566,18 +1580,15 @@ at least the longest provider, Workflow, migration, and client retry window that
 can present their IDs. Content deletion marks the reference revoked before R2
 garbage collection, so an old part cannot reauthorize retained bytes.
 
-Regional D1 retains the normalized provider `activities`, ordered
-`activity_events`, their event-specific authorization selectors/source
-revisions and targets, watch and automation claims, delivery outboxes, dead
-letters, opportunity batch windows/events, opportunity/provenance/user-state
-records, ranking rounds, stored suggested-work sets, promotion receipts, and
-object-projection receipts. It also retains the opaque workspace/work-stream
-fleet directory and migration campaign/job ledger because those require
-cross-object version, cohort, lease, cursor, and error queries. Fleet rows omit
-titles, descriptions, people, sidebar activity, mentions, unread state,
-suggestions, and conversation content. Those tables own query/control-plane
-stages, not any child transcript or workspace collection returned as
-authoritative after a child commit.
+The `WorkspaceDO` families above retain normalized provider activity, the
+ordered activity log, source selectors/targets, watches and automation claims,
+delivery outboxes/dead letters, digest cursors, opportunity/provenance/
+user-state records, rankings, promotion receipts, and child-feedback receipts.
+Regional D1 retains only the opaque workspace/work-stream fleet directory and
+migration campaign/job ledger needed for cross-object version, cohort, lease,
+cursor, and error queries, plus explicitly product-free telemetry/rebuildable
+aggregates. Fleet rows omit titles, descriptions, people, sidebar activity,
+mentions, unread state, suggestions, activity content, and conversation data.
 
 ### Migration-control Durable Object SQLite schemas
 
@@ -1753,21 +1764,31 @@ participant has observed. The child operational table contains:
 | Column(s) | SQLite shape | Contract |
 | --- | --- | --- |
 | `action_id`, `version` | Composite primary key `(TEXT,INTEGER CHECK(version>0))` | Stable action identity and immutable replacement version. |
-| `source_activity_id`, `delivery_id` | `TEXT NOT NULL`; `TEXT NOT NULL UNIQUE` | Opaque D1 source identity and idempotent delivery identity. |
+| `source_activity_id`, `delivery_id` | `TEXT NOT NULL`; `TEXT NOT NULL UNIQUE` | Opaque parent-workspace source identity and idempotent delivery identity. |
 | `audience_kind`, `audience_user_id` | `TEXT NOT NULL CHECK IN (user,workstream)`; nullable `TEXT` | User audience requires exactly one user; work-stream audience forbids it. A higher version may narrow but never silently widen audience. |
-| `provenance_ref`, `authorization_selector_hash`, `source_revisions_json` | Bounded `TEXT NOT NULL` | Opaque source and canonical membership/connection/resource revision vector used for every read and resolution. |
+| `provenance_ref`, `authorization_selector_hash`, `source_revisions_json`, `source_authorization_epoch` | Bounded `TEXT NOT NULL` for the first three; `INTEGER NOT NULL` for the epoch | Opaque source and canonical membership/connection/resource revision vector. The epoch fences stale cached decisions but does not replace the parent's normalized selector check. |
 | `display_title`, `display_body` | Bounded `TEXT NOT NULL` | Authorized display snapshot. It is not a model or shared transcript fallback. |
 | `status` | `TEXT NOT NULL CHECK IN (pending,accepted,dismissed,retracted,expired)` | Terminal state never reopens; a higher version is a distinct row and replacement decision. |
 | `created_at`, `expires_at`, `resolved_at`, `retracted_at` | Required `INTEGER`, required `INTEGER`, nullable `INTEGER`, nullable `INTEGER` | Pending requires future expiry and no resolution timestamp; each terminal shape has the corresponding timestamp. |
 | `resolved_by_user_id`, `resolution_client_id` | Nullable `TEXT` | Required together for accepted or dismissed user resolution and unique as `(action_id,resolution_client_id)` when populated. |
 | `share_intent_json`, `authored_part_id` | Nullable bounded `TEXT`; nullable `TEXT REFERENCES parts(id)` | Explicit disclosure target and the newly authored audience-safe main-feed part. Accepting the card alone does not copy its private body. |
-| `feedback_message_id` | Nullable `TEXT UNIQUE` | References the durable regional-service outbox delivery for D1 feedback. |
+| `feedback_message_id` | Nullable `TEXT UNIQUE` | References the durable child-to-parent outbox delivery for workspace feedback. |
 
 Indexes are `(audience_kind,audience_user_id,status,expires_at)`,
 `(source_activity_id,version DESC)`, and `(status,expires_at)`. Shape constraints
 bind audience, lifecycle timestamps, resolver identity, and explicit sharing.
 
-Reads and resolutions use the active capability plus current source revisions.
+Any child snapshot that would include a pending suggested action first calls the
+parent's narrow `authorizeSuggestedActionDisclosure` RPC with action/version,
+recipient, source vector, and the child's source floor. The parent checks current
+membership, connection/source epochs, and normalized selector principals, then
+returns a short-lived action-specific signed decision carrying the current
+`source_authorization_epoch`; failure or parent unavailability omits the card.
+Acceptance/dismissal performs the same live check and fails closed. This is a
+deliberate RPC only for connector-derived operational overlays, not for ordinary
+transcript reads. Parent deny changes advance the epoch before emitting the
+best-effort retraction command, so a delayed outbox can affect cleanup but cannot
+extend disclosure. Reads and resolutions also use the active child capability.
 Expiry and retraction clear personal workspace interest. A private row is
 omitted from every shared read by construction rather than returned and hidden
 by the client. Retention keeps only the bounded audit fields needed for feedback
@@ -1918,12 +1939,13 @@ logs, analytics, support access, and every subprocessor require separate
 deployment verification; an EU-pinned DO alone is not an end-to-end residency
 claim.
 
-Regional D1 remains during and after this migration wherever it is the correct
-regional query or policy store. It is not copied into one Global database.
-That explicitly includes provider activity, the first-party activity log,
-digests, watches, automation matching, opportunity admission/provenance,
-suggested-work ranking and feedback, delivery outboxes, and dead-letter state.
-Their object projections are derived caches and remain within the same region.
+Regional D1 remains during and after this migration only for explicitly
+product-free fleet/migration queries, telemetry, and rebuildable aggregates. It
+is not copied into one Global database. Provider activity, the first-party
+activity log, digests, watches, workspace-local automation matching,
+opportunity admission/provenance, suggested-work ranking/feedback, delivery
+outboxes, and their dead-letter state remain inside the owning jurisdictional
+`WorkspaceDO`; large bodies remain in its regional R2.
 
 ## Security and trust model
 
@@ -1970,9 +1992,10 @@ Exports and deletion traverse all substreams, referenced payloads, run receipts,
 activity incorporations, suggested-action history, and workspace projections.
 The parent tombstone precedes or shares the deletion protocol so delayed child,
 activity, or suggestion delivery cannot recreate sidebar metadata. Activity and
-opportunity retention/delete jobs remove or irreversibly redact regional D1 and
-R2 provenance according to their own audience and legal-retention rules; an
-opaque object receipt is not permission to retain deleted source content.
+opportunity retention/delete jobs remove or irreversibly redact the owning
+`WorkspaceDO` rows and regional R2 provenance according to their own audience
+and legal-retention rules; an opaque receipt is not permission to retain
+deleted source content.
 
 ## Agent behavior
 
@@ -2055,9 +2078,9 @@ ceilings; a high limit is not an instruction to consume it.
 | Running instances per account | 50,000 in the Paid limits table | The same page's explanatory prose still says 10,000. Do not hard-code correctness to either number: record the account-confirmed limit, use 10,000 as the conservative release-planning ceiling until Cloudflare confirms 50,000 for the account, and configure a lower product admission cap. Waiting instances do not count. |
 | Instance creation | 300/second per account and 100/second per Workflow | Batch starts, rate-limit regional admission, and treat HTTP 429 as non-admission. Creation **and restart** consume this rate. |
 | Queued instances | 2,000,000 | Queueing is a pressure valve, not an SLO; Avalon applies a much smaller product queue/age bound. |
-| Completed state/log retention | 30 days | Product history and receipts remain in their domain owners/D1, never only Workflow history. |
+| Completed state/log retention | 30 days | Product history and receipts remain in their domain owners and migration-control ledgers, never only Workflow history. |
 | Workflow name / instance ID length | 64 / 100 characters | Use short stable Workflow names and opaque hashed instance IDs; validate the documented identifier character set before creation. |
-| Subrequests per instance | 10,000 default; configurable to 10,000,000 | Count owner RPC, R2/D1, model, tool, and other service calls in admission. Keep the default until load evidence requires more. |
+| Subrequests per instance | 10,000 default; configurable to 10,000,000 | Count owner RPC, R2, migration-D1, model, tool, and other service calls in admission. Keep the default until load evidence requires more. |
 | Retries per step | 10,000 | Product retry policies stay far lower and side effects still require receipts/reconciliation. |
 | Workflow schedules | 100 per account; cron expression at most 256 characters | Agent loops start from durable product admission, not a per-loop schedule. Budget the small number of fleet/digest schedules in the account inventory. |
 
@@ -2164,8 +2187,8 @@ another abstraction that only one feature uses:
 | Automation drafting and elicitation loop | Automation-domain record/owner adapter. |
 | Live meeting control-tower and final meeting summary | Meeting-domain record/owner adapter. |
 | Attachment summary and work-stream naming/description | `WorkstreamDO` through a model-only target adapter. |
-| Activity structuring and work-opportunity admission/ranking | Their regional activity or opportunity domain owner through a model-only target adapter. |
-| Activity digest | Digest-domain adapter; it no longer needs a synthetic work stream merely to reuse the loop. |
+| Activity structuring and work-opportunity admission/ranking | The owning `WorkspaceDO` through a model-only target adapter and bounded snapshot/CAS. |
+| Activity digest | The owning `WorkspaceDO` through a digest adapter; it no longer needs a synthetic work stream merely to reuse the loop. |
 
 The generic Workflow host is the default for a loop that can outlive an HTTP
 request, calls tools, waits for user or provider events, or needs durable step
@@ -2321,15 +2344,26 @@ client socket endpoint.
    other agent loops through their own target adapters. Direct legacy loops
    remain available only for unmigrated authorities during the bounded
    transition.
-8. **Bridge activity and suggestions to object owners.** Add durable regional
-   delivery/outbox receipts in both directions, child idempotency, dead-letter
-   observability, event-specific authorization selectors, canonical log-event
-   producers, audience-scoped suggested-action delivery/retraction, suggested-
-   work source tombstones/display projections, and promotion gates with current-
-   epoch receipts. Run in shadow until D1 and object-derived cards, resolutions,
-   targets, and created-child receipts reconcile without duplicate effects. The
-   normalized activity, activity-log, and opportunity domains remain
-   authoritative in D1.
+8. **Move activity and suggestions into each workspace owner.** Add the parent
+   connector-domain gate, encrypted credential and normalized resource-ACL
+   tables, activity/digest/opportunity tables, R2-before-parent-receipt ingress
+   with a same-transaction Queue outbox plus normalization watchdog, bounded
+   normalization and claim RPCs, child delivery/outbox receipts in both
+   directions, dead-letter observability, source deny epochs, canonical event
+   producers, audience-scoped suggested-action delivery/retraction, local
+   suggestion sets, and the parent-local promotion gate. Snapshot and tail one
+   workspace's legacy D1 rows into `connector_domain_authority=legacy_shadow`
+   inside its potentially already-live parent under a separate D1
+   `connector_authority` row and connector hold/route-receipt journal. It uses
+   the same hold/prepare/CAS mechanics as product cutover but never mutates the
+   already-live `workspace_authority` route. The gate, rather than the whole
+   object, makes this generation side-effect-free. Shadow-compare
+   normalized rows, ordered log cursors, digest windows, ranks, resolutions,
+   targets, credential versions, selector grants, and child receipts; then
+   prepare the connector domain and route that workspace's ingress/read/write
+   paths together. The `connector_authority` CAS receipt atomically opens the prepared connector
+   generation on first routed request. After that CAS, D1 is a fenced legacy
+   source, not a fallback authority.
 9. **Retire legacy authority and coordination.** After every route, provider
    ingress, scheduler, export, deletion, and repair path resolves the object
    authority, stop writing migrated conversation tables. After inventory proves
@@ -2431,8 +2465,12 @@ are defined in [`migration-control-plane.md`](migration-control-plane.md).
     authorization for many members, typical one-to-five-second time to first
     token, ordinary tools measured in seconds, Terminal p95 under one minute,
     and Terminal operations up to five minutes without parent-plane token
-    traffic. They publish supported parent and child envelopes and demonstrate
-    stable shard-facade behavior when an envelope is exceeded.
+    traffic. They publish supported parent and child envelopes, including
+    per-provider one-workspace sustained/burst ingress, p95/p99 webhook
+    acknowledgement, body size, provider retry horizon, and the interactive SLO
+    under that burst. Before a shard facade exists, excess ingress receives a
+    documented retryable response and no acknowledgement; the test does not
+    attribute protection to downstream normalization batching.
 14. Storage accounting demonstrates that durable write count follows bounded
     mutable-tail checkpoints and semantic final parts rather than token deltas
     or UI frames. Tests publish row/index writes, latency, fragmentation, PITR
@@ -2474,30 +2512,45 @@ are defined in [`migration-control-plane.md`](migration-control-plane.md).
     listing access. An offline device purges the card on its next authenticated
     contact; the system does not claim remote erasure of already cached bytes.
 20. Activity-ingestion fixtures prove exact-byte verification or checkpointed
-    polling, provider/dedupe uniqueness, regional R2 payload retention, compact
-    regional D1 normalization, opaque Queue envelopes, deterministic claims,
-    child delivery idempotency, and ordered `activity_events` projection. Replays
-    create one incorporated part, one log event, and one effect. Poison activity
-    is observable in a dead-letter state and can be replayed in a bounded scope.
-    D1 target IDs cannot authorize child delivery, and a digest page filters all
-    work-stream audiences plus event-specific source selectors in bounded batches
-    without child fan-out. Provider and child producers cannot double-log one
-    semantic occurrence.
+    polling, `(connection_id,provider,delivery_id)` and normalized-event
+    uniqueness across two same-provider installations, regional R2 payload retention,
+    R2-before-parent-receipt ordering, parent receipt/outbox before webhook
+    acknowledgement, a same-transaction local normalization watchdog that
+    survives Queue/DLQ loss, automatically dead-letters at its frozen
+    attempt/age ceiling, cancels without releasing dead-letter evidence, and
+    can be restarted only as an explicit next replay generation,
+    compact `WorkspaceDO` normalization, bounded Queue
+    envelopes and parent RPCs, deterministic claims, child
+    delivery idempotency, and ordered local `activity_events`. Replays create one
+    incorporated part, one log event, and one effect. Poison activity is visible
+    in local dead-letter state and can be replayed in a bounded scope. A target
+    ID cannot authorize child delivery, and a digest page filters work-stream
+    audiences plus current normalized selector/principal rows without D1 or
+    child fan-out. A selector hash alone never authorizes a read or effect.
+    Provider and child producers cannot double-log one semantic occurrence.
 21. Personal connector activity remains visible only to its owner through
-    admission, ranking, workspace display cache, opportunity start, provenance,
+    admission, ranking, workspace suggestion set, opportunity start, provenance,
     digest, and feedback. A workspace-audience activity remains resource-
     authorized. No activity title, actor, target, opportunity, or projection is
-    stored in Global. Member removal synchronously drops the parent display cache
-    even while regional D1 cleanup is delayed; source revocation masks sensitive
-    display fields before it completes.
+    stored in Global. Member removal synchronously invalidates the parent's
+    authoritative personal set; source revocation advances a local deny epoch
+    and masks sensitive display fields before asynchronous cleanup completes.
+    Schema-shape tests prove a normalizer cannot attach personal-source content
+    to the workspace principal. Credential tests prove ciphertext-only parent
+    RPCs, lease/version-CAS refresh, no plaintext Queue/Workflow/log payload,
+    and fail-closed use of a revoked or disabled source.
 22. Suggested-work tests rank and store a set before the request path, keep
     per-person impression and dismissal independent, and never place an
-    opportunity into real work-stream collections. Crashes after the D1 claim,
-    parent reservation, child initialization, or D1 finalization all reconcile
-    to one initialized child and one opening user turn, with no child visible
-    before the parent's final promotion transaction. Every stage revalidates the
-    recorded membership/source epochs; pre-publication revocation terminalizes
-    and quarantines rather than completes. Concurrent starts by two members with
+    opportunity into real work-stream collections. Crashes after the parent
+    claim/reservation, child initialization, receipt, or parent finalization all
+    reconcile to one initialized child and one opening user turn, with no child
+    visible before the parent's final promotion transaction. Every stage
+    revalidates the recorded membership epoch and complete normalized source
+    dependency vector; pre-publication revocation terminalizes
+    into bounded `retiring`, settles one idempotent child-cleanup receipt, and
+    leaves a non-content retired-origin tombstone rather than unreachable child
+    storage. The old origin cannot retry; a newly admitted version can.
+    Concurrent starts by two members with
     different request keys still resolve one workspace-opportunity origin; a
     personal opportunity refuses a different user.
 23. Suggested-action tests deliver one pending card to one existing child,
@@ -2505,23 +2558,32 @@ are defined in [`migration-control-plane.md`](migration-control-plane.md).
     table, and project a targeted **Needs Your Input** signal only to the
     assignee. A personal card is absent from shared transcript, export, search,
     digest, compaction, model projection, and other participants' realtime.
-    Version, expiry, and current source authorization are checked on read and
-    accept; a retraction wins idempotently. D1 feedback eventually converges
+    Version, expiry, and current source authorization are checked through the
+    narrow live parent disclosure RPC on every read and accept; parent
+    unavailability omits the optional card, and a delayed retraction cannot
+    extend its visibility. A retraction wins idempotently. Parent feedback eventually converges
     without controlling the open-work-stream read. With contextual routing
     disabled, all producers and readers expose no new pending cards. Acceptance
     shares evidence only through an explicit audience-safe newly authored part
     and never implies external-write approval without an action-specific contract.
 24. Storage and deletion tests prove that provider bodies live only in regional
-    R2, normalized/query state only in regional D1, incorporated content only in
-    its child, and compact collection/display facts only in the parent. Deleting
-    or narrowing any source cannot be undone by delayed activity, suggestion, or
-    child-projection delivery.
+    R2, normalized/query/suggestion/digest state only in the owning
+    `WorkspaceDO`, and incorporated content only in its child. Regional D1 has no
+    connector-event or suggestion authority. Deleting or narrowing any source
+    cannot be undone by delayed activity, suggestion, or child delivery.
 25. Fleet-control tests cover a lazy additive table/column migration, an
     explicit convergence sweep, a restartable local transform, parent-before-
     child wire-version expansion, and an authority-copy import from D1/R2.
     Regional inventory reports schema/data/protocol versions and coarse
     operational size/state but contains no title, description, member, mention,
     unread, suggestion, activity text, or conversation content.
+    A connector-domain fixture first makes membership/sidebar live, then imports
+    connector data under `legacy_shadow`; no ingress, read, credential refresh,
+    poll, digest, rank, or effect executes before the exact D1 route receipt
+    opens the prepared singleton generation. The fixture proves the independent
+    D1 `connector_authority` remains `legacy/holding` while
+    `workspace_authority` already routes to the parent, and that connector CAS
+    does not disturb the workspace route.
 26. A migration failure at every phase proves automatic `pausing` plus permit
     drain, bounded/DLQ retry, pre-cutover abort, compatible code rollback, and
     post-cutover forward repair. A PITR rehearsal records bookmark/command
@@ -2607,21 +2669,23 @@ are defined in [`migration-control-plane.md`](migration-control-plane.md).
 35. Retention tests prove that pruning replay/outbox/inbox/grant/tool/migration
     receipts cannot precede their maximum retry or recovery window, while
     canonical conversation/product state remains independent of Workflow-log,
-    socket-event, activity-projection, and migration-control retention.
+    socket-event, R2-body, and migration-control retention.
 36. Legacy-object cutover tests migrate a `WorkstreamRoom` socket cursor and
     pending HyperSight wake into `WorkstreamDO` replay/`due_work`, and compare a
     `WorkspaceScheduler` alarm/retry set with `WorkspaceDO.due_work` through a
     lost refresh. Inventory must prove no caller, socket, alarm, or retry state
     remains before either old class lifecycle is retired; crash symbolication is
     unchanged and receives no workspace/work-stream binding.
-37. Regional-schema conformance tests build D1 from the checked-in migrations
-    and compare every connector-ingress, activity, effect/delivery, event-log,
-    digest, opportunity, ranking, snapshot, and action-feedback table with this
-    contract. They prove that the same provider delivery and bytes resolve one
-    ingress receipt/activity, changed bytes under that delivery ID are rejected,
-    an R2-before-D1 crash leaves only a reapable orphan, a D1-before-Queue crash is
-    repaired by the pending scan, and stale processing leases recreate no
-    automation, event, child delivery, opportunity candidate, or action.
+37. Workspace-schema conformance tests compare every connector-source/ingress,
+    activity, effect/delivery, event-log, digest, opportunity, ranking, snapshot,
+    and action-feedback table in `WorkspaceDO` with this contract. They prove
+    that the same provider delivery and bytes resolve one receipt/activity,
+    changed bytes under that delivery ID are rejected, an R2-before-parent crash
+    leaves only a reapable orphan, a parent-before-Queue crash is repaired by the
+    local outbox/alarm, Queue redelivery returns the existing receipt, and stale
+    processing leases recreate no automation,
+    event, child delivery, opportunity candidate, or action. D1 schema tests
+    prove none of those product tables remain after retention-gated cleanup.
 38. Digest-storage tests insert events with tied provider timestamps and prove
     `log_sequence` loses none; atomically insert event targets; freeze a cursor
     while later events arrive; withhold non-digestible machinery; and keep digest
@@ -2632,19 +2696,22 @@ are defined in [`migration-control-plane.md`](migration-control-plane.md).
     content from leaving Avalon.
 39. Opportunity/action lineage tests follow one connector activity through its
     normalized revision, exclusive effect decision, immutable batch reference,
-    provenance graph, per-person ranking, parent display projection, hidden-child
+    provenance graph, per-person ranking, parent suggestion set, hidden-child
     promotion, or existing-child suggested-action delivery. Personal audience is
-    preserved at every row and projection. Reordered or repeated child feedback
-    writes one D1 receipt and cannot reopen a terminal action, while deletion of
-    the parent display cache does not delete the regional opportunity authority.
+    preserved at every row and delivery. Reordered or repeated child feedback
+    writes one parent receipt and cannot reopen a terminal action, while
+    invalidating a suggestion set does not delete its retained local opportunity
+    evidence before policy allows.
 
 ## Open questions
 
 1. **What exact parent and child capacity envelopes are supported?** This blocks
    production canary, not schema and shadow work. Load testing must set supported
-   member, work-stream, socket, update-rate, projection-byte, conversation-byte,
-   and run-admission values, plus the high-water marks that stop admission and
-   require a separately specified shard tier or successor work stream. Any
+   member, work-stream, socket, sidebar-update, connector-event, burst-rate,
+   activity-backlog, digest-batch, SQLite-byte, projection-byte,
+   conversation-byte, and run-admission values, plus the high-water marks that
+   shed/slow connector ingress or require a separately specified activity-shard
+   tier or successor work stream. Any
    future sharding remains behind the `WorkspaceDO`; it never permits client
    fan-out to work streams and cannot ship without its own complete table and
    reconciliation contract.
@@ -2680,25 +2747,29 @@ are defined in [`migration-control-plane.md`](migration-control-plane.md).
 7. **What are the activity, payload, event-log, opportunity, feedback, and
    object-receipt retention periods?** The launch policy must cover per-source
    deletion, connection removal, member removal, legal holds, content-hash
-   erasure, regional R2 garbage collection, and expired-object projection
-   cleanup without making opaque receipts permanent content proxies.
+   erasure, regional R2 garbage collection, and expired local suggestion/event
+   cleanup without making opaque receipts permanent content proxies. Separately,
+   set encrypted credential-envelope/key-version retention and prove plaintext
+   never enters migration manifests, Queue/Workflow inputs, logs, or exports.
 8. **Which suggested actions exist at launch?** Contextual routing is currently
    paused. Re-enabling it requires product names, action kinds, target/assignee
    semantics, acceptance effects, expiry, notification behavior, and a quality
    gate. Until then the architecture retains the delivery/feedback boundary but
    exposes no new card.
 9. **What are the activity and suggestion recovery SLOs?** Set delivery retry and
-   dead-letter thresholds, maximum sidebar/opportunity projection lag, replay
-   authorization, ranking freshness, and the terminal UX for an opportunity
-   whose source is revoked during `Starting`.
+   dead-letter thresholds, normalization-watchdog interval, maximum sidebar/
+   opportunity projection lag, replay authorization, ranking freshness,
+   asynchronous stale-set cleanup, and the terminal UX for an opportunity whose
+   source is revoked during `Starting`.
 10. **What is the offline snapshot authorization lease?** Set its duration,
     screen-lock and local-encryption expectations, behavior after expiry without
     connectivity, and purge proof on the next authenticated epoch change. The
     system cannot promise remote erasure of bytes already downloaded offline.
 11. **What are activity authorization batch limits?** Define the event-selector
-    encoding, resource-policy revision source, fail-closed timeout, digest jitter
-    window, users/events per parent request, priority lane, and sharding threshold
-    so digest traffic cannot starve membership or sidebar operations.
+    and principal snapshot refresh contract, resource-policy revision source,
+    deny precedence, fail-closed timeout, digest jitter window, users/events per
+    parent request, priority lane, and sharding threshold so digest traffic
+    cannot starve membership or sidebar operations.
 12. **What are the fleet campaign safety envelopes?** Measure constructor DDL,
     fixed jurisdictional shard count, Queue wake batching, permit TTL/
     concurrency, object RPC slice size, defer-busy policy, error/latency/
