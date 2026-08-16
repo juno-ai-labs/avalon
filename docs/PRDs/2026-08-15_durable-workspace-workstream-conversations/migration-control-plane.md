@@ -237,8 +237,10 @@ state without acquiring sidebar or transcript content.
 ### Inventory maintenance
 
 Allocation, registration, retirement, successful schema migration, and
-meaningful size-bucket changes append a regional inventory outbox item. The
-normal regional activity/operations Queue delivers the idempotent update to D1.
+meaningful size-bucket changes append a product-free regional inventory outbox
+item. The fleet-inventory Queue delivers that idempotent update to D1; the
+connector-activity Queue instead resolves one `WorkspaceDO` and never writes a
+D1 product row.
 The `WorkspaceDO` directory is the authoritative parent-to-child relationship;
 the D1 row is its fleet projection.
 
@@ -439,10 +441,50 @@ There is no platform bulk loader into every object's private SQLite database;
 the object applies its own import. D1 is the old product authority and also the
 single cutover gate; route, hold state, and source writes are never independent
 systems. Every legacy writer named in the enforced writer registry must use one
-regional D1 transaction that reads `workstream_authority(resource_key, epoch,
-state, target, final_hold_seq, prepared_hash)` and then either mutates the old
-tables plus outbox or inserts a stable command in `migration_ingress_hold`.
-There is no unchecked legacy write path.
+regional D1 transaction that reads the applicable
+`workstream_authority(resource_key, epoch, state, target, final_hold_seq,
+prepared_hash)` or same-shaped `workspace_authority` row and then either mutates
+the old tables plus outbox or inserts a stable command in
+`migration_ingress_hold`. Connector migration never reuses either row: it has a
+separate D1 `connector_authority` domain gate because `workspace_authority` may
+already route membership/sidebar traffic to the parent. There is no unchecked
+legacy write path.
+
+The regional D1 connector-cutover tables are deliberately narrow:
+
+| Table | Fields and constraints | Contract |
+| --- | --- | --- |
+| `connector_authority` | `workspace_key TEXT PRIMARY KEY`, `epoch INTEGER`, `generation INTEGER`, `state TEXT CHECK IN ('legacy','holding','closing_hold','do','quarantined')`, nullable `target_workspace_do_id TEXT`, nullable `final_hold_seq INTEGER`, nullable `prepared_hash TEXT`, nullable `route_receipt_hash TEXT`, `updated_at TEXT`; unique `(workspace_key,epoch,generation)`. | Sole legacy connector-domain writer/route gate. It is independent of `workspace_authority`; state `do` requires target, final sequence, prepared hash, and route receipt. Product fields, credentials, activity, and member data are forbidden. |
+| `connector_migration_holds` | Composite primary key `(workspace_key,epoch,hold_seq)` with `workspace_key TEXT`, `epoch INTEGER`, `generation INTEGER`, `hold_seq INTEGER`, `command_id TEXT UNIQUE`, `command_kind TEXT`, `request_hash TEXT`, exactly one bounded `payload_json TEXT` or regional `payload_ref TEXT`, `payload_hash TEXT`, `status TEXT CHECK IN ('held','imported','settled','returned_to_legacy')`, nullable `target_receipt_hash TEXT`, `created_at TEXT`, `updated_at TEXT`; unique `(workspace_key,epoch,request_hash)`. | Finite connector journal while `holding`. Insert and legacy authority check occur in the same D1 transaction. `closing_hold` forbids insertion; every sequence through `final_hold_seq` must have a target receipt before route CAS. |
+| `connector_route_receipts` | Composite primary key `(workspace_key,epoch,generation)`; `target_workspace_do_id TEXT`, `final_hold_seq INTEGER`, `prepared_hash TEXT`, `route_receipt_hash TEXT UNIQUE`, `committed_at TEXT`. | Immutable result of the one `connector_authority` compare-and-set. Regional routing carries this opaque receipt to the target; it contains no connector or workspace product metadata beyond opaque routing keys. |
+
+The same protocol moves the newly parent-owned connector domain. For that
+campaign, the fenced resource is the workspace and the source snapshot/tail
+includes connector sources, encrypted credential envelopes and rotation
+versions/leases, normalized selector/principal ACL snapshots, poll cursors,
+ingress receipts, normalized
+activities/effects, ordered activity events/targets, digest state,
+opportunity/provenance/user state, suggestion rankings, promotion receipts, and
+child-feedback receipts. Existing workspace-prefixed R2 bodies remain in place
+and their references/hashes are verified; they are never re-keyed into or
+deduplicated with another workspace. Provider ingress, polling, activity reads,
+digest claims, ranking, and promotion all pass through the one
+`connector_authority` row so they cut over together rather than leaving D1 and
+`WorkspaceDO` as continuing co-authorities.
+
+Because membership/sidebar may already be live in this same object, connector
+cutover does **not** rely on the whole target being hidden. The target's
+singleton `connector_domain_authority` is an independent product-domain gate.
+During import it is `legacy_shadow`: ordinary parent APIs remain live, but every
+connector ingress/read, credential refresh, poll, digest, rank, notification,
+replay, and background effect rejects that generation. `prepared` preserves
+the verified final hold sequence/hash with the same prohibition. The external
+D1 `connector_authority` CAS produces the route receipt; a request carrying that
+receipt atomically changes only this singleton to `open`. Every imported
+connector row, due job, outbox command, Queue envelope, and Workflow claim is
+generation-stamped and must equal the open singleton. Thus the live parent can
+hold old membership authority and a shadow connector domain without exposing or
+executing shadow activity.
 
 An authority-copy campaign uses this crash-safe protocol:
 
@@ -450,12 +492,18 @@ An authority-copy campaign uses this crash-safe protocol:
    snapshot, store hashed large chunks in regional R2, and continue normal
    source mutations plus an old-writer outbox in the same D1 transactions.
 2. Import the snapshot and tail through a recorded outbox high-water mark into
-   a hidden, side-effect-free target generation. Verify counts, hashes,
-   message-array projection, sidebar projection, and authorization floors.
+   a hidden, side-effect-free target generation. For connector-domain migration,
+   “hidden” means the live parent's `connector_domain_authority=legacy_shadow`,
+   not an unreachable workspace object. Verify counts, hashes,
+   message-array projection, sidebar projection, activity-log sequence/cursors,
+   suggestion-set fingerprints, source epochs, and authorization floors as
+   applicable to the target class.
 3. In one D1 transaction, compare the old epoch and change `legacy -> holding`
    while advancing the authority epoch. From that point a current writer
-   inserts its complete command into `migration_ingress_hold` instead of the old
-   product tables and returns an explicit `accepted_pending_migration` receipt.
+   inserts its complete command into the authority's hold journal—
+   `connector_migration_holds` for the connector domain, otherwise
+   `migration_ingress_hold`—instead of the old product tables and returns an
+   explicit `accepted_pending_migration` receipt.
    A writer that observed the prior epoch fails and retries through the gate.
 4. Replay the remaining old outbox and held commands, in stable ID/sequence
    order, into the target generation. Duplicate import returns the existing
@@ -466,15 +514,25 @@ An authority-copy campaign uses this crash-safe protocol:
    every held command through the final sequence, producing a target
    `prepared_hash`.
 6. Call idempotent `prepareAuthority(epoch, final_hold_seq, prepared_hash)`.
-   The target records `prepared` but still cannot run tools, notify, publish
-   activity, accept external ingress, or appear in the parent collection.
+   The whole-object target records `prepared`; a live workspace parent records
+   those values in `connector_domain_authority.state='prepared'`. In both cases
+   the prepared domain still cannot use credentials, poll, run tools, digest,
+   rank, notify, publish/read activity, accept external ingress, or deliver an
+   effect.
 7. In one D1 compare-and-set, require the matching epoch, `closing_hold` state,
    final sequence, and prepared hash, then publish state `do` plus the target
-   route. This CAS is the sole external authority cutover. There is no
+   route and insert its immutable route receipt. Connector campaigns mutate
+   `connector_authority` plus `connector_route_receipts`; they do not touch the
+   already-live `workspace_authority` route. This CAS is the sole external
+   authority cutover. There is no
    post-route held-item release: every acknowledged held item was already
    imported and verified.
 8. The router's first direct request carries the committed route epoch/receipt;
    the target atomically opens that prepared epoch before applying the request.
+   For an already-live parent this changes only `connector_domain_authority` and
+   requires the exact generation, final hold sequence, prepared hash, and D1
+   route-receipt hash. A first routed retry with the same receipt returns the
+   open result; another receipt is corruption.
    A lost post-CAS notification is therefore repaired by normal ingress or a
    regional reconciliation command. Background effects remain paused until the
    same route receipt opens the epoch.

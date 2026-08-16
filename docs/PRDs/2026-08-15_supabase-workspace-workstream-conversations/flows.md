@@ -113,15 +113,17 @@ client has fetched through byte 2,400 from coordinate hints.
 **Expected user-visible behavior:** Text resumes from the committed offset,
 provisional overlap reconciles in place, and completion appears once.
 
-**Architecture stress:** `active_outputs` commits bytes and offset together;
-Realtime carries attempt/revision/sequence coordinates and the client fetches
-text through live RLS. Durable work-stream events fill gaps.
+**Architecture stress:** `active_output_attempts` plus bounded
+`active_output_chunks` commit each byte range and offset together; Realtime
+carries attempt/revision/sequence coordinates and the client fetches only bytes
+after its live-authorized offset. Durable work-stream events fill semantic gaps.
 
 **Failure oracle:** Fail if text disappears, repeats visibly, an old attempt
 overwrites the winner, or the client depends on Broadcast Replay for recovery.
 
-**Unresolved pressure:** Tune observed/unobserved checkpoint intervals against
-database WAL and regeneration cost.
+**Unresolved pressure:** Validate the 500 ms observed/one-second unobserved
+defaults and 16 KiB chunks against WAL, TOAST, vacuum, RLS reads, and
+regeneration cost.
 
 ### S04 — A private evidence chat cannot become shared history
 
@@ -271,9 +273,9 @@ may have filesystem effects and cannot be assumed cancellable.
 
 **Flow:**
 
-1. Steering commits while the Edge/Workflow adapter is attached.
-2. The active adapter requests cancellation if supported and parks before its
-   runtime limit.
+1. Steering commits while the Workflow's execution Worker is attached.
+2. The Worker requests cancellation if supported; the Workflow parks on an
+   addressable provider reference rather than holding a polling loop.
 3. A callback or reconciler records partial output and final provider status.
 4. No next effect begins under the old revision; the loop resumes or asks.
 
@@ -437,28 +439,38 @@ accessible, or database cascade is treated as proof of Storage deletion.
 **Persona:** Priya audits an EU workspace using messages, files, connectors,
 vectors, realtime, and a long loop.
 
-**Preconditions:** The contracted EU Supabase/provider path is approved; the
-Workflow driver is enabled only if separately approved.
+**Preconditions:** The global routing database, EU Supabase shard, EU Regional
+Services Worker hostname, providers, and opaque Workflow path are approved.
 
 **Flow:**
 
-1. The global plane resolves only the opaque regional route.
-2. The client gets a regional session and connects to the EU project.
-3. All data, jobs, files, search, and events stay regional.
-4. The audit traces subprocessors and approved opaque driver fields.
+1. The global database resolves opaque workspace ID to `region=EU`, `shard=eu-1`,
+   and a signed route epoch; it contains global identity/invitation/billing but
+   no work-stream metadata.
+2. The client gets a shard-local session and connects to `eu-1`.
+3. A global lifecycle command lands in the routing outbox, is delivered by
+   Workflow/Worker, and commits one matching `global_command_receipt` plus local
+   route gate before its global acknowledgement.
+4. Content-bearing connector/model/derived work enters the EU Regional Services
+   Worker hostname and reads EU Supabase only; Workflow sees opaque status.
+5. The audit traces route epoch, shard receipt, subprocessors, and approved
+   opaque driver fields.
 
 **Expected user-visible behavior:** Features work without copying product
 metadata/content into the Global project; unapproved features fail closed.
 
-**Architecture stress:** Project boundary, explicit Edge invocation region,
-regional secrets/storage, and data-minimal optional Workflow are reviewed as a
-whole rather than inferred from database location.
+**Architecture stress:** Required global routing authority, shard-local
+admission gate, Regional Services fetch boundary, shard-scoped secrets/storage,
+and data-minimal Workflow are reviewed as one path rather than inferred from
+database location or service-binding proximity.
 
-**Failure oracle:** Fail if Global contains a title/body/user overlay/vector, an
-unapproved processor handles content, or outage silently fails over regions.
+**Failure oracle:** Fail if Global contains a title/body/user overlay/vector, a
+shard accepts the wrong route epoch, global acknowledgement lacks a shard
+receipt, an unapproved processor handles content, or outage silently fails over.
 
-**Unresolved pressure:** Contractually confirm Realtime, Edge, logs, backups,
-support, and Workflow locality.
+**Unresolved pressure:** Contractually confirm Supabase Realtime/logs/backups/
+support plus Cloudflare Workflow state/logs, Regional Services execution, and
+outbound subrequests.
 
 ### S16 — Dormant work streams migrate without waking an entity fleet
 
@@ -769,26 +781,30 @@ consumers exist or old runs are reinterpreted by incompatible code.
 
 **Persona:** Priya watches an EU-only backfill.
 
-**Preconditions:** The EU project owns campaign, jobs, queue, Storage staging,
-and Edge secrets.
+**Preconditions:** The EU shard owns campaign/jobs/queue/Storage staging; the EU
+Cloudflare Worker has shard-scoped secrets and an approved regional hostname.
 
 **Flow:**
 
-1. Regional Cron wakes the EU dispatcher.
-2. Queue messages contain only local IDs and load content from EU Postgres.
-3. Workers process bounded jobs in the forced EU execution region.
+1. Regional Cron sends an identifier-only wake to the EU regionalized Worker.
+2. Queue messages contain only local IDs; the fetch handler dequeues and loads
+   content from EU Postgres after regional admission.
+3. Cloudflare Workers/Workflows process bounded jobs through that hostname.
 4. Metrics/logs follow the approved regional path.
 
 **Expected user-visible behavior:** Migration completes without a Global content
 copy or an external always-on control server.
 
-**Architecture stress:** Regional Supabase primitives remove cross-region shard
-wakes; legal review still covers globally deployed Edge/Realtime internals.
+**Architecture stress:** Supabase owns durable job state while Cloudflare owns
+compute. Regional Services does not cover Cron/Workflow triggers or outgoing
+subrequests, so opaque wakes and content loading inside the regional fetch
+handler are explicit.
 
 **Failure oracle:** Fail if a global queue/worker receives bodies, an EU job
 runs in an unapproved region, or failure redirects to US.
 
-**Unresolved pressure:** Confirm Supabase job/function/log contractual locality.
+**Unresolved pressure:** Confirm Supabase job/log and Cloudflare Workflow/
+Worker/provider contractual locality.
 
 ### S28 — One multiplexed socket covers a foreground workspace
 
@@ -817,59 +833,86 @@ grows with historical count, or reconnect requires Broadcast history.
 **Unresolved pressure:** Set grace/background rules and completion-notification
 contract.
 
-### S29 — UI frames and durable checkpoints keep independent time
+### S29 — A 100-token/second stream does not become 10,000 writes
 
 **Mode:** Showcase
 
-**Persona:** Samantha watches a fast model produce 80 token fragments per
-second.
+**Persona:** Samantha watches a fast model produce 100 tokens per second for a
+10,000-token answer.
 
-**Preconditions:** Two viewers are foreground; database load is normal.
+**Preconditions:** One viewer is foreground; the launch-default observed
+checkpoint interval is 500 ms, the chunk bound is 16 KiB, and capacity planning
+uses four UTF-8 bytes per token.
 
 **Flow:**
 
-1. Executor coalesces tokens into `active_outputs` every 250–500 ms.
-2. It sends body-free coordinate hints; clients fetch text through live RLS.
-3. One viewer disconnects between checkpoints and reconnects.
-4. Completion seals one part.
+1. Inference emits for about 100 seconds; the executor retains generated deltas
+   in memory and permits one checkpoint RPC in flight.
+2. Every 500 ms with new data it sends about 50 tokens/about 200 bytes to
+   `checkpoint_active_output`; the RPC mutates only the open bounded chunk.
+3. After each commit it sends a body-free REST Broadcast hint. The client
+   coalesces hints and fetches only bytes after its last authorized offset. It
+   queues the roughly 50-token batch and drains it at the selected 10, 20, or
+   30 visual frames per second—about 10, 5, or 3–4 tokens per frame—without
+   sending another network request per visual frame.
+4. Crossing 16 KiB seals the tail and creates the next chunk; about 40 KiB of
+   output therefore occupies about three chunks.
+5. Samantha disconnects between checkpoints and rejoins from the committed
+   offset. Completion verifies the chunk sequence and seals one assistant part.
 
-**Expected user-visible behavior:** Both viewers perceive fluid output; recovery
-has bounded overlap and no missing committed text.
+**Expected user-visible behavior:** Samantha sees continuous motion at the
+selected 10/20/30 fps target even though durable/network batches arrive about
+twice per second; recovery has bounded overlap and no missing committed text,
+and completion is identical to the one winning attempt.
 
-**Architecture stress:** Realtime messages scale with receivers, while database
-WAL scales with checkpoints—not tokens. Faster body frames remain gated on a
+**Architecture stress:** The run creates at most 200 nonempty checkpoint
+transactions, about three chunk rows, 200 REST Broadcast sends, and 400 billed
+Realtime messages for one receiver—not 10,000 token writes. A 250 ms tier would
+create about 400 checkpoints; one second would create about 100. Direct 30 fps
+network frames would create up to 3,000 sends/6,000 billed messages for the run,
+so local animation provides the visual requirement without the 15-times
+transport multiplier. Realtime messages scale with receivers, while database
+WAL scales with bounded chunk checkpoints. Faster body frames remain gated on a
 proven revocable stream lease and a 30-fps ceiling.
 
-**Failure oracle:** Fail if tokens cause rows, hints contain generated bodies
+**Failure oracle:** Fail if the case creates more than 200 nonempty checkpoint
+transactions at the default cadence, any token creates an event or database
+Broadcast write, a checkpoint rewrites the full accumulated prefix, a
+continuous client refetches the full prefix, hints contain generated bodies
 without a revocable lease, durable cursor advances without bytes, fan-out is
-workspace wide, or final text differs from one winning attempt.
+workspace wide, local 10/20/30 fps rendering multiplies persistence/transport,
+the animation falls progressively behind without bounded catch-up, or final
+text differs from one winning attempt.
 
-**Unresolved pressure:** Tune frame/checkpoint cadence by model rate, observers,
-cost, and primary load.
+**Unresolved pressure:** Load-test 100 and 1,000 simultaneous observed streams
+at 250/500/1,000 ms against WAL bytes, IOPS, CPU, vacuum, pool pressure,
+Realtime messages/second, incremental RLS reads, and cost; UX-test all three
+render targets and their backlog/catch-up behavior.
 
 ### S30 — An exceptional transform uses bounded queue slices
 
 **Mode:** Showcase
 
-**Persona:** Ren needs to parse a very large import beyond one Edge CPU budget.
+**Persona:** Ren needs to parse a very large import beyond one Worker CPU budget.
 
 **Preconditions:** The transform can split by immutable chunks and row ranges.
 
 **Flow:**
 
 1. A coordinator validates/stages Storage chunks.
-2. Queue jobs process small CPU-bounded ranges in Edge/database functions.
+2. Queue jobs process small CPU-bounded ranges in Cloudflare Worker actions and
+   transactional database RPCs.
 3. Each range records counts/hashes and can retry.
 4. A validator combines only references and commits campaign success.
 
 **Expected user-visible behavior:** The migration progresses without holding an
 always-on server or blocking interactive traffic.
 
-**Architecture stress:** The Supabase-only constraint forbids hiding the work in
-a Cloudflare Container; chunking must fit Edge CPU/memory or use provider-native
-bulk/database operations.
+**Architecture stress:** The chosen Worker/Workflow compute contract forbids an
+unrecorded long process; chunking must fit Worker CPU/memory/subrequests or use
+provider-native bulk/database operations.
 
-**Failure oracle:** Fail if one Edge call exceeds limits, unbounded JSON is held
+**Failure oracle:** Fail if one Worker call exceeds limits, unbounded JSON is held
 in memory, or a coordinator becomes the only copy of progress.
 
 **Unresolved pressure:** Identify any indivisible transforms that would force a
@@ -882,7 +925,7 @@ future runtime-scope decision.
 **Persona:** Avalon performs a 30-minute investigation with 12 model calls,
 ordinary tools, and two Daytona commands.
 
-**Preconditions:** The region allows the default Workflow driver; Supabase is
+**Preconditions:** The shard's Workflow/Worker path is approved; Supabase is
 authoritative.
 
 **Flow:**
@@ -898,11 +941,11 @@ state; no action repeats across deploy/retry.
 **Architecture stress:** One Workflow matches the full-loop lifetime but holds
 only opaque state. Supabase revisions/receipts decide every action.
 
-**Failure oracle:** Fail if the full loop is one Edge/Workflow retry unit, state
+**Failure oracle:** Fail if the full loop is one Worker/Workflow-step retry unit, state
 history exists only in Workflow, or client/socket loss owns cancellation.
 
-**Unresolved pressure:** Compare failure/cost data with the Supabase-native
-driver before final regional rollout.
+**Unresolved pressure:** Validate Worker/Workflow limits, placement, residency,
+and cost before final shard rollout; there is no alternate Edge driver.
 
 ## Break-attempt studies
 
@@ -1175,7 +1218,7 @@ or too large for model/Edge limits.
 clearly labelled safe fallback; it never silently drops evidence.
 
 **Architecture stress:** `content_refs` is authority while Storage supplies
-bytes; Edge CPU/memory and signed URL boundaries are enforced.
+bytes; Worker CPU/memory and signed URL boundaries are enforced.
 
 **Failure oracle:** Fail if corrupt bytes reach the model, a fallback bypasses
 authorization, the function buffers an unbounded object, or path guesses grant
@@ -1513,32 +1556,50 @@ the event cursor, or model order changes across reload.
 **Unresolved pressure:** Define how late activity is summarized into future
 context without rewriting past turns.
 
-### B23 — Tiny streaming deltas amplify storage and sockets
+### B23 — Per-token and growing-prefix writes collapse shared capacity
 
 **Mode:** Break attempt
 
-**Persona:** 5,000 active viewers watch fast agent output.
+**Persona:** 1,000 people each watch a work stream generating 100 tokens per
+second.
 
-**Preconditions:** Models yield token fragments above 30 fps.
+**Preconditions:** Each answer targets 10,000 tokens; each stream has one
+receiver and a naive implementation is proposed.
 
 **Flow:**
 
-1. A naive implementation broadcasts/stores every token.
-2. Realtime messages multiply by recipients; Postgres WAL grows.
-3. Correct implementation coalesces foreground frames and checkpoints chunks.
-4. Capacity control reduces cadence or subscriber set under pressure.
+1. The rejected implementation updates Postgres and calls database Broadcast
+   per token, producing 100,000 writes/second before its Broadcast/WAL
+   multiplier.
+2. A second rejected implementation checkpoints every 500 ms but rewrites the
+   full growing output row and makes continuous clients refetch that prefix.
+3. The conforming implementation appends deltas to 16 KiB mutable-tail chunks
+   every 500 ms, sends post-commit REST hints, serves offset-based reads, and
+   animates those batches locally at 10/20/30 fps.
+4. This still produces about 2,000 checkpoint transactions and 4,000 Realtime
+   messages/second at 1,000 streams with one receiver.
+5. Because 4,000 exceeds the currently documented default 2,500
+   messages/second for Pro without Spend Cap/Team, admission lengthens cadence,
+   reduces observers, partitions regions, or uses an approved limit increase;
+   database admission separately follows measured WAL/IO/CPU headroom.
 
-**Expected user-visible behavior:** Text remains human-real-time without account
-limit collapse or database write storm.
+**Expected user-visible behavior:** Accepted streams remain predictably live;
+excess work receives explicit queued/degraded cadence rather than silently
+dropping output or overloading the primary.
 
-**Architecture stress:** Realtime billing counts sends plus receivers; shared
-primary makes row-per-token especially costly.
+**Architecture stress:** Realtime billing counts sends plus receivers; REST
+Broadcast avoids a second Postgres write per checkpoint but does not remove
+message billing. The shared primary still absorbs checkpoint transactions,
+bounded-row WAL, RLS delta reads, and finalization.
 
-**Failure oracle:** Fail if each token is a DB row/Broadcast, inactive workspace
-subscribers receive frames, or backpressure drops terminal state.
+**Failure oracle:** Fail if each token is a DB row/Broadcast, the full prefix is
+rewritten or refetched on every checkpoint, inactive workspace subscribers
+receive frames, documented message limits are treated as a database capacity
+proof, or backpressure drops terminal state.
 
-**Unresolved pressure:** Establish frame/checkpoint/fan-out quotas and observer
-aggregation.
+**Unresolved pressure:** Establish regional checkpoint-transaction, WAL-byte,
+delta-read, frame/fan-out, and observer quotas from production-shaped load
+tests and the contracted account limits.
 
 ### B24 — Workspace deletion races a scheduled and running loop
 
@@ -1902,7 +1963,7 @@ qualification.
 
 **Mode:** Break attempt
 
-**Persona:** A new Edge adapter emits a step/event payload before regional schema
+**Persona:** A new Worker adapter emits a step/event payload before shard schema
 and old driver versions understand it.
 
 **Preconditions:** Deploy order is wrong in one region.
@@ -2013,67 +2074,73 @@ claims Storage was restored with SQL.
 
 **Unresolved pressure:** Build forward-repair tools and regional DR runbooks.
 
-### B41 — Global route and regional workspace row disagree
+### B41 — Global route and shard-local admission gate disagree
 
 **Mode:** Break attempt
 
 **Persona:** Mateo resolves a workspace to EU while a stale client/command points
 to Global/US or an older route epoch.
 
-**Preconditions:** Routing metadata and regional product row are separate
-projects/systems.
+**Preconditions:** Required global `workspace_routes` points to `eu-2` at epoch
+9, while `eu-1`, `eu-2`, a stale desktop, and a delayed routing command have
+different observed state.
 
 **Flow:**
 
-1. Client presents workspace ID, selected region, and epoch.
-2. Regional endpoint proves the workspace exists locally and epoch matches.
-3. Wrong-region request returns a non-content route correction or fails closed.
-4. Repair begins from the source-D1 closure gate/receipt, then converges the
-   destination activation and global route copies.
+1. Client presents the signed workspace/shard/region/epoch route envelope.
+2. The target Worker and shard RPC require a matching writable
+   `workspace_route_gate`; a regional product row alone is insufficient.
+3. A delayed global command deduplicates by command ID/payload hash and returns
+   its existing `global_command_receipt`; wrong-shard/epoch fails closed with a
+   non-content route correction.
+4. Repair starts from the source shard's immutable closure cursor/hash, verifies
+   destination activation, and only then converges the global pointer/receipt.
 
 **Expected user-visible behavior:** Safe re-route/re-authentication without
 creating product state in the wrong project.
 
-**Architecture stress:** Thin global routing remains a cross-system contract even
-though work-stream/sidebar relationships are local SQL. Only the source-local
-gate linearizes authority; route and destination rows may lag safely.
+**Architecture stress:** The global Supabase database is canonical for routing
+and globally required identity/invitation/billing facts, but cannot atomically
+commit with a product shard. Only the source-local gate closes write authority;
+global route, destination activation, and acknowledgements may lag safely.
 
-**Failure oracle:** Fail if repair treats global+regional updates as atomic,
-destination activates without the source closure receipt, a regional endpoint
-creates a missing row on demand, content crosses Global, or both claim writes.
+**Failure oracle:** Fail if repair treats global+shard updates as atomic,
+acknowledges without a shard receipt/hash, destination activates without source
+closure, an endpoint creates a missing workspace on demand, product content
+crosses Global, or two gates claim writable.
 
 **Unresolved pressure:** Define closure-receipt authentication, route-repair
 tooling, and the accepted availability gap after irreversible source closure.
 
-### B42 — The Supabase-native driver becomes a hidden workflow engine
+### B42 — Ad hoc consumers bypass the one Workflow abstraction
 
 **Mode:** Break attempt
 
-**Persona:** Engineers add special queue/Cron/Edge code for each loop type.
+**Persona:** Engineers add special queue/Cron/Worker loops for each domain.
 
-**Preconditions:** EU cannot yet approve Cloudflare Workflow.
+**Preconditions:** A region cannot yet approve Cloudflare Workflow/Worker
+processing, so affected agent features are disabled.
 
 **Flow:**
 
 1. A two-hour loop exercises leases, early events, retries, waits, deployments,
    steering, and unknown effects.
 2. New domains request custom state transitions.
-3. The architecture requires one generic `RunDriver` state machine and conformance
-   suite rather than per-domain consumers.
-4. Unsupported complexity is rejected or moves behind the same interface.
+3. The architecture rejects a Queue/Cron lease engine and requires the one
+   Workflow plus Supabase run/effect ledger and conformance suite.
+4. The feature remains explicitly unavailable until the approved path exists.
 
 **Expected user-visible behavior:** Consistent progress/recovery across work-
 stream and non-work-stream loops.
 
-**Architecture stress:** Supabase supplies storage/queue/function primitives,
-not a managed durable workflow. Complexity must be acknowledged, tested, and
-costed.
+**Architecture stress:** Supabase supplies storage/queue primitives; Cloudflare
+supplies compute/workflow. A hidden second orchestrator doubles failure modes.
 
 **Failure oracle:** Fail if each loop invents leases/idempotency, Cron polls every
-run, Edge invocations own waits, or behavior diverges from the Workflow driver.
+run, Worker invocations own full-loop waits, or an unapproved fallback runs.
 
-**Unresolved pressure:** Decide whether failure-injection evidence justifies
-approving the hybrid driver more broadly.
+**Unresolved pressure:** Close contractual blockers or define the user-visible
+feature-unavailable policy per shard.
 
 ### B43 — A supposedly additive migration blocks a hot table
 
@@ -2148,19 +2215,20 @@ maximum supported full-loop elapsed/step/cost budget.
 | Queue and steering | S07–S09, S18 | B07, B17, B26, B44 | Durable input, control revision, effect-begin CAS |
 | Substreams and sub-agents | S04–S06 | B08–B09, B16, B27–B28 | Explicit lineage/audience/scope/promotion |
 | Compaction with live tail | S19 | B08, B28, B39 | Frozen complete-turn source rows and epoch checks |
-| Token realtime/reconnect | S03, S28–S29 | B03–B05, B23, B38–B39 | Private Broadcast hints, durable events/checkpoints |
+| Token realtime/reconnect | S03, S28–S29 | B03–B05, B23, B38–B39 | 500 ms bounded-chunk checkpoints, REST hints, offset reads, local 10/20/30 fps animation |
 | Background/idle sockets | S28, S31 | B05, B23, B38, B44 | One multiplexed connection, intentional close/catch-up |
-| Full 2–30m/2h+ loops | S17, S31 | B24, B37, B42, B44 | Generic run schema; Workflow or Supabase driver |
+| Full 2–30m/2h+ loops | S17, S31 | B24, B37, B42, B44 | Supabase run/effect ledger; one Workflow; bounded Worker actions |
 | Daytona Terminal | S09, S31 | B17, B26, B40, B44 | Addressable effect start/park/reconcile; provider unchanged |
 | Connector ingress/activity | S11, S21–S22 | B11, B22, B29–B30, B34 | Receipt/body hash, pgmq, normalized lineage/audience |
 | Digests/suggestions | S20–S22 | B29–B34 | Frozen provenance, personal/common authority, atomic acceptance |
 | Storage and large content | S01, S13, S25 | B10, B12, B39–B40 | Pending/ready refs, hashed chunks, independent backup/delete |
 | FTS/vectors | S21–S22 | B08, B28, B30, B33–B34 | Authorized relational candidates; rebuildable pgvector |
 | Auth/RLS and revocation | S04, S15 | B03, B08–B10, B15, B17, B20, B25, B32–B33 | Regional sessions, live membership/epochs, narrow runner RPCs |
-| EU residency | S11, S15, S27 | B14, B20, B25, B41 | Regional project; contract-gated Edge/Realtime/Workflow |
+| Global routing and shard gates | S15–S16, S23–S27 | B13, B20, B36, B40–B41 | Global Supabase route/outbox/receipts; shard-local gate; source closure |
+| EU residency | S11, S15, S27 | B14, B20, B25, B41 | EU Supabase shard; Regional Services Worker; opaque Workflow; contract gates |
 | Additive schema/backfill | S23–S24 | B35, B37, B40, B43 | CLI expand/backfill/contract; bounded campaign jobs |
 | D1/R2 cutover | S16, S25 | B13, B36, B40–B41 | Hashed import, write hold/outbox, source-local closure gate |
-| Queue/Cron/Edge limits | S12, S24, S27, S30 | B24, B29, B34–B35, B42–B44 | Logged pgmq, due state, bounded functions, DLQ/receipts |
+| Queue/Cron/Worker limits | S12, S24, S27, S30 | B24, B29, B34–B35, B42–B44 | Logged pgmq, due state, bounded Worker/Workflow actions, DLQ/receipts |
 | Export/deletion/DR | S13–S14 | B12, B24, B40 | Fenced chunks, phased deletion, Storage-aware restore |
 | Scale/cost/operations | S28–S30 | B01–B02, B12, B18, B21, B23, B25, B34, B38, B43–B44 | Shared-primary sizing, pooling, batching, throttling |
 
@@ -2168,8 +2236,9 @@ maximum supported full-loop elapsed/step/cost budget.
 
 ### P0 — Must close before implementation commitment
 
-1. Which full-loop driver ships per region, and can the Cloudflare Workflow
-   exception meet EU state/log/execution/subrequest requirements?
+1. What contract and tests prove Cloudflare Workflow state/log safety plus
+   Regional Services Worker execution and outbound-subrequest processing for
+   each shard? There is no Edge fallback.
 2. What supported Supabase Auth/OIDC topology provides global identity plus
    independent regional sessions, refresh, logout, and revocation?
 3. What is the tested maximum stale-access window for an already joined private
@@ -2180,11 +2249,12 @@ maximum supported full-loop elapsed/step/cost budget.
    user message arrives between tool call and late tool result?
 6. Which external effects are idempotent, cancellable, and queryable, and which
    must become `unknown` after a crash?
-7. What writer inventory, hold/outbox, validation, source-local closure gate,
-   and destination/global convergence protocol proves exactly one authority
-   during D1/R2 migration?
-8. What contractual EU guarantees cover Supabase Realtime, Edge, Auth, Storage,
-   backups/logs/support and Daytona/model/connector providers?
+7. What writer inventory, hold/outbox, source-shard closure receipt,
+   destination gate, global route/outbox/receipt convergence, and repair protocol
+   prove exactly one authority during D1/R2 import and later shard moves?
+8. What contractual EU guarantees cover Supabase Realtime/Auth/Storage/backups/
+   logs/support, Cloudflare Workflow/Worker/Regional Services/subrequests, and
+   Daytona/model/connector providers?
 
 ### P1 — Must close before production canary
 
@@ -2195,15 +2265,16 @@ maximum supported full-loop elapsed/step/cost budget.
     and lazy attention/count algorithms support large workspaces?
 11. What substream kind/inheritance/depth/promotion rules and projector version
     are normative across all provider adapters?
-12. What inline-versus-Storage size limits and active-output checkpoint cadence
-    balance latency, WAL/IO, reconnect, and cost?
+12. Do 16 KiB chunks and 500 ms observed/one-second unobserved checkpoints pass
+    WAL/TOAST/vacuum/IO, pool, incremental RLS-read, and Realtime fan-out gates
+    at 100 and 1,000 simultaneous streams, and is a 250 ms tier affordable?
 13. What durable event retention/offline window and snapshot fallback are
     promised?
 14. What Daytona start/status/callback/cancel/idempotency/output APIs make long
     commands safely addressable?
-15. What full-loop budgets and conservative Workflow/Edge/queue capacity gates
+15. What full-loop budgets and conservative Workflow/Worker/queue capacity gates
     preserve recovery/terminalization reserve?
-16. How do regional schema, Edge, desktop, and driver versions coexist with
+16. How do global/shard schema, Worker, desktop, and driver versions coexist with
     nonterminal runs during deploy?
 17. How are Database and Storage backed up/restored/deleted independently, and
     how are external effects reconciled after PITR?
