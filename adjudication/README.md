@@ -38,6 +38,25 @@ adjudication/
    Verdicts land in `verdicts/`; the aggregate matrix and vote split are the
    result — a 3–2 split is a finding, not a failure.
 
+## Concurrency rules
+
+Multiple sessions may work this branch simultaneously. The layout makes file
+conflicts impossible if everyone stays in their lane:
+
+- **Write only your own paths**: your `candidates/<candidate>/` folder, or your
+  own `rebuttals/<candidate>-rebuttal.md`. Never edit `packet/`, another
+  candidate's files, or anything outside `adjudication/`.
+- **Push contention is normal**: if your push is rejected (non-fast-forward),
+  run `git fetch origin && git rebase origin/claude/supabase-workspace-prd-review-k3iyfb`
+  and push again. **Never force-push this branch** — it carries other
+  sessions' work.
+- **Re-read `packet/` at the moment you start writing** — it may have been
+  updated since you were first prompted; the branch copy is authoritative over
+  any pasted copy.
+- Phases: brief-writing is fully parallel; rebuttals start only when every
+  expected candidate has a brief; judging starts only when every rebuttal is
+  in. The operator announces the barriers.
+
 Background context judges may read (read-only, not candidates): the two
 architecture PRDs under `docs/PRDs/2026-08-15_*`, the review at
 `docs/PRDs/2026-08-15_supabase-workspace-workstream-conversations/review.md`.
