@@ -687,9 +687,15 @@ surfaces are not in any registry and were missing from the first cut: the
 Firecrawl web pair, which `createAvalonTools` omits entirely without a
 `FIRECRAWL_API_KEY`, and the automation architect's four tools and the HyperSight
 submission tool, both built against run state. A lower-bound count cannot notice
-any of them leaving; asserting the names can. `packages/connectors`' hosted-MCP
-tools arrive from remote servers at runtime and remain covered only by Bind's own
-sanitizer.
+any of them leaving; asserting the names can.
+
+Hosted-MCP tools arrive from remote servers at run time, so no build-time walk
+can reach them at all — and the exposure there is worse, because one third-party
+schema fails the whole request and every other tool in it. They are covered by
+`repairRootUnionForProviders` applied at `validateDynamicConnectorTools`, which
+enforces the same measured rule as a rewrite instead of a report; see
+[`hosted-mcp-connectors.md`](hosted-mcp-connectors.md#changelog) for why it
+repairs rather than rejects.
 
 ### 2026-08-15 — A settled read receipt rebinds instead of halting the run
 
