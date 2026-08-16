@@ -2284,8 +2284,9 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
     name: "load_plugin",
     description: "Load one available plugin from the catalog for this run.",
     capability: "avalon.plugins.load",
-    // Activation changes only Avalon's durable run surface. It does not write
-    // to an external provider and is safe to resume from the same receipt.
+    // Activation may prepare convergent host-owned runtime infrastructure, but
+    // never performs an outward-facing provider/data write. Hooks must be safe
+    // to resume from the same receipt after an ambiguous interruption.
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2310,6 +2311,15 @@ export interface HarnessTool {
   serial?: boolean;
 }
 
+/** Frozen run identity passed to a deferred plugin while it becomes active. */
+export interface HarnessPluginActivationContext {
+  workspaceId: string;
+  workstreamId: string;
+  harnessRunId: string;
+  executionPrincipal: ExecutionPrincipal;
+  signal: AbortSignal;
+}
+
 /** A Bind plugin whose trusted identity, prose, and tool policy are authored by the host. */
 export interface HarnessPlugin {
   /** Stable host authorization/persistence identity (`avalon:*` or `connection:<uuid>`). */
@@ -2330,6 +2340,20 @@ export interface HarnessPlugin {
    * definitions are replaced. Results are cached for the lifetime of one run.
    */
   loadTools?: () => Promise<HarnessTool[]>;
+  /**
+   * Prepare plugin-owned runtime state before this deferred plugin becomes
+   * model-visible. A rejection leaves the plugin inactive. The harness invokes
+   * this at most once per run, after authorization and dynamic tool loading but
+   * before an explicit load is persisted; a restored activation is already
+   * durable and runs the hook before re-entering the active set.
+   *
+   * `load_plugin` is read-safe: this hook may prepare convergent host-owned
+   * runtime infrastructure, but must be safe to repeat after response loss and
+   * must not perform an outward-facing provider or user-data write.
+   */
+  onActivate?: (context: HarnessPluginActivationContext) => Promise<void>;
+  /** Extend `load_plugin`'s deadline for a blocking activation hook. */
+  activationTimeoutMs?: number;
   /** For deferred plugins, requests persistence before an activation hint; ignored for core plugins. */
   preload: boolean;
   explicit?: boolean;

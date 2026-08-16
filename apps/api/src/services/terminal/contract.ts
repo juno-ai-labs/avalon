@@ -102,10 +102,10 @@ const pathProperty = (description: string) => ({
   description,
 });
 
-// Tool deadlines include lazy sandbox allocation and compatibility setup. The
+// Tool deadlines retain room for sandbox recovery and compatibility setup. The
 // command envelope keeps 30 seconds beyond the model-facing 15-minute maximum
 // for durable provider observation; keep that sum within the schema ceiling.
-const TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS = 120_000;
+export const TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS = 120_000;
 
 const definitions: Record<TerminalToolName, ToolDefinition> = {
   read_file: {

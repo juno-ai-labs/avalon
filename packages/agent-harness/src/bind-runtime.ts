@@ -1499,6 +1499,9 @@ async function createPluginRuntime(
   skills: SkillRuntime;
 }> {
   let registry: ToolRegistry<BindPlugin> | null = null;
+  const pluginSources = new Map(
+    (input.plugins ?? []).map((plugin) => [plugin.canonicalId, plugin] as const),
+  );
   const dynamicPluginSources = new Map(
     (input.plugins ?? [])
       .filter((plugin) => plugin.loadTools)
@@ -1506,6 +1509,9 @@ async function createPluginRuntime(
   );
   const loadedDynamicPlugins = new Set<string>();
   const dynamicPluginLoads = new Map<string, Promise<void>>();
+  const activatedPluginHooks = new Set<string>();
+  const pluginActivationHooks = new Map<string, Promise<void>>();
+  const fallbackActivationSignal = input.signal ?? new AbortController().signal;
   const eligibleIds = new Set<string>();
   const canonicalByModelId = new Map<string, string>();
   const requireRegistry = (): ToolRegistry<BindPlugin> => {
@@ -1530,6 +1536,33 @@ async function createPluginRuntime(
       dynamicPluginLoads.delete(id);
     }
   };
+  const runPluginActivationHook = async (
+    id: string,
+    signal: AbortSignal = fallbackActivationSignal,
+  ): Promise<void> => {
+    const source = pluginSources.get(id);
+    const activate = source?.onActivate;
+    if (!activate || activatedPluginHooks.has(id)) return;
+    const existing = pluginActivationHooks.get(id);
+    if (existing) return existing;
+    const pending = Promise.resolve()
+      .then(() => activate({
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        harnessRunId: input.harnessRunId,
+        executionPrincipal: input.executionPrincipal,
+        signal,
+      }))
+      .then(() => {
+        activatedPluginHooks.add(id);
+      });
+    pluginActivationHooks.set(id, pending);
+    try {
+      await pending;
+    } finally {
+      pluginActivationHooks.delete(id);
+    }
+  };
   // A host that supplies no port authorizes everything it made eligible.
   const reauthorize = async (
     id: string,
@@ -1549,8 +1582,16 @@ async function createPluginRuntime(
     preload: true,
     explicit: true,
     tools: AVALON_DISCOVERY_TOOL_DEFINITIONS.map((definition): HarnessTool => ({
-      definition,
-      execute: async (raw) => {
+      definition: definition.name === "load_plugin"
+        ? {
+            ...definition,
+            timeoutMs: Math.max(
+              input.config.toolTimeoutMs,
+              ...(input.plugins ?? []).map((plugin) => plugin.activationTimeoutMs ?? 0),
+            ),
+          }
+        : definition,
+      execute: async (raw, context) => {
         const activeRegistry = requireRegistry();
         if (definition.name === "list_plugins") {
           return {
@@ -1597,6 +1638,14 @@ async function createPluginRuntime(
           return {
             output: { error: "plugin_tools_unavailable" },
             summary: "Plugin tools could not be loaded",
+          };
+        }
+        try {
+          await runPluginActivationHook(id, context.signal);
+        } catch {
+          return {
+            output: { error: "plugin_activation_failed" },
+            summary: "Plugin could not be activated",
           };
         }
         await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
@@ -1711,6 +1760,7 @@ async function createPluginRuntime(
       if (await reauthorize(id, "activation") !== "authorized") return "unreachable";
       try {
         await ensurePluginTools(id);
+        await runPluginActivationHook(id);
         return true;
       } catch {
         return "unreachable";

@@ -1,7 +1,10 @@
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
+import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
+import { createAvalonTerminalPlugin } from "../src/services/terminal/plugin";
+import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -48,8 +51,36 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
   return { database, env, input };
 }
 
+function provider(): TerminalSandboxProvider {
+  return {
+    createSandbox: vi.fn(async (input) => ({
+      id: `sandbox-${input.generation}`,
+      name: input.stableName,
+      state: "running" as const,
+      domainAllowList: input.domainAllowList,
+    })),
+    getSandbox: vi.fn(async (name) => ({
+      id: "sandbox-existing",
+      name,
+      state: "running" as const,
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+    })),
+    startSandbox: vi.fn(async () => undefined),
+    stopSandbox: vi.fn(async () => undefined),
+    archiveSandbox: vi.fn(async () => undefined),
+    deleteSandbox: vi.fn(async () => undefined),
+    updateNetworkPolicy: vi.fn(async () => undefined),
+    configureGitHubReadAccess: vi.fn(async () => undefined),
+    clearGitHubReadAccess: vi.fn(async () => undefined),
+    readFile: vi.fn(async () => new Uint8Array()),
+    writeFile: vi.fn(async () => undefined),
+    runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
+    publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
+  };
+}
+
 describe("Terminal Bind integration", () => {
-  it("registers the complete deferred plugin without allocating a sandbox", async () => {
+  it("registers the complete deferred plugin without allocating before activation", async () => {
     const { database, env, input } = fixture("supported");
     const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "avalon:terminal");
@@ -60,6 +91,28 @@ describe("Terminal Bind integration", () => {
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",
     ]);
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 0 });
+  });
+
+  it("starts the sandbox when Terminal activates, before any Terminal tool executes", async () => {
+    const { database, env, input } = fixture("supported");
+    const sandboxProvider = provider();
+    const plugin = await createAvalonTerminalPlugin(env, input, { provider: sandboxProvider });
+
+    expect(plugin?.onActivate).toBeTypeOf("function");
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_sandboxes").get()).toEqual({ count: 0 });
+
+    await plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    });
+
+    expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
+    expect(database.prepare(
+      "SELECT state, provider_sandbox_id FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
+    ).get(W, S)).toEqual({ state: "running", provider_sandbox_id: "sandbox-1" });
   });
 
   it("omits Terminal in unsupported regions", async () => {
