@@ -67,7 +67,7 @@ function memberSafeFailure(error: unknown): HarnessWorkflowOutcome {
         ? "The run was superseded by another durable executor"
         : code === "run_cancelled"
           ? "The run was cancelled"
-          : "The Avalon harness could not complete this run",
+          : "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
     },
   };
 }
@@ -75,8 +75,30 @@ function memberSafeFailure(error: unknown): HarnessWorkflowOutcome {
 function terminalSlackText(outcome: HarnessWorkflowOutcome): string {
   if (outcome.status === "stopped") return "Avalon stopped this task.";
   if (outcome.status === "needs_input") return "Avalon needs more information before it can continue this task.";
-  if (outcome.status === "failed") return outcome.error?.message ?? "Avalon could not complete this task.";
+  if (outcome.status === "failed") return slackSafeFailureText(outcome);
   return "Avalon completed the task without a text response.";
+}
+
+/**
+ * The failure sentence, with any remedy Slack cannot offer taken out.
+ *
+ * The member-safe strings are written for the work-stream surface, where a
+ * **Copy request ID** button sits beside them. Slack has no request id and no
+ * affordance, so forwarding that sentence verbatim names a next action that dead
+ * -ends there. Every other string travels fine — "try again in a moment" needs
+ * nothing from the surface — so this rewrites the one that does not, rather than
+ * giving Slack a parallel copy of the whole table to drift against.
+ */
+function slackSafeFailureText(outcome: HarnessWorkflowOutcome): string {
+  const message = outcome.error?.message;
+  if (!message) return "Avalon could not complete this task.";
+  return message.replace(
+    / Retrying is unlikely to help — copy the request ID for support\.?$/u,
+    " Retrying is unlikely to help; the work stream has the details for support.",
+  ).replace(
+    / — if it keeps happening, copy the request ID for support\.?$/u,
+    " — if it keeps happening, the work stream has the details for support.",
+  );
 }
 
 async function updateHyperSightRun(
