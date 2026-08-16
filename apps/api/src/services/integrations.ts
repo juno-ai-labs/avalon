@@ -422,7 +422,20 @@ function workstreamHarnessTerminalResult(input: {
 }): WorkstreamHarnessResult {
   const { outcome, streamedText, messageId, ambiguousToolOutcome, stoppedByUser } = input;
   const durableMessage = streamedText ? { messageId } : {};
-  if (ambiguousToolOutcome) return { status: "needs_input", ...durableMessage };
+  // Carrying the reason: an ambiguity that halts a run may leave nothing else
+  // behind — no elicitation to answer and, when the receipt it collided with
+  // had already settled, no failed tool row either. The run itself then has to
+  // be able to say why it stopped.
+  if (ambiguousToolOutcome) {
+    return {
+      status: "needs_input",
+      ...durableMessage,
+      error: {
+        code: "ambiguous_external_write",
+        message: "An external action's outcome could not be confirmed, so Avalon stopped instead of repeating it",
+      },
+    };
+  }
   if (stoppedByUser) return { status: "stopped", ...durableMessage };
   if (outcome.status === "completed" && streamedText) return { status: "completed", messageId };
   if (outcome.status === "completed") {
@@ -2408,10 +2421,28 @@ export async function runWorkstreamHarness(
       // receipt, never from a provider-rewritten wire alias. A missing or
       // mismatched plan fails closed and is never replayed as a read.
       const mode = expectedPolicy.definition.mode;
+      // A settled read at these coordinates is not an ambiguous write. Hand the
+      // call to the planner, which rebinds the receipt and executes it; see
+      // `completedReadReceipt`, which applies the same fences this does — a
+      // different call, both sides read, nothing external moved.
+      if (
+        row.status === "completed"
+        && mode === "read"
+        && row.input_hash !== inputHash
+        && recordedReceiptMode(row.execution_plan_json) === "read"
+      ) {
+        return null;
+      }
       if (mode === "write" || row.input_hash !== inputHash || !policyMatches) {
         ambiguousToolOutcome = true;
         const newlyAmbiguous = row.status !== "ambiguous";
-        if (row.status !== "ambiguous") {
+        // A completed receipt cannot be finalized again: an ambiguous finalize
+        // moves `('pending', 'started', 'failed')`, so the update matches no row
+        // and the attempt raises `RunOwnershipLost`, which the harness reports
+        // as a fatal port failure. The ambiguity is still recorded below,
+        // against the receipt as it stands. A `failed` row is still mutable and
+        // still flips — a write may have reached the provider before failing.
+        if (row.status !== "ambiguous" && row.status !== "completed") {
           await finalizeToolInvocationFailure(env.DB, liveness.lease, {
             harnessRunId: input.harnessRunId,
             invocationId: row.id,
@@ -2531,7 +2562,20 @@ export async function runWorkstreamHarness(
                 harnessRunId: input.harnessRunId,
                 invocationId: invocation.id,
               }).catch(() => undefined);
+              // The run ends here, so this is the only place the halt is
+              // recorded. Without it an ambiguity that leaves the receipt row
+              // untouched — a coordinate reused after it settled — reaches the
+              // person as a bare "Needs input" and appears nowhere else.
+              await recordToolAudit(env, input, invocation.id, event.toolName, mode, "ambiguous");
             }
+            logStructuredEvent(env, "warn", "tool_receipt_coordinate_conflict", {
+              workspace_id: input.workspaceId,
+              workstream_id: input.workstreamId,
+              harness_run_id: input.harnessRunId,
+              tool_invocation_id: receipt.invocationId,
+              tool_name: event.toolName,
+              mode,
+            });
             stopController.abort("ambiguous_external_write");
             throw new Error("ambiguous_external_write");
           }
@@ -5566,6 +5610,16 @@ function storedToolPolicyMatches(
     && plan.mode === expected.definition.mode
     && plan.idempotency === expected.definition.idempotency
     && (plan.connectionId ?? null) === expected.connectionId;
+}
+
+/**
+ * The mode a receipt was recorded under, read from the receipt itself rather
+ * than from the tool the caller is holding now — the two disagree exactly when
+ * a coordinate has been reused, which is the case this answers.
+ */
+function recordedReceiptMode(executionPlanJson: string | null): "read" | "write" | null {
+  const plan = parseJson<Record<string, unknown> | null>(executionPlanJson, null);
+  return plan?.mode === "read" || plan?.mode === "write" ? plan.mode : null;
 }
 
 function compatiblePriorReceiptPlans(
