@@ -2,7 +2,7 @@
 
 Fill every section, in order, within the caps. A section you cannot fill with
 cited facts gets "UNKNOWN — <what would resolve it>", which scores better than
-confident vagueness. Total cap: 2,500 words excluding tables. You may not
+confident vagueness. Total cap: 2,800 words excluding tables. You may not
 argue about the conversation model (it ships regardless) or about other
 candidates (that's the rebuttal round).
 
@@ -47,23 +47,38 @@ What pages at 2am; how many distinct technologies must someone understand to
 debug end-to-end; what the inspection story is (can you query production state
 with SQL or equivalent?); backup/restore drill effort.
 
-## 7. Top three risks (one paragraph each)
+## 7. Infrastructure as code & deployment (≤250 words + coverage table)
+
+The team's strong preference is everything-as-code. Provide a coverage table:
+each component from §1 → the exact IaC tool that manages it (Terraform provider
+by name, Wrangler config, `supabase` CLI + checked-in migrations, Pulumi, …) →
+what remains **dashboard-only or support-ticket-only** (limit raises, compute
+resizes, auth settings — name them; omitting one that exists scores worse than
+listing it). Then, briefly: how prod/staging/preview environments are stamped
+out and what each always-on environment costs; how schema migrations sequence
+against code deploys — today's stack has a known hazard window where old code
+writes into a new schema, state whether yours has the same window and how it's
+closed; rollback story; secrets management; drift detection; end-to-end deploy
+time and blast radius; and any routine operation that incurs downtime (e.g.
+database compute resizes).
+
+## 8. Top three risks (one paragraph each)
 
 Including at least one "this assumption might be false" risk with its
 probability and blast radius. Every dependency on undocumented behavior,
 private beta, or negotiation ("contact support to raise limits") must appear
 here.
 
-## 8. What breaks first (≤150 words)
+## 9. What breaks first (≤150 words)
 
 At growing S, name the first binding constraint and whether the fix is money,
 configuration, or architecture. A candidate that hides its dead end loses to
 one that names it.
 
-## 9. Tripwires (3–5 bullets)
+## 10. Tripwires (3–5 bullets)
 
 Measurable triggers that should reopen this decision if your candidate wins.
 
-## 10. Assumptions register
+## 11. Assumptions register
 
 Every number you introduced that isn't a cited list price.

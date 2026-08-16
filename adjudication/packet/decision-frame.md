@@ -42,7 +42,7 @@ cost.
 | --- | --- | ---: |
 | Simplicity | 20 | Count of distinct technologies, concepts, and protocols the team must hold; lines of bespoke distributed-systems code the design demands |
 | UX / product feel | 20 | The seven proxies below, mechanism-level answers only |
-| Maintainability | 15 | Debuggability, inspectability (can you SQL it?), hiring pool, migration/tooling ergonomics |
+| Maintainability | 15 | Debuggability, inspectability (can you SQL it?), hiring pool, migration/tooling ergonomics, and the IaC/deployment story (template §7) — how much of the stack is declarative, reviewable, and reproducible versus dashboard- or ticket-only |
 | Migration time / velocity freeze | 15 | Product-weeks the team does not ship features, with the estimate's assumptions shown |
 | Unproven-assumption risk | 15 | Launch gates that could fail (e.g. undocumented auth federation), probability-weighted; every "contact sales/support" dependency counts |
 | Scalability | 8 | Credible-path-only: no dead ends before ~S=300; name what breaks first and whether the fix is money or architecture |
@@ -84,3 +84,9 @@ estimated honestly.
   if their architecture's cost differs between them.
 - Tripwires, not pre-optimization: each brief ends with the 3–5 measurable
   triggers that should reopen this decision.
+- **Infrastructure is managed as code.** Declarative, version-controlled,
+  reviewable configuration (Terraform/Pulumi/provider-native config files,
+  CLI-driven migrations) is the strong preference. Any component that can only
+  be provisioned or changed through a dashboard, or only resized/raised via a
+  support ticket, must be named explicitly — it counts against maintainability
+  rather than disqualifying, but hiding it counts double.
