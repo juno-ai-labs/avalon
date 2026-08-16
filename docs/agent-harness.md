@@ -14,6 +14,7 @@ Each run is one server-side, tool-using loop inherent to a work stream. It is no
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
 | `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
+| `packages/agent-harness/src/tool-schema-safety.ts` | The two standing checks over what Bind's sanitizer *emits*: a root union branch xAI rejects, and a composition branch the sanitizer strips a constraint from. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
 | `apps/api/src/workflows/workstream-loop.ts` | The generic Workflow every run is one instance of. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
@@ -610,12 +611,17 @@ silently return every test to the shared key while each still passes alone.
 composition of bare `required` branches — `memory_search`, Notion
 `create_comment`, X `get_user_timeline`, Terminal `import_resource` — no longer
 declare it in `inputSchema`. Each states it in its `description` and enforces it
-where it always held, in the executor's zod parse. `emptiedCompositionBranches`
-in `@avalon/agent-harness` runs a schema through Bind's real `sanitizeToolSchema`
-and reports any `allOf`/`anyOf`/`oneOf` branch that arrives empty;
-`apps/api/test/tool-schema-sanitization.test.ts` walks every authored tool schema
-in the repository — core, discovery, skills, Terminal, and every connector, from
-the registries rather than a list — through it.
+where it always held, in the executor's zod parse.
+`packages/agent-harness/src/tool-schema-safety.ts` adds two checks over what
+Bind's real `sanitizeToolSchema` *emits*: `nonObjectRootUnionBranches` for a root
+`anyOf`/`oneOf` branch xAI will not read as an object, and
+`weakenedCompositionBranches`, which compares the authored schema against the
+sanitized one and reports any branch that lost a `required` or came out
+constraining nothing. `apps/api/test/tool-schema-sanitization.test.ts` walks
+every authored tool schema in the repository through both — core, discovery,
+skills, the automation architect's own four tools, the HyperSight submission
+tool, Terminal, and every connector — and asserts by name that the conditional
+and hand-assembled surfaces are actually in the walk.
 
 **Why:** one line on `memory_search` —
 `oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]` — carried two
@@ -648,23 +654,42 @@ accepted by all nine models. A single "no empty branches" rule would have
 flagged harmless nested cases while missing an author who writes
 `oneOf: [{ required: [...] }]` at the root and never trips the sanitizer.
 
+Review of the first cut moved three more boundaries, each of them measured
+rather than argued. A root `allOf` is an **intersection**, not a union, and is
+accepted by all nine models including every Grok, so the root check reads only
+`anyOf`/`oneOf`; treating `allOf` as a union would have failed schemas nothing
+objects to. "Emptied" was too narrow in the other direction: `{ description,
+required }` prunes to `{ description }` and `{ type: "object", required }` to
+`{ type: "object" }`, so the check now compares authored against sanitized and
+reports a dropped `required` wherever it lands — the annotation form is *also* a
+hard 400 on Grok, while the `type: "object"` form is the silent one and would
+otherwise have passed both checks. And the walk missed `dependentSchemas`, the
+2019-09 successor to draft-07's `dependencies`, which Bind's sanitizer does
+descend into.
+
 Rejected alternatives, all measured: pinning a `provider` preference or dropping
 x-ai from the routes hides a schema defect behind routing while every other
 provider still loses the constraint; giving each branch `type: "object"` alone
 passes xAI but the sanitizer then strips the `required` anyway, so the constraint
 is lost silently — the only structural form that both passes and survives is a
 full object schema per branch, which is what the attachment tools already use;
-teaching Avalon to post-process Bind's output would fork the sanitizer. The empty
--branch check asserts *empty branch* rather than *unsatisfiable* deliberately —
-satisfiability needs a solver, and a branch the sanitizer emptied is a discarded
-constraint whether or not some instance still validates.
+teaching Avalon to post-process Bind's output would fork the sanitizer. The
+weakened-branch check asserts *constraint removed* rather than *unsatisfiable*
+deliberately — satisfiability needs a solver, and a branch the sanitizer weakened
+is a discarded constraint whether or not some instance still validates.
 
 A future change must keep the guard walking the registries: the same defect in a
 tool added later is invisible to a hand-maintained list. It must also keep the
 two checks distinct — collapsing them loses exactly the distinction the
-measurement bought. `packages/connectors`' hosted-MCP tools arrive from remote
-servers at runtime and are covered only by Bind's own sanitizer, not by this
-test.
+measurement bought — and keep the named-surface assertion, because the walk's
+weak point is a tool it never reaches rather than one it judges wrongly. Three
+surfaces are not in any registry and were missing from the first cut: the
+Firecrawl web pair, which `createAvalonTools` omits entirely without a
+`FIRECRAWL_API_KEY`, and the automation architect's four tools and the HyperSight
+submission tool, both built against run state. A lower-bound count cannot notice
+any of them leaving; asserting the names can. `packages/connectors`' hosted-MCP
+tools arrive from remote servers at runtime and remain covered only by Bind's own
+sanitizer.
 
 ### 2026-08-15 — A settled read receipt rebinds instead of halting the run
 
