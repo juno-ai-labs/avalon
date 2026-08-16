@@ -474,30 +474,53 @@ future agent tool or plugin, not just this family.
   connector's `validateToolInput`) because `z.toJSONSchema` cannot carry the
   callback. Let a Zod rejection reach the harness so it can distinguish
   downstream validation from bad declared input. Never cast across the boundary.
-- **Never express an exclusive choice as a composition of bare `required`
-  branches.** The wire schema is not what you wrote: Bind sanitizes every
-  `inputSchema` on the way to the provider, and one of its transforms prunes a
-  `required` against *the same node's own* `properties` map, because Gemini's
-  validator resolves neither composition nor parent scope. A branch that is
-  nothing but a `required` — the ordinary "exactly one of these" idiom, with the
-  properties declared on the parent — therefore prunes to nothing:
+- **Never express an exclusive choice as a root-level union of bare `required`
+  branches.** Two independent things go wrong, and the rules below were measured
+  against grok-4.3/4.5/4.6, gemini-3.5/3.6/3.7-flash, and
+  gpt-5.6-terra/sol/luna through OpenRouter rather than reasoned about.
+
+  **It fails the request on xAI.** Grok requires every branch of a *root* union
+  to be recognizably an object and answers
+
+  ```text
+  invalid-argument: <tool>: tool parameter root must be an object type
+  (root schema is an anyOf/oneOf union with a non-object branch)
+  ```
+
+  which OpenRouter surfaces as a provider 400 covering the **whole request,
+  every tool**. A branch qualifies if it declares `type: "object"` *or*
+  `properties`; a bare `{ required: [...] }` and an empty `{}` do not. This is
+  not a sanitizer artifact — the authored schema fails identically to the
+  sanitized one. Only the **root** is constrained: the same union nested under a
+  property is accepted by all nine models.
+
+  **It loses the constraint everywhere else, silently.** The wire schema is not
+  what you wrote. Bind sanitizes every `inputSchema` on the way out, and one
+  transform prunes a `required` against *the same node's own* `properties` map,
+  because Gemini's validator resolves neither composition nor parent scope. A
+  branch that is nothing but a `required`, with the properties declared on the
+  parent, prunes to nothing:
 
   ```jsonc
   oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]
-    ↦  oneOf: [{}, {}]     // no instance can satisfy this
+    ↦  oneOf: [{}, {}]
   ```
 
-  xAI compiles tool schemas strictly and answers a provider 400 covering the
-  **whole request, every tool**; Gemini, OpenAI, and DeepSeek accept it and the
-  constraint is merely gone. State the constraint in the tool's `description`,
-  where every provider reads it, and enforce it in the executor's zod parse —
-  which is where it always held anyway, since `z.toJSONSchema` cannot carry a
-  `.refine()` across the boundary either. `schedule_wakeup`'s "Give exactly one
-  of delay or at" is the shape to copy. A choice that genuinely must be
-  structural gives each branch its own `properties` alongside its `required`, as
-  the attachment tools do. `apps/api/test/tool-schema-sanitization.test.ts`
-  walks every authored schema through the real sanitizer and fails on any branch
-  it empties.
+  Gemini and OpenAI accept that without complaint and let the model send both
+  parameters or neither.
+
+  So: state the constraint in the tool's `description`, where every provider
+  reads it, and enforce it in the executor's zod parse — which is where it
+  always held anyway, since `z.toJSONSchema` cannot carry a `.refine()` across
+  the boundary either. `schedule_wakeup`'s "Give exactly one of delay or at" is
+  the shape to copy. When a choice genuinely must be structural, give each
+  branch a full object schema — `{ type: "object", properties: {…}, required:
+  [...] }` — which is the only form that both passes xAI and survives
+  sanitization with its `required` intact, because the branch then carries the
+  `properties` the pruning resolves against.
+  `workstream_list_resources` and `workstream_read_resource` are built that way
+  and never broke. `apps/api/test/tool-schema-sanitization.test.ts` walks every
+  authored schema through the real sanitizer and fails on either defect.
 - **Choose `serial` deliberately.** This one is not a `ToolDefinition` field: it
   lives on the `HarnessTool` wrapper beside `definition` and `execute`, because
   it orders *execution* rather than describing policy. Bind already runs writes
@@ -522,8 +545,9 @@ future agent tool or plugin, not just this family.
 2. No silently ignored params: `additionalProperties: false` declared *and* a
    strict zod parse in the executor enforcing it; the surface is uniform across
    the family. An exclusive or conditional choice between parameters lives in
-   the `description` and the executor's parse, never in a `oneOf`/`anyOf` of
-   bare `required` branches, which sanitization empties and xAI then rejects.
+   the `description` and the executor's parse, never in a root-level
+   `oneOf`/`anyOf` of bare `required` branches — xAI rejects the whole request,
+   and sanitization empties the branches for everyone else.
 3. References accept names where a person would use a name; ambiguity is an
    error, never a guess.
 4. There is a discovery path for any id, type, or enum the tool requires.

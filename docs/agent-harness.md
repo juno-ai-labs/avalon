@@ -617,36 +617,54 @@ and reports any `allOf`/`anyOf`/`oneOf` branch that arrives empty;
 in the repository — core, discovery, skills, Terminal, and every connector, from
 the registries rather than a list — through it.
 
-**Why:** `oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]` on
-`memory_search` reached the provider as `oneOf: [{}, {}]`. Bind's sanitizer
-prunes a `required` against the same node's own `properties` — correct for
-Gemini, whose validator resolves neither composition nor parent scope — and a
-branch that is *only* a `required` has no own `properties`, so both branches
-pruned to nothing. Nothing can satisfy that schema. xAI compiles tool schemas
-strictly and rejected the whole request, every tool, with a provider 400. Because
-`memory_search` is a core tool present on every request, all 253 x-ai attempts in
-the three days after it shipped failed: default routes paid a dead ~1s round trip
-per turn and fell back to Gemini, so the fleet looked healthy, while a work
-stream pinned to Grok from the composer's model picker got
-`pinnedModelRouting`'s empty `fallbackModels`, no second candidate, and a bare
-`harness_execution_failed`. The failing payload named neither the tool nor the
-reason; it took a diff against the last green payload to find.
+**Why:** one line on `memory_search` —
+`oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]` — carried two
+independent defects, and separating them took a live matrix across nine models
+(grok-4.3/4.5/4.6, gemini-3.5/3.6/3.7-flash, gpt-5.6-terra/sol/luna).
 
-The fix is not "avoid `oneOf`" — it is that **the wire schema is not the authored
-schema**, and only a check that runs the real sanitizer can know the difference.
-Hand-writing a JSON Schema approximation of an executor's `.refine()` was the
-actual mistake; `z.toJSONSchema` already cannot carry one across that boundary,
-which is why the constraint has to live in prose the model reads and a parse that
-rejects. Rejected alternatives: pinning a `provider` preference or dropping x-ai
-from the routes would have hidden a schema defect behind routing, and every other
-provider was silently losing the constraint too; teaching Avalon to post-process
-Bind's output would fork the sanitizer. The guard asserts *empty branch* rather
-than *unsatisfiable* deliberately — satisfiability needs a solver, and a branch
-the sanitizer emptied is a discarded constraint whether or not some instance
-still validates. A future change must keep the guard walking the registries: the
-same defect in a tool added later is invisible to a hand-maintained list, and
-`packages/connectors`' hosted-MCP tools arrive from remote servers at runtime and
-are covered only by Bind's own sanitizer, not by this test.
+The **fatal** one is the root-level union. Grok requires every branch of a root
+union to be recognizably an object — `type: "object"` or `properties`, either
+alone suffices — and answers `invalid-argument: … tool parameter root must be an
+object type (root schema is an anyOf/oneOf union with a non-object branch)`,
+which OpenRouter surfaces as a provider 400 covering the whole request, every
+tool. Because `memory_search` is core and present on every request, all 253 x-ai
+attempts in the three days after it shipped failed: default routes paid a dead
+~1s round trip per turn and fell back to Gemini, so the fleet looked healthy,
+while a work stream pinned to Grok from the composer's model picker got
+`pinnedModelRouting`'s empty `fallbackModels`, no second candidate, and a bare
+`harness_execution_failed` naming neither the tool nor the reason.
+
+The **silent** one is the sanitizer. It prunes a `required` against the same
+node's own `properties` — correct for Gemini, whose validator resolves neither
+composition nor parent scope — so a branch that is *only* a `required` prunes to
+`{}` and the constraint is gone on every provider. Gemini and OpenAI accept the
+emptied schema and let the model send both parameters or neither.
+
+The first cut of this change assumed the emptied branch was the xAI trigger. It
+is not, and the measurement is why the guard is now two checks rather than one:
+the authored branches 400 identically to the sanitized ones, restoring the
+`required` does not help, and the same union *nested* under a property is
+accepted by all nine models. A single "no empty branches" rule would have
+flagged harmless nested cases while missing an author who writes
+`oneOf: [{ required: [...] }]` at the root and never trips the sanitizer.
+
+Rejected alternatives, all measured: pinning a `provider` preference or dropping
+x-ai from the routes hides a schema defect behind routing while every other
+provider still loses the constraint; giving each branch `type: "object"` alone
+passes xAI but the sanitizer then strips the `required` anyway, so the constraint
+is lost silently — the only structural form that both passes and survives is a
+full object schema per branch, which is what the attachment tools already use;
+teaching Avalon to post-process Bind's output would fork the sanitizer. The empty
+-branch check asserts *empty branch* rather than *unsatisfiable* deliberately —
+satisfiability needs a solver, and a branch the sanitizer emptied is a discarded
+constraint whether or not some instance still validates.
+
+A future change must keep the guard walking the registries: the same defect in a
+tool added later is invisible to a hand-maintained list. It must also keep the
+two checks distinct — collapsing them loses exactly the distinction the
+measurement bought. `packages/connectors`' hosted-MCP tools arrive from remote
+servers at runtime and are covered only by Bind's own sanitizer, not by this
+test.
 
 ### 2026-08-15 — A settled read receipt rebinds instead of halting the run
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { AVALON_DISCOVERY_TOOL_DEFINITIONS, AVALON_SKILL_TOOL_DEFINITIONS, emptiedCompositionBranches } from "@avalon/agent-harness";
+import {
+  AVALON_DISCOVERY_TOOL_DEFINITIONS,
+  AVALON_SKILL_TOOL_DEFINITIONS,
+  emptiedCompositionBranches,
+  nonObjectRootUnionBranches,
+} from "@avalon/agent-harness";
 import { createConnectorRegistry } from "@avalon/connectors";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
@@ -12,22 +17,33 @@ import { createTestEnv } from "./helpers/cloudflare-test";
  * hand, against the sanitizer that actually rewrites it on the way to the
  * provider.
  *
- * A tool schema is not what Avalon wrote — it is what Bind's sanitizer emits,
- * and the two differ. `memory_search` declared an exclusive choice as `oneOf:
- * [{ required: ["query"] }, { required: ["memoryItemId"] }]`, the sanitizer
- * pruned each branch's `required` against a `properties` map those branches do
- * not have, and what reached the wire was `oneOf: [{}, {}]` — a schema nothing
- * can satisfy. xAI rejects it with a provider 400 covering the whole request,
- * so for three days every x-ai call in the fleet failed: default routes paid a
- * dead round trip and fell back, and a work stream pinned to Grok from the
- * composer's model picker had nowhere to fall back to and simply died. Nothing
- * caught it because the authored schema reads correctly and no test had ever
- * run one through the sanitizer.
+ * Two separate defects, both introduced by one line on `memory_search`:
  *
- * Walking the registries is what makes this a standing guard rather than a
- * snapshot: a tool added next year fails here until its wire schema survives
- * the trip, and it fails at `pnpm test` rather than three days later in a
- * payload log.
+ *   oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }]
+ *
+ * **The fatal one.** A root-level union branch that xAI cannot read as an
+ * object is a hard 400 covering the whole request, every tool — measured
+ * against grok-4.3/4.5/4.6. For three days every x-ai call in the fleet failed:
+ * default routes paid a dead round trip and fell back to Gemini, so the fleet
+ * looked healthy, and a work stream pinned to Grok from the composer's model
+ * picker had nowhere to fall back to and simply died. The sanitizer is not what
+ * made it fatal — the *authored* branches fail identically, because a bare
+ * `{ required: [...] }` is no more an object to xAI than the `{}` the sanitizer
+ * leaves. Only the root matters; the same union nested under a property is
+ * accepted by all nine models tested.
+ *
+ * **The silent one.** A tool schema is not what Avalon wrote — it is what Bind's
+ * sanitizer emits. It prunes each branch's `required` against a `properties`
+ * map those branches do not have, so what reached the wire was `oneOf: [{}, {}]`
+ * and the constraint was gone on *every* provider, Gemini and OpenAI included.
+ * They accept it without complaint and let the model send both parameters or
+ * neither.
+ *
+ * Nothing caught either one, because the authored schema reads correctly and no
+ * test had ever run one through the sanitizer. Walking the registries is what
+ * makes this a standing guard rather than a snapshot: a tool added next year
+ * fails here until its wire schema survives the trip, and it fails at
+ * `pnpm test` rather than three days later in a payload log.
  */
 const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example.com/callback" };
 const registryConfig: Parameters<typeof createConnectorRegistry>[0] = {
@@ -75,11 +91,18 @@ function everyAuthoredToolSchema(): { name: string; schema: Record<string, unkno
 }
 
 describe("tool schema sanitization", () => {
-  it("leaves no tool with a composition branch the sanitizer empties", () => {
+  it("leaves no tool whose root union has a branch xAI cannot read as an object", () => {
     const tools = everyAuthoredToolSchema();
     expect(tools.length).toBeGreaterThan(60);
 
-    const emptied = tools.flatMap(({ name, schema }) =>
+    const rejected = tools.flatMap(({ name, schema }) =>
+      nonObjectRootUnionBranches(schema).map((path) => `${name}: ${path}`));
+
+    expect(rejected).toEqual([]);
+  });
+
+  it("leaves no tool with a composition branch the sanitizer empties", () => {
+    const emptied = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
       emptiedCompositionBranches(schema).map((path) => `${name}: ${path}`));
 
     expect(emptied).toEqual([]);
