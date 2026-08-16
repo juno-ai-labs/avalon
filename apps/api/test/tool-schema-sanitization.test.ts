@@ -146,3 +146,77 @@ describe("tool schema sanitization", () => {
     expect(weakened).toEqual([]);
   });
 });
+
+/**
+ * The schemas Avalon does not author, and the only ones a build-time guard can
+ * never see: a hosted MCP server's `inputSchema` arrives at run time and reaches
+ * the model verbatim. The blast radius is worse than a first-party mistake,
+ * because xAI rejects the whole request — one bad schema from one remote server
+ * takes down a run's every other tool, Avalon's core tools included — and the
+ * person who connected that server did nothing wrong.
+ *
+ * So the rule the guard above reports on is applied here as a repair, at
+ * Avalon's own host-side gate over dynamic tools rather than inside a connector
+ * adapter, and every dynamic source (Slack, Granola, Notion) funnels through it.
+ */
+describe("dynamic connector tool schemas", () => {
+  const dynamicAdapter = () => {
+    const registry = createTestConnectorRegistry();
+    const adapter = registry.get("notion");
+    const capability = adapter.dynamicAgentTools?.capabilities[0];
+    if (!capability) throw new Error("expected Notion to declare a dynamic capability");
+    return { adapter, capability };
+  };
+
+  const validate = (inputSchema: Record<string, unknown>) => {
+    const { adapter, capability } = dynamicAdapter();
+    return __integrationTesting.validateDynamicConnectorTools(
+      createTestEnv({}),
+      adapter,
+      "personal",
+      [capability],
+      "notion",
+      [{
+        name: "remote_tool",
+        description: "A tool served by a third-party MCP server.",
+        capability,
+        mode: "write",
+        idempotency: "record_before_execute",
+        inputSchema,
+      }],
+    )[0]!.inputSchema as Record<string, unknown>;
+  };
+
+  it("repairs a remote root union Grok would reject the whole request over", () => {
+    const repaired = validate({
+      type: "object",
+      properties: { pageId: { type: "string" }, discussionId: { type: "string" } },
+      oneOf: [{ required: ["pageId"] }, { required: ["discussionId"] }],
+    });
+
+    expect(repaired.oneOf).toBeUndefined();
+    expect(repaired.properties).toEqual({ pageId: { type: "string" }, discussionId: { type: "string" } });
+    expect(nonObjectRootUnionBranches(repaired)).toEqual([]);
+  });
+
+  it("leaves a remote schema alone when its root union is already object-branched", () => {
+    const schema = {
+      anyOf: [
+        { type: "object", properties: { pageId: { type: "string" } }, required: ["pageId"] },
+        { type: "object", properties: { cursor: { type: "string" } }, required: ["cursor"] },
+      ],
+    };
+
+    expect(validate(schema)).toEqual(schema);
+  });
+
+  it("leaves an ordinary remote object schema untouched", () => {
+    const schema = {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    };
+
+    expect(validate(schema)).toEqual(schema);
+  });
+});
