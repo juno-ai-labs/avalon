@@ -835,17 +835,22 @@ dismissals.
 
 **Flow:**
 
-1. Regional ingress verifies exact bytes, retains the large payload in regional
-   R2, and inserts one normalized regional D1 activity and receipt.
-2. It enqueues only region, workspace ID, and activity ID.
+1. Regional ingress verifies exact bytes, retains the large payload under a
+   workspace-prefixed regional R2 key, and commits the `WorkspaceDO` ingress
+   receipt, Queue-outbox intent, and local normalization watchdog before
+   acknowledging Linear.
+2. The outbox wakes a regional consumer, which normalizes outside the object;
+   the parent then atomically records the activity and initial processing work.
 3. Deterministic routing claims nothing, so admission groups the event into a
    bounded workspace window and creates or updates one opportunity.
-4. Background ranking stores different four-card sets for Maya and Mateo and
-   publishes bounded per-person display projections to the `WorkspaceDO`.
-5. Maya starts the opportunity; the promotion initializes one hidden child and
-   opening user part, revalidates its source epochs, and D1 finalizes.
-6. The parent atomically masks the opportunity and exposes the child from the
-   finalization receipt.
+4. Background ranking claims a bounded parent snapshot and atomically stores
+   different authoritative four-card sets for Maya and Mateo in the parent.
+5. Maya starts the opportunity; the parent reserves one hidden child, whose
+   idempotent initialization creates the opening user part and returns a receipt.
+6. The parent revalidates the opportunity's complete source-dependency rows and
+   atomically marks its version started, resolves Maya's state, and exposes the
+   child. Every stored set filters that version immediately; bounded background
+   slices compact stale set items rather than finalization scanning all users.
 
 **Expected user-visible behavior:** Maya sees a useful stored suggestion without
 waiting for inference on page load. Starting shows a bounded `Starting` state,
@@ -853,10 +858,12 @@ then one real work stream appears in Work Streams and In Progress. Mateo's own
 ranked set and dismissal state remain independent. Nobody sees raw payload data
 outside its authorized regional surfaces.
 
-**Architecture stress:** R2 payload ownership, normalized D1 activity,
-deterministic claims, batch admission, per-person stored ranking, rebuildable
-parent display cache with source deny floors, current-epoch promotion receipts,
-and a hidden parent gate each own a different fact.
+**Architecture stress:** R2 payload ownership, parent receipt/outbox before
+provider acknowledgement, Queue redelivery, workspace-local normalized
+activity, bounded deterministic claims, batch admission, per-person
+stored ranking with source deny floors and normalized multi-source dependencies,
+current-epoch child receipts, and a hidden parent gate each own a different fact
+without a D1 product projection.
 
 **Failure oracle:** Ranking runs on the request, the queue carries the payload,
 Maya's start creates two children, an opportunity appears as unread before
@@ -880,16 +887,19 @@ admission result targets Mateo rather than every participant.
 
 **Flow:**
 
-1. The regional activity domain records the classifier/admission decision and
-   enqueues one stable delivery to the existing `WorkstreamDO`.
+1. The `WorkspaceDO` records the classifier/admission decision and commits one
+   stable local-outbox delivery to the existing `WorkstreamDO`.
 2. The child rechecks current visibility, deduplicates the delivery, and inserts
-   one Mateo-audience operational action with version, expiry, and source epochs.
+   one Mateo-audience operational action with version, expiry, source vector,
+   and parent source-authorization epoch.
 3. Its Mateo-specific projection adds Needs Your Input without touching every
    other member's personal row.
-4. Mateo accepts the action while the D1 feedback writer is temporarily down.
+4. Before rendering and again before acceptance, the child obtains a narrow,
+   action/version/user-specific authorization decision from the parent. Mateo
+   accepts while the later child-to-parent learning-feedback RPC is unavailable.
 5. The child resolves the action once, appends audience-safe accepted evidence
    to the main feed only if Mateo explicitly shares it, clears Needs Your Input,
-   and later replays feedback to D1.
+   and later replays feedback to the parent.
 
 **Expected user-visible behavior:** Mateo sees one relevant card inside the work
 stream as a private overlay and in his interest list. Acceptance clears the
@@ -897,15 +907,16 @@ prompt immediately and does not wait for the learning corpus. Other members do
 not see the pending card; they see evidence only after an explicit authorized
 share, at which point the transcript changes once.
 
-**Architecture stress:** D1 owns routing and cross-workstream feedback, while the
-child owns an audience-scoped operational row and resolution. Personal
-projection and feedback outboxes may lag independently without making the
-pending action a conversation part or a second UI authority.
+**Architecture stress:** The parent owns workspace-local routing/evidence and
+feedback receipts, while the child owns an audience-scoped operational row and
+resolution. Personal projection and feedback outboxes may lag independently
+without making the pending action a conversation part or a second UI authority.
 
-**Failure oracle:** Duplicate cards, a workspace-wide personal fan-out, a D1
-outage preventing acceptance, a resolved card returning after replay, or an
-unauthorized source snippet entering shared transcript/model/export breaks the
-split.
+**Failure oracle:** Duplicate cards, a workspace-wide personal fan-out, showing
+or accepting the optional card while the parent cannot prove current source
+authority, a resolved card returning after replay, or an unauthorized source
+snippet entering shared transcript/model/export breaks the split. Ordinary
+transcript reads must remain available during that parent outage.
 
 **Unresolved pressure:** Product research must define which action types exist
 and whether any explicit acceptance can satisfy a separate write-tool approval
@@ -999,45 +1010,55 @@ evidence.
 
 **Mode:** Showcase
 
-**Persona:** Samantha uses a work stream throughout its authority move from D1
-and R2-backed records into a `WorkstreamDO`.
+**Persona:** Samantha keeps using a workspace whose membership/sidebar already
+live in `WorkspaceDO` while its connector/activity domain moves from D1 and R2
+records into that same parent.
 
-**Preconditions:** A revision-stamped D1 snapshot and hashed R2 chunks feed a
-hidden object generation. Every legacy writer uses the same D1 authority-row
-transaction, the old authority owns an outbox/tail cursor, and held commands
-have stable IDs.
+**Preconditions:** A revision-stamped D1 snapshot and existing workspace-keyed
+R2 bodies feed `connector_domain_authority=legacy_shadow` inside the live parent.
+Every legacy connector writer uses the same D1 authority-row transaction, the
+independent D1 `connector_authority` is still `legacy` while
+`workspace_authority` already routes to the parent, the old connector authority
+owns an outbox/tail cursor, and held commands have stable IDs.
 
 **Flow:**
 
-1. Snapshot and shadow import begin while Samantha and a provider continue to
-   append through the old authority.
-2. Idempotent object RPC imports chunks and verifies counts, hashes, message
-   arrays, sidebar projection, and authorization without side effects.
-3. One D1 transaction changes `legacy -> holding`; newly arriving desktop,
+1. Snapshot and shadow import begin while Samantha uses the live sidebar and a
+   provider continues to append through the old connector authority.
+2. Idempotent object RPC imports source rows, encrypted credential envelopes,
+   selector/principal ACLs, activity/digest/suggestion state, and R2 references;
+   it verifies counts, hashes, cursors, and authorization. The shadow gate
+   rejects ingress, reads, refresh, polling, digest, ranking, and effects.
+3. One D1 transaction changes only `connector_authority` from
+   `legacy -> holding`; newly arriving desktop,
    provider, scheduler, and tool-result inputs receive explicit
    `accepted_pending_migration` receipts only after durable hold insertion.
-4. The controller enters `closing_hold`, stops acknowledging new ingress,
+4. The controller enters `closing_hold`, stops acknowledging new connector ingress,
    records the final hold sequence, imports/verifies every accepted command, and
-   prepares the target without side effects.
-5. One D1 CAS publishes the DO route. The first routed request opens the
-   prepared epoch; no accepted held item needs release after route, and source/
-   hold receipts remain retained for the rollback window.
+   changes only the connector singleton to `prepared` without side effects.
+5. One D1 `connector_authority` CAS plus route-receipt insert publishes the
+   connector route without changing `workspace_authority`. The first routed
+   request carries its receipt and atomically opens that prepared connector generation; no
+   accepted held item needs release after route, and source/hold receipts remain
+   retained for the rollback window.
 
-**Expected user-visible behavior:** Samantha may see a brief `Upgrading work
-stream` state, but every acknowledged or held action appears exactly once. No
-shadow notification, tool, sidebar card, or activity is visible before
-cutover.
+**Expected user-visible behavior:** Samantha's membership, sidebar, and existing
+work streams stay available. Connector-backed activity may show a bounded
+`Upgrading integrations` state, but every acknowledged or held event appears
+exactly once after cutover. No shadow notification, credential use, digest,
+suggestion, or activity is visible before connector-domain open.
 
 **Architecture stress:** Large input lives in regional R2; the regional D1
-authority row atomically gates every old mutation, hold insertion, and route
-CAS; and the side-effect-free target is not externally authoritative before
-route publication. Closing the hold creates a finite verified set without
-asking D1 and DO SQLite to share a transaction.
+authority row atomically gates every old connector mutation, hold insertion,
+and route CAS; and an independent domain singleton keeps shadow data
+side-effect-free inside an otherwise-live parent. Closing the hold creates a
+finite verified set without asking D1 and DO SQLite to share a transaction.
 
-**Failure oracle:** Acknowledgement before durable hold, post-route release
-needed for correctness, a lost/duplicate input, a shadow side effect, route CAS
-before final-sequence verification, or a direct legacy writer escaping the
-authority-row gate fails this study.
+**Failure oracle:** Treating “WorkspaceDO is live” as permission to read or run
+shadow connector state, acknowledgement before durable hold, post-route release
+needed for correctness, a lost/duplicate input, plaintext credential movement,
+route CAS before final-sequence verification, or a direct legacy writer escaping
+the authority-row gate fails this study.
 
 **Unresolved pressure:** Bound hold duration and bytes, define backpressure when
 the bound is reached, and specify how users distinguish held from fully
@@ -2306,9 +2327,10 @@ summary can finish.
 **Persona:** Ren replays one provider event after an activity-consumer defect is
 fixed while the destination parent and child are intermittently unavailable.
 
-**Preconditions:** The original webhook was acknowledged, its normalized row is
-`failed`, one earlier Queue attempt reached suggested-work batching, and one
-native activity-log projection acknowledgement was lost. The exact raw payload
+**Preconditions:** The original webhook was acknowledged after R2 plus the
+parent ingress receipt/outbox committed, its normalized row is `failed`, one
+earlier processing attempt reached suggested-work batching, and one
+child-to-parent native event acknowledgement was lost. The exact raw payload
 still exists in regional R2.
 
 **Flow:**
@@ -2316,24 +2338,33 @@ still exists in regional R2.
 1. Ren selects the one failed activity for bounded replay rather than resetting
    the workspace.
 2. The provider redelivers the same event while the replay is running.
-3. Deterministic automation and route claims are retried; the work-stream
+3. The original Queue message exhausts its DLQ retention after `send()` had
+   settled the outbox; the receipt remains `accepted`, so the parent's local
+   watchdog alarm resends the same normalization identity from retained R2.
+4. A malformed normalizer result reaches the frozen attempt ceiling. The parent
+   transaction marks generation 1 dead and cancels its watchdog. After the bug
+   is fixed, Ren authorizes bounded replay generation 2; generation 1 remains
+   inspectable and the retained R2 payload is reused.
+5. Deterministic automation and route claims are retried; the work-stream
    delivery acknowledgement is lost after the child commit.
-4. The child retries a native Avalon event outbox while the provider activity's
-   one canonical log event remains owned by the regional activity processor;
+6. The child retries a native Avalon event outbox while the provider activity's
+   one canonical log event remains owned by the `WorkspaceDO`;
    opportunity admission retries its batch result.
-5. The `WorkspaceDO` is unavailable while any resulting card projection is sent.
-6. All systems recover and reconcile by durable IDs and source hashes.
+7. The `WorkstreamDO` is unavailable while the parent's activity delivery is
+   retried, and the parent later receives a stale child projection.
+8. All systems recover and reconcile by durable IDs and source hashes.
 
 **Expected user-visible behavior:** At most one automation effect, incorporated
 activity/action, activity-log event, and opportunity exists. The relevant card
 eventually appears without a duplicate notification. Operators can see every
 retry and final disposition without reading raw content by default.
 
-**Architecture stress:** Provider uniqueness, payload hash, activity processing
-lease, exclusive claims, route delivery ID, child receipt, log dedupe key,
-opportunity source fingerprint, and parent projection versions must compose
-across independently retried systems. Canonical producer rules must prevent the
-provider and child paths from describing one semantic event twice.
+**Architecture stress:** Connection-scoped provider uniqueness, payload hash,
+parent bounded normalization-watchdog generations, activity lease, exclusive claims, local
+delivery/outbox ID, child receipt, log dedupe key, opportunity fingerprint, and
+independent child projection versions must compose across retries. Canonical
+producer rules must prevent provider and child paths from describing one
+semantic event twice.
 
 **Failure oracle:** Any duplicate external effect, transcript card, digest item,
 or opportunity; a permanently silent failed row; unbounded fleet replay; or a
@@ -2357,7 +2388,8 @@ consider both events near the same time.
 **Flow:**
 
 1. The personal email and workspace Linear event enter separate normalized
-   activities and batch partitions.
+   activities and batch partitions. Composite source/audience foreign keys
+   reject any normalizer output that labels the Gmail row `workspace`.
 2. Identity resolution links the same external address to an Avalon member.
 3. A faulty semantic result proposes one combined opportunity and an existing
    workspace work stream.
@@ -2370,15 +2402,16 @@ derived from his personal Gmail connection. Maya may see a Linear-only
 opportunity if independently useful, but no title, provenance, identity link,
 target, action, digest, or ranking explanation reveals the email.
 
-**Architecture stress:** Audience is a required input to batch partitioning,
-admission, provenance nodes, opportunity fingerprints, ranking, display
-projection, child delivery, model projection, feedback, and diagnostics—not a
-late renderer filter.
+**Architecture stress:** Audience is a schema-enforced source relationship and
+a required input to parent-local batch
+partitioning, admission, provenance nodes, opportunity fingerprints, ranking,
+suggestion sets, child delivery, model projection, feedback, and diagnostics—not
+a late renderer filter.
 
 **Failure oracle:** A shared fingerprint merges the records, a workspace card
 contains a Gmail phrase, a personal provenance node is reachable from Maya's
-snapshot, a D1 feedback query teaches across the boundary, or Global sees either
-activity's content.
+snapshot, a parent-local feedback query teaches across the boundary, or Global
+sees either activity's content.
 
 **Unresolved pressure:** Specify whether a user may explicitly promote personal
 evidence into a workspace work stream and the review/attribution operation that
@@ -2392,31 +2425,35 @@ makes that a newly authorized disclosure.
 regional services are recovering from an outage.
 
 **Preconditions:** Both clients use the same start idempotency key. The
-opportunity is version 7, will expire soon, and references eight authorized
-provenance resources. A later ranking pass supersedes the visible set.
+opportunity is version 7, will expire soon, and its normalized dependency table
+references eight resources across two connector sources. A later ranking pass
+supersedes the visible set.
 
 **Flow:**
 
-1. Attempt A crashes after D1 moves the opportunity to `starting`.
-2. Attempt B crashes after the parent reserves a hidden child.
+1. Attempt A crashes after the parent moves the opportunity to `starting` and
+   records a reservation.
+2. Attempt B crashes after the parent enqueues hidden-child initialization.
 3. Attempt C crashes after the hidden child writes metadata but before its
    opening part.
-4. Attempt D initializes the child and common projection but loses the D1
-   finalization response.
+4. Attempt D initializes the child and common projection but loses the child
+   receipt response to the parent.
 5. The second client retries while version 8 is now in Maya's suggested set.
-6. Maya loses source-resource access, and a reconciler resumes from all durable
-   receipts.
+6. Maya loses access to one resource, advancing the parent deny floor and that
+   selector version; a reconciler resumes from all durable receipts.
 
 **Expected user-visible behavior:** Maya sees one bounded Starting state. Because
-the source epoch changed before the final parent commit, no work stream becomes
-visible; the claim terminalizes and the hidden reservation is quarantined or
-tombstoned. In a control run with unchanged epochs, one work stream and no
+one dependency no longer validates before the final parent commit, no work
+stream becomes visible; the reservation enters retiring, its child cleanup
+receipt settles, and a non-content origin tombstone prevents revival. In a
+control run with unchanged epochs, one work stream and no
 Starting card appear atomically with one complete opening turn.
 
 **Architecture stress:** The promotion saga needs an immutable content snapshot
-but current permission at every stage, origin uniqueness, hidden initialization,
-one opening-part key, a D1 finalization receipt, one parent-visible commit point,
-expiry rules, and repair that knows which authority owns each stage.
+but the complete multi-source dependency vector checked at every stage,
+parent-local origin uniqueness, hidden child initialization, one opening-part
+key, an idempotent child receipt, one bounded parent-visible commit point, and
+asynchronous stale-set compaction that never scans every member in that commit.
 
 **Failure oracle:** Two child IDs, a registered empty child visible forever, two
 opening turns, a retry silently using version 8 content, a revoked resource
@@ -2424,8 +2461,9 @@ hydrated after the claim, or a permanently `starting` opportunity breaks
 promotion correctness.
 
 **Unresolved pressure:** Set the user-visible timeout and cancellation behavior
-for Starting and the retention/repair policy for an initialized but never
-published child.
+for Starting, the maximum child-cleanup SLO, and the exact delayed-command/audit
+retention horizon for the retired origin tombstone. The retirement state machine
+and new-version-only retry rule are not optional.
 
 ### B32 — Common and personal collection replacements race a scope change
 
@@ -2488,9 +2526,12 @@ private email subject that must not reach shared transcript or model context.
 1. The child inserts the action in its Mateo-audience operational table and adds
    Needs Your Input to Mateo's workspace projection.
 2. Maya opens the work stream, exports it, searches it, and runs a compaction.
-3. Mateo disconnects Gmail, but the D1 retraction delivery is delayed.
-4. Mateo clicks Accept from a stale connected UI while version 5 supersedes the
-   classifier result and the original action expires.
+3. Mateo disconnects Gmail, but the parent-outbox retraction delivery is
+   delayed.
+4. Mateo's stale UI asks the child to render and then Accept. Each operation
+   calls the narrow parent disclosure RPC; the parent's already-advanced source
+   authorization epoch and current selector deny reject version 4 while version
+   5 supersedes the classifier result and the original action expires.
 5. The retraction arrives twice after the click.
 
 **Expected user-visible behavior:** Maya never sees the pending title in the
@@ -2500,9 +2541,10 @@ once on `retracted`, clears Needs Your Input, and duplicate delivery changes
 nothing. Explicit sharing would require a fresh authorized confirmation.
 
 **Architecture stress:** Pending actions need principal audience, immutable ID
-and version, current source-authorization checks on read and accept, expiry,
-idempotent retraction, private realtime/export filtering, and a separate explicit
-share operation. `people` visibility alone is insufficient.
+and version, current parent source-authorization checks on read and accept,
+child source floors, expiry, idempotent retraction, private realtime/export
+filtering, and a separate explicit share operation. Retraction is cleanup, not
+the authorization linearization point; `people` visibility alone is insufficient.
 
 **Failure oracle:** Any Gmail phrase reaches Maya or the model, stale acceptance
 authors a shared part or external write, the card reappears after retraction, or
@@ -2525,16 +2567,18 @@ some activities into children, and 5,000 digests become due in one minute.
 
 **Flow:**
 
-1. The regional activity processor writes one canonical event per provider
-   activity with work-stream audience plus event-specific resource selector and
-   source revision.
+1. A regional consumer normalizes outside the object, then the `WorkspaceDO`
+   writes one canonical event per provider activity with work-stream audience,
+   event-specific resource selector, and source revision.
 2. Child incorporation outboxes retry but must not create a second digestible
    description of those provider events.
 3. Digest scheduling jitters and groups due people into bounded workspace
    batches rather than issuing 5,000 simultaneous parent calls.
 4. One repository ACL is revoked after events were written but before reads.
-5. Parent visibility and regional resource-policy batches filter each candidate;
-   one batch times out and fails closed before retry.
+5. The parent advances the global source deny floor and writes a new normalized
+   selector version plus explicit principal deny before cleanup. Indexed
+   event-to-selector references filter each candidate; one batch encounters a
+   missing/refreshing selector and fails closed before retry.
 
 **Expected user-visible behavior:** Every member receives at most one authorized
 description of an occurrence. Repository titles are omitted for people without
@@ -2543,16 +2587,19 @@ delayed in a visible retry state, but parent authorization and sidebar traffic
 remain responsive.
 
 **Architecture stress:** Historical event audience, per-event source revision,
-two-layer batched authorization, canonical producer identity, scheduler jitter,
-parent capacity lanes, and fail-closed retry all interact at enterprise scale.
+normalized versioned resource selectors/principals, deny-first ACL changes,
+two-layer batched authorization, versioned digest destinations, canonical
+producer identity, scheduler jitter, parent capacity lanes, and fail-closed
+retry all interact at enterprise scale.
 
 **Failure oracle:** A private repository title leaks, provider and child produce
 duplicate digest items, unknown authorization is treated as allowed, or digest
 fan-out saturates the parent enough to block membership and sidebar operations.
 
-**Unresolved pressure:** Load tests must set batch sizes, jitter windows,
-priority lanes, timeout/retry SLOs, and the threshold where authorization work
-moves behind transparent workspace projection shards.
+**Unresolved pressure:** Load tests must set ingest/digest batch sizes, jitter
+windows, latency lanes, timeout/retry SLOs, SQLite/backlog soft limits, and the
+threshold where a separately specified `WorkspaceActivityDO` or deterministic
+activity shards become necessary behind the parent facade.
 
 ### B35 — Queue replay escapes a paused fleet campaign
 
@@ -3000,17 +3047,17 @@ and rare two-hour tail.
 | Full agent-loop lifetime | S17, S31, B15, B24, B44 | One Workflow instance per full loop, deterministic model/tool/reconcile/wait steps, 2–30 minute normal and rare 2+ hour support, Paid-limit budgets for steps/subrequests/state/payloads/creation/concurrency, owner receipts, passive-wait concurrency release, terminalization reserve, and many bounded Terminal calls rather than one multi-hour command. |
 | Ambiguous writes | S10, B07, B24 | Record-before-execute, causal effect intent stable across retries, reconciliation, `needs_input`, and no blind replay. |
 | Offline and reconnect | S02, S03, S28, B05, B23, B38, B39 | Cursor replay, snapshot reset for expired cursors, monotonic user state, no periodic reconnect, bounded jitter, and explicit stale/degraded UI. |
-| Provider ingress | S11, S21, B11, B13, B22, B29, B30, B34 | Global envelope minimization, regional body processing, hash-aware deduplication, audience partitioning, route fencing, and commit-order provenance. |
-| Activity ingestion and first-party log | S21, S22, B22, B29, B30, B34 | Regional R2 payloads, normalized D1 activity, opaque queues, deterministic claims, canonical producers, event-specific authorization, idempotent child delivery, ordered log projection, dead letters, and bounded replay. |
-| Suggested work | S21, B29, B30, B31 | Stored background ranking, per-person state, source-epoch deny floors, bounded parent display cache, distinct opportunity identity, current authorization, a hidden child gate, and one visible parent promotion commit. |
-| Suggested actions in existing work | S22, B29, B30, B32, B33 | D1 routing/feedback authority, child audience-scoped operational authority, version/expiry/retraction, explicit sharing, sparse assignment signals, and disabled-surface enforcement. |
+| Provider ingress | S11, S21, S25, B11, B13, B22, B29, B30, B34 | Global envelope minimization, regional body processing, connection-scoped hash-aware deduplication, audience shape constraints, connector-domain route fencing, local normalization watchdogs, and commit-order provenance. |
+| Activity ingestion and first-party log | S21, S22, S25, B22, B29, B30, B34 | Workspace-prefixed regional R2 payloads, parent ingress receipt/outbox/watchdog before provider acknowledgement, workspace-local normalized activity and ordered log, bounded Queue/parent claims, canonical producers, versioned selector/principal authorization, idempotent parent/child delivery, dead letters, and bounded replay. |
+| Suggested work | S21, B29, B30, B31 | Parent-owned stored background ranking, per-person state, global deny floor plus normalized multi-source dependencies, distinct opportunity identity, current authorization, an idempotently initialized hidden child, bounded one-user finalization, and asynchronous stale-set cleanup. |
+| Suggested actions in existing work | S22, B29, B30, B32, B33 | Parent routing/evidence/feedback authority, child audience-scoped operational authority, live parent disclosure/accept authorization, child source floor, version/expiry/retraction, explicit sharing, sparse assignment signals, and disabled-surface enforcement. |
 | Scheduled automation | S12, B13, B24 | Stable occurrence identity, one admission, pre-run context, target liveness checks, and safe late alarms. |
 | Export and deletion | S13, S14, B10, B12, B24 | Audience-aware point-in-time manifests, resumable fan-out, reference cleanup, deletion epochs, and no resurrection. |
 | EU and Global isolation | S11, S15, S27, B11, B12, B14, B20, B25, B35 | Jurisdictional bindings, non-product Global wake schema, product resolution first inside a jurisdictional shard, regional application logs/storage, explicit Cloudflare operational-ID logging review, no Regional-Services subrequest assumption, and hard no-fallback controls. Terminal retains its separate Daytona residency gate. |
 | Migration and cutover | S16, S23, S24, S25, S26, S27, B13, B35, B36, B37, B40, B41, B43 | Lazy object creation, journal-authoritative slices, jurisdictional shard admission, compatibility gates, atomic legacy authority-row/hold writes, prepare-before-route CAS, quarantine, forward repair, and reconciled fleet evidence. |
 | Lazy additive schema migration | S23, B43 | Idempotent constructor DDL before request service, no dormant-object wake, observed-version reporting, large-fixture canaries, and a proven constructor-time ceiling. |
 | Fleet sweep and online backfill | S24, B35, B43 | Regional D1 jobs, campaign Workflow, opaque shard wakes, fixed shard admission permits, visible pause drain, object-local checksummed cursors, bounded slices, and later cleanup. |
-| D1/R2-to-DO authority copy | S25, B13, B36, B40 | Immutable regional snapshot/chunks, side-effect-free shadow generation, transactional D1 authority gate/hold, finite final sequence, prepare-before-route CAS, no post-route release, and retained source. |
+| D1/R2-to-DO authority copy | S25, B13, B36, B40 | Immutable regional snapshot/chunks, independent connector-domain shadow/prepared/open gate inside a live parent, transactional D1 authority gate/hold, encrypted credential and ACL import, finite final sequence, prepare-before-route CAS, no post-route release, and retained source. |
 | Parent-before-child protocol rollout | S26, B04, B37 | N/N-1 receiver expansion, durable acknowledgement, complete replacements, delayed-envelope reconciliation, rollback floor, and inventory proof before contraction. |
 | Regional Queue/Workflow dispatch | S27, B14, B35 | Non-product shard wake, Worker with only a jurisdictional-shard binding, product resolution inside that shard, no Regional-Services subrequest claim, shard-local admission, and fail-closed unsupported residency. |
 | Realtime socket topology and hibernation | S28, B03, B05, B38 | One parent plus one foreground-child hibernatable socket, zero background application heartbeat, no ticket-rotation reconnect, authorization epochs, and cursor resume. |
@@ -3040,7 +3087,11 @@ and rare two-hour tail.
    side-effect-free target, and then publishes one route CAS with no post-route
    release. Implementation still needs a machine-checked registry covering
    desktop, provider, scheduler, tool-result, attention, export, deletion, and
-   repair writers, plus hold capacity/backpressure limits. See S25, B13, B36.
+   repair writers, plus hold capacity/backpressure limits. Connector migration
+   additionally needs conformance proof that every ingress/read/background path
+   checks the internal shadow/prepared/open generation, and that encrypted
+   credential migration/rotation preserves Avalon's one-door freshness contract
+   without plaintext in migration or execution envelopes. See S25, B13, B36.
 3. **How are incomplete tool turns durably reconciled?** The owner needs a
    wake-up, timeout, provider reconciliation contract, and exactly-one result
    rule for crashes at every point around execution. See S10 and B07.
@@ -3112,15 +3163,20 @@ and rare two-hour tail.
     when live-source or authorization churn repeatedly invalidates summaries.
     See S19 and B28.
 18. **What is the end-to-end activity delivery and replay contract?** Define
-    claim exclusivity, delivery IDs, child and log receipts, retry/dead-letter
-    thresholds, event-specific authorization selectors, canonical producers,
-    digest batch scheduling, causal tracing, bounded replay authority, and
-    retention across R2, D1, child, and parent. See S21, S22, B29, B30, and B34.
+    claim exclusivity, connection-scoped delivery IDs, the local normalization
+    watchdog, child and log receipts, retry/dead-letter thresholds, normalized
+    selector/principal refresh and deny rules, canonical producers, digest
+    target versioning, causal tracing, bounded replay authority, per-provider
+    synchronous parent-ingress envelopes/backpressure, and retention across R2,
+    parent, and child.
+    See S21, S22, B29, B30, and B34.
 19. **What makes opportunity promotion complete or safely repairable?** Specify
-    immutable content versus current permission, source epoch revalidation,
+    immutable content versus current permission, multi-source dependency
+    canonicalization/revalidation, the workspace deny floor,
     parent origin uniqueness, hidden child initialization, opening-part identity,
-    D1 finalization receipt, one parent-visible commit, revocation quarantine,
-    and the maximum Starting state. See S21 and B31.
+    child initialization receipt, one bounded parent-visible commit,
+    asynchronous stale-set cleanup, revocation quarantine, and the maximum
+    Starting state. See S21 and B31.
 20. **What are the fleet campaign safety envelopes?** Publish allowed
     constructor DDL and p99 limits, fixed shard count, permit TTL/concurrency,
     RPC slice budgets, pause-drain thresholds/SLO, DLQ handling, and the
