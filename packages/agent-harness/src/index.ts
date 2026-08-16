@@ -2301,6 +2301,8 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
 export interface HarnessTool {
   definition: ToolDefinition;
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
+  /** Resolve a host-only execution deadline after validated input is known. */
+  resolveTimeoutMs?: (input: unknown) => number | undefined;
   /**
    * Re-run code-authored input refinements when a Zod failure escapes the
    * executor. JSON Schema cannot represent every refinement, so this keeps a
@@ -2318,6 +2320,22 @@ export interface HarnessPluginActivationContext {
   harnessRunId: string;
   executionPrincipal: ExecutionPrincipal;
   signal: AbortSignal;
+}
+
+/** A host-authored, model-safe explanation for a rejected plugin activation. */
+export class HarnessPluginActivationError extends Error {
+  readonly retryable: boolean;
+  readonly retryAfterMs: number | undefined;
+
+  constructor(
+    message: string,
+    options: { retryable: boolean; retryAfterMs?: number; cause?: unknown },
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "HarnessPluginActivationError";
+    this.retryable = options.retryable;
+    this.retryAfterMs = options.retryAfterMs;
+  }
 }
 
 /** A Bind plugin whose trusted identity, prose, and tool policy are authored by the host. */
@@ -2342,14 +2360,16 @@ export interface HarnessPlugin {
   loadTools?: () => Promise<HarnessTool[]>;
   /**
    * Prepare plugin-owned runtime state before this deferred plugin becomes
-   * model-visible. A rejection leaves the plugin inactive. The harness invokes
-   * this at most once per run, after authorization and dynamic tool loading but
-   * before an explicit load is persisted; a restored activation is already
-   * durable and runs the hook before re-entering the active set.
+   * model-visible after an explicit `load_plugin`. A rejection leaves the plugin
+   * inactive. Successful preparation is cached for the run; a failed hook may
+   * be retried by a later explicit load. Restored durable activations do not run
+   * the hook and retain their ordinary first-tool preparation path.
    *
    * `load_plugin` is read-safe: this hook may prepare convergent host-owned
    * runtime infrastructure, but must be safe to repeat after response loss and
-   * must not perform an outward-facing provider or user-data write.
+   * must not perform an outward-facing provider or user-data write. Throw
+   * `HarnessPluginActivationError` only with host-authored model-safe guidance;
+   * other rejection details are hidden from the model.
    */
   onActivate?: (context: HarnessPluginActivationContext) => Promise<void>;
   /** Extend `load_plugin`'s deadline for a blocking activation hook. */

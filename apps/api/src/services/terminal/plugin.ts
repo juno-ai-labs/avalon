@@ -1,7 +1,8 @@
-import type {
-  HarnessPlugin,
-  HarnessPluginActivationContext,
-  HarnessToolContext,
+import {
+  HarnessPluginActivationError,
+  type HarnessPlugin,
+  type HarnessPluginActivationContext,
+  type HarnessToolContext,
 } from "@avalon/agent-harness";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { newId } from "@avalon/db";
@@ -12,8 +13,8 @@ import { recordTerminalPlatformObservation } from "../../observability/terminal-
 import {
   createTerminalPlugin,
   parseTerminalRegionConfiguration,
+  TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
   TERMINAL_PLUGIN_SYSTEM_MESSAGE,
-  TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS,
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
@@ -28,6 +29,7 @@ import {
   createGitHubRestPublicationGateway,
   createGitHubRestReadGateway,
   createTerminalRepositoryPublisher as createRepositoryPublisher,
+  type TerminalGitHubReadGateway,
 } from "./repository";
 import { createTerminalResourceBridge } from "./resource-bridge";
 import { createDaytonaTerminalRuntime } from "./runtime";
@@ -43,7 +45,10 @@ import {
 export async function createAvalonTerminalPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
-  options: { provider?: TerminalSandboxProvider } = {},
+  options: {
+    provider?: TerminalSandboxProvider;
+    readGateway?: TerminalGitHubReadGateway;
+  } = {},
 ): Promise<HarnessPlugin | null> {
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
@@ -82,7 +87,7 @@ export async function createAvalonTerminalPlugin(
       eventId: newId(),
     }),
   );
-  const readGateway = createGitHubRestReadGateway(env);
+  const readGateway = options.readGateway ?? createGitHubRestReadGateway(env);
   const prepareRepository = async (
     context: HarnessToolContext,
     sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
@@ -92,6 +97,32 @@ export async function createAvalonTerminalPlugin(
       await bootstrapTerminalRepository(env, context, sandbox, sandboxProvider, readGateway);
     } catch (error) {
       if (error instanceof TerminalToolError && error.code === "repository_not_configured") return;
+      throw error;
+    }
+  };
+  const repositoryPreparationDeferredCodes = new Set([
+    "connection_revoked",
+    "github_unavailable",
+    "repository_access_revoked",
+    "repository_base_changed",
+    "repository_bootstrap_failed",
+    "repository_not_authorized",
+    "repository_not_configured",
+  ]);
+  const prepareRepositoryForActivation = async (
+    context: HarnessToolContext,
+    sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
+  ): Promise<string | null> => {
+    try {
+      await bootstrapTerminalRepository(env, context, sandbox, provider, readGateway);
+      return null;
+    } catch (error) {
+      // Repository selection and bootstrap failures are repaired through the
+      // Terminal tool surface itself. The sandbox is already usable, so hiding
+      // checkout_repository here would remove the only in-product repair path.
+      if (error instanceof TerminalToolError && repositoryPreparationDeferredCodes.has(error.code)) {
+        return error.code;
+      }
       throw error;
     }
   };
@@ -153,7 +184,7 @@ export async function createAvalonTerminalPlugin(
   );
   return {
     ...plugin,
-    activationTimeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 60_000,
+    activationTimeoutMs: TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
     onActivate: async (context: HarnessPluginActivationContext) => {
       const startedAt = Date.now();
       const terminalContext: HarnessToolContext = {
@@ -162,12 +193,14 @@ export async function createAvalonTerminalPlugin(
       };
       try {
         const sandbox = await coordinator.acquire(terminalContext);
-        await prepareRepository(terminalContext, sandbox, provider);
+        const repositoryPreparationCode = await prepareRepositoryForActivation(terminalContext, sandbox);
         logStructuredEvent(env, "info", "terminal_plugin_activation_finished", {
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
           harness_run_id: context.harnessRunId,
           state: "completed",
+          repository_state: repositoryPreparationCode ? "deferred" : "prepared",
+          ...(repositoryPreparationCode ? { repository_code: repositoryPreparationCode } : {}),
           duration_ms: Date.now() - startedAt,
         });
       } catch (error) {
@@ -179,7 +212,18 @@ export async function createAvalonTerminalPlugin(
           code: error instanceof TerminalToolError ? error.code : "terminal_activation_failed",
           duration_ms: Date.now() - startedAt,
         });
-        throw error;
+        if (!(error instanceof TerminalToolError)) throw error;
+        const retryAfterMs = typeof error.details?.retryAfterMs === "number"
+          ? error.details.retryAfterMs
+          : undefined;
+        const retryable = error.code === "sandbox_busy"
+          || (error.code === "sandbox_unavailable" && !configuration.emergencyDisabled);
+        const reason = typeof error.details?.reason === "string" ? error.details.reason : error.message;
+        throw new HarnessPluginActivationError(reason, {
+          retryable,
+          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+          cause: error,
+        });
       }
     },
   };

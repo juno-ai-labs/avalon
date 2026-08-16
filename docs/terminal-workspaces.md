@@ -35,10 +35,19 @@ exclusive Terminal mutation lease, creates, starts, or restores the stable
 private sandbox, prepares any selected repository, and records the provider
 result in D1. Only after that succeeds does Bind persist a new activation and
 expose all nine tools and the language guidance on the next model turn. A
-restored activation hint runs the same idempotent hook before becoming active.
-Later tools re-acquire the same coordinator boundary and reuse that generation
-only while its execution-principal, selected repository, connection, and
-visible-resource authority fingerprint still match.
+restored activation hint becomes active without repeating provider preparation;
+its first Terminal tool acquires the sandbox through the ordinary executor path.
+This keeps an old work-stream hint from starting compute in an unrelated later
+run. Later tools re-acquire the same coordinator boundary and reuse that
+generation only while its execution-principal, selected repository, connection,
+and visible-resource authority fingerprint still match.
+
+Activation prepares a selected repository when possible, but a stale base,
+revoked selection, GitHub outage, or clone failure does not hide Terminal's only
+repair path. The plugin still activates with `checkout_repository` visible, and
+the repository precondition on the first relevant tool returns the specific
+remediation. Sandbox authority, network-policy, lease, and provider-startup
+failures remain fail-closed.
 
 Avalon uses Daytona's managed `daytona-small` container snapshot. On first
 creation an idempotent compatibility bootstrap creates the owned `/workspace`,
@@ -172,10 +181,13 @@ personless; it is not duplicated into these product events.
   authority fingerprint.** Reusing it after a principal, resource visibility,
   GitHub connection, or repository change would make old filesystem bytes a new
   caller's unauthorized input, so a mismatch destroys and reprovisions it.
-- **Discovering Terminal never allocates provider compute; activating it does.**
+- **Discovering Terminal never allocates provider compute; explicitly loading it does.**
   The model almost always uses Terminal after choosing to load it, so activation
   absorbs the cold start before the first operation while catalog inspection
-  remains side-effect free. A startup failure leaves the plugin inactive.
+  remains side-effect free. Restoring a durable hint does not allocate until a
+  Terminal tool is actually called. A sandbox startup failure leaves an
+  explicit load inactive, while repository-remediation failures keep
+  `checkout_repository` reachable.
 - **Every mutation is serialized through the coordinator and every command has
   one durable task receipt.** Parallel file operations or automatic retry after
   an ambiguous write could corrupt the sandbox or repeat a side effect.
@@ -358,7 +370,11 @@ reconciliation.
 
 ## Performance and cost
 
-Allocation is activation-driven and reuse is scoped to one work stream.
+Allocation is driven by an explicit Terminal load, or by the first Terminal tool
+after a durable hint is restored, and reuse is scoped to one work stream. Merely
+restoring a hint does not refresh the five-minute warm-stop or sixty-minute
+archive deadlines, so an earlier use cannot keep idle compute alive across
+unrelated later runs.
 Five-minute warm stop reduces compute time, sixty-minute archive reduces retained
 live-disk cost, and thirty-day deletion bounds provider storage. Only
 user-visible generated files, complete eligible command logs, and the last
@@ -385,14 +401,15 @@ update lag before changing the default.
 
 ## Changelog
 
-### 2026-08-15 — Terminal starts its sandbox when the plugin activates
+### 2026-08-16 — Terminal starts its sandbox when the plugin activates
 
 **What changed:** Terminal now uses the harness's blocking activation hook to
 acquire or restore its authority-fenced Daytona sandbox and prepare any selected
 repository before the plugin becomes active. The first Terminal tool still
 crosses the coordinator and repository checks, but normally finds the prepared
-running generation. Catalog discovery remains allocation-free, and activation
-success or failure has its own content-free structured event.
+running generation. Repository errors with an in-product checkout repair defer
+to that tool instead of hiding it. Catalog discovery remains allocation-free,
+and activation success or failure has its own content-free structured event.
 
 **Why:** A model that chooses to load Terminal almost always calls one of its
 tools next. Deferring startup to that call made the user-visible operation pay a
@@ -404,11 +421,13 @@ allocate compute without a model decision; keeping first-tool allocation, which
 preserves the avoidable wait; and launching startup in the background, which
 would race the first tool and outlive no guaranteed Worker lifetime.
 
-**Consequences:** `load_plugin` may take up to Terminal's declared activation
-deadline and can fail with the plugin left inactive. Persisted activation hints
-start or restore the sandbox when a later run restores Terminal. The coordinator
-remains authoritative and idempotent, so tools still recheck authority, policy,
-lease, and provider state rather than trusting activation as authorization.
+**Consequences:** Terminal's `load_plugin` may take up to the combined sandbox
+acquisition and repository-bootstrap deadline and can fail with the plugin left
+inactive. Other plugin loads keep their own shorter deadline. Persisted hints do
+not start or restore the sandbox in later runs; their first actual Terminal tool
+does. The coordinator remains authoritative and idempotent, so tools still
+recheck authority, policy, lease, and provider state rather than trusting
+activation as authorization.
 
 ### 2026-08-13 — Terminal lifecycle telemetry observes transitions, not tool reuse
 

@@ -182,6 +182,14 @@ to **Account Analytics: Read**. Its start/end line is the actual first and last
 Analytics Engine observation in the requested window, not merely the requested
 date boundary.
 
+Use `terminal_plugin_activation_finished` to separate plugin-load latency from
+the first Terminal tool. It carries `state`, `duration_ms`, and the owning
+workspace/work-stream/run IDs. Successful activation also carries
+`repository_state=prepared|deferred`; a deferred result includes the bounded
+`repository_code` naming the remediation left for `checkout_repository` or the
+next repository-bound tool. Failed activation carries only a code, never
+provider text, repository identity, commands, or output.
+
 Use the structured events `terminal_tool_finished`,
 `terminal_sandbox_lifecycle_transition`, and
 `terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.
