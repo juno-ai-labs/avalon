@@ -55,6 +55,9 @@ const checkoutRepositoryArguments = z.object({
   repositoryFullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
   requiredRemoteAccess: z.enum(["read_only", "full_access"]).default("read_only"),
 }).strict();
+// The wire schema no longer declares the destinationPath/overwrite pairing, so
+// this message is the model's only feedback on it; see `SearchInputSchema` in
+// `memory-service.ts` for why a union's default reads backwards.
 const importResourceArguments = z.union([
   z.object({ resourceId: z.string().uuid() }).strict(),
   z.object({
@@ -62,7 +65,7 @@ const importResourceArguments = z.union([
     destinationPath: relativePath,
     overwrite: z.boolean().optional(),
   }).strict(),
-]);
+], { error: "Send resourceId alone for deterministic placement, or resourceId with destinationPath. overwrite is only accepted alongside destinationPath." });
 const publishResourceArguments = z.object({
   filePath: relativePath,
   displayName: z.string().min(1).max(300).optional(),

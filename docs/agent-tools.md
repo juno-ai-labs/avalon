@@ -489,10 +489,13 @@ future agent tool or plugin, not just this family.
 
   which OpenRouter surfaces as a provider 400 covering the **whole request,
   every tool**. A branch qualifies if it declares `type: "object"` *or*
-  `properties`; a bare `{ required: [...] }` and an empty `{}` do not. This is
-  not a sanitizer artifact — the authored schema fails identically to the
-  sanitized one. Only the **root** is constrained: the same union nested under a
-  property is accepted by all nine models.
+  `properties`; a bare `{ required: [...] }`, an empty `{}`, and an
+  annotation-only `{ description: "…" }` do not. This is not a sanitizer
+  artifact — the authored schema fails identically to the sanitized one. Two
+  limits, both measured: only the **root** is constrained, so the same union
+  nested under a property is fine everywhere; and only a **union** is, so a root
+  `allOf` — an intersection — is accepted by all nine models including every
+  Grok.
 
   **It loses the constraint everywhere else, silently.** The wire schema is not
   what you wrote. Bind sanitizes every `inputSchema` on the way out, and one
@@ -507,7 +510,10 @@ future agent tool or plugin, not just this family.
   ```
 
   Gemini and OpenAI accept that without complaint and let the model send both
-  parameters or neither.
+  parameters or neither. An emptied branch is only the most visible form:
+  `{ description: "…", required: [...] }` prunes to `{ description: "…" }` and
+  `{ type: "object", required: [...] }` to `{ type: "object" }`, neither of them
+  empty and both just as unconstrained.
 
   So: state the constraint in the tool's `description`, where every provider
   reads it, and enforce it in the executor's zod parse — which is where it

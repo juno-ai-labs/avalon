@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   AVALON_SKILL_TOOL_DEFINITIONS,
-  emptiedCompositionBranches,
   nonObjectRootUnionBranches,
+  weakenedCompositionBranches,
 } from "@avalon/agent-harness";
-import { createConnectorRegistry } from "@avalon/connectors";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { TERMINAL_TOOL_DEFINITIONS } from "../src/services/terminal/contract";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./helpers/connector-registry";
 
 /**
  * Every authored tool schema, walked from the registries rather than listed by
@@ -45,24 +46,6 @@ import { createTestEnv } from "./helpers/cloudflare-test";
  * fails here until its wire schema survives the trip, and it fails at
  * `pnpm test` rather than three days later in a payload log.
  */
-const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example.com/callback" };
-const registryConfig: Parameters<typeof createConnectorRegistry>[0] = {
-  granola: { redirectUri: "https://api.example.com/callback" },
-  google: oauth,
-  github: {
-    appId: "1",
-    clientId: "Iv1.client-id",
-    clientSecret: "secret",
-    privateKey: `${["-----BEGIN", "PRIVATE KEY-----"].join(" ")}\nAA==\n${["-----END", "PRIVATE KEY-----"].join(" ")}`,
-    webhookSecret: "webhook",
-    redirectUri: "https://api.example.com/callback",
-  },
-  linear: oauth,
-  notion: oauth,
-  slack: { ...oauth, signingSecret: "signing" },
-  x: { apiKey: "key" },
-};
-
 const workflowInput = (): WorkstreamWorkflowInput => ({
   workspaceId: "00000000-0000-4000-8000-000000000001",
   workstreamId: "00000000-0000-4000-8000-000000000002",
@@ -72,39 +55,94 @@ const workflowInput = (): WorkstreamWorkflowInput => ({
   executionPrincipal: { type: "user", userId: "00000000-0000-4000-8000-000000000000" },
 } as WorkstreamWorkflowInput);
 
-/** Every tool schema this repository authors, as `<surface>.<tool>` → schema. */
+/**
+ * Every tool schema this repository authors, as `<surface>.<tool>` → schema.
+ *
+ * `FIRECRAWL_API_KEY` is set because `createFirecrawlWebTools` returns `[]`
+ * without one, so an empty environment silently drops `web_search`/`web_fetch`
+ * from a walk that claims to cover everything. The automation creator's four
+ * tools and the HyperSight submission tool are added by hand for the same
+ * reason: both are built against run state rather than registered, so nothing
+ * that walks a registry can see them. `EXPECTED_TOOLS` below fails loudly if
+ * any of these stop arriving, because a shrinking surface is exactly how this
+ * guard would go quietly green while a tool regressed.
+ */
+const label = (definition: { capability: string; name: string }): string =>
+  `${definition.capability}:${definition.name}`;
+
 function everyAuthoredToolSchema(): { name: string; schema: Record<string, unknown> }[] {
-  const core = __integrationTesting.createAvalonTools(createTestEnv({}), workflowInput())
-    .map((tool) => ({ name: `avalon.${tool.definition.name}`, schema: tool.definition.inputSchema }));
-  const discovery = [...AVALON_DISCOVERY_TOOL_DEFINITIONS, ...AVALON_SKILL_TOOL_DEFINITIONS]
-    .map((definition) => ({ name: `avalon.${definition.name}`, schema: definition.inputSchema }));
+  const env = createTestEnv({ FIRECRAWL_API_KEY: "test-firecrawl-key" });
+  // Labelled `capability:name`, because neither alone is unique: the memory and
+  // web plugins both export a tool called `search`, and `memory.write` covers
+  // three. A failure has to name one tool unambiguously to be worth reading.
+  const core = __integrationTesting.createAvalonTools(env, workflowInput())
+    .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
+  const discovery = [
+    ...AVALON_DISCOVERY_TOOL_DEFINITIONS,
+    ...AVALON_SKILL_TOOL_DEFINITIONS,
+    ...AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
+  ].map((definition) => ({ name: label(definition), schema: definition.inputSchema }));
+  const hyperSight = __integrationTesting
+    .hyperSightSubmissionPlugin({ markdown: null }, async () => undefined)
+    .tools.map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
   const terminal = TERMINAL_TOOL_DEFINITIONS
     .map((definition) => ({ name: `terminal.${definition.name}`, schema: definition.inputSchema }));
-  const registry = createConnectorRegistry(registryConfig);
+  const registry = createTestConnectorRegistry();
   const connectors = registry.list().flatMap((manifest) =>
     registry.get(manifest.type).agentPlugin.tools.map((definition) => ({
       name: `${manifest.type}.${definition.name}`,
       schema: definition.inputSchema,
     })));
-  return [...core, ...discovery, ...terminal, ...connectors]
+  const walked = [...core, ...discovery, ...hyperSight, ...terminal, ...connectors]
     .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown> }));
+
+  // Asserted here rather than in one `it`, so no check can run against a set
+  // that quietly shrank. A conditional surface that stops being built fails
+  // every assertion below it instead of passing all of them vacuously.
+  const names = new Set(walked.map((entry) => entry.name));
+  expect(EXPECTED_TOOLS.filter((name) => !names.has(name))).toEqual([]);
+  expect(unconfiguredConnectorTypes(registry)).toEqual([]);
+  expect(walked.length).toBeGreaterThan(60);
+  return walked;
 }
 
-describe("tool schema sanitization", () => {
-  it("leaves no tool whose root union has a branch xAI cannot read as an object", () => {
-    const tools = everyAuthoredToolSchema();
-    expect(tools.length).toBeGreaterThan(60);
+/**
+ * Surfaces that are conditional, hand-assembled, or otherwise easy to drop out
+ * of the walk without anyone noticing. A lower-bound count cannot catch that: a
+ * missing conditional tool still leaves 60-odd others behind it.
+ */
+const EXPECTED_TOOLS = [
+  "memory.search:search",
+  "avalon.plugins.list:list_plugins",
+  "avalon.skills.load:load_skill",
+  "web.search:search",
+  "web.fetch:fetch",
+  "avalon.automation.plugins.list:plugins_list",
+  "avalon.automation.submit:submit_draft",
+  "avalon.hypersight.submit:submit_block",
+  "terminal.import_resource",
+  "notion.create_comment",
+  "x.get_user_timeline",
+];
 
-    const rejected = tools.flatMap(({ name, schema }) =>
+describe("tool schema sanitization", () => {
+  it("walks every authored surface, including the conditional and hand-assembled ones", () => {
+    // The completeness assertions live in `everyAuthoredToolSchema`; this names
+    // the guarantee so a failure there reads as coverage rather than schema.
+    expect(everyAuthoredToolSchema().length).toBeGreaterThan(60);
+  });
+
+  it("leaves no tool whose root union has a branch xAI cannot read as an object", () => {
+    const rejected = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
       nonObjectRootUnionBranches(schema).map((path) => `${name}: ${path}`));
 
     expect(rejected).toEqual([]);
   });
 
-  it("leaves no tool with a composition branch the sanitizer empties", () => {
-    const emptied = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
-      emptiedCompositionBranches(schema).map((path) => `${name}: ${path}`));
+  it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {
+    const weakened = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
+      weakenedCompositionBranches(schema).map((path) => `${name}: ${path}`));
 
-    expect(emptied).toEqual([]);
+    expect(weakened).toEqual([]);
   });
 });

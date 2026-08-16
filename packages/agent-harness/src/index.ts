@@ -25,7 +25,7 @@ import { toolActivityName } from "./tool-activity";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { emptiedCompositionBranches, nonObjectRootUnionBranches } from "./tool-schema-safety";
+export { nonObjectRootUnionBranches, weakenedCompositionBranches } from "./tool-schema-safety";
 export {
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
@@ -1440,66 +1440,28 @@ export async function compileAutomation(input: {
   const toolLabelPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
     {
-      definition: {
-        name: "plugins_list",
-        description: "List every connector plugin authorized for this automation creator, with compact trusted metadata.",
-        capability: "avalon.automation.plugins.list",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: { type: "object", additionalProperties: false, properties: {} },
-      },
+      definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[0]!,
       execute: async () => ({
         output: executeAutomationCreatorDiscoveryTool("plugins_list", {}, catalog),
         summary: "Listed authorized automation plugins",
       }),
     },
     {
-      definition: {
-        name: "plugins_search",
-        description: "Search authorized connector plugins and their tools by capability, provider, action, or keyword.",
-        capability: "avalon.automation.plugins.search",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { query: { type: "string", minLength: 1 } },
-          required: ["query"],
-        },
-      },
+      definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[1]!,
       execute: async (raw) => ({
         output: executeAutomationCreatorDiscoveryTool("plugins_search", asRecord(raw), catalog),
         summary: "Searched authorized automation plugins",
       }),
     },
     {
-      definition: {
-        name: "plugin_inspect",
-        description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it.",
-        capability: "avalon.automation.plugins.inspect",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { pluginId: { type: "string" } },
-          required: ["pluginId"],
-        },
-      },
+      definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[2]!,
       execute: async (raw) => ({
         output: executeAutomationCreatorDiscoveryTool("plugin_inspect", asRecord(raw), catalog),
         summary: "Inspected an authorized automation plugin",
       }),
     },
     {
-      definition: {
-        name: "submit_draft",
-        description: "Save the best current automation draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question.",
-        capability: "avalon.automation.submit",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: automationDraftSubmissionJsonSchema,
-      },
+      definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[3]!,
       execute: async (raw) => {
         await input.onDiagnostic?.({
           stage: "normalize",
@@ -2258,6 +2220,60 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   idempotency: "provider_key",
   inputSchema: z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
 } as const satisfies ToolDefinition;
+
+/**
+ * The automation architect's own four tools, as data.
+ *
+ * Split out of `compileAutomation` so the schema guard can reach them: they are
+ * authored provider-facing schemas like any other, but they are built inside
+ * that function against its run state, so a guard walking the registries could
+ * not see them and would have reported a clean surface while they regressed.
+ * Only `execute` needs the closure; the definitions never varied.
+ */
+export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
+  {
+    name: "plugins_list",
+    description: "List every connector plugin authorized for this automation creator, with compact trusted metadata.",
+    capability: "avalon.automation.plugins.list",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+  },
+  {
+    name: "plugins_search",
+    description: "Search authorized connector plugins and their tools by capability, provider, action, or keyword.",
+    capability: "avalon.automation.plugins.search",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { query: { type: "string", minLength: 1 } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "plugin_inspect",
+    description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it.",
+    capability: "avalon.automation.plugins.inspect",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { pluginId: { type: "string" } },
+      required: ["pluginId"],
+    },
+  },
+  {
+    name: "submit_draft",
+    description: "Save the best current automation draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question.",
+    capability: "avalon.automation.submit",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: automationDraftSubmissionJsonSchema,
+  },
+] as const satisfies readonly HarnessTool["definition"][];
 
 export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
   {

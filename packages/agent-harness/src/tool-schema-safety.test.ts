@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { emptiedCompositionBranches, nonObjectRootUnionBranches } from "./tool-schema-safety";
+import { nonObjectRootUnionBranches, weakenedCompositionBranches } from "./tool-schema-safety";
 
 /**
  * The production fingerprint, kept as a literal: this exact schema shipped in
@@ -16,37 +16,69 @@ const MEMORY_SEARCH_BEFORE_THE_FIX = {
   oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }],
 };
 
-describe("emptiedCompositionBranches", () => {
+describe("weakenedCompositionBranches", () => {
   it("catches a composition branch that is only a `required`", () => {
-    expect(emptiedCompositionBranches(MEMORY_SEARCH_BEFORE_THE_FIX)).toEqual(["/oneOf/0", "/oneOf/1"]);
+    expect(weakenedCompositionBranches(MEMORY_SEARCH_BEFORE_THE_FIX))
+      .toEqual(["/oneOf/0 (required dropped)", "/oneOf/1 (required dropped)"]);
   });
 
-  it("catches one emptied branch beside a surviving sibling", () => {
-    expect(emptiedCompositionBranches({
+  it("catches one weakened branch beside a surviving sibling", () => {
+    expect(weakenedCompositionBranches({
       type: "object",
       properties: { cursor: { type: "string" }, limit: { type: "integer" } },
       anyOf: [
         { type: "object", properties: { limit: { type: "integer" } } },
         { required: ["cursor"] },
       ],
-    })).toEqual(["/anyOf/1"]);
+    })).toEqual(["/anyOf/1 (required dropped)"]);
   });
 
-  it("reaches a branch nested under a property, an array item, and a `not`", () => {
-    expect(emptiedCompositionBranches({
+  it("catches a branch whose annotation survives the pruning", () => {
+    // The literal-empty test is not enough: sanitizing
+    // `{ description, required }` leaves `{ description }`, which is not empty
+    // and constrains exactly as little as `{}` does.
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [{ description: "choose a", required: ["a"] }, { description: "choose b", required: ["b"] }],
+    })).toEqual(["/oneOf/0 (required dropped)", "/oneOf/1 (required dropped)"]);
+  });
+
+  it("catches a branch that keeps its `type` but loses its `required`", () => {
+    // `{ type: "object", required: [...] }` sanitizes to `{ type: "object" }`.
+    // `nonObjectRootUnionBranches` deliberately passes that shape — xAI accepts
+    // it — so this check is the only thing standing between it and a silently
+    // discarded constraint.
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
+      oneOf: [{ type: "object", required: ["query"] }, { type: "object", required: ["memoryItemId"] }],
+    })).toEqual(["/oneOf/0 (required dropped)", "/oneOf/1 (required dropped)"]);
+  });
+
+  it("reaches a branch nested under a property, an array item, a `not`, and `dependentSchemas`", () => {
+    expect(weakenedCompositionBranches({
       type: "object",
       properties: {
         filter: { type: "object", properties: { a: { type: "string" } }, oneOf: [{ required: ["a"] }] },
         rows: { type: "array", items: { type: "object", properties: { b: { type: "string" } }, anyOf: [{ required: ["b"] }] } },
       },
+      dependentSchemas: {
+        filter: { type: "object", properties: { c: { type: "string" } }, oneOf: [{ required: ["c"] }] },
+      },
       not: { anyOf: [{ required: ["filter"] }] },
-    })).toEqual(["/not/anyOf/0", "/properties/filter/oneOf/0", "/properties/rows/items/anyOf/0"]);
+    })).toEqual([
+      "/not/anyOf/0 (required dropped)",
+      "/properties/filter/oneOf/0 (required dropped)",
+      "/properties/rows/items/anyOf/0 (required dropped)",
+      "/dependentSchemas/filter/oneOf/0 (required dropped)",
+    ]);
   });
 
   it("passes a composition whose branches carry their own properties", () => {
     // The idiom that survives sanitization, and what an exclusive choice should
     // look like when it has to be expressed structurally at all.
-    expect(emptiedCompositionBranches({
+    expect(weakenedCompositionBranches({
       anyOf: [
         { type: "object", properties: { resourceId: { type: "string" } }, required: ["resourceId"] },
         { type: "object", properties: { cursor: { type: "string" } }, required: ["cursor"] },
@@ -55,18 +87,18 @@ describe("emptiedCompositionBranches", () => {
   });
 
   it("passes a plain object schema and an empty one", () => {
-    expect(emptiedCompositionBranches({
+    expect(weakenedCompositionBranches({
       type: "object",
       properties: { query: { type: "string" } },
       required: ["query"],
     })).toEqual([]);
-    expect(emptiedCompositionBranches({ type: "object", properties: {} })).toEqual([]);
+    expect(weakenedCompositionBranches({ type: "object", properties: {} })).toEqual([]);
   });
 
   it("does not read a parameter named `oneOf` as a composition", () => {
     // The walk descends into `properties` values as subschemas, so a tool that
     // takes an argument called `oneOf` is never mistaken for one.
-    expect(emptiedCompositionBranches({
+    expect(weakenedCompositionBranches({
       type: "object",
       properties: { oneOf: { type: "array", items: { type: "string" } } },
       required: ["oneOf"],
@@ -74,7 +106,7 @@ describe("emptiedCompositionBranches", () => {
   });
 
   it("tolerates a non-object root rather than throwing", () => {
-    expect(emptiedCompositionBranches({} as Record<string, unknown>)).toEqual([]);
+    expect(weakenedCompositionBranches({} as Record<string, unknown>)).toEqual([]);
   });
 });
 
@@ -110,6 +142,25 @@ describe("nonObjectRootUnionBranches", () => {
         { type: "object", properties: { cursor: { type: "string" } }, required: ["cursor"] },
       ],
     })).toEqual([]);
+  });
+
+  it("ignores a root `allOf`, which is an intersection every model accepts", () => {
+    // Measured: a root `allOf` of constraint-only branches, and one Bind's
+    // flatten cannot merge, are both accepted by all nine models including
+    // every Grok. Reading it as a union would fail a schema nothing objects to.
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      allOf: [{ required: ["a"] }, { not: { required: ["b"] } }],
+    })).toEqual([]);
+  });
+
+  it("catches an annotation-only root branch, which Grok also rejects", () => {
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [{ description: "choose a" }, { description: "choose b" }],
+    })).toEqual(["/oneOf/0", "/oneOf/1"]);
   });
 
   it("ignores a nested union, which every model accepts", () => {
