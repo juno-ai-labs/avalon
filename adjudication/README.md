@@ -12,6 +12,7 @@ adjudication/
                        decision-frame.md          rules, rubric, weights
                        avalon-data-plane-cost-brief.md   demand model
                        advocate-template.md       required brief format
+                       known-hazards.md           verified facts + design traps to address
                        judge-prompt.md            how briefs are scored
   candidates/        One folder per candidate substrate:
                        <candidate>/brief.md       the standardized argument

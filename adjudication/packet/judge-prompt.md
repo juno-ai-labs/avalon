@@ -17,18 +17,23 @@ PRD review, and the primer.
    as unknown, not as claimed. Do not reward writing quality, confidence, or
    brief length — several candidates have 6,000 lines of prior art and others
    have two pages; judge the architecture, not the corpus.
-3. **Score the matrix.** Every candidate × every criterion, 1–10, using the
+3. **Hazard cross-check.** For each brief, walk `known-hazards.md`: every
+   applicable hazard must be addressed with a mechanism or explicitly ruled
+   inapplicable with a reason. Unaddressed → that aspect scores as unknown; a
+   brief contradicting a verified vendor fact without a fresher citation is
+   penalized in the risk criterion.
+4. **Score the matrix.** Every candidate × every criterion, 1–10, using the
    decision-frame weights. UX splits into streaming-feel and consistency-feel
    scored separately (average them only in the final weighted sum, and report
    both). Show one sentence of justification per cell — the sentence must
    reference a mechanism or a number, not an adjective.
-4. **Sensitivity, mandatory.** Report: (a) the smallest assumption change that
+5. **Sensitivity, mandatory.** Report: (a) the smallest assumption change that
    flips the winner; (b) which criterion's weight would have to change, and to
    what, to flip it; (c) the winner under a pure "maximum product feel"
    weighting and under a pure "minimum velocity freeze" weighting.
-5. **Minority report.** The strongest honest case for the runner-up, written as
+6. **Minority report.** The strongest honest case for the runner-up, written as
    if you believed it.
-6. **Verdict.** One winner, the conditions under which it's wrong, and the 3–5
+7. **Verdict.** One winner, the conditions under which it's wrong, and the 3–5
    tripwires the team should instrument (drawn from the briefs, deduplicated).
 
 ## Output shape

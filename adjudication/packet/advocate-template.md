@@ -2,7 +2,9 @@
 
 Fill every section, in order, within the caps. A section you cannot fill with
 cited facts gets "UNKNOWN — <what would resolve it>", which scores better than
-confident vagueness. Total cap: 2,800 words excluding tables. You may not
+confident vagueness. Total cap: 2,800 words excluding tables. Address the
+applicable items in `known-hazards.md` inside your sections — the judge
+cross-checks, and an unaddressed applicable hazard scores as unknown. You may not
 argue about the conversation model (it ships regardless) or about other
 candidates (that's the rebuttal round).
 
