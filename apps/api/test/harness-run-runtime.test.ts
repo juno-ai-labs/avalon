@@ -1184,6 +1184,321 @@ describe("durable harness attempt runtime", () => {
     ]);
   });
 
+  it("rebinds a settled read receipt whose coordinates a re-executed pass reused", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-receipt-reuse",
+      owner: "owner-receipt-reuse",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    const readPlan = {
+      pluginId: "avalon:tool-discovery",
+      canonicalToolName: "load_plugin",
+      capability: "tools.discover",
+      connectionId: null,
+      mode: "read",
+      idempotency: "safe",
+      toolSurfaceHash: "discovery-surface-v1",
+    };
+    const coordinates = {
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      // The positional receipt id a restarted pass mints again from turn one.
+      toolCallId: `${RUN_ONE}:turn:1:tool:0`,
+      mode: "read" as const,
+    };
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      invocationId: "invocation-reused-coordinate",
+      toolName: "load_plugin",
+      inputHash: "terminal-plugin",
+      input: { pluginId: "avalon_terminal" },
+      plan: readPlan,
+    })).toMatchObject({ state: "created" });
+    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-reused-coordinate",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/loaded-terminal.json",
+      outputSummary: "Loaded Terminal; 9 tools are now available",
+    })).toBe("persisted");
+
+    // The identical call still replays. Rebinding may never cost a pass the
+    // result it already paid for.
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      toolName: "load_plugin",
+      inputHash: "terminal-plugin",
+      input: { pluginId: "avalon_terminal" },
+      plan: readPlan,
+    })).toMatchObject({ state: "replay_completed", invocationId: "invocation-reused-coordinate" });
+
+    // A different read landing on the same coordinate executes instead of
+    // halting the run: nothing external moved, so nothing is ambiguous.
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      toolName: "search_code",
+      inputHash: "github-search",
+      input: { query: "debug model list" },
+      plan: {
+        ...readPlan,
+        pluginId: "connection:connection-github",
+        canonicalToolName: "search_code",
+        capability: "code.read",
+        connectionId: "connection-github",
+        toolSurfaceHash: "github-surface-v1",
+      },
+    })).toMatchObject({ state: "created", invocationId: "invocation-reused-coordinate" });
+    expect(sqlite.database.prepare(
+      `SELECT tool_name, status, input_hash, output_ref, output_summary, error_json
+         FROM tool_invocations WHERE id = 'invocation-reused-coordinate'`,
+    ).get()).toEqual({
+      tool_name: "search_code",
+      status: "started",
+      input_hash: "github-search",
+      output_ref: null,
+      output_summary: null,
+      error_json: null,
+    });
+    expect(sqlite.database.prepare(
+      `SELECT phase FROM tool_invocation_checkpoints
+        WHERE tool_invocation_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
+    ).all()).toEqual([
+      { phase: "execution_planned" },
+      { phase: "result_persisted" },
+      { phase: "execution_replanned" },
+    ]);
+
+    // The rebound call completes through the same path production uses, which
+    // passes a static `checkpointIndex: 1`. A replanned receipt is already past
+    // that index, so the completion has to derive its own.
+    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-reused-coordinate",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/searched-code.json",
+      outputSummary: "Found 3 matches",
+    })).toBe("persisted");
+    expect(sqlite.database.prepare(
+      `SELECT status, output_ref, checkpoint_index FROM tool_invocations
+        WHERE id = 'invocation-reused-coordinate'`,
+    ).get()).toEqual({
+      status: "completed",
+      output_ref: "payloads/runtime/searched-code.json",
+      checkpoint_index: 3,
+    });
+    expect(sqlite.database.prepare(
+      `SELECT checkpoint_index, phase FROM tool_invocation_checkpoints
+        WHERE tool_invocation_id = 'invocation-reused-coordinate' ORDER BY checkpoint_index`,
+    ).all()).toEqual([
+      { checkpoint_index: 0, phase: "execution_planned" },
+      { checkpoint_index: 1, phase: "result_persisted" },
+      { checkpoint_index: 2, phase: "execution_replanned" },
+      { checkpoint_index: 3, phase: "result_persisted" },
+    ]);
+
+    // A write landing on a settled read coordinate still fails closed, and a
+    // read landing on a settled write coordinate reports the ambiguity rather
+    // than raising a lease failure that never happened.
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      mode: "write",
+      toolName: "publish_branch_and_pr",
+      inputHash: "publish",
+      input: { branch: "add-model" },
+      plan: { ...readPlan, canonicalToolName: "publish_branch_and_pr", mode: "write" },
+    })).toMatchObject({ state: "ambiguous_external_write" });
+
+    const settledWrite = `${RUN_ONE}:turn:2:tool:0`;
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      toolCallId: settledWrite,
+      invocationId: "invocation-settled-write",
+      mode: "write",
+      toolName: "publish_branch_and_pr",
+      inputHash: "publish",
+      input: { branch: "add-model" },
+      plan: { ...readPlan, canonicalToolName: "publish_branch_and_pr", mode: "write" },
+    });
+    await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-settled-write",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/published.json",
+      outputSummary: "Opened pull request",
+    });
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...coordinates,
+      toolCallId: settledWrite,
+      toolName: "load_plugin",
+      inputHash: "github-plugin",
+      input: { pluginId: "plugin_github" },
+      plan: readPlan,
+    })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-settled-write" });
+    expect(sqlite.database.prepare(
+      "SELECT status FROM tool_invocations WHERE id = 'invocation-settled-write'",
+    ).get()).toEqual({ status: "completed" });
+  });
+
+  it("refuses to rebind a read receipt that other durable state is keyed to", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-receipt-dependents",
+      owner: "owner-receipt-dependents",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    const readPlan = {
+      pluginId: "avalon:workstream",
+      canonicalToolName: "run_subagent",
+      capability: "subagent.run",
+      connectionId: null,
+      mode: "read",
+      idempotency: "safe",
+      toolSurfaceHash: "workstream-surface-v1",
+    };
+    const delegation = {
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:1:tool:0`,
+      mode: "read" as const,
+      plan: readPlan,
+    };
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...delegation,
+      invocationId: "invocation-delegation",
+      toolName: "run_subagent",
+      inputHash: "first-objective",
+      input: { objective: "Find the model list" },
+    });
+    await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-delegation",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/child.json",
+      outputSummary: "The sub-agent reported back",
+    });
+
+    // `run_subagent` is a read, but its child run is keyed by this coordinate
+    // and admits exactly one objective there. Rebinding would promise an
+    // execution that `admitInlineChildAttempt` then refuses.
+    sqlite.database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status,
+        created_at, parent_harness_run_id, parent_tool_call_id,
+        chain_root_harness_run_id, chain_depth, delegated_task_hash)
+       VALUES (?, ?, ?, 'inline_child', ?, 'completed', ?, ?, ?, ?, 1, 'first-objective')`,
+    ).run(
+      "00000000-0000-4000-8000-0000000000c1",
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      JSON.stringify({ type: "user", userId: "00000000-0000-4000-8000-000000000009" }),
+      new Date().toISOString(),
+      RUN_ONE,
+      delegation.toolCallId,
+      RUN_ONE,
+    );
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...delegation,
+      toolName: "run_subagent",
+      inputHash: "second-objective",
+      input: { objective: "Find the composer instead" },
+    })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-delegation" });
+
+    // An attachment read records the derivatives it depended on against the
+    // invocation id, and a lifecycle trigger deletes the invocation when that
+    // resource changes — which after a rebind would delete a different read.
+    const attachmentPlan = { ...readPlan, canonicalToolName: "view_resource", capability: "workstream.resources.view" };
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:1:tool:1`,
+      invocationId: "invocation-attachment",
+      toolName: "view_resource",
+      inputHash: "first-resource",
+      input: { resourceId: "resource-one" },
+      plan: attachmentPlan,
+      mode: "read",
+    });
+    await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-attachment",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/viewed.json",
+      outputSummary: "Viewed the resource",
+    });
+    sqlite.database.prepare(
+      `INSERT INTO resources
+       (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
+       VALUES (?, ?, 'file', 'avalon', 'One', '{}', ?, ?)`,
+    ).run("resource-one", WORKSPACE_ID, new Date().toISOString(), new Date().toISOString());
+    sqlite.database.prepare(
+      `INSERT INTO attachment_tool_receipts
+       (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at)
+       VALUES (?, ?, ?, 'sha-one', ?)`,
+    ).run(WORKSPACE_ID, "resource-one", "invocation-attachment", new Date().toISOString());
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: `${RUN_ONE}:turn:1:tool:1`,
+      toolName: "view_resource",
+      inputHash: "second-resource",
+      input: { resourceId: "resource-two" },
+      plan: attachmentPlan,
+      mode: "read",
+    })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-attachment" });
+
+    // A `failed` receipt is still mutable for an ambiguous finalize, and still
+    // flips: a write that failed may have reached the provider before it did,
+    // and that is the row the member sees the "could not confirm" wording on.
+    await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...delegation,
+      toolCallId: `${RUN_ONE}:turn:1:tool:2`,
+      invocationId: "invocation-failed-read",
+      toolName: "search_code",
+      inputHash: "first-search",
+      input: { query: "one" },
+      plan: { ...readPlan, canonicalToolName: "search_code", capability: "code.read" },
+    });
+    await finalizeToolInvocationFailure(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-failed-read",
+      status: "failed",
+      phase: "execution_failed",
+      error: { code: "tool_failed", message: "The provider rejected the request" },
+    });
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...delegation,
+      toolCallId: `${RUN_ONE}:turn:1:tool:2`,
+      toolName: "search_code",
+      inputHash: "second-search",
+      input: { query: "two" },
+      plan: { ...readPlan, canonicalToolName: "search_code", capability: "code.read" },
+    })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-failed-read" });
+    expect(sqlite.database.prepare(
+      "SELECT status, error_json FROM tool_invocations WHERE id = 'invocation-failed-read'",
+    ).get()).toEqual({
+      status: "ambiguous",
+      error_json: '{"code":"ambiguous_external_write","message":"A tool-call receipt was reused with a different immutable execution plan"}',
+    });
+
+    // Both refusals leave the settled receipts exactly as they were.
+    expect(sqlite.database.prepare(
+      `SELECT id, status, input_hash FROM tool_invocations
+        WHERE id IN ('invocation-delegation', 'invocation-attachment') ORDER BY id`,
+    ).all()).toEqual([
+      { id: "invocation-attachment", status: "completed", input_hash: "first-resource" },
+      { id: "invocation-delegation", status: "completed", input_hash: "first-objective" },
+    ]);
+  });
+
   it("does not publish an R2 result reference when its lease is lost after upload", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
