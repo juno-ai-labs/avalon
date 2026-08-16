@@ -139,6 +139,7 @@ export interface Env {
   HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS?: string;
   HARNESS_TTFT_TIMEOUT_MS?: string;
   HARNESS_STREAM_IDLE_TIMEOUT_MS?: string;
+  HARNESS_TRANSPORT_RETRIES?: string;
   HARNESS_CHILD_MAX_MODEL_ITERATIONS?: string;
   HARNESS_CHILD_MAX_TOOL_CALLS?: string;
   HARNESS_CHILD_MAX_WALL_CLOCK_MS?: string;
@@ -265,6 +266,7 @@ const EnvContractSchema = z.object({
   HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS: numericString.optional(),
   HARNESS_TTFT_TIMEOUT_MS: numericString.optional(),
   HARNESS_STREAM_IDLE_TIMEOUT_MS: numericString.optional(),
+  HARNESS_TRANSPORT_RETRIES: numericString.optional(),
   HARNESS_CHILD_MAX_MODEL_ITERATIONS: numericString.optional(),
   HARNESS_CHILD_MAX_TOOL_CALLS: numericString.optional(),
   HARNESS_CHILD_MAX_WALL_CLOCK_MS: numericString.optional(),
@@ -443,6 +445,28 @@ export function numericEnv(
 ): number {
   const parsed = Number.parseInt(env[key] ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * A count whose meaningful range **includes zero**, read separately from
+ * `numericEnv` rather than by relaxing it.
+ *
+ * Every key `numericEnv` serves is a timeout, a byte ceiling, or a budget where
+ * zero is nonsense, so its `> 0` guard doubles as validation and must keep it.
+ * A retry budget is the first key here where zero is not only meaningful but the
+ * single most important value: it is the operator's lever for stopping the
+ * harness re-requesting into a provider that is already failing. Routing it
+ * through `numericEnv` silently substituted the fallback, so `=0` read as
+ * applied, changed nothing, and logged nothing — a dead switch found only by
+ * reading the helper.
+ */
+export function countEnv(
+  env: Env,
+  key: "HARNESS_TRANSPORT_RETRIES",
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(env[key] ?? "", 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 export function assertRegion(value: string): Region {

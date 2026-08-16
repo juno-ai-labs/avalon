@@ -253,6 +253,12 @@ describe("boundary contracts", () => {
       "run_tool_call_limit_exceeded",
       "run_cost_limit_exceeded",
       "context_limit_exceeded",
+      // The two provider arms are separate on purpose: one says Avalon called
+      // and got nothing, the other that Avalon declined to call. Neither may
+      // collapse back into `harness_execution_failed`, which means Avalon's own
+      // defect and tells a member not to bother retrying.
+      "provider_unavailable",
+      "provider_circuit_open",
     ]));
     expect(() => HarnessFailureCodeSchema.parse("generic_limit")).toThrow();
   });

@@ -193,10 +193,26 @@ const WORKSTREAM_TOOL_TASKS_SQL = `SELECT ti.*, hr.created_at AS harness_created
   ORDER BY COALESCE(ti.started_at, hr.created_at) DESC
   LIMIT 500`;
 
+// Codes that reach the same member surface without being harness failure codes —
+// connector-layer and run-lifecycle outcomes.
+//
+// The model-facing entries were brought up to the two rules that govern
+// `MEMBER_SAFE_HARNESS_FAILURE_MESSAGES` — name a next action, and use no word
+// that only exists inside Avalon. `provider_error` is a *connector* provider,
+// not the model one, and used to say "the model provider could not complete this
+// run", a sentence a reader could not tell apart from the model codes beside it.
+//
+// **The lifecycle entries below do not meet those rules yet**, and the claim is
+// scoped rather than stated over them: `run_ownership_lost` and
+// `stale_run_reaped` still say "executor" and "execution lease", and neither
+// they nor `provider_error` name a next action. They are left as they are
+// because each needs a product answer about what a member should actually do
+// when a run is superseded or its lease expires, which is not this change's to
+// invent. Do not read the rules above as already enforced here.
 const ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS = Object.freeze({
-  empty_completion: "The model provider returned an empty response",
-  model_output_invalid: "The model provider returned an invalid response",
-  provider_error: "The model provider could not complete this run",
+  empty_completion: "The model returned an empty response. Try again in a moment",
+  model_output_invalid: "The model returned a response Avalon could not read. Try again in a moment",
+  provider_error: "A connected service returned an error, so this run stopped",
   run_admission_timeout: "This work stream stayed busy too long to start the run",
   run_cancelled: "This run was cancelled",
   run_ownership_lost: "This run was superseded by another executor",
@@ -206,7 +222,7 @@ const ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS = Object.freeze({
 
 const GENERIC_MEMBER_SAFE_HARNESS_ERROR = Object.freeze({
   code: "harness_execution_failed",
-  message: "The Avalon harness could not complete this run",
+  message: "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
 });
 
 export async function launchWorkstreamHarness(

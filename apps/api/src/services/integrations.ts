@@ -54,6 +54,7 @@ import {
   readStructuredFailure,
   type AddressingClassification,
   type AutomationDraft,
+  type HarnessFailureCode,
   type AutomationPluginActivity,
   type AutomationPluginIcon,
   type ConnectorPollWorkflowInput,
@@ -80,7 +81,7 @@ import {
 } from "@avalon/connectors";
 import { z } from "zod";
 import type { Env } from "../env";
-import { numericEnv } from "../env";
+import { countEnv, numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
 import { markWorkflowInstanceCreated } from "../lib/workflow-launch-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -439,9 +440,31 @@ function workstreamHarnessTerminalResult(input: {
       code: outcome.failure?.code ?? "harness_execution_failed",
       message: outcome.failure
         ? memberSafeHarnessFailureMessage(outcome.failure.code)
-        : "The Avalon harness could not complete this run",
+        : "Avalon could not complete this run. Retrying is unlikely to help — copy the request ID for support",
     },
   };
+}
+
+/**
+ * What the **parent model** reads when a sub-agent fails.
+ *
+ * Deliberately not the member-safe string. That one is written for a person
+ * looking at their own work stream, and it reaches the parent through the tool
+ * result's model-visible `output` — where "this run" names neither the parent's
+ * run nor the child's, and where a sentence like "try again in a moment" is
+ * advice with no addressee. `docs/agent-tools.md` asks a failure to carry the
+ * shortest safe next action, because a small model can follow an instruction but
+ * cannot infer a recovery path from a noun phrase.
+ *
+ * The provider arms are the ones that matter: the child already spent its own
+ * transport retry before failing, so an immediate re-delegation walks into the
+ * same outage. Say that, rather than leaving the parent to guess from a code.
+ */
+function delegatedFailureMessage(code: HarnessFailureCode): string {
+  if (code === "provider_unavailable" || code === "provider_circuit_open") {
+    return "The sub-agent's model provider is not responding. Continue without its result, and delegate this objective again only if nothing else remains to do.";
+  }
+  return memberSafeHarnessFailureMessage(code);
 }
 
 function classifyHarnessToolFailure(
@@ -1278,6 +1301,7 @@ export async function compileAutomationDraft(
       workspaceId: input.workspaceId,
       userId: input.userId,
       fallbackModels: routing.fallbackModels,
+      transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       messages: input.messages,
       ...(draftAttachments.parts.length > 0 ? { latestUserAttachmentParts: draftAttachments.parts } : {}),
       ...(architectTools.length > 0 ? { architectTools } : {}),
@@ -2043,6 +2067,12 @@ export async function runWorkstreamHarness(
         ttftTimeoutMs: numericEnv(env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
         streamIdleTimeoutMs: numericEnv(env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
         sameModelRetries: 0,
+        // Matters most for a work stream pinned from the developer-mode model
+        // selector: its route carries no fallbacks by design, so without this a
+        // single stalled request throws away however long the run had already
+        // spent — a repository checkout, a sandbox, an install and two
+        // typechecks, in the case that prompted this.
+        transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       },
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
@@ -3337,6 +3367,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             ttftTimeoutMs: numericEnv(options.env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
             streamIdleTimeoutMs: numericEnv(options.env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
             sameModelRetries: 0,
+            transportRetries: countEnv(options.env, "HARNESS_TRANSPORT_RETRIES", 1),
           },
           workspaceId: childInput.workspaceId,
           workstreamId: childInput.workstreamId,
@@ -3705,7 +3736,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             error: {
               code: outcome.failure?.code ?? "harness_execution_failed",
               message: outcome.failure
-                ? memberSafeHarnessFailureMessage(outcome.failure.code)
+                ? delegatedFailureMessage(outcome.failure.code)
                 : outcome.status === "completed"
                   ? "The sub-agent returned no result"
                   : "The sub-agent could not complete its delegated objective",
