@@ -9,6 +9,13 @@ import {
 /**
  * The production fingerprint, kept as a literal: this exact schema shipped in
  * `memory_search` and 400'd every x-ai request in the fleet for three days.
+ *
+ * Under `@juno-ai/bind` 12 the sanitizer repairs it — each branch comes back as
+ * `{ type: "object", required: [...], properties: {…} }` — so the checks below
+ * report nothing for it. That is the *dependency's* behaviour, not this
+ * module's, which is why it is asserted here: a bind release that stopped
+ * repairing would put the original defect back on the wire, and this file is
+ * where that would surface.
  */
 const MEMORY_SEARCH_BEFORE_THE_FIX = {
   type: "object",
@@ -21,56 +28,38 @@ const MEMORY_SEARCH_BEFORE_THE_FIX = {
 };
 
 describe("weakenedCompositionBranches", () => {
-  it("catches a composition branch that is only a `required`", () => {
-    expect(weakenedCompositionBranches(MEMORY_SEARCH_BEFORE_THE_FIX))
-      .toEqual(["/oneOf/0 (required dropped)", "/oneOf/1 (required dropped)"]);
-  });
-
-  it("catches one weakened branch beside a surviving sibling", () => {
-    expect(weakenedCompositionBranches({
-      type: "object",
-      properties: { cursor: { type: "string" }, limit: { type: "integer" } },
-      anyOf: [
-        { type: "object", properties: { limit: { type: "integer" } } },
-        { required: ["cursor"] },
-      ],
-    })).toEqual(["/anyOf/1 (required dropped)"]);
-  });
-
-  it("catches a branch whose annotation survives the pruning", () => {
-    // The literal-empty test is not enough: sanitizing
-    // `{ description, required }` leaves `{ description }`, which is not empty
-    // and constrains exactly as little as `{}` does.
-    expect(weakenedCompositionBranches({
-      type: "object",
-      properties: { a: { type: "string" }, b: { type: "string" } },
-      oneOf: [{ description: "choose a", required: ["a"] }, { description: "choose b", required: ["b"] }],
-    })).toEqual(["/oneOf/0 (required dropped)", "/oneOf/1 (required dropped)"]);
-  });
-
-  it("catches a branch that keeps its `type` but loses its `required`", () => {
-    // `{ type: "object", required: [...] }` sanitizes to `{ type: "object" }`.
-    // `nonObjectRootUnionBranches` deliberately passes that shape — xAI accepts
-    // it — so this check is the only thing standing between it and a silently
-    // discarded constraint.
-    expect(weakenedCompositionBranches({
-      type: "object",
-      properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
-      oneOf: [{ type: "object", required: ["query"] }, { type: "object", required: ["memoryItemId"] }],
-    })).toEqual(["/oneOf/0 (required dropped)", "/oneOf/1 (required dropped)"]);
-  });
-
-  it("reaches a branch nested under a property, an array item, a `not`, and `dependentSchemas`", () => {
+  it("still catches a branch whose `required` names nothing in scope", () => {
+    // The positive case that survives bind 12. The branch is NESTED, so the
+    // root-union drop does not apply, and `ghost` resolves against neither the
+    // branch nor its parent, so the sanitizer prunes it to `{}` — a constraint
+    // the author wrote and the wire schema no longer carries.
     expect(weakenedCompositionBranches({
       type: "object",
       properties: {
-        filter: { type: "object", properties: { a: { type: "string" } }, oneOf: [{ required: ["a"] }] },
-        rows: { type: "array", items: { type: "object", properties: { b: { type: "string" } }, anyOf: [{ required: ["b"] }] } },
+        filter: {
+          type: "object",
+          properties: { a: { type: "string" } },
+          oneOf: [{ required: ["a"] }, { required: ["ghost"] }],
+        },
+      },
+    })).toEqual(["/properties/filter/oneOf/1 (required dropped)"]);
+  });
+
+  it("reaches every subschema position the walk claims to cover", () => {
+    // Traversal coverage, held with unresolvable names because a resolvable one
+    // now survives sanitization and would make this assert nothing. Each path
+    // is a different position: a property, an array item, a `not`, and
+    // `dependentSchemas` (the 2019-09 successor to `dependencies`).
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: {
+        filter: { type: "object", properties: { a: { type: "string" } }, oneOf: [{ required: ["ghost"] }] },
+        rows: { type: "array", items: { type: "object", properties: { b: { type: "string" } }, anyOf: [{ required: ["ghost"] }] } },
       },
       dependentSchemas: {
-        filter: { type: "object", properties: { c: { type: "string" } }, oneOf: [{ required: ["c"] }] },
+        filter: { type: "object", properties: { c: { type: "string" } }, oneOf: [{ required: ["ghost"] }] },
       },
-      not: { anyOf: [{ required: ["filter"] }] },
+      not: { anyOf: [{ required: ["ghost"] }] },
     })).toEqual([
       "/not/anyOf/0 (required dropped)",
       "/properties/filter/oneOf/0 (required dropped)",
@@ -79,9 +68,42 @@ describe("weakenedCompositionBranches", () => {
     ]);
   });
 
+  it("reports nothing for the shapes bind 12 repairs", () => {
+    // Each of these was a finding under bind 11. The sanitizer now resolves a
+    // branch's `required` against its parent's `properties` and copies the
+    // referenced subschemas down, so the constraint reaches the wire intact and
+    // there is nothing left to report. If any of these starts failing, the
+    // dependency regressed rather than this module.
+    expect(weakenedCompositionBranches(MEMORY_SEARCH_BEFORE_THE_FIX)).toEqual([]);
+    // A bare `required` beside a sibling that already carries its own properties.
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: { cursor: { type: "string" }, limit: { type: "integer" } },
+      anyOf: [
+        { type: "object", properties: { limit: { type: "integer" } } },
+        { required: ["cursor"] },
+      ],
+    })).toEqual([]);
+    // The annotation form: `{ description, required }` used to prune to
+    // `{ description }`, which is not empty and constrains exactly as little.
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [{ description: "choose a", required: ["a"] }, { description: "choose b", required: ["b"] }],
+    })).toEqual([]);
+    // The silent form: `{ type: "object", required }` used to prune to
+    // `{ type: "object" }`, which xAI accepts, so no other check stood in front
+    // of it.
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
+      oneOf: [{ type: "object", required: ["query"] }, { type: "object", required: ["memoryItemId"] }],
+    })).toEqual([]);
+  });
+
   it("passes a composition whose branches carry their own properties", () => {
-    // The idiom that survives sanitization, and what an exclusive choice should
-    // look like when it has to be expressed structurally at all.
+    // The idiom that always survived sanitization, and what an exclusive choice
+    // should look like when it has to be expressed structurally at all.
     expect(weakenedCompositionBranches({
       anyOf: [
         { type: "object", properties: { resourceId: { type: "string" } }, required: ["resourceId"] },
@@ -119,27 +141,54 @@ describe("weakenedCompositionBranches", () => {
  * 3.7-flash, and gpt-5.6-terra/sol/luna through OpenRouter, not inferred.
  */
 describe("nonObjectRootUnionBranches", () => {
-  it("catches the branch shape Grok rejects, authored or sanitized", () => {
-    // Both forms 400 on all three Grok models; the sanitizer is not what makes
-    // the authored one fatal, so restoring the `required` would not have helped.
-    expect(nonObjectRootUnionBranches(MEMORY_SEARCH_BEFORE_THE_FIX)).toEqual(["/oneOf/0", "/oneOf/1"]);
+  it("still catches a root branch that carries its own composition", () => {
+    // The one root-union shape bind 12 forwards unchanged, and it is a hard 400
+    // on all three Grok models — measured against the exact bytes the sanitizer
+    // emits. This assertion is the only thing standing in front of it, so it is
+    // the positive case that matters most in this file.
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [
+        { type: "object", anyOf: [{ properties: { a: { type: "string" } } }, { properties: { b: { type: "string" } } }] },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    })).toEqual(["/oneOf/0"]);
+  });
+
+  it("reports nothing for the root unions bind 12 repairs or drops", () => {
+    // Repaired into object branches:
+    expect(nonObjectRootUnionBranches(MEMORY_SEARCH_BEFORE_THE_FIX)).toEqual([]);
+    // Dropped, because no branch can be made usable:
     expect(nonObjectRootUnionBranches({
       type: "object",
       properties: { query: { type: "string" } },
       oneOf: [{}, {}],
-    })).toEqual(["/oneOf/0", "/oneOf/1"]);
+    })).toEqual([]);
+    // Dropped: a declared non-object `type` disqualifies a branch whatever its
+    // `properties` says.
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [
+        { type: "string", properties: { a: { type: "string" } } },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    })).toEqual([]);
+    // Dropped: annotation-only branches assert nothing.
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [{ description: "choose a" }, { description: "choose b" }],
+    })).toEqual([]);
   });
 
   it("passes a root union whose branches are recognizably objects", () => {
-    // `type: "object"` alone is enough — even with the `required` pruned away,
-    // which is what the sanitizer does to a branch declaring no properties.
     expect(nonObjectRootUnionBranches({
       type: "object",
       properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
       oneOf: [{ type: "object", required: ["query"] }, { type: "object", required: ["memoryItemId"] }],
     })).toEqual([]);
-    // `properties` alone is enough too, and this is the shape to reach for: it
-    // is the only one that ALSO survives sanitization with its `required`.
     expect(nonObjectRootUnionBranches({
       anyOf: [
         { type: "object", properties: { resourceId: { type: "string" } }, required: ["resourceId"] },
@@ -157,42 +206,6 @@ describe("nonObjectRootUnionBranches", () => {
       properties: { a: { type: "string" }, b: { type: "string" } },
       allOf: [{ required: ["a"] }, { not: { required: ["b"] } }],
     })).toEqual([]);
-  });
-
-  it("catches a root branch whose own `type` contradicts its `properties`", () => {
-    // Measured 0/3 on Grok: a declared `type` decides by itself, so carrying
-    // `properties` does not rescue a branch typed as something else. The guard
-    // accepted this shape until the rule was measured.
-    expect(nonObjectRootUnionBranches({
-      type: "object",
-      properties: { a: { type: "string" }, b: { type: "string" } },
-      oneOf: [
-        { type: "string", properties: { a: { type: "string" } } },
-        { type: "object", properties: { b: { type: "string" } } },
-      ],
-    })).toEqual(["/oneOf/0"]);
-  });
-
-  it("catches a root branch that carries its own composition", () => {
-    // Also measured 0/3 on Grok, `type: "object"` notwithstanding: nesting the
-    // union one level down inside a root branch is the same rejection as
-    // putting it at the root.
-    expect(nonObjectRootUnionBranches({
-      type: "object",
-      properties: { a: { type: "string" }, b: { type: "string" } },
-      oneOf: [
-        { type: "object", anyOf: [{ properties: { a: { type: "string" } } }, { properties: { b: { type: "string" } } }] },
-        { type: "object", properties: { b: { type: "string" } } },
-      ],
-    })).toEqual(["/oneOf/0"]);
-  });
-
-  it("catches an annotation-only root branch, which Grok also rejects", () => {
-    expect(nonObjectRootUnionBranches({
-      type: "object",
-      properties: { a: { type: "string" }, b: { type: "string" } },
-      oneOf: [{ description: "choose a" }, { description: "choose b" }],
-    })).toEqual(["/oneOf/0", "/oneOf/1"]);
   });
 
   it("ignores a nested union, which every model accepts", () => {
@@ -221,6 +234,11 @@ describe("nonObjectRootUnionBranches", () => {
  * The repair a schema Avalon did not write goes through. A hosted MCP server's
  * `inputSchema` reaches the model verbatim and no build-time check can see it,
  * so the rule the guard reports on is applied here as a rewrite instead.
+ *
+ * These run on the authored schema without invoking the sanitizer, so they are
+ * independent of the installed bind version — which makes this block the
+ * standing coverage for the measured branch rules themselves, now that the
+ * sanitizer repairs most of them before the guard above ever sees them.
  */
 describe("repairRootUnionForProviders", () => {
   it("drops a root union Grok would reject, keeping the rest of the schema", () => {
@@ -247,10 +265,10 @@ describe("repairRootUnionForProviders", () => {
     })).toEqual({ type: "object", properties: { a: { type: "string" } } });
   });
 
-  it("repairs the two branch shapes the guard used to miss", () => {
-    // The repair shares `readableRootUnionBranch` with the guard, so a shape
-    // the guard reports is a shape the repair fixes. A remote MCP server can
-    // serve either of these, and either fails the whole request.
+  it("repairs the two branch shapes measured after the first cut", () => {
+    // A declared non-object `type` disqualifies the branch whatever its
+    // `properties` says; a branch carrying its own composition is disqualified
+    // whatever its `type` says. Both are 0/3 on Grok.
     expect(repairRootUnionForProviders({
       type: "object",
       properties: { a: { type: "string" } },
