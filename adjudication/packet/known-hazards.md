@@ -94,7 +94,7 @@ state why it does not apply to your architecture.
   `docs/PRDs/2026-08-15_supabase-workspace-workstream-conversations/review.md`.
   Your brief inherits its burden — findings there must be resolved, mitigated,
   or conceded, not re-asserted.
-- **The current-stack advocate**: the Motivation sections of
-  `docs/PRDs/2026-08-12_per-workspace-databases/prd.md` (on `main`) — the
-  measured pains (migration hazard window, ~460 hand-written tenancy
-  predicates, sidebar repair machinery) are your liabilities to answer.
+- (The former current-stack seat was removed by owner decision — see the
+  README's field decision. The measured pains recorded in
+  `docs/PRDs/2026-08-12_per-workspace-databases/prd.md`'s Motivation remain
+  useful background on why the migration constraint exists.)

@@ -22,9 +22,13 @@ Advocates argue only about where the data and realtime/execution planes live.
 Claiming the conversation model as a benefit of your substrate is a scoring
 penalty.
 
-"Keep the current stack" (per-region D1 + Durable Objects + Workflows, building
-the conversation model on it) is a full candidate — the null hypothesis — and
-must be argued for as seriously as any migration.
+Moving off the current stack (per-region D1 + Durable Objects as the data
+plane) is a **settled constraint**, decided outside this process — there is no
+stay-put candidate, and judges must not re-litigate the migration decision or
+score against a stay-put baseline. Candidates are compared with each other;
+migration cost is still scored per template §5. (Cloudflare Workflows used
+purely as a data-minimal loop driver is not "the current stack" for this
+purpose.)
 
 ## Demand
 

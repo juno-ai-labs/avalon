@@ -25,10 +25,17 @@ adjudication/
 1. **Standardize.** Each advocate session reads `packet/` and commits exactly
    one `candidates/<candidate>/brief.md` per the template. Compress your
    existing PRD/argument; introduce no new uncited claims; UNKNOWN beats
-   confident vagueness. Candidates expected: `supabase`, `cloudflare-do`,
-   `aws`, `gcp`, `managed-postgres`, `convex`, and `current-stack` (the null
-   hypothesis — required). This list is the authoritative field: barriers
-   and judge preconditions count against it.
+   confident vagueness. Candidates expected: `supabase`, `aws`, `gcp`, and
+   `convex`. This list is the authoritative field: barriers and judge
+   preconditions count against it.
+
+   *Field decision, 2026-08-16 (owner):* moving off the current stack is a
+   settled constraint, not a question — `current-stack`, `cloudflare-do`,
+   and `managed-postgres` are out of the field and no brief exists for
+   them. Judges must not re-litigate the decision to migrate, must not
+   score candidates against a stay-put baseline, and must not treat the
+   absence of those briefs as a precondition failure. Migration cost
+   remains scored per template §5, candidate-to-candidate.
 2. **Compliance gate.** The operator checks each brief against the template
    (sections present, caps respected, citations resolvable, scope rule
    honored) and kicks back noncompliant briefs before anyone sees them.
