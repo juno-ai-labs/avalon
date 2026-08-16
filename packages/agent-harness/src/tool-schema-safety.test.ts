@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { emptiedCompositionBranches } from "./tool-schema-safety";
+import { emptiedCompositionBranches, nonObjectRootUnionBranches } from "./tool-schema-safety";
 
 /**
  * The production fingerprint, kept as a literal: this exact schema shipped in
@@ -75,5 +75,61 @@ describe("emptiedCompositionBranches", () => {
 
   it("tolerates a non-object root rather than throwing", () => {
     expect(emptiedCompositionBranches({} as Record<string, unknown>)).toEqual([]);
+  });
+});
+
+/**
+ * Each expectation below was measured against grok-4.3/4.5/4.6, gemini-3.5/3.6/
+ * 3.7-flash, and gpt-5.6-terra/sol/luna through OpenRouter, not inferred.
+ */
+describe("nonObjectRootUnionBranches", () => {
+  it("catches the branch shape Grok rejects, authored or sanitized", () => {
+    // Both forms 400 on all three Grok models; the sanitizer is not what makes
+    // the authored one fatal, so restoring the `required` would not have helped.
+    expect(nonObjectRootUnionBranches(MEMORY_SEARCH_BEFORE_THE_FIX)).toEqual(["/oneOf/0", "/oneOf/1"]);
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { query: { type: "string" } },
+      oneOf: [{}, {}],
+    })).toEqual(["/oneOf/0", "/oneOf/1"]);
+  });
+
+  it("passes a root union whose branches are recognizably objects", () => {
+    // `type: "object"` alone is enough — even with the `required` pruned away,
+    // which is what the sanitizer does to a branch declaring no properties.
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
+      oneOf: [{ type: "object", required: ["query"] }, { type: "object", required: ["memoryItemId"] }],
+    })).toEqual([]);
+    // `properties` alone is enough too, and this is the shape to reach for: it
+    // is the only one that ALSO survives sanitization with its `required`.
+    expect(nonObjectRootUnionBranches({
+      anyOf: [
+        { type: "object", properties: { resourceId: { type: "string" } }, required: ["resourceId"] },
+        { type: "object", properties: { cursor: { type: "string" } }, required: ["cursor"] },
+      ],
+    })).toEqual([]);
+  });
+
+  it("ignores a nested union, which every model accepts", () => {
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: {
+        filter: {
+          type: "object",
+          properties: { a: { type: "string" }, b: { type: "string" } },
+          oneOf: [{ required: ["a"] }, { required: ["b"] }],
+        },
+      },
+    })).toEqual([]);
+  });
+
+  it("passes a plain object schema with no root union at all", () => {
+    expect(nonObjectRootUnionBranches({
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    })).toEqual([]);
   });
 });
