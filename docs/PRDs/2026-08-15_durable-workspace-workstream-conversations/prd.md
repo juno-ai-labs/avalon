@@ -9,6 +9,8 @@
 > [`migration-control-plane.md`](migration-control-plane.md), and the
 > technical/economic
 > [`comparison.md`](../2026-08-15_supabase-workspace-workstream-conversations/comparison.md).
+> The newer full three-way comparison, including the hybrid design, is
+> [`here`](../2026-08-16_hybrid-workstream-do-supabase/comparison.md).
 
 ## Summary
 
