@@ -112,6 +112,7 @@ describe("the health probe under a misconfigured environment", () => {
       WORKSTREAM_ROOMS: { idFromName: () => "id", get: () => room },
       ACTIVITY_QUEUE: { send: () => undefined },
       WORKSTREAM_LOOP_WORKFLOW: { create: () => undefined },
+      POSTGRES_AGENT_LOOP_WORKFLOW: { create: () => undefined },
       CONNECTOR_POLL_WORKFLOW: { create: () => undefined },
       WORKSTREAM_EMAIL_ADDRESS_KEY: "a".repeat(48),
       WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",

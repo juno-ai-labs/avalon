@@ -625,6 +625,26 @@ access and no-egress symbolication.
 
 ## Changelog
 
+### 2026-08-17 — Supabase Postgres lands as a gated authority, not a silent cutover
+
+**What changed:** The API can bind a least-privilege, transaction-pooled
+Postgres client and a `PostgresAgentLoopWorkflow`; separate global and regional
+Supabase projects define routing and product authority. Both deployed regions
+still set `PRODUCT_DATA_AUTHORITY=d1`.
+
+**Why:** The Postgres architecture needs executable ordering, streaming,
+steering, and migration fences before any workspace is moved, while merely
+shipping that foundation must not change production authority.
+
+**Considered and rejected:** Replacing existing services in place or silently
+dual-writing D1 and Postgres. Either makes schema deployment itself a migration
+and risks two writable histories.
+
+**Consequences:** New Postgres paths must go through `@avalon/postgres` and the
+explicit authority gate. A future cutover must complete the source-closure and
+desktop rollout gates in [`supabase-postgres.md`](supabase-postgres.md); changing
+the Wrangler value alone is not an authorized migration.
+
 ### 2026-08-13 — Telemetry separates data projection from control authority
 
 **What changed:** The architecture now names two directional telemetry RPC

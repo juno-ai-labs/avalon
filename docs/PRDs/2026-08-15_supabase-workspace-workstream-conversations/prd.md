@@ -1009,6 +1009,7 @@ Avalon uses a few logged Basic queues, not one queue per workspace/work stream:
 | Logical queue | Contents | Consumer |
 | --- | --- | --- |
 | `workflow_starts` | Run ID, deterministic Workflow instance ID, expected revision | Workflow creation/attachment reconciler only |
+| `workflow_signals` | Durable signal ID, run ID, deterministic Workflow ID, control revision, signal kind | Immediate Workflow `sendEvent` reconciliation only |
 | `connector_ingress` | Ingress receipt ID and parser version | Normalizer |
 | `sidebar_attention` | Attention event ID, bounded explicit-mention cursor, expected revision | Sparse overlay batch materializer |
 | `derived_content` | Compaction, embedding, digest, suggestion job IDs | Workflow start reconciler for inference; typed Worker only for deterministic non-inference finalization |
@@ -2685,18 +2686,17 @@ They must be rechecked and account-confirmed before release.
 | --- | --- | --- |
 | Workflow script size | 10 MB | Keep Workflow/provider adapter code small and enforce bundle gates |
 | Scripts per account | 500 shared with Workers | Include every regional router/Workflow script in one inventory |
-| Active CPU per step | 30 s default, configurable to 5 m | Start at 30 s; model/tool waiting is I/O; heavy transforms are sliced |
+| Active CPU per step | 30 s default, configurable to 5 m | Configure the full-loop Workflow at 5 m; model/tool waiting is I/O and heavy transforms are still sliced |
 | Wall time per step | Unlimited | Does not justify putting the full loop in one retry unit |
-| Authored step timeout guidance | At most 30 m | Bound attached actions; detach and reconcile longer operations |
 | Non-stream step result / event payload | 1 MiB each | IDs, cursors, hashes only; no content |
 | Persisted state per instance | 1 GB including streamed output | Failure ceiling, not a storage budget |
-| Steps per instance | 10,000 default, configurable to 25,000 | Hard infrastructure ceiling; monitor and surface exhaustion honestly |
+| Steps per instance | 10,000 default, configurable to 25,000 | Configure 25,000; it remains a hard infrastructure ceiling that is monitored and surfaced honestly |
 | Maximum sleep | 365 days | Hard platform ceiling, not a configured product limit |
 | Running instances | Paid table published 50,000; prose has differed | Use account-confirmed value and conservative 10,000 planning until resolved |
 | Creation | 300/s/account, 100/s/workflow | Rate-limit admission; 429 is non-admission and retried from Supabase |
 | Queued instances | 2,000,000 | Platform capacity is not a user-facing latency SLO |
 | Completed Workflow history | 30 days | Cloudflare's control history may expire; Supabase independently retains canonical product history and receipts |
-| Subrequests | 10,000 default, configurable much higher | Count Supabase/provider calls and keep a recovery reserve |
+| Subrequests | 10,000 default, configurable to 10,000,000 | Configure 10,000,000; count Supabase/provider calls and keep a recovery reserve |
 
 This version intentionally configures no product-level limits. Cloudflare,
 Supabase, model-provider, and Daytona hard ceilings still exist and surface as
@@ -2706,9 +2706,10 @@ accumulates transcript or Terminal output. Stable Workflow instance/step IDs
 make retries consult Supabase receipts. Deleting Workflow history must not
 affect product history.
 
-Each Workflow action is one bounded semantic step in the Workflow code. A long
-model response may stream within a Workflow step because the paid Workflow wall
-time is unlimited while active CPU remains bounded; it still checkpoints output,
+Each Workflow action is one bounded semantic step in the Workflow code. No
+application wall-time timeout is added merely because an ordinary loop can run
+for hours: the paid Workflow wall time per step is unlimited while active CPU
+remains bounded. A long model response still checkpoints output,
 observes platform time/token/subrequest ceilings and usage telemetry, and cannot
 make the entire full loop one retry unit. A Daytona command is an addressable effect started once,
 parked through Workflow wait/sleep or callback, and reconciled by provider ID.

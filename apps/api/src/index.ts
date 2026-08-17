@@ -22,6 +22,7 @@ import {
   reapExpiredCrashReports,
 } from "./telemetry/crash-delivery";
 import { readTelemetryOperationalSnapshot } from "./telemetry/operations";
+import { drainPostgresWorkflowControl } from "./postgres/workflow-control";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -91,6 +92,7 @@ export { WorkstreamRoom } from "./durable-objects/workstream-room";
 export { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 export { WorkstreamLoopWorkflow } from "./workflows/workstream-loop";
+export { PostgresAgentLoopWorkflow } from "./workflows/postgres-agent-loop";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
 export { GitHubRegionalBridge } from "./github-regional-bridge";
@@ -178,6 +180,7 @@ export default {
       recoverPendingActivityQueue(env),
       reapExpiredActivityEvents(env),
       reconcileDigestDefaults(env),
+      drainPostgresWorkflowControl(env),
       processTelemetry(env),
     ]));
   }),

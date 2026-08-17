@@ -30,6 +30,7 @@ export default tseslint.config(
       "**/out/**",
       "**/release/**",
       "**/.wrangler/**",
+      "**/supabase/.temp/**",
       "**/.playwright-cli/**",
       "**/output/**",
       "**/coverage/**",

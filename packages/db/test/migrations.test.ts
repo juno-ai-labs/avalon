@@ -2379,4 +2379,68 @@ describe("database migrations", () => {
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });
+
+  it("closes D1 product writes before a workspace can activate Postgres authority", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('authority-owner', 'authority-subject', 'authority@example.com', 'Authority Owner',
+              '2026-08-17', '2026-08-17');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('authority-workspace', 'Authority Workspace', 'authority-workspace', 'global',
+              'authority-owner', '2026-08-17', '2026-08-17');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('authority-workstream', 'authority-workspace', 'Authority', 'Move safely', 'ad_hoc',
+              'authority-owner', 'idle', '2026-08-17', '2026-08-17', '2026-08-17');
+    `);
+
+    expect(database.prepare(
+      "SELECT authority_mode, source_state, route_epoch FROM workspace_authority_gates WHERE workspace_id = ?",
+    ).get("authority-workspace")).toEqual({
+      authority_mode: "d1",
+      source_state: "writable",
+      route_epoch: 1,
+    });
+
+    database.prepare(
+      `UPDATE workspace_authority_gates
+       SET authority_mode = 'shadow', source_state = 'closing', route_epoch = 2, updated_at = ?
+       WHERE workspace_id = ?`,
+    ).run("2026-08-17T01:00:00Z", "authority-workspace");
+    expect(() => database.prepare(
+      "UPDATE workstreams SET title = ? WHERE id = ?",
+    ).run("Should not write", "authority-workstream")).toThrow(/workspace_source_not_writable/u);
+    expect(() => database.prepare(
+      `UPDATE workspace_authority_gates
+       SET authority_mode = 'postgres'
+       WHERE workspace_id = ?`,
+    ).run("authority-workspace")).toThrow(/CHECK constraint failed/u);
+
+    database.prepare(
+      `UPDATE workspace_authority_gates
+       SET authority_mode = 'postgres', source_state = 'closed',
+           source_closure_cursor = ?, source_closure_hash = ?,
+           destination_receipt_id = ?, closed_at = ?, updated_at = ?
+       WHERE workspace_id = ?`,
+    ).run(
+      "message:42", "a".repeat(64), "destination-receipt",
+      "2026-08-17T01:05:00Z", "2026-08-17T01:05:00Z", "authority-workspace",
+    );
+    expect(database.prepare(
+      "SELECT authority_mode, source_state FROM workspace_authority_gates WHERE workspace_id = ?",
+    ).get("authority-workspace")).toEqual({ authority_mode: "postgres", source_state: "closed" });
+
+    const migrationTables = database.prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name LIKE 'workspace_postgres_%'
+       ORDER BY name`,
+    ).all();
+    expect(migrationTables).toEqual([
+      { name: "workspace_postgres_export_manifests" },
+      { name: "workspace_postgres_shadow_comparisons" },
+    ]);
+    database.close();
+  });
 });

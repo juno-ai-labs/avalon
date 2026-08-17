@@ -16,6 +16,13 @@ pnpm dev
 
 The default Global API is `http://127.0.0.1:8787`; the optional EU development API uses port `8788`. `GET /health` checks D1, R2, Durable Objects, Queue and Workflow bindings, the one-Global-registry route, and regional inbound-email configuration, and reports other provider configuration separately.
 
+The feature-gated Postgres projects use the same local Supabase ports, so run
+them one at a time. `pnpm postgres:regional:start`,
+`pnpm postgres:regional:reset`, and `pnpm postgres:regional:test` rebuild and
+verify a regional shard; stop it before running the corresponding
+`postgres:global:*` commands. These projects contain local-only credentials and
+do not change the API's default D1 authority.
+
 After the API is running, use `pnpm smoke:local` for the repeatable authentication, work-stream, sidebar-data, idempotency, URL-safety, and realtime acceptance check. The complete desktop acceptance flow is documented in `docs/e2e.md`.
 
 Local authentication is available only when all of these are true:
@@ -37,6 +44,16 @@ Create independent resource sets for `global` and `eu`:
 - An activity Queue and dead-letter Queue
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
+
+The candidate Postgres rollout additionally requires one global Supabase
+control project and one regional Supabase product project per active region.
+Do not provision connection URLs under `VITE_` names. Bind the global router,
+regional router, Workflow runner, and Queue runner as separate transaction-
+pooler credentials; neither Worker uses Supabase `service_role`. The checked-in
+Wrangler files remain `PRODUCT_DATA_AUTHORITY=d1` until source closure,
+destination verification, desktop session/Realtime rollout, and route
+activation all complete. [`supabase-postgres.md`](supabase-postgres.md) owns the
+full gate and failure model.
 
 One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data. Both regions do send it an evaluation context carrying workspace, work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email domains — bounded by the rules in [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 

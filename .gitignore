@@ -12,6 +12,7 @@ release/
 .playwright-cli/
 output/
 .wrangler/
+**/supabase/.temp/
 .vite/
 coverage/
 *.log

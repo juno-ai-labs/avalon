@@ -567,6 +567,28 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-08-17 — Postgres authority uses explicit roles, RLS, and revisioned topics
+
+**What changed:** The candidate Supabase plane exposes only an `api` schema to
+authenticated sessions, keeps product tables private with RLS, gives global
+router, regional router, Workflow, and Queue consumers separate non-bypass
+roles, and rotates content-bearing Realtime topics with access revisions.
+
+**Why:** One service-role key or stable content topic would turn a Worker,
+queue, or already-connected client into a standing cross-tenant capability.
+Short operations need only their narrow RPCs, and revocation must stop new
+content without relying on a socket disconnect racing a commit.
+
+**Considered and rejected:** Giving Workers the Supabase `service_role`, exposing
+private tables directly, and relying on client filtering. Each bypasses the
+database boundary that must remain correct under malformed or stale callers.
+
+**Consequences:** Database URLs remain regional Worker secrets and cannot reach
+the renderer. A later desktop canary must mint a short-lived project session and
+map it through `platform_identities`; the schema landing does not authorize a
+client to use a Worker database credential. See
+[`supabase-postgres.md`](supabase-postgres.md).
+
 ### 2026-08-13 — GitHub policy drift fails closed without inventing a new gate
 
 **What changed:** GitHub authorization distinguishes absent legacy policy from

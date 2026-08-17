@@ -43,7 +43,20 @@ export interface Env {
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   ACTIVITY_QUEUE: Queue;
   WORKSTREAM_LOOP_WORKFLOW: Workflow;
+  POSTGRES_AGENT_LOOP_WORKFLOW: Workflow;
   CONNECTOR_POLL_WORKFLOW: Workflow;
+
+  /**
+   * D1 remains the default until a workspace has a verified source-closure and
+   * destination-activation receipt. `shadow` permits comparison writes but is
+   * never read authority; `postgres` is valid only for routed cohorts.
+   */
+  PRODUCT_DATA_AUTHORITY?: "d1" | "shadow" | "postgres";
+  SUPABASE_GLOBAL_ROUTER_DATABASE_URL?: string;
+  SUPABASE_REGIONAL_ROUTER_DATABASE_URL?: string;
+  SUPABASE_WORKFLOW_DATABASE_URL?: string;
+  SUPABASE_QUEUE_DATABASE_URL?: string;
+  SUPABASE_DATABASE_SSL?: "require" | "disable";
   EU_IDENTITY_BRIDGE?: RegionalIdentityBridgeRpcBinding;
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
@@ -224,7 +237,15 @@ const EnvContractSchema = z.object({
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ACTIVITY_QUEUE: binding<Queue>(),
   WORKSTREAM_LOOP_WORKFLOW: binding<Workflow>(),
+  POSTGRES_AGENT_LOOP_WORKFLOW: binding<Workflow>(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
+
+  PRODUCT_DATA_AUTHORITY: z.enum(["d1", "shadow", "postgres"]).optional(),
+  SUPABASE_GLOBAL_ROUTER_DATABASE_URL: z.string().min(1).optional(),
+  SUPABASE_REGIONAL_ROUTER_DATABASE_URL: z.string().min(1).optional(),
+  SUPABASE_WORKFLOW_DATABASE_URL: z.string().min(1).optional(),
+  SUPABASE_QUEUE_DATABASE_URL: z.string().min(1).optional(),
+  SUPABASE_DATABASE_SSL: z.enum(["require", "disable"]).optional(),
 
   APP_ENV: z.enum(["development", "test", "staging", "production"]),
   AVALON_REGION: z.enum(["global", "eu"]),
@@ -395,7 +416,20 @@ export function assertEnvContract(env: Env): void {
           : []),
       ]
     : [];
-  if (result.success && missingSecrets.length === 0 && terminalConfigurationIssues.length === 0) {
+  const postgresRequiredKeys: Array<keyof Env> = [
+    "SUPABASE_REGIONAL_ROUTER_DATABASE_URL",
+    "SUPABASE_WORKFLOW_DATABASE_URL",
+    "SUPABASE_QUEUE_DATABASE_URL",
+  ];
+  if (env.AVALON_REGION === "global") postgresRequiredKeys.push("SUPABASE_GLOBAL_ROUTER_DATABASE_URL");
+  const postgresConfigurationIssues = env.PRODUCT_DATA_AUTHORITY === "shadow"
+      || env.PRODUCT_DATA_AUTHORITY === "postgres"
+    ? postgresRequiredKeys
+        .filter((key) => !env[key])
+        .map((key) => `${key} is missing`)
+    : [];
+  if (result.success && missingSecrets.length === 0 && terminalConfigurationIssues.length === 0
+      && postgresConfigurationIssues.length === 0) {
     validated.add(env);
     return;
   }
@@ -411,6 +445,7 @@ export function assertEnvContract(env: Env): void {
     })),
     ...missingSecrets.map((key) => `${key} is missing`),
     ...terminalConfigurationIssues,
+    ...postgresConfigurationIssues,
   ];
   throw new EnvContractError([...new Set(keys)].sort());
 }

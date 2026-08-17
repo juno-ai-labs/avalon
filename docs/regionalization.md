@@ -309,6 +309,27 @@ resident.
 
 ## Changelog
 
+### 2026-08-17 — The candidate Postgres plane keeps routing global and content regional
+
+**What changed:** A global Supabase project stores only enumerated account,
+organization, entitlement, shard, and workspace-route data; regional projects
+own workspace content, Realtime, Storage, search, queues, and receipts. Route
+commands cross databases with epochs and hashes instead of foreign keys.
+
+**Why:** A single global content database would weaken the existing EU durable-
+data boundary, while duplicating identity/routing metadata into every region
+would make pre-workspace discovery and route movement ambiguous.
+
+**Considered and rejected:** Global transcript/activity storage and regional
+copies of the global route authority. Both create an unnecessary second resting
+place or conflicting control plane.
+
+**Consequences:** The EU and Global schemas remain identical but their data does
+not mix. Cloudflare Workflow, provider, Daytona, Realtime, and log processing
+remain separately governed transient-processing surfaces; an EU database region
+does not by itself promise EU-only execution. See
+[`supabase-postgres.md`](supabase-postgres.md).
+
 ### 2026-08-13 — Terminal activation stays within the Global US target
 
 **What changed:** The Global Worker now declares Terminal supported with the

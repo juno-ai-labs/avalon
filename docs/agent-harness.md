@@ -532,6 +532,29 @@ pass locally and fail `pnpm lint`.
 
 ## Changelog
 
+### 2026-08-17 — A Postgres-backed Workflow host checkpoints outside Bind
+
+**What changed:** `PostgresAgentLoopWorkflow` rematerializes provider-valid
+messages from regional Postgres, invokes Bind, batches generated text at about
+2 Hz, and commits through control-revision-fenced output RPCs. Persisted
+Workflow state contains only identifiers, revisions, and hashes.
+
+**Why:** Full loops commonly last 2–30 minutes and rare coding sessions exceed
+two hours, but product text must remain in its regional authority and steering
+must supersede a live attempt without making one long provider call the unit of
+durability.
+
+**Considered and rejected:** Supabase Edge Functions for full loops, per-token
+rows, and storing prompts/output in Workflow state. Their execution ceiling,
+write amplification, and duplicate retention surface conflict with the runtime
+and residency requirements.
+
+**Consequences:** Bind remains the inference-loop library, while the Workflow
+host owns durable action/wait boundaries and Postgres owns receipts. The current
+production D1 host retains its complete plugin/Daytona surface; Postgres cannot
+be canaried until equivalent adapters use its effect receipts. See
+[`supabase-postgres.md`](supabase-postgres.md).
+
 ### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
 
 **What changed:** Supported regional work-stream runtimes register

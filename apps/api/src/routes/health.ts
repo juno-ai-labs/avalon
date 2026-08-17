@@ -3,6 +3,7 @@ import { z } from "zod";
 import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
+import { createPostgresClient, productDataAuthority } from "../postgres/runtime";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 /** The probe's own shape — this route owns it, so the contract lives here. */
@@ -72,6 +73,24 @@ healthRoutes.get("/", async (c) => {
   } catch {
     checks.d1 = { ok: false, message: "unavailable" };
   }
+  const dataAuthority = productDataAuthority(c.env);
+  if (dataAuthority === "d1") {
+    checks.postgres = { ok: true, message: "standby; D1 remains authoritative" };
+  } else {
+    let postgresClient: ReturnType<typeof createPostgresClient> | undefined;
+    try {
+      postgresClient = createPostgresClient(c.env, "workflow_runner");
+      const result = await postgresClient.health();
+      checks.postgres = {
+        ok: result.role === "avalon_workflow_runner",
+        message: result.role === "avalon_workflow_runner" ? `${dataAuthority} authority available` : "unexpected database role",
+      };
+    } catch {
+      checks.postgres = { ok: false, message: `${dataAuthority} authority unavailable` };
+    } finally {
+      await postgresClient?.close();
+    }
+  }
   try {
     await c.env.PAYLOADS.list({ limit: 1 });
     checks.r2 = { ok: true, message: "available" };
@@ -96,8 +115,13 @@ healthRoutes.get("/", async (c) => {
     message: typeof c.env.ACTIVITY_QUEUE?.send === "function" ? "binding available" : "binding unavailable",
   };
   checks.workflows = {
-    ok: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function" && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function",
-    message: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function" ? "bindings available" : "binding unavailable",
+    ok: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function"
+      && typeof c.env.POSTGRES_AGENT_LOOP_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function",
+    message: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function"
+      && typeof c.env.POSTGRES_AGENT_LOOP_WORKFLOW?.create === "function"
+      ? "bindings available"
+      : "binding unavailable",
   };
   // Flagship bindings are always remote, so this is unavailable under
   // `wrangler dev --local` by design and is only required in production, where
@@ -200,6 +224,7 @@ healthRoutes.get("/", async (c) => {
     checks.workflows,
     checks.workstreamEmailRegistry,
   ];
+  if (dataAuthority !== "d1") required.push(checks.postgres);
   if (c.env.APP_ENV === "production") required.push(checks.inboundEmail, checks.featureFlags);
   if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);

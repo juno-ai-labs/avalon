@@ -509,6 +509,28 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-17 — D1 records source closure before Postgres may become authoritative
+
+**What changed:** Migration `0077_postgres_authority_gates.sql` adds one
+default-writable authority gate per D1 workspace, export/shadow evidence tables,
+and fail-closed write triggers for root high-volume product tables. The separate
+Supabase migrations define the candidate global and regional schemas.
+
+**Why:** Copying rows is not an authority transfer. D1 must durably prove that
+the source closed at a known cursor/hash before the destination route can be
+activated, and the schema foundation must not disable current writes.
+
+**Considered and rejected:** Timestamp-based dual-write reconciliation and a
+migration that marks every existing workspace read-only on deploy. The former
+cannot reconstruct one valid order; the latter turns an additive release into
+an outage.
+
+**Consequences:** D1 remains writable by default. Any new root product write
+surface added before cutover must participate in the authority gate, while
+child writes must remain reachable only through already-gated command
+transactions. [`supabase-postgres.md`](supabase-postgres.md) owns the candidate
+Postgres model and transfer protocol.
+
 ### 2026-08-13 — Recoverable GitHub status remains a valid Terminal reference
 
 **What changed:** Migration

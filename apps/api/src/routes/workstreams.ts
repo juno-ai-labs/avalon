@@ -33,12 +33,15 @@ import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperation
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
 import { TerminalWorkstreamService } from "../services/terminal/workstream-state";
+import { createPostgresClient, productDataAuthority } from "../postgres/runtime";
+import { signalPostgresAgentLoop, startPostgresAgentLoop } from "../postgres/workflow-control";
 
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
 const resourceParam = z.object({ id: IdSchema, resourceId: IdSchema });
 const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const suggestionParam = z.object({ id: IdSchema, suggestionId: IdSchema });
+const postgresRunParam = z.object({ id: IdSchema, runId: IdSchema });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   before: z.string().datetime({ offset: true }).optional(),
@@ -76,6 +79,11 @@ const CreatedWorkstreamSchema = z.object({
   messageId: IdSchema,
   harnessRunId: IdSchema.nullable(),
 });
+const PostgresRunWakeResponseSchema = z.object({
+  runId: IdSchema,
+  state: z.string(),
+  signaled: z.number().int().nonnegative(),
+});
 const CreatedMessageSchema = z.object({
   message: MessageSchema,
   agentInvoked: z.boolean(),
@@ -112,6 +120,46 @@ function terminalWorkstreamService(c: Context<HonoAppEnv>): TerminalWorkstreamSe
     provider,
   );
 }
+
+workstreamRoutes.post(
+  "/:id/postgres-runs/:runId/wake",
+  zValidator("param", postgresRunParam),
+  async (c) => {
+    if (productDataAuthority(c.env) !== "postgres") {
+      return c.json({ error: { code: "postgres_authority_inactive", message: "Postgres is not authoritative" } }, 409);
+    }
+    const { id: workstreamId, runId } = c.req.valid("param");
+    const auth = getAuth(c);
+    const client = createPostgresClient(c.env, "regional_router");
+    try {
+      const descriptor = await client.workflowWakeDescriptor({
+        workspaceId: auth.workspaceId,
+        workstreamId,
+        runId,
+      });
+      await startPostgresAgentLoop(c.env, {
+        runId: descriptor.run_id,
+        workflowInstanceId: descriptor.workflow_instance_id,
+        expectedRunRevision: descriptor.expected_run_revision,
+      });
+      for (const signal of descriptor.signals) {
+        await signalPostgresAgentLoop(c.env, descriptor.workflow_instance_id, {
+          signalId: signal.signal_id,
+          runId: descriptor.run_id,
+          controlRevision: signal.control_revision,
+          signalKind: signal.signal_kind,
+        });
+      }
+      return c.json(PostgresRunWakeResponseSchema.parse({
+        runId: descriptor.run_id,
+        state: descriptor.state,
+        signaled: descriptor.signals.length,
+      }), 202);
+    } finally {
+      await client.close();
+    }
+  },
+);
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
