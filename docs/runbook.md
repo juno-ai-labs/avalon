@@ -186,8 +186,9 @@ Use the structured events `terminal_tool_finished`,
 `terminal_sandbox_lifecycle_transition`, and
 `terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.
 For regional durable diagnosis, query counts/ages and exact IDs from
-`workstream_sandboxes`, `sandbox_tasks`,
-`workspace_sandbox_network_policy_mutations`, and `repository_publications`;
+the owning object's `terminal_workspace`, `terminal_tasks`, and
+`repository_publications`; workspace-wide policy mutation rows remain in
+`workspace_sandbox_network_policy_mutations` in D1.
 inspect generated logs/diffs only through Avalon's authorized resource surface.
 The oldest running `last_activity_at`, nonterminal task beyond
 `command_deadline_at`, expired lifecycle claim, failed policy verification, or
@@ -201,9 +202,10 @@ new sandbox leases and publication starts fail closed with
 `sandbox_unavailable`; regional receipts and generated resources remain intact.
 Revoke/rotate the Daytona project key and GitHub App
 credentials as the incident requires, reconcile retained provider sandboxes
-against `workstream_sandboxes`, and run the full real-provider probe before
+against each owning object's `terminal_workspace`, and run the full real-provider probe before
 clearing the emergency switch. Do not bulk-delete provider sandboxes by label
-without matching the exact regional D1 workspace/work-stream/generation rows;
+without matching the exact regional route and object-local
+workspace/work-stream/generation rows;
 final diffs and ambiguous publication state may still require preservation.
 
 Apply migration `0040_realtime_transcription_admission.sql` before enabling dictation. It stores no audio or transcripts: it records consumed one-minute ticket IDs and five-minute active-session leases. The Worker permits at most two concurrent sessions per user and twenty per workspace, rejects more than thirty client frames per second, and caps PCM audio at five minutes per connection. Expired leases are removed during the next admission attempt.
@@ -565,8 +567,10 @@ Cloudflare can terminate long-lived connections during network deployments, so r
 
 ### WorkstreamDO authority maintenance cutover
 
-Run one region at a time. Deploy the compatibility Worker and apply migration
-`0077_workstream_do_authority_cutover.sql` before starting. Use a new positive
+Run one region at a time. Deploy the compatibility Worker and apply migrations
+`0077_workstream_do_authority_cutover.sql`,
+`0078_workstream_do_regional_effects.sql`, and
+`0079_workstream_do_full_serving.sql` before starting. Use a new positive
 generation; never reuse one from a quarantined attempt.
 
 1. Set `workstream_authority_control` from `legacy_open` (or `quarantined` with
@@ -594,7 +598,8 @@ generation; never reuse one from a quarantined attempt.
    persistence, and regional-effect outbox all use the WorkstreamDO. Run the read,
    write, queued/steering, streaming reconnect, Terminal, and sidebar smoke
    tests while the public surface is still closed. That deployment must bump
-   `WORKSTREAM_DO_SERVING_CONTRACT_VERSION` to the required version. Cron writes
+   `WORKSTREAM_DO_SERVING_CONTRACT_VERSION` to the required version. The complete
+   object-local serving implementation is contract `1`. Cron writes
    that code-owned attestation only after every route is active; never edit
    `serving_contract_version` manually.
 7. Confirm `serving_contract_version >= required_serving_contract_version`, then

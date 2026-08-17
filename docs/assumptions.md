@@ -6,7 +6,7 @@ These choices resolve low-level ambiguity without changing the product contract.
 2. Global and EU deployments run identical code with separate bindings. Local development uses one emulated region at a time and a header-gated development identity only when `AVALON_DEV_AUTH=true`.
 3. The Hono API is the only public application backend. Electron loads a bundled renderer and never loads an arbitrary hosted page into its privileged window.
 4. UUIDv7 identifiers are generated at the service boundary for sortable uniqueness.
-5. D1 stores searchable metadata and complete short text messages. R2 stores uploads, large connector payloads, and snapshots.
+5. Each WorkstreamDO stores searchable work-stream metadata, ordered short text parts, runs, and work-stream-owned receipts in local SQLite. Regional D1 stores workspace/control data and rebuildable cross-work-stream projections. R2 stores uploads, large connector payloads, and snapshots.
 6. OpenRouter model names are configuration, with conservative defaults documented in `.env.example`, and are chosen by the `agent-model-*` flags rather than by anyone using the product. The one exception is the composer's model selector described in item 20, which is a developer-mode affordance rather than product UI: with Debug enabled off — every ordinary installation — there is still no model selector anywhere in Avalon.
 7. Google APIs are implemented directly over their documented REST endpoints so connector behavior remains Worker-compatible and the dependency surface stays small.
 8. A development seed is explicit and test-only. Production startup never creates demo records and the desktop does not silently fall back to hardcoded data.

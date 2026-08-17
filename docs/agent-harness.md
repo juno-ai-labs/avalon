@@ -1,6 +1,6 @@
 # Agent harness
 
-Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
+Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. A Cloudflare Workflow hosts the complete loop. The owning WorkstreamDO stores work-stream admission, leases, transcript, receipts, and terminal state; regional D1 remains authoritative for workspace/connector authority and cross-work-stream projections, while R2 stores large outputs.
 
 Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
@@ -38,9 +38,28 @@ Every write is conditional on the status the pass started from, which is what ke
 
 ### Admission and immutable run scope
 
-The generic Workflow creates one replay-stable attempt identity, reaps expired attempts, and claims a time-bounded D1 lease. At most one unexpired harness lease may run in a work stream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed.
+The generic Workflow creates one replay-stable attempt identity, reaps expired attempts, and claims a time-bounded object-local lease. At most one unexpired harness lease may run in a work stream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed.
 
 A launch is never split across the response that asked for it. The `harness_runs` row, the work stream's `running` status, and the Workflows start all complete before `launchWorkstreamHarness` returns, because `attempt_id` and `lease_expires_at` stay NULL until the Workflow admits the run and nothing reaps that shape — a row claiming `running` with no Workflow behind it is a work stream `stop` cannot terminalize and `retry` refuses. Deferring the start to `waitUntil` was tried and reverted for exactly that reason; see [`workstream-creation.md`](workstream-creation.md). A start that fails marks the run failed, publishes `harness_status_changed`, and answers `503`.
+
+### Execution primitive and expected duration
+
+One Cloudflare Workflow instance represents one **full Bind loop**, not one
+model turn. The Workflow gives retries, durable instance identity, cancellation
+observation, and a deadline long enough for the product workload; a direct
+Worker request is only the bounded executor for a Workflow step and is not the
+owner of the loop. Most loops are expected to last 2–30 minutes. Time to first
+token is normally 1–5 seconds, ordinary tools take seconds, and a Terminal call
+usually finishes within a minute at p95 but can take 3–5 minutes. Rare coding
+sessions may continue for more than two hours. The one-year Workflow step
+deadline is therefore an operational ceiling, not the product duration target.
+
+The WorkstreamDO does not stay awake for that wall time. The Workflow invokes
+the Worker, which calls Bind and checkpoints leases, turns, tool receipts, and
+final messages through the object's local SQL RPC. Hibernating room sockets are
+resumed only for batched stream frames or commands. Terminal remains a plugin in
+the same loop and executes its actual coding commands in Daytona; Cloudflare
+persists and orchestrates the loop but does not replace the Daytona sandbox.
 
 A run records the message it was triggered by in `harness_runs.trigger_message_id`, because that id is what fences the transcript the run may see — everything up to and including the trigger, nothing after. `retry` creates a new run for a failed one and inherits that stored id rather than reconstructing it: a run with no message behind it (a scheduled wakeup, an activity, an automation run with no opening message, a HyperSight block) stores NULL and replays the whole available transcript, and so does a row written before the column existed. A scheduled digest is not one of these — it appends its brief and launches against that message — and neither is an automation run that has one. Reconstructing the trigger as "the latest human message" — which is what `retry` did before the column existed — is right only while nothing has happened since, and fences finished work out of the replay whenever it has.
 
@@ -605,6 +624,26 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-17 — Full loops run in Workflow and persist in WorkstreamDO SQL
+
+**What changed:** One Cloudflare Workflow now explicitly owns one complete Bind
+loop, including expected 2–30 minute runs and rare two-hour-plus Daytona coding
+sessions. Work-stream leases, runs, scopes, receipts, checkpoints, and terminal
+rows are served by the owning object's SQL.
+
+**Why:** Treating a Workflow as one turn, or treating a direct Worker invocation
+as the durable loop owner, loses the retry and cancellation boundary needed by
+long tool-using sessions. Leaving the run ledger in D1 after transcript authority
+moved would preserve a split work-stream transaction.
+
+**Considered and rejected:** One Workflow per model turn, one continuously live
+Durable Object invocation, and direct Worker-only loops. Each couples useful work
+to an invocation lifetime or creates custom recovery between turns.
+
+**Consequences:** Workers execute bounded loop slices, the Workflow retains the
+durable full-loop identity, WorkstreamDO hibernation remains available between
+events, and Daytona remains the coding execution provider.
+
 ### 2026-08-16 — `@juno-ai/bind` 13, and the compensating layer steps back
 
 **What changed:** the pin moved from 12.0.0 to 13.0.0, which closes the one shape
@@ -999,7 +1038,6 @@ misstate agency, or make observation part of product correctness.
 replayed terminal receipt is explicitly labeled. The regional runtime—not
 desktop ingest—owns workspace-only events. Any future run/tool dimension must
 remain a bounded canonical taxonomy and must not add content.
-
 ### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
 
 **What changed:** Supported regional work-stream runtimes register
@@ -1359,8 +1397,8 @@ deriving the final run in Analytics Engine was rejected. Analytics Engine
 adaptively samples at write and query time, does not guarantee individual-row
 retrieval, cannot reconstruct exact sequences, and supports no joins. A
 terminal summary is cheaper, directly queryable, and uses Bind's already
-computed totals. Exact per-run investigation stays in D1, Workers Logs, and
-Workers Traces; a future per-tool latency dataset must use one fixed-schema
+computed totals. Exact per-run investigation stays in the owning WorkstreamDO,
+Workers Logs, and Workers Traces; a future per-tool latency dataset must use one fixed-schema
 point per completed tool execution rather than mixing event shapes here.
 
 **Consequences:** HyperSight can now run far longer and spend more than before;
@@ -1442,20 +1480,20 @@ to discard the only copy of a new run's prefix.
 zero. Leaving a streaming work stream closed that socket; returning subscribed
 as a first-time reader, and the room intentionally answered sequence zero with
 a detail snapshot rather than replay. That snapshot contained no transcript,
-because the partial assistant message does not exist in D1. A concurrent REST
+because the partial assistant message does not yet exist as a final local part. A concurrent REST
 refresh could then remove the partial row, and later deltas appended to an empty
 bubble until `stream_completed` replaced it with the full final text.
 
 The same missing state made a genuine first-time join worse: no client had a
-prefix to preserve, and neither D1 nor the room snapshot could supply one. The
+prefix to preserve, and neither the final transcript nor the room snapshot could supply one. The
 replay window could not be the source of truth because it is bounded, in memory,
 and lost when the room hibernates. The accumulated checkpoint closes both gaps,
 while committing it with the claimed room sequence prevents a snapshot from
 saying it includes a chunk whose text it does not yet carry.
 
-**Considered and rejected:** Persisting every partial assistant update in D1
-would turn the canonical transcript into an incomplete-message store and add a
-high-frequency write path to the database; D1 remains final-only. Replaying from
+**Considered and rejected:** Persisting every partial assistant update as a
+final transcript part would turn canonical history into an incomplete-message
+store and add a high-frequency write path; the transcript remains final-only. Replaying from
 sequence zero for an initial subscriber still fails after replay eviction or
 hibernation and makes join cost grow with the response. Keeping sockets open for
 every listed work stream would cover future scheduled runs but scale connection

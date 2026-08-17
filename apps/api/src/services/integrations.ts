@@ -123,6 +123,10 @@ import {
 } from "../telemetry/product-usage";
 import { createAutomationDraftAttachmentTools } from "./automation-draft-attachment-tools";
 import {
+  regionalDatabase,
+  workstreamExecutionEnvironment,
+} from "./workstream-runtime-database";
+import {
   markConnectorNeedsReconnect,
   withAuthorizedConnection,
 } from "./connector-connection-access";
@@ -1630,23 +1634,20 @@ async function recordWorkflowLaunch(
   instanceId: string,
   launchedAt: string,
 ): Promise<string> {
-  await env.DB.batch([
-    env.DB.prepare(
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  );
+  await executionEnv.DB.batch([
+    executionEnv.DB.prepare(
       `UPDATE harness_runs
        SET workflow_instance_id = ?,
            status = CASE WHEN status = 'scheduled' THEN 'running' ELSE status END,
            started_at = COALESCE(started_at, ?)
        WHERE id = ? AND workspace_id = ?`,
     ).bind(instanceId, launchedAt, input.harnessRunId, input.workspaceId),
-    env.DB.prepare(
-      `UPDATE automation_runs
-       SET workflow_instance_id = ?,
-           status = CASE WHEN status = 'scheduled' THEN 'running' ELSE status END,
-           started_at = COALESCE(started_at, ?)
-       WHERE workstream_id = ? AND workspace_id = ?
-         AND ? != 'hypersight_block'`,
-    ).bind(instanceId, launchedAt, input.workstreamId, input.workspaceId, input.reason),
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `UPDATE workstreams
        SET harness_status = CASE WHEN harness_status = 'scheduled' THEN 'running' ELSE harness_status END,
            updated_at = ?
@@ -1654,6 +1655,14 @@ async function recordWorkflowLaunch(
          AND ? != 'hypersight_block'`,
     ).bind(launchedAt, input.workstreamId, input.workspaceId, input.reason),
   ]);
+  await regionalDatabase(executionEnv).prepare(
+    `UPDATE automation_runs
+     SET workflow_instance_id = ?,
+         status = CASE WHEN status = 'scheduled' THEN 'running' ELSE status END,
+         started_at = COALESCE(started_at, ?)
+     WHERE workstream_id = ? AND workspace_id = ?
+       AND ? != 'hypersight_block'`,
+  ).bind(instanceId, launchedAt, input.workstreamId, input.workspaceId, input.reason).run();
   return instanceId;
 }
 
@@ -1778,7 +1787,9 @@ export async function runWorkstreamHarness(
 ): Promise<WorkstreamHarnessResult> {
   const runStartedAtMs = Date.now();
   const database = createDatabase(env.DB);
-  const workstream = await database.workstreams.get(input.workspaceId, input.workstreamId);
+  const workstream = await env.DB.prepare(
+    `SELECT title, objective FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
+  ).bind(input.workstreamId, input.workspaceId).first<{ title: string; objective: string }>();
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
   const initialRun = await env.DB.prepare(
     "SELECT status, origin FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
@@ -2625,7 +2636,7 @@ export async function runWorkstreamHarness(
           if (transientSlackSearch) suppressInferencePayloadLogging = true;
           const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
-          await registerAttachmentToolReceipt(env.DB, {
+          await registerAttachmentToolReceipt(env, {
             workspaceId: input.workspaceId,
             invocationId: plannedInvocation.id,
             canonicalToolName: receiptPolicy.definition.name,
@@ -3668,7 +3679,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   event.toolCallId,
                 );
                 if (!invocation) throw new Error("tool_execution_plan_missing");
-                await registerAttachmentToolReceipt(options.env.DB, {
+                await registerAttachmentToolReceipt(options.env, {
                   workspaceId: childInput.workspaceId,
                   invocationId: invocation.id,
                   canonicalToolName: receiptPolicy.definition.name,
@@ -3905,10 +3916,8 @@ async function loadRunPromptContext(
        FROM automation_subscriptions s
        JOIN automation_templates t ON t.id = s.template_id
        JOIN automation_template_versions v ON v.id = s.template_version_id AND v.template_id = s.template_id
-       JOIN workstreams w ON w.id = ? AND w.workspace_id = s.workspace_id
-         AND w.automation_subscription_id = s.id
        WHERE s.id = ? AND s.workspace_id = ?`,
-    ).bind(input.workstreamId, input.automationSubscriptionId, input.workspaceId).first<{
+    ).bind(input.automationSubscriptionId, input.workspaceId).first<{
       name: string;
       version_number: number;
       instructions: string;
@@ -3990,26 +3999,27 @@ async function loadRunPromptContext(
     // client-message id, so this cannot pick up a later message in the same
     // work stream, and one occurrence's run can never be handed another's
     // window.
-    const digest = await env.DB.prepare(
-      `SELECT d.planned_for, d.event_count, m.text_content
-         FROM digest_deliveries d
-         JOIN messages m
-           ON m.workspace_id = d.workspace_id
-          AND m.workstream_id = ?
-          AND m.client_message_id = 'digest:' || d.id
-        WHERE d.id = ? AND d.workspace_id = ?`,
-    ).bind(input.workstreamId, input.digestDeliveryId, input.workspaceId)
-      .first<{ planned_for: string; event_count: number; text_content: string }>();
+    const digestWindow = await env.DB.prepare(
+      `SELECT planned_for, event_count FROM digest_deliveries WHERE id = ? AND workspace_id = ?`,
+    ).bind(input.digestDeliveryId, input.workspaceId)
+      .first<{ planned_for: string; event_count: number }>();
+    const digestMessage = await env.DB.prepare(
+      `SELECT text_content FROM messages
+        WHERE workspace_id = ? AND workstream_id = ? AND client_message_id = ?`,
+    ).bind(input.workspaceId, input.workstreamId, `digest:${input.digestDeliveryId}`)
+      .first<{ text_content: string }>();
     // Failing the attempt rather than running without the window: a digest with
     // no brief cannot be written, and settlement folds an unsettled window into
     // the next occurrence instead of consuming it.
-    if (!digest?.text_content.trim()) throw new Error("digest_brief_context_not_found");
+    if (!digestWindow || !digestMessage?.text_content.trim()) {
+      throw new Error("digest_brief_context_not_found");
+    }
     // Nothing is pushed to `memoryQueryParts` here — the brief is this run's
     // trigger message, so the branch above already added its text.
     triggerMessage = renderScheduledDigestBriefMessage({
-      brief: digest.text_content,
-      plannedFor: digest.planned_for,
-      eventCount: Number(digest.event_count),
+      brief: digestMessage.text_content,
+      plannedFor: digestWindow.planned_for,
+      eventCount: Number(digestWindow.event_count),
     });
   }
   const frozenMemory = await freezeRunMemoryContext(
@@ -4280,7 +4290,7 @@ async function loadAuthorizedAttachmentReplay(
   contentParts: Awaited<ReturnType<typeof rehydrateWorkstreamViewReceipt>>;
 } | null | undefined> {
   if (!receipt.capability.startsWith("workstream.resources.")) return undefined;
-  const validation = await validateAttachmentToolReceiptReplay(env.DB, {
+  const validation = await validateAttachmentToolReceiptReplay(env, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     principal: input.executionPrincipal,
@@ -4288,12 +4298,12 @@ async function loadAuthorizedAttachmentReplay(
     capability: receipt.capability,
   });
   if (validation !== "valid" || !receipt.outputRef) {
-    await invalidateAttachmentToolReplay(env.DB, input.workspaceId, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env, input.workspaceId, receipt.invocationId);
     return null;
   }
   const output = await loadToolReplayOutput(env, receipt.outputRef);
   if (output === null) {
-    await invalidateAttachmentToolReplay(env.DB, input.workspaceId, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env, input.workspaceId, receipt.invocationId);
     return null;
   }
   let contentParts: Awaited<ReturnType<typeof rehydrateWorkstreamViewReceipt>>;
@@ -4302,11 +4312,11 @@ async function loadAuthorizedAttachmentReplay(
       ? await rehydrateWorkstreamViewReceipt(env, input, receipt.rawInput, output)
       : [];
   } catch {
-    await invalidateAttachmentToolReplay(env.DB, input.workspaceId, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env, input.workspaceId, receipt.invocationId);
     return null;
   }
   if (receipt.canonicalToolName === "view_resource" && contentParts.length === 0) {
-    await invalidateAttachmentToolReplay(env.DB, input.workspaceId, receipt.invocationId);
+    await invalidateAttachmentToolReplay(env, input.workspaceId, receipt.invocationId);
     return null;
   }
   return { output, contentParts };

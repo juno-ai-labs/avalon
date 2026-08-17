@@ -217,11 +217,17 @@ export function workstreamAuthoritySourceQuery(stage: WorkstreamAuthorityImportS
                 JOIN tool_invocations t ON t.id = c.tool_invocation_id
                WHERE t.workspace_id = ?1 AND t.workstream_id = ?2 AND c.rowid > ?3
                ORDER BY c.rowid LIMIT ?4`;
+    case "attachment_tool_receipts":
+      return `SELECT receipt.rowid AS source_rowid, receipt.*
+                FROM attachment_tool_receipts receipt
+                JOIN tool_invocations invocation ON invocation.id = receipt.tool_invocation_id
+               WHERE invocation.workspace_id = ?1 AND invocation.workstream_id = ?2
+                 AND receipt.rowid > ?3 ORDER BY receipt.rowid LIMIT ?4`;
     case "elicitation_requests":
       return `SELECT rowid AS source_rowid, * FROM elicitations
                WHERE workspace_id = ?1 AND workstream_id = ?2 AND rowid > ?3 ORDER BY rowid LIMIT ?4`;
     case "workstream_resource_links":
-      return `SELECT wr.rowid AS source_rowid, wr.*, r.resource_type, r.provider,
+      return `SELECT wr.rowid AS source_rowid, wr.*, r.connection_id, r.resource_type, r.provider,
                      r.provider_resource_id, r.title AS resource_title, r.mime_type, r.content_ref,
                      r.canonical_url, r.metadata_json, r.updated_at AS resource_updated_at
                 FROM workstream_resources wr JOIN resources r ON r.id = wr.resource_id
@@ -433,6 +439,11 @@ export function normalizeWorkstreamAuthoritySourceRow(
     case "tool_effect_checkpoints": return { checkpoint_id: text(row, "id"), effect_intent_id: text(row, "tool_invocation_id"),
       run_id: text(row, "harness_run_id"), attempt_id: text(row, "attempt_id"), checkpoint_index: integer(row, "checkpoint_index"),
       phase: text(row, "phase"), member_safe_payload_json: json(row, "member_safe_payload_json", "{}"), created_at: createdAt };
+    case "attachment_tool_receipts": return {
+      workspace_id: text(row, "workspace_id"), resource_id: text(row, "resource_id"),
+      tool_invocation_id: text(row, "tool_invocation_id"),
+      derivative_sha256: text(row, "derivative_sha256"), created_at: createdAt,
+    };
     case "elicitation_requests": return { elicitation_id: text(row, "id"), run_id: text(row, "harness_run_id"),
       prompt: text(row, "prompt"), response_type: text(row, "response_type"), options_json: json(row, "options_json", "[]"),
       minimum_selections: integer(row, "minimum_selections"), maximum_selections: nullableInteger(row, "maximum_selections"),
@@ -444,6 +455,7 @@ export function normalizeWorkstreamAuthoritySourceRow(
       attached_by_user_id: nullableText(row, "attached_by_user_id"), watch_enabled: integer(row, "watch_enabled"),
       relationship_type: text(row, "relationship_type"), resource_json: JSON.stringify({
         id: text(row, "resource_id"), type: text(row, "resource_type"), provider: text(row, "provider"),
+        connectionId: nullableText(row, "connection_id"),
         providerResourceId: nullableText(row, "provider_resource_id"), title: text(row, "resource_title"),
         mimeType: nullableText(row, "mime_type"), contentRef: nullableText(row, "content_ref"),
         canonicalUrl: nullableText(row, "canonical_url"), metadata: JSON.parse(json(row, "metadata_json", "{}")),
@@ -608,6 +620,27 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
   ).bind(route.workspace_id, route.workstream_id).first<SourceRow>();
   if (!root) throw new Error("workstream_import_projection_root_missing");
   const state = exactState(root);
+  const wakeup = await env.DB.prepare(
+    `SELECT due_at, prompt FROM workstream_wakeups
+      WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'
+      ORDER BY due_at, id LIMIT 1`,
+  ).bind(route.workspace_id, route.workstream_id).first<{ due_at: string; prompt: string }>();
+  const terminal = await env.DB.prepare(
+    `SELECT CASE
+              WHEN state IN ('stopping', 'archiving', 'expiring')
+                THEN lifecycle_claim_expires_at
+              WHEN expire_due_at IS NOT NULL AND (
+                (state = 'running' AND (warm_stop_due_at IS NULL OR expire_due_at <= warm_stop_due_at))
+                OR (state = 'stopped' AND (archive_due_at IS NULL OR expire_due_at <= archive_due_at))
+                OR state = 'archived'
+              ) THEN expire_due_at
+              WHEN state = 'running' THEN warm_stop_due_at
+              WHEN state = 'stopped' THEN archive_due_at
+              ELSE expire_due_at
+            END AS due_at
+       FROM workstream_sandboxes
+      WHERE workspace_id = ? AND workstream_id = ? AND provider_sandbox_id IS NOT NULL`,
+  ).bind(route.workspace_id, route.workstream_id).first<{ due_at: string | null }>();
   const common = {
     title: text(root, "title"),
     description: text(root, "objective"),
@@ -618,19 +651,47 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
     lastActivityAt: text(root, "last_activity_at"),
     completedAt: state === "completed" ? text(root, "updated_at") : null,
     archivedAt: nullableText(root, "archived_at"),
+    emailAddress: nullableText(root, "email_address"),
+    originType: text(root, "origin_type", "ad_hoc"),
+    createdByUserId: nullableText(root, "created_by_user_id"),
+    automationSubscriptionId: nullableText(root, "automation_subscription_id"),
+    automationRunId: nullableText(root, "automation_run_id"),
+    plannedFor: nullableText(root, "planned_for"),
+    titleStatus: text(root, "title_status", "settled"),
+    latestAttentionOrdinal: integer(root, "latest_attention_sequence_number"),
+    unreadTrackingStartOrdinal: integer(root, "unread_tracking_start_sequence_number"),
+    nextWakeupDueAt: wakeup?.due_at ?? null,
+    nextWakeupPrompt: wakeup?.prompt ?? null,
+    nextTerminalActionAt: terminal?.due_at ?? null,
+    createdAt: text(root, "created_at"),
+    updatedAt: text(root, "updated_at"),
   };
   await env.DB.prepare(
     `INSERT INTO workstream_directory_projections
        (workspace_id, workstream_id, generation, version, title, description, preview,
         scope, state, system_kind, last_activity_at, completed_at, archived_at,
-        payload_hash, projected_at)
-     VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        email_address, origin_type, created_by_user_id, automation_subscription_id,
+        automation_run_id, planned_for, title_status, latest_attention_ordinal,
+        unread_tracking_start_ordinal, next_wakeup_due_at, next_wakeup_prompt,
+        next_terminal_action_at, created_at, updated_at, payload_hash, projected_at)
+     VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(workstream_id) DO UPDATE SET
        workspace_id = excluded.workspace_id, generation = excluded.generation,
        version = excluded.version, title = excluded.title, description = excluded.description,
        preview = excluded.preview, scope = excluded.scope, state = excluded.state,
        system_kind = excluded.system_kind, last_activity_at = excluded.last_activity_at,
        completed_at = excluded.completed_at, archived_at = excluded.archived_at,
+       email_address = excluded.email_address, origin_type = excluded.origin_type,
+       created_by_user_id = excluded.created_by_user_id,
+       automation_subscription_id = excluded.automation_subscription_id,
+       automation_run_id = excluded.automation_run_id, planned_for = excluded.planned_for,
+       title_status = excluded.title_status,
+       latest_attention_ordinal = excluded.latest_attention_ordinal,
+       unread_tracking_start_ordinal = excluded.unread_tracking_start_ordinal,
+       next_wakeup_due_at = excluded.next_wakeup_due_at,
+       next_wakeup_prompt = excluded.next_wakeup_prompt,
+       next_terminal_action_at = excluded.next_terminal_action_at,
+       created_at = excluded.created_at, updated_at = excluded.updated_at,
        payload_hash = excluded.payload_hash, projected_at = excluded.projected_at
      WHERE excluded.generation > workstream_directory_projections.generation
         OR (excluded.generation = workstream_directory_projections.generation
@@ -648,8 +709,65 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
     common.lastActivityAt,
     common.completedAt,
     common.archivedAt,
+    common.emailAddress,
+    common.originType,
+    common.createdByUserId,
+    common.automationSubscriptionId,
+    common.automationRunId,
+    common.plannedFor,
+    common.titleStatus,
+    common.latestAttentionOrdinal,
+    common.unreadTrackingStartOrdinal,
+    common.nextWakeupDueAt,
+    common.nextWakeupPrompt,
+    common.nextTerminalActionAt,
+    common.createdAt,
+    common.updatedAt,
     workstreamImportHash(common),
     new Date().toISOString(),
+  ).run();
+
+  const projectedAt = new Date().toISOString();
+  await env.DB.prepare(
+    `DELETE FROM workstream_resource_link_projections WHERE workstream_id = ?`,
+  ).bind(route.workstream_id).run();
+  await env.DB.prepare(
+    `INSERT INTO workstream_resource_link_projections
+       (workspace_id, workstream_id, resource_id, watch_enabled,
+        relationship_type, generation, version, projected_at)
+     SELECT ?, wr.workstream_id, wr.resource_id, wr.watch_enabled,
+            wr.relationship_type, ?, 0, ?
+       FROM workstream_resources wr
+      WHERE wr.workstream_id = ?`,
+  ).bind(
+    route.workspace_id,
+    route.generation,
+    projectedAt,
+    route.workstream_id,
+  ).run();
+  await env.DB.prepare(
+    `INSERT INTO workstream_suggestion_feedback_projections
+       (workspace_id, workstream_id, action_id, activity_id, source, status,
+        resolved_at, resolved_by_user_id, generation, version, projected_at)
+     SELECT suggestion.workspace_id, suggestion.workstream_id, suggestion.id,
+            suggestion.activity_id, suggestion.source, suggestion.status,
+            suggestion.resolved_at, suggestion.resolved_by_user_id, ?, 1, ?
+       FROM activity_suggestions suggestion
+      WHERE suggestion.workspace_id = ? AND suggestion.workstream_id = ?
+        AND suggestion.source IN ('contextual_routing', 'suggested_work')
+        AND suggestion.status IN ('accepted', 'dismissed')
+        AND suggestion.resolved_at IS NOT NULL
+     ON CONFLICT(workstream_id, action_id) DO UPDATE SET
+       activity_id = excluded.activity_id, source = excluded.source,
+       status = excluded.status, resolved_at = excluded.resolved_at,
+       resolved_by_user_id = excluded.resolved_by_user_id,
+       generation = excluded.generation, version = excluded.version,
+       projected_at = excluded.projected_at`,
+  ).bind(
+    route.generation,
+    projectedAt,
+    route.workspace_id,
+    route.workstream_id,
   ).run();
 
   const viewers = await env.DB.prepare(
@@ -692,7 +810,19 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
                 AND mentioned_message.workstream_id = ?2
                 AND mention.mentioned_user_id = interested.user_id
                 AND mentioned_message.sequence_number > COALESCE(rs.read_through_sequence_number, 0)
-            ) AS you_are_mentioned
+            ) AS you_are_mentioned,
+            COALESCE(rs.read_through_sequence_number, w.unread_tracking_start_sequence_number)
+              AS seen_attention_ordinal,
+            rs.manual_unread_from_sequence_number AS manual_unread_from_ordinal,
+            COALESCE(rs.manual_unread_generation, 0) AS manual_unread_generation,
+            COALESCE((
+              SELECT MAX(mentioned_message.sequence_number)
+                FROM message_mentions mention
+                JOIN messages mentioned_message ON mentioned_message.id = mention.message_id
+               WHERE mentioned_message.workspace_id = ?1
+                 AND mentioned_message.workstream_id = ?2
+                 AND mention.mentioned_user_id = interested.user_id
+            ), 0) AS latest_mention_attention_ordinal
        FROM interested
        JOIN workstreams w ON w.id = ?2 AND w.workspace_id = ?1
        LEFT JOIN workstream_read_states rs
@@ -702,6 +832,10 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
     is_participant: number;
     unread_count: number;
     you_are_mentioned: number;
+    seen_attention_ordinal: number;
+    manual_unread_from_ordinal: number | null;
+    manual_unread_generation: number;
+    latest_mention_attention_ordinal: number;
   }>();
   const viewerStatements = (viewers.results ?? []).map((viewer) => {
     const projection = {
@@ -709,17 +843,27 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
       unreadCount: Number(viewer.unread_count),
       youAreMentioned: Number(viewer.you_are_mentioned) > 0,
       listable: common.scope === "workspace" || Number(viewer.is_participant) > 0,
+      seenAttentionOrdinal: Number(viewer.seen_attention_ordinal),
+      manualUnreadFromOrdinal: viewer.manual_unread_from_ordinal,
+      manualUnreadGeneration: Number(viewer.manual_unread_generation),
+      latestMentionAttentionOrdinal: Number(viewer.latest_mention_attention_ordinal),
     };
     return env.DB.prepare(
       `INSERT INTO workstream_directory_user_projections
-         (workspace_id, workstream_id, user_id, generation, version, is_participant,
-          unread_count, you_are_mentioned, listable, payload_hash, projected_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+       (workspace_id, workstream_id, user_id, generation, version, is_participant,
+          unread_count, you_are_mentioned, listable, payload_hash, projected_at,
+          seen_attention_ordinal, manual_unread_from_ordinal,
+          manual_unread_generation, latest_mention_attention_ordinal)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(workstream_id, user_id) DO UPDATE SET
          workspace_id = excluded.workspace_id, generation = excluded.generation,
          version = excluded.version, is_participant = excluded.is_participant,
          unread_count = excluded.unread_count, you_are_mentioned = excluded.you_are_mentioned,
          listable = excluded.listable, payload_hash = excluded.payload_hash,
+         seen_attention_ordinal = excluded.seen_attention_ordinal,
+         manual_unread_from_ordinal = excluded.manual_unread_from_ordinal,
+         manual_unread_generation = excluded.manual_unread_generation,
+         latest_mention_attention_ordinal = excluded.latest_mention_attention_ordinal,
          projected_at = excluded.projected_at
        WHERE excluded.generation > workstream_directory_user_projections.generation
           OR (excluded.generation = workstream_directory_user_projections.generation
@@ -735,6 +879,10 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
       projection.listable ? 1 : 0,
       workstreamImportHash(projection),
       new Date().toISOString(),
+      projection.seenAttentionOrdinal,
+      projection.manualUnreadFromOrdinal,
+      projection.manualUnreadGeneration,
+      projection.latestMentionAttentionOrdinal,
     );
   });
   for (let start = 0; start < viewerStatements.length; start += 80) {
@@ -943,10 +1091,9 @@ export async function processWorkstreamAuthorityMigration(
         operationsRemaining -= verified.length;
         continue;
       }
-      // Attestation is code-owned, not an operator assertion. This import-only
-      // deployment advertises version 0, so the update is a no-op. The later
-      // Worker that actually implements the complete DO serving contract bumps
-      // the compile-time version and can attest only after every route is active.
+      // Attestation is code-owned, not an operator assertion. A Worker can
+      // advertise a serving contract only after every route is active, while
+      // the final phase flip remains an explicit operator action.
       if (WORKSTREAM_DO_SERVING_CONTRACT_VERSION > 0) {
         await env.DB.prepare(
           `UPDATE workstream_authority_control

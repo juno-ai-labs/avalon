@@ -18,6 +18,10 @@ import { fireDigestSchedule } from "../services/digest-run-service";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+import {
+  bootstrapWorkstreamRuntimeEnvironment,
+  workstreamExecutionEnvironment,
+} from "../services/workstream-runtime-database";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
 import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "../services/terminal/lifecycle";
@@ -49,6 +53,10 @@ interface AlarmTargetRow {
 }
 
 interface DueTerminalSandboxRow {
+  workstream_id: string;
+}
+
+interface DueWakeupWorkstreamRow {
   workstream_id: string;
 }
 
@@ -218,8 +226,9 @@ export class WorkspaceScheduler {
     }
     if (!existing) await this.state.storage.put("workspaceId", parsedWorkspaceId);
 
-    const targets = await this.env.DB.prepare(
-      `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const targets = await this.env.DB.prepare(authority.phase === "durable_object_open"
+      ? `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
          FROM schedules
         WHERE workspace_id = ?1 AND enabled = 1 AND next_run_at IS NOT NULL
        UNION ALL
@@ -227,35 +236,35 @@ export class WorkspaceScheduler {
          FROM resource_watches
         WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL
        UNION ALL
-       SELECT 'wakeup' AS target_kind, id, due_at
-         FROM workstream_wakeups
-        WHERE workspace_id = ?1 AND status = 'pending'
+       SELECT 'wakeup' AS target_kind, workstream_id AS id,
+              next_wakeup_due_at AS due_at
+         FROM workstream_directory_projections
+        WHERE workspace_id = ?1 AND archived_at IS NULL
+          AND next_wakeup_due_at IS NOT NULL
        UNION ALL
        SELECT 'terminal' AS target_kind, workstream_id AS id,
-              CASE
-                WHEN state IN ('stopping', 'archiving', 'expiring')
-                  THEN lifecycle_claim_expires_at
-                WHEN expire_due_at IS NOT NULL AND (
-                  (state = 'running' AND (warm_stop_due_at IS NULL OR expire_due_at <= warm_stop_due_at))
-                  OR (state = 'stopped' AND (archive_due_at IS NULL OR expire_due_at <= archive_due_at))
-                  OR state = 'archived'
-                ) THEN expire_due_at
-                WHEN state = 'running' THEN warm_stop_due_at
-                WHEN state = 'stopped' THEN archive_due_at
-                ELSE expire_due_at
-              END AS due_at
-         FROM workstream_sandboxes
-        WHERE workspace_id = ?1
-          AND provider_sandbox_id IS NOT NULL
-          AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
-          AND (
-            (state IN ('stopping', 'archiving', 'expiring') AND lifecycle_claim_expires_at IS NOT NULL)
-            OR
-            expire_due_at IS NOT NULL
-            OR (state = 'running' AND warm_stop_due_at IS NOT NULL)
-            OR (state = 'stopped' AND archive_due_at IS NOT NULL)
-          )`
-    )
+              next_terminal_action_at AS due_at
+         FROM workstream_directory_projections
+        WHERE workspace_id = ?1 AND archived_at IS NULL
+          AND next_terminal_action_at IS NOT NULL`
+      : `SELECT 'schedule' AS target_kind, id, next_run_at AS due_at
+           FROM schedules
+          WHERE workspace_id = ?1 AND enabled = 1 AND next_run_at IS NOT NULL
+         UNION ALL
+         SELECT 'watch' AS target_kind, id, next_poll_at AS due_at
+           FROM resource_watches
+          WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL
+         UNION ALL
+         SELECT 'wakeup' AS target_kind, id, due_at
+           FROM workstream_wakeups
+          WHERE workspace_id = ?1 AND status = 'pending'
+         UNION ALL
+         SELECT 'terminal' AS target_kind, workstream_id AS id,
+                COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) AS due_at
+           FROM workstream_sandboxes
+          WHERE workspace_id = ?1 AND provider_sandbox_id IS NOT NULL
+            AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
+            AND COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) IS NOT NULL`)
       .bind(parsedWorkspaceId)
       .all<AlarmTargetRow>();
 
@@ -327,36 +336,32 @@ export class WorkspaceScheduler {
         )
           .bind(workspaceId, now.toISOString())
           .all<ResourceWatchRow>(),
-        this.env.DB.prepare(
-          `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
-                  due_at, status, version, created_at
-             FROM workstream_wakeups
-            WHERE workspace_id = ?1
-              AND status = 'pending'
-              AND due_at <= ?2
-            ORDER BY due_at ASC
-            LIMIT 100`
-        )
+        this.env.DB.prepare(authority.phase === "durable_object_open"
+          ? `SELECT workstream_id
+             FROM workstream_directory_projections
+            WHERE workspace_id = ?1 AND archived_at IS NULL
+              AND next_wakeup_due_at IS NOT NULL AND next_wakeup_due_at <= ?2
+            ORDER BY next_wakeup_due_at, workstream_id LIMIT 100`
+          : `SELECT workstream_id
+               FROM workstream_wakeups
+              WHERE workspace_id = ?1 AND status = 'pending' AND due_at <= ?2
+              GROUP BY workstream_id ORDER BY MIN(due_at), workstream_id LIMIT 100`)
           .bind(workspaceId, now.toISOString())
-          .all<WorkstreamWakeupRow>(),
-        this.env.DB.prepare(
-          `SELECT workstream_id
-             FROM workstream_sandboxes
-            WHERE workspace_id = ?1
-              AND provider_sandbox_id IS NOT NULL
-              AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
-              AND (
-                (state IN ('stopping', 'archiving', 'expiring')
-                  AND lifecycle_claim_expires_at IS NOT NULL
-                  AND lifecycle_claim_expires_at <= ?2)
-                OR
-                (state = 'running' AND warm_stop_due_at IS NOT NULL AND warm_stop_due_at <= ?2)
-                OR (state = 'stopped' AND archive_due_at IS NOT NULL AND archive_due_at <= ?2)
-                OR (expire_due_at IS NOT NULL AND expire_due_at <= ?2)
-              )
-            ORDER BY COALESCE(expire_due_at, archive_due_at, warm_stop_due_at) ASC
-            LIMIT 100`,
-        )
+          .all<DueWakeupWorkstreamRow>(),
+        this.env.DB.prepare(authority.phase === "durable_object_open"
+          ? `SELECT workstream_id
+             FROM workstream_directory_projections
+            WHERE workspace_id = ?1 AND archived_at IS NULL
+              AND next_terminal_action_at IS NOT NULL
+              AND next_terminal_action_at <= ?2
+            ORDER BY next_terminal_action_at, workstream_id LIMIT 100`
+          : `SELECT workstream_id
+               FROM workstream_sandboxes
+              WHERE workspace_id = ?1 AND provider_sandbox_id IS NOT NULL
+                AND state IN ('running', 'stopping', 'stopped', 'archiving', 'archived', 'expiring')
+                AND COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at) <= ?2
+              ORDER BY COALESCE(lifecycle_claim_expires_at, expire_due_at, archive_due_at, warm_stop_due_at), workstream_id
+              LIMIT 100`)
           .bind(workspaceId, now.toISOString())
           .all<DueTerminalSandboxRow>()
       ]);
@@ -405,11 +410,25 @@ export class WorkspaceScheduler {
         }
       }
 
-      for (const wakeup of dueWakeups.results) {
-        const key = retryStateKey("wakeup", wakeup.id);
+      for (const dueWorkstream of dueWakeups.results) {
+        const executionEnv = await workstreamExecutionEnvironment(
+          this.env,
+          workspaceId,
+          dueWorkstream.workstream_id,
+        );
+        const wakeup = await executionEnv.DB.prepare(
+          `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
+                  due_at, status, version, created_at
+             FROM workstream_wakeups
+            WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'
+              AND due_at <= ? ORDER BY due_at, id LIMIT 1`,
+        ).bind(workspaceId, dueWorkstream.workstream_id, now.toISOString())
+          .first<WorkstreamWakeupRow>();
+        if (!wakeup) continue;
+        const key = retryStateKey("wakeup", dueWorkstream.workstream_id);
         if ((retryStates[key]?.retryAt ?? 0) > now.getTime()) continue;
         try {
-          await fireWorkstreamWakeup(this.env, wakeup);
+          await fireWorkstreamWakeup(executionEnv, wakeup);
           if (retryStates[key]) {
             delete retryStates[key];
             retryStatesChanged = true;
@@ -437,14 +456,19 @@ export class WorkspaceScheduler {
           if (!terminalProvider) {
             throw new Error("terminal_provider_unavailable");
           }
+          const executionEnv = await workstreamExecutionEnvironment(
+            this.env,
+            workspaceId,
+            sandbox.workstream_id,
+          );
           const result = await reconcileDueTerminalSandbox(
-            this.env.DB,
+            executionEnv.DB,
             terminalProvider,
             workspaceId,
             sandbox.workstream_id,
             now,
             createTerminalFinalDiffPreserver(
-              this.env,
+              executionEnv,
               terminalProvider,
               workspaceId,
               sandbox.workstream_id,
@@ -586,6 +610,7 @@ export class WorkspaceScheduler {
     const subscriptionId = schedule.automation_subscription_id;
     if (!subscriptionId) throw new Error("missing_automation_subscription");
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const authority = await readWorkstreamAuthorityControl(this.env);
 
     const source = await this.env.DB.prepare(
       `SELECT s.id AS subscription_id,
@@ -618,15 +643,21 @@ export class WorkspaceScheduler {
       .first<AutomationRunRow>();
 
     if (!run) {
-      const planned = await this.env.DB.prepare(
-        `SELECT id, automation_run_id
-           FROM workstreams
+      const planned = await this.env.DB.prepare(authority.phase === "durable_object_open"
+        ? `SELECT workstream_id AS id, automation_run_id
+           FROM workstream_directory_projections
           WHERE workspace_id = ?1
             AND automation_subscription_id = ?2
             AND planned_for = ?3
             AND archived_at IS NULL
           LIMIT 1`
-      )
+        : `SELECT id, automation_run_id
+           FROM workstreams
+          WHERE workspace_id = ?1
+            AND automation_subscription_id = ?2
+            AND planned_for = ?3
+            AND archived_at IS NULL
+          LIMIT 1`)
         .bind(schedule.workspace_id, subscriptionId, schedule.next_run_at)
         .first<PlannedWorkstreamRow>();
 
@@ -634,6 +665,9 @@ export class WorkspaceScheduler {
       const createdWorkstreamId = planned ? null : workstreamId;
       const runId = crypto.randomUUID();
       const timestamp = now.toISOString();
+      const executionEnv = planned
+        ? await workstreamExecutionEnvironment(this.env, schedule.workspace_id, workstreamId)
+        : await bootstrapWorkstreamRuntimeEnvironment(this.env, schedule.workspace_id, workstreamId);
 
       if (!planned) {
         const emailRoute = await emailRouting.reserve({
@@ -641,7 +675,7 @@ export class WorkspaceScheduler {
           workspaceId: schedule.workspace_id,
           workstreamId,
         });
-        await this.env.DB.prepare(
+        await executionEnv.DB.prepare(
           `INSERT INTO workstreams (
              id, workspace_id, title, objective, email_address, email_route_status, origin_type,
              created_by_user_id, automation_subscription_id, automation_run_id,
@@ -690,7 +724,11 @@ export class WorkspaceScheduler {
         )
           .bind(subscriptionId, schedule.next_run_at)
           .first<AutomationRunRow>();
-        if (createdWorkstreamId && run?.workstream_id !== createdWorkstreamId) {
+        if (
+          authority.phase !== "durable_object_open"
+          && createdWorkstreamId
+          && run?.workstream_id !== createdWorkstreamId
+        ) {
           // A concurrent scheduler won the unique run claim. The losing Global
           // address remains a permanent non-routable reservation tombstone.
           await this.env.DB.prepare(
@@ -705,7 +743,7 @@ export class WorkspaceScheduler {
           status: "running",
           workflow_instance_id: null
         };
-        await this.env.DB.prepare(
+        await executionEnv.DB.prepare(
           `UPDATE workstreams
               SET automation_run_id = ?1, harness_status = 'running', updated_at = ?2
             WHERE id = ?3 AND workspace_id = ?4`
@@ -758,16 +796,19 @@ export class WorkspaceScheduler {
       if (!workflowAlreadyExists(error)) throw error;
     }
 
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `UPDATE automation_runs
-            SET workflow_instance_id = ?1, status = 'running', started_at = COALESCE(started_at, ?2)
-          WHERE id = ?3 AND workspace_id = ?4`
-      ).bind(workflowId, now.toISOString(), run.id, schedule.workspace_id),
-      this.env.DB.prepare(
-        `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
-      ).bind(workflowId, harnessRunId, schedule.workspace_id)
-    ]);
+    await this.env.DB.prepare(
+      `UPDATE automation_runs
+          SET workflow_instance_id = ?1, status = 'running', started_at = COALESCE(started_at, ?2)
+        WHERE id = ?3 AND workspace_id = ?4`,
+    ).bind(workflowId, now.toISOString(), run.id, schedule.workspace_id).run();
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      schedule.workspace_id,
+      run.workstream_id,
+    );
+    await executionEnv.DB.prepare(
+      `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
+    ).bind(workflowId, harnessRunId, schedule.workspace_id).run();
   }
 
   private async ensureHarnessRun(
@@ -776,7 +817,8 @@ export class WorkspaceScheduler {
     executionPrincipal: z.infer<typeof ExecutionPrincipalSchema>,
     now: Date
   ): Promise<string> {
-    const existing = await this.env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(this.env, workspaceId, workstreamId);
+    const existing = await executionEnv.DB.prepare(
       `SELECT id
          FROM harness_runs
         WHERE workspace_id = ?1
@@ -792,8 +834,8 @@ export class WorkspaceScheduler {
     if (existing) return existing.id;
 
     const id = crypto.randomUUID();
-    const model = await scheduledWorkstreamModelForExisting(this.env, { workspaceId, workstreamId });
-    await this.env.DB.prepare(
+    const model = await scheduledWorkstreamModelForExisting(executionEnv, { workspaceId, workstreamId });
+    await executionEnv.DB.prepare(
       `INSERT INTO harness_runs (
        id, workspace_id, workstream_id, origin, execution_principal_json,
          workflow_instance_id, parent_harness_run_id, status, started_at, completed_at,

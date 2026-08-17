@@ -17,6 +17,25 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
   lastActivityAt: TimestampSchema,
   completedAt: NullableTimestampSchema,
   archivedAt: NullableTimestampSchema,
+  emailAddress: z.string().email().max(254).nullable().optional(),
+  originType: z.enum(["ad_hoc", "automation"]).optional(),
+  createdByUserId: IdSchema.nullable().optional(),
+  automationSubscriptionId: IdSchema.nullable().optional(),
+  automationRunId: IdSchema.nullable().optional(),
+  plannedFor: NullableTimestampSchema.optional(),
+  titleStatus: z.enum(["naming", "automatic", "settled"]).optional(),
+  latestAttentionOrdinal: z.number().int().nonnegative().optional(),
+  unreadTrackingStartOrdinal: z.number().int().nonnegative().optional(),
+  nextWakeupDueAt: NullableTimestampSchema.optional(),
+  nextWakeupPrompt: z.string().max(500).nullable().optional(),
+  nextTerminalActionAt: NullableTimestampSchema.optional(),
+  resourceLinks: z.array(z.object({
+    resourceId: IdSchema,
+    watchEnabled: z.boolean(),
+    relationshipType: z.string().min(1).max(80),
+  }).strict()).max(10_000).optional(),
+  createdAt: TimestampSchema.optional(),
+  updatedAt: TimestampSchema.optional(),
 }).strict();
 
 export const WorkstreamDirectoryUserEffectSchema = z.object({
@@ -26,6 +45,10 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
   unreadCount: z.number().int().nonnegative(),
   youAreMentioned: z.boolean(),
   listable: z.boolean(),
+  seenAttentionOrdinal: z.number().int().nonnegative().optional(),
+  manualUnreadFromOrdinal: z.number().int().nonnegative().nullable().optional(),
+  manualUnreadGeneration: z.number().int().nonnegative().optional(),
+  latestMentionAttentionOrdinal: z.number().int().nonnegative().optional(),
 }).strict();
 
 export const WorkstreamActivityEffectSchema = z.object({
@@ -63,11 +86,22 @@ export const WorkstreamMentionNotificationEffectSchema = z.object({
   occurredAt: TimestampSchema,
 }).strict();
 
+export const WorkstreamSuggestionFeedbackEffectSchema = z.object({
+  kind: z.literal("suggestion_feedback"),
+  actionId: IdSchema,
+  activityId: IdSchema,
+  source: z.enum(["contextual_routing", "suggested_work"]),
+  status: z.enum(["accepted", "dismissed"]),
+  resolvedAt: TimestampSchema,
+  resolvedByUserId: IdSchema,
+}).strict();
+
 export const WorkstreamRegionalEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
+  WorkstreamSuggestionFeedbackEffectSchema,
 ]);
 
 export type WorkstreamRegionalEffect = z.infer<typeof WorkstreamRegionalEffectSchema>;

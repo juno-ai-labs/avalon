@@ -15,6 +15,7 @@ import {
 } from "../src/durable-objects/workstream-authority-import";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { workstreamRegionalEffectWakeMessage } from "../src/durable-objects/workstream-regional-effect";
+import { rewriteWorkstreamRuntimeSql } from "../src/durable-objects/workstream-runtime-sql";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -29,10 +30,12 @@ const AUTHOR_ID = "00000000-0000-7000-8000-0000000000a7";
 const EXPECTED_TABLES = [
   "_data_migrations",
   "_migration_command_receipts",
+  "_runtime_statement_changes",
   "_sql_schema_migrations",
   "active_output_chunks",
   "active_output_turns",
   "activity_delivery_receipts",
+  "attachment_tool_receipts",
   "compaction_checkpoints",
   "compaction_jobs",
   "content_refs",
@@ -134,7 +137,7 @@ describe("the Workstream Durable Object relational schema", () => {
         schema_version: WORKSTREAM_OBJECT_SCHEMA_VERSION,
       });
       expect(database.prepare("SELECT COUNT(*) AS count FROM _sql_schema_migrations").get())
-        .toEqual({ count: 1 });
+        .toEqual({ count: WORKSTREAM_OBJECT_SCHEMA_VERSION });
 
       const widestTable = tables.reduce((widest, table) => {
         const columnCount = database.prepare(`PRAGMA table_info("${table}")`).all().length;
@@ -162,6 +165,76 @@ describe("the Workstream Durable Object relational schema", () => {
 
       expect(() => applyWorkstreamObjectSchema(storage, "worker-two"))
         .toThrow("workstream_schema_hash_mismatch:1");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("serves legacy runtime SQL from normalized object-local tables", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
+      database.prepare(
+        `INSERT INTO workstream
+           (id, workstream_key, parent_workspace_key, region, authority_mode,
+            authority_generation, title, description, scope, exact_state,
+            state_reason_code, next_sequence_number, next_attention_ordinal,
+            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
+            deletion_epoch, run_revision, created_at, last_people_activity_at,
+            state_changed_at, updated_at)
+         VALUES (1, ?, ?, 'global', 'authoritative', 1, 'Local', 'Object owned',
+                 'workspace', 'scheduled', 'test', 1, 1, 1, 0, 0, 1, 0, 1,
+                 1000, 1000, 1000, 1000)`,
+      ).run(WORKSTREAM_ID, WORKSPACE_ID);
+      database.prepare(
+        `INSERT INTO substreams
+           (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
+            depth, return_mode, origin_part_id, owner_user_id, audience,
+            tool_policy, status, created_at, closed_at)
+         VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
+                 'workspace', 'full', 'open', 1000, NULL)`,
+      ).run();
+      database.prepare(rewriteWorkstreamRuntimeSql(
+        `INSERT INTO harness_runs
+           (id, workspace_id, workstream_id, origin, execution_principal_json,
+            status, model, created_at)
+         VALUES (?, ?, ?, 'opening_message', ?, 'scheduled', 'test-model', ?)`,
+      )).run(RUN_ID, WORKSPACE_ID, WORKSTREAM_ID, JSON.stringify({
+        type: "workspace",
+        workspaceId: WORKSPACE_ID,
+      }), "2026-08-17T12:00:00.000Z");
+      database.prepare(rewriteWorkstreamRuntimeSql(
+        `INSERT INTO messages
+           (id, client_message_id, workspace_id, workstream_id, author_type,
+            message_type, text_content, sequence_number, harness_run_id, created_at)
+         VALUES (?, 'runtime-message', ?, ?, 'agent', 'text', 'hello', 1, ?, ?)`,
+      )).run(MESSAGE_ID, WORKSPACE_ID, WORKSTREAM_ID, RUN_ID, "2026-08-17T12:00:01.000Z");
+      database.prepare(rewriteWorkstreamRuntimeSql(
+        `INSERT INTO workstream_sandboxes
+           (workspace_id, workstream_id, state, stable_name, provider_sandbox_id,
+            generation, authority_fingerprint, applied_network_revision, version,
+            last_activity_at, created_at, updated_at)
+         VALUES (?, ?, 'running', 'sandbox', 'daytona-1', 1, 'authority', 1, 1, ?, ?, ?)`,
+      )).run(
+        WORKSPACE_ID,
+        WORKSTREAM_ID,
+        "2026-08-17T12:00:02.000Z",
+        "2026-08-17T12:00:02.000Z",
+        "2026-08-17T12:00:02.000Z",
+      );
+
+      expect(database.prepare("SELECT run_id, status FROM runs").get()).toEqual({
+        run_id: RUN_ID,
+        status: "admitted",
+      });
+      expect(database.prepare("SELECT id, content FROM parts").get()).toEqual({
+        id: MESSAGE_ID,
+        content: "hello",
+      });
+      expect(database.prepare(
+        "SELECT sandbox_id, lifecycle_state FROM terminal_workspace WHERE id = 1",
+      ).get()).toEqual({ sandbox_id: "daytona-1", lifecycle_state: "running" });
     } finally {
       database.close();
     }

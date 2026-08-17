@@ -27,7 +27,7 @@ weeks ago.
 | `@juno-ai/bind` (`loop/tool-loop.ts`) | Calls `needsCompaction` after a turn and `applyCompaction` at a batch boundary, then swaps in whatever transcript it is given. Bind holds no opinion about that transcript's shape. |
 | [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: `persistWorkstreamContextCompaction`, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
 | [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
-| [`packages/db/migrations/0073_attachment_derivative_lifecycle.sql`](../packages/db/migrations/0073_attachment_derivative_lifecycle.sql) | Principal-scoped `workstream_context_compactions` rows plus the monotonic work-stream resource-inventory revision and its relationship triggers. |
+| [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `compaction_jobs`/`compaction_checkpoints` plus the monotonic local resource-inventory revision and relationship triggers. Migration `0073` is the pre-cutover source schema. |
 
 ## How it works
 
@@ -88,8 +88,8 @@ statement. An attachment revocation or visibility change therefore cannot race
 with checkpoint creation without repeating the grouped aggregation.
 
 The base checkpoint is persisted without its system message or authorized
-appendix, keyed by work stream and execution principal, in
-`workstream_context_compactions`, together
+appendix, keyed by execution principal in the owning WorkstreamDO's
+`compaction_checkpoints`, together
 with that scope, the raw summary, checkpoint-template version, model,
 before/window token counts, and the compaction's own usage and cost. The upsert
 advances a row only when `compacted_through_sequence` moves forward, or when the
@@ -235,6 +235,26 @@ results.
 
 ## Changelog
 
+### 2026-08-17 — Compaction and its revision fence are object-local
+
+**What changed:** Compaction jobs, checkpoints, and the resource-inventory
+revision now persist in the owning WorkstreamDO. A message arriving during
+summarization receives a later immutable part sequence; conditional persistence
+still fences the captured transcript and resource revision.
+
+**Why:** Summary publication, transcript ordering, and authorization revision
+must share one serializable authority. Keeping the checkpoint in D1 would leave
+a cross-database race precisely at compaction's safety boundary.
+
+**Considered and rejected:** Pausing message ingress during compaction and
+copying local revisions into D1. The former harms steering; the latter cannot
+atomically represent the local transcript boundary.
+
+**Consequences:** Compaction never blocks new messages. A successful checkpoint
+covers only its frozen sequence; messages committed while it ran remain after
+that fence and are appended during replay. A revision mismatch discards the
+candidate and retries later.
+
 ### 2026-08-12 — Compaction fences one aggregate instead of repeating it
 
 **What changed:** Preparation now reads only the monotonic inventory revision.
@@ -276,7 +296,7 @@ letting the model reconcile old and new appendices. Each leaves either an
 authorization ambiguity or an unbounded runtime path.
 
 **Consequences:** Every checkpoint lookup supplies the exact principal key,
-resource relationships advance the revision through D1 triggers, and the final
+resource relationships advance the revision through local triggers, and the final
 write fails closed if that revision changed. The old inventory appendix is
 generated state, never durable summary content.
 

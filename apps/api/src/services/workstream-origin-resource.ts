@@ -14,6 +14,8 @@ import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { logWarn } from "../observability/logger";
 import { publishWorkstreamEvent } from "./integrations";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 
 /**
  * A connector origin bound to the installed credential it was reached through.
@@ -212,9 +214,20 @@ export async function attachWorkstreamOriginResource(env: Env, input: {
   try {
     const resourceId = await resolveOriginResource(env, input.workspaceId, input.descriptor);
     if (!resourceId) return null;
-    await env.DB.prepare(ATTACH_ORIGIN_RESOURCE_SQL)
-      .bind(input.workstreamId, resourceId, input.attachedByUserId, nowIso())
-      .run();
+    const authority = await readWorkstreamAuthorityControl(env);
+    if (authority.phase === "durable_object_open") {
+      await attachWorkstreamRuntimeResource(env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        resourceId,
+        attachedByUserId: input.attachedByUserId,
+        relationshipType: ORIGIN_RELATIONSHIP_TYPE,
+      });
+    } else {
+      await env.DB.prepare(ATTACH_ORIGIN_RESOURCE_SQL)
+        .bind(input.workstreamId, resourceId, input.attachedByUserId, nowIso())
+        .run();
+    }
     const row = await env.DB.prepare(ATTACHED_ORIGIN_RESOURCE_SQL)
       .bind(resourceId, input.workspaceId)
       .first<Record<string, unknown>>();

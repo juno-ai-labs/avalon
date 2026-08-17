@@ -1,7 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { loadWorkstreamRoomSnapshot } from "../src/durable-objects/workstream-room";
+import type { Env } from "../src/env";
+import { WorkstreamService } from "../src/services/workstream-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
@@ -12,6 +13,16 @@ const workstreamId = "00000000-0000-7000-8000-0000000000b1";
 const at = "2026-08-11T09:00:00.000Z";
 
 const databases: DatabaseSync[] = [];
+
+async function loadWorkstreamRoomSnapshot(
+  env: Env,
+  input: { workspaceId: string; workstreamId: string; viewerUserId: string; viewers: [] },
+) {
+  return new WorkstreamService(env, {
+    workspaceId: input.workspaceId,
+    userId: input.viewerUserId,
+  } as never).get(input.workstreamId);
+}
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();

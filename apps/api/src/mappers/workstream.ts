@@ -192,6 +192,7 @@ export function toWorkstream(input: Record<string, unknown>): Workstream {
     manualUnreadFromSequenceNumber,
     manualUnreadGeneration: row.viewer_manual_unread_generation ?? 0,
     hasUnread,
+    youAreMentioned: false,
     firstUnreadSequenceNumber: manualUnreadFromSequenceNumber
       ?? (hasUnread ? Math.min(latestAttentionSequenceNumber, readThroughSequenceNumber + 1) : null),
     lastActivityAt: row.last_activity_at,
