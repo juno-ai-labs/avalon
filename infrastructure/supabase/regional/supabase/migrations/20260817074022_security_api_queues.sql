@@ -1607,24 +1607,19 @@ begin
   update avalon_private.workstreams
   set latest_seq = greatest(latest_seq, assistant_seq),
       revision = revision + 1, last_activity_at = now(), updated_at = now(),
-      active_run_id = case when p_terminal_run then null else active_run_id end,
       state = case when state in ('waiting', 'needs_input', 'error') then 'active' else state end,
       state_reason = case when state in ('waiting', 'needs_input', 'error') then null else state_reason end,
       error_at = case when state = 'error' then null else error_at end
   where id = workstream.id;
-  if p_terminal_run then
-    update avalon_private.agent_runs
-    set state = 'completed', run_revision = run_revision + 1,
-        completed_at = now(), last_progress_at = now(),
-        terminal_reason = 'completed'
-    where id = run.id;
-  end if;
   update avalon_private.workstream_cards
   set exact_state = case when exact_state in ('waiting', 'needs_input', 'error') then 'active' else exact_state end,
       lifecycle_family = 'in_progress', completed_at = null, error_at = null,
       latest_seq = greatest(latest_seq, assistant_seq), preview_text = left(full_text, 512),
       last_activity_at = now(), common_revision = common_revision + 1,
-      active_run_summary = case when p_terminal_run then '{}'::jsonb else active_run_summary end
+      active_run_summary = case
+        when p_terminal_run then jsonb_build_object('run_id', run.id, 'state', 'settling')
+        else active_run_summary
+      end
   where workstream_id = workstream.id;
   insert into avalon_private.workstream_events (
     workspace_id, workstream_id, workstream_seq, kind, run_id,

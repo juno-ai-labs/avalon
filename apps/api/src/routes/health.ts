@@ -3,7 +3,12 @@ import { z } from "zod";
 import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
-import { createPostgresClient, productDataAuthority } from "../postgres/runtime";
+import {
+  createPostgresClient,
+  EXPECTED_POSTGRES_ROLE,
+  postgresHealthRoles,
+  productDataAuthority,
+} from "../postgres/runtime";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 /** The probe's own shape — this route owns it, so the contract lives here. */
@@ -77,19 +82,34 @@ healthRoutes.get("/", async (c) => {
   if (dataAuthority === "d1") {
     checks.postgres = { ok: true, message: "standby; D1 remains authoritative" };
   } else {
-    let postgresClient: ReturnType<typeof createPostgresClient> | undefined;
-    try {
-      postgresClient = createPostgresClient(c.env, "workflow_runner");
-      const result = await postgresClient.health();
-      checks.postgres = {
-        ok: result.role === "avalon_workflow_runner",
-        message: result.role === "avalon_workflow_runner" ? `${dataAuthority} authority available` : "unexpected database role",
-      };
-    } catch {
-      checks.postgres = { ok: false, message: `${dataAuthority} authority unavailable` };
-    } finally {
-      await postgresClient?.close();
+    const roleChecks = await Promise.all(postgresHealthRoles(c.env).map(async (role) => {
+      let postgresClient: ReturnType<typeof createPostgresClient> | undefined;
+      let check: { ok: boolean; message: string };
+      try {
+        postgresClient = createPostgresClient(c.env, role);
+        const result = await postgresClient.health();
+        check = result.role === EXPECTED_POSTGRES_ROLE[role]
+          ? { ok: true, message: "available" }
+          : { ok: false, message: "unexpected database role" };
+      } catch {
+        check = { ok: false, message: "unavailable" };
+      } finally {
+        try {
+          await postgresClient?.close();
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "unknown Postgres close error";
+          logEvent(c, "warn", "postgres_health_client_close_failed", { role, reason });
+        }
+      }
+      return { role, check };
+    }));
+    for (const { role, check } of roleChecks) {
+      checks[`postgres.${role}`] = check;
     }
+    const unavailableRoles = roleChecks.filter(({ check }) => !check.ok).map(({ role }) => role);
+    checks.postgres = unavailableRoles.length === 0
+      ? { ok: true, message: `${dataAuthority} authority available` }
+      : { ok: false, message: `${dataAuthority} authority unavailable: ${unavailableRoles.join(", ")}` };
   }
   try {
     await c.env.PAYLOADS.list({ limit: 1 });

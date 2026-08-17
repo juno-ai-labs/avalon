@@ -255,6 +255,13 @@ function completeLatestRun(database: DatabaseSync, workstreamId: string): void {
  * `created_at` is after the opening run's, which is the order `retry` reads.
  */
 function insertFailedTriggerlessRun(database: DatabaseSync, workstreamId: string): void {
+  const openingRun = database.prepare(
+    `SELECT created_at FROM harness_runs
+     WHERE workstream_id = ?
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
+  ).get(workstreamId) as { created_at: string };
+  const createdAt = new Date(Date.parse(openingRun.created_at) + 60_000).toISOString();
+  const terminalizedAt = new Date(Date.parse(createdAt) + 5 * 60_000).toISOString();
   database.prepare(
     `INSERT INTO harness_runs
      (id, workspace_id, workstream_id, origin, execution_principal_json, status,
@@ -265,9 +272,9 @@ function insertFailedTriggerlessRun(database: DatabaseSync, workstreamId: string
     workspaceId,
     workstreamId,
     JSON.stringify({ type: "user", userId: selectorId }),
-    "2026-08-14T09:00:00.000Z",
-    "2026-08-14T09:05:00.000Z",
-    "2026-08-14T09:00:00.000Z",
+    createdAt,
+    terminalizedAt,
+    createdAt,
   );
   database.prepare("UPDATE workstreams SET harness_status = 'failed' WHERE id = ?").run(workstreamId);
 }

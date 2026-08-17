@@ -85,6 +85,13 @@ that is waiting, while an actively executing model step notices steering at its
 next 500 ms database checkpoint, loses the control compare-and-set, aborts the
 provider request, and rematerializes under the new revision.
 
+Finalizing an output seals its reserved transcript part but deliberately keeps
+the current run as `workstreams.active_run_id`. Only `workflow_finish_run`
+releases that owner, and it admits the oldest pending batch while holding the
+same work-stream row lock in the same transaction. A message arriving after the
+last output checkpoint therefore extends the pending batch instead of creating
+a younger run that can overtake it.
+
 Tool-call and tool-result parts commit together in one database transaction.
 That preserves provider-valid adjacency: a user message can sort before the
 exchange or after it, never between the call and result. External effects have
@@ -165,9 +172,10 @@ safety boundary, not an invitation to dual-write canonical histories.
 - One checkpoint accepts at most 16 KiB of new UTF-8 text and two overlap
   batches; the Broadcast application envelope is capped below 192 KiB. Larger
   terminal parts use a ready private Storage reference.
-- Workflow step wall time is unlimited on Workers Paid. The Postgres loop
-  configures the published maxima of five active CPU minutes, 25,000 steps, and
-  10,000,000 subrequests. Waiting-for-user is represented by a Workflow event with a 30-day
+- Workflow step wall time is unlimited on Workers Paid. The Worker-level
+  `limits` block configures five active CPU minutes and 10,000,000 subrequests;
+  the Postgres Workflow definition independently configures 25,000 steps, using
+  the placements supported by Wrangler. Waiting-for-user is represented by a Workflow event with a 30-day
   timeout. The initial host still treats Bind's full loop as one retry unit and
   is not canary-ready until action-level step/checkpoint adapters land.
 - The Worker client uses Supavisor transaction mode on port 6543 in hosted
@@ -195,6 +203,9 @@ pnpm postgres:global:start
 pnpm postgres:global:reset
 pnpm postgres:global:test
 ```
+
+`pnpm postgres:stop` uses the Supabase CLI's all-project stop so Global and
+regional containers are both stopped even when one project was not running.
 
 Regional pgTAP tests cover tenant isolation, command replay, conversation order,
 queue versus steer, control-fenced checkpoints, tool adjacency, connector
@@ -246,7 +257,10 @@ RLS still protects catch-up reads.
 
 ## Operations
 
-Health reports Postgres only when `shadow` or `postgres` is selected. Operators
+Health reports Postgres only when `shadow` or `postgres` is selected. It probes
+the regional router, Workflow runner, and queue runner independently, plus the
+Global router on the Global Worker; any missing connection or unexpected
+database role fails the aggregate authority check. Operators
 must compare route/gate epochs, queue age/read count, Workflow starts/signals,
 active output age, checkpoint write/byte rates, Realtime sends/deliveries/egress,
 RLS denials, connector conflicts, and migration receipts before widening a
@@ -266,6 +280,29 @@ messages, and cost per active run; it is not inferred from a raw workspace or
 work-stream count.
 
 ## Changelog
+
+### 2026-08-17 — Terminal settlement preserves queue order and probes every database role
+
+**What changed:** Output finalization now leaves the active run attached until
+`workflow_finish_run` atomically releases it and admits the oldest queued batch.
+Health checks every configured Postgres role, local shutdown stops both Supabase
+projects, and Workflow CPU/subrequest limits moved to Wrangler's supported
+Worker-level block while the per-Workflow block retains only its step limit.
+
+**Why:** Releasing ownership when the last output sealed created a transaction
+gap in which newer input could start a run ahead of an older pending batch. A
+single-role health probe and ignored Wrangler fields could also report a canary
+healthy when routing, queue draining, or resource safeguards were unavailable.
+
+**Considered and rejected:** Starting the successor from the output-finalization
+command would couple a conversation-part commit to full-loop settlement and
+would still leave failure outcomes on a separate path. Terminal settlement is
+the one boundary shared by every outcome and already owns successor admission.
+
+**Consequences:** `p_terminal_run` marks the final output frame, not ownership
+release. Callers must always settle the run. Canary health now opens one bounded
+connection per required role, and CPU/subrequest limits apply to the Worker
+script while only the step limit is scoped to the Postgres Workflow definition.
 
 ### 2026-08-17 — A feature-gated Supabase authority and Workflow protocol are executable
 

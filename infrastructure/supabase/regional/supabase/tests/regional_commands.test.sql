@@ -160,7 +160,7 @@ select lives_ok(
     1, 5, extensions.digest(convert_to('hello', 'utf8'), 'sha256'),
     null, true
   )$$,
-  'finalization seals one assistant part and the terminal run atomically'
+  'finalization seals one assistant part without releasing run ownership'
 );
 select is(
   (select count(*)::bigint from avalon_private.conversation_parts),
@@ -169,8 +169,8 @@ select is(
 );
 select is(
   (select state from avalon_private.agent_runs),
-  'completed',
-  'full loop reaches a terminal semantic state'
+  'running',
+  'output sealing cannot bypass the terminal settlement command'
 );
 
 set local role authenticated;

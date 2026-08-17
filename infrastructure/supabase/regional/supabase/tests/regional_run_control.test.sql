@@ -1,5 +1,5 @@
 begin;
-select plan(30);
+select plan(34);
 
 insert into auth.users (id, aud, role, email, created_at, updated_at)
 values ('018f1000-0000-7000-8000-000000000001', 'authenticated', 'authenticated',
@@ -145,6 +145,36 @@ select is(
   'active',
   'a completed loop does not complete the work stream lifecycle'
 );
+select is(
+  (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+  (select id from avalon_private.agent_runs order by created_at limit 1),
+  'final output keeps the old run as owner until terminal settlement'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '018f1000-0000-7000-8000-000000000001', true);
+select lives_ok(
+  $$select * from api.append_user_message(
+    (select id from api.workstreams where title = 'Run control'),
+    (select root_substream_id from api.workstreams where title = 'Run control'),
+    'Queue this behind the earlier follow-up', 'control-message-2b', 'queue',
+    (select revision from api.workstreams where title = 'Run control')
+  )$$,
+  'input arriving after final output still joins the pending successor batch'
+);
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+select is(
+  (select count(*)::bigint from avalon_private.agent_runs),
+  1::bigint,
+  'post-output input cannot overtake the pending batch by creating a new run'
+);
+select is(
+  (select last_seq from avalon_private.input_admission_batches
+    where first_seq = 3 and state = 'pending'),
+  4::bigint,
+  'the one pending batch extends through input received during settlement'
+);
 select lives_ok(
   $$select avalon_private.workflow_finish_run(
     (select id from avalon_private.agent_runs order by created_at limit 1),
@@ -225,7 +255,7 @@ select is(
   jsonb_array_length(avalon_private.workflow_materialize_run(
     (select active_run_id from avalon_private.workstreams where title = 'Run control'), 2
   ) -> 'parts'),
-  4,
+  5,
   'rematerialization includes all committed inputs and excludes provisional output'
 );
 select avalon_private.workflow_observe_signal(

@@ -354,6 +354,10 @@ begin
         common_revision = common_revision + 1
     where workstream_id = run.owner_id;
     if terminal then
+      -- `workflow_admit_next_batch` locks this same work-stream row. The
+      -- terminal owner is therefore released and its oldest queued batch is
+      -- admitted inside this transaction; an appender can observe neither the
+      -- temporary NULL owner nor overtake the pending batch.
       next_run := avalon_private.workflow_admit_next_batch(run.owner_id);
     end if;
   end if;

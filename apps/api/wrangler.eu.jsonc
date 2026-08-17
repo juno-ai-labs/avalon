@@ -4,6 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-31",
   "compatibility_flags": ["nodejs_compat"],
+  "limits": { "cpu_ms": 300000, "subrequests": 10000000 },
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
@@ -162,7 +163,7 @@
   },
   "workflows": [
     { "name": "avalon-eu-workstream-loop", "binding": "WORKSTREAM_LOOP_WORKFLOW", "class_name": "WorkstreamLoopWorkflow" },
-    { "name": "avalon-eu-postgres-agent-loop", "binding": "POSTGRES_AGENT_LOOP_WORKFLOW", "class_name": "PostgresAgentLoopWorkflow", "limits": { "cpu_ms": 300000, "steps": 25000, "subrequests": 10000000 } },
+    { "name": "avalon-eu-postgres-agent-loop", "binding": "POSTGRES_AGENT_LOOP_WORKFLOW", "class_name": "PostgresAgentLoopWorkflow", "limits": { "steps": 25000 } },
     { "name": "avalon-eu-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" }
   ],
   // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
