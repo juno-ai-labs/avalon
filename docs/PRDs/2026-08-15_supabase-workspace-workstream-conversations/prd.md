@@ -10,7 +10,9 @@
 > minimal Cloudflare Workflow drives each full agent loop.
 > Companions: [`state.md`](state.md), [`flows.md`](flows.md), the underlying
 > [`research.md`](research.md), and the technical/economic
-> [`comparison.md`](comparison.md).
+> [`comparison.md`](comparison.md). The newer full three-way comparison,
+> including the hybrid design, is
+> [`here`](../2026-08-16_hybrid-workstream-do-supabase/comparison.md).
 
 ## Summary
 
