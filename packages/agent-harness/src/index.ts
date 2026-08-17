@@ -27,6 +27,7 @@ export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
 export {
   nonObjectRootUnionBranches,
+  readableRootUnionBranch,
   repairRootUnionForProviders,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
