@@ -22,6 +22,116 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("fences the maintenance cutover and leaves only directory projections writable", () => {
+    const database = migrateFreshDatabase();
+    try {
+      database.exec(`
+        INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+        VALUES ('authority-user', 'authority-subject', 'authority@example.com', 'Authority User',
+                '2026-08-16T00:00:00.000Z', '2026-08-16T00:00:00.000Z');
+        INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('authority-workspace', 'Authority Workspace', 'authority-workspace', 'global',
+                'authority-user', '2026-08-16T00:00:00.000Z', '2026-08-16T00:00:00.000Z');
+        INSERT INTO workstreams
+          (id, workspace_id, title, objective, origin_type, created_by_user_id,
+           harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+        VALUES ('authority-workstream', 'authority-workspace', 'Before', 'Objective', 'ad_hoc',
+                'authority-user', 'completed', 4, '2026-08-16T00:00:00.000Z',
+                '2026-08-16T00:00:00.000Z', '2026-08-16T00:00:00.000Z');
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_draining', generation = 1,
+               started_at = '2026-08-16T01:00:00.000Z', updated_at = '2026-08-16T01:00:00.000Z'
+         WHERE id = 1;
+        INSERT INTO harness_runs
+          (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+        VALUES ('authority-run', 'authority-workspace', 'authority-workstream', 'opening_message',
+                '{}', 'scheduled', '2026-08-16T01:00:00.000Z');
+      `);
+      expect(() => database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_importing', updated_at = '2026-08-16T01:01:00.000Z'
+         WHERE id = 1;
+      `)).toThrow(/workstream_authority_runs_not_drained/u);
+      database.exec(`
+        UPDATE harness_runs
+           SET status = 'completed', completed_at = '2026-08-16T01:01:00.000Z',
+               terminalized_at = '2026-08-16T01:01:00.000Z'
+         WHERE id = 'authority-run';
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_importing', updated_at = '2026-08-16T01:01:00.000Z'
+         WHERE id = 1;
+      `);
+      expect(() => database.exec(
+        `UPDATE workstreams SET title = 'Late writer' WHERE id = 'authority-workstream'`,
+      )).toThrow(/workstream_do_authoritative/u);
+      expect(database.prepare(
+        `SELECT object_name, state, source_fence_sequence
+           FROM workstream_authority_routes WHERE workstream_id = 'authority-workstream'`,
+      ).get()).toEqual({
+        object_name: "global:authority-workspace:authority-workstream",
+        state: "pending",
+        source_fence_sequence: 3,
+      });
+      expect(() => database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_verified', updated_at = '2026-08-16T01:02:00.000Z'
+         WHERE id = 1;
+      `)).toThrow(/workstream_authority_routes_not_verified/u);
+      database.exec(`
+        UPDATE workstream_authority_routes SET state = 'verified'
+         WHERE workstream_id = 'authority-workstream';
+        UPDATE workstream_authority_control
+           SET phase = 'maintenance_verified', updated_at = '2026-08-16T01:03:00.000Z'
+         WHERE id = 1;
+      `);
+      expect(() => database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'durable_object_open', updated_at = '2026-08-16T01:04:00.000Z'
+         WHERE id = 1;
+      `)).toThrow(/workstream_authority_not_ready_to_open/u);
+      database.exec(`
+        UPDATE workstream_authority_routes SET state = 'active'
+         WHERE workstream_id = 'authority-workstream';
+      `);
+      expect(() => database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'durable_object_open', updated_at = '2026-08-16T01:04:30.000Z'
+         WHERE id = 1;
+      `)).toThrow(/workstream_authority_not_ready_to_open/u);
+      database.exec(`
+        UPDATE workstream_authority_control
+           SET phase = 'durable_object_open', serving_contract_version = 1,
+               opened_at = '2026-08-16T01:05:00.000Z',
+               updated_at = '2026-08-16T01:05:00.000Z'
+         WHERE id = 1;
+      `);
+
+      expect(() => database.exec(
+        `UPDATE workstreams SET title = 'Forbidden' WHERE id = 'authority-workstream'`,
+      )).toThrow(/workstream_do_authoritative/u);
+      expect(() => database.exec(`
+        INSERT INTO messages
+          (id, workspace_id, workstream_id, author_type, message_type, text_content,
+           sequence_number, created_at)
+        VALUES ('forbidden-message', 'authority-workspace', 'authority-workstream', 'system',
+                'text', 'forbidden', 4, '2026-08-16T01:06:00.000Z');
+      `)).toThrow(/workstream_do_authoritative/u);
+      database.exec(`
+        INSERT INTO workstream_directory_projections
+          (workspace_id, workstream_id, generation, version, title, description, preview,
+           scope, state, last_activity_at, payload_hash, projected_at)
+        VALUES ('authority-workspace', 'authority-workstream', 1, 1, 'After', 'Description', '',
+                'workspace', 'completed', '2026-08-16T01:05:00.000Z', 'hash',
+                '2026-08-16T01:05:00.000Z');
+      `);
+      expect(database.prepare(
+        `SELECT title FROM workstream_directory_projections WHERE workstream_id = 'authority-workstream'`,
+      ).get()).toEqual({ title: "After" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("anchors regional telemetry identity, preference, delivery, and retention in D1", () => {
     const database = migrateFreshDatabase();
     const userColumns = database.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;

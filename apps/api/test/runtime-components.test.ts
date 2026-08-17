@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@avalon/contracts";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   calculateNextOccurrence,
@@ -10,15 +11,16 @@ import {
 } from "../src/durable-objects/workspace-scheduler";
 import {
   applyActiveStreamCheckpointEvent,
-  consumeSocketTicket,
   distinctNonParticipantViewers,
   isPersonalEventAudience,
   planSocketReplay,
   splitActiveStreamCheckpointText,
   workstreamRoomName,
 } from "../src/durable-objects/workstream-room";
+import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { durableObjectNamespaceForRegion } from "../src/lib/durable-object-namespace";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 function timing(overrides: Partial<ScheduleTiming> = {}): ScheduleTiming {
   return {
@@ -188,7 +190,7 @@ describe("runtime component invariants", () => {
     const chunks = splitActiveStreamCheckpointText(text);
 
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((chunk) => chunk.length <= 30_000)).toBe(true);
+    expect(chunks.every((chunk) => new TextEncoder().encode(chunk).byteLength <= 60 * 1024)).toBe(true);
     expect(chunks.join("")).toBe(text);
     expect(chunks.every((chunk) => {
       const last = chunk.charCodeAt(chunk.length - 1);
@@ -218,6 +220,32 @@ describe("runtime component invariants", () => {
     expect(schedulerRetryDelay(1, () => 0)).toBe(30_000);
     expect(schedulerRetryDelay(2, () => 0)).toBe(60_000);
     expect(schedulerRetryDelay(99, () => 0.999)).toBeLessThanOrEqual(30 * 60_000);
+  });
+
+  it("parks workspace alarms without reading due work during maintenance", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const setAlarm = vi.fn(async () => undefined);
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      get: async () => "00000000-0000-7000-8000-000000000001",
+      setAlarm,
+    });
+    const first = vi.fn(async () => ({
+      phase: "maintenance_draining",
+      generation: 2,
+      required_serving_contract_version: 1,
+      serving_contract_version: 0,
+    }));
+    const prepare = vi.fn(() => ({ first }));
+    const scheduler = new WorkspaceScheduler(
+      createCloudflareTestBinding<DurableObjectState>({ storage }),
+      { DB: { prepare } } as never,
+    );
+
+    await scheduler.alarm();
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(setAlarm).toHaveBeenCalledWith(Date.now() + 5 * 60_000);
   });
 
   it("persists a retry gate so a failed due target cannot create a one-second alarm loop", async () => {
@@ -254,6 +282,17 @@ describe("runtime component invariants", () => {
     });
     let auditWrites = 0;
     const prepare = vi.fn((sql: string) => ({
+      first: async () => {
+        if (sql.includes("FROM workstream_authority_control")) {
+          return {
+            phase: "legacy_open",
+            generation: 0,
+            required_serving_contract_version: 1,
+            serving_contract_version: 0,
+          };
+        }
+        throw new Error(`Unexpected first query: ${sql}`);
+      },
       bind: vi.fn(() => ({
         all: async () => {
           // The alarm-target union names every due-dated table, so it has to be
@@ -313,26 +352,32 @@ describe("runtime component invariants", () => {
   });
 
   it("consumes each signed socket ticket identity only once", async () => {
+    const database = new DatabaseSync(":memory:");
     const values = new Map<string, unknown>();
-    type Transaction = {
-      get<T>(key: string): Promise<T | undefined>;
-      put(key: string, value: unknown): Promise<void>;
-    };
-    const transaction: Transaction = {
-      get: async <T>(key: string) => values.get(key) as T | undefined,
-      put: async (key: string, value: unknown) => { values.set(key, value); },
-    };
     const storage = createCloudflareTestBinding<DurableObjectStorage>({
-      transaction: async (callback: (value: Transaction) => Promise<boolean>) => callback(transaction),
-      list: async () => new Map(values) as Map<string, number>,
-      delete: async (keys: string[]) => {
-        for (const key of keys) values.delete(key);
-        return true;
+      get: async (key: string | string[]) => Array.isArray(key)
+        ? new Map(key.flatMap((entry) => values.has(entry) ? [[entry, values.get(entry)]] : []))
+        : values.get(key),
+      list: async ({ prefix = "" }: { prefix?: string } = {}) => new Map(
+        [...values].filter(([key]) => key.startsWith(prefix)),
+      ),
+      delete: async (key: string | string[]) => {
+        if (Array.isArray(key)) {
+          let deleted = 0;
+          for (const entry of key) if (values.delete(entry)) deleted += 1;
+          return deleted;
+        }
+        return values.delete(key);
       },
+      transactionSync: (callback: () => unknown) => callback(),
+      sql: createTestSqlStorage(database),
     });
+    const store = new WorkstreamObjectStore(storage, "test", "global");
+    await store.waitUntilReady();
 
-    await expect(consumeSocketTicket(storage, "ticket-1", 2_000, 1_000)).resolves.toBe(true);
-    await expect(consumeSocketTicket(storage, "ticket-1", 2_000, 1_000)).resolves.toBe(false);
+    expect(store.consumeSocketTicket("ticket-1", 2_000, 1_000)).toBe(true);
+    expect(store.consumeSocketTicket("ticket-1", 2_000, 1_000)).toBe(false);
+    database.close();
   });
 
   it("keeps active participants out of the ephemeral viewer list", () => {

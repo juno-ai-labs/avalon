@@ -41,7 +41,11 @@ export async function publishWorkstreamRoomEvent(
     "https://workstream-room/internal/events",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-avalon-workspace-id": workspaceId,
+        "x-avalon-workstream-id": workstreamId,
+      },
       body: JSON.stringify({ event }),
     },
   );

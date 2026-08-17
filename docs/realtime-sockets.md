@@ -21,7 +21,7 @@ is recorded.
 | `apps/api/src/services/socket-service.ts` | Issues and verifies both ticket kinds, reads the presented ticket off a handshake, negotiates the response subprotocol, and admits a work-stream upgrade. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its D1 replay receipt and session lease, and the Azure upgrade. |
 | `apps/api/src/routes/socket.ts` | The two upgrade routes. The query ticket is optional here; the service decides what was presented. |
-| `apps/api/src/durable-objects/workstream-room.ts` | Answers the work-stream upgrade — or refuses it. Never sees a ticket. |
+| `apps/api/src/durable-objects/workstream-room.ts` | Answers the work-stream upgrade — or refuses it. Receives only verified identity, expiry, and the ticket JTI; never the signed bearer ticket. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses a ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
 ## How it works
@@ -74,8 +74,13 @@ sends one.
   WebSocket attached, so rebuilding one of the room's JSON rejections throws a
   `RangeError` that no error-middleware branch matches — turning every
   deliberate 401, 403, or 409 into an unhandled 500.
-- **The room never receives the ticket.** It is verified at the edge and
-  stripped from the subrequest; the room authorizes from the identity headers.
+- **The room never receives the signed bearer ticket.** It is verified at the
+  edge and stripped from the subrequest. The room receives verified identity,
+  expiry, and JTI headers, reauthorizes against the current workspace and
+  work-stream authority generation, and consumes the JTI in its local
+  `durable_inbox_receipts` table. Before cutover visibility is the legacy D1
+  row; after cutover workspace membership remains in D1 while personal
+  participation/revocation is owned by the WorkstreamDO.
 - **Origin is checked before the ticket is read.** An exact match against
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
 - **A ticket is single-use.** The room and the dictation bridge each consume the
@@ -155,6 +160,41 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-17 — Admission follows the work-stream authority generation
+
+**What changed:** Room admission now names the authority generation it must
+reauthorize against, while ticket replay receipts and hibernating transport stay
+local to the same object.
+
+**Why:** After product authority moves, a frozen legacy participant row cannot
+revoke a live reader. Workspace membership remains a D1 fact; work-stream
+participation becomes an object fact.
+
+**Considered and rejected:** Keeping D1 participant rows as an authorization
+fallback, which would silently restore a second authority.
+
+**Consequences:** Maintenance closes every existing room socket. Reconnect is
+admitted only after the regional generation opens and the new authority answers.
+
+### 2026-08-16 — Room ticket receipts move into named local SQL
+
+**What changed:** The verified ticket JTI remains consumed by the one
+work-stream room, but its replay receipt now lives on the `socket_ticket`
+channel in `durable_inbox_receipts`. Existing `socket-ticket:<jti>` values are
+imported in place and then deleted.
+
+**Why:** The Durable Object was already SQLite-backed. A named receipt table
+gives replay protection an inspectable key and retention query instead of an
+unstructured hidden value, without moving the bearer ticket into the room.
+
+**Considered and rejected:** Consuming the work-stream JTI in D1, which would
+add a regional database write and contention point to every socket admission;
+and passing the signed ticket through, which broadens credential exposure.
+
+**Consequences:** Admission semantics and error codes are unchanged. Any new
+room ticket path must use the SQL receipt operation and preserve the edge/room
+split between signature verification and final authorization.
 
 ### 2026-08-11 — The ticket moves from the query string to the handshake subprotocol
 

@@ -1712,8 +1712,8 @@ function createSequencedStreamDeltaBatcher(
  * Hand one event to the work stream's room.
  *
  * Returns whether the room accepted it. Almost every caller ignores that and
- * should: realtime delivery is an optimization, and canonical D1 state and
- * snapshots recover the UI after a room outage without replaying product
+ * should: realtime delivery is an optimization, and canonical regional state
+ * plus snapshots recover the UI after a room outage without replaying product
  * mutations. The exception is an event the room acts on rather than relays —
  * a retraction of read access — where a swallowed failure would leave the
  * caller believing something was enforced that was not. Those callers check.

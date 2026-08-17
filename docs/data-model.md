@@ -1,11 +1,15 @@
 # Data model
 
-Avalon's canonical product state is one D1 database per region, and **the
-checked-in migrations are authoritative** — this document is the map of what the
-tables mean and which rules the schema is holding up, not a second copy of the
-DDL. Application contracts expose camel-cased TypeScript values; storage uses
-explicit snake-cased columns, and JSON only where provider- or model-shaped data
-is not relationally queried.
+Avalon's regional data is split by declared authority. D1 owns workspace,
+identity, connector, routing, schedule, audit, and projection state. After a
+guarded authority generation opens, each `WorkstreamRoom` SQLite database owns
+the product state of exactly one work stream; before that generation opens the
+legacy D1 rows remain the serving authority. The checked-in migrations are the
+authoritative D1 schema and the object schema registry is the authoritative DO
+schema. This document maps both rather than duplicating their DDL. Application
+contracts expose camel-cased TypeScript values; storage uses explicit
+snake-cased columns, and JSON only where provider- or model-shaped data is not
+relationally queried.
 
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
@@ -14,13 +18,14 @@ knowing an object's ID is enough to read it — it never is.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/db/migrations/NNNN_*.sql` | The authoritative schema. Monotonically numbered, immutable once deployed. |
+| `packages/db/migrations/NNNN_*.sql` | The authoritative regional D1 schema. Monotonically numbered, immutable once deployed. |
 | `packages/db/src/index.ts` | Region-aware repositories and the D1 wrapper every service is handed. |
 | `packages/db/test/migrations.test.ts` | Applies every migration in order and asserts on the resulting schema. |
 | `packages/db/seed.sql` | The local development seed. |
 | `apps/api/src/lib/workstream-visibility.ts` | The single expression of who may read a work stream, parameterized by the SQL naming the reader. |
 | `apps/api/src/mappers/connection.ts`, `apps/api/src/mappers/workstream.ts` | Row schemas parsed at the read — the pattern the remaining hand-coercing readers are converging on. |
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `WorkstreamRoom`. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
@@ -517,6 +522,45 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-17 — Work-stream product rows acquire an object-local authority boundary
+
+**What changed:** The map now distinguishes workspace/control/projection tables
+that remain in D1 from normalized product tables owned by one WorkstreamDO after
+the maintenance generation opens. D1 migration `0077` records the phase/routes
+and permanently fences the legacy product tables after open.
+
+**Why:** The physical copy and the authority switch are separate facts. Without
+an explicit generation and writer fence, the same logical row could continue to
+accept mutations in both databases.
+
+**Considered and rejected:** Treating all D1 rows with `workstream_id` as one
+ownership class. Pins, schedules, connector delivery, automation, audit, and
+telemetry cross the work-stream boundary for valid workspace/control reasons.
+
+**Consequences:** Code must consult the ownership map, not infer authority from
+an ID column. Object-local schema changes use the object registry; D1 control and
+projection changes use numbered migrations.
+
+### 2026-08-16 — Object-local SQL is named separately from canonical D1
+
+**What changed:** The data map now identifies the versioned SQLite schema owned
+by each existing `WorkstreamRoom` and points to its module contract. At that
+stage, canonical work-stream metadata and completed transcript rows still
+remained in regional D1.
+
+**Why:** Cloudflare stores the room's former key/value data inside its SQLite
+database, but hidden storage is still a different authority boundary from D1.
+Leaving it undocumented makes named local tables look like a second canonical
+product database.
+
+**Considered and rejected:** Adding the object DDL to `packages/db/migrations`.
+Those migrations run against regional D1 and cannot safely version millions of
+independently activated Durable Object databases.
+
+**Consequences:** D1 schema changes still use numbered package migrations.
+Room-local schema changes use the Workstream Object registry. The later
+maintenance campaign supplies the separately fenced authority migration.
+
 ### 2026-08-15 — Connector conversations seed the existing work-stream scope
 
 **What changed:** A work stream started from a connector conversation now chooses
@@ -561,7 +605,6 @@ secrets; the latter double-counts one setup journey.
 **Consequences:** These columns are bounded metadata, not provider payloads.
 Future event versions must persist any terminal dimensions at admission and
 must not reinterpret an attempt after its operation binding is set.
-
 ### 2026-08-13 — Recoverable GitHub status remains a valid Terminal reference
 
 **What changed:** Migration

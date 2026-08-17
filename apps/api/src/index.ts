@@ -22,6 +22,12 @@ import {
   reapExpiredCrashReports,
 } from "./telemetry/crash-delivery";
 import { readTelemetryOperationalSnapshot } from "./telemetry/operations";
+import {
+  acceptsNewWorkstreamWork,
+  readWorkstreamAuthorityControl,
+  workstreamMaintenanceResponse,
+} from "./services/workstream-authority";
+import { processWorkstreamAuthorityMigration } from "./services/workstream-authority-migration";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -145,7 +151,7 @@ function withEnvContract<TArgs extends [unknown, Env, ...unknown[]], TResult>(
 }
 
 export default {
-  fetch: (request, env, context) => {
+  fetch: async (request, env, context) => {
     // `/health` is exempt. It is the endpoint whose job is to report which
     // pieces of configuration are present, and it already models every one of
     // them as configured/not configured. Letting the 503 swallow it would make
@@ -160,25 +166,61 @@ export default {
     if (new URL(request.url).pathname !== "/health" && assertEnvContractOrLog(env)) {
       return misconfiguredResponse(request, env);
     }
+    const url = new URL(request.url);
+    if (url.pathname !== "/health") {
+      const authority = await readWorkstreamAuthorityControl(env);
+      if (!acceptsNewWorkstreamWork(authority)) return workstreamMaintenanceResponse(authority);
+    }
     return app.fetch(request, env, context);
   },
-  queue: withEnvContract(consumeActivityQueue),
+  queue: withEnvContract(async (batch, env) => {
+    const authority = await readWorkstreamAuthorityControl(env);
+    if (!acceptsNewWorkstreamWork(authority)) {
+      throw new Error(`workstream_maintenance:${authority.phase}:${authority.generation}`);
+    }
+    return consumeActivityQueue(batch, env);
+  }),
   scheduled: withEnvContract((_controller, env, context) => {
-    context.waitUntil(Promise.all([
-      reapExpiredHarnessAttempts(env),
-      reapExpiredDraftAttachments(env),
-      reapDeletedNoteObjects(env),
-      reapDeletedResourceObjects(env),
-      processPendingNotePrivacyNotifications(env),
-      processMemoryIndexOutbox(env),
-      new SlackAgentService(env).maintainIngress(),
-      refreshSlackWorkstreamUnfurls(env),
-      processDueOpportunityWindows(env),
-      processDueSuggestedWork(env),
-      recoverPendingActivityQueue(env),
-      reapExpiredActivityEvents(env),
-      reconcileDigestDefaults(env),
-      processTelemetry(env),
-    ]));
+    context.waitUntil((async () => {
+      const authority = await readWorkstreamAuthorityControl(env);
+      if (authority.phase === "maintenance_importing" || authority.phase === "maintenance_verified") {
+        // The importer deliberately reserves one of the invocation's six
+        // outbound-connection slots. Do not make telemetry compete with its
+        // route waves during the maintenance window.
+        await processWorkstreamAuthorityMigration(env, authority);
+        await processTelemetry(env);
+        return;
+      }
+      if (authority.phase === "maintenance_draining") {
+        await Promise.all([
+          reapExpiredHarnessAttempts(env),
+          processTelemetry(env),
+        ]);
+        return;
+      }
+      if (authority.phase === "quarantined") {
+        await processTelemetry(env);
+        return;
+      }
+      const backgroundTasks = [
+        reapDeletedNoteObjects(env),
+        reapDeletedResourceObjects(env),
+        processMemoryIndexOutbox(env),
+        reapExpiredActivityEvents(env),
+        processTelemetry(env),
+      ];
+      await Promise.all([
+        reapExpiredHarnessAttempts(env),
+        reapExpiredDraftAttachments(env),
+        processPendingNotePrivacyNotifications(env),
+        new SlackAgentService(env).maintainIngress(),
+        refreshSlackWorkstreamUnfurls(env),
+        processDueOpportunityWindows(env),
+        processDueSuggestedWork(env),
+        recoverPendingActivityQueue(env),
+        reconcileDigestDefaults(env),
+        ...backgroundTasks,
+      ]);
+    })());
   }),
 } satisfies ExportedHandler<Env>;
