@@ -1391,7 +1391,11 @@ export const CreateWebhookConnectionRequestSchema = z.object({
 
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subscribe"), afterSequence: z.number().int().nonnegative() }),
-  z.object({ type: z.literal("create_message"), payload: CreateMessageRequestSchema }),
+  z.object({
+    type: z.literal("create_message"),
+    operationId: IdSchema,
+    payload: CreateMessageRequestSchema,
+  }),
   z.object({ type: z.literal("stop_harness") }),
   z.object({ type: z.literal("answer_elicitation"), elicitationId: IdSchema, payload: AnswerElicitationRequestSchema }),
   z.object({ type: z.literal("add_participant"), userId: IdSchema }),
@@ -1400,6 +1404,35 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("detach_resource"), resourceId: IdSchema }),
   z.object({ type: z.literal("accept_activity_suggestion"), suggestionId: IdSchema }),
   z.object({ type: z.literal("dismiss_activity_suggestion"), suggestionId: IdSchema })
+]);
+
+/**
+ * A direct response to one client command. It is deliberately outside the room
+ * event sequence: the canonical `message_created` event is replayable and
+ * broadcast, while this receipt is private to the socket that submitted it.
+ * Reconnecting clients resend the same `clientMessageId` and receive the same
+ * canonical message through the idempotent write path.
+ */
+export const WorkstreamSocketCommandResultSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("client_command_succeeded"),
+    command: z.literal("create_message"),
+    clientMessageId: z.string().min(1).max(120),
+    message: MessageSchema,
+    agentInvoked: z.boolean(),
+    harnessRunId: IdSchema.nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("client_command_failed"),
+    command: z.literal("create_message"),
+    clientMessageId: z.string().min(1).max(120),
+    error: z.object({
+      status: z.number().int().min(0).max(599),
+      code: z.string().min(1).max(160),
+      message: z.string().min(1).max(1_000),
+      details: z.record(z.string(), z.unknown()).optional(),
+    }).strict(),
+  }).strict(),
 ]);
 
 const ServerEventBaseSchema = z.object({
@@ -2171,6 +2204,7 @@ export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptSt
 export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
+export type WorkstreamSocketCommandResult = z.infer<typeof WorkstreamSocketCommandResultSchema>;
 export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;

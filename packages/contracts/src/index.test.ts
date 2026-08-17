@@ -34,6 +34,7 @@ import {
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   WorkstreamContextSchema,
+  WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema
 } from "./index";
 
@@ -502,6 +503,27 @@ describe("boundary contracts", () => {
         afterSequence: 42
       })
     ).toEqual({ type: "subscribe", afterSequence: 42 });
+    expect(ClientSocketEventSchema.parse({
+      type: "create_message",
+      operationId: id,
+      payload: { text: "Continue", clientMessageId: "client-message-one" },
+    })).toMatchObject({
+      type: "create_message",
+      operationId: id,
+      payload: {
+        text: "Continue",
+        clientMessageId: "client-message-one",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+    expect(WorkstreamSocketCommandResultSchema.safeParse({
+      type: "client_command_failed",
+      command: "create_message",
+      clientMessageId: "client-message-one",
+      error: { status: 409, code: "conflict", message: "Try again" },
+    }).success).toBe(true);
   });
 
   it("bounds HyperSight configuration and preserves unique block identities", () => {
