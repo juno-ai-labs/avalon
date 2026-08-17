@@ -23,11 +23,16 @@ import { createDaytonaTerminalProvider } from "../services/terminal/daytona-prov
 import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "../services/terminal/lifecycle";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
+import {
+  acceptsNewWorkstreamWork,
+  readWorkstreamAuthorityControl,
+} from "../services/workstream-authority";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
 const RETRY_STATES_KEY = "schedulerRetryStates";
 const SCHEDULER_RETRY_BASE_MS = 60_000;
 const SCHEDULER_RETRY_MAX_MS = 30 * 60_000;
+const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 
 const SchedulerRetryStateSchema = z.object({
   attempt: z.number().int().positive(),
@@ -286,6 +291,12 @@ export class WorkspaceScheduler {
   async alarm(): Promise<void> {
     const workspaceId = await this.state.storage.get<string>("workspaceId");
     if (!workspaceId) return;
+
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(authority)) {
+      await this.state.storage.setAlarm(Date.now() + MAINTENANCE_RECHECK_MS);
+      return;
+    }
 
     try {
       const now = new Date();

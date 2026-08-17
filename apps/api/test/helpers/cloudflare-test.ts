@@ -55,6 +55,7 @@ type CloudflareBinding =
   | ImagesBinding
   | Queue
   | R2Bucket
+  | SqlStorage
   | VectorizeIndex;
 
 export function createTestEnv<T extends EnvDouble>(value: ExactKeys<EnvDouble, T>): Env {

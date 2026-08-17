@@ -540,7 +540,13 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 ## Realtime operations and cost controls
 
 - Use one deterministic WorkstreamRoom per work stream, scoped by region and workspace. Do not allocate a room per socket or user.
-- Keep REST/D1 canonical. The room's bounded replay buffer is an in-memory optimization and must not be persisted. The separate active-stream checkpoint is one logical value with bounded text chunks, updated per batched delta, removed at terminal state, and carried by `history_unavailable` while the client refreshes every canonical REST surface. Do not collapse it back into one unbounded Durable Object value: an oversized write would also roll back the room sequence and stop later live chunks.
+- Respect the authority phase. Before `durable_object_open`, REST reads the
+  legacy D1 source; afterward REST reads the WorkstreamDO and D1 contains only
+  directory projections. The room's bounded replay buffer remains an in-memory
+  optimization. The active checkpoint lives in `active_output_turns` and
+  60-KiB `active_output_chunks`, is updated per batched delta, and is removed at
+  terminal state. Do not collapse it into one unbounded value.
+- On first activation after the SQL-store rollout, an existing room imports its hidden `__cf_kv` identity, sequence, checkpoint chunks, HyperSight due item, and socket-ticket receipts. Diagnose failures through `_sql_schema_migrations`, `_data_migrations`, and `object_versions`; a `copied/running` data row means cleanup can resume safely, while an invalid legacy record remains deliberately untouched for repair. `GET /health` reports `schema: workstream-do-v1` and local database bytes.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The client heartbeat is jittered across 45–55 seconds, waits 15 seconds for `pong`, and reconnects with equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not perform application work.
 - Batch model `stream_delta` broadcasts. Avoid Durable Object timers, per-connection alarms, and periodic room health polling; each can wake an otherwise idle room and add duration or request cost.
@@ -550,6 +556,53 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 - The renderer captures mono PCM16 in a 24 kHz `AudioWorklet`, sends bounded chunks, and explicitly commits when the user stops. Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
+
+### WorkstreamDO authority maintenance cutover
+
+Run one region at a time. Deploy the compatibility Worker and apply migration
+`0077_workstream_do_authority_cutover.sql` before starting. Use a new positive
+generation; never reuse one from a quarantined attempt.
+
+1. Set `workstream_authority_control` from `legacy_open` (or `quarantined` with
+   a larger generation) to `maintenance_draining`, recording the operator and
+   reason. All non-health HTTP traffic returns 503, named connector/email RPC
+   entrypoints return retryable maintenance failures, Queue deliveries retry,
+   workspace/room alarms park for five minutes, and only existing Workflows may
+   finish.
+2. Confirm the Cloudflare Queue has no in-flight consumer. Query
+   `harness_runs` for every nonterminal `scheduled`/`running` row, including
+   inline children. Wait, cancel through the normal fenced path, or let the
+   stale-run reaper terminalize them. Do not edit a live run to completed.
+3. Set the phase to `maintenance_importing`. The D1 trigger rejects this while
+   any run remains. It also creates one route row for every archived and active
+   work stream at the frozen sequence fence and activates legacy product-table
+   writer triggers. A `workstream_do_authoritative` error during import is a
+   late writer, not permission to remove the fence.
+4. Let cron process the campaign. Monitor counts grouped by `state` and inspect
+   `last_error_code`; `quarantined` stops the region and requires repair plus a
+   new generation. A page can be retried. Do not manually advance its cursor.
+5. When every route verifies, control advances to `maintenance_verified` and
+   cron activates each object. Wait until every route is `active`. The region
+   remains behind the maintenance response intentionally.
+6. Deploy the Worker whose product reads/writes, Workflow persistence, Terminal
+   persistence, and directory outbox all use the WorkstreamDO. Run the read,
+   write, queued/steering, streaming reconnect, Terminal, and sidebar smoke
+   tests while the public surface is still closed. That deployment must bump
+   `WORKSTREAM_DO_SERVING_CONTRACT_VERSION` to the required version. Cron writes
+   that code-owned attestation only after every route is active; never edit
+   `serving_contract_version` manually.
+7. Confirm `serving_contract_version >= required_serving_contract_version`, then
+   perform the guarded update to `durable_object_open`. It fails unless every
+   route in the generation is active and the serving contract is attested. The
+   Worker gate independently rejects an open phase when its own compile-time
+   version is too old. Verify HTTP, Queue, cron, two simultaneous streaming work
+   streams, and common/user sidebar projections before starting the next region.
+
+The legacy D1 product triggers are the post-open tripwire. An error containing
+`workstream_do_authoritative` means a missed writer; quarantine and fix that
+path. Do not remove the trigger or fall back to D1. Directory projection tables,
+workspace resources, pins, schedules, connector delivery, audit, and telemetry
+remain valid D1 writers.
 
 ## Timezones
 
@@ -1100,9 +1153,15 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 
 ## Recovery and data handling
 
-- D1 is canonical for work streams, messages, runs, schedules, connector metadata, and audit events.
-- R2 stores large payloads, uploads, and snapshots referenced by D1.
-- Durable Object storage coordinates presence, ordering, sockets, and alarms; it is not the backup source.
+- Before the authority phase opens, D1 is canonical for work streams, messages,
+  runs, schedules, connector metadata, and audit events. After it opens, each
+  WorkstreamDO is canonical for its work-stream product tables; D1 stays
+  canonical for schedules, connector/workspace metadata, audit, and directory
+  projections.
+- R2 stores large payloads, uploads, and snapshots referenced by their owning
+  regional database.
+- Use D1 PITR before the work-stream authority open. After open, use object
+  PITR/repair for product state and D1 recovery for control/projections.
 - Production never loads `packages/db/seed.sql`.
 - Restore D1 and its corresponding R2 objects as a region-consistent set before resuming Queue consumers or scheduler alarms.
 

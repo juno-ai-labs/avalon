@@ -1,9 +1,10 @@
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkstreamRoom } from "../src/durable-objects/workstream-room";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 const WORKSPACE = "00000000-0000-7000-8000-0000000000c0";
 const PARTICIPANT = "00000000-0000-7000-8000-0000000000c1";
@@ -90,14 +91,32 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): Workstream
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
   ]);
+  const objectDatabase = new DatabaseSync(":memory:");
+  databases.push(objectDatabase);
+  const sql = createTestSqlStorage(objectDatabase);
   const state = createCloudflareTestBinding<DurableObjectState>({
+    blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
     setWebSocketAutoResponse: () => undefined,
     getWebSockets: () => sockets,
     storage: {
-      get: async (key: string) => storage.get(key),
+      get: async (key: string | string[]) => Array.isArray(key)
+        ? new Map(key.flatMap((entry) => storage.has(entry) ? [[entry, storage.get(entry)]] : []))
+        : storage.get(key),
       put: async (key: string, value: unknown) => { storage.set(key, value); },
-      delete: async (key: string) => { storage.delete(key); },
+      delete: async (key: string | string[]) => {
+        if (Array.isArray(key)) {
+          let deleted = 0;
+          for (const entry of key) if (storage.delete(entry)) deleted += 1;
+          return deleted;
+        }
+        return storage.delete(key);
+      },
+      list: async ({ prefix = "" }: { prefix?: string } = {}) => new Map(
+        [...storage].filter(([key]) => key.startsWith(prefix)),
+      ),
       setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql,
       transaction: async (body: (t: unknown) => Promise<unknown>) => body({
         get: async (key: string) => storage.get(key),
         put: async (key: string, value: unknown) => { storage.set(key, value); },
@@ -170,6 +189,51 @@ describe("who the work-stream room lets connect", () => {
 
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "socket_ticket_replayed" });
+  });
+
+  it("refuses an internal event that cannot pin the room identity", async () => {
+    const response = await roomFor(seededDatabase()).fetch(new Request(
+      "https://room.internal/internal/events",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "harness_status_changed", status: "running" }),
+      },
+    ));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_room_identity" });
+  });
+
+  it("refuses late room events after the source snapshot is frozen", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      UPDATE workstream_authority_control
+         SET phase = 'maintenance_draining', generation = 1, updated_at = '2026-08-17T00:00:00.000Z'
+       WHERE id = 1;
+      UPDATE workstream_authority_control
+         SET phase = 'maintenance_importing', updated_at = '2026-08-17T00:01:00.000Z'
+       WHERE id = 1;
+    `);
+    const response = await roomFor(database).fetch(new Request(
+      "https://room.internal/internal/events",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-avalon-workspace-id": WORKSPACE,
+          "x-avalon-workstream-id": WORKSTREAM,
+        },
+        body: JSON.stringify({ type: "harness_status_changed", status: "running" }),
+      },
+    ));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "workstream_maintenance",
+      phase: "maintenance_importing",
+      generation: 1,
+    });
   });
 });
 

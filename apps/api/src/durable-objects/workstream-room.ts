@@ -1,12 +1,10 @@
 import {
-  ActiveStreamCheckpointsSchema,
   ClientSocketEventSchema,
   IdSchema,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamDetailSchema,
-  type ActiveStreamCheckpoint,
   type PersonalSocketEvent,
   type ServerSocketEvent,
   type User,
@@ -28,6 +26,21 @@ import {
 import { launchHyperSightRefresh } from "../services/hypersight-service";
 import { loadVisibleWorkstreamResources } from "../services/workstream-resource-visibility";
 import { memberSafeHarnessError } from "../services/workstream-service";
+import {
+  acceptsNewWorkstreamWork,
+  permitsLegacyRuntimeDrain,
+  readWorkstreamAuthorityControl,
+} from "../services/workstream-authority";
+import {
+  WorkstreamAuthorityImporter,
+  WorkstreamAuthorityImportRequestSchema,
+} from "./workstream-authority-import";
+import {
+  WorkstreamObjectStore,
+  type PendingHyperSightRefresh,
+} from "./workstream-object-storage";
+
+export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
@@ -44,7 +57,6 @@ const BroadcastRequestSchema = z.object({
   audienceUserId: IdSchema.optional(),
 }).strict();
 const RoomIdentitySchema = z.object({ workspaceId: IdSchema, workstreamId: IdSchema });
-const SOCKET_TICKET_PREFIX = "socket-ticket:";
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
 /**
@@ -59,6 +71,7 @@ const MAX_REPLAY_BYTES = 512_000;
 const AUTHORIZATION_REVALIDATE_MS = 30_000;
 const HYPERSIGHT_DEBOUNCE_MS = 1_200;
 const HYPERSIGHT_MAX_DEBOUNCE_MS = 5_000;
+const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
   "message_created",
   "stream_completed",
@@ -72,46 +85,11 @@ const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
   "activity_suggestion_resolved",
   "hypersight_configuration_updated",
 ]);
-const ACTIVE_STREAM_CHECKPOINTS_KEY = "activeStreamCheckpoints";
-const ACTIVE_STREAM_CHECKPOINT_CHUNK_PREFIX = "activeStreamCheckpointText:";
-// Keep each stored string below even the legacy 128 KiB value ceiling. The
-// room classes use SQLite-backed Durable Objects (whose current value ceiling
-// is larger), but a storage representation should not depend on one enormous
-// value when the response itself has no equivalent product limit.
-const ACTIVE_STREAM_CHECKPOINT_CHUNK_CODE_UNITS = 30_000;
-
-const StoredActiveStreamCheckpointSchema = z.object({
-  messageId: IdSchema,
-  harnessRunId: IdSchema,
-  turnId: z.string().min(1).max(180),
-  epoch: z.number().int().nonnegative(),
-  streamSeq: z.number().int().nonnegative(),
-  seenTurnIds: z.array(z.string().min(1).max(180)),
-  textChunkCount: z.number().int().nonnegative(),
-  turnStartOffset: z.number().int().nonnegative(),
-  roomSequence: z.number().int().nonnegative(),
-  createdAt: z.string().datetime({ offset: true }),
-});
-
-type StoredActiveStreamCheckpoint = z.infer<typeof StoredActiveStreamCheckpointSchema>;
-
-interface ActiveStreamCheckpointStorage {
-  get<T = unknown>(key: string): Promise<T | undefined>;
-  put(key: string, value: unknown): Promise<void>;
-  delete(key: string): Promise<boolean>;
-}
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
-}
-
-interface PendingHyperSightRefresh {
-  workspaceId: string;
-  workstreamId: string;
-  triggerSequence: number;
-  firstQueuedAt: number;
 }
 
 /**
@@ -134,86 +112,6 @@ interface UserRow {
 
 const textEncoder = new TextEncoder();
 
-function activeStreamCheckpointChunkKey(index: number): string {
-  return `${ACTIVE_STREAM_CHECKPOINT_CHUNK_PREFIX}${String(index).padStart(8, "0")}`;
-}
-
-/** Split without leaving one half of a UTF-16 surrogate pair in either value. */
-export function splitActiveStreamCheckpointText(text: string): string[] {
-  const chunks: string[] = [];
-  for (let start = 0; start < text.length;) {
-    let end = Math.min(text.length, start + ACTIVE_STREAM_CHECKPOINT_CHUNK_CODE_UNITS);
-    const prior = text.charCodeAt(end - 1);
-    const next = text.charCodeAt(end);
-    if (end < text.length && prior >= 0xD800 && prior <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
-      end -= 1;
-    }
-    chunks.push(text.slice(start, end));
-    start = end;
-  }
-  return chunks;
-}
-
-async function loadActiveStreamCheckpoints(
-  storage: ActiveStreamCheckpointStorage,
-  storedValue?: unknown,
-): Promise<ActiveStreamCheckpoint[]> {
-  const value = storedValue ?? await storage.get(ACTIVE_STREAM_CHECKPOINTS_KEY);
-  const legacy = ActiveStreamCheckpointsSchema.safeParse(value);
-  if (legacy.success) return legacy.data;
-
-  const stored = StoredActiveStreamCheckpointSchema.safeParse(value);
-  if (!stored.success) return [];
-  const chunks: string[] = [];
-  for (let index = 0; index < stored.data.textChunkCount; index += 1) {
-    const chunk = await storage.get(activeStreamCheckpointChunkKey(index));
-    if (typeof chunk !== "string") return [];
-    chunks.push(chunk);
-  }
-  const hydrated = ActiveStreamCheckpointsSchema.safeParse([{ ...stored.data, text: chunks.join("") }]);
-  return hydrated.success ? hydrated.data : [];
-}
-
-async function storeActiveStreamCheckpoints(
-  storage: ActiveStreamCheckpointStorage,
-  previousValue: unknown,
-  checkpoints: ActiveStreamCheckpoint[],
-): Promise<void> {
-  const previousStored = StoredActiveStreamCheckpointSchema.safeParse(previousValue);
-  const previousChunkCount = previousStored.success ? previousStored.data.textChunkCount : 0;
-  const checkpoint = checkpoints[0];
-  if (!checkpoint) {
-    for (let index = 0; index < previousChunkCount; index += 1) {
-      await storage.delete(activeStreamCheckpointChunkKey(index));
-    }
-    await storage.delete(ACTIVE_STREAM_CHECKPOINTS_KEY);
-    return;
-  }
-
-  const chunks = splitActiveStreamCheckpointText(checkpoint.text);
-  for (let index = 0; index < chunks.length; index += 1) {
-    await storage.put(activeStreamCheckpointChunkKey(index), chunks[index]);
-  }
-  for (let index = chunks.length; index < previousChunkCount; index += 1) {
-    await storage.delete(activeStreamCheckpointChunkKey(index));
-  }
-  const metadata = StoredActiveStreamCheckpointSchema.parse({
-    ...checkpoint,
-    textChunkCount: chunks.length,
-  }) satisfies StoredActiveStreamCheckpoint;
-  await storage.put(ACTIVE_STREAM_CHECKPOINTS_KEY, metadata);
-}
-
-function eventCanChangeActiveStreamCheckpoint(event: ServerSocketEvent): boolean {
-  return event.type === "stream_started"
-    || event.type === "stream_delta"
-    || event.type === "stream_completed"
-    || (event.type === "harness_status_changed"
-      && (event.status === "needs_input"
-        || event.status === "completed"
-        || event.status === "failed"
-        || event.status === "idle"));
-}
 
 /**
  * Whether this event can have taken somebody's read access away.
@@ -225,83 +123,6 @@ function eventCanChangeActiveStreamCheckpoint(event: ServerSocketEvent): boolean
 function retractsReadAccess(event: ServerSocketEvent): boolean {
   if (event.type === "workstream_scope_changed") return event.scope === "personal";
   return event.type === "participant_removed";
-}
-
-/**
- * Fold one sequenced room event into the durable partial-response checkpoint.
- * This mirrors the renderer's Bind cursor rules so a fresh subscriber receives
- * exactly the text an uninterrupted subscriber is already displaying.
- */
-export function applyActiveStreamCheckpointEvent(
-  checkpoints: ActiveStreamCheckpoint[],
-  event: ServerSocketEvent,
-): ActiveStreamCheckpoint[] {
-  if (event.type === "stream_completed") {
-    return checkpoints.filter((checkpoint) => checkpoint.messageId !== event.message.id);
-  }
-  if (
-    event.type === "harness_status_changed"
-    && (event.status === "needs_input"
-      || event.status === "completed"
-      || event.status === "failed"
-      || event.status === "idle")
-  ) {
-    return [];
-  }
-  if (event.type !== "stream_started" && event.type !== "stream_delta") return checkpoints;
-
-  // Admission permits one active harness run per work stream. A start from a
-  // different run supersedes a checkpoint whose terminal event never reached
-  // the room, keeping this one accumulated value bounded across outages.
-  const activeCheckpoints = event.type === "stream_started"
-    ? checkpoints.filter((checkpoint) => checkpoint.harnessRunId === event.harnessRunId)
-    : checkpoints;
-  const existing = activeCheckpoints.find((checkpoint) => checkpoint.messageId === event.messageId);
-  // The publisher always attempts `stream_started` first. If that room request
-  // failed, a later delta cannot reconstruct the missing prefix and must not
-  // manufacture a checkpoint that claims it can.
-  if (event.type === "stream_delta" && !existing) return checkpoints;
-  if (existing) {
-    if (event.sequence <= existing.roomSequence) return checkpoints;
-    if (event.turnId === existing.turnId) {
-      if (event.epoch < existing.epoch) return checkpoints;
-      if (event.epoch === existing.epoch && event.streamSeq <= existing.streamSeq) {
-        return checkpoints;
-      }
-    } else if (existing.seenTurnIds.includes(event.turnId)) {
-      return checkpoints;
-    }
-  }
-
-  const startsNewTurn = !existing || event.turnId !== existing.turnId;
-  const turnStartOffset = startsNewTurn ? existing?.text.length ?? 0 : existing.turnStartOffset;
-  const replacesAttempt = event.reset
-    || (existing !== undefined && !startsNewTurn && event.epoch > existing.epoch);
-  const text = event.type === "stream_started"
-    ? (replacesAttempt ? (existing?.text ?? "").slice(0, turnStartOffset) : existing?.text ?? "")
-    : replacesAttempt
-      ? `${(existing?.text ?? "").slice(0, turnStartOffset)}${event.delta}`
-      : `${existing?.text ?? ""}${event.delta}`;
-  const seenTurnIds = existing?.seenTurnIds.includes(event.turnId)
-    ? existing.seenTurnIds
-    : [...(existing?.seenTurnIds ?? []), event.turnId];
-  const harnessRunId = event.type === "stream_started"
-    ? event.harnessRunId
-    : existing?.harnessRunId;
-  if (!harnessRunId) return checkpoints;
-  const next: ActiveStreamCheckpoint = {
-    messageId: event.messageId,
-    harnessRunId,
-    turnId: event.turnId,
-    epoch: event.epoch,
-    streamSeq: event.streamSeq,
-    seenTurnIds,
-    text,
-    turnStartOffset,
-    roomSequence: event.sequence,
-    createdAt: existing?.createdAt ?? event.occurredAt,
-  };
-  return [next];
 }
 
 /**
@@ -378,29 +199,6 @@ export async function loadVisibleWorkstreamRoomResources(
   return visible.rows;
 }
 
-export async function consumeSocketTicket(
-  storage: DurableObjectStorage,
-  ticketId: string,
-  expiresAt: number,
-  nowEpochSeconds = Math.floor(Date.now() / 1_000),
-): Promise<boolean> {
-  if (expiresAt <= nowEpochSeconds) return false;
-  const key = `${SOCKET_TICKET_PREFIX}${ticketId}`;
-  const consumed = await storage.transaction(async (transaction) => {
-    if (await transaction.get<number>(key)) return false;
-    await transaction.put(key, expiresAt);
-    return true;
-  });
-  if (consumed) {
-    const entries = await storage.list<number>({ prefix: SOCKET_TICKET_PREFIX, limit: 32 });
-    const expired = [...entries.entries()]
-      .filter(([, expiration]) => expiration <= nowEpochSeconds)
-      .map(([entryKey]) => entryKey);
-    if (expired.length) await storage.delete(expired);
-  }
-  return consumed;
-}
-
 export function distinctNonParticipantViewers<T extends { userId: string; connectedAt: string }>(
   attachments: T[],
   participantIds: ReadonlySet<string>,
@@ -425,7 +223,7 @@ export type SocketReplayPlan =
  * The replay window intentionally lives only in object memory. Persisting every
  * token event would turn an ephemeral optimization into storage write cost.
  * After hibernation, clients receive an explicit resync instruction and use
- * canonical REST/D1 state instead.
+ * the canonical REST surface for the current authority generation.
  */
 export function planSocketReplay(
   afterSequence: number,
@@ -450,10 +248,11 @@ export function planSocketReplay(
 }
 
 /**
- * A hibernating, non-canonical realtime coordinator for one work stream.
+ * The hibernating realtime and storage authority for one work stream.
  *
- * REST/D1 remain authoritative. This object only allocates a total order for
- * live events, publishes canonical snapshots, and tracks socket presence.
+ * Before the guarded D1 import opens, the room coordinates live events around
+ * the legacy product rows. After it opens, the same object-local SQL database
+ * is the product authority; REST remains the recovery surface in both phases.
  */
 export class WorkstreamRoom {
   private readonly recentEvents: ServerSocketEvent[] = [];
@@ -465,17 +264,28 @@ export class WorkstreamRoom {
    * conservative direction.
    */
   private lastRevalidatedAt = 0;
+  private readonly objectStore: WorkstreamObjectStore;
+  private readonly authorityImporter: WorkstreamAuthorityImporter;
+  private readonly initialized: Promise<void>;
 
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env
   ) {
+    this.objectStore = new WorkstreamObjectStore(
+      state.storage,
+      env.APP_VERSION ?? "unknown",
+      env.AVALON_REGION,
+    );
+    this.authorityImporter = new WorkstreamAuthorityImporter(state.storage);
+    this.initialized = state.blockConcurrencyWhile(() => this.objectStore.waitUntilReady());
     // Exact text ping/pong frames are answered by the runtime without waking a
     // hibernated object, so keepalives do not accrue Durable Object duration.
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
   async fetch(request: Request): Promise<Response> {
+    await this.initialized;
     const url = new URL(request.url);
 
     if (request.method === "GET" && (url.pathname === "/socket" || url.pathname === "/")) {
@@ -489,22 +299,64 @@ export class WorkstreamRoom {
       return this.acceptEvent(request);
     }
 
+    if (request.method === "POST" && url.pathname === "/internal/authority-import") {
+      return this.acceptAuthorityImport(request);
+    }
+
     if (request.method === "GET" && url.pathname === "/presence") {
-      const identity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
-      if (!identity.success) return jsonResponse({ viewers: [] });
+      const identity = this.objectStore.identity();
+      if (!identity) return jsonResponse({ viewers: [] });
       return jsonResponse({
-        viewers: await this.loadViewers(identity.data.workspaceId, identity.data.workstreamId),
+        viewers: await this.loadViewers(identity.workspaceId, identity.workstreamId),
       });
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return jsonResponse({ ok: true, sockets: this.state.getWebSockets().length });
+      return jsonResponse({
+        ok: true,
+        sockets: this.state.getWebSockets().length,
+        schema: "workstream-do-v1",
+        databaseBytes: this.objectStore.databaseSize(),
+      });
     }
 
     return jsonResponse({ error: "not_found" }, 404);
   }
 
+  private async acceptAuthorityImport(request: Request): Promise<Response> {
+    const parsed = WorkstreamAuthorityImportRequestSchema.safeParse(await request.json());
+    if (!parsed.success) return jsonResponse({ error: "invalid_authority_import" }, 400);
+    const control = await readWorkstreamAuthorityControl(this.env);
+    const requiredPhase = parsed.data.operation === "activate"
+      ? "maintenance_verified"
+      : "maintenance_importing";
+    if (control.phase !== requiredPhase || control.generation !== parsed.data.generation) {
+      return jsonResponse({
+        error: "authority_import_phase_mismatch",
+        phase: control.phase,
+        generation: control.generation,
+      }, 409);
+    }
+    try {
+      if (parsed.data.operation === "begin") {
+        for (const socket of this.state.getWebSockets()) {
+          disconnect(socket, 1012, "Work stream maintenance");
+        }
+        this.objectStore.ensureIdentity({
+          workspaceId: parsed.data.workspaceId,
+          workstreamId: parsed.data.workstreamId,
+        }, this.env.AVALON_REGION);
+      }
+      return jsonResponse(this.authorityImporter.execute(parsed.data));
+    } catch (error) {
+      return jsonResponse({
+        error: error instanceof Error ? error.message : "authority_import_failed",
+      }, 409);
+    }
+  }
+
   async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    await this.initialized;
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
     let decoded: unknown;
 
@@ -528,6 +380,11 @@ export class WorkstreamRoom {
     }
 
     if (parsed.data.type === "subscribe") {
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      if (!acceptsNewWorkstreamWork(authority) || !this.objectStore.isRealtimeWritable()) {
+        disconnect(socket, 1012, "Work stream maintenance");
+        return;
+      }
       await this.fulfillSubscription(
         socket,
         attachment.workspaceId,
@@ -548,9 +405,15 @@ export class WorkstreamRoom {
   }
 
   async alarm(): Promise<void> {
-    const pending = await this.state.storage.get<PendingHyperSightRefresh>("pendingHyperSightRefresh");
+    await this.initialized;
+    const pending = this.objectStore.pendingHyperSightRefresh();
     if (!pending) return;
-    await this.state.storage.delete("pendingHyperSightRefresh");
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(authority)) {
+      await this.state.storage.setAlarm(Date.now() + MAINTENANCE_RECHECK_MS);
+      return;
+    }
+    this.objectStore.deletePendingHyperSightRefresh();
     try {
       const runs = await launchHyperSightRefresh(
         this.env,
@@ -569,8 +432,9 @@ export class WorkstreamRoom {
         this.broadcast(event);
       }
     } catch {
-      await this.state.storage.put("pendingHyperSightRefresh", pending);
-      await this.state.storage.setAlarm(Date.now() + HYPERSIGHT_DEBOUNCE_MS);
+      const retryAt = Date.now() + HYPERSIGHT_DEBOUNCE_MS;
+      this.objectStore.failPendingHyperSightRefresh(pending, retryAt);
+      await this.state.storage.setAlarm(retryAt);
     }
   }
 
@@ -602,6 +466,14 @@ export class WorkstreamRoom {
   }
 
   private async connect(request: Request, url: URL): Promise<Response> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(authority)) {
+      return jsonResponse({
+        error: "workstream_maintenance",
+        phase: authority.phase,
+        generation: authority.generation,
+      }, 503);
+    }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return jsonResponse({ error: "websocket_upgrade_required" }, 426);
     }
@@ -649,26 +521,40 @@ export class WorkstreamRoom {
 
     if (!authorized) return jsonResponse({ error: "forbidden" }, 403);
 
-    if (!await consumeSocketTicket(
-      this.state.storage,
+    const currentAuthority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(currentAuthority)) {
+      return jsonResponse({
+        error: "workstream_maintenance",
+        phase: currentAuthority.phase,
+        generation: currentAuthority.generation,
+      }, 503);
+    }
+
+    try {
+      this.objectStore.ensureIdentity({
+        workspaceId: identity.data.workspaceId,
+        workstreamId: identity.data.workstreamId,
+      }, this.env.AVALON_REGION);
+    } catch (error) {
+      if (error instanceof Error && error.message === "workstream_object_identity_mismatch") {
+        return jsonResponse({ error: "room_identity_mismatch" }, 409);
+      }
+      throw error;
+    }
+    if (!this.objectStore.isRealtimeWritable()) {
+      return jsonResponse({
+        error: "workstream_maintenance",
+        phase: currentAuthority.phase,
+        generation: currentAuthority.generation,
+      }, 503);
+    }
+
+    if (!this.objectStore.consumeSocketTicket(
       identity.data.ticketId,
       identity.data.ticketExpiresAt,
     )) {
       return jsonResponse({ error: "socket_ticket_replayed" }, 401);
     }
-
-    const roomIdentity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
-    if (
-      roomIdentity.success &&
-      (roomIdentity.data.workspaceId !== identity.data.workspaceId ||
-        roomIdentity.data.workstreamId !== identity.data.workstreamId)
-    ) {
-      return jsonResponse({ error: "room_identity_mismatch" }, 409);
-    }
-    await this.state.storage.put("roomIdentity", {
-      workspaceId: identity.data.workspaceId,
-      workstreamId: identity.data.workstreamId
-    });
 
     const pair = Object.values(new WebSocketPair());
     const client = pair[0];
@@ -692,6 +578,14 @@ export class WorkstreamRoom {
   }
 
   private async acceptEvent(request: Request): Promise<Response> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(authority) && !permitsLegacyRuntimeDrain(authority)) {
+      return jsonResponse({
+        error: "workstream_maintenance",
+        phase: authority.phase,
+        generation: authority.generation,
+      }, 503);
+    }
     let body: unknown;
     try {
       body = await request.json();
@@ -709,16 +603,16 @@ export class WorkstreamRoom {
       workspaceId: request.headers.get("x-avalon-workspace-id"),
       workstreamId: request.headers.get("x-avalon-workstream-id"),
     });
-    if (requestIdentity.success) {
-      const storedIdentity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
-      if (!storedIdentity.success) {
-        await this.state.storage.put("roomIdentity", requestIdentity.data);
-      } else if (
-        storedIdentity.data.workspaceId !== requestIdentity.data.workspaceId
-        || storedIdentity.data.workstreamId !== requestIdentity.data.workstreamId
-      ) {
+    if (!requestIdentity.success) {
+      return jsonResponse({ error: "invalid_room_identity" }, 400);
+    }
+    try {
+      this.objectStore.ensureIdentity(requestIdentity.data, this.env.AVALON_REGION);
+    } catch (error) {
+      if (error instanceof Error && error.message === "workstream_object_identity_mismatch") {
         return jsonResponse({ error: "room_identity_mismatch" }, 409);
       }
+      throw error;
     }
 
     const rawEvent = unvalidatedEvent as Record<string, unknown>;
@@ -795,9 +689,9 @@ export class WorkstreamRoom {
     // marked those attachments unsubscribed, which is the filter `loadViewers`
     // applies, so they drop out without an exclusion argument.
     if (evicted) {
-      const identity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
-      if (identity.success) {
-        await this.broadcastPresence(identity.data.workspaceId, identity.data.workstreamId);
+      const identity = this.objectStore.identity();
+      if (identity) {
+        await this.broadcastPresence(identity.workspaceId, identity.workstreamId);
       }
     }
     if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(event.type)) {
@@ -836,8 +730,8 @@ export class WorkstreamRoom {
     }
     if (byUserId.size === 0) return false;
 
-    const identity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
-    if (!identity.success) return false;
+    const identity = this.objectStore.identity();
+    if (!identity) return false;
     const userIds = [...byUserId.keys()];
     const placeholders = userIds.map(() => "?").join(",");
     let permitted: Set<string>;
@@ -851,7 +745,7 @@ export class WorkstreamRoom {
             AND wm.user_id IN (${placeholders})
             AND ${workstreamVisibilitySql("wm.user_id")}`
       )
-        .bind(identity.data.workstreamId, identity.data.workspaceId, ...userIds)
+        .bind(identity.workstreamId, identity.workspaceId, ...userIds)
         .all<{ user_id: string }>();
       permitted = new Set((result.results ?? []).map((row) => row.user_id));
     } catch {
@@ -894,20 +788,21 @@ export class WorkstreamRoom {
   }
 
   private async scheduleHyperSightRefresh(triggerSequence: number): Promise<void> {
-    const identity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
-    if (!identity.success) return;
+    const identity = this.objectStore.identity();
+    if (!identity) return;
     const now = Date.now();
-    const existing = await this.state.storage.get<PendingHyperSightRefresh>("pendingHyperSightRefresh");
+    const existing = this.objectStore.pendingHyperSightRefresh();
     const pending: PendingHyperSightRefresh = {
-      ...identity.data,
+      ...identity,
       triggerSequence: Math.max(existing?.triggerSequence ?? 0, triggerSequence),
       firstQueuedAt: existing?.firstQueuedAt ?? now,
     };
-    await this.state.storage.put("pendingHyperSightRefresh", pending);
-    await this.state.storage.setAlarm(Math.min(
+    const dueAt = Math.min(
       now + HYPERSIGHT_DEBOUNCE_MS,
       pending.firstQueuedAt + HYPERSIGHT_MAX_DEBOUNCE_MS,
-    ));
+    );
+    this.objectStore.putPendingHyperSightRefresh(pending, dueAt);
+    await this.state.storage.setAlarm(dueAt);
   }
 
   private async fulfillSubscription(
@@ -976,7 +871,7 @@ export class WorkstreamRoom {
       reason: plan.reason,
       latestSequence: currentSequence,
       activeStreams: plan.reason === "history_unavailable"
-        ? await loadActiveStreamCheckpoints(this.state.storage)
+        ? this.objectStore.activeStreamCheckpoints()
         : [],
     });
     socket.send(JSON.stringify(event));
@@ -993,7 +888,7 @@ export class WorkstreamRoom {
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
       const workstream = await this.loadSnapshot(workspaceId, workstreamId, attachment.userId);
       const sequence = knownSequence ?? await this.currentSequence(workstreamId);
-      const storedCheckpoints = await loadActiveStreamCheckpoints(this.state.storage);
+      const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
       const event = ServerSocketEventSchema.parse({
         type: "snapshot",
         sequence,
@@ -1140,7 +1035,6 @@ export class WorkstreamRoom {
   }
 
   private async currentSequence(workstreamId: string): Promise<number> {
-    const stored = (await this.state.storage.get<number>("eventSequence")) ?? 0;
     const canonical = await this.env.DB.prepare(
       `SELECT COALESCE(MAX(sequence_number), 0) AS sequence
          FROM messages
@@ -1148,19 +1042,11 @@ export class WorkstreamRoom {
     )
       .bind(workstreamId)
       .first<{ sequence: number }>();
-    if ((canonical?.sequence ?? 0) > stored) {
-      await this.state.storage.put("eventSequence", canonical?.sequence ?? 0);
-    }
-    return Math.max(stored, canonical?.sequence ?? 0);
+    return this.objectStore.currentSequence(canonical?.sequence ?? 0);
   }
 
   private async allocateSequence(requested?: number): Promise<number> {
-    return this.state.storage.transaction(async (transaction) => {
-      const current = (await transaction.get<number>("eventSequence")) ?? 0;
-      const next = Math.max(current + 1, requested ?? 0);
-      await transaction.put("eventSequence", next);
-      return next;
-    });
+    return this.objectStore.allocateSequence(requested);
   }
 
   /**
@@ -1173,21 +1059,7 @@ export class WorkstreamRoom {
     unsequencedEvent: ServerSocketEvent,
     requestedSequence?: number,
   ): Promise<ServerSocketEvent> {
-    return this.state.storage.transaction(async (transaction) => {
-      const current = (await transaction.get<number>("eventSequence")) ?? 0;
-      const sequence = Math.max(current + 1, requestedSequence ?? 0);
-      const event = ServerSocketEventSchema.parse({ ...unsequencedEvent, sequence });
-      await transaction.put("eventSequence", sequence);
-      if (eventCanChangeActiveStreamCheckpoint(event)) {
-        const storedValue = await transaction.get(ACTIVE_STREAM_CHECKPOINTS_KEY);
-        const checkpoints = await loadActiveStreamCheckpoints(transaction, storedValue);
-        const nextCheckpoints = applyActiveStreamCheckpointEvent(checkpoints, event);
-        if (nextCheckpoints !== checkpoints) {
-          await storeActiveStreamCheckpoints(transaction, storedValue, nextCheckpoints);
-        }
-      }
-      return event;
-    });
+    return this.objectStore.commitRealtimeEvent(unsequencedEvent, requestedSequence);
   }
 }
 

@@ -414,8 +414,11 @@ snapshots.
 
 It does not own product state, authorization for the product action being
 observed, provider content, PostHog-side retention/access/configuration, legal
-approval, advertising, consent-law determinations, or cross-site identity. Product
-analytics are advisory and may be incomplete; D1 product records remain canonical.
+approval, advertising, consent-law determinations, cross-site identity, or
+public-site analytics. The public site remains unchanged. Product analytics are
+advisory and may be incomplete; regional product authority is canonical — D1
+for workspace/control data and, after its guarded cutover, the owning
+WorkstreamDO for work-stream product data.
 
 ## Failure modes and limits
 

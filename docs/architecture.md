@@ -197,11 +197,16 @@ identity, crash, and restricted operator flow.
 
 ### Work streams and live updates
 
-REST/D1 remains canonical. Within each regional workspace, every work stream maps
-deterministically to exactly one WorkstreamRoom Durable Object named from region,
-workspace ID, and work-stream ID. EU calls resolve the namespace through
-`jurisdiction("eu")`. The room coordinates ordering and ephemeral presence; it
-does not duplicate the canonical transcript.
+Within each regional workspace, every work stream maps deterministically to one
+`WorkstreamRoom` Durable Object named from region, workspace ID, and work-stream
+ID. EU calls resolve the namespace through `jurisdiction("eu")`. The existing
+namespace is SQLite-backed. Before its guarded maintenance cutover, D1 serves
+the work-stream product rows; afterward the object's named SQL tables own root
+metadata, transcript/substreams, viewer attention, runs/tools, compaction,
+suggestions, and Terminal state. D1 retains workspace authority/routing and
+versioned common/user directory projections. Its hidden KV migration, normalized
+schema, fleet import, and authority states are documented in
+[`workstream-durable-object.md`](workstream-durable-object.md).
 
 The room authorizes every connection against D1 itself rather than trusting the
 one-minute ticket, using the same rule the REST reads apply — see
@@ -447,10 +452,11 @@ precede any LLM classification.
 
 ## Invariants
 
-- **Canonical state is D1, everywhere.** Durable Objects coordinate ordering,
-  presence, sockets, and alarms; a reader that treats a Durable Object as the
-  source of truth will serve state that survives no restart. R2 holds payloads
-  and the relational metadata that names them stays in D1.
+- **Authority follows the declared storage boundary.** Regional D1 owns
+  workspace, connector, routing, schedule, audit, and projection state. After a
+  work-stream generation opens, its WorkstreamDO owns work-stream product state
+  and legacy D1 writers fail. R2 holds large payloads; the authority that names
+  each reference stays in the owning regional database.
 - **Every boundary a value crosses is parsed at runtime, not asserted by a type
   that build erases.** That covers HTTP requests, JSON responses, queue messages,
   Workflow params and step results, Durable Object fetches and their stored state,
@@ -624,6 +630,47 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-17 — Work-stream authority gains a maintenance-fenced cutover
+
+**What changed:** The existing one-workstream-per-DO namespace gains the
+normalized product schema and a regional campaign that drains runs, imports and
+verifies every object, seeds directory projections, activates one generation,
+and fences legacy D1 product writers.
+
+**Why:** Named local tables without a writer switch are only a shadow copy. The
+approved maintenance window removes live tailing and dual-write conflicts while
+still requiring fleet-wide evidence before authority opens.
+
+**Considered and rejected:** A new namespace and a live migration. The former
+changes object identity without changing placement; the latter requires holding
+queues, tail reconciliation, and conflict policy.
+
+**Consequences:** D1 remains workspace/control authority and the directory query
+plane. Each opened WorkstreamDO becomes product authority, quarantine never
+falls back, and the final regional open is an explicit operator action.
+
+### 2026-08-16 — Work-stream rooms expose their existing SQLite storage
+
+**What changed:** `WorkstreamRoom` keeps its namespace and product boundary but
+replaces free-form Durable Object key/value records with an explicit local SQL
+schema. The room imports identity, sequence, active output, pending HyperSight
+work, and ticket receipts in place before accepting an event or socket.
+
+**Why:** The namespace was already SQLite-backed, so a second class and an
+object-fleet copy would add risk without changing placement. Named relational
+owners make recovery and schema evolution inspectable before the later
+authority campaign imports regional product rows.
+
+**Considered and rejected:** A new Durable Object namespace and an unfenced
+authority flip. The later maintenance campaign supplies the missing fence.
+
+**Consequences:** An old room pays one lazy local migration on its first wake.
+Room code must use `WorkstreamObjectStore`; future DDL uses a new immutable
+schema version. Authority remains phase-dependent until the regional campaign
+opens.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-13 — Telemetry separates data projection from control authority
 

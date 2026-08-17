@@ -32,6 +32,10 @@ import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
 import { workstreamWorkflowStepTimeout } from "../services/workstream-run-policy";
+import {
+  permitsLegacyRuntimeDrain,
+  readWorkstreamAuthorityControl,
+} from "../services/workstream-authority";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 
 const HarnessWorkflowOutcomeSchema = z.object({
@@ -145,6 +149,13 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     const input = WorkstreamWorkflowInputSchema.parse(event.payload);
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
     const hyperSightRun = input.reason === "hypersight_block";
+
+    await step.do("check-workstream-authority-fence", async () => {
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      if (!permitsLegacyRuntimeDrain(authority)) {
+        throw new Error(`workstream_maintenance:${authority.phase}:${authority.generation}`);
+      }
+    });
 
     const identity = await step.do("create-durable-attempt-identity", async (): Promise<AttemptIdentity> => {
       const attemptId = crypto.randomUUID();
@@ -501,7 +512,11 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       );
       await rooms.get(id).fetch("https://workstream-room/internal/events", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-avalon-workspace-id": input.workspaceId,
+          "x-avalon-workstream-id": input.workstreamId,
+        },
         body: JSON.stringify({ event }),
       });
     } catch {

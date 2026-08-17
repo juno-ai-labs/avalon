@@ -11,6 +11,7 @@ import {
   RegionalWebhookInputSchema,
   parseRpcInput,
 } from "./lib/rpc-contracts";
+import { requireWorkstreamIngress } from "./services/workstream-authority";
 
 /**
  * Account-internal RPC surface used by the shared Global Notion ingress. It
@@ -20,28 +21,32 @@ import {
  */
 export class NotionRegionalBridge extends WorkerEntrypoint<Env> {
   completeNotion(input: unknown) {
-    return serializeNotionRpcResult(() => {
+    return serializeNotionRpcResult(async () => {
+      await requireWorkstreamIngress(this.env);
       const parsed = parseRpcInput(NotionCallbackInputSchema, input, "completeNotion");
       return new ConnectionService(this.env).completeProvider("notion", parsed.code, parsed.state);
     });
   }
 
   denyNotion(input: unknown) {
-    return serializeNotionRpcResult(() => {
+    return serializeNotionRpcResult(async () => {
+      await requireWorkstreamIngress(this.env);
       const parsed = parseRpcInput(NotionCallbackStateInputSchema, input, "denyNotion");
       return new ConnectionService(this.env).completeProviderDenial("notion", parsed.state);
     });
   }
 
   failNotionAttempt(input: unknown) {
-    return serializeNotionRpcResult(() => {
+    return serializeNotionRpcResult(async () => {
+      await requireWorkstreamIngress(this.env);
       const parsed = parseRpcInput(NotionCallbackFailureInputSchema, input, "failNotionAttempt");
       return new ConnectionService(this.env).failProviderAttempt("notion", parsed.state, parsed.errorCode);
     });
   }
 
   ingestNotion(input: unknown) {
-    return serializeNotionRpcResult(() => {
+    return serializeNotionRpcResult(async () => {
+      await requireWorkstreamIngress(this.env);
       const parsed = parseRpcInput(RegionalWebhookInputSchema, input, "ingestNotion");
       return new ProviderWebhookService(this.env).ingestNotion(new Uint8Array(parsed.rawBody), parsed.headers);
     });
@@ -49,6 +54,7 @@ export class NotionRegionalBridge extends WorkerEntrypoint<Env> {
 
   storeNotionChallenge(input: unknown) {
     return serializeNotionRpcResult(async () => {
+      await requireWorkstreamIngress(this.env);
       const parsed = parseRpcInput(NotionChallengeInputSchema, input, "storeNotionChallenge");
       await new ProviderWebhookService(this.env).storeNotionChallengeToken(
         parsed.verificationToken,
