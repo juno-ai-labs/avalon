@@ -44,6 +44,14 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
  *     under one of its `properties` is accepted by all nine models — so this
  *     must never become a subtree scan, for the same reason.
  *
+ * **The rule is stated over a *sanitized* branch**, which is the only form that
+ * reaches a provider, and both callers pass one. It is deliberately literal
+ * about `type` as a result: an array `type` such as `["object", "null"]` reads
+ * as unreadable here, which is wrong for an authored schema and irrelevant for a
+ * sanitized one, because Bind collapses a type array to a scalar before this
+ * ever sees it. Anyone applying this predicate to an authored schema — a legal
+ * shape for a third-party MCP server to serve — should sanitize first.
+ *
  * Bind 13 handles every clause here, so nothing in the shipped tool surface
  * currently trips it. It is kept as the statement of the rule itself: the
  * clauses cost roughly two hundred live provider requests to establish, and
@@ -129,11 +137,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  *
  * **Bind 12 and 13 repair all of those**: a branch's `required` now resolves
  * against its parent's `properties`, and the referenced subschemas are copied
- * down, so the constraint reaches the wire. What still reports here is a branch
- * naming something *nothing* in scope declares, which remains unrepairable and
- * is still pruned away. Keep the check rather than trusting the dependency: it
- * costs nothing when there is nothing to find, and it is what would notice a
- * bind release that stopped repairing.
+ * down, so the constraint reaches the wire. Two forms still report, and the
+ * second is now the more consequential:
+ *
+ * - `(required dropped)` — a branch naming something *nothing* in scope
+ *   declares, which remains unrepairable and is still pruned away.
+ * - `(composition dropped)` — a whole root union Bind removed, which it does
+ *   when no branch of it can be made usable. See `walkPair` for why a vanished
+ *   keyword has to be reported rather than skipped.
+ *
+ * Keep the check rather than trusting the dependency: it costs nothing when
+ * there is nothing to find, and it is what would notice a bind release that
+ * stopped repairing.
  *
  * The loss is silent on every provider measured: nine live models accept a
  * weakened branch without complaint and let the model send both parameters or

@@ -14,7 +14,7 @@ Each run is one server-side, tool-using loop inherent to a work stream. It is no
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
 | `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
-| `packages/agent-harness/src/tool-schema-safety.ts` | The two standing checks over what Bind's sanitizer *emits*: a root union branch xAI rejects, and a composition branch the sanitizer strips a constraint from. |
+| `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
 | `apps/api/src/workflows/workstream-loop.ts` | The generic Workflow every run is one instance of. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
