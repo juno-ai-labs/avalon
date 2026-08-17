@@ -1,6 +1,6 @@
 # Agent harness
 
-Avalon's production loop is an adapter over `@juno-ai/bind` 11.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
+Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
 
 Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
@@ -8,7 +8,7 @@ Each run is one server-side, tool-using loop inherent to a work stream. It is no
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/agent-harness/src/bind-runtime.ts` | The Bind 11 adapter itself — registry construction, the tool loop's hooks, streaming. |
+| `packages/agent-harness/src/bind-runtime.ts` | The Bind adapter itself — registry construction, the tool loop's hooks, streaming. |
 | `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
@@ -650,6 +650,19 @@ durable asset here; the checks that consume them are replaceable.
 
 A future bump should expect these test files to move again, and should ask why
 each expectation changed rather than making it green.
+
+Review caught two errors in the first cut of this, both of them the same mistake
+in opposite directions, and both fixed by measuring rather than arguing. The
+branch predicate rejected a branch carrying its own **`allOf`**, generalised from
+a measurement that only ever covered `anyOf`. An intersection is not a union: a
+branch with its own `allOf` is accepted by all nine models and Bind 13
+deliberately keeps it, so rejecting it would have made the repair delete a root
+union the sanitizer had preserved — the precise harm this change exists to stop.
+And `walkPair` assumed the sanitizer never removes a branch, which stopped being
+true in Bind 13: an unrepairable root union is now deleted whole, and the walk
+skipped it while `nonObjectRootUnionBranches` had nothing left to judge, so an
+erased constraint passed both checks. A vanished composition is now reported as
+`(composition dropped)`.
 
 ### 2026-08-16 — `@juno-ai/bind` 12, which repairs most of what the guards were catching
 

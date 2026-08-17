@@ -30,13 +30,19 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
  * - **A declared `type` decides by itself.** `{ type: "string", properties: {…} }`
  *   is rejected exactly like a bare `{ type: "string" }` — the `properties` does
  *   not rescue a branch whose own `type` contradicts it.
- * - **A branch carrying its own composition is rejected even with
- *   `type: "object"`.** `{ type: "object", anyOf: [...] }` 400s on all three
- *   Grok models, so nesting a union one level down inside a root branch does
- *   not escape the rule; it is the same 400 as putting it at the root. The
- *   objection reaches the branch's **own** keywords only — a composition under
- *   one of its `properties` is accepted by all nine models — so this must never
- *   become a subtree scan, which would discard legitimate constraints.
+ * - **A branch carrying its own *union* is rejected even with `type: "object"`.**
+ *   `{ type: "object", anyOf: [...] }` 400s on all three Grok models, so nesting
+ *   a union one level down inside a root branch does not escape the rule; it is
+ *   the same 400 as putting it at the root. Two boundaries here, both measured
+ *   and both easy to get wrong in opposite directions:
+ *   - It is `anyOf`/`oneOf` only. A branch carrying its own **`allOf`** is
+ *     accepted by all nine models, Grok included — an intersection is not a
+ *     union — and Bind 13 deliberately keeps it. Rejecting it here would make
+ *     the repair below delete a root union the sanitizer had preserved,
+ *     destroying a constraint to fix a problem that does not exist.
+ *   - The objection reaches the branch's **own** keywords only — a composition
+ *     under one of its `properties` is accepted by all nine models — so this
+ *     must never become a subtree scan, for the same reason.
  *
  * Bind 13 handles every clause here, so nothing in the shipped tool surface
  * currently trips it. It is kept as the statement of the rule itself: the
@@ -46,7 +52,7 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
 export function readableRootUnionBranch(branch: unknown): boolean {
   if (!isPlainObject(branch)) return false;
   if ("type" in branch ? branch.type !== "object" : !isPlainObject(branch.properties)) return false;
-  return !COMPOSITION_KEYWORDS.some((keyword) => Array.isArray(branch[keyword]));
+  return !ROOT_UNION_KEYWORDS.some((keyword) => Array.isArray(branch[keyword]));
 }
 
 /**
@@ -255,8 +261,15 @@ export function nonObjectRootUnionBranches(schema: Record<string, unknown>): str
  * Walk the authored schema and its sanitized copy in step, reporting each
  * composition branch the sanitizer took a constraint out of.
  *
- * The two trees are structurally identical — the sanitizer rebuilds the spine
- * but never reorders or drops a branch — so the same path indexes both.
+ * The trees are *nearly* parallel, so the same path indexes both — but not
+ * identical, and the difference matters. Bind 13 removes a root composition
+ * outright when no branch of it can be made usable. That is provider-safe and
+ * deliberate, and it is still an authored constraint that did not reach the
+ * wire, so a vanished keyword is reported rather than skipped. Treating the two
+ * trees as structurally identical, which an earlier version of this walk did,
+ * meant a whole erased union slipped past both checks: `walkPair` stopped at the
+ * missing array, and `nonObjectRootUnionBranches` had nothing left to find
+ * because the union it would have judged was gone.
  */
 function walkPair(
   authored: unknown,
@@ -269,8 +282,12 @@ function walkPair(
   const childDepth = depth + 1;
   for (const keyword of COMPOSITION_KEYWORDS) {
     const authoredBranches = authored[keyword];
+    if (!Array.isArray(authoredBranches)) continue;
     const sanitizedBranches = sanitized[keyword];
-    if (!Array.isArray(authoredBranches) || !Array.isArray(sanitizedBranches)) continue;
+    if (!Array.isArray(sanitizedBranches)) {
+      found.push(`${path}/${keyword} (composition dropped)`);
+      continue;
+    }
     authoredBranches.forEach((authoredBranch, index) => {
       const sanitizedBranch = sanitizedBranches[index];
       const branchPath = `${path}/${keyword}/${index}`;
