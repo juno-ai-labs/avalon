@@ -101,12 +101,13 @@ lazy count for very busy streams.
 **Persona:** Mateo's network drops while Avalon is streaming.
 
 **Preconditions:** The run has an active output checkpoint at byte 2,400 and the
-client has fetched through byte 2,400 from coordinate hints.
+client has applied content-bearing Broadcasts through byte 2,400.
 
 **Flow:**
 
 1. The socket disconnects for eight seconds.
-2. The executor continues database checkpoints and body-free coordinate hints.
+2. The Workflow continues database checkpoints and content-bearing Broadcasts
+   containing each actual delta plus up to the two preceding committed deltas.
 3. Mateo reconnects by subscribe-buffer-snapshot.
 4. The run seals one assistant part.
 
@@ -115,8 +116,9 @@ provisional overlap reconciles in place, and completion appears once.
 
 **Architecture stress:** `active_output_attempts` plus bounded
 `active_output_chunks` commit each byte range and offset together; Realtime
-carries attempt/revision/sequence coordinates and the client fetches only bytes
-after its live-authorized offset. Durable work-stream events fill semantic gaps.
+carries actual text with attempt/revision/sequence coordinates, overlap repairs
+one missed batch, and the client fetches only bytes after its live-authorized
+offset for a remaining gap. Durable work-stream events fill semantic gaps.
 
 **Failure oracle:** Fail if text disappears, repeats visibly, an old attempt
 overwrites the winner, or the client depends on Broadcast Replay for recovery.
@@ -595,7 +597,8 @@ accepted suggestions, and recently opened streams.
 
 1. One snapshot RPC returns common cards and her overlays.
 2. A message mention, completion, and pin change commit.
-3. Workspace Broadcast hints identify affected cards/collections.
+3. Workspace Database Broadcast carries the actual bounded common-card and
+   personal-overlay patches with durable revisions.
 4. Both surfaces patch from the same durable events.
 
 **Expected user-visible behavior:** Collection counts and cards agree everywhere
@@ -850,8 +853,10 @@ uses four UTF-8 bytes per token.
    in memory and permits one checkpoint RPC in flight.
 2. Every 500 ms with new data it sends about 50 tokens/about 200 bytes to
    `checkpoint_active_output`; the RPC mutates only the open bounded chunk.
-3. After each commit it sends a body-free REST Broadcast hint. The client
-   coalesces hints and fetches only bytes after its last authorized offset. It
+3. The checkpoint transaction Database-Broadcasts the actual new text plus up
+   to two preceding committed deltas with verified offsets and hashes. The
+   client applies overlap and fetches only bytes after its last authorized
+   offset when Replay/overlap leaves a gap. It
    queues the roughly 50-token batch and drains it at the selected 10, 20, or
    30 visual frames per second—about 10, 5, or 3–4 tokens per frame—without
    sending another network request per visual frame.
@@ -866,20 +871,22 @@ twice per second; recovery has bounded overlap and no missing committed text,
 and completion is identical to the one winning attempt.
 
 **Architecture stress:** The run creates at most 200 nonempty checkpoint
-transactions, about three chunk rows, 200 REST Broadcast sends, and 400 billed
-Realtime messages for one receiver—not 10,000 token writes. A 250 ms tier would
+transactions, about three chunk rows, 200 content-bearing Database Broadcast
+inserts/sends, and 400 billed Realtime messages for one receiver—not 10,000
+token writes. Current-plus-previous-two overlap delivers about 120 KiB of text
+for about 40 KiB unique output, plus protocol overhead. A 250 ms tier would
 create about 400 checkpoints; one second would create about 100. Direct 30 fps
 network frames would create up to 3,000 sends/6,000 billed messages for the run,
 so local animation provides the visual requirement without the 15-times
 transport multiplier. Realtime messages scale with receivers, while database
-WAL scales with bounded chunk checkpoints. Faster body frames remain gated on a
-proven revocable stream lease and a 30-fps ceiling.
+WAL scales with bounded chunk checkpoints plus the managed Broadcast rows.
 
 **Failure oracle:** Fail if the case creates more than 200 nonempty checkpoint
 transactions at the default cadence, any token creates an event or database
 Broadcast write, a checkpoint rewrites the full accumulated prefix, a
-continuous client refetches the full prefix, hints contain generated bodies
-without a revocable lease, durable cursor advances without bytes, fan-out is
+continuous client refetches the full prefix, a Broadcast body lacks matching
+durable offsets/hashes or uses a stale access-revision topic, a durable cursor
+advances without bytes, fan-out is
 workspace wide, local 10/20/30 fps rendering multiplies persistence/transport,
 the animation falls progressively behind without bounded catch-up, or final
 text differs from one winning attempt.
@@ -1015,11 +1022,11 @@ issued minutes ago.
 
 **Flow:**
 
-1. Removal commits and advances membership/authorization epochs.
+1. Removal commits and advances the workspace access revision.
 2. The old channel remains physically connected until Realtime reauthorization
    or explicit eviction.
-3. New messages/events occur; any old channel receives at most body-free,
-   non-subject coordinate/eviction traffic permitted by policy.
+3. New messages/events occur only on the new access-revision topic; the old
+   channel receives no content committed after removal.
 4. The client tries catch-up/content fetch and a command.
 
 **Expected user-visible behavior:** New content/actions and active-output text
@@ -1027,17 +1034,18 @@ fetches are denied immediately; the socket is evicted within the tested maximum
 window.
 
 **Architecture stress:** Supabase RLS for fetch/command is live, while already-
-joined Broadcast authorization is cached. Launch Realtime payloads contain no
-generated body and restricted subject hints are audience/personal scoped.
+joined Broadcast authorization is cached. Revisioned topics prevent the old
+channel from receiving later content, and restricted payloads use the matching
+work-stream/substream or personal topic.
 
 **Failure oracle:** Fail if an old channel receives generated/private bodies,
 old JWT authorizes new RPCs, signed URLs remain usable beyond policy, or no
 eviction bound exists.
 
-**Unresolved pressure:** Vendor-test topic reauthorization/forced disconnect and
-whether a rotatable stream-key lease can safely enable faster body frames later.
+**Unresolved pressure:** Vendor-test topic authorization, revision rotation,
+Replay, forced disconnect, and concurrent access-change/checkpoint races.
 
-### B04 — Realtime hints arrive late, out of order, and after deletion
+### B04 — Realtime payloads arrive late, out of order, and after deletion
 
 **Mode:** Break attempt
 
@@ -1574,8 +1582,9 @@ receiver and a naive implementation is proposed.
 2. A second rejected implementation checkpoints every 500 ms but rewrites the
    full growing output row and makes continuous clients refetch that prefix.
 3. The conforming implementation appends deltas to 16 KiB mutable-tail chunks
-   every 500 ms, sends post-commit REST hints, serves offset-based reads, and
-   animates those batches locally at 10/20/30 fps.
+   every 500 ms, transactionally Database-Broadcasts actual current/previous-
+   two deltas, serves offset-based reads for unresolved gaps, and animates those
+   batches locally at 10/20/30 fps.
 4. This still produces about 2,000 checkpoint transactions and 4,000 Realtime
    messages/second at 1,000 streams with one receiver.
 5. Because 4,000 exceeds the currently documented default 2,500
@@ -1587,10 +1596,10 @@ receiver and a naive implementation is proposed.
 excess work receives explicit queued/degraded cadence rather than silently
 dropping output or overloading the primary.
 
-**Architecture stress:** Realtime billing counts sends plus receivers; REST
-Broadcast avoids a second Postgres write per checkpoint but does not remove
-message billing. The shared primary still absorbs checkpoint transactions,
-bounded-row WAL, RLS delta reads, and finalization.
+**Architecture stress:** Realtime billing counts sends plus receivers and
+payload egress. Database Broadcast adds one managed `realtime.messages` insert
+per nonempty checkpoint. The shared primary also absorbs the bounded active-
+output mutation, WAL, occasional RLS gap reads, and finalization.
 
 **Failure oracle:** Fail if each token is a DB row/Broadcast, the full prefix is
 rewritten or refetched on every checkpoint, inactive workspace subscribers
@@ -1832,7 +1841,7 @@ personal hints are buffered.
 **Flow:**
 
 1. Removal advances visibility/authorization epoch.
-2. Old card/user hints arrive after an eviction hint.
+2. Old card/user payloads arrive after an eviction hint.
 3. Snapshot/catch-up RLS excludes the stream.
 4. Client applies epoch/revision rules and removes local caches.
 
@@ -2215,7 +2224,7 @@ maximum supported full-loop elapsed/step/cost budget.
 | Queue and steering | S07–S09, S18 | B07, B17, B26, B44 | Durable input, control revision, effect-begin CAS |
 | Substreams and sub-agents | S04–S06 | B08–B09, B16, B27–B28 | Explicit lineage/audience/scope/promotion |
 | Compaction with live tail | S19 | B08, B28, B39 | Frozen complete-turn source rows and epoch checks |
-| Token realtime/reconnect | S03, S28–S29 | B03–B05, B23, B38–B39 | 500 ms bounded-chunk checkpoints, REST hints, offset reads, local 10/20/30 fps animation |
+| Token realtime/reconnect | S03, S28–S29 | B03–B05, B23, B38–B39 | 500 ms bounded-chunk checkpoints, actual current/previous-two Database Broadcast, Replay/offset recovery, local 10/20/30 fps animation |
 | Background/idle sockets | S28, S31 | B05, B23, B38, B44 | One multiplexed connection, intentional close/catch-up |
 | Full 2–30m/2h+ loops | S17, S31 | B24, B37, B42, B44 | Supabase run/effect ledger; one Workflow; bounded Worker actions |
 | Daytona Terminal | S09, S31 | B17, B26, B40, B44 | Addressable effect start/park/reconcile; provider unchanged |

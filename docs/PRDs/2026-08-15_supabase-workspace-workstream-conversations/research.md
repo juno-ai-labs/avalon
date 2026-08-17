@@ -6,7 +6,7 @@
 
 ## Executive conclusion
 
-Avalon can preserve the important product semantics without emulating one Durable Object per workspace or work stream. The idiomatic Supabase authority is one regional Postgres database, with short row-locked transactions providing per-work-stream serialization, relational tables providing workspace-wide projections, private Realtime Broadcast providing low-latency invalidation and active-output coordinate hints, and durable sequence-numbered event tables providing replay. This makes the most awkward Durable Object boundary—the reliable child-to-parent sidebar projection—a local database transaction.
+Avalon can preserve the important product semantics without emulating one Durable Object per workspace or work stream. The idiomatic Supabase authority is one regional Postgres database, with short row-locked transactions providing per-work-stream serialization, relational tables providing workspace-wide projections, private database-originated Realtime Broadcast carrying bounded renderable patches and content, and durable sequence-numbered event tables providing authoritative replay. This makes the most awkward Durable Object boundary—the reliable child-to-parent sidebar projection—a local database transaction.
 
 The recommended shape is:
 
@@ -16,10 +16,10 @@ The recommended shape is:
 - one or more Supabase product-project shards per residency boundary, initially
   `global-us-1` and `eu-1`;
 - Postgres as the only authority for conversation ordering, run admission, unread/mention state, sidebar projections, connector normalization, compaction fences, and action lifecycle;
-- database Broadcast for transactional semantic invalidation/control hints and
-  direct REST Broadcast for post-commit token checkpoint coordinates, with
-  generated bodies fetched through live RLS and animated locally at 10/20/30
-  fps unless a revocable stream lease is proven;
+- database Broadcast for transactional common/personal projection patches,
+  semantic text/tool batches, and active-output deltas, including the preceding
+  two bounded batches when they fit; durable cursor/offset reads through live
+  RLS recover any remaining gap, and the desktop animates 2 Hz batches locally;
 - durable Supabase Queues (`pgmq`) plus Cron for transactional jobs and wakes;
 - Cloudflare Worker fetch handlers for every application/provider/background
   compute action, plus exactly one Cloudflare Workflow per full agent loop;
@@ -75,7 +75,7 @@ The Supabase design must be tested against the following source-flow clusters. T
 | Conversation order, substreams, context visibility, and provider arrays | S01–S10; B06–B10, B16–B19, B22–B23, B26–B28, B39, B44 | Work-stream sequence allocation, immutable parts, scope epochs, compaction lineage, SQL materialization |
 | Sidebar, unread, mention, state, interest, and workspace collections | S02, S12, S20, S30; B01–B05, B21 | Same-transaction projections, sparse per-user rows, durable workspace event cursor |
 | Connector activity, digests, suggestions, and privacy | S11, S21–S22; B11, B15, B29–B35 | Idempotent ingress receipts, raw-body registry, normalized events, authorization-aware opportunity state |
-| Token streaming, reconnect, background clients, and presence | S03, S07–S09, S18, S28–S29; B23, B26, B38 | Bounded checkpoints, REST hints, offset reads, local animation, cursor handshake, connection lifecycle |
+| Token streaming, reconnect, background clients, and presence | S03, S07–S09, S18, S28–S29; B23, B26, B38 | Bounded checkpoints, content-bearing Database Broadcast overlap, Replay/offset recovery, local animation, cursor handshake, connection lifecycle |
 | Queueing, steering, safe interruption, tools, and long runs | S04–S06, S17, S31; B07, B17, B24, B44 | Admission RPCs, revision fences, idempotent effects, resumable full-loop driver, Daytona reconciliation |
 | Regional placement, identity, authorization, deletion, and export | S13–S15, S19; B14, B20, B25, B32 | Regional projects, live membership checks, cross-project sign-in, storage cleanup |
 | Schema/data migration, backfill, rebalancing, and rollback | S16, S23–S27; B12–B13, B35–B37, B40–B43 | Expand/backfill/contract, queue-driven campaigns, PITR limitations, cutover receipts |
@@ -181,7 +181,8 @@ Use the default `READ COMMITTED` isolation level with explicit row locks for mos
 6. update workspace-wide and per-user sidebar projections;
 7. insert durable workspace/work-stream events;
 8. enqueue follow-up work through `pgmq.send` where needed;
-9. call `realtime.send` for private transactionally emitted hints where appropriate;
+9. call a failure-isolating wrapper around `realtime.send` for the private,
+   bounded renderable payload where appropriate;
 10. commit and return the durable sequence/revision.
 
 The lock is held only for a short database transaction. It is never held while calling a model, uploading a file, invoking Daytona, waiting for a user, or broadcasting to an external endpoint. PostgreSQL row locks and isolation behavior are documented in [Transaction isolation](https://www.postgresql.org/docs/current/transaction-iso.html), [Explicit locking](https://www.postgresql.org/docs/current/explicit-locking.html), and [`SELECT` locking clauses](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE).
@@ -226,8 +227,9 @@ The regional primary is shared by conversations, queues, semantic Realtime
 database Broadcast, Auth metadata, connector ingestion, and vectors. Queue churn
 and row-per-token writes would consume the same WAL, IOPS, and CPU as user
 commands. Avalon should use 16 KiB mutable-tail chunks plus periodic delta
-checkpoints, send token-coordinate hints through REST Broadcast, batch ingress,
-prune transient data, and monitor this shared resource. Native table
+checkpoints, transactionally Database-Broadcast bounded actual deltas with
+two-batch overlap, batch ingress, prune transient data, and monitor this shared
+resource. Native table
 partitioning is available, but should follow measured table/maintenance pain
 rather than be added speculatively. See [Table
 partitioning](https://supabase.com/docs/guides/database/partitions).
@@ -242,20 +244,30 @@ Supabase Realtime offers Broadcast, Presence, and Postgres Changes. Avalon shoul
 
 | Primitive | Avalon use | Why / why not |
 | --- | --- | --- |
-| Private Broadcast from database | Workspace projection invalidations, durable-event hints, committed run/control hints | Supabase recommends Broadcast for scalability and security; database Broadcast can be emitted with the committing transaction |
-| Private direct Broadcast | Body-free active-output coordinates, ephemeral typing/control acceleration | Low latency, but not durable; generated bodies require a proven revocable lease |
+| Private Broadcast from database | Actual bounded workspace/personal projection patches, semantic text/tool batches, and active-output text deltas | Supabase recommends Broadcast for scalability and security; database Broadcast can be emitted with the committing transaction and is eligible for Replay |
+| Private direct Broadcast | Presence-like UI ephemera only, if needed | Do not split canonical content delivery into a second post-commit send path; Workflow `sendEvent` carries run-control IDs |
 | Postgres Changes | Narrow internal/admin prototypes only | Every change is checked against each subscriber and ordered on a single thread; it scales poorly for high-fanout workspace feeds |
 | Presence | Online/typing hints at human cadence | Ephemeral and reconciliation-prone; never authority for membership, seen state, run ownership, or billing |
 
 Supabase explicitly recommends Broadcast over Postgres Changes for scalability and security. Its benchmarks explain that Postgres Changes authorizes each change for each subscriber and preserves ordering on a single thread, making the database/realtime path a bottleneck. See [Subscribing to database changes](https://supabase.com/docs/guides/realtime/subscribing-to-database-changes) and [Realtime benchmarks](https://supabase.com/docs/guides/realtime/benchmarks).
 
-### Durable state plus Broadcast hints
+### Durable state plus content-bearing Broadcast
 
 Every important change must have a durable, monotonically sequenced database representation. Recommended event tables include `workspace_events(workspace_id, workspace_seq, kind, subject_id, payload, authz_epoch, created_at)` and `workstream_events(workstream_id, workstream_seq, kind, payload, authz_epoch, created_at)`. Their sequences are allocated in the same transaction as the domain mutation and projection update.
 
 The transaction can also call `realtime.send` to a private topic such as `workspace:<id>` or `workstream:<id>`. Supabase Realtime's architecture describes database Broadcast through `realtime.messages` and WAL, with the Realtime extension managing daily partitions and short retention. See [Realtime architecture](https://supabase.com/docs/guides/realtime/architecture) and [Broadcast](https://supabase.com/docs/guides/realtime/broadcast).
 
-The Broadcast payload should be a small invalidation or event envelope with sequence, revision, kind, and IDs. A client that misses it queries durable events after its cursor or reloads an authoritative snapshot. Supabase Broadcast Replay is not the recovery log: database Broadcast replay is limited to private database broadcasts, a 72-hour minimum window, at most 25 messages per request, and timestamp-based replay. Those bounds are too small and imprecise for sidebar and conversation correctness.
+The Broadcast payload should contain the bounded renderable projection patch or
+inline text/tool content plus sequence/revision/offset/hash coordinates. Active
+text sends the current delta plus up to two preceding committed deltas. Semantic
+parts send the current batch plus up to two preceding complete batches while a
+192 KiB application envelope permits; oversized content remains behind an
+authorized `content_ref`. A client that misses the overlap queries durable
+events/bytes after its cursor or reloads an authoritative snapshot. Supabase
+Broadcast Replay is not the recovery log: database Broadcast replay is limited
+to private database broadcasts, a 72-hour minimum window, at most 25 messages
+per request, and timestamp-based replay. Those bounds are too small and
+imprecise for sidebar and conversation correctness.
 
 ### Snapshot/subscription handshake
 
@@ -284,10 +296,12 @@ Realtime does not provide Durable Object-style WebSocket hibernation. An idle op
 
 ### Token streaming
 
-Token delivery should split provisional experience from durable recovery. The
-architecture review exposed a security constraint: Realtime authorizes a private
-channel when it joins, so membership removal is not proven to reauthorize an
-uncooperative already-joined subscriber immediately. The launch-safe path is:
+Token delivery should split provisional experience from durable recovery.
+Realtime authorizes a private channel when it joins, so every content topic
+includes the current workspace/work-stream/substream access revisions. An
+access change commits a revision bump and all later content goes only to the
+new topic; an already-joined old topic receives no post-revocation content. The
+launch path is:
 
 - one stable attempt root owns ordered 16 KiB chunks; only the open tail mutates;
 - the runner sends only new bytes and commits at most every 500 ms when observed,
@@ -295,18 +309,16 @@ uncooperative already-joined subscriber immediately. The launch-safe path is:
   a 250 ms tier is optional only after a regional load test;
 - checkpoint revision, offset, frame range, provider cursor, and hash advance in
   the transaction that stores all represented bytes, with one RPC in flight;
-- after commit, the trusted runner sends a body-free revision/offset/hash hint
-  through the REST Broadcast API. Supabase documents that REST Broadcast goes
-  directly through Realtime, while database Broadcast inserts into
-  `realtime.messages` and is then read through WAL, so database Broadcast would
-  add avoidable database work to every token checkpoint;
-- clients call a live RLS-protected offset RPC and fetch only new bytes, so
-  removal blocks new bodies and a continuous client never rereads the growing
-  prefix;
+- the checkpoint transaction calls database Broadcast with the actual new text
+  plus up to the two preceding committed deltas. Each entry has verified byte
+  offsets and a hash, and the whole application envelope is capped at 192 KiB;
+- clients apply the overlap by exact offset and call a live RLS-protected offset
+  RPC only when overlap/Replay does not close a gap. Topic revision stops later
+  bodies after removal, while live RLS protects recovery reads;
 - completion verifies ordered chunks, seals one immutable conversation part,
   updates work-stream/sidebar state, and emits one terminal event; and
-- reconnect reads the active attempt/chunks or sealed part by revision and byte
-  offset.
+- reconnect first uses eligible Broadcast Replay as an acceleration, then reads
+  the active attempt/chunks or sealed part by revision and byte offset.
 
 Transport cadence and visual cadence are deliberately independent. The desktop
 receives a durable batch roughly twice per second, queues its delta locally, and
@@ -509,7 +521,11 @@ domain rules.
 Both queue and steering actions commit a normal user message/part before returning success. They differ in the control revision:
 
 - **Queue:** commit the message to the work-stream tail but do not invalidate the active attempt. The next admission boundary deterministically batches all eligible queued messages.
-- **Steer:** commit the message and atomically increment `control_revision`, record `interrupt_requested_at`, and emit a run-control hint. The active attempt checks that revision before appending output, before and after each model/tool action, and before beginning any irreversible effect.
+- **Steer:** commit the message and atomically increment `control_revision`,
+  record `interrupt_requested_at`, and send the durable signal ID to the
+  attached Cloudflare Workflow. The active attempt checks that revision before
+  appending output, before and after each model/tool action, and before beginning
+  any irreversible effect.
 
 An active execution Worker may subscribe outbound to a private
 `run-control:<run_id>` Realtime channel to reduce interrupt latency. The
@@ -927,7 +943,8 @@ Never send full prompts, message bodies, tokens, connector bodies, Storage signe
 Alert at minimum on database CPU/memory/IOPS/disk/WAL, connection/pool
 saturation, long locks/statements, active-output checkpoint transactions/second,
 bytes and WAL bytes/checkpoint, chunk updates/inserts, TOAST/vacuum pressure,
-incremental RLS-read latency, Realtime hint sends/receivers/messages per second,
+incremental RLS-read latency, Realtime content sends/receivers/messages and
+payload egress per second,
 client animation backlog/lag, queue oldest age/read count/DLQ, Cron failure,
 Worker/Workflow failure/rate, Realtime join/RLS/disconnect/sequence gaps, run
 stuck/lease churn, unknown effects, compaction invalidation rate, ingress lag,
@@ -971,10 +988,10 @@ database/Supavisor, and other product paths. Worker-to-Supabase/provider traffic
 must be included in the path model. See [Supabase egress](https://supabase.com/docs/guides/troubleshooting/all-about-supabase-egress-a_Sg_e).
 
 Cost controls that align with correctness are: checkpoint only delta bytes into
-16 KiB mutable-tail chunks at a 500 ms observed default, send body-free REST
-hints rather than token rows or database Broadcasts, animate received batches
-locally at 10/20/30 fps, cap any future revocable body-frame network path at 30
-fps, subscribe only to active topics, close truly idle background sockets and
+16 KiB mutable-tail chunks at a 500 ms observed default, Database-Broadcast one
+bounded current delta plus at most two preceding deltas rather than token rows,
+animate received batches locally at 10/20/30 fps, cap transport at 2 Hz by
+default, subscribe only to active topics, close truly idle background sockets and
 catch up by cursor, store large immutable bodies in Storage, batch connector
 normalization/embedding, use due-state instead of hot polling, prune transient
 event/control rows after durable retention, and size one regional database from
@@ -1021,10 +1038,10 @@ Supabase account limits can be raised or differ by plan. A benchmark page is not
 | Global-to-shard control | Global route/outbox/receipt tables + Cloudflare Workflow/Worker dispatcher + regional route gate/receipt | Source shard closure is move linearization; retries cannot create two writers |
 | Workspace/work-stream metadata | Regional Postgres | Same transaction as originating command and event |
 | Ordered parts and substreams | Regional Postgres private tables/RPCs | Work-stream row lock allocates sequence; sealed parts immutable |
-| User queue/steer input | Postgres command RPC + durable event + Queue + Broadcast hint | Committed revision is authority; Broadcast accelerates only |
+| User queue/steer input | Postgres command RPC + durable event + Queue + content-bearing Broadcast; Workflow `sendEvent` for control | Committed revision is authority; Broadcast accelerates UI only |
 | Unread/mention/interest/sidebar | Common projection plus sparse per-user tables | Updated transactionally; seen is monotonic |
 | Client realtime | Private Realtime Broadcast over one multiplexed regional socket | Durable cursor catch-up after every gap/reconnect |
-| Token stream | 500 ms delta checkpoints into 16 KiB mutable-tail chunks + body-free REST Broadcast hints + offset RLS fetch + local 10/20/30 fps animation + sealed part | Launch-safe revocation without row-per-token, growing-prefix, or per-checkpoint database-Broadcast amplification; any later leased body network path capped at 30 fps |
+| Token stream | 500 ms delta checkpoints into 16 KiB mutable-tail chunks + database Broadcast of actual current/previous-two deltas + Replay/offset RLS recovery + local 20 fps default animation + sealed part | Access-revision topics and live-RLS catch-up preserve revocation/recovery without row-per-token or growing-prefix writes; Broadcast row/egress cost is explicit |
 | Presence/typing | Realtime Presence | Ephemeral hint only |
 | Durable asynchronous work | Logged Supabase Queues (`pgmq`) | At-least-once end-to-end; receipt and DLQ required |
 | Timed dispatch | Supabase Cron | Wake-up only; due-state in Postgres |
@@ -1093,7 +1110,7 @@ Supabase account limits can be raised or differ by plan. A benchmark page is not
 
 ## Bottom line
 
-Supabase changes the best architecture from millions of isolated actors to a regional relational authority. It handles Avalon's hardest cross-object metadata problem elegantly: conversation append, work-stream lifecycle, workspace collections, unread/mention overlays, durable events, and a Realtime hint can commit together. It also gives a coherent native stack for queues, scheduled dispatch, files, vectors, Auth, and observability.
+Supabase changes the best architecture from millions of isolated actors to a regional relational authority. It handles Avalon's hardest cross-object metadata problem elegantly: conversation append, work-stream lifecycle, workspace collections, unread/mention overlays, durable events, and the matching bounded renderable Realtime payload can commit together. It also gives a coherent native stack for queues, scheduled dispatch, files, vectors, Auth, and observability.
 
 Supabase remains the canonical product and realtime authority, while Cloudflare
 Workers and one data-minimal Workflow per full loop are the sole application

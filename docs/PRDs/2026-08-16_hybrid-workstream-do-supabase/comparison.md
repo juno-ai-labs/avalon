@@ -282,12 +282,14 @@ The path differs:
 | Option | Token transport | Durable recovery | Workspace/card transport |
 | --- | --- | --- | --- |
 | CF hierarchy | WorkstreamDO hibernatable WebSocket | DO SQLite cursor | WorkspaceDO hibernatable WebSocket |
-| Supabase authority | Realtime body-free hint; RLS read by offset | Postgres checkpoints/events | Supabase Realtime hint; RLS read |
+| Supabase authority | Content-bearing Database Broadcast with current/previous-two overlap; Replay/RLS gap read | Postgres checkpoints/events | Actual bounded sidebar/overlay patches; events/RLS recovery |
 | Hybrid | WorkstreamDO hibernatable WebSocket | DO SQLite cursor | Supabase Realtime hint; RLS read |
 
-Supabase's path is safe, but has more hops for each durable token delta. It must
-never rely on ephemeral Broadcast as the content log. The DO paths can send the
-delta directly from the authority and use the same cursor for reconnect.
+Supabase's path is safe when every Broadcast carries committed offsets/hashes,
+all later sends rotate with access revision, and Postgres remains the recovery
+log. The normal path no longer needs a separate body read, but each checkpoint
+adds a managed Broadcast row and overlap/receiver egress. The DO paths can send
+the delta directly from the authority and use the same cursor for reconnect.
 
 ### Product-scale isolation
 
@@ -669,7 +671,9 @@ Extraction is allowed only after the Round 4 hybrid gates pass.
    updates run and sidebar projections, appends durable workspace events, and
    sends/enqueues the run intent through the transactional outbox/Queue.
 4. It commits and acknowledges.
-5. Realtime emits body-free hints; clients fetch durable changes through RLS.
+5. The same transaction Database-Broadcasts the actual bounded card/overlay and
+   inline text/tool payloads, with current/previous-two overlap where defined;
+   clients use Replay/RLS only for remaining gaps.
 6. A Worker starts/wakes the full-loop Workflow by stable ID.
 
 **Hybrid**
@@ -708,7 +712,7 @@ Authority-specific streaming:
 | Worker-to-authority | Executor WS/RPC to WorkstreamDO | Regional RPC to Postgres | Executor WS/RPC to WorkstreamDO |
 | Provisional text | Bounded mutable SQLite chunk | Bounded mutable Postgres chunk | Bounded mutable SQLite chunk |
 | Durable cadence | 500 ms observed | 500 ms observed | 500 ms observed |
-| Participant hint | DO pushes cursor/delta | Transactional outbox/Broadcast hint | DO pushes cursor/delta |
+| Participant delivery | DO pushes cursor/delta | Transactional content-bearing Database Broadcast with overlap | DO pushes cursor/delta |
 | Workspace projection | Semantic/final events to WorkspaceDO | Same transaction | 1 s observed or 2–5 s unobserved to PG |
 | Final immutable part | DO SQLite | Postgres | DO SQLite, then prompt PG projection |
 
@@ -731,8 +735,9 @@ stores a per-work-stream durable and presented cursor.
    event forces snapshot reconciliation.
 
 For CF/hybrid, the cursor protocol terminates at WorkstreamDO. For Supabase,
-Realtime is only a wake-up hint and the client closes the gap through an RLS
-query. All three are lossless if and only if the durable log/checkpoint commits
+Realtime normally carries the committed content, current/previous-two overlap
+repairs one missed message, and Replay/RLS closes any remaining gap. All three
+are lossless if and only if the durable log/checkpoint commits
 before its visible cursor is advertised.
 
 #### Steer during active inference or a tool
@@ -895,8 +900,9 @@ distribution of canonical serialization, not elimination of work.
   alone never grants workspace content.
 - RLS derives identity from verified claims and joins live regional membership;
   clients never hold a service role.
-- Broadcast topics are private and body-free. The durable content is fetched
-  through RLS by workspace/work-stream cursor.
+- Broadcast topics are private and include the current access revision. They
+  carry bounded actual card/overlay, text, tool-call, and tool-result content
+  with durable cursor/offset/hash coordinates; Postgres/RLS remains recovery.
 - Revocation tests include already-joined channels, refreshed/expired JWTs,
   background clients, and pooled sessions.
 

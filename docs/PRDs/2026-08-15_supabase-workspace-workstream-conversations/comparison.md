@@ -105,7 +105,7 @@ is visible rather than pretending the invoices are directly comparable.
 | Active agent run | `WorkstreamDO` owns run/control state; one Workflow drives the full loop | Postgres owns run/control state; one opaque Workflow normally drives the full loop | Cloudflare has a natural live actor endpoint; Supabase has easier durable inspection and generic querying |
 | Realtime | Hibernating `WorkspaceDO` and foreground `WorkstreamDO` WebSockets | One regional Supabase Realtime socket with private workspace/foreground channels | Cloudflare is more efficient for long idle sockets; Supabase is easier to multiplex but bills connections/messages/egress |
 | Two-stream focus switch | Ready-before-close handoff between two child sockets, then return to one foreground child | Keep both logical work-stream channels on the existing regional socket while both runs are active | Supabase gives the simpler instant switch; both recover committed state from snapshots and durable cursors |
-| Token path | Workflow/executor to `WorkstreamDO`, bounded mutable chunks, direct client frames up to 30 fps | 500 ms deltas into 16 KiB chunks, REST hint, offset RLS fetch, then local 10/20/30 fps animation; network body frames require a revocable lease | Both avoid token writes; Supabase trades about one checkpoint of display lag and extra reads for much lower transport volume, while Cloudflare's owner can stream directly |
+| Token path | Workflow/executor to `WorkstreamDO`, bounded mutable chunks, direct client frames up to 30 fps | 500 ms deltas into 16 KiB chunks, content-bearing Database Broadcast with current/previous-two overlap, Replay/offset recovery, then local 10/20/30 fps animation | Both avoid token writes; Supabase trades about one checkpoint of display lag plus metered Broadcast rows/egress for a simple multiplexed path, while Cloudflare's owner can stream directly |
 | Activity and suggestions | Owning `WorkspaceDO` SQLite authority plus regional R2, Queues/Workers/Workflows, and local child delivery | Regional Postgres authority plus Supabase Queues/Cron and Cloudflare Worker/Workflow compute | Both use one product authority per event; Cloudflare favors workspace isolation/locality, Supabase favors elastic SQL/vector queries |
 | Large content | Regional R2 plus opaque references | Regional Supabase Storage plus `content_refs` | Both are workable; R2 has free egress, while Supabase provides integrated RLS metadata and CDN behavior |
 | Exact and semantic search | WorkspaceDO exact indexes plus regional Vectorize/derived cross-workspace indexes | Postgres FTS plus pgvector | Supabase keeps regional authorization joins and source rows together; Cloudflare's vector service is cheaper and more isolated but derived |
@@ -136,7 +136,7 @@ flowchart LR
     S2 --> S4["Common and personal sidebar"]
     S2 --> S5["Durable event"]
     S2 --> S6["Queue item"]
-    S2 --> S7["Realtime hint"]
+    S2 --> S7["Content-bearing Realtime Broadcast"]
   end
 ```
 
@@ -305,11 +305,14 @@ background-idle, and recover from durable cursors on focus.
 
 Supabase also has a security caveat absent from the direct owner path: RLS is
 checked when a private channel joins, and immediate reauthorization of an
-already-joined, uncooperative subscriber is not established. The launch-safe
-design Broadcasts body-free output coordinates and fetches generated text
-through live RLS. That adds database/API/egress load and can be less fluid than
-direct DO frames. Token bodies can move to Realtime only after a server-rotated,
-revocable stream lease passes the removal tests.
+already-joined, uncooperative subscriber is not established. The selected
+design addresses it with access-revision topic names. Membership/access removal
+bumps the relevant revision in the same transaction, and every later content-
+bearing Database Broadcast targets only the new topic. Live RLS still protects
+Replay and durable catch-up. This removes a per-frame fetch in the normal path,
+but adds one managed `realtime.messages` row per checkpoint and makes payload
+egress—roughly triple unique text with current-plus-previous-two overlap—an
+explicit cost.
 
 #### Token-write amplification: 100 tokens/second for 10,000 tokens
 
@@ -323,18 +326,21 @@ uses roughly three 16 KiB chunks.
 | --- | ---: | ---: | --- | --- |
 | Row and Broadcast per token | 10,000 | 10,000 | Low latency but extreme amplification | Reject on both platforms |
 | 500 ms checkpoint that rewrites one growing text row | 200 | 200 | Can be animated smoothly, but repeatedly copies the accumulated prefix | Reject; logical write count hides WAL/TOAST/egress amplification |
-| Supabase bounded-tail launch path | At most 200 checkpoint transactions plus about two chunk boundary insert/seals and one final transaction | 200 body-free REST hints | Client offset-fetches each batch and drains it locally at 10/20/30 fps | Accept subject to regional load gate |
-| Supabase direct 30 fps body path | Same 200 durable checkpoints | Up to 3,000 body sends | Native 30 fps, but only behind revocable lease | 15 times the launch-path message volume without added durability |
+| Supabase bounded-tail launch path | At most 200 checkpoint transactions, each with one active-output mutation and one managed Broadcast insert, plus about two chunk boundary insert/seals and one final transaction | 200 content-bearing Database Broadcasts | Client applies current/previous-two delta overlap and drains it locally at 10/20/30 fps; RLS offset fetch only for a gap | Accept subject to regional WAL/egress load gate |
+| Supabase direct 30 fps body path | Same 200 durable checkpoints | Up to 3,000 body sends | Native 30 fps | Reject: 15 times the selected-path message volume without added durability |
 | Cloudflare bounded-tail plus direct frames | About 200 durable SQLite checkpoints plus boundaries/finalization | Up to 3,000 owner-to-client frames, or fewer with local animation | Direct low-latency frames; client animation is still available | Technically safer at high fan-out because outgoing DO frames are not message-metered, but active-object duration and incoming executor delivery still matter |
 
-For Supabase, one continuously observing client produces 200 REST sends plus
+For Supabase, one continuously observing client produces 200 Database Broadcast sends plus
 200 deliveries, or 400 billed Realtime messages. Visual cadence is independent:
 the client spreads each approximately 50-token batch across the next half
 second—about 10 tokens/frame at 10 fps, five at 20 fps, or 3–4 at 30 fps. It
 uses a bounded-lag controller to catch up after jitter and reconciles to the
 sealed part. This introduces roughly one checkpoint plus network of display lag
 after provider generation but does not create additional database writes,
-Realtime messages, or full-prefix reads.
+Realtime messages, or full-prefix reads. Current-plus-previous-two overlap
+delivers about 120 KiB of text for the illustrative 40 KiB unique output after
+warm-up, plus protocol overhead; that bounded egress premium buys one-message
+loss repair without another database fetch.
 
 A single stream comfortably fits the proposed Supabase protocol. Concurrency is
 the real gate. With `A` continuously observed streams at 500 ms, the primary
@@ -386,22 +392,22 @@ replacement attempt and may retract that attempt's provisional output.
 | Safety property | Cloudflare Durable Objects | Supabase | Assessment |
 | --- | --- | --- | --- |
 | Normal switch with both streams active | Open B's child socket, hydrate/replay, mark ready, then close A after a bounded overlap; the process keeps separate A/B caches | Keep A and B logical channels joined on one regional socket and switch the selected cache | Supabase is operationally simpler and normally instant; Cloudflare requires a two-socket handoff but no cross-object transaction |
-| Notification lost during switch | `WorkstreamDO` replays `workstream_events` after the snapshot watermark or sends an explicit snapshot reset | A body-free Broadcast is only a hint; snapshot plus `events_after`/`active_output_after` repairs the gap from attempt/chunks | Tie for committed state when both protocols are implemented; neither trusts transport delivery |
-| Snapshot/live race | One owner serializes its snapshot watermark and later child events; same-socket order plus cursor replay closes disconnect gaps | Client must subscribe and buffer before a one-statement snapshot, then discard hints at/below its attested watermark | Cloudflare has the smaller race surface; Supabase is correct but depends on more explicit client/database choreography |
+| Notification lost during switch | `WorkstreamDO` replays `workstream_events` after the snapshot watermark or sends an explicit snapshot reset | Current-plus-previous-two overlap normally repairs one missed Broadcast; Replay and snapshot plus `events_after`/`active_output_after` repair anything else | Tie for committed state when both protocols are implemented; neither trusts transport delivery |
+| Snapshot/live race | One owner serializes its snapshot watermark and later child events; same-socket order plus cursor replay closes disconnect gaps | Client must subscribe and buffer before a one-statement snapshot, then discard payloads at/below its attested watermark | Cloudflare has the smaller race surface; Supabase is correct but depends on more explicit client/database choreography |
 | Active-to-final race | One local SQLite transaction seals immutable parts, terminal cursor, and active-row deletion | One Postgres transaction seals the part, terminal state, projections/events, and active-row deletion | Tie inside one work stream; Supabase can additionally update relational sidebar state in the same transaction |
-| Stale attempt frames | `attempt_epoch` fences socket frames and cached provisional text | `attempt_id`, revision, offset, and hash fence hints and fetched bytes | Tie; neither may splice attempts |
+| Stale attempt frames | `attempt_epoch` fences socket frames and cached provisional text | `attempt_id`, revision, offset, and hash fence content-bearing batches and fetched bytes | Tie; neither may splice attempts |
 | Just-rendered uncheckpointed text | Direct owner frames can be smoother, but process-local text newer than the owner checkpoint is provisional and may rewind on failed attempt recovery | Launch-safe UI fetches only committed checkpoint bytes; local 10/20/30 fps animation makes batches continuous but trails generation by about the 500 ms default plus network, or up to one second unobserved | Supabase is more conservative about what it displays; Cloudflare has lower first-byte/live latency but a larger explicitly provisional visible tail |
-| Membership removed mid-stream | Owner capability epoch and targeted child-socket eviction can stop later body delivery | Already-joined channel reauthorization is not a sufficient launch guarantee, so hints contain no bodies and every body fetch uses live RLS | Cloudflare leads for prompt stream revocation; Supabase's body-free path preserves confidentiality at added read/latency cost |
+| Membership removed mid-stream | Owner capability epoch and targeted child-socket eviction can stop later body delivery | The removal transaction bumps the access revision; all later Broadcasts use the new topic, while Replay/catch-up require live RLS | Tie on the required no-post-revocation-content property, but Supabase must prove the revision/checkpoint race and Cloudflare must prove capability/eviction fencing |
 | Process or network restart | Reopen the selected child with capability, cache cursor, snapshot, and replay; old child sockets hibernate or expire independently | Recreate one regional socket, join needed topics, then subscribe-buffer-snapshot each visible stream | Tie for correctness; Supabase rejoins logical channels on one connection, while Cloudflare reconnects independently to each selected object |
 | Regional authority failure | Failure is normally isolated to the affected work-stream object; A and B fail independently unless a shared regional dependency is down | A and B share the regional Postgres/Realtime failure domain | Cloudflare has stronger per-work-stream blast-radius isolation |
 
 The strict safety verdict is therefore narrower than “one platform cannot lose
 tokens.” Both prevent transport switching from losing committed output. The
-Cloudflare owner has stronger serialization, isolation, and live revocation,
-while Supabase has the cleaner two-channel desktop handoff and a deliberately
-safer launch rule that displays only checkpointed bodies. Supabase's advantage
-disappears if Avalon sends token bodies optimistically over Broadcast without a
-durable offset/lease protocol; Cloudflare's advantage disappears if the client
+Cloudflare owner has stronger serialization and isolation, while Supabase has
+the cleaner two-channel desktop handoff and displays only transactionally
+checkpointed bodies. Supabase is safe only if content Broadcast carries durable
+offset/hash coordinates and all post-revocation sends use the new access-
+revision topic; Cloudflare's advantage disappears if the client
 closes A before B reports a reconciled ready state. The bake-off must inject
 both failures rather than test only a healthy focus change.
 
@@ -740,7 +746,7 @@ for budgeting.
 | Stored work streams | 1,000,000 |
 | Full agent loops / Workflow steps | 100,000 / 4,000,000 |
 | Streaming profile | 100 tokens/s × 10,000 tokens; 500 ms checkpoints; one receiver |
-| Supabase active-output checkpoint transactions | 20 million, before chunk boundaries/finalization |
+| Supabase active-output checkpoint transactions | 20 million, each including one bounded output mutation and one managed Database Broadcast insert, before chunk boundaries/finalization |
 | Worker requests / CPU, including Workflow invocation/CPU | 100 million / 500 million ms |
 | DO billed requests / active object time | 60 million / 10 million object-seconds |
 | DO SQLite reads / writes / stored data | 15 billion / 175 million / 500 GB |
@@ -748,6 +754,7 @@ for budgeting.
 | Queue messages | 10 million under 64 KB, three normal operations each |
 | Workflow state | 10 GB-month |
 | Realtime messages | 50 million; 40 million come from the streaming profile |
+| Streaming-profile Realtime text egress | About 12 GiB before protocol overhead from current-plus-previous-two overlap; included in the total egress input below |
 | File/object storage / uncached egress | 2,048 GB / 2,048 GB |
 | R2 operations | 5 million Class A / 50 million Class B |
 | Vector workload | 500,000 vectors at 1,536 dimensions / 1 million queries |
@@ -819,9 +826,11 @@ Daytona, and connector vendors.
 
 This model assumes no Supabase provisioned IOPS/throughput overage, replicas,
 branching, cached egress, drain event/egress charge, custom domains, Team or
-Enterprise uplift, or queue-specific negotiated charge. It also assumes the
-safe body-free Realtime design; repeated live-RLS token-body fetches contribute
-to database and egress load even though API request count itself is not billed.
+Enterprise uplift, or queue-specific negotiated charge. It assumes content-
+bearing Database Broadcast; its managed-row/WAL churn and roughly 12 GiB of
+illustrative overlap text egress are inputs to capacity and egress rather than a
+separate per-request charge. Gap-only live-RLS reads add load when delivery,
+Replay, and overlap do not converge.
 The 50-million-message input already includes the 40 million sends/deliveries
 from 100,000 worked streaming runs, so the subtotal does not add them twice.
 The assumed two XL primaries are provisional: 20 million checkpoint
@@ -842,7 +851,7 @@ active-object duration can move it substantially.
 | Stored but dormant work streams | DO SQL bytes; almost no duration | Disk plus unchanged always-on compute | Cloudflare |
 | Active independent work streams | Requests, row writes, active duration scale with use | May require stepwise compute/IO tier increases | Cloudflare until its distributed-operation volume dominates |
 | Workspace sidebar/card mutations | Child write + projection delivery/repair + parent write | Same-transaction rows/WAL | Supabase may use fewer application operations even if compute is fixed |
-| Token checkpoints, frames, and observers | SQLite row writes follow checkpoint cadence; outgoing DO frames are free, while active handling still has duration | Shared-primary checkpoint/WAL/offset-read load plus messages per transport send and receiver; local 10/20/30 fps animation is free of platform traffic | Cloudflare at high fan-out; both should batch persistence |
+| Token checkpoints, frames, and observers | SQLite row writes follow checkpoint cadence; outgoing DO frames are free, while active handling still has duration | Shared-primary checkpoint/Broadcast-row/WAL load plus payload egress and messages per transport send and receiver; local 10/20/30 fps animation is free of platform traffic | Cloudflare at high fan-out; both should batch persistence |
 | Background idle users | Hibernating sockets avoid duration | Peak connection and heartbeat/egress until closed | Cloudflare, or close Supabase sockets and recover by cursor |
 | Connector/activity volume | WorkspaceDO row writes/storage/active time, Queue ops, Worker CPU; a hot workspace approaches one object's envelope | Primary/WAL/IO, Queue tables, and Cloudflare Worker/Workflow compute across a regional shard | Cloudflare for bounded per-workspace skew/isolation; Supabase for very large workspaces or flexible regional queries |
 | File egress | R2 Internet egress is free | Cached/uncached egress overage | Cloudflare |
@@ -859,11 +868,12 @@ but one hundred million seconds consume 12.8 million GB-s before the inclusion
 and therefore move duration into the low hundreds of dollars.
 
 Realtime cadence is another major lever. Supabase counts a Broadcast once when
-sent and again for every receiver. The launch design checkpoints and sends a
-body-free REST hint every 500 ms while observed, then animates each fetched
+sent and again for every receiver, and content-bearing payloads also consume
+egress. The launch design checkpoints and Database-Broadcasts the actual
+current/previous-two deltas every 500 ms while observed, then animates each
 batch locally at the selected 10/20/30 fps. That render rate is a product/CPU
-choice, not a database or Realtime rate. A 250 ms checkpoint tier and any direct
-30 fps body path require separate capacity/security/economic gates.
+choice, not a database or Realtime rate. A 250 ms checkpoint tier or direct
+30 fps transport path requires separate capacity/security/economic gates.
 
 ### Engineering and operational economics
 
@@ -883,7 +893,7 @@ assigning a blanket “serverless is simpler” or “Postgres is simpler” fac
 | Search | WorkspaceDO exact indexes plus authorization-filtered Vectorize/derived cross-workspace indexes | FTS/pgvector query/index/RLS tuning |
 | Fleet/schema migration | Dedicated multi-primitive control plane | Conventional regional migrations and bounded backfill campaigns |
 | Capacity operations | Per-object limits, hot parent, cross-service quotas | Compute/IO/pool/WAL/vacuum/index/partition tuning |
-| Token streaming | Owner-frame/coalescing and bounded SQLite checkpoints | Bounded chunks/CAS, REST hints, RLS offset reads, local animation/backlog controller, and shared-primary load gates |
+| Token streaming | Owner-frame/coalescing and bounded SQLite checkpoints | Bounded chunks/CAS, content-bearing Database Broadcast overlap, Replay/RLS offset recovery, local animation/backlog controller, and shared-primary WAL/egress load gates |
 | Restore and repair | Cross-object/WorkspaceDO/R2 reconstruction plus product-free fleet ledger | Regional database restore plus Storage/effect reconciliation |
 | Regional identity | Existing global routing/capability integration | Global/regional Supabase Auth federation spike |
 
