@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   nonObjectRootUnionBranches,
+  readableRootUnionBranch,
   repairRootUnionForProviders,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
@@ -141,11 +142,13 @@ describe("weakenedCompositionBranches", () => {
  * 3.7-flash, and gpt-5.6-terra/sol/luna through OpenRouter, not inferred.
  */
 describe("nonObjectRootUnionBranches", () => {
-  it("still catches a root branch that carries its own composition", () => {
-    // The one root-union shape bind 12 forwards unchanged, and it is a hard 400
-    // on all three Grok models — measured against the exact bytes the sanitizer
-    // emits. This assertion is the only thing standing in front of it, so it is
-    // the positive case that matters most in this file.
+  it("reports nothing for a root branch carrying its own composition, which bind 13 now drops", () => {
+    // This was the guard's last live finding. Bind 12 forwarded the shape
+    // straight into a 400 on all three Grok models; bind 13 drops the
+    // composition, so there is nothing left for the guard to report. Kept as a
+    // regression test on the dependency — the rule it encodes is asserted
+    // directly against `readableRootUnionBranch` below, where no sanitizer
+    // version can hide it.
     expect(nonObjectRootUnionBranches({
       type: "object",
       properties: { a: { type: "string" }, b: { type: "string" } },
@@ -153,10 +156,10 @@ describe("nonObjectRootUnionBranches", () => {
         { type: "object", anyOf: [{ properties: { a: { type: "string" } } }, { properties: { b: { type: "string" } } }] },
         { type: "object", properties: { b: { type: "string" } } },
       ],
-    })).toEqual(["/oneOf/0"]);
+    })).toEqual([]);
   });
 
-  it("reports nothing for the root unions bind 12 repairs or drops", () => {
+  it("reports nothing for the root unions the sanitizer repairs or drops", () => {
     // Repaired into object branches:
     expect(nonObjectRootUnionBranches(MEMORY_SEARCH_BEFORE_THE_FIX)).toEqual([]);
     // Dropped, because no branch can be made usable:
@@ -241,45 +244,35 @@ describe("nonObjectRootUnionBranches", () => {
  * sanitizer repairs most of them before the guard above ever sees them.
  */
 describe("repairRootUnionForProviders", () => {
-  it("drops a root union Grok would reject, keeping the rest of the schema", () => {
-    const repaired = repairRootUnionForProviders({
+  it("defers to the sanitizer when the sanitizer already handles the shape", () => {
+    // Repairing this unconditionally is now WORSE than doing nothing. Bind 13
+    // turns it into self-sufficient object branches that every provider accepts
+    // and the model can actually read; dropping the composition first throws
+    // that constraint away and tells the model nothing. Under bind 11 and 12
+    // the drop was the only thing between a remote schema and a 400.
+    const remote = {
       type: "object",
-      properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
-      required: ["query"],
-      oneOf: [{ required: ["query"] }, { required: ["memoryItemId"] }],
-    });
+      properties: { pageId: { type: "string" }, discussionId: { type: "string" } },
+      oneOf: [{ required: ["pageId"] }, { required: ["discussionId"] }],
+    };
 
-    expect(repaired).toEqual({
-      type: "object",
-      properties: { query: { type: "string" }, memoryItemId: { type: "string" } },
-      required: ["query"],
-    });
-    expect(nonObjectRootUnionBranches(repaired)).toEqual([]);
+    expect(repairRootUnionForProviders(remote)).toBe(remote);
   });
 
-  it("drops an annotation-only root union, which Grok rejects the same way", () => {
-    expect(repairRootUnionForProviders({
+  it("leaves the annotation-only and conflicting-`type` shapes to the sanitizer too", () => {
+    const annotationOnly = {
       type: "object",
       properties: { a: { type: "string" } },
       anyOf: [{ description: "choose a" }, { description: "or not" }],
-    })).toEqual({ type: "object", properties: { a: { type: "string" } } });
-  });
-
-  it("repairs the two branch shapes measured after the first cut", () => {
-    // A declared non-object `type` disqualifies the branch whatever its
-    // `properties` says; a branch carrying its own composition is disqualified
-    // whatever its `type` says. Both are 0/3 on Grok.
-    expect(repairRootUnionForProviders({
+    };
+    const conflictingType = {
       type: "object",
       properties: { a: { type: "string" } },
       oneOf: [{ type: "string", properties: { a: { type: "string" } } }],
-    })).toEqual({ type: "object", properties: { a: { type: "string" } } });
+    };
 
-    expect(repairRootUnionForProviders({
-      type: "object",
-      properties: { a: { type: "string" } },
-      oneOf: [{ type: "object", anyOf: [{ properties: { a: { type: "string" } } }] }],
-    })).toEqual({ type: "object", properties: { a: { type: "string" } } });
+    expect(repairRootUnionForProviders(annotationOnly)).toBe(annotationOnly);
+    expect(repairRootUnionForProviders(conflictingType)).toBe(conflictingType);
   });
 
   it("leaves a root union whose branches are already objects untouched", () => {
@@ -321,5 +314,67 @@ describe("repairRootUnionForProviders", () => {
     repairRootUnionForProviders(schema);
 
     expect(schema.oneOf).toEqual([{ required: ["a"] }]);
+  });
+});
+
+/**
+ * The measured rules themselves, asserted against the predicate rather than
+ * through whatever the installed sanitizer happens to do with them.
+ *
+ * This block exists because the checks above have gone quiet: bind 13 repairs
+ * or drops every shape they were built to catch, so they now assert the
+ * dependency's behaviour more than this module's. These clauses cost roughly
+ * two hundred live provider requests to establish and are the durable part; a
+ * sanitizer that changes underneath them must not be able to make them
+ * vacuous.
+ */
+describe("readableRootUnionBranch", () => {
+  it("accepts a branch that is recognizably an object", () => {
+    expect(readableRootUnionBranch({ type: "object" })).toBe(true);
+    expect(readableRootUnionBranch({ type: "object", required: ["a"] })).toBe(true);
+    expect(readableRootUnionBranch({ properties: { a: { type: "string" } } })).toBe(true);
+    expect(readableRootUnionBranch({
+      type: "object",
+      properties: { a: { type: "string" } },
+      required: ["a"],
+    })).toBe(true);
+  });
+
+  it("rejects a branch that asserts nothing", () => {
+    expect(readableRootUnionBranch({})).toBe(false);
+    expect(readableRootUnionBranch({ required: ["a"] })).toBe(false);
+    expect(readableRootUnionBranch({ description: "choose a" })).toBe(false);
+    expect(readableRootUnionBranch(null)).toBe(false);
+    expect(readableRootUnionBranch("nope")).toBe(false);
+  });
+
+  it("lets a declared `type` decide by itself", () => {
+    // `properties` does not rescue a branch whose own `type` contradicts it:
+    // measured 0/3 on Grok, identical to a bare `{ type: "string" }`.
+    expect(readableRootUnionBranch({ type: "string", properties: { a: { type: "string" } } })).toBe(false);
+    expect(readableRootUnionBranch({ type: "array", properties: { a: { type: "string" } } })).toBe(false);
+    expect(readableRootUnionBranch({ type: "string" })).toBe(false);
+  });
+
+  it("rejects a branch carrying its own composition, whatever its type", () => {
+    // Measured 0/3 on Grok even with `type: "object"` present.
+    expect(readableRootUnionBranch({ type: "object", anyOf: [{ type: "object" }] })).toBe(false);
+    expect(readableRootUnionBranch({ type: "object", oneOf: [{ type: "object" }] })).toBe(false);
+    expect(readableRootUnionBranch({ type: "object", allOf: [{ type: "object" }] })).toBe(false);
+  });
+
+  it("looks only at the branch's own keywords, never its subtree", () => {
+    // A composition under one of the branch's PROPERTIES is accepted by all
+    // nine models. Treating this as a subtree scan would discard legitimate
+    // constraints to fix a problem that does not exist.
+    expect(readableRootUnionBranch({
+      type: "object",
+      properties: { a: { anyOf: [{ type: "string" }, { type: "number" }] } },
+      required: ["a"],
+    })).toBe(true);
+    expect(readableRootUnionBranch({
+      type: "object",
+      properties: { a: { type: "object", properties: { inner: { oneOf: [{ type: "string" }] } } } },
+    })).toBe(true);
   });
 });
