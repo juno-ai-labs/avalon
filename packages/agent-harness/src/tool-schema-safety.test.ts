@@ -46,6 +46,32 @@ describe("weakenedCompositionBranches", () => {
     })).toEqual(["/properties/filter/oneOf/1 (required dropped)"]);
   });
 
+  it("catches a root composition the sanitizer removes outright", () => {
+    // Bind 13 deletes a root union no branch of which can be made usable. That
+    // is provider-safe and deliberate, and it is still an authored constraint
+    // that never reached the wire — and it is invisible to
+    // `nonObjectRootUnionBranches`, which has nothing left to judge once the
+    // union is gone. An earlier version of this walk stopped at the missing
+    // array and reported nothing, so a first-party tool could have lost a whole
+    // union with both checks green.
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: { a: { type: "string" } },
+      oneOf: [{ required: ["ghost"] }],
+    })).toEqual(["/oneOf (composition dropped)"]);
+  });
+
+  it("catches a root union dropped because a branch carried its own union", () => {
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [
+        { type: "object", anyOf: [{ properties: { a: { type: "string" } } }] },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    })).toEqual(["/oneOf (composition dropped)"]);
+  });
+
   it("reaches every subschema position the walk claims to cover", () => {
     // Traversal coverage, held with unresolvable names because a resolvable one
     // now survives sanitization and would make this assert nothing. Each path
@@ -238,10 +264,14 @@ describe("nonObjectRootUnionBranches", () => {
  * `inputSchema` reaches the model verbatim and no build-time check can see it,
  * so the rule the guard reports on is applied here as a rewrite instead.
  *
- * These run on the authored schema without invoking the sanitizer, so they are
- * independent of the installed bind version — which makes this block the
- * standing coverage for the measured branch rules themselves, now that the
- * sanitizer repairs most of them before the guard above ever sees them.
+ * These are **not** version-independent, despite operating on authored input:
+ * the gate calls `nonObjectRootUnionBranches`, which runs the sanitizer. Under
+ * bind 13 every shape here is handled upstream, so the gate passes the schema
+ * through untouched and `toBe` holds on identity. A bind release that stops
+ * handling one of them flips that to a repair and fails this block — which is
+ * the regression signal the gate exists to send, not a defect in this module.
+ * The version-independent coverage of the rules themselves is the
+ * `readableRootUnionBranch` block below.
  */
 describe("repairRootUnionForProviders", () => {
   it("defers to the sanitizer when the sanitizer already handles the shape", () => {
@@ -356,11 +386,22 @@ describe("readableRootUnionBranch", () => {
     expect(readableRootUnionBranch({ type: "string" })).toBe(false);
   });
 
-  it("rejects a branch carrying its own composition, whatever its type", () => {
+  it("rejects a branch carrying its own union, whatever its type", () => {
     // Measured 0/3 on Grok even with `type: "object"` present.
     expect(readableRootUnionBranch({ type: "object", anyOf: [{ type: "object" }] })).toBe(false);
     expect(readableRootUnionBranch({ type: "object", oneOf: [{ type: "object" }] })).toBe(false);
-    expect(readableRootUnionBranch({ type: "object", allOf: [{ type: "object" }] })).toBe(false);
+  });
+
+  it("accepts a branch carrying its own `allOf`, which is an intersection", () => {
+    // Measured 9/9, Grok included — and Bind 13 deliberately keeps it. Rejecting
+    // it would make the repair delete a root union the sanitizer preserved,
+    // which is the same class of harm as the repair this PR just gated.
+    expect(readableRootUnionBranch({ type: "object", allOf: [{ properties: { a: { type: "string" } } }] })).toBe(true);
+    expect(readableRootUnionBranch({
+      type: "object",
+      properties: { a: { type: "string" } },
+      allOf: [{ required: ["a"] }],
+    })).toBe(true);
   });
 
   it("looks only at the branch's own keywords, never its subtree", () => {
