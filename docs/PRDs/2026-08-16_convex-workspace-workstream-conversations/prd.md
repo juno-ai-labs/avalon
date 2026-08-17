@@ -68,24 +68,21 @@ replace.
 The concrete problem the current stack keeps producing is the seam between an
 entity's own state and everything that must agree with it. A work-stream update
 has to reach the workspace projection, the per-person overlay, the sidebar card,
-the durable event log, and the socket, and each of those hops is an Avalon-built
-delivery with its own failure mode: a lost hint, a cursor that skipped, a
-resync flash, a replayed frame, a card that says "running" for a stream that
-finished ninety seconds ago. Roughly 200 lines of checkpoint, replay, resync,
-and eviction protocol exist in `WorkstreamRoom` for no product reason — they
-exist because delivery is unreliable and Avalon has to repair it. Every such
-repair path is a place a future incident comes from, and none of them is
-something a user would pay for.
+the durable event log, and the socket, and each hop is an Avalon-built delivery
+with its own failure mode: a lost hint, a skipped cursor, a resync flash, a
+replayed frame, a card that says "running" for a stream that finished ninety
+seconds ago. Roughly 200 lines of checkpoint, replay, resync, and eviction
+protocol exist in `WorkstreamRoom` for no product reason — they exist because
+delivery is unreliable and Avalon has to repair it, and every repair path is
+where a future incident comes from.
 
 Convex removes the category rather than improving the odds. A mutation is a
 serializable transaction across every document it touches, so the sidebar card
 and the message it describes cannot be written apart. A subscribed query is
-re-executed server-side whenever a commit overlaps its read set, and the result
-that is pushed is a recomputed snapshot rather than a replayed delta — so
-reconnect is one query execution, not a cursor negotiation, and Avalon's
-visibility rule, which runs *inside* that query, is re-evaluated on every
-delivered frame. That is the mechanism the panel scored highest, and it is the
-reason this proposal exists.
+re-executed server-side whenever a commit overlaps its read set, and what is
+pushed is a recomputed snapshot rather than a replayed delta — so reconnect is
+one query execution, and Avalon's visibility rule, which runs *inside* that
+query, is re-evaluated on every delivered frame.
 
 Three independent judge passes over identical inputs voted 2–1 for Convex
 (means 67.5 / 61.3 / 57.6 / 51.2 against GCP, Supabase, and AWS), and — more
@@ -242,17 +239,14 @@ union of pin, mention, unread, assignment or input need, accepted suggestion,
 and recently opened or active signals. No opaque recommender silently changes
 this collection.
 
-The system does not eagerly create one overlay document for every member and
-work stream. It creates one when the person opens, is mentioned or assigned,
-needs input, pins, mutes, dismisses, accepts a suggestion, or otherwise differs
-from the default. A missing overlay means "never opened". Large workspace-wide
-attention events use an audience ordinal and lazy evaluation rather than a
-Cartesian write.
-
-Marking seen is a monotonic mutation. It advances only to a sequence or
-attention ordinal the caller is authorized to see, and never moves backward or
-into the future. Rendering, presence, and an open socket do not mark content
-seen.
+The system does not eagerly create one overlay per member and work stream. It
+creates one when the person opens, is mentioned or assigned, needs input, pins,
+mutes, dismisses, or accepts a suggestion; a missing overlay means "never
+opened", and workspace-wide attention events use an audience ordinal and lazy
+evaluation rather than a Cartesian write. Marking seen is a monotonic mutation
+that advances only to an ordinal the caller is authorized to see and never moves
+backward or into the future; rendering, presence, and an open socket do not mark
+content seen.
 
 The same mutation that changes a work-stream title, state, last activity,
 message attention, mention, or assignment updates the head document's card
@@ -273,17 +267,16 @@ different bytes is quarantined as immutable conflict evidence and audited.
 
 Large raw bodies go to Convex file storage through a pending-then-ready content
 reference lifecycle. The receipt and the scheduled normalization work commit
-together, because scheduling from inside a mutation is transactional: if the
-mutation commits, the job is scheduled. A bounded worker creates immutable
-normalized activity facts, version and tombstone records, resource links,
-audiences, and reconciliation cursors. Raw receipts are evidence and replay
-input; normalized activity is the product-facing authority; vectors and
-subscriptions are neither.
+together, because scheduling from inside a mutation is transactional. A bounded
+worker creates immutable normalized activity facts, version and tombstone
+records, resource links, audiences, and reconciliation cursors. Raw receipts are
+evidence and replay input; normalized activity is the product-facing authority;
+vectors and subscriptions are neither.
 
 Digests freeze an authorized activity watermark, timezone, audience, source
 revision, and model and prompt version. Late events enter the next digest or an
-explicit revision. Model generation and delivery are separate idempotent
-effects. Revocation between selection and commit invalidates the artifact.
+explicit revision. Generation and delivery are separate idempotent effects, and
+revocation between selection and commit invalidates the artifact.
 
 Opportunity workers create suggestions and their source links. A suggested work
 stream is a proposal with provenance, score, explanation, target audience,
@@ -322,17 +315,16 @@ but the provider array never places a user role inside a required call/result
 pair. This is an explicit projection rule, not a claim that physical and
 provider order are always identical.
 
-The projector is a versioned function over: the requested work stream and
-substream lineage; an inclusive work-stream sequence fence; a current
-authorization and context-scope epoch; complete, visible turns and tool
-call/result pairs; applicable, still-valid compaction summaries; promoted child
-summaries and referenced content versions; and a provider adapter that maps
-neutral roles and typed parts into its wire format. It produces the same logical
-array on retry and records the projection version, source fence, hashes, and
-audience epoch on the run step. Provider wire payloads are not canonical
-history. Small text is inline in the part document; large bodies resolve from
-ready content references. Missing, corrupt, unauthorized, or revised content
-fails materialization explicitly rather than silently changing the prompt.
+The projector is a versioned function over the requested substream lineage, an
+inclusive sequence fence, the current authorization and context-scope epoch,
+complete visible turns and tool call/result pairs, still-valid compaction
+summaries, promoted child summaries and referenced content versions, and a
+provider adapter. It produces the same logical array on retry and records the
+projection version, source fence, hashes, and audience epoch on the run step.
+Provider wire payloads are not canonical history. Small text is inline in the
+part document; large bodies resolve from ready content references. Missing,
+corrupt, unauthorized, or revised content fails materialization explicitly
+rather than silently changing the prompt.
 
 ### Queued and steering messages
 
@@ -532,106 +524,92 @@ None yet.
 
 ## Key design decisions
 
-1. **One Convex deployment per region is the entire product data plane.**
-   Database, realtime fan-out, job queue, loop driver, blob storage, text and
-   vector search, and the API tier are one product with one status page and one
-   local development loop. *Rejected:* the Supabase hybrid, whose fan-out is
-   metered *and* whose S=300 column depends on an unpriced negotiation past a
-   published message-rate cap, which adds a pull-read tier for content it cannot
-   safely push, and whose real migration is the field's largest freeze — 32–40
-   engineer-weeks behind an "8–10 product-week" headline. *Rejected:* GCP, which
-   scored as the runner-up on verified, boring, Terraformed infrastructure and
-   the field's only structurally unmetered fan-out, but which requires the most
-   bespoke distributed code — a relay tier, a Redis fan-out, and an
-   Avalon-written revocation backstop — to reach what Convex gives as a platform
-   property. GCP remains the named fallback if Phase 0 fails. *Rejected:* AWS,
-   most technologies, highest normalized cost, the field's lowest turn ceiling,
-   and a migration that strands the dictation bridge. *Rejected:* staying on
-   D1 and Durable Objects, which the settled direction already excludes.
-2. **Reactive query subscriptions are the whole realtime layer; the client
-   cursor protocol is deleted, not ported.** Recovery is query recomputation,
-   consistency across queries is a platform guarantee, and retraction is an
-   epoch bump. *Rejected:* porting `WorkstreamRoom`'s checkpoint, replay,
-   resync, and eviction protocol onto a new store, which keeps every failure
-   mode Avalon currently owns while paying a migration for the privilege.
-3. **Avalon mints its own JWTs; Convex validates them as a custom JWT
-   provider.** The Global identity plane stays the one identity authority, the
-   auth line is $0 at every scale, and no vendor sits between a person and their
-   session. *Rejected:* an auth vendor (the field's comparable line is
-   $488–$3,600/mo at 250k MAU), which would add a second identity authority, a
-   MAU meter, and a federation spike to Phase 0 for no product gain.
-4. **The Azure dictation Worker stays.** Convex terminates its own client
-   sockets but does not proxy third-party ones, so one vestigial Cloudflare
-   Worker keeps bridging dictation. *Rejected:* claiming a two-technology stack.
-   The honest end-to-end count is about five — Convex core, its three newer
-   components, the Electron client, the retained Worker, and Fivetran plus a
-   warehouse — with OpenRouter and Daytona as external providers.
-5. **SQL analytics come from a warehouse, not from the transactional store.**
-   Convex's Pro streaming export through the vendor-maintained Fivetran
-   connector feeds the warehouse; production questions in the meantime are typed
-   TypeScript queries run through `npx convex run`. *Rejected:* scoring the
-   substrate decision on ad-hoc SQL availability, and *rejected:* a read replica
-   or SQL shim in front of a document store, which would create a second query
-   surface with different authorization.
+1. **One Convex deployment per region is the entire product data plane** —
+   database, realtime fan-out, queue, loop driver, blob storage, search, and API
+   tier as one product with one status page and one local development loop.
+   *Rejected:* the Supabase hybrid, whose fan-out is metered *and* whose S=300
+   column depends on an unpriced negotiation past a published message-rate cap,
+   which needs a pull-read tier for content it cannot safely push, and whose real
+   freeze is the field's largest — 32–40 engineer-weeks behind an "8–10
+   product-week" headline. *Rejected:* GCP, the runner-up on verified,
+   Terraformed infrastructure and the field's only structurally unmetered
+   fan-out, but requiring the most bespoke distributed code — relay tier, Redis
+   fan-out, Avalon-written revocation backstop — to reach what Convex gives as a
+   platform property; it remains the named fallback if Phase 0 fails.
+   *Rejected:* AWS (most technologies, highest normalized cost, lowest turn
+   ceiling, a migration that strands the dictation bridge), and staying on
+   D1/Durable Objects, which the settled direction already excludes.
+2. **Reactive subscriptions are the whole realtime layer; the client cursor
+   protocol is deleted, not ported.** Recovery is query recomputation and
+   retraction is an epoch bump. *Rejected:* porting `WorkstreamRoom`'s
+   checkpoint/replay/resync/eviction protocol onto a new store, which keeps every
+   failure mode Avalon owns today and pays a migration for the privilege.
+3. **Avalon mints its own JWTs; Convex validates them as a custom JWT provider.**
+   The Global identity plane stays the one identity authority and the auth line
+   is $0 at every scale. *Rejected:* an auth vendor ($488–$3,600/mo at 250k MAU
+   across the field), which adds a second identity authority, a MAU meter, and a
+   federation spike to Phase 0 for no product gain.
+4. **The Azure dictation Worker stays.** Convex terminates its own client sockets
+   but does not proxy third-party ones. *Rejected:* claiming a two-technology
+   stack — the honest end-to-end count is about five (Convex core, its three
+   newer components, the Electron client, the retained Worker, Fivetran plus a
+   warehouse), with OpenRouter and Daytona as external providers.
+5. **SQL analytics come from a warehouse, not the transactional store** — Pro
+   streaming export through the vendor-maintained Fivetran connector, with
+   `npx convex run` for one-off production questions. *Rejected:* scoring the
+   substrate on ad-hoc SQL availability, and a SQL shim or replica in front of a
+   document store, which creates a second query surface with its own
+   authorization.
 6. **Per-principal budgets use the rate-limiter component.** "Clients can only
    invoke exported functions" answers raw data-plane access, not what an
-   authenticated-but-hostile client can spend at $2 per million calls. Every
-   client-callable mutation and action is limited per principal and per
-   workspace, and the limiter's counters are documents in the same transaction
-   system. *Rejected:* treating the function boundary as sufficient, which the
-   compliance gate identified as a silently skipped hazard and which is a cost
-   exposure as much as an abuse one.
+   authenticated-but-hostile client can spend at $2 per million calls, so every
+   client-callable function is limited per principal and per workspace with
+   counters in the same transaction system. *Rejected:* treating the function
+   boundary as sufficient — the compliance gate caught this as a skipped hazard,
+   and it is a cost exposure as much as an abuse one.
 7. **A timer-driven watchdog, not token flow, bounds steering.** The turn action
    reads the steering document at every checkpoint commit, and a 500 ms timer
    forces a no-op checkpoint when no tokens arrive — provider stall, long tool
-   wait, or slow first byte. The visible-halt bound is therefore one checkpoint
-   interval in every case, not only while output is flowing. *Rejected:* the
-   token-driven-only design, whose "≤500 ms, no lost notification" claim silently
-   assumed a ticking checkpoint loop and left the stalled case unbounded.
-8. **Streamed output is append-only delta chunks, sealed into one immutable
-   part.** Each chunk is a small batched document keyed by turn and epoch; seal
-   copies the accumulated text into the assistant part and tombstones the
-   chunks. *Rejected:* a document per token, which multiplies write and index
-   cost for no user benefit. *Rejected:* one mutable accumulating buffer
-   rewritten every tick, which rewrites the whole buffer per checkpoint and
-   makes retraction a rewrite rather than an epoch bump.
+   wait, slow first byte — so the visible-halt bound is one checkpoint interval
+   in every case. *Rejected:* the token-driven-only design, whose "≤500 ms, no
+   lost notification" claim assumed a ticking loop and left the stalled case
+   unbounded.
+8. **Streamed output is append-only delta chunks sealed into one immutable
+   part**, keyed by turn and epoch. *Rejected:* a document per token, which
+   multiplies write and index cost for no user benefit; and one mutable
+   accumulating buffer rewritten each tick, which rewrites the whole buffer per
+   checkpoint and makes retraction a rewrite instead of an epoch bump.
 9. **The work-stream sequence is allocated by read-modify-write on the head
-   document under optimistic concurrency control.** Contenders conflict on that
-   document and retry, so commit order is sequence order and the
-   late-commit-with-a-lower-number problem is structurally absent. *Rejected:* a
-   separate counter service or monotonic-clock ordering, both of which
-   reintroduce a gap between allocation and commit that Avalon would then have
-   to detect and repair.
+   document under optimistic concurrency control**, so commit order is sequence
+   order and the late-commit-with-a-lower-number problem is structurally absent.
+   *Rejected:* a separate counter service or clock ordering, which reintroduce a
+   gap between allocation and commit that Avalon would then have to repair.
 10. **The Workflow component drives full loops; no external orchestrator.** Run
-    state, steps, waits, and the product data they describe are in one
-    transactional system, so a driver binding, a data-minimality rule for
-    orchestrator state, and a second vendor in every residency review all cease
-    to exist. *Rejected:* retaining Cloudflare Workflows as the driver, which
-    keeps a cross-system binding whose failure modes — instance lost, recreated,
-    or holding state the database disagrees with — are exactly what this design
-    is trying to stop owning.
+    state, steps, waits, and the data they describe sit in one transactional
+    system, so a driver binding, a data-minimality rule for orchestrator state,
+    and a second vendor in every residency review all cease to exist.
+    *Rejected:* retaining Cloudflare Workflows as the driver, whose failure modes
+    — instance lost, recreated, or holding state the database disagrees with —
+    are exactly what this design stops owning.
 11. **One model turn is one Convex-runtime action, and the runtime is a Phase 0
-    gate.** Convex-runtime actions cap at 30 minutes; Node-runtime actions cap
-    at 10. The kept agent-harness and Bind adapter code must run without
-    `"use node"`, and Phase 0 verifies it before any migration work. A turn that
-    exceeds 30 minutes aborts and retries from the last durable step, re-spending
-    that provider call — a named regression against the current unbounded step,
-    at tail frequency. *Rejected:* assuming the harness ports as "light edits",
-    which would put a 10-minute ceiling under a ~10-minute requirement with zero
-    headroom. If the gate fails, an external turn host is designed before
-    committing, or the decision reverts.
-12. **Launch Global (US East) only; EU is deferred and fail-closed.** The
-    Ireland region is real and priced (+30% on resources, with Pro included
-    allowances not applying), but no published DPA, subprocessor list, or
-    contractual processing commitment was found. *Rejected:* treating region
-    availability as residency compliance, which is the mistake this project
-    cannot afford to make twice.
+    gate.** Convex-runtime actions cap at 30 minutes, Node-runtime actions at 10,
+    so the kept harness and Bind adapter must run without `"use node"` and Phase
+    0 proves it before any migration work. A turn past 30 minutes aborts and
+    retries from the last durable step, re-spending that provider call — a named
+    regression at tail frequency. *Rejected:* assuming the harness ports as
+    "light edits", which would put a 10-minute ceiling under a ~10-minute
+    requirement with zero headroom; if the gate fails, an external turn host is
+    designed first or the decision reverts.
+12. **Launch Global (US East) only; EU is deferred and fail-closed.** Ireland is
+    real and priced (+30% on resources, Pro included allowances not applying),
+    but no published DPA, subprocessor list, or processing commitment was found.
+    *Rejected:* treating region availability as residency compliance.
 13. **Cutover is single-writer at approximately zero users, gated on the D1
-    side.** The source-local authority gate remains the sole linearization
-    point, exactly as the sibling PRD designs it; Convex is activated at the
-    same epoch only after the gate closes. *Rejected:* a dual-write or
-    shadow-authority period, which is the one migration shape that can produce
-    two systems accepting canonical writes.
+    side** — the source-local authority gate stays the sole linearization point,
+    exactly as the sibling PRD designs it, and Convex activates at the same epoch
+    only after it closes. *Rejected:* a dual-write or shadow-authority period,
+    the one migration shape that can produce two systems accepting canonical
+    writes.
 
 ## Data model
 
@@ -646,7 +624,7 @@ Sketch level; the full document shapes, fields, and indexes are in
 | Runs | `runs`, `runStepRecords`, `runControl`, `runWaits`, `runWaitEvents`, `toolEffects`, `terminalSessions`, `terminalCommands` |
 | Connectors and activity | `connectorInstallations`, `ingressReceipts`, `ingressConflicts`, `connectorResources`, `activityEvents`, `activityLinks`, `activityCursors` |
 | Digests and suggestions | `digestSchedules`, `digestJobs`, `digests`, `suggestions`, `suggestionSources`, `suggestionFeedback` |
-| Content and search | `contentRefs`, `storageReconciliation`, `searchDocuments`, `embeddings` |
+| Content and search | `contentRefs`, `searchDocuments`, `embeddings` |
 | Operations | `commandReceipts`, `auditEvents`, `exportJobs`, `deletionJobs`, `importReceipts` |
 
 Three documents carry the design:
@@ -947,3 +925,150 @@ Instrumented from Phase 1 and reviewed monthly:
 4. No signable in-region DPA by EU-build kickoff — self-host EU or reopen.
 5. A vendor-health signal (license change, pricing move above 25%, distress) —
    execute the rehearsed export and self-host drill within 30 days.
+
+## Acceptance
+
+### Conversation and product behavior
+
+1. Two concurrent writers observe one committed work-stream order; a retried
+   mutation does not duplicate a part, and nothing commits below a visible
+   sequence.
+2. A materialization at the same fence, audience, scope, configuration, and
+   projector version produces the same ordered content hash on every retry.
+3. Tool call/result pairs stay provider-valid when human input arrives between
+   their physical timestamps; that input is admitted at the next safe boundary.
+4. Private, fork, sub-agent, and document substreams expose exactly their
+   declared lineage and audience, never ambient work-stream history, and depth,
+   cycle, and kind rules reject a branch bomb without corrupting its parent.
+5. A queued message is durable and visible, does not invalidate the active
+   attempt, and is admitted exactly once at the next boundary.
+6. A steering message is durable before acknowledgement, advances the control
+   revision, and prevents any later irreversible effect under the old revision.
+7. **Steering halts visible output within one second with the provider stalled
+   and no tokens flowing** — the watchdog case, tested with a stalled stream and
+   with a long tool wait.
+8. A superseded attempt's checkpoint cannot commit, and one epoch bump retracts
+   its provisional text for every viewer at once; two attempts never splice and
+   only one seals.
+9. A message sent during compaction lands above the fence and appears after the
+   summary with no loss, duplication, or accidental inclusion; an authorization
+   or resource change during compaction rejects the result.
+
+### Sidebar, subscriptions, and streaming
+
+10. A metadata, status, or message mutation changes head-document card fields,
+    affected overlays, and audit rows atomically; crash tests reveal no split
+    state.
+11. **Work Streams**, **In Progress**, **Completed**, **Error**, and date groups
+    match their documented predicates under pagination.
+12. **You Are Mentioned**, **Unread**, **Needs Your Input**, **Pinned**, and
+    **Of Interest** match the authorized sparse overlay on both surfaces.
+13. Mark-seen is monotonic, device-independent, authorization-bounded, and cannot
+    acknowledge future or unseen-audience content; a workspace-wide attention
+    event avoids one eager write per member.
+14. **Push latency**: p95 commit-to-client update stays at or below one second at
+    peak for the pilot week and in every later load test.
+15. A client offline for a second and a client offline for a week both recover by
+    resubscription alone, with no cursor, replay, or snapshot-required path in
+    the code.
+16. Streamed output updates every 250–500 ms while observed, no document per
+    token exists, and sealing produces one immutable part and tombstones its
+    chunks.
+17. **Revocation race**: removing a member during an active stream stops further
+    frames for that member and delivers no result computed at a pre-revocation
+    snapshot — measured against the Phase 0 vendor letter, or against the ≤60 s
+    bound if the fallback stance is adopted.
+18. One socket per regional session serves every surface; a backgrounded app
+    closes it without churn and recomputes on focus.
+
+### Runs, effects, and limits
+
+19. The same run contract executes a typical 2–30 minute work-stream loop and at
+    least one non-work-stream iterative loop.
+20. A failure-injected 2+ hour session survives deploys, step retries, early
+    events, socket loss, and desktop closure without duplicated terminal state or
+    blind tool repetition.
+21. **Runtime-cap conformance**: no action requires `"use node"`; every model
+    turn completes inside the 30-minute ceiling under the validated workload, and
+    an induced overrun aborts and retries from the last durable step exactly
+    once.
+22. A wake or signal arriving before its wait is installed is consumed from the
+    durable wait-event record exactly once.
+23. A Daytona command timing out at the executor is reconciled by provider
+    command ID before any retry; ambiguous writes surface honestly.
+24. Budget, authorization, and control races have one compare-and-set winner.
+25. **Per-principal rate limits** hold: a hostile authenticated client cannot
+    exceed its budget for calls or streamed work, and rejection is an explicit
+    product state rather than a timeout.
+
+### Activity, storage, search, and operations
+
+26. A connector duplicate with identical bytes reuses its receipt; the same ID
+    with different bytes quarantines without overwriting evidence, and replay
+    across every async boundary creates the same activity.
+27. A suggested work stream is absent from real collections until one acceptance
+    mutation creates exactly one work stream, card, and initial history; revoked,
+    expired, or deleted sources make acceptance fail closed.
+28. Text and vector search return only currently authorized documents, a stale
+    embedding cannot leak after an ACL change or deletion, and every index is
+    rebuildable from canonical sources; crashes around upload, finalize, and
+    delete converge pending, ready, orphan, and deleted states.
+29. **Spend versus model**: metered spend for the pilot week is within +50% of
+    the cost model, itemized per meter off the usage dashboard.
+30. **Restore drill**: a scheduled backup restores into a scratch deployment with
+    file storage included, reconciliation runs before admission reopens, the
+    drill repeats quarterly, and `npx convex export` succeeds weekly.
+31. Import compares immutable chunk and row counts and hashes, catches held
+    writes, closes exactly one source-local authority gate, tolerates a crash at
+    every later convergence edge, and never has two writers.
+32. Alerts cover function exception rate, stalled workflow instances, OCC
+    conflict hotspots, scheduled-job backlog age, ingress lag, storage orphans,
+    stuck runs and unknown effects, migration mismatch, and export and deletion
+    SLOs.
+
+## Open questions
+
+1. What exact wording of the vendor letter satisfies the C1 claim — per-frame
+   authorization freshness after a revoking commit, including caches and
+   reconnects — and does the vendor state it in documentation or only in
+   contract? If neither, the bounded-staleness stance becomes the launch stance.
+2. Does every reactive re-run bill one function call (assumption A5), and what
+   is the action memory granularity (A7)? These carry ±2× on the dominant cost
+   lines and are resolved by the pilot's dashboard read, not by argument.
+3. What are the real scheduler-dispatch and subscription-push latency
+   distributions under Avalon's checkpoint load, and does the vendor offer any
+   bound at all?
+4. What DPA, subprocessor list, and control-plane processing answers can be had
+   for the EU deployment, and do backups, logs, and support access stay in
+   region?
+5. What happens to the Singapore requirement if it arrives before a Convex SG
+   region — self-host, runner-up substrate, or a deferred market?
+6. What is the sharding strategy past S≈2,000, when one deployment is one
+   logical database with no published shard story: per-workspace deployment
+   assignment, per-region splitting, or a different unit entirely — and what does
+   it cost to retrofit an ID scheme that assumed one deployment?
+7. If the C9 gate fails, what is the external turn host: where does it run, how
+   does it stream deltas back into mutations, and what does it do to the
+   technology count and the migration estimate?
+8. What multi-node guarantees does the self-hosted backend actually provide, and
+   what is the recovery-time objective of the exit drill at S≈300?
+9. What are the final loop budgets for tokens, steps, tools, elapsed and idle
+   time, cost, output bytes, children, and scheduled backlog age?
+10. Which text and body sizes stay inline in documents versus file storage, and
+    what observer-aware checkpoint interval passes the load test per region?
+
+## References
+
+- [The Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md)
+  — the standing product contract this PRD is written against.
+- [Supabase workspace and work-stream
+  conversations](../2026-08-15_supabase-workspace-workstream-conversations/prd.md)
+  — the sibling design whose product semantics this PRD preserves exactly.
+- [Durable workspace and work-stream
+  conversations](../2026-08-15_durable-workspace-workstream-conversations/prd.md)
+  — the elaboration of the current stack that both replace.
+- [`design.md`](design.md) — schema, function protocols, streaming and steering
+  protocol, run driver, and migration mechanics.
+- [`research.md`](research.md) — vendor documentation review, the four-candidate
+  comparison, and **Provenance** for the adjudication record behind it.
+- [`flows.md`](flows.md) — end-to-end walkthroughs of the flows named above.
