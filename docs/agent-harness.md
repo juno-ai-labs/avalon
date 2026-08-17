@@ -605,6 +605,52 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-16 — `@juno-ai/bind` 13, and the compensating layer steps back
+
+**What changed:** the pin moved from 12.0.0 to 13.0.0, which closes the one shape
+12 forwarded into a 400 — a root union branch carrying its own composition.
+`repairRootUnionForProviders` now defers to the sanitizer, returning the schema
+untouched unless `nonObjectRootUnionBranches` reports something still fatal after
+sanitization. `readableRootUnionBranch` is exported and asserted directly.
+
+**Why:** two things, and the second is the one worth remembering.
+
+The bump itself is the upstream fix specified from here, verified against the
+published package before pinning. The gap shape is now dropped; the over-reach
+that a careless version of that fix would have caused is absent — a composition
+under a branch's *property*, one and two levels down, survives untouched, which
+matters because all nine models accept it and destroying it would trade a real
+constraint for nothing. Every 12.0.0 behaviour re-verified: headline repair with
+`required` intact, idempotence, the Gemini dangling-`required` pruning, the
+unrepairable drop, root `allOf` as an intersection, and the copy-down ceiling
+still falling back to dropping. All fifteen emitted shapes accepted 9/9 live.
+
+The second thing is that **our own repair had become worse than doing nothing.**
+Bind 13 turns a remote `oneOf: [{required:["pageId"]}, {required:["discussionId"]}]`
+into self-sufficient object branches every provider accepts and the model can
+read. Dropping that composition first — which is what this layer did
+unconditionally — threw the constraint away and told the model nothing. The layer
+was correct against Bind 11, where the drop was the only thing between a
+third-party schema and a 400 covering the whole request. It stopped being correct
+the moment the dependency started handling the shape properly, and nothing about
+the code would have said so; it would simply have kept quietly deleting
+constraints. Gating it on what the sanitizer actually emits fixes that and keeps
+the backstop, which a deletion would not: the gate re-engages by itself for any
+shape a future sanitizer stops handling, without anyone having to notice.
+
+The checks are now quiet — bind 13 repairs or drops every shape they were built
+to catch — which raised the question of whether they still earn their place. They
+do, but the reason moved: they are a regression detector on the dependency rather
+than a live defence, and that only works if the rules themselves stay asserted.
+So `readableRootUnionBranch` is exported and tested directly against every
+measured clause, including the over-reach guard. Without that, a sanitizer change
+underneath these checks could make them vacuous while they still passed. The
+clauses cost roughly two hundred live provider requests to establish and are the
+durable asset here; the checks that consume them are replaceable.
+
+A future bump should expect these test files to move again, and should ask why
+each expectation changed rather than making it green.
+
 ### 2026-08-16 — `@juno-ai/bind` 12, which repairs most of what the guards were catching
 
 **What changed:** the pin moved from 11.0.0 to 12.0.0. Bind's sanitizer now
