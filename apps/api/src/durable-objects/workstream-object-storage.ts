@@ -7,6 +7,13 @@ import {
 import { z } from "zod";
 
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
+import {
+  WorkstreamRegionalEffectSchema,
+  WorkstreamRegionalEffectEnvelopeSchema,
+  workstreamRegionalEffectHash,
+  type WorkstreamRegionalEffect,
+  type WorkstreamRegionalEffectEnvelope,
+} from "./workstream-regional-effect";
 
 const LEGACY_ROOM_IDENTITY_KEY = "roomIdentity";
 const LEGACY_EVENT_SEQUENCE_KEY = "eventSequence";
@@ -18,6 +25,9 @@ const LEGACY_KV_CAMPAIGN_ID = "workstream-room-kv-to-sql-v1";
 const HYPERSIGHT_JOB_KEY = "hypersight_refresh";
 const ACTIVE_OUTPUT_CHUNK_MAX_BYTES = 60 * 1024;
 const SOCKET_TICKET_RECEIPT_RETENTION_MS = 5 * 60_000;
+const REGIONAL_EFFECT_CHANNEL = "regional_effect_v1";
+const REGIONAL_EFFECT_RETRY_BASE_MS = 5_000;
+const REGIONAL_EFFECT_RETRY_MAX_MS = 5 * 60_000;
 
 const RoomIdentitySchema = z.object({
   workspaceId: z.string().uuid(),
@@ -66,9 +76,45 @@ interface DueWorkRow extends Record<string, SqlStorageValue> {
   payload_json: string;
 }
 
+interface DueWorkTimeRow extends Record<string, SqlStorageValue> {
+  due_at: number;
+}
+
 interface DataMigrationRow extends Record<string, SqlStorageValue> {
   phase: string;
   status: string;
+}
+
+interface RegionalEffectOutboxRow extends Record<string, SqlStorageValue> {
+  message_id: string;
+  payload_json: string;
+  payload_hash: string;
+  attempts: number;
+}
+
+interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
+  next_version: number;
+  last_payload_hash: string;
+  last_enqueued_message_id: string;
+}
+
+interface AuthorityRow extends Record<string, SqlStorageValue> {
+  workstream_key: string;
+  parent_workspace_key: string;
+  region: "global" | "eu";
+  authority_mode: string;
+  authority_generation: number;
+}
+
+export interface RegionalEffectCommand {
+  partitionKey: string;
+  effect: WorkstreamRegionalEffect;
+  /** Required for immutable activity/notification effects. */
+  sourceVersion?: number;
+  /** Stable across retries; required for immutable activity/notification effects. */
+  dedupeKey?: string;
+  /** The user projection that must be visible before a mention can be delivered. */
+  dependsOnProjectionKey?: string;
 }
 
 export type WorkstreamObjectIdentity = z.infer<typeof RoomIdentitySchema>;
@@ -747,6 +793,14 @@ export class WorkstreamObjectStore {
     return parsed.success ? parsed.data : null;
   }
 
+  nextHyperSightDueAt(): number | null {
+    const row = first(this.storage.sql.exec<DueWorkTimeRow>(
+      `SELECT due_at FROM due_work WHERE job_key = ?`,
+      HYPERSIGHT_JOB_KEY,
+    ));
+    return row?.due_at ?? null;
+  }
+
   putPendingHyperSightRefresh(pending: PendingHyperSightRefresh, dueAt: number): void {
     this.storage.sql.exec(
       `INSERT INTO due_work(job_key, kind, due_at, epoch, payload_json, attempts, last_error_code, updated_at)
@@ -782,5 +836,257 @@ export class WorkstreamObjectStore {
       JSON.stringify(pending),
       Date.now(),
     );
+  }
+
+  /**
+   * Commit projection/notification intents in the same SQLite transaction as
+   * the product mutation that created them. Future authoritative write paths
+   * pass their local SQL work through `mutate`; publishing never sits on the
+   * user response path.
+   */
+  async commitWithRegionalEffects<T>(
+    mutate: (sql: SqlStorage) => T,
+    effects: readonly RegionalEffectCommand[]
+      | ((sql: SqlStorage, result: T) => readonly RegionalEffectCommand[]),
+  ): Promise<{ result: T; enqueued: number }> {
+    const committed = this.storage.transactionSync(() => {
+      const authority = first(this.storage.sql.exec<AuthorityRow>(
+        `SELECT workstream_key, parent_workspace_key, region, authority_mode, authority_generation
+           FROM workstream WHERE id = 1`,
+      ));
+      if (
+        !authority
+        || authority.authority_mode !== "authoritative"
+        || authority.authority_generation <= 0
+      ) throw new Error("workstream_regional_effect_authority_fenced");
+
+      const result = mutate(this.storage.sql);
+      const commands = typeof effects === "function"
+        ? effects(this.storage.sql, result)
+        : effects;
+      const messageIds = commands.map(() => crypto.randomUUID());
+      let enqueued = 0;
+      for (const [index, command] of commands.entries()) {
+        const effect = WorkstreamRegionalEffectSchema.parse(command.effect);
+        const projectionKey = effect.kind === "directory_common"
+          ? "common"
+          : effect.kind === "directory_user"
+            ? `user:${effect.userId}`
+            : null;
+        let sourceVersion: number;
+        let messageId: string;
+        let requiredProjectionVersion: number | null = null;
+        let payloadHash = workstreamRegionalEffectHash(effect);
+
+        if (projectionKey) {
+          const previous = first(this.storage.sql.exec<ProjectionKeyRow>(
+            `SELECT next_version, last_payload_hash, last_enqueued_message_id
+               FROM projection_keys WHERE projection_key = ?`,
+            projectionKey,
+          ));
+          if (previous?.last_payload_hash === payloadHash) continue;
+          sourceVersion = previous?.next_version ?? 1;
+          messageId = messageIds[index]!;
+          // A queued stale projection may still arrive, but its lower version
+          // cannot overwrite this one. It no longer needs local redelivery.
+          this.storage.sql.exec(
+            `DELETE FROM durable_outbox
+              WHERE channel = ? AND partition_key = ? AND state IN ('pending', 'inflight')`,
+            REGIONAL_EFFECT_CHANNEL,
+            projectionKey,
+          );
+          this.storage.sql.exec(
+            `INSERT INTO projection_keys
+               (projection_key, next_version, last_payload_hash,
+                last_enqueued_message_id, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(projection_key) DO UPDATE SET
+               next_version = excluded.next_version,
+               last_payload_hash = excluded.last_payload_hash,
+               last_enqueued_message_id = excluded.last_enqueued_message_id,
+               updated_at = excluded.updated_at`,
+            projectionKey,
+            sourceVersion + 1,
+            payloadHash,
+            messageId,
+            Date.now(),
+          );
+        } else {
+          sourceVersion = z.number().int().positive().parse(command.sourceVersion);
+          const dedupeKey = z.string().min(1).max(450).parse(command.dedupeKey);
+          messageId = `effect:${dedupeKey}`;
+          if (effect.kind === "mention_notification") {
+            const requiredKey = `user:${effect.recipientUserId}`;
+            if (command.dependsOnProjectionKey !== requiredKey) {
+              throw new Error("workstream_notification_projection_dependency_missing");
+            }
+            const dependency = first(this.storage.sql.exec<ProjectionKeyRow>(
+              `SELECT next_version, last_payload_hash, last_enqueued_message_id
+                 FROM projection_keys WHERE projection_key = ?`,
+              requiredKey,
+            ));
+            requiredProjectionVersion = (dependency?.next_version ?? 1) - 1;
+            if (requiredProjectionVersion <= 0) {
+              throw new Error("workstream_notification_projection_dependency_uncommitted");
+            }
+            payloadHash = workstreamRegionalEffectHash(effect, requiredProjectionVersion);
+          } else if (command.dependsOnProjectionKey !== undefined) {
+            throw new Error("workstream_regional_effect_dependency_not_supported");
+          }
+        }
+
+        const envelope = WorkstreamRegionalEffectEnvelopeSchema.parse({
+          kind: "workstream_regional_effect",
+          contractVersion: 1,
+          region: authority.region,
+          workspaceId: authority.parent_workspace_key,
+          workstreamId: authority.workstream_key,
+          generation: authority.authority_generation,
+          messageId,
+          partitionKey: projectionKey ?? command.partitionKey,
+          sourceVersion,
+          requiredProjectionVersion,
+          payloadHash,
+          effect,
+        });
+        const inserted = this.storage.sql.exec(
+          `INSERT OR IGNORE INTO durable_outbox
+             (message_id, channel, destination_kind, destination_id, partition_key,
+              source_version, source_epoch, contract_version, payload_json, payload_ref,
+              payload_hash, state, attempts, not_before, created_at, acked_at)
+           VALUES (?, ?, 'queue', ?, ?, ?, ?, 1, ?, NULL, ?, 'pending', 0, ?, ?, NULL)`,
+          messageId,
+          REGIONAL_EFFECT_CHANNEL,
+          authority.region,
+          envelope.partitionKey,
+          envelope.sourceVersion,
+          envelope.generation,
+          JSON.stringify(envelope),
+          payloadHash,
+          Date.now(),
+          Date.now(),
+        );
+        if (inserted.rowsWritten === 0) {
+          const existing = first(this.storage.sql.exec<{ payload_hash: string }>(
+            `SELECT payload_hash FROM durable_outbox WHERE message_id = ?`,
+            messageId,
+          ));
+          if (existing?.payload_hash !== payloadHash) {
+            throw new Error("workstream_regional_effect_idempotency_conflict");
+          }
+          continue;
+        }
+        enqueued += 1;
+      }
+      return { result, enqueued };
+    });
+    if (committed.enqueued > 0) await this.storage.setAlarm(Date.now());
+    return committed;
+  }
+
+  dueRegionalEffects(now = Date.now(), limit = 10): WorkstreamRegionalEffectEnvelope[] {
+    const rows = this.storage.sql.exec<RegionalEffectOutboxRow>(
+      `SELECT message_id, payload_json, payload_hash, attempts
+         FROM durable_outbox
+        WHERE channel = ? AND state IN ('pending', 'inflight') AND not_before <= ?
+        ORDER BY created_at, message_id
+        LIMIT ?`,
+      REGIONAL_EFFECT_CHANNEL,
+      now,
+      Math.max(1, Math.min(limit, 100)),
+    ).toArray();
+    return rows.map((row) => {
+      const parsed = WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json));
+      if (parsed.messageId !== row.message_id || parsed.payloadHash !== row.payload_hash) {
+        throw new Error("workstream_regional_effect_outbox_corrupt");
+      }
+      return parsed;
+    });
+  }
+
+  regionalEffect(messageId: string, payloadHash: string): WorkstreamRegionalEffectEnvelope | null {
+    const row = first(this.storage.sql.exec<RegionalEffectOutboxRow>(
+      `SELECT message_id, payload_json, payload_hash, attempts
+         FROM durable_outbox
+        WHERE channel = ? AND message_id = ? AND payload_hash = ?
+          AND state IN ('pending', 'inflight')`,
+      REGIONAL_EFFECT_CHANNEL,
+      messageId,
+      payloadHash,
+    ));
+    if (!row) return null;
+    const parsed = WorkstreamRegionalEffectEnvelopeSchema.parse(JSON.parse(row.payload_json));
+    if (parsed.messageId !== row.message_id || parsed.payloadHash !== row.payload_hash) {
+      throw new Error("workstream_regional_effect_outbox_corrupt");
+    }
+    return parsed;
+  }
+
+  markRegionalEffectsQueued(messages: readonly WorkstreamRegionalEffectEnvelope[]): void {
+    const now = Date.now();
+    this.storage.transactionSync(() => {
+      for (const message of messages) {
+        const row = first(this.storage.sql.exec<{ attempts: number }>(
+          `SELECT attempts FROM durable_outbox
+            WHERE message_id = ? AND payload_hash = ? AND state IN ('pending', 'inflight')`,
+          message.messageId,
+          message.payloadHash,
+        ));
+        if (!row) continue;
+        const attempts = row.attempts + 1;
+        const delay = Math.min(
+          REGIONAL_EFFECT_RETRY_MAX_MS,
+          REGIONAL_EFFECT_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 6),
+        );
+        this.storage.sql.exec(
+          `UPDATE durable_outbox
+              SET state = 'inflight', attempts = ?, not_before = ?
+            WHERE message_id = ? AND payload_hash = ?`,
+          attempts,
+          now + delay,
+          message.messageId,
+          message.payloadHash,
+        );
+      }
+    });
+  }
+
+  deferRegionalEffects(
+    messages: readonly WorkstreamRegionalEffectEnvelope[],
+    notBefore: number,
+  ): void {
+    this.storage.transactionSync(() => {
+      for (const message of messages) {
+        this.storage.sql.exec(
+          `UPDATE durable_outbox
+              SET state = 'pending', attempts = attempts + 1, not_before = ?
+            WHERE channel = ? AND message_id = ? AND payload_hash = ?
+              AND state IN ('pending', 'inflight')`,
+          notBefore,
+          REGIONAL_EFFECT_CHANNEL,
+          message.messageId,
+          message.payloadHash,
+        );
+      }
+    });
+  }
+
+  acknowledgeRegionalEffect(messageId: string, payloadHash: string): boolean {
+    return this.storage.sql.exec(
+      `DELETE FROM durable_outbox
+        WHERE channel = ? AND message_id = ? AND payload_hash = ?`,
+      REGIONAL_EFFECT_CHANNEL,
+      messageId,
+      payloadHash,
+    ).rowsWritten === 1;
+  }
+
+  nextRegionalEffectDueAt(): number | null {
+    const row = first(this.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(not_before) AS due_at FROM durable_outbox
+        WHERE channel = ? AND state IN ('pending', 'inflight')`,
+      REGIONAL_EFFECT_CHANNEL,
+    ));
+    return row?.due_at ?? null;
   }
 }

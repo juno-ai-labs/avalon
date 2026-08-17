@@ -259,14 +259,30 @@ export async function listActivityEventsForUser(
           OR (e.audience_kind = 'user' AND e.audience_user_id = ?2)
           OR (e.audience_kind = 'workstream' AND EXISTS (
                 SELECT 1
-                  FROM workstream_participants p
-                  JOIN workstreams w ON w.id = p.workstream_id
-                 WHERE p.workstream_id = e.audience_workstream_id
-                   AND p.user_id = ?2
-                   AND p.removed_at IS NULL
-                   -- Machinery never feeds a digest, even for its own
-                   -- participant: a digest must not summarize itself.
-                   AND w.system_kind IS NULL
+                  FROM workstream_authority_control authority
+                 WHERE authority.id = 1 AND (
+                   (authority.phase = 'durable_object_open' AND EXISTS (
+                     SELECT 1 FROM workstream_directory_user_projections viewer
+                      JOIN workstream_directory_projections common
+                        ON common.workstream_id = viewer.workstream_id
+                       AND common.workspace_id = viewer.workspace_id
+                      WHERE viewer.workstream_id = e.audience_workstream_id
+                        AND viewer.user_id = ?2
+                        AND viewer.is_participant = 1
+                        -- Machinery never feeds a digest, even for its own
+                        -- participant: a digest must not summarize itself.
+                        AND common.system_kind IS NULL
+                   ))
+                   OR (authority.phase != 'durable_object_open' AND EXISTS (
+                     SELECT 1
+                       FROM workstream_participants participant
+                       JOIN workstreams workstream ON workstream.id = participant.workstream_id
+                      WHERE participant.workstream_id = e.audience_workstream_id
+                        AND participant.user_id = ?2
+                        AND participant.removed_at IS NULL
+                        AND workstream.system_kind IS NULL
+                   ))
+                 )
               ))
         )
         -- The reader must still be a member. A revoked membership stops the log

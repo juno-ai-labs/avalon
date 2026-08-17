@@ -14,6 +14,7 @@ import {
   workstreamImportHash,
 } from "../src/durable-objects/workstream-authority-import";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
+import { workstreamRegionalEffectWakeMessage } from "../src/durable-objects/workstream-regional-effect";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -22,6 +23,8 @@ const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000a2";
 const RUN_ID = "00000000-0000-7000-8000-0000000000a3";
 const MESSAGE_ID = "00000000-0000-7000-8000-0000000000a4";
 const TICKET_ID = "00000000-0000-7000-8000-0000000000a5";
+const RECIPIENT_ID = "00000000-0000-7000-8000-0000000000a6";
+const AUTHOR_ID = "00000000-0000-7000-8000-0000000000a7";
 
 const EXPECTED_TABLES = [
   "_data_migrations",
@@ -100,6 +103,8 @@ function objectStorage(
       }
       return values.delete(key);
     },
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
     transactionSync: (body: () => unknown) => body(),
     sql: createTestSqlStorage(database),
   });
@@ -445,6 +450,81 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(store.allocateSequence()).toBe(1);
       expect(database.prepare("SELECT authority_mode FROM workstream WHERE id = 1").get())
         .toEqual({ authority_mode: "authoritative" });
+
+      const commonEffect = {
+        kind: "directory_common" as const,
+        title: "Imported title",
+        description: "Imported description",
+        preview: "Latest result",
+        scope: "workspace" as const,
+        state: "completed",
+        systemKind: null,
+        lastActivityAt: "2026-08-17T00:00:00.000Z",
+        completedAt: "2026-08-17T00:00:00.000Z",
+        archivedAt: null,
+      };
+      const firstProjection = await store.commitWithRegionalEffects(() => "committed", [{
+        partitionKey: "common",
+        effect: commonEffect,
+      }]);
+      const duplicateProjection = await store.commitWithRegionalEffects(() => "committed", [{
+        partitionKey: "common",
+        effect: commonEffect,
+      }]);
+      expect(firstProjection).toEqual({ result: "committed", enqueued: 1 });
+      expect(duplicateProjection).toEqual({ result: "committed", enqueued: 0 });
+
+      const due = store.dueRegionalEffects(Date.now() + 1);
+      expect(due).toEqual([expect.objectContaining({
+        generation,
+        partitionKey: "common",
+        sourceVersion: 1,
+        effect: commonEffect,
+      })]);
+      expect(workstreamRegionalEffectWakeMessage(due[0]!)).not.toHaveProperty("effect");
+      store.markRegionalEffectsQueued(due);
+      expect(store.dueRegionalEffects()).toEqual([]);
+      expect(store.acknowledgeRegionalEffect(due[0]!.messageId, due[0]!.payloadHash)).toBe(true);
+      expect(database.prepare("SELECT COUNT(*) AS count FROM durable_outbox").get())
+        .toEqual({ count: 0 });
+
+      const mentionCommit = await store.commitWithRegionalEffects(() => "mentioned", [
+        {
+          partitionKey: `user:${RECIPIENT_ID}`,
+          effect: {
+            kind: "directory_user",
+            userId: RECIPIENT_ID,
+            isParticipant: true,
+            unreadCount: 1,
+            youAreMentioned: true,
+            listable: true,
+          },
+        },
+        {
+          partitionKey: `notification:${MESSAGE_ID}:${RECIPIENT_ID}`,
+          sourceVersion: 2,
+          dedupeKey: `notification:${MESSAGE_ID}:${RECIPIENT_ID}`,
+          dependsOnProjectionKey: `user:${RECIPIENT_ID}`,
+          effect: {
+            kind: "mention_notification",
+            intentId: `mention:${MESSAGE_ID}:${RECIPIENT_ID}`,
+            messageId: MESSAGE_ID,
+            recipientUserId: RECIPIENT_ID,
+            authorUserId: AUTHOR_ID,
+            authorNameSnapshot: "Author",
+            workstreamTitleSnapshot: "Imported title",
+            messageText: "Please review",
+            occurredAt: "2026-08-17T00:00:00.000Z",
+          },
+        },
+      ]);
+      expect(mentionCommit).toEqual({ result: "mentioned", enqueued: 2 });
+      expect(store.dueRegionalEffects(Date.now() + 1)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          partitionKey: `notification:${MESSAGE_ID}:${RECIPIENT_ID}`,
+          requiredProjectionVersion: 1,
+        }),
+      ]));
     } finally {
       database.close();
     }

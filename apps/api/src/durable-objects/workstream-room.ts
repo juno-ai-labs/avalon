@@ -36,6 +36,10 @@ import {
   WorkstreamAuthorityImportRequestSchema,
 } from "./workstream-authority-import";
 import {
+  WorkstreamRegionalEffectAckSchema,
+  workstreamRegionalEffectWakeMessage,
+} from "./workstream-regional-effect";
+import {
   WorkstreamObjectStore,
   type PendingHyperSightRefresh,
 } from "./workstream-object-storage";
@@ -111,6 +115,11 @@ interface UserRow {
 }
 
 const textEncoder = new TextEncoder();
+
+function minimumTimestamp(...timestamps: Array<number | null>): number | null {
+  const present = timestamps.filter((timestamp): timestamp is number => timestamp !== null);
+  return present.length === 0 ? null : Math.min(...present);
+}
 
 
 /**
@@ -278,7 +287,13 @@ export class WorkstreamRoom {
       env.AVALON_REGION,
     );
     this.authorityImporter = new WorkstreamAuthorityImporter(state.storage);
-    this.initialized = state.blockConcurrencyWhile(() => this.objectStore.waitUntilReady());
+    this.initialized = state.blockConcurrencyWhile(async () => {
+      await this.objectStore.waitUntilReady();
+      const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
+      const nextHyperSightAt = this.objectStore.nextHyperSightDueAt();
+      const nextAlarmAt = minimumTimestamp(nextEffectAt, nextHyperSightAt);
+      if (nextAlarmAt !== null) await this.ensureAlarmNoLaterThan(nextAlarmAt);
+    });
     // Exact text ping/pong frames are answered by the runtime without waking a
     // hibernated object, so keepalives do not accrue Durable Object duration.
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -301,6 +316,14 @@ export class WorkstreamRoom {
 
     if (request.method === "POST" && url.pathname === "/internal/authority-import") {
       return this.acceptAuthorityImport(request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/regional-effect-ack") {
+      return this.acceptRegionalEffectAck(request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/regional-effect-delivery") {
+      return this.readRegionalEffect(request);
     }
 
     if (request.method === "GET" && url.pathname === "/presence") {
@@ -355,6 +378,27 @@ export class WorkstreamRoom {
     }
   }
 
+  private async acceptRegionalEffectAck(request: Request): Promise<Response> {
+    const parsed = WorkstreamRegionalEffectAckSchema.safeParse(await request.json());
+    if (!parsed.success) return jsonResponse({ error: "invalid_regional_effect_ack" }, 400);
+    return jsonResponse({
+      ok: true,
+      removed: this.objectStore.acknowledgeRegionalEffect(
+        parsed.data.messageId,
+        parsed.data.payloadHash,
+      ),
+    });
+  }
+
+  private async readRegionalEffect(request: Request): Promise<Response> {
+    const parsed = WorkstreamRegionalEffectAckSchema.safeParse(await request.json());
+    if (!parsed.success) return jsonResponse({ error: "invalid_regional_effect_request" }, 400);
+    const effect = this.objectStore.regionalEffect(parsed.data.messageId, parsed.data.payloadHash);
+    return effect
+      ? jsonResponse(effect)
+      : jsonResponse({ error: "regional_effect_not_found" }, 404);
+  }
+
   async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
     await this.initialized;
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
@@ -407,10 +451,33 @@ export class WorkstreamRoom {
   async alarm(): Promise<void> {
     await this.initialized;
     const pending = this.objectStore.pendingHyperSightRefresh();
-    if (!pending) return;
+    const nextHyperSightAt = this.objectStore.nextHyperSightDueAt();
+    const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
+    if (!pending && nextEffectAt === null) return;
     const authority = await readWorkstreamAuthorityControl(this.env);
     if (!acceptsNewWorkstreamWork(authority)) {
       await this.state.storage.setAlarm(Date.now() + MAINTENANCE_RECHECK_MS);
+      return;
+    }
+
+    if (nextEffectAt !== null && nextEffectAt <= Date.now()) {
+      const effects = this.objectStore.dueRegionalEffects();
+      if (effects.length > 0) {
+        try {
+          await this.env.ACTIVITY_QUEUE.sendBatch(effects.map((effect) => ({
+            body: workstreamRegionalEffectWakeMessage(effect),
+          })));
+          this.objectStore.markRegionalEffectsQueued(effects);
+        } catch {
+          const retryAt = Date.now() + 5_000;
+          this.objectStore.deferRegionalEffects(effects, retryAt);
+          await this.ensureAlarmNoLaterThan(retryAt);
+        }
+      }
+    }
+
+    if (!pending || nextHyperSightAt === null || nextHyperSightAt > Date.now()) {
+      await this.ensureNextWorkAlarm();
       return;
     }
     this.objectStore.deletePendingHyperSightRefresh();
@@ -434,8 +501,9 @@ export class WorkstreamRoom {
     } catch {
       const retryAt = Date.now() + HYPERSIGHT_DEBOUNCE_MS;
       this.objectStore.failPendingHyperSightRefresh(pending, retryAt);
-      await this.state.storage.setAlarm(retryAt);
+      await this.ensureAlarmNoLaterThan(retryAt);
     }
+    await this.ensureNextWorkAlarm();
   }
 
   async webSocketClose(
@@ -802,7 +870,20 @@ export class WorkstreamRoom {
       pending.firstQueuedAt + HYPERSIGHT_MAX_DEBOUNCE_MS,
     );
     this.objectStore.putPendingHyperSightRefresh(pending, dueAt);
-    await this.state.storage.setAlarm(dueAt);
+    await this.ensureAlarmNoLaterThan(dueAt);
+  }
+
+  private async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {
+    const existing = await this.state.storage.getAlarm();
+    if (existing === null || existing > dueAt) await this.state.storage.setAlarm(dueAt);
+  }
+
+  private async ensureNextWorkAlarm(): Promise<void> {
+    const dueAt = minimumTimestamp(
+      this.objectStore.nextRegionalEffectDueAt(),
+      this.objectStore.nextHyperSightDueAt(),
+    );
+    if (dueAt !== null) await this.ensureAlarmNoLaterThan(dueAt);
   }
 
   private async fulfillSubscription(

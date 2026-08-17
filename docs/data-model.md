@@ -275,6 +275,21 @@ includes it. Knowing an object ID is never sufficient authorization.
 
 ### Activity log and digests
 
+- `workstream_regional_effect_receipts` is the D1 inbox for the authoritative
+  WorkstreamDO outbox. Its message ID and payload hash detect replay or conflict;
+  `(workstream_id, generation, partition_key, source_version)` prevents two
+  different commands from claiming one source position. It is delivery evidence,
+  not a copy of product state.
+- `workstream_directory_projections` and
+  `workstream_directory_user_projections` are rebuildable workspace/common and
+  viewer-specific query rows. Equal generation/version with a different hash is
+  rejected. `workstream_notification_intents` temporarily retains a bounded
+  mention payload plus its required viewer-projection version while D1 resolves
+  current membership/profile/destination state; notification delivery waits for
+  that causal projection, and a newer revocation/listability row wins;
+  terminal delivery or skip erases `payload_json` rather than retaining a second
+  transcript. Acknowledged receipts and terminal intent shells are retained for
+  30 days; pending/unacknowledged rows do not expire.
 - `activity_events` is the first-party record of what happened that someone should
   hear about, separate from the `activities` ingest table below. `audience_kind`
   stores a visibility *rule* — `workspace`, `user`, or `workstream` — resolved
@@ -448,6 +463,9 @@ collection, opt-out, and destination behavior.
     provider/stable names are unique inside that workspace.** Two live generations
     for one stream would defeat mutation serialization and make authority
     revocation nondeterministic.
+14. **A WorkstreamDO regional effect is acknowledged only after the D1 effect and
+    inbox receipt commit together.** Queue order is never trusted; common/user
+    projections compare generation/version and immutable effects use stable IDs.
 
 ## Boundary
 
@@ -521,6 +539,20 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-17 — D1 gains a durable inbox for WorkstreamDO regional effects
+
+**What changed:** Regional D1 records hash-checked WorkstreamDO effect receipts,
+monotonic sidebar projections, and short-lived mention delivery intents.
+
+**Why:** Workspace queries and delivery require relational membership, identity,
+and connector state that correctly remains outside a single work stream.
+
+**Considered and rejected:** Copying credentials/users into each object or
+retaining notification bodies after settlement.
+
+**Consequences:** D1 can serve cross-workstream lists and external delivery
+without becoming work-stream product authority.
 
 ### 2026-08-17 — Work-stream product rows acquire an object-local authority boundary
 

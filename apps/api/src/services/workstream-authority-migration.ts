@@ -624,7 +624,7 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
        (workspace_id, workstream_id, generation, version, title, description, preview,
         scope, state, system_kind, last_activity_at, completed_at, archived_at,
         payload_hash, projected_at)
-     VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(workstream_id) DO UPDATE SET
        workspace_id = excluded.workspace_id, generation = excluded.generation,
        version = excluded.version, title = excluded.title, description = excluded.description,
@@ -714,7 +714,7 @@ async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void
       `INSERT INTO workstream_directory_user_projections
          (workspace_id, workstream_id, user_id, generation, version, is_participant,
           unread_count, you_are_mentioned, listable, payload_hash, projected_at)
-       VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(workstream_id, user_id) DO UPDATE SET
          workspace_id = excluded.workspace_id, generation = excluded.generation,
          version = excluded.version, is_participant = excluded.is_participant,
