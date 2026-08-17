@@ -27,6 +27,10 @@ common/user directory projections for the sidebar.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Object-local DDL, immutable schema fingerprints, and lazy additive schema application. |
+| `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative product repository for reads, mutations, message admission, and sidebar-effect creation. |
+| `apps/api/src/durable-objects/workstream-runtime-compat-schema.ts` | Temporary SQL views/triggers that map established repository names onto normalized local tables without storing a second copy. |
+| `apps/api/src/services/workstream-runtime-database.ts` | D1-compatible port that sends work-stream-owned statements to the owning object and leaves regional statements in D1. Mixed-authority batches are rejected. |
+| `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-object product RPCs used by REST, queues, schedulers, and connector ingress after cutover. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | Existing KV-to-SQL migration plus current room operations for cursors, active output, due work, ticket receipts, and the transactional regional-effect outbox. |
 | `apps/api/src/durable-objects/workstream-regional-effect.ts` | Versioned regional-effect contract, opaque Queue wake-up, and canonical payload hash. |
 | `apps/api/src/durable-objects/workstream-authority-import.ts` | Fixed import-stage contract, reset order, page receipts, verification, and activation. It accepts no arbitrary SQL. |
@@ -62,6 +66,33 @@ invent substreams: every existing message becomes one `parts` row in substream
 only for an actual isolated model context or child interaction. They are not
 folders, UI grouping, participants, runs, or a workaround for large history.
 
+The named local tables are grouped by responsibility below. The column-level
+contract, constraints, and indexes live in `workstream-object-schema.ts`; this
+catalog explains relationships and ownership rather than maintaining a second
+copy of the DDL.
+
+| Local tables | Meaning and relationships |
+| --- | --- |
+| `_sql_schema_migrations`, `_data_migrations`, `_migration_command_receipts`, `object_versions` | Object-local schema/data versioning and idempotent fleet-import receipts. They never contain product-visible rows. |
+| `workstream` | The single root row. It pins the workspace/work-stream identity and authority generation, owns title/description/scope/exact lifecycle, sequence and attention allocators, origin/model/email metadata, and lifecycle timestamps. Every product row belongs to this implicit root. |
+| `participants`, `grant_sessions`, `member_attention` | Current explicit participants, bounded grant snapshots, and one viewer's seen/manual-unread/mention waterlines. A workspace membership is still checked in D1; a personal-stream participant decision is local. |
+| `content_refs`, `substreams`, `parts`, `part_attachments`, `part_mentions` | LLM-shaped conversation storage. `parts` is the ordered heterogeneous message array for one substream; attachment and mention joins hang off an exact part. `content_refs` points to large R2 content. Substream `0` is canonical chat. |
+| `runs`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts`, `run_events` | One durable full-loop record and its frozen authority/context, lifecycle ledger, provider attempts, and replayable execution events. Runs point to a substream and an optional trigger part. |
+| `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Exactly-once tool plans/checkpoints, attachment-version dependencies, resumable plugin hints, and human-input pauses. They join to a run and, where visible in chat, to a part. |
+| `active_output_turns`, `active_output_chunks`, `realtime_state`, `workstream_events` | Reconnect-safe partial inference state and sequenced room events. Chunks bound row size; the active-turn cursor and accumulated text commit together. Final assistant output becomes an ordinary `parts` row. |
+| `compaction_jobs`, `compaction_checkpoints`, `description_refresh_state` | Revision-fenced background derivations. A compaction freezes its transcript boundary; later messages remain above that boundary and are never overwritten by the resulting summary. |
+| `workstream_resource_links`, `resource_inventory_revision`, `activity_delivery_receipts`, `suggested_actions`, `legacy_artifacts` | Local links to workspace-owned D1 resources, the authorization revision protecting context/replay, connector-activity admission receipts, and work-stream-specific suggestions. `legacy_artifacts` exists only to preserve imported historical rows. |
+| `hypersight_configuration_versions`, `hypersight_block_runs`, `hypersight_user_preferences` | Versioned HyperSight execution and per-viewer preferences scoped to this work stream. |
+| `workstream_wakeups`, `due_work` | One-shot agent wakeups and the object's bounded alarm schedule. The common directory projection carries only the next due timestamp needed by the workspace scheduler. |
+| `terminal_workspace`, `terminal_commands`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | The Daytona-backed coding workspace, command/task receipts, imports, selected repository, grants, and publication convergence for this work stream. Provider execution remains on Daytona; only its durable Avalon state moved local. |
+| `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Monotonic projection versions plus at-least-once cross-authority delivery. A product transaction writes its D1-bound effect to the outbox; a stable inbox receipt deduplicates inbound commands such as socket tickets. |
+
+The compatibility views named `_runtime_workstreams`, `_runtime_messages`,
+`_runtime_harness_runs`, and similar are an implementation bridge for existing
+repositories. Their `INSTEAD OF` triggers translate into the normalized rows
+above. They do not create legacy-shaped storage and must not be queried as an
+independent authority.
+
 ### Regional D1 after cutover
 
 D1 remains authoritative for workspace membership and roles, global/regional
@@ -70,6 +101,15 @@ automation definitions and deliveries, email/Slack ingress receipts, audit and
 telemetry, user pins, and workspace-owned resources. A WorkstreamDO stores a
 resource link and descriptor snapshot, not a second connector credential or
 workspace resource catalog.
+
+The D1 `workstreams` row is retained as a non-product identity anchor because
+older workspace/control tables have foreign keys to its ID. New post-cutover
+anchors set `do_identity_anchor = 1`; product code must not read metadata or
+lifecycle from that row. `workstream_create_receipts` makes creation retryable
+while the object is initialized, the anchor is inserted, and the first directory
+projection is delivered. `workstream_authority_control` and
+`workstream_authority_routes` select the generation and deterministic object;
+the import-page tables prove the maintenance copy. None is a product fallback.
 
 `workstream_directory_projections` stores common sidebar fields such as title,
 description, preview, last activity, lifecycle state, completion, scope, and
@@ -108,6 +148,31 @@ Effects have four v1 shapes:
 | `directory_user` | Participation, unread count, mention flag, and listability for Home and the sidebar's work-streams-of-interest views. |
 | `activity_event` | An idempotent first-party `activity_events` row and named targets, used by digests and future notification feeds. |
 | `mention_notification` | A short-lived delivery intent. D1 revalidates active membership and resolves the current user, workspace, Slack connection, email address, and work-stream reply address before delivery. |
+
+The same bridge is the only supported WorkstreamDO-to-workspace update path.
+Sidebar state, Home lists, notifications, email/Slack delivery, digests, and
+cross-work-stream routing do not synchronously query every object:
+
+```text
+local product transaction
+  -> durable_outbox
+  -> WorkstreamRoom alarm
+  -> Cloudflare Queue opaque wake-up
+  -> regional Worker fetches the effect by authenticated DO RPC
+  -> D1 effect + hash receipt commit atomically
+  -> Worker acknowledges the owning DO
+  -> local outbox row is deleted
+```
+
+Common directory projections drive workspace-wide sections such as Work
+Streams, In Progress, and Completed. User directory projections drive You Are
+Mentioned, unread counts past the viewer waterline, participation, and each
+user's work-streams-of-interest list. The resource-link projection is the
+workspace-queryable inverted index for connector activity. Suggestion feedback
+is projected only for cross-work-stream routing quality; the suggestion body and
+lifecycle remain local. First-party activity effects become regional
+`activity_events`, where digest and suggested-action systems can scan them
+without reading every object.
 
 Token/`stream_delta` frames never create regional effects. A run may project a
 semantic state transition such as started, needs input, failed, or completed,
@@ -272,11 +337,10 @@ stream is closed or access is revoked. A socket accepted by an older deployment
 has no serialized session ID, so its first command receives
 `socket_reconnect_required` and closes with 1012 rather than being trusted.
 REST message creation remains a compatibility ingress for non-desktop callers.
-In the current serving-contract-0 migration deployment the room delegates this
-write to the legacy D1 service. The serving-contract-1 deployment must replace
-that delegation with the same object-local authoritative transaction and
-regional-effect outbox used by every other post-cutover mutation; contract 0
-cannot open the region.
+After contract 1 it invokes the same object-local authoritative transaction and
+regional-effect outbox as the socket command. It never delegates a product write
+to D1. The socket and REST paths therefore share `clientMessageId` idempotency,
+queue/steering semantics, participant updates, and run launch.
 
 Active inference is the durable exception. Batched model frames update the room
 cursor, one `active_output_turns` row, and bounded `active_output_chunks` in one
@@ -367,6 +431,29 @@ prove D1 or workerd behavior.
 
 ## Changelog
 
+### 2026-08-17 — Serving contract 1 removes D1 product fallback
+
+**What changed:** REST, socket, Workflow, queue, scheduler, connector, Terminal,
+compaction, suggestion, and notification-producing paths now route every
+work-stream-owned read and mutation to the normalized SQL database in the owning
+`WorkstreamRoom`. D1 keeps only identity anchors, control rows, workspace-owned
+data, and rebuildable cross-work-stream projections. The full table catalog and
+the regional-effect path are recorded above.
+
+**Why:** Copying rows into SQLite without moving every serving path leaves D1 as
+the practical authority and permits the two stores to diverge immediately after
+maintenance.
+
+**Considered and rejected:** Permanent dual writes, a read fallback to frozen D1
+rows, and synchronous D1 writes inside product transactions. Each creates either
+split authority or a cross-system partial-commit window.
+
+**Consequences:** An unavailable or quarantined WorkstreamDO fails closed. Legacy
+D1 product-table triggers are now intentional tripwires. Existing repositories
+may use the local compatibility views, but new code should prefer typed product
+RPCs and normalized local tables. Cross-work-stream behavior must use the durable
+outbox/projection bridge.
+
 ### 2026-08-17 — Foreground user messages enter through the work-stream socket
 
 **What changed:** The existing hibernating WorkstreamDO socket now accepts
@@ -390,9 +477,9 @@ cannot prove the complete operation succeeded.
 **Consequences:** Socket attachments carry the verified regional session ID,
 old attachments reconnect before their first write, private receipts remain
 outside room replay ordering, and the 120-second client timeout bounds an
-unconfirmed send. The import-only serving contract still writes through the
-legacy service; it must be replaced by local SQL authority before contract 1 can
-open.
+unconfirmed send. Reconnect resends the same `clientMessageId`, which converges
+on one local part and one run. Contract 1 performs the transaction directly in
+the owning object.
 
 ### 2026-08-17 — Durable regional effects feed sidebar and notifications
 

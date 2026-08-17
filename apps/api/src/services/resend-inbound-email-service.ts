@@ -6,6 +6,9 @@ import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { publishWorkstreamEvent } from "./integrations";
 import { runAutomationFromInboundEmail } from "./automation-service";
+import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = "automation.with-avalon.com";
@@ -444,8 +447,14 @@ export class ResendRegionalEmailService {
       targetType,
       workstreamId: parsed.workstreamId!,
     };
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      input.workspaceId,
+      input.workstreamId,
+    );
 
-    const workstream = await this.env.DB.prepare(
+    const workstream = await executionEnv.DB.prepare(
       `SELECT id, workspace_id, email_address
        FROM workstreams
        WHERE id = ? AND workspace_id = ? AND archived_at IS NULL
@@ -523,7 +532,7 @@ export class ResendRegionalEmailService {
       const resourceId = await this.upsertEmailResource(input, safeEmail, payloadRef);
       await this.renewRegionalLease(input, leaseToken);
       const clientMessageId = await emailClientMessageId(input.resendEmailId);
-      const replayed = await this.env.DB.prepare(
+      const replayed = await executionEnv.DB.prepare(
         `SELECT id FROM messages WHERE workstream_id = ? AND client_message_id = ? LIMIT 1`,
       ).bind(input.workstreamId, clientMessageId).first<{ id: string }>();
       if (replayed) {
@@ -531,7 +540,7 @@ export class ResendRegionalEmailService {
         return { accepted: true, duplicate: true, messageId: replayed.id, resourceId };
       }
 
-      const sequence = await this.env.DB.prepare(
+      const sequence = await executionEnv.DB.prepare(
         `UPDATE workstreams
          SET next_sequence_number = next_sequence_number + 1
          WHERE id = ? AND workspace_id = ? AND email_address = ? COLLATE NOCASE
@@ -559,14 +568,23 @@ export class ResendRegionalEmailService {
         attachmentCount: safeEmail.attachments.length,
         truncated: safeEmail.truncated,
       };
-      const batch = await this.env.DB.batch([
-        this.env.DB.prepare(
+      if (authority.phase === "durable_object_open") {
+        await attachWorkstreamRuntimeResource(this.env, {
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          resourceId,
+          attachedByUserId: null,
+          relationshipType: "inbound_email",
+        });
+      }
+      const localStatements = [
+        ...(authority.phase === "durable_object_open" ? [] : [executionEnv.DB.prepare(
           `INSERT INTO workstream_resources
            (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
            VALUES (?, ?, NULL, 0, 'inbound_email', ?)
            ON CONFLICT(workstream_id, resource_id) DO NOTHING`,
-        ).bind(input.workstreamId, resourceId, createdAt),
-        this.env.DB.prepare(
+        ).bind(input.workstreamId, resourceId, createdAt)]),
+        executionEnv.DB.prepare(
           `INSERT OR IGNORE INTO messages
            (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
             message_type, text_content, structured_content_json, sequence_number, created_at, edited_at)
@@ -581,27 +599,31 @@ export class ResendRegionalEmailService {
           sequence.sequence_number,
           createdAt,
         ),
-        this.env.DB.prepare(
+        executionEnv.DB.prepare(
           `UPDATE workstreams
            SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?),
                last_activity_at = ?, updated_at = ?
            WHERE id = ? AND workspace_id = ?`,
         ).bind(sequence.sequence_number, createdAt, createdAt, input.workstreamId, input.workspaceId),
-        this.env.DB.prepare(
+        ...(authority.phase === "durable_object_open" ? [] : [executionEnv.DB.prepare(
           `UPDATE workstream_email_receipts
            SET payload_ref = ?, processed_at = ?, error_json = NULL,
                lease_token = NULL, lease_expires_at = NULL
            WHERE resend_email_id = ? AND workstream_id = ? AND lease_token = ?`,
-        ).bind(payloadRef, createdAt, input.resendEmailId, input.workstreamId, leaseToken),
-      ]);
+        ).bind(payloadRef, createdAt, input.resendEmailId, input.workstreamId, leaseToken)]),
+      ];
+      const batch = await executionEnv.DB.batch(localStatements);
       if (batch.some((result) => !result.success)) {
         throw new ApiError(500, "email_persistence_failed", "The inbound email could not be persisted");
       }
-      if (changes(batch[3]!) === 0) {
+      if (authority.phase === "durable_object_open") {
+        await this.markRegionalProcessed(input, payloadRef, leaseToken);
+      } else if (changes(batch[3]!) === 0) {
         throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
       }
-      if (changes(batch[1]!) === 0) {
-        const canonical = await this.env.DB.prepare(
+      const messageResult = batch[authority.phase === "durable_object_open" ? 0 : 1]!;
+      if (changes(messageResult) === 0) {
+        const canonical = await executionEnv.DB.prepare(
           `SELECT id FROM messages WHERE workstream_id = ? AND client_message_id = ? LIMIT 1`,
         ).bind(input.workstreamId, clientMessageId).first<{ id: string }>();
         if (!canonical) {

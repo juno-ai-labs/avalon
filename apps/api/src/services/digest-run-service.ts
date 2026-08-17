@@ -12,6 +12,11 @@ import {
 import { publishWorkstreamEvent } from "./integrations";
 import { workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { launchWorkstreamHarness } from "./workstream-service";
+import {
+  bootstrapWorkstreamRuntimeEnvironment,
+  workstreamExecutionEnvironment,
+} from "./workstream-runtime-database";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * How far back a person's first ever digest reads. Without a floor, switching a
@@ -199,8 +204,21 @@ export async function fireDigestSchedule(
         .bind(deliveryId).run().catch(() => undefined);
       // Messages, the run row and the memory context cascade with it.
       if (workstreamId) {
-        await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
-          .bind(workstreamId).run().catch(() => undefined);
+        const authority = await readWorkstreamAuthorityControl(env);
+        if (authority.phase === "durable_object_open") {
+          const executionEnv = await workstreamExecutionEnvironment(
+            env,
+            schedule.workspace_id,
+            workstreamId,
+          );
+          await executionEnv.DB.prepare(
+            `UPDATE workstreams SET archived_at = ?, updated_at = ?
+              WHERE id = ? AND system_kind = 'digest'`,
+          ).bind(nowIso(), nowIso(), workstreamId).run().catch(() => undefined);
+        } else {
+          await env.DB.prepare("DELETE FROM workstreams WHERE id = ? AND system_kind = 'digest'")
+            .bind(workstreamId).run().catch(() => undefined);
+        }
       }
     }
     throw error;
@@ -292,8 +310,13 @@ async function createDigestWorkstream(
 ): Promise<string> {
   const workstreamId = newId();
   const at = nowIso();
-  await env.DB.batch([
-    env.DB.prepare(
+  const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
+    env,
+    schedule.workspace_id,
+    workstreamId,
+  );
+  await executionEnv.DB.batch([
+    executionEnv.DB.prepare(
       `INSERT INTO workstreams
          (id, workspace_id, title, objective, origin_type, created_by_user_id,
           harness_status, last_activity_at, created_at, updated_at, system_kind, scope)
@@ -312,18 +335,17 @@ async function createDigestWorkstream(
     ),
     // The recipient is the sole participant, which is what makes every tool the
     // run reaches for resolve against their own access and nobody else's.
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `INSERT OR IGNORE INTO workstream_participants
          (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
        VALUES (?, ?, ?, 'creator', ?, NULL)`,
     ).bind(workstreamId, schedule.user_id, schedule.user_id, at),
-    // Linked from the occurrence that owns it. Settlement reads this rather than
-    // joining back through `harness_runs`, so the note it writes lands even when
-    // the run never recorded itself on the delivery.
-    env.DB.prepare(
-      "UPDATE digest_deliveries SET workstream_id = ?, updated_at = ? WHERE id = ?",
-    ).bind(workstreamId, at, occurrence.deliveryId),
   ]);
+  // The occurrence is regional coordination state; it references the D1
+  // identity anchor but never owns the work-stream record.
+  await env.DB.prepare(
+    "UPDATE digest_deliveries SET workstream_id = ?, updated_at = ? WHERE id = ?",
+  ).bind(workstreamId, at, occurrence.deliveryId).run();
   return workstreamId;
 }
 
@@ -337,11 +359,16 @@ async function appendDigestBriefMessage(
   env: Env,
   input: { workspaceId: string; workstreamId: string; deliveryId: string; brief: string },
 ): Promise<string> {
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  );
   const messageId = newId();
   const clientMessageId = `digest:${input.deliveryId}`;
   const at = nowIso();
-  await env.DB.batch([
-    env.DB.prepare(
+  await executionEnv.DB.batch([
+    executionEnv.DB.prepare(
       `INSERT INTO messages
          (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
           message_type, text_content, structured_content_json, sequence_number, created_at)
@@ -349,14 +376,14 @@ async function appendDigestBriefMessage(
          FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
        ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
     ).bind(messageId, clientMessageId, input.workspaceId, input.brief, at, input.workstreamId, input.workspaceId),
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `UPDATE workstreams
           SET next_sequence_number = next_sequence_number + 1, last_activity_at = ?, updated_at = ?
         WHERE id = ? AND workspace_id = ?
           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
     ).bind(at, at, input.workstreamId, input.workspaceId, messageId),
   ]);
-  const stored = await createDatabase(env.DB).workstreams.getMessageByClientId(
+  const stored = await createDatabase(executionEnv.DB).workstreams.getMessageByClientId(
     input.workspaceId,
     input.workstreamId,
     clientMessageId,

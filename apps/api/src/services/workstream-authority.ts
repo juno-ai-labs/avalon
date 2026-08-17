@@ -21,8 +21,8 @@ export interface WorkstreamAuthorityControl {
   servingContractVersion: number;
 }
 
-/** Import/schema support is deployed; the DO-backed product serving port is not yet complete. */
-export const WORKSTREAM_DO_SERVING_CONTRACT_VERSION = 0;
+/** This Worker implements the complete normalized WorkstreamDO serving contract. */
+export const WORKSTREAM_DO_SERVING_CONTRACT_VERSION = 1;
 
 const LEGACY_OPEN = {
   phase: "legacy_open",

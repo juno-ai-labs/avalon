@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * What a workspace's own accept and dismiss decisions say about suggesting
@@ -137,15 +138,19 @@ export async function suggestionAdmission(
   now: Date = new Date(),
 ): Promise<SuggestionAdmission> {
   const since = new Date(now.getTime() - EVENT_TYPE_WINDOW_MS).toISOString();
+  const authority = await readWorkstreamAuthorityControl(env);
   // Driven from `activity_suggestions` and joined outward: the workspace's
   // resolved suggestions are few and indexed, where `activities` holds every
   // event the workspace has ever ingested and filtering that by event type
   // first would read most of it.
+  const feedbackTable = authority.phase === "durable_object_open"
+    ? "workstream_suggestion_feedback_projections"
+    : "activity_suggestions";
   const row = await env.DB.prepare(
     `SELECT COALESCE(SUM(CASE WHEN s.status = 'accepted' THEN 1 ELSE 0 END), 0) AS accepted,
             COALESCE(SUM(CASE WHEN s.status = 'dismissed' THEN 1 ELSE 0 END), 0) AS dismissed,
             COUNT(DISTINCT CASE WHEN s.status = 'dismissed' THEN s.resolved_by_user_id END) AS dismissers
-       FROM activity_suggestions s
+       FROM ${feedbackTable} s
        JOIN activities a ON a.id = s.activity_id
       WHERE s.workspace_id = ?1
         -- Contextual routing's own cards only. The suggested-work path publishes

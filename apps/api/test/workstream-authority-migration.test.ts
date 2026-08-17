@@ -56,14 +56,14 @@ const AT = "2026-08-17T00:00:00.000Z";
 const COMPLETED_AT = "2026-08-17T00:01:00.000Z";
 
 describe("the regional workstream authority serving fence", () => {
-  it("keeps the import-only deployment closed even if D1 is incorrectly marked open", () => {
-    expect(WORKSTREAM_DO_SERVING_CONTRACT_VERSION).toBe(0);
+  it("opens only when D1 and the deployed Worker attest the complete serving contract", () => {
+    expect(WORKSTREAM_DO_SERVING_CONTRACT_VERSION).toBe(1);
     expect(acceptsNewWorkstreamWork({
       phase: "durable_object_open",
       generation: 3,
       requiredServingContractVersion: 1,
       servingContractVersion: 1,
-    })).toBe(false);
+    })).toBe(true);
     expect(acceptsNewWorkstreamWork({
       phase: "legacy_open",
       generation: 0,

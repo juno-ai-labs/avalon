@@ -126,9 +126,15 @@ describe("work-stream compaction resource inventory", () => {
             } as T;
           },
           async all<T>() {
-            const results = currentRows.length > 0
-              ? [{ attachment_kind: "image", count: 1, message_attachments: 1 }]
-              : [];
+            const results = sql.includes("FROM workstream_resources wr")
+              ? currentRows.map((row) => ({
+                resource_id: row.id,
+                relationship_type: row.relationship_type,
+                attached_at: row.attached_at,
+                attached_watch_enabled: row.attached_watch_enabled,
+                message_attachment: row.message_attachment,
+              }))
+              : currentRows.map((row) => ({ ...row, visibility_version: row.updated_at }));
             return createTestD1Result<T>({ success: true, results: results as T[] });
           },
         });

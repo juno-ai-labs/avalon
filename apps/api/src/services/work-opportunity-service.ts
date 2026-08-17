@@ -21,6 +21,7 @@ import { hydrateConnectorActivitySource } from "./integrations";
 import { logWarn } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
 import { WorkstreamService } from "./workstream-service";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 const MAX_BATCH_EVENTS = 16;
 const MAX_BATCH_CHARACTERS = 24_000;
@@ -492,12 +493,23 @@ async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): 
       occurredAt: String(row.occurred_at),
     };
   }
-  const row = await env.DB.prepare(
-    `SELECT m.id, m.text_content, m.created_at, m.workstream_id, w.title AS workstream_title,
-            u.id AS author_id, u.name AS author_name, u.email AS author_email
-     FROM messages m JOIN workstreams w ON w.id = m.workstream_id
-     LEFT JOIN users u ON u.id = m.author_user_id
-     WHERE m.id = ? AND m.workspace_id = ? LIMIT 1`,
+  const authority = await readWorkstreamAuthorityControl(env);
+  const row = await env.DB.prepare(authority.phase === "durable_object_open"
+    ? `SELECT activity.source_id AS id, activity.body AS text_content,
+              activity.occurred_at AS created_at,
+              activity.audience_workstream_id AS workstream_id,
+              activity.title AS workstream_title,
+              user.id AS author_id, user.name AS author_name, user.email AS author_email
+         FROM activity_events activity
+         LEFT JOIN users user ON user.id = activity.actor_user_id
+        WHERE activity.workspace_id = ?2 AND activity.source_id = ?1
+          AND activity.source_kind = 'workstream_message'
+          AND activity.audience_workstream_id IS NOT NULL LIMIT 1`
+    : `SELECT m.id, m.text_content, m.created_at, m.workstream_id, w.title AS workstream_title,
+              u.id AS author_id, u.name AS author_name, u.email AS author_email
+         FROM messages m JOIN workstreams w ON w.id = m.workstream_id
+         LEFT JOIN users u ON u.id = m.author_user_id
+        WHERE m.id = ?1 AND m.workspace_id = ?2 LIMIT 1`,
   ).bind(event.source_id, workspaceId).first<Record<string, unknown>>();
   if (!row) return null;
   return {
@@ -654,19 +666,21 @@ async function syncVerifiedIdentityDirectory(env: Env, workspaceId: string): Pro
 
 async function loadAdmissionContext(env: Env, window: WindowRow) {
   await syncVerifiedIdentityDirectory(env, window.workspace_id);
-  const [memberRows, identityRows, workRows, opportunityRows] = await Promise.all([
-    env.DB.prepare(
-      `SELECT u.id, u.name, u.email FROM workspace_members wm JOIN users u ON u.id = wm.user_id
-       WHERE wm.workspace_id = ? AND wm.status = 'active' ORDER BY u.name LIMIT 250`,
-    ).bind(window.workspace_id).all<{ id: string; name: string; email: string }>(),
-    env.DB.prepare(
-      `SELECT user_id, provider, provider_tenant_id, provider_user_id, handle, email, display_name
-       FROM external_user_identities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 1000`,
-    ).bind(window.workspace_id).all<Record<string, unknown>>(),
-    env.DB.prepare(
-      // Machinery is excluded outright rather than filtered per audience: a
-       // digest work stream's title names its owner, and the automation clause
-       // below admits it unconditionally because it carries no subscription.
+  const authority = await readWorkstreamAuthorityControl(env);
+  const workRowsPromise = authority.phase === "durable_object_open"
+    ? env.DB.prepare(
+      `SELECT projection.workstream_id AS id, projection.title,
+              projection.description AS objective
+         FROM workstream_directory_projections projection
+         LEFT JOIN workstream_directory_user_projections viewer
+           ON viewer.workstream_id = projection.workstream_id AND viewer.user_id = ?
+        WHERE projection.workspace_id = ? AND projection.archived_at IS NULL
+          AND projection.system_kind IS NULL
+          AND (? = 'workspace' OR projection.scope = 'workspace' OR viewer.is_participant = 1)
+        ORDER BY projection.last_activity_at DESC LIMIT 20`,
+    ).bind(window.audience_user_id, window.workspace_id, window.audience_scope)
+      .all<{ id: string; title: string; objective: string }>()
+    : env.DB.prepare(
       `SELECT w.id, w.title, w.objective FROM workstreams w
        LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
        WHERE w.workspace_id = ? AND w.archived_at IS NULL AND w.system_kind IS NULL
@@ -680,7 +694,17 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
        ORDER BY w.last_activity_at DESC LIMIT 20`,
     ).bind(
       window.workspace_id, window.audience_scope, window.audience_user_id, window.audience_user_id,
-    ).all<{ id: string; title: string; objective: string }>(),
+    ).all<{ id: string; title: string; objective: string }>();
+  const [memberRows, identityRows, workRows, opportunityRows] = await Promise.all([
+    env.DB.prepare(
+      `SELECT u.id, u.name, u.email FROM workspace_members wm JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = ? AND wm.status = 'active' ORDER BY u.name LIMIT 250`,
+    ).bind(window.workspace_id).all<{ id: string; name: string; email: string }>(),
+    env.DB.prepare(
+      `SELECT user_id, provider, provider_tenant_id, provider_user_id, handle, email, display_name
+       FROM external_user_identities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 1000`,
+    ).bind(window.workspace_id).all<Record<string, unknown>>(),
+    workRowsPromise,
     env.DB.prepare(
       `SELECT id, display_prompt, admission_reasoning FROM work_opportunities
        WHERE workspace_id = ? AND status = 'active' AND expires_at > ?
@@ -1958,11 +1982,22 @@ export class WorkOpportunityService {
   }
 
   private async findDurableStart(opportunityId: string): Promise<{ workstreamId: string; messageId: string } | null> {
-    const row = await this.env.DB.prepare(
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const row = await this.env.DB.prepare(authority.phase === "durable_object_open"
+      ? `SELECT workstream_id, message_id
+           FROM workstream_create_receipts
+          WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id LIKE ?
+            AND state = 'completed' AND message_id IS NOT NULL
+          ORDER BY updated_at DESC LIMIT 1`
+      :
       `SELECT w.id AS workstream_id, m.id AS message_id
        FROM workstreams w JOIN messages m ON m.workstream_id = w.id AND m.sequence_number = 1
        WHERE w.workspace_id = ? AND w.created_from_opportunity_id = ? LIMIT 1`,
-    ).bind(this.auth.workspaceId, opportunityId).first<{ workstream_id: string; message_id: string }>();
+    ).bind(
+      this.auth.workspaceId,
+      authority.phase === "durable_object_open" ? this.auth.userId : opportunityId,
+      ...(authority.phase === "durable_object_open" ? [`opportunity:${opportunityId}:v%`] : []),
+    ).first<{ workstream_id: string; message_id: string }>();
     return row ? { workstreamId: row.workstream_id, messageId: row.message_id } : null;
   }
 

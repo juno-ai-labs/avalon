@@ -338,23 +338,35 @@ export class TerminalSandboxCoordinator {
   }
 
   private loadRepositoryAuthority(workspaceId: string, workstreamId: string): Promise<RepositoryAuthorityRow | null> {
-    return this.database.prepare(
+    return this.loadRepositoryAuthorityAcrossBoundaries(workspaceId, workstreamId);
+  }
+
+  private async loadRepositoryAuthorityAcrossBoundaries(
+    workspaceId: string,
+    workstreamId: string,
+  ): Promise<RepositoryAuthorityRow | null> {
+    const repository = await this.database.prepare(
       `SELECT repository.connection_id, repository.repository_full_name, repository.base_ref,
               repository.base_sha, repository.head_ref
          FROM workstream_terminal_repositories repository
-         JOIN connector_connections connection
-           ON connection.id = repository.connection_id
-          AND connection.workspace_id = repository.workspace_id
-          AND connection.status <> 'disabled'
         WHERE repository.workspace_id = ? AND repository.workstream_id = ?
           AND repository.state = 'selected'`,
     ).bind(workspaceId, workstreamId).first<RepositoryAuthorityRow>();
+    if (!repository) return null;
+    const connection = await this.database.prepare(
+      `SELECT id FROM connector_connections
+        WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
+    ).bind(repository.connection_id, workspaceId).first<{ id: string }>();
+    return connection ? repository : null;
   }
 
   private async hasRevokedImportedResource(context: HarnessToolContext, row: SandboxRow): Promise<boolean> {
     const principalUserId = context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null;
-    const revoked = await this.database.prepare(
-      `SELECT imported.resource_id
+    const candidates = await this.database.prepare(
+      `SELECT imported.resource_id, resource.provider,
+              CASE WHEN imported.state <> 'completed'
+                     OR relationship.resource_id IS NULL
+                     OR resource.id IS NULL THEN 1 ELSE 0 END AS revoked
          FROM sandbox_imported_resources imported
          LEFT JOIN workstream_resources relationship
            ON relationship.workstream_id = imported.workstream_id
@@ -363,31 +375,24 @@ export class TerminalSandboxCoordinator {
            ON resource.id = imported.resource_id
           AND resource.workspace_id = imported.workspace_id
         WHERE imported.workspace_id = ? AND imported.workstream_id = ?
-          AND imported.sandbox_generation = ?
-          AND (
-            imported.state <> 'completed'
-            OR
-            relationship.resource_id IS NULL
-            OR resource.id IS NULL
-            OR (
-              resource.provider = 'avalon_note'
-              AND NOT EXISTS (
-                SELECT 1 FROM notes note
-                 WHERE note.resource_id = resource.id
-                   AND note.workspace_id = imported.workspace_id
-                   AND note.archived_at IS NULL
-                   AND (note.scope = 'workspace' OR note.owner_user_id = ?)
-              )
-            )
-          )
-        LIMIT 1`,
+          AND imported.sandbox_generation = ?`,
     ).bind(
       context.workspaceId,
       context.workstreamId,
       row.generation,
-      principalUserId,
-    ).first<{ resource_id: string }>();
-    return revoked !== null;
+    ).all<{ resource_id: string; provider: string | null; revoked: number }>();
+    const rows = candidates.results ?? [];
+    if (rows.some((candidate) => Number(candidate.revoked) === 1)) return true;
+    const noteIds = rows.filter((candidate) => candidate.provider === "avalon_note")
+      .map((candidate) => candidate.resource_id);
+    if (noteIds.length === 0) return false;
+    const placeholders = noteIds.map(() => "?").join(", ");
+    const notes = await this.database.prepare(
+      `SELECT resource_id FROM notes
+        WHERE workspace_id = ? AND resource_id IN (${placeholders})
+          AND archived_at IS NULL AND (scope = 'workspace' OR owner_user_id = ?)`,
+    ).bind(context.workspaceId, ...noteIds, principalUserId).all<{ resource_id: string }>();
+    return new Set((notes.results ?? []).map((note) => note.resource_id)).size !== noteIds.length;
   }
 
   private async reserveFirstGeneration(

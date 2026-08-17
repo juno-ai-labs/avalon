@@ -12,10 +12,6 @@ import { newId, nowIso } from "@avalon/db";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import {
-  WORKSTREAM_VISIBILITY_SQL,
-  workstreamVisibilityBindings,
-} from "../lib/workstream-visibility";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import {
   emitProductUsageTelemetry,
@@ -26,6 +22,9 @@ import {
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
 } from "./integrations";
+import { WorkstreamDirectoryService } from "./workstream-directory-service";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 interface ConfigurationRow {
   id: string;
@@ -99,7 +98,7 @@ async function latestConfiguration(
   workspaceId: string,
   workstreamId: string,
 ): Promise<ConfigurationRow | null> {
-  return env.DB.prepare(
+  return (await workstreamExecutionEnvironment(env, workspaceId, workstreamId)).DB.prepare(
     `SELECT id, version_number, blocks_json, created_at
        FROM hypersight_configuration_versions
       WHERE workspace_id = ? AND workstream_id = ?
@@ -114,7 +113,7 @@ async function latestRunForBlock(
   workstreamId: string,
   block: BlockSnapshot,
 ): Promise<HyperSightBlockRun | null> {
-  const row = await env.DB.prepare(
+  const row = await (await workstreamExecutionEnvironment(env, workspaceId, workstreamId)).DB.prepare(
     `SELECT id, block_id, configuration_version_id, trigger_sequence, status, markdown, error_json, created_at, started_at, completed_at
       FROM hypersight_block_runs
       WHERE workspace_id = ? AND workstream_id = ? AND block_id = ? AND prompt = ?
@@ -152,14 +151,21 @@ export async function loadHyperSight(
  * hand its output back to them.
  */
 async function requireVisibleWorkstream(env: Env, auth: AuthContext, workstreamId: string): Promise<void> {
-  const row = await env.DB.prepare(
-    `SELECT 1 AS visible
-       FROM workstreams w
-      WHERE w.id = ? AND w.workspace_id = ? AND w.archived_at IS NULL
-        AND ${WORKSTREAM_VISIBILITY_SQL}`,
-  ).bind(workstreamId, auth.workspaceId, ...workstreamVisibilityBindings(auth.userId))
-    .first<{ visible: number }>();
-  if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+  const authority = await readWorkstreamAuthorityControl(env);
+  const visible = authority.phase === "durable_object_open"
+    ? await new WorkstreamDirectoryService(env, auth).visible(workstreamId)
+    : Boolean(await env.DB.prepare(
+      `SELECT 1 FROM workstreams workstream
+        WHERE workstream.id = ? AND workstream.workspace_id = ?
+          AND workstream.archived_at IS NULL
+          AND (workstream.scope = 'workspace' OR workstream.created_by_user_id = ?
+            OR EXISTS (SELECT 1 FROM workstream_participants participant
+                WHERE participant.workstream_id = workstream.id
+                  AND participant.user_id = ? AND participant.removed_at IS NULL))`,
+    ).bind(workstreamId, auth.workspaceId, auth.userId, auth.userId).first());
+  if (!visible) {
+    throw new ApiError(404, "workstream_not_found", "Work stream not found");
+  }
 }
 
 export class HyperSightService {
@@ -172,7 +178,11 @@ export class HyperSightService {
 
   async getPreference(workstreamId: string): Promise<HyperSightPreference> {
     await requireVisibleWorkstream(this.env, this.auth, workstreamId);
-    const row = await this.env.DB.prepare(
+    const row = await (await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    )).DB.prepare(
       `SELECT visible, updated_at
          FROM hypersight_user_preferences
         WHERE workspace_id = ? AND workstream_id = ? AND user_id = ?`,
@@ -192,7 +202,11 @@ export class HyperSightService {
   ): Promise<HyperSightPreference> {
     await requireVisibleWorkstream(this.env, this.auth, workstreamId);
     const updatedAt = nowIso();
-    await this.env.DB.prepare(
+    await (await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    )).DB.prepare(
       `INSERT INTO hypersight_user_preferences
        (workspace_id, workstream_id, user_id, visible, updated_at)
        VALUES (?, ?, ?, ?, ?)
@@ -225,7 +239,11 @@ export class HyperSightService {
     const id = newId();
     const createdAt = nowIso();
     try {
-      await this.env.DB.prepare(
+      await (await workstreamExecutionEnvironment(
+        this.env,
+        this.auth.workspaceId,
+        workstreamId,
+      )).DB.prepare(
         `INSERT INTO hypersight_configuration_versions
          (id, workspace_id, workstream_id, version_number, blocks_json, created_by_user_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -282,7 +300,8 @@ export async function launchHyperSightRefresh(
   workstreamId: string,
   triggerSequence: number,
 ): Promise<HyperSightBlockRun[]> {
-  const configuration = await latestConfiguration(env, workspaceId, workstreamId);
+  const executionEnv = await workstreamExecutionEnvironment(env, workspaceId, workstreamId);
+  const configuration = await latestConfiguration(executionEnv, workspaceId, workstreamId);
   if (!configuration) return [];
   const blocks = parseBlocks(configuration.blocks_json).filter((block) => block.prompt.trim().length > 0);
   if (blocks.length === 0) return [];
@@ -291,14 +310,14 @@ export async function launchHyperSightRefresh(
   // is expected to use on its `harness_runs` row. The route plan's fallbacks
   // are resolved again and passed to `runHarness` on the execution path in
   // `integrations.ts`, which is the only place they mean anything.
-  const { model } = await resolveAgentModelRouting(env, "hypersight", { workspaceId, workstreamId });
+  const { model } = await resolveAgentModelRouting(executionEnv, "hypersight", { workspaceId, workstreamId });
   for (const block of blocks) {
     const harnessRunId = newId();
     const blockRunId = newId();
     const createdAt = nowIso();
     try {
-      const writes = await env.DB.batch([
-        env.DB.prepare(
+      const writes = await executionEnv.DB.batch([
+        executionEnv.DB.prepare(
           `INSERT INTO harness_runs
            (id, workspace_id, workstream_id, origin, execution_principal_json,
             status, model, created_at)
@@ -311,7 +330,7 @@ export async function launchHyperSightRefresh(
           model,
           createdAt,
         ),
-        env.DB.prepare(
+        executionEnv.DB.prepare(
           `INSERT INTO hypersight_block_runs
            (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
             trigger_sequence, harness_run_id, status, created_at)
@@ -345,7 +364,7 @@ export async function launchHyperSightRefresh(
       reason: "hypersight_block",
     };
     try {
-      await startWorkstreamWorkflow(env, workflowInput);
+      await startWorkstreamWorkflow(executionEnv, workflowInput);
       launched.push({
         id: blockRunId,
         blockId: block.id,
@@ -364,13 +383,13 @@ export async function launchHyperSightRefresh(
         code: "workflow_unavailable",
         message: "HyperSight could not start this refresh",
       };
-      await env.DB.batch([
-        env.DB.prepare(
+      await executionEnv.DB.batch([
+        executionEnv.DB.prepare(
           `UPDATE harness_runs
               SET status = 'failed', completed_at = ?, terminalized_at = ?, error_json = ?
             WHERE id = ? AND status IN ('scheduled', 'running')`,
         ).bind(completedAt, completedAt, JSON.stringify(failure), harnessRunId),
-        env.DB.prepare(
+        executionEnv.DB.prepare(
           `UPDATE hypersight_block_runs
               SET status = 'failed', error_json = ?, completed_at = ?
             WHERE id = ? AND status = 'queued'`,

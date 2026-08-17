@@ -22,7 +22,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
-| `packages/db/migrations/0075_terminal_workspaces.sql` | Authoritative regional Terminal schema. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
 
 ## How it works
 
@@ -32,7 +32,8 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 which exposes all nine tools and the language guidance but performs no provider
 operation. The first tool execution asks `TerminalSandboxCoordinator` for the
 work stream's exclusive Terminal mutation lease. It creates, starts, or restores
-the stable private sandbox and records the provider result in D1. A later tool in
+the stable private sandbox and records the provider result in the owning
+WorkstreamDO. A later tool in
 the same work stream reuses that generation only while its execution-principal,
 selected repository, connection, and visible-resource authority fingerprint
 still match.
@@ -61,13 +62,13 @@ internal hashes.
 
 Commands are non-interactive foreground Bash. The provider runs each command in
 a named process session under GNU `timeout`, sends TERM at the deadline, sends
-KILL five seconds later, and retains the named session until the terminal D1
+KILL five seconds later, and retains the named session until the terminal local
 result is durable. It then deletes the session; if deletion fails it stops the
 sandbox. After a Worker interruption, Bind re-enters only an exact incomplete
 Terminal command receipt, verifies the command hash and sandbox generation, and
 reattaches to the sole command in that session. All other incomplete writes keep
 the harness's fail-closed ambiguity behavior. The model receives one final
-result; provider observation is never a tool. D1 stores the task, command hash,
+result; provider observation is never a tool. The WorkstreamDO stores the task, command hash,
 deadline, exit, termination reason, output byte counts, and bounded head/tail.
 Output beyond the inline allowance is also published as a generated log
 resource, capped at 25 MB.
@@ -144,8 +145,8 @@ auto-restart it.
 
 The workspace scheduler stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Daytona's
-15-minute auto-stop is only a provider backstop. Due transitions use a short D1
-claim and reconcile observed provider state after ambiguous calls. Before stop
+15-minute auto-stop is only a provider backstop. Due transitions use a short
+object-local claim and reconcile observed provider state after ambiguous calls. Before stop
 or deletion Avalon saves a bounded Git diff (or a summary when the diff is too
 large) as a generated resource. Filesystem archives are not copied to R2; after
 expiry a participant explicitly starts fresh and the next tool gets a new root.
@@ -277,27 +278,29 @@ reviews.
 
 ## Data model
 
-Migration `0075_terminal_workspaces.sql` adds:
+Migration `0075_terminal_workspaces.sql` created the legacy D1 source. Serving
+contract 1 imports the work-stream-owned rows into these normalized local tables:
 
 - `workspace_sandbox_network_policies`, `_domains`, and `_mutations` for the
   revisioned preview/confirm/read-back protocol;
-- `workstream_sandboxes` for generation, authority, provider, lease, lifecycle,
+- `terminal_workspace` for generation, authority, provider, lease, lifecycle,
   retention, and final-diff state;
-- `sandbox_tasks` for durable command submission and one final result;
-- `sandbox_imported_resources` for generation-scoped deterministic imports;
-- `workstream_terminal_repositories` for the exact GitHub repository, refs, and
+- `terminal_tasks` and `terminal_commands` for durable command submission and one final result;
+- `terminal_imported_resources` for generation-scoped deterministic imports;
+- `terminal_repository` for the exact GitHub repository, refs, and
   selected remote-access ceiling;
 - `terminal_publication_grants` for run/principal provenance retained by the
   optional typed publisher; and
 - `repository_publications` for convergent trusted-write reconciliation.
 
-Every tenant-owned primary key and lookup starts with `workspace_id`; database
-triggers verify that work streams and GitHub connections belong to that same
-workspace. Provider IDs are reconciliation facts and never authorize a request.
+The object identity supplies the workspace/work-stream tenant boundary. Regional
+D1 remains authoritative for workspace network policy and GitHub connection
+authority, which are rechecked before local mutations. Provider IDs are
+reconciliation facts and never authorize a request.
 
 ## Regional impact
 
-All Terminal D1 rows, resource bytes, generated logs/diffs, GitHub App
+All Terminal local rows, regional resource bytes, generated logs/diffs, GitHub App
 installation-token creation, and tool execution records stay in the workspace's
 owning Avalon region. Daytona processes the sandbox filesystem in the configured
 regional target and is therefore a regional subprocessor boundary, not a
@@ -357,8 +360,8 @@ reduces compute time, sixty-minute archive reduces retained live-disk cost, and
 thirty-day deletion bounds provider storage. Only user-visible generated files,
 complete eligible command logs, and the last bounded Git diff are copied to R2;
 Avalon does not pay to maintain a second cold filesystem archive. Provider time
-and output bytes are derivable from `workstream_sandboxes` and `sandbox_tasks`,
-so cost changes can be measured without exposing commands.
+and output bytes are derivable from local `terminal_workspace` and
+`terminal_tasks`, so cost changes can be measured without exposing commands.
 
 `pnpm terminal:analytics -- --days 7` queries Cloudflare's SQL API and prints
 the actual first/last observation time, sampled and sampling-weighted counts,
@@ -378,6 +381,24 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-17 — Terminal persistence follows its work stream into the object
+
+**What changed:** Sandbox generations, command/task receipts, imports,
+repository selection, publication grants, and publication receipts are served
+from the owning WorkstreamDO. Workspace network policy and connector credentials
+remain regional D1 inputs.
+
+**Why:** A Terminal lease and tool receipt participate in the same run and
+authority fingerprint as the transcript. Leaving them writable in D1 after the
+work-stream cutover would split one recovery transaction across authorities.
+
+**Considered and rejected:** Keeping Terminal in D1 because Daytona is external.
+The execution provider boundary does not change who owns Avalon's run state.
+
+**Consequences:** The workspace scheduler discovers only projected due work and
+then claims the exact lifecycle transition in the object. Daytona remains the
+sandbox provider, and no Daytona-to-Cloudflare migration is implied.
+
 ### 2026-08-13 — Terminal lifecycle telemetry observes transitions, not tool reuse
 
 **What changed:** Sandbox acquisition reports `start`, `restore`, or
@@ -395,7 +416,6 @@ observable; transition truth is available only in the coordinator.
 **Consequences:** Provider operation metrics and product lifecycle metrics retain
 their distinct meanings. New acquire fast paths must explicitly decide whether
 they performed a lifecycle transition before invoking the observer.
-
 ### 2026-08-13 — Git trusts Daytona's secret-substitution proxy CA
 
 **What changed:** Repository bootstrap and the ephemeral trusted publisher now

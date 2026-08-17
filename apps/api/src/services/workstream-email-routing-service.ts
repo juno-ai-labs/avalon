@@ -7,6 +7,8 @@ import {
 } from "../lib/workstream-email-address";
 import { ApiError } from "../lib/api-error";
 import { RPC_BATCH_LIMIT } from "../lib/rpc-contracts";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 const MAX_ADDRESS_RESERVATION_ATTEMPTS = 1_024;
 /** One bound for both sides of the bridge. See `RPC_BATCH_LIMIT`. */
@@ -258,7 +260,12 @@ export class WorkstreamEmailRoutingService {
 
   async ensureWorkstreamAddress(input: WorkstreamEmailRouteInput): Promise<WorkstreamEmailRoute> {
     this.assertRegionalOwner(input);
-    const current = await this.env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      input.workspaceId,
+      input.workstreamId,
+    );
+    const current = await executionEnv.DB.prepare(
       `SELECT email_address, email_route_status, archived_at
        FROM workstreams WHERE id = ? AND workspace_id = ?`,
     ).bind(input.workstreamId, input.workspaceId).first<LocalWorkstreamEmailRow>();
@@ -276,13 +283,13 @@ export class WorkstreamEmailRoutingService {
       throw new ApiError(409, "workstream_email_address_conflict", "The work stream already has a different email address");
     }
     if (!current.email_address) {
-      await this.env.DB.prepare(
+      await executionEnv.DB.prepare(
         `UPDATE workstreams
          SET email_address = ?, email_route_status = 'reserved', updated_at = ?
          WHERE id = ? AND workspace_id = ? AND email_address IS NULL`,
       ).bind(route.emailAddress, nowIso(), input.workstreamId, input.workspaceId).run();
     }
-    const stored = await this.env.DB.prepare(
+    const stored = await executionEnv.DB.prepare(
       `SELECT email_address, email_route_status, archived_at
        FROM workstreams WHERE id = ? AND workspace_id = ?`,
     ).bind(input.workstreamId, input.workspaceId).first<LocalWorkstreamEmailRow>();
@@ -293,7 +300,7 @@ export class WorkstreamEmailRoutingService {
     if (route.status !== storedDesiredStatus) {
       await this.setStatus({ ...input, status: storedDesiredStatus });
     }
-    const localUpdate = await this.env.DB.prepare(
+    const localUpdate = await executionEnv.DB.prepare(
       `UPDATE workstreams SET email_route_status = ?, updated_at = ?
        WHERE id = ? AND workspace_id = ? AND email_address = ? COLLATE NOCASE`,
     ).bind(storedDesiredStatus, nowIso(), input.workstreamId, input.workspaceId, route.emailAddress).run();
@@ -319,6 +326,13 @@ export class WorkstreamEmailRoutingService {
     if (inputs.length === 0) return [];
     this.assertBulkSize(inputs);
     for (const input of inputs) this.assertRegionalOwner(input);
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      // Each address belongs to a different WorkstreamDO. There is no honest
+      // cross-object transaction, so reconcile each owner through the same
+      // idempotent single-object path used by foreground requests.
+      return Promise.all(inputs.map((input) => this.ensureWorkstreamAddress(input)));
+    }
 
     const initialRows = await this.loadLocalWorkstreamEmailRows(inputs);
     const missingInputs = inputs.filter((_, index) => !initialRows[index]!.email_address);

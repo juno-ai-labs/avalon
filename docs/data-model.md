@@ -1,12 +1,13 @@
 # Data model
 
 Avalon's regional data is split by declared authority. D1 owns workspace,
-identity, connector, routing, schedule, audit, and projection state. After a
-guarded authority generation opens, each `WorkstreamRoom` SQLite database owns
-the product state of exactly one work stream; before that generation opens the
-legacy D1 rows remain the serving authority. The checked-in migrations are the
-authoritative D1 schema and the object schema registry is the authoritative DO
-schema. This document maps both rather than duplicating their DDL. Application
+identity, connector, routing, schedule, audit, and projection state. Serving
+contract 1 makes each `WorkstreamRoom` SQLite database the product authority for
+exactly one work stream after the guarded regional generation opens. Frozen
+legacy D1 product rows are migration input and writer tripwires, never a serving
+fallback. The checked-in migrations are the authoritative D1 schema and the
+object schema registry is the authoritative DO schema. This document maps both
+rather than duplicating their DDL. Application
 contracts expose camel-cased TypeScript values; storage uses explicit
 snake-cased columns, and JSON only where provider- or model-shaped data is not
 relationally queried.
@@ -45,7 +46,8 @@ includes it. Knowing an object ID is never sufficient authorization.
 
 ### Work streams
 
-- `workstreams` is the central object. `origin_type` distinguishes ad hoc work
+- The object-local `workstream` row is the product root. `origin_type`
+  distinguishes ad hoc work
   from automation output without splitting the UI. `objective` is the work
   stream's description; `description_source` records whether a person wrote it
   (`authored`) or it was derived at creation or by the refresh loop (`derived`),
@@ -55,7 +57,7 @@ includes it. Knowing an object ID is never sufficient authorization.
   is a placeholder clients render as a skeleton, `automatic` once Avalon has named
   it and one later pass may still replace it, `settled` when a person named it, a
   caller supplied it, or that pass has run.
-- `workstream_description_refreshes` holds one row per work stream: the last
+- Object-local `description_refresh_state` holds one row per work stream: the last
   evaluation by the loop that rewrites a description once the work stream's
   purpose has moved. `rest_until` is both the admission clock and the
   single-writer claim — it is pushed forward when an evaluation starts, so two
@@ -67,7 +69,7 @@ includes it. Knowing an object ID is never sufficient authorization.
   knowing the loop looked is what separates a description that still fits from one
   nothing has examined. See
   [`workstream-descriptions.md`](workstream-descriptions.md).
-- `workstreams.scope` answers who may read a work stream, in the same
+- `workstream.scope` answers who may read a work stream, in the same
   `personal`/`workspace` vocabulary `notes.scope` uses. `personal` is enforced as
   "an active participant, and nobody else" by both the list query and the
   single-row read, so privacy is a declared property of the row rather than a rule
@@ -107,7 +109,7 @@ includes it. Knowing an object ID is never sufficient authorization.
   automation-generated row takes its audience from that automation's scope —
   opening it would broaden nothing and closing it would hide it from the owner, who
   reaches it by owning the automation rather than by being a participant.
-- `workstreams.system_kind` is the different question of whether a work stream is
+- `workstream.system_kind` is the different question of whether a work stream is
   *machinery*. `NULL` is ordinary work; any non-`NULL` value (`digest` today) is a
   subsystem's own work stream, so an internal run can reuse the whole agent loop
   rather than inventing a second one. It decides whether the row is *listed* — off
@@ -115,7 +117,7 @@ includes it. Knowing an object ID is never sufficient authorization.
   enabled is on — never who may read it. A digest's work stream carries both:
   `scope = 'personal'` and `system_kind = 'digest'`. See
   [`digests.md`](digests.md).
-- `workstreams.model_override` pins this one work stream's runs to an OpenRouter
+- `workstream.model_override` pins this one work stream's runs to an OpenRouter
   model, ahead of the `agent-model-workstream` flag. `NULL` — the overwhelming
   majority — means the flag decides. It exists because model *selection* is a
   fleet-wide rollout and this is the opposite question, asked about one piece of
@@ -125,8 +127,9 @@ includes it. Knowing an object ID is never sufficient authorization.
   that moves, so it lives in `AGENT_MODEL_OVERRIDES` and is re-validated on read,
   which lets a model be retired without a migration.
 - `workstream_pins` is one person's pinned work streams and the order they
-  arranged them in — keyed `(workstream_id, user_id)` like
-  `workstream_read_states`, and for the same reason: a pin is one person's opinion
+  arranged them in. It remains in D1 because it is a cross-work-stream ordering
+  owned by one user. The corresponding read/mention waterlines live in the
+  owning object's `member_attention`; a pin is one person's opinion
   about a shared row, so it cannot be a column on `workstreams` without imposing
   one member's arrangement on the workspace. `position` is unique and ascending
   per person and is rewritten as a dense run by every unpin and reorder, because a
@@ -139,15 +142,16 @@ includes it. Knowing an object ID is never sufficient authorization.
   applies the visibility rule above, so a pin left behind by a work stream that was
   archived or narrowed contributes no row while remaining removable by its owner.
   See [`workstream-pinning.md`](workstream-pinning.md).
-- `workstream_participants` records explicit participation reasons. Viewer
-  presence is intentionally absent from D1.
-- `messages` has a per-work-stream `sequence_number`;
-  `workstreams.next_sequence_number` allocates ordered events.
-- `message_mentions` stores validated person and connector spans.
-- `message_attachments` relates a resource to one exact owning message. A
+- Object-local `participants` records explicit participation reasons. Viewer
+  presence is intentionally absent from durable storage.
+- Object-local `parts` has a per-work-stream `sequence_number`; the root
+  `workstream.next_sequence_number` allocates ordered events. Conversation rows
+  belong to a `substreams` row, with the main chat fixed at substream `0`.
+- `part_mentions` stores validated person and connector spans.
+- `part_attachments` relates a resource to one exact owning part. A
   resource can appear in multiple work streams, so projections that report
-  message-attachment state must join through `messages.workstream_id`; existence
-  anywhere in the workspace is not the relationship for the current work stream.
+  attachment state must use the current object's link; existence anywhere in the
+  workspace is not the relationship for the current work stream.
 - `resources` holds metadata while `content_ref` points at the user-visible
   regional R2 object and `content_sha256` identifies the exact bytes selected for
   model extraction. Uploads hash before the row commits; connector hydration
@@ -163,24 +167,32 @@ includes it. Knowing an object ID is never sufficient authorization.
   new row and queues the former pointer; resource deletion queues its current
   original and derivative, while detaching one relationship leaves shared
   resource objects intact.
-  `attachment_tool_receipts` relates a versioned read, search, view, or summary
+  Object-local `attachment_tool_receipts` relates a versioned read, search, view, or summary
   receipt to every derivative it used. Replacing that version or deleting the
   resource invalidates the whole invocation and queues its JSON replay object;
-  the table never contains attachment content or ephemeral image data. All
-  Both tenant-owned attachment tables carry `workspace_id`, and every
-  dependency registration, invalidation, replay, and cleanup mutation supplies
-  it even though resource and invocation IDs are globally unique.
-  `workstream_resource_inventory_revisions` holds one monotonic revision per
-  work stream. D1 triggers advance it when resource membership, message
+  the table never contains attachment content or ephemeral image data. Every
+  dependency registration, invalidation, replay, and cleanup mutation
+  carries the workspace/work-stream identity even though resource and invocation
+  IDs are globally unique.
+  `resource_inventory_revision` holds one monotonic revision in the object.
+  Local triggers advance it when resource membership, message
   attachment relationships, resource classification/content identity, or
   private-note visibility can change the authorized inventory. Derivative claim,
   processing, and hydration timestamp updates do not advance it; it is a race
   fence, not an attachment catalog.
-  `workstream_resources` owns
+  `workstream_resource_links` owns
   attachment/watch behavior; its `relationship_type` distinguishes an ordinary
   `attachment` from the `origin` a work stream was created from — see
   [work-stream origin attachments](workstream-origin-attachments.md).
-- `elicitations` and `activity_suggestions` are first-class transcript blocks.
+- `elicitation_requests` and `suggested_actions` are first-class transcript blocks.
+
+D1 retains a `workstreams` identity anchor because workspace/control tables have
+foreign keys to the stable ID. A post-cutover row has `do_identity_anchor = 1`;
+its metadata and lifecycle columns are not product authority. Common and
+per-user list queries use `workstream_directory_projections` and
+`workstream_directory_user_projections`. Connector routing uses
+`workstream_resource_link_projections`. Those rows are rebuildable outputs of
+the object outbox, not mirrors to read when an object is unavailable.
 
 ### Automations and execution
 
@@ -234,10 +246,10 @@ includes it. Knowing an object ID is never sufficient authorization.
   contract.
 - The partial unique index on `(automation_subscription_id, planned_for)` converges
   early-open and alarm-driven scheduled-run creation.
-- `harness_runs` records each bounded model loop. `tool_invocations` is unique on
-  `(harness_run_id, tool_call_id)` and stores input hashes plus side-effect state.
-- `workstream_context_compactions` stores one latest raw LLM continuation
-  summary per `(workspace_id, workstream_id, execution_principal_key)`, with its
+- Object-local `runs` records each bounded model loop. `tool_effects` is unique on
+  `(run_id, provider_tool_call_id)` and stores input hashes plus side-effect state.
+- `compaction_jobs` and `compaction_checkpoints` store the raw LLM continuation
+  summary per execution principal, with its
   sequence boundary, resource-inventory revision, and deterministic template
   version. Current authorized totals are regenerated on apply and replay and
   are intentionally absent from the principal-scoped row. A final conditional
@@ -246,25 +258,26 @@ includes it. Knowing an object ID is never sufficient authorization.
   advances them transactionally/idempotently. Exactly one of
   `automation_subscription_id`, `connector_connection_id`, and `digest_schedule_id`
   is set on a row.
-- `workstream_wakeups` holds one-shot prompt wake-ups a run scheduled for itself.
+- Object-local `workstream_wakeups` holds one-shot prompt wake-ups a run scheduled for itself.
   It is separate from `schedules` because a wake-up is one-shot, belongs to a work
   stream rather than a subscription or connection, and carries the prompt text that
-  becomes the resulting run's trigger. The same workspace alarm unions it with
-  `schedules` and `resource_watches`. `(workstream_id, idempotency_key)` is unique,
+  becomes the resulting run's trigger. The common directory projection exposes
+  only the next due time so the workspace alarm can call the owner; it does not
+  copy the wake-up. `idempotency_key` is unique inside the object,
   so a replayed tool receipt resolves to the wake-up its first attempt created;
   `status` moves `pending → fired` under a version guard before the run is launched,
   making a wake-up at-most-once rather than at-least-once.
-- Terminal control-plane rows are regional and tenant-first.
-  `workstream_sandboxes` owns one generation, authority fingerprint, provider
+- Terminal's work-stream-specific durable rows are object-local.
+  `terminal_workspace` owns one generation, authority fingerprint, provider
   reconciliation identity, exclusive operation lease, lifecycle deadlines, and
-  final-diff pointer per work stream. `sandbox_tasks` binds one command to one
+  final-diff pointer per work stream. `terminal_tasks` binds one command to one
   harness tool receipt and retains only command hash, terminal state, exit,
   termination reason, byte counts, and bounded head/tail plus an optional full-log
-  resource. `sandbox_imported_resources` records planned and completed imports
+  resource. `terminal_imported_resources` records planned and completed imports
   per generation, destination, source hash, and byte size so a retry never trusts
   pre-existing sandbox bytes. `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
   own the revision-fenced preview/confirm/read-back protocol.
-  `workstream_terminal_repositories` stores the immutable numeric GitHub
+  `terminal_repository` stores the immutable numeric GitHub
   repository ID, canonical name, selected base/ref/SHA, fixed head ref, durable
   requested remote-access ceiling, and connection; `terminal_publication_grants` retains run/principal provenance for
   the optional typed publisher; `repository_publications` converges its
@@ -539,6 +552,26 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-17 — Serving names now match the WorkstreamDO authority
+
+**What changed:** The work-stream map now names the normalized object-local root,
+parts, participants, runs, tool effects, attention, compaction, wakeup, resource
+link, suggestion, and Terminal tables as the serving records. The D1
+`workstreams` row is explicitly an identity anchor; directory, resource-link,
+and suggestion-feedback rows are explicitly rebuildable projections.
+
+**Why:** Once serving contract 1 routes all product operations to the object,
+describing the frozen legacy D1 table names as canonical would invite a new
+writer or read fallback and recreate split authority.
+
+**Considered and rejected:** Renaming every established repository and API type
+in the same cutover. The local compatibility views preserve those code-level
+names without preserving duplicate product storage.
+
+**Consequences:** New schema and query design starts from the normalized local
+tables. D1 foreign-key anchors and projections may support regional joins, but
+must never be used to reconstruct product state when the object is unavailable.
 
 ### 2026-08-17 — D1 gains a durable inbox for WorkstreamDO regional effects
 
