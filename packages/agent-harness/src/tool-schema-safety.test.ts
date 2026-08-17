@@ -11,7 +11,7 @@ import {
  * The production fingerprint, kept as a literal: this exact schema shipped in
  * `memory_search` and 400'd every x-ai request in the fleet for three days.
  *
- * Under `@juno-ai/bind` 12 the sanitizer repairs it — each branch comes back as
+ * Under `@juno-ai/bind` 13 the sanitizer repairs it — each branch comes back as
  * `{ type: "object", required: [...], properties: {…} }` — so the checks below
  * report nothing for it. That is the *dependency's* behaviour, not this
  * module's, which is why it is asserted here: a bind release that stopped
@@ -30,7 +30,7 @@ const MEMORY_SEARCH_BEFORE_THE_FIX = {
 
 describe("weakenedCompositionBranches", () => {
   it("still catches a branch whose `required` names nothing in scope", () => {
-    // The positive case that survives bind 12. The branch is NESTED, so the
+    // The positive case that survives bind 13. The branch is NESTED, so the
     // root-union drop does not apply, and `ghost` resolves against neither the
     // branch nor its parent, so the sanitizer prunes it to `{}` — a constraint
     // the author wrote and the wire schema no longer carries.
@@ -69,7 +69,7 @@ describe("weakenedCompositionBranches", () => {
     ]);
   });
 
-  it("reports nothing for the shapes bind 12 repairs", () => {
+  it("reports nothing for the shapes the sanitizer repairs", () => {
     // Each of these was a finding under bind 11. The sanitizer now resolves a
     // branch's `required` against its parent's `properties` and copies the
     // referenced subschemas down, so the constraint reaches the wire intact and
