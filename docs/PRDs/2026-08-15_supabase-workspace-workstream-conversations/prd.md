@@ -7,7 +7,8 @@
 > authority; private Realtime Broadcast accelerates delivery; Supabase Queues,
 > Cron, Storage, and pgvector provide durable scheduling, object, and search
 > services. Cloudflare Workers provide all application compute, and one data-
-> minimal Cloudflare Workflow drives each full agent loop.
+> minimal Cloudflare Workflow drives every inference run: one full loop or one
+> bounded one-shot inference.
 > Companions: [`state.md`](state.md), [`flows.md`](flows.md), the underlying
 > [`research.md`](research.md), and the technical/economic
 > [`comparison.md`](comparison.md). The newer full three-way comparison,
@@ -26,17 +27,20 @@ database can therefore make a work-stream update visible in **Work Streams**,
 **In Progress**, **Completed**, **You Are Mentioned**, **Unread**, and **Needs
 Your Input** without delivering a fallible child-to-parent projection.
 
-The initial topology is one EU Supabase product shard, one Global/US product
-shard, and one required global Supabase control database. A shard is a whole
-Supabase project and residency/capacity unit; the routing model permits more
-than one shard in a region without making a database per workspace idiomatic.
-The global database owns sign-in identity, billing references, invitations,
+The initial topology is exactly one EU Supabase product shard, one Global/US
+product shard, and one required global Supabase control database. A shard is a
+whole Supabase project and residency/capacity unit. Additional regional shards
+remain a production-driven Supabase scaling option, but this version neither
+creates nor prelaunch load-tests them. The global database owns stable identity
+bindings, billing references, invitations,
 the regional-shard directory, workspace route/epoch, and idempotent routing-
 control outbox/receipts. It stores no work-stream title, description, message,
 activity, suggestion, embedding, or person-specific sidebar state. Every
 product transaction stays inside the workspace's assigned regional shard. The
-identity federation between global and shard-local Supabase Auth remains a
-launch-gating spike rather than an assumed feature.
+existing Avalon identity provider remains the authentication authority. Its
+asymmetrically signed JWTs are accepted directly through Supabase Third-Party
+Auth in the global and regional projects by `iss`/`sub` through OIDC discovery
+and JWKS; Avalon, not Supabase Auth, owns refresh, logout, and account sessions.
 
 Conversation storage follows how language models consume context without
 turning the whole transcript into one mutable JSON document. `substreams`
@@ -60,31 +64,38 @@ A full agent loop—not merely one model turn—usually lasts 2–30 minutes and
 rarely exceed two hours during coding. Daytona remains the Terminal plugin's
 execution provider. One Terminal call is usually seconds, p95 is under a minute,
 and the tail may take 3–5 minutes or longer. One Cloudflare Workflow represents
-the full loop; bounded Cloudflare Worker fetch handlers perform model, tool,
+the full loop, and every bounded one-shot inference has its own Workflow run;
+bounded Cloudflare Worker fetch handlers perform model, tool,
 connector, compaction, suggestion, embedding, migration, and reconciliation
 actions. Workflow state contains only opaque IDs, revisions, cursors, enums,
 timing, and hashes while all product state remains in Supabase. There is no
-Supabase Edge Function or home-grown Queue/Cron workflow-engine fallback. If a
-residency boundary cannot approve this Cloudflare execution path, agent and
-derived-model features fail closed there until a new architecture is approved.
+Supabase Edge Function or home-grown Queue/Cron workflow-engine fallback. EU
+residency in this PRD is a durable-data promise: EU Database, Storage, vectors,
+and backups remain in the approved EU shard. Transient Realtime, CDN, log,
+Worker, Workflow, model-provider, and Daytona processing may be global under
+the applicable DPA. Configuration and continuous controls—not a separate
+contractual Cloudflare regional-processing guarantee—provide execution-path
+assurance.
 
 Private Supabase Realtime Broadcast provides low-latency invalidations,
 committed control hints, and active-output revision/offset hints. It is not the
 event log and, by default, does not carry generated text bodies because an
 already-joined channel is not proven to reauthorize immediately after removal.
 Durable `workspace_events` and `workstream_events` carry monotonically ordered
-replay cursors. Token text is broadcast in batches no faster than 30 frames per
-second only behind a separately proven revocable stream lease; the launch-safe
-path appends deltas to a bounded 16 KiB active-output chunk at most every 500 ms
-while observed and every second while unobserved. The executor then sends a
-body-free REST Broadcast hint, avoiding both row-per-token storage and a
-`realtime.messages` insert for every checkpoint. Clients fetch only bytes after
+replay cursors. The launch path appends deltas to a bounded 16 KiB active-output
+chunk at most every 500 ms while observed and every second while unobserved. The
+executor then sends a body-free REST Broadcast hint, avoiding both row-per-token
+storage and a `realtime.messages` insert for every checkpoint. Clients fetch only bytes after
 their durable offset through live RLS, and final output seals as one immutable
-conversation part. Reconnect always recovers from the database.
-One regional Realtime WebSocket multiplexes an active workspace and a small set
-of foreground work-stream topics. A background app with no visible active run
-closes it after a grace period and catches up by cursor rather than consuming an
-idle connection forever or reconnecting every few minutes.
+conversation part. The desktop animates committed batches at 20 frames per
+second by default; reduced-motion clients show each batch without animation.
+Reconnect always recovers from the database. One regional Realtime WebSocket
+multiplexes an active workspace and a small set of foreground work-stream
+topics. When an active run or completion obligation exists, a background app
+retains one body-free user-level socket per regional shard containing active
+work. With no active obligation it closes after a grace period and catches up
+by cursor rather than consuming an idle connection forever or reconnecting
+every few minutes.
 
 Connector ingress, normalized activity, digests, suggested work streams, and
 suggested actions also live in the assigned regional shard. Signed webhook receipts
@@ -102,7 +113,10 @@ plane. Schema changes are regional Postgres deployments using expand/backfill/
 contract. Large transformations and D1/R2 imports use regional campaign, job,
 receipt, and exception tables processed in bounded queue-backed slices. The PRD
 specifies that smaller control surface because it is required for safe rollout,
-but it does not create a separate migration-control-plane companion.
+but it does not create a separate migration-control-plane companion. The D1/R2
+authority cutover uses a scheduled read-only maintenance window of at most 15
+minutes for the final copy, verification, source-closure receipt, and Supabase
+activation; it does not dual-write.
 
 ## Motivation
 
@@ -121,18 +135,19 @@ state mutation to commit together.
 
 The architecture still needs deliberate boundaries. A regional shard primary is
 a shared contention and failure domain. Realtime is not durable history.
-Supabase Auth sessions are project-local. The global route database and a shard
-cannot commit atomically. Cloudflare Workflow/Worker execution and Supabase
-product state cannot commit atomically. Storage bytes are not recovered by
+Supabase authorization, RLS, and Realtime connections are project-local even
+when every project verifies the same Avalon IdP JWT. The global route database
+and a shard cannot commit atomically. Cloudflare Workflow/Worker execution and
+Supabase product state cannot commit atomically. Storage bytes are not recovered by
 database PITR. External model, connector, and Daytona calls cannot be atomic
 with Postgres. Treating those limitations as explicit contracts is safer than
 hiding them behind one service name.
 
 ## Goals
 
-1. Make regional Postgres the only product-data authority for a workspace's
-   metadata, work streams, conversations, sidebar projections, activity,
-   suggestions, files, search metadata, and run state.
+1. For this version, make regional Postgres the only product-data authority for
+   a workspace's metadata, work streams, conversations, sidebar projections,
+   activity, suggestions, files, search metadata, and run state.
 2. Serialize every canonical work-stream mutation with a short database lock
    and transaction, including common workspace collections, sparse per-person
    attention state, durable events, and required queue messages.
@@ -147,40 +162,56 @@ hiding them behind one service name.
    later irreversible effect from starting against superseded context.
 6. Run generic full agent loops lasting 2–30 minutes and rarely 2+ hours across
    work-stream and non-work-stream owners, with durable retries, event waits,
-   deployment survival, effect reconciliation, and explicit budgets.
+   deployment survival, usage telemetry, and uniform at-least-once effect
+   retries under one stable Avalon operation ID.
 7. Keep Daytona as the Terminal execution provider and reconcile long commands
    by provider reference rather than retrying them after an executor timeout.
 8. Deliver human-realtime tokens and sidebar changes through private Realtime
    Broadcast while using durable database cursors for every reconnect, gap,
    authorization change, and terminal convergence.
-9. Avoid row-per-token storage, per-work-stream sockets, idle-background socket
-   waste, high-frequency empty polling, and one Realtime fan-out message per
-   database row.
+9. Avoid row-per-token storage, per-work-stream sockets, unnecessary idle-
+   background socket waste, high-frequency empty polling, and one Realtime fan-
+   out message per database row while retaining a body-free regional user socket
+   for active-run completion obligations.
 10. Store connector ingress, activity, digests, suggested work streams, and
     suggested actions with durable provenance, deduplication, audience, expiry,
     feedback, and exactly-once promotion semantics.
 11. Use private regional Storage and `content_refs` for large payloads, and use
     authorization-filtered Postgres FTS plus pgvector for exact and semantic
     retrieval without making a vector index authoritative.
-12. Keep EU product data and processing within its approved regional path, fail
-    closed rather than failing over across a residency boundary, and validate
-    Supabase Database/Auth/Realtime/Storage/backup paths plus Cloudflare Worker,
-    Workflow, Regional Services, logs, and external providers with legal/
-    security before launch.
+12. Keep EU durable product data—Database, Storage, vectors, and backups—inside
+    the approved EU regional shard and fail closed rather than failing durable
+    data over across a residency boundary. Permit transient Realtime/CDN/log,
+    Cloudflare Worker/Workflow, model-provider, and Daytona processing globally
+    under the applicable DPA, with configuration-based assurance and continuous
+    controls.
 13. Migrate from D1/R2 and evolve the regional schema through observable,
     pausable, idempotent, bounded campaigns without waking or instantiating an
     entity fleet and without two long-lived write authorities.
 14. Make cost grow with active users, useful stream frames, durable checkpoints,
     stored content, and bounded work—not historical work-stream count, idle
     sockets, row-per-token writes, or duplicate cross-service projections.
+15. Keep every regional workspace table and its children classifiable and
+    deterministically exportable by owning work stream as a dormant portability
+    contingency. This version is Supabase-only and does not plan a WorkstreamDO
+    migration; any such change requires a new approved architecture decision.
+    Preserve the relational
+    design: compatibility must not replace normalized foreign keys, joins, RLS,
+    generated/search columns, triggers, or same-transaction workspace behavior
+    with redundant columns or premature distributed protocols.
+16. Continue using UUIDv7 for every newly generated Avalon-owned opaque UUID so
+    distributed IDs retain temporal locality across Postgres, Workers,
+    Workflows, clients, and a possible future export target. UUID order is only a
+    temporal sorting/locality aid; explicit domain sequences and revisions
+    remain the canonical ordering and fencing mechanism.
 
 ## Non-goals
 
 1. This PRD does not create one Supabase project, database, schema, queue,
    function, or process per workspace or work stream.
-2. This PRD does not create a synthetic workspace or work-stream actor. The
-   database aggregate and command API preserve logical ownership without a
-   resident process.
+2. The launch version does not create a synthetic workspace or work-stream
+   actor. The database aggregate and command API preserve logical ownership
+   without a resident process.
 3. This PRD does not store regional product metadata in the global control database or create
    global search, global vectors, a global inbox, or cross-region product SQL.
 4. This PRD does not silently fail an EU workspace over to a Global/US project.
@@ -200,8 +231,9 @@ hiding them behind one service name.
     database transaction, queue visibility window, or retryable Workflow step.
 12. This PRD does not make every agent loop a work stream. The run model is
     owner-neutral and domain state remains with its owner tables.
-13. This PRD does not make an ambiguous external write safe to repeat. Unknown
-    effects reconcile or request intervention.
+13. This PRD does not promise exactly-once external side effects. Every provider
+    call is retried automatically under the same Avalon operation ID; providers
+    that ignore idempotency may perform a duplicate effect.
 14. Terminal remains on its existing Daytona provider under the separate
     Terminal subsystem contract; Cloudflare Workers and Workflows do not run
     shell commands.
@@ -216,6 +248,10 @@ hiding them behind one service name.
 19. This PRD does not use Supabase Edge Functions or construct a second workflow
     engine from Queue/Cron leases. Cloudflare Workers/Workflows are the one
     application compute plane.
+20. WorkstreamDO compatibility does not create a current scale gate, roadmap,
+    pre-provisioned object, shadow writer, or alternate authority. Postgres
+    remains the only authority unless a future superseding PRD explicitly
+    chooses and governs a different architecture.
 
 ## Product behavior
 
@@ -225,18 +261,21 @@ Opening a workspace calls one paginated regional snapshot RPC. It returns
 common work-stream cards, the current user's sparse overlays, collection counts,
 and a durable `workspace_seq` cursor. It never fans out to work-stream processes.
 
-The common card contains the work-stream ID, title, short description/objective,
-origin, created time, last people-visible activity time, latest conversation
-sequence, exact run state and blocker/terminal reason, lifecycle family,
-preview, active-agent summary, needs-input flag, completion/error timestamps,
-and common revision. Every exact state maps to one family:
+The render-complete common card contains the work-stream ID, title, short
+description/objective, origin, created time, last people-visible activity time,
+latest conversation sequence, exact run state and blocker/terminal reason,
+lifecycle family, short preview, active-agent summary, needs-input flag,
+compact participant/activity counts, completion/error timestamps, and common
+revision. Full message bodies, the full description, participant lists, and
+mention details are fetched only when their surface opens. Every exact state
+maps to one family:
 
 | Exact state/reason | Sidebar family |
 | --- | --- |
 | `scheduled`, `preparing_context`, `running`, `interrupting`, `waiting_capacity` | `in_progress` |
 | `needs_input` with an ordinary question or missing choice | `in_progress` |
 | `completed`, `cancelled_cleanly`, `archived` | `completed` |
-| `failed`, `budget_exhausted`, or `needs_input` with an ambiguous effect/intervention | `error` |
+| `failed` or `needs_input` with an operator intervention | `error` |
 | `deleting`, `restoring` | hidden by the visibility gate |
 
 **Work Streams** is every visible real work stream. **In Progress**,
@@ -244,9 +283,11 @@ and common revision. Every exact state maps to one family:
 groups use the same documented `last_activity_at` or `completed_at` field and
 workspace timezone; they are not client guesses.
 
-The person-specific overlay contains a monotonic seen waterline, unread and
-mention ordinals, latest mention time, `needs_your_input`, pin, mute, dismiss,
-last opened, and per-person revision. **You Are Mentioned**, **Unread**,
+The render-complete person-specific overlay contains a monotonic seen waterline,
+unread count and ordinals, mention ordinals, latest mention time,
+`needs_your_input`, assignment state, pin, mute, dismiss, last opened, and per-
+person revision. Only displayed collection/attention counts are cached; detailed
+mention and participant data is refetched. **You Are Mentioned**, **Unread**,
 **Needs Your Input**, and **Pinned** are indexed overlay predicates. **Of
 Interest** on the main screen is the documented union of pin, mention, unread,
 assignment/input need, accepted suggestion, and recently opened/active signals.
@@ -255,18 +296,25 @@ No opaque recommender silently changes this collection.
 The system does not eagerly create one overlay row for every member and work
 stream. It creates one when the person opens, is mentioned or assigned, needs
 input, pins/mutes/dismisses, accepts a suggestion, or otherwise differs from the
-default. Large workspace-wide attention events use an audience ordinal and lazy
-evaluation instead of a Cartesian write.
+default. A message may explicitly mention at most 250 people; affected sparse
+overlays are created asynchronously in bounded batches from the committed
+attention event. Group and workspace mentions always append one audience-
+attention event and expand lazily rather than synchronously writing one row per
+member.
 
 Marking seen is a monotonic RPC. It advances only to a sequence or attention
 ordinal the caller is authorized to see and never moves backward or into the
 future. Rendering, Presence, and an open socket do not mark content seen.
 
 The same transaction that changes a work-stream title, state, last activity,
-message attention, mention, or assignment updates the common row and affected
-overlays, appends workspace/work-stream events, and queues required follow-up.
-There is no cross-object delivery to repair. Realtime sends a small sequence
-hint after commit; a lost hint is recovered from `workspace_events`.
+message attention, mention, or assignment updates the common row, direct sparse
+overlays, canonical attention/mention facts, appends workspace/work-stream
+events, and queues required follow-up. Explicit mention overlays are the one
+intentional asynchronous exception: at most 250 are materialized in bounded
+batches, while snapshot/collection queries fold any pending authorized mention
+event so **You Are Mentioned** never waits for the projection. There is no
+cross-object delivery to repair. Realtime sends a small sequence hint after
+commit; a lost hint is recovered from `workspace_events`.
 
 ### Activity ingestion, digests, and suggestions
 
@@ -325,22 +373,25 @@ provider array never places a user role inside a required call/result pair. This
 is an explicit projection rule, not a claim that physical and provider order are
 always identical.
 
-The projector is a versioned database/application function over:
+The projector is a deterministic, versioned database/application function over:
 
 - the requested work stream and substream lineage;
 - an inclusive work-stream sequence fence;
-- a current authorization and context-scope epoch;
+- a current authorization, resource-authorization, and context-scope epoch;
 - complete, visible turns and tool-call/result pairs;
 - applicable, still-valid compaction summaries;
 - promoted child summaries and referenced content versions;
 - a provider adapter that maps neutral roles and typed parts into its wire
   format.
 
-It produces the same logical array on retry and records the projection version,
-source fence, hashes, and audience epoch on the run step. Provider wire payloads
-are not canonical history. Small text may be inline; large bodies resolve from
-ready `content_refs`. Missing, corrupt, unauthorized, or revised content fails
-materialization explicitly rather than silently changing the prompt.
+It produces the same logical array on retry and records the materializer and
+provider-adapter versions, source fence, hashes, audience epoch, and resource-
+authorization revision on the run step. Compaction and redaction are applied at
+that frozen fence. A promoted child contributes only its provenance-bearing
+summary/reference. Provider wire payloads are not canonical history. Small text
+may be inline; large bodies resolve from ready `content_refs`. Missing, corrupt,
+unauthorized, or revised content fails materialization explicitly rather than
+silently changing the prompt.
 
 ### Queued and steering messages
 
@@ -417,7 +468,7 @@ persisted input/result contains only shard routing, owner/run IDs, revisions,
 cursors, next-action enums, timing, and integrity hashes. Each Workflow step
 invokes the shard's bounded Cloudflare execution Worker, which loads canonical
 context from Supabase, begins one fenced step, performs one provider action, and
-commits or reconciles its result. The model-token path is provider -> execution
+commits or recovers/retries its result. The model-token path is provider -> execution
 Worker -> checkpoint RPC/REST Broadcast -> desktop; tokens never pass through
 Workflow state. Prompts, messages, connector data, tokens, Terminal output,
 provider secrets, and customer files never enter Workflow state. Supabase
@@ -430,16 +481,20 @@ The one driver implements this contract:
    and driver revisions;
 3. make at most one externally meaningful model/tool/reconciliation action;
 4. checkpoint provisional output independently of the durable action result;
-5. commit through a compare-and-set RPC or classify an unknown result;
-6. return `continue`, `wait_event`, `wait_until`, `terminal`, or `reconcile`;
-7. preserve explicit token, tool, cost, elapsed, idle, and step budgets.
+5. commit through a compare-and-set RPC; on an uncertain response, recover the
+   operation ID and automatically retry the same provider operation;
+6. return `continue`, `wait_event`, `wait_until`, `terminal`, or `retry`;
+7. record token, tool, cost, elapsed, idle, and step usage as telemetry without
+   enforcing a product-level budget in this version.
 
 An executor may listen to `run-control:<run_id>` while a model/tool request is
 active to reduce interrupt latency. The socket is an optimization, not a lease
 or authority. Every irreversible effect starts through a database RPC after a
 fresh control/authorization check. The race between that check and the external
-call is resolved by the committed effect intent and provider idempotency or
-reconciliation—not by pretending it can be made atomic.
+call is resolved by the committed effect intent and stable Avalon operation ID.
+The driver automatically retries that operation. A provider that honors the ID
+deduplicates it; a provider that does not may execute a duplicate, which is an
+explicit at-least-once product risk rather than a claim of atomicity.
 
 ### Token streaming and realtime socket lifecycle
 
@@ -449,8 +504,7 @@ are four separate clocks. **No token causes a database write.** The executor
 buffers deltas and, at launch, calls `checkpoint_active_output` at most every
 500 ms while observed, every one second while unobserved, when the open 16 KiB
 chunk would fill, or immediately at a semantic/final boundary. It sends no
-checkpoint when no new bytes arrived. A 250 ms observed policy is an optional
-load-tested tier, not the default.
+checkpoint when no new bytes arrived.
 
 The checkpoint RPC sends only bytes after the last durable offset plus expected
 run/attempt/control revisions, frame range, provider cursor, and hash. After
@@ -477,48 +531,39 @@ Electron main process allows one fetch in flight per attempt and coalesces newer
 hints, bounding reads and avoiding quadratic egress.
 
 Transport cadence and visual cadence are independent. The desktop queues each
-fetched delta and drains it via `requestAnimationFrame` at the product-selected
-10, 20, or 30 visual frames per second. It allocates available tokens or
-characters across the frames until the next expected batch; it does not assume
-one model token per frame. At 100 tokens/second and 500 ms checkpoints, each
-batch is about 50 tokens, so 10/20/30 fps render about 10/5/3–4 tokens per frame
-over the next half second. This is continuous visual motion at the chosen frame
-requirement while the transport remains near 2 Hz. A bounded-lag controller
+fetched delta and drains it via `requestAnimationFrame` at 20 visual frames per
+second by default. It allocates available tokens or characters across the
+frames until the next expected batch; it does not assume one model token per
+frame. At 100 tokens/second and 500 ms checkpoints, each batch is about 50
+tokens, so 20 fps renders about five tokens per frame over the next half second.
+This is continuous visual motion while the transport remains near 2 Hz. A
+reduced-motion client displays the fetched batch immediately without per-token
+animation. A bounded-lag controller
 accelerates when a late batch arrives, pauses rather than inventing content if
 the buffer empties, never renders beyond the committed byte offset, and flushes
 or reconciles to the sealed final part on completion. Switching work streams
 preserves a separate animation queue and committed/displayed offset for each.
-
-An optional faster path may coalesce generated text bodies every 50–75 ms and
-never above 30 frames per second only after Avalon proves a stream capability/
-lease that the server can rotate at the authorization transaction's epoch and
-that prevents an already-joined removed client from decrypting/receiving later
-bodies. An eviction hint, client cooperation, JWT refresh, or a merely bounded
-channel-disconnect delay is not sufficient. Until then, Realtime messages carry
-coordinates only. Clients reject old attempts, duplicates, gaps, and offsets
-below the last sealed or checkpointed byte.
-
-The faster path is a network-latency optimization, not the way Avalon satisfies
-the 10/20/30 fps visual requirement. For the worked 100-second run, direct 30
-fps body delivery would send up to 3,000 frames and bill 6,000 Realtime messages
-with one receiver, versus 200 hints and 400 messages for 2 Hz durable batches
-animated locally. It creates no extra durable checkpoint writes, but it is 15
-times the Realtime message volume and remains behind the revocable-lease gate.
+Realtime messages carry coordinates only. Clients reject old attempts,
+duplicates, gaps, and offsets below the last sealed or checkpointed byte.
 
 `active_output_attempts` holds stable attempt identity and lifecycle;
 `active_output_chunks` holds the bounded mutable tail and immutable earlier
 chunks. Checkpoint revision, byte offset, frame sequence, token estimate,
 provider cursor, and hash advance only in the transaction that stores all bytes
-they describe. Approximate token-budget progress rides the chunk checkpoint and
+they describe. Approximate token-usage progress rides the chunk checkpoint and
 the exact run counter settles at the model-step boundary; there is no separate
-per-token counter update. Completion locks the attempt, verifies the ordered
-chunk hash/offset, inserts one sealed assistant part, updates semantic run/work-
-stream state and durable events, and marks the attempt sealed in one transaction.
+per-token counter update. For output at or below 256 KiB, completion locks the
+attempt, verifies the ordered chunk hash/offset, inserts one inline sealed
+assistant part, updates semantic run/work-stream state and durable events, and
+marks the attempt sealed in one transaction. Larger output first uploads one
+immutable private-Storage object through the pending/verified `content_refs`
+protocol; the active chunks remain recoverable until a later terminal
+transaction inserts the part by ready content reference and seals the attempt.
 Chunk deletion is bounded asynchronous cleanup after the recovery window rather
 than a large finalization transaction. Advancing a durable cursor without its
 bytes is forbidden.
 
-#### Checkpoint write budget
+#### Checkpoint write model
 
 For token rate `R`, total tokens `N`, and checkpoint interval `I` seconds, a
 continuous observed generation lasts `N/R` seconds and produces approximately
@@ -541,11 +586,11 @@ checkpoints, and an explicit planning assumption of four UTF-8 bytes/token:
 | REST Broadcast sends | 200 |
 | Billed Realtime messages with one receiver | 400: 200 sends + 200 deliveries |
 | Incremental body returned to one continuously observing client | About 40 KiB plus request/protocol overhead |
-| Desktop visual cadence | Selectable 10/20/30 fps from the same 2 Hz batches |
-| Tokens rendered per visual frame at 10/20/30 fps | About 10 / 5 / 3–4 while draining each batch |
+| Desktop visual cadence | 20 fps by default from the same 2 Hz batches; reduced motion shows each batch immediately |
+| Tokens rendered per visual frame at 20 fps | About 5 while draining each batch |
 
-At 250 ms the same run has about 400 checkpoints and 800 Realtime messages for
-one receiver; at one second it has about 100 and 200. A naive token-write design
+At one second the same run has about 100 checkpoints and 200 Realtime messages
+for one receiver. A naive token-write design
 would issue 10,000 streaming transactions—50 times the 500 ms design—and is
 rejected. A single such run is well inside the architecture; fleet safety is a
 concurrency question. With `A` continuously observed streams at 500 ms, the
@@ -555,9 +600,10 @@ streams with one receiver mean about 200 checkpoint transactions and 400
 Realtime messages/second, before other traffic. One thousand mean about 2,000
 and 4,000 respectively, above Supabase's currently documented default 2,500
 messages/second for Pro without Spend Cap/Team and therefore require a vendor
-limit increase, lower cadence/fan-out, or more regional partitioning. Database
-capacity is gated separately by measured WAL/IO/CPU; Supabase has no public
-per-row-write price that proves it from arithmetic alone.
+limit increase, lower cadence/fan-out, vertical scaling, or an additional
+regional Supabase shard. Database capacity is governed from production
+WAL/IO/CPU telemetry; Supabase has no public per-row-write price that proves it
+from arithmetic alone.
 
 The checkpoint guarantees client reconnect to the latest durable provisional
 bytes; it does not promise that a crashed model executor can continue a
@@ -577,10 +623,13 @@ contract.
 
 The app keeps the socket while foreground interaction, a visible active stream,
 or a promised live completion requires it. It leaves stale work-stream channels
-after a grace period. When fully backgrounded with no such obligation, it closes
-the socket and catches up on focus. This avoids both repeated reconnect churn and
-indefinitely billing an idle user. Presence is limited to online/typing hints at
-human cadence.
+after a grace period but retains one body-free user-level topic on one socket
+per regional shard that still contains the user's active work. That topic
+delivers completion/needs-input coordinates without generated bodies. When fully
+backgrounded with no active-run or completion obligation, the shard socket
+closes and catches up on focus. This avoids both repeated reconnect churn and
+indefinitely billing a user with no active work. Presence is limited to online/
+typing hints at human cadence.
 
 ### Switching between two streaming work streams
 
@@ -599,9 +648,9 @@ then changes only the selected cache and is immediate; it creates neither a new
 physical connection nor a new inference request. This remains a small
 foreground/running set, not a subscription to every pinned, unread, mentioned,
 or background work stream. Supabase's paid-plan limit of 100 channels per
-connection leaves ample protocol headroom for this two-stream case, but the
-release limit must remain lower and load tested for Avalon's workspace,
-personal, work-stream, and control topics.
+connection leaves ample protocol headroom for this two-stream case. Avalon
+observes channel use in production; this version does not require a prelaunch
+capacity/load test.
 
 If B's topic was evicted, the client joins it first and buffers hints before
 fetching an authorized hydration RPC. One SQL statement snapshot returns the
@@ -620,8 +669,7 @@ fetched through live RLS only after the checkpoint transaction has stored the
 bytes and matching offset, so a lost or delayed Broadcast loses only a wake-up.
 The newest executor bytes may be up to the 500 millisecond launch-default
 observed checkpoint interval behind, or up to one second after observation
-stops, but appear after the next commit. A 250 ms tier is allowed only after the
-regional write/WAL/Realtime load gate passes. Completion atomically replaces
+stops, but appear after the next commit. Completion atomically replaces
 the active attempt with its immutable final part, so hydration sees a coherent
 active or sealed state even when completion races the switch.
 
@@ -629,17 +677,16 @@ Hints and caches from an old `attempt_id` are discarded rather than spliced
 into a replacement. If the executor/provider cannot resume a failed
 nondeterministic attempt, either work stream may still perform the already
 documented whole-attempt reset and visibly retract provisional output. That is
-inference recovery, not loss caused by switching. A future direct token-body
-fast path cannot claim the same displayed-byte safety unless its revocable
-lease and resume protocol prove that every displayed offset is durably
-recoverable; until then, body-free coordinates plus live-RLS fetch remain the
-required path.
+inference recovery, not loss caused by switching. Body-free coordinates plus
+live-RLS fetch remain the required path, so every displayed offset is durably
+recoverable.
 
 ### Compaction while messages continue
 
 Compaction never rewrites the mutable conversation head. A transaction freezes
 a complete-turn source range, content hashes, substream lineage, authorization
-epoch, context-scope revision, and compactor/model version into a unique job.
+epoch, resource-authorization revision, context-scope revision, and compactor/
+model version into a unique job.
 Messages sent during compaction allocate higher work-stream sequences normally
 and are not observed by the job.
 
@@ -660,10 +707,13 @@ sidebar projections, appends both event streams, and enqueues any derived work.
 The UI can therefore recover a coherent terminal card and transcript after any
 lost Broadcast.
 
-An error is classified as retryable, user-actionable, ambiguous external
-effect, budget exhaustion, authorization invalidation, or permanent failure.
-The sidebar maps it deterministically. Operators can inspect opaque IDs,
-revisions, timings, hashes, and error classes without routine content access.
+An error is classified as retryable, user-actionable, authorization
+invalidation, infrastructure/capacity exhaustion, or permanent failure.
+Uncertain provider responses are retried automatically under the original
+operation ID; a provider without idempotency may duplicate an effect. The
+sidebar maps terminal results deterministically. Operators can inspect opaque
+IDs, revisions, timings, hashes, and error classes without routine content
+access.
 
 Offline writes carry idempotency and expected revision. Reconnect submits them
 to the regional command API, receives the original result on duplicate, and
@@ -700,21 +750,36 @@ waiting, terminal, and recovery states.
 
 | Decision | Outcome | Reason |
 | --- | --- | --- |
-| Global control database | One required Supabase project with identity, shard directory, workspace routes/epochs, invitations/billing, and routing-command outbox/receipts | Gives every client and global lifecycle command one non-product routing authority |
-| Regional physical unit | One or more Supabase product-project shards per residency boundary; initially one EU and one Global/US | Keeps product transactions local, permits coarse capacity sharding, and avoids per-workspace compute/control overhead |
-| Workspace/work-stream authority | Regional Postgres rows and functions | Relational transactions solve sidebar projection and query needs directly |
+| Global control database | One required Supabase project with identity bindings, shard directory, workspace routes/epochs, invitations/billing, and routing-command outbox/receipts | Gives every client and global lifecycle command one non-product routing authority |
+| Regional physical unit | Exactly one EU and one Global/US product shard initially; no prelaunch capacity/load test | Start simply and select tier, limits, vertical scale, or later shards from production usage and abuse observations |
+| Authentication | Existing Avalon IdP JWTs directly through Supabase Third-Party Auth using asymmetric OIDC discovery/JWKS and `(iss, sub)` | Keeps Avalon in control of authentication, refresh, and logout without sharing signing secrets or requiring regional Supabase users |
+| EU promise | EU durable data only: Database, Storage, vectors, and backups | Transient Realtime/CDN/log/Cloudflare/provider processing may be global under the DPA; configuration and controls provide assurance rather than a separate processing-location contract |
+| Workspace/work-stream authority | Regional Postgres rows and functions; Supabase-only remains the selected architecture | Relational transactions solve sidebar projection and query needs directly; WorkstreamDO-compatible exportability is a dormant contingency, not a scale plan |
 | Serialization | Short `workstreams` row lock in a database function | Clear order without a resident actor or connection-scoped lock |
 | Client API | Narrow RLS-protected views/RPCs; canonical tables private | Prevents partial multi-request mutations and centralizes live auth checks |
-| Realtime | Private Broadcast hints plus durable event cursors | Low latency without confusing transient delivery with authority |
-| Token persistence | Stable attempt root plus bounded 16 KiB mutable-tail chunks, 500 ms observed checkpoints, then one sealed part | Avoids row-per-token and ever-growing-row WAL/IO while bounding reconnect loss |
+| Realtime authorization | Private body-free Broadcast hints; one-hour Third-Party Auth JWT lease; no topic rotation | Commands/reads/Storage revoke immediately, while an already-joined private channel may retain stale hint access for up to one hour |
+| Event replay | Durable event tables retain seven days; older cursors require `snapshot_required` | Provides a clear offline contract without making Broadcast Replay or unbounded events authoritative |
+| Background notification | One user-level Realtime socket per regional shard while that user has active work | Preserves body-free completion/needs-input notification without retaining work-stream channels or billing users with no active obligation |
+| Sidebar cards | Render-complete compact common and personal fields; refetch detailed bodies/lists | Makes list surfaces immediate without turning cards into transcript or membership replicas |
+| Mention fan-out | At most 250 explicit people, asynchronously materialized in bounded batches; group/workspace mentions expand lazily | Avoids synchronous Cartesian writes while retaining sparse user attention rows |
+| Context materialization | Deterministic versioned materializer at frozen sequence/audience/resource fences with pinned provider adapter | Retries produce provider-valid arrays without leaking compacted, redacted, or revoked content |
+| Token persistence | Human/assistant text up to 256 KiB and structured bodies up to 64 KiB inline; larger/binary content in private Storage; 16 KiB mutable-tail chunks at 500 ms observed/1 s unobserved | Avoids row-per-token and ever-growing-row WAL/IO while bounding reconnect loss |
+| Desktop stream rendering | Animate each 2 Hz committed batch at 20 fps by default; reduced motion displays batches immediately | Preserves perceived continuity without additional database or Realtime writes |
 | Application compute | Cloudflare Worker fetch handlers for all bounded API/provider/background actions | One compute/runtime/tooling plane beside Workflow; Supabase stays the state platform |
 | Async jobs | Logged Supabase Queues plus Cron/Cloudflare Worker consumers | Atomic enqueue with domain state; content is processed only after shard Worker admission |
-| Full-loop driver | Exactly one Cloudflare Workflow per admitted full loop | Handles 2–30 minute and rare 2+ hour loops without a second home-grown orchestrator; data stays authoritative in Supabase |
+| Queue policy | `pgmq.read` batches 32 with 60 s visibility, renew at 30 s using `pgmq.set_vt`, DLQ after 10 reads | Defines one pull-based at-least-once contract whose availability follows regional Postgres |
+| Inference driver | Every inference uses durable `RunDriver`: one Workflow per full loop or per bounded one-shot inference | Gives work-stream and non-work-stream inference one implementation and durable recovery boundary |
+| Product budgets | No product-level limits initially; record usage and observe production/abuse | Product policy will be chosen from evidence; unavoidable platform/provider hard ceilings still surface as infrastructure/capacity failures |
+| External effects | Uniform automatic retry under the same Avalon operation ID | This is at least once; providers that ignore idempotency may duplicate effects, while Daytona reattaches safely by named session/command ID |
 | Terminal | Existing Daytona plugin/provider | The provider remains separately governed; long commands reconcile by provider ID |
 | Large content | Private Supabase Storage plus canonical `content_refs` | Separates bytes from relational state without making Storage metadata authoritative |
 | Search | Postgres FTS + pgvector/HNSW | Supports authorization joins and transactional lifecycle |
 | Vector Buckets | Defer launch use | Public alpha and weaker proof for transaction/RLS/residency semantics |
-| Migration | CLI schema migrations plus regional campaign/job tables | Shared database removes per-object fleet migration but still needs bounded backfill/import control |
+| Retention | PITR 14 d; independent Storage recovery 30 d; active-data/derivative deletion 24 h; backup expiry 30 d; ops logs 30 d; content-free security/audit 1 y; provider/Daytona artifacts <=30 d; exports 7 d; scoped legal holds override | Sets explicit lifecycle promises for every authority and derivative |
+| Table partitioning | Never partition Postgres tables | Preserve ordinary relational tables/indexes and use bounded cleanup, vertical scaling, or later regional shards |
+| Encryption | Platform encryption at rest/TLS/RLS for ordinary content; Vault for connector credentials; regional Worker secrets for model/Daytona credentials | Keeps searchable data searchable without duplicating key-management and query machinery |
+| D1/R2 migration | Scheduled read-only maintenance window up to 15 minutes; final copy/verification/closure then activate Supabase; no dual writes | Simplifies authority transfer while retaining an independently verifiable source-closure receipt |
+| WorkstreamDO contingency | Audited indexed ownership paths and deterministic export; no trigger, planned rollout, DO column, or object | Preserves relational features today; any future extraction requires a superseding architecture decision |
 
 ## Key design decisions
 
@@ -722,7 +787,7 @@ waiting, terminal, and recovery states.
 
 The required global Supabase project is the sole global routing/control
 database. A regional shard is one complete Supabase project with Database,
-Auth-session bridge, Realtime, Queues/Cron, Storage, and vectors. Launch has
+Third-Party Auth configuration, Realtime, Queues/Cron, Storage, and vectors. Launch has
 `eu-1` and `global-us-1`; capacity may later add `eu-2` or `global-us-2` without
 changing workspace IDs or creating one project per workspace. `region_key` is
 immutable after workspace creation. `shard_id` may change only through the
@@ -731,8 +796,8 @@ fenced authority-transfer protocol, and every change increments `route_epoch`.
 The desktop first calls the global routing Worker, which reads this database
 and returns a signed, short-lived route envelope containing opaque workspace ID,
 `region_key`, `shard_id`, regional API/Realtime origin identifiers, route epoch,
-and expiry. It then establishes the shard-local Auth/session and Supabase
-client. Ordinary product reads/writes never proxy through the global database.
+and expiry. It then creates the shard-local Supabase client with the same Avalon
+IdP JWT. Ordinary product reads/writes never proxy through the global database.
 Every shard command carries workspace ID, shard ID, route epoch, operation key,
 and no product body; the shard-local admission row rejects an old shard/epoch.
 
@@ -741,7 +806,8 @@ The global database is limited to:
 - account identity and sign-in configuration;
 - opaque organization/workspace IDs, immutable selected region, assigned shard,
   route epoch, lifecycle, and non-content shard health/capacity class;
-- invitations that must be discoverable before a regional session exists;
+- invitations that must be discoverable before regional workspace membership
+  exists;
 - billing/customer/entitlement references and non-product lifecycle state;
 - a routing-command outbox, delivery attempts, shard receipts, and convergence
   status for create/suspend/delete/move/invite/entitlement operations.
@@ -765,12 +831,27 @@ both shards writable. Globally initiated deletion/suspension is deny-first: the
 global route stops issuing writable envelopes immediately, while shard command
 delivery is retried to converge stored state.
 
-Supabase Auth is project-local. Before implementation, Avalon must prove a
-supported federation flow in which global Auth acts as OIDC provider to each
-regional product project, or adopt another explicitly reviewed session exchange.
-It must prove stable subject mapping, regional session issuance, refresh,
-logout, membership removal, Realtime token replacement, and recovery. A shared
-JWT signing key or a client-held service role is rejected.
+The existing Avalon identity provider is the authentication authority for every
+project. Supabase Third-Party Auth validates its asymmetric JWT directly through
+the provider's OIDC discovery document and JWKS. The stable principal is the
+pair `(iss, sub)`; `auth.uid()` and a Supabase-managed `auth.users` row are not
+required for Avalon authorization. Avalon owns sign-in, refresh, logout,
+one-hour access-token issuance, and account-session revocation. Supabase owns
+JWT verification and maps claims into `auth.jwt()` for RLS. Shared symmetric
+signing secrets, copied private keys, a regional session exchange, and client-
+held service roles are rejected.
+
+The Avalon issuer must expose HTTPS OIDC discovery/JWKS, sign asymmetrically,
+and put `kid`, `iss`, stable `sub`, `aud`, one-hour `exp`, and a fixed low-
+privilege Postgres `role` in every accepted token. The `role` is issuer policy,
+not user metadata, and can only select the ordinary authenticated role. The
+desktop supplies the current token through `supabase-js`'s `accessToken`
+callback. Each project configures the same issuer independently and permits the
+documented key-refresh delay during rotation. Before rollout, a hosted-project
+integration test must prove that Avalon's issuer is accepted as the selected
+custom Third-Party Auth provider across Data API, Storage, and Realtime; failure
+blocks this implementation rather than falling back to a shared key or copied
+Supabase user.
 
 ### Schemas, grants, and API boundary
 
@@ -792,6 +873,61 @@ Views use `security_invoker = true`. UPDATE policies include both `USING` and
 `WITH CHECK`, and the required SELECT policy. Every membership/audience/RLS
 predicate has a supporting index. User-editable Auth metadata never grants
 access, and JWT workspace claims are not treated as fresh membership.
+
+### WorkstreamDO-compatible exportability without a second authority
+
+The regional schema keeps each work stream deterministically exportable to a
+portable SQLite-shaped aggregate without moving its workspace or rewriting its
+conversation model. Supabase-only is the chosen architecture; this is a dormant
+portability contingency, not a scale plan or automatic trigger. No DO exists,
+receives a shadow write, or becomes a fallback merely because a compatible row
+was created. Invoking a WorkstreamDO requires a future superseding PRD and an
+explicit new architecture decision.
+
+Every workspace-scoped table must have one documented ownership classification:
+workspace-retained, work-stream aggregate, Postgres read model, shared reference,
+or derived/rebuildable. A work-stream aggregate row either stores
+<code>workstream_id</code> or reaches it through a bounded, indexed, non-
+polymorphic foreign-key path whose join and cardinality are tested. Leaf rows do
+not copy <code>workspace_id</code> or <code>workstream_id</code> merely for future
+portability when the normalized parent path is clearer and cheaper. Tables that
+use a polymorphic owner must have a checked owner-kind mapping and a registry of
+the exact export join for the work-stream case.
+
+The compatibility contract also requires:
+
+- globally stable UUIDv7 identities for newly generated Avalon-owned opaque
+  UUIDs, preserving existing/imported/external IDs without re-keying; 64-bit
+  sequences/revisions transported as decimal strings; timestamps transported as
+  UTC RFC 3339; hashes as fixed base64url or hex; and canonical JSON with a
+  schema version and byte cap;
+- one work-stream-wide canonical sequence plus complete-turn/provider-order
+  invariants that do not depend on physical row IDs or commit timestamps;
+- a versioned extraction registry that names, for every table, its disposition,
+  root key, ordered export query, dependency order, inclusion predicate,
+  cardinality bound, and canonical checksum projection;
+- portable materializer and invariant tests for conversation order, provider
+  tool pairs, queued/steering admission, compaction, runs, effects, and active
+  output. The target DO must match these semantics, not Postgres's physical
+  schema;
+- receipts and external provider references that can be selected through the
+  registered work-stream ownership path while they remain retryable;
+- Postgres-specific foreign keys, deferred constraints, triggers, generated
+  columns, views, RLS, FTS, pgvector, arrays, JSON operators, and transactions
+  remain allowed wherever they make the Supabase design safer or faster. The
+  registry states whether each value is copied, recomputed, referenced, or
+  deliberately left in Postgres;
+- Postgres search, workspace collections, connector facts, user overlays, and
+  other relational domains remain authoritative in Postgres after extraction.
+  Compatibility never means copying a workspace into every DO.
+
+The table-by-table disposition and hypothetical transfer protocol are
+normative portability documentation in
+[Appendix A](#appendix-a-non-planned-workstreamdo-extraction-contingency).
+The portable representation never round-trips a Postgres `bigint` through a
+JavaScript `number`: values outside the exact safe-integer range remain decimal
+text in transit and are stored as SQLite text or another explicitly validated
+lossless representation in a future DO.
 
 ### Command transaction and lock order
 
@@ -830,18 +966,26 @@ result; reusing it with different bytes is an error. Queue deliveries have
 semantic inbox receipts. Run effects use `(run_id, step_no, effect_kind,
 effect_key)` so two intentionally repeated actions remain distinct.
 
-An external side effect follows `planned -> started -> succeeded|failed|unknown`:
+An external side effect follows `planned -> started -> succeeded|failed`, with
+an intermediate `response_uncertain` diagnostic state:
 
 1. commit intent and its idempotency key;
 2. call the provider outside the transaction;
 3. commit the response/provider reference through a fenced RPC;
-4. after a crash or timeout, reconcile by provider reference before retrying.
+4. after a crash, timeout, or uncertain response, automatically retry the same
+   provider call with the same Avalon operation ID.
 
-If the provider neither accepts idempotency keys nor supports result lookup, a
-post-call crash is `unknown` and may require a person. An outbox is used only
-where a provider push/callback cannot be part of the Postgres-native queue; it
-is drained with the same receipt rules. Database Webhooks may accelerate an
-external notification but are not the durable job bus.
+This policy is uniform across model and tool providers. When a provider honors
+idempotency, the repeated ID deduplicates the effect. When it ignores the ID and
+offers no lookup, Avalon still retries and accepts that the external effect may
+occur more than once. UI and audit surfaces disclose this at-least-once risk;
+they do not invent an exactly-once guarantee or block waiting for a person.
+Daytona is the safer special case because its deterministic named-session,
+command ID, and log-offset protocol reattaches to the existing command rather
+than launching another. An outbox is used only where a provider push/callback
+cannot be part of the Postgres-native queue; it is drained with the same receipt
+rules. Database Webhooks may accelerate an external notification but are not
+the durable job bus.
 
 ### Supabase Queues/Cron with Cloudflare Worker consumers
 
@@ -851,6 +995,7 @@ Avalon uses a few logged Basic queues, not one queue per workspace/work stream:
 | --- | --- | --- |
 | `agent_ready` | Run ID, expected revision, due time, driver hint | Run dispatcher/step adapter |
 | `connector_ingress` | Ingress receipt ID and parser version | Normalizer |
+| `sidebar_attention` | Attention event ID, bounded explicit-mention cursor, expected revision | Sparse overlay batch materializer |
 | `derived_content` | Compaction, embedding, digest, suggestion job IDs | Typed bounded workers |
 | `maintenance` | Export, deletion, orphan, migration job IDs | Typed maintenance workers |
 
@@ -858,18 +1003,21 @@ Queue bodies contain identifiers and expected revisions, not canonical content
 or secrets. Enqueue occurs in the originating database transaction. Delivery is
 treated as at least once end to end despite visibility semantics. The consumer
 creates/fetches a unique receipt, commits the authoritative outcome, then
-deletes or archives the message. Poison messages enter an explicit dead-letter
-record/queue after a policy-defined attempt count.
+deletes an ordinary successful delivery or archives the message when auditable
+delivery history is required. Trusted Cloudflare Workers pull with
+`pgmq.read(queue_name, 60, 32)`: a batch of at most 32 and a 60-second visibility
+timeout. Work expected to continue renews visibility after 30 seconds with
+`pgmq.set_vt`. A message enters the explicit dead-letter queue after ten reads.
 
-Visibility exceeds the bounded action p99 plus margin and is renewed only after
-the deployed `pgmq` API is verified. Per-kind and per-workspace concurrency,
-fairness, oldest-visible age, `read_ct`, next attempt, and DLQ count are
-observable. The launch requires a throughput/latency test because public docs do
-not give a hosted queue SLA or continuously running consumer.
+Per-kind and per-workspace concurrency, fairness, oldest-visible age, `read_ct`,
+next attempt, and DLQ count are observable. Queue availability follows the
+regional Postgres primary. Public docs do not provide a hosted Queue SLA;
+throughput and latency are observed in production rather than launch-certified.
 
 A small number of regional Supabase Cron jobs may create due queue rows or send
 an authenticated, identifier-only HTTP wake to the shard's regional Cloudflare
-Worker hostname, potentially as often as every second if load tests permit.
+Worker hostname, potentially as often as every second when production telemetry
+shows it is needed and safe.
 Alternatively, a Cloudflare Cron Trigger may send the same opaque wake to that
 hostname. Due state remains in Postgres; neither scheduler is one job per run or
 an SLA. For EU, a Cron/Queue trigger does not itself process content because
@@ -880,7 +1028,9 @@ bytes after in-region admission.
 The Worker validates transport and its shard-scoped runner identity, calls a
 transactional RPC, performs one bounded external or CPU-light action, and calls
 a completion RPC. Workflow steps may await network I/O for a model stream, but
-CPU, subrequest, output, and product elapsed budgets remain explicit. Large
+unavoidable Cloudflare CPU, subrequest, output, and wall-time ceilings still
+apply. Avalon records product usage but sets no product-level token, tool, cost,
+elapsed, idle, or step limit in this version. Large
 transforms are divided into database-key ranges or addressable provider
 operations. `waitUntil`, a client socket, or a queue visibility timeout is not
 durability; Workflow and Supabase receipts are.
@@ -902,7 +1052,10 @@ The database decides the next action. A driver may only request
 driver event is only a wake-up; early events are persisted in `run_wait_events`
 before a waiter exists, and a later wait consumes them exactly once.
 
-The implementation is one Workflow instance per `agent_run`.
+The implementation is one Workflow instance per `agent_run`: a full loop uses
+one Workflow for its entire loop, while a one-shot description, attachment
+summary, classification, ranking, embedding, or other bounded inference uses
+one Workflow for that single inference run. No inference bypasses `RunDriver`.
 Workflow steps stay bounded and data-minimal. A long wait uses Workflow event or
 duration waiting; it does not keep an executor or client socket active. A
 Workflow calls the selected shard Worker explicitly. In Global/US, a service
@@ -913,9 +1066,10 @@ Placement does not apply to Workflow named entrypoints, and Regional Services
 does not cover Workflow/Queue/Cron triggers or outgoing subrequests. The
 Workflow therefore receives only opaque status, while the regionalized Worker
 loads prompts/content, calls approved providers, checkpoints the EU shard, and
-returns an opaque next-action result. This path remains disabled until the
-Cloudflare contract covers Workflow state/logs and the full Worker/provider
-processing path.
+returns an opaque next-action result. The contractual promise is EU durable-
+data residency, not full EU processing: transient Cloudflare and provider
+processing may be global under the applicable DPA. Deployment configuration,
+redacted state/logging, and continuous controls provide assurance.
 
 Run admission and driver creation are not one distributed transaction. The
 admission transaction creates `agent_runs`/`driver_bindings(state='pending')`
@@ -927,7 +1081,7 @@ effect can begin until the binding is active and `begin_next_step` claims it.
 If creation repeatedly fails, the run remains visibly queued/capacity-limited
 and a later dispatcher retries—it is never rolled back into an uncommitted user
 message. There is no queue-backed alternative driver. If Workflow creation or
-the residency gate is unavailable, the run stays visibly queued/unsupported;
+the Workflow service is unavailable, the run stays visibly queued/unsupported;
 Avalon does not silently start a second orchestration implementation.
 
 Cloudflare Workflow input and result must never include prompt text, generated
@@ -937,11 +1091,13 @@ to delete every Workflow instance without deleting product truth.
 
 ### Realtime protocols
 
-Four logical private topics are sufficient for the active surface:
+Five logical private topic classes are sufficient for the active surface:
 
 - `workspace:<opaque_workspace_id>`: common invalidations and durable cursor;
 - `workspace-user:<workspace_id>:<user_id>`: personal overlay invalidations;
 - `workstream:<opaque_workstream_id>`: foreground committed/checkpoint hints;
+- `region-user:<user_id>`: body-free completion/needs-input coordinates while
+  that user has active work in the regional shard;
 - `run-control:<opaque_run_id>`: trusted executor acceleration.
 
 The first three are multiplexed over one regional client connection. Topic RLS
@@ -974,12 +1130,14 @@ attested watermark. It never treats every missing integer as a leaked event or
 endless transport gap.
 
 Membership removal increments authorization epochs and updates regional rows in
-one transaction. New commands and catch-up queries fail immediately. The client
-is sent an eviction hint and regional tokens/channels are renewed. Because the
-public contract for already-joined Realtime channel reauthorization is not
-sufficiently precise, launch requires an integration test and a maximum stale-
-channel bound; sensitive payloads remain IDs/invalidation hints, and every
-content fetch performs live RLS.
+one transaction. New commands, catch-up queries, and Storage reads fail
+immediately through live checks. Third-Party Auth access JWTs have a one-hour
+standard lease. Supabase caches private-channel RLS for a joined connection;
+refresh recalculates authorization and expiry disconnects the socket. Avalon
+does not rotate topic names and accepts up to one hour of stale Broadcast access
+on an already-authorized channel. Sensitive payloads therefore remain body-free
+IDs/invalidation hints, and every content fetch performs live RLS. An eviction
+hint accelerates cleanup but is not the security boundary.
 
 ### Storage and content references
 
@@ -1023,11 +1181,14 @@ The regional primary is shared by interactive transactions, queues, semantic
 Realtime database Broadcast, Auth metadata, activity, vectors, active-output
 checkpoints, and offset reads. Token checkpoint hints use REST Broadcast, so
 they do not add a `realtime.messages` row/WAL write, but their checkpoint RPCs
-still consume the shared primary. Launch sizing must measure workspace/card
-counts, active writers, connector burst, token fan-out, checkpoint transactions
-and bytes, mutable-chunk inserts/updates, WAL bytes/checkpoint, TOAST/vacuum,
-incremental RLS reads, queue backlog, vector index memory, IOPS, and connection
-pool demand together.
+still consume the shared primary. This version starts with exactly one product
+shard per region and performs no prelaunch capacity/load test. Production
+telemetry observes workspace/card counts, active writers, connector burst,
+token fan-out, checkpoint transactions and bytes, mutable-chunk inserts/updates,
+WAL bytes/checkpoint, TOAST/vacuum, incremental RLS reads, queue backlog, vector
+index memory, IOPS, and connection-pool demand together. Those observations
+select Supabase tier, limits, vertical scaling, and any later additional shard.
+Correctness, failover, restore, and failure-injection tests remain required.
 
 Cloudflare Workers normally call narrow Supabase Data API/RPC endpoints over
 HTTPS. Any measured direct-Postgres path uses Supavisor transaction pooling;
@@ -1037,18 +1198,20 @@ statement timeouts. Large reads use keyset pagination, not deep `OFFSET`. All
 foreign keys, RLS predicates, due-state claims, collection filters, and event
 cursors have indexes.
 
-Partition append-heavy event/activity/run-event tables only after measured
-size, vacuum, index, or retention pressure establishes the boundary. Read
-replicas may serve lag-tolerant historical/analytics views; they never serve
+Postgres table partitioning is not used in this architecture, even after a size
+threshold. Ordinary indexed tables, bounded deletion/archive jobs, vertical
+scaling, and—if production operations later require it—another regional project
+are the supported responses. Read replicas may serve lag-tolerant historical/
+analytics views; they never serve
 read-your-write sidebar, authorization, active runs, Queues, Realtime, Auth, or
 Storage correctness.
 
 Realtime cost is transport send rate multiplied by receivers, not desktop
 render rate. Only foreground work-stream subscribers receive active-output
 coordinate hints; common invalidations are tiny. The client turns each 2 Hz
-batch into 10/20/30 fps local animation without more network or database work.
-Generated body frames remain disabled until the revocable-lease gate in the
-token protocol is satisfied.
+batch into 20 fps local animation by default without more network or database
+work; reduced-motion clients display the batch immediately. Generated bodies
+remain outside Realtime Broadcast.
 Worker request/CPU and Workflow-step cost are controlled with due-state,
 callbacks, and durable waits rather than hot polling. Storage holds large
 immutable bodies; Postgres holds metadata and hot text. Idle sockets close
@@ -1064,10 +1227,27 @@ the stated keys, authority, lifecycle, transaction boundary, and indexes remain
 equivalent.
 
 - Canonical tables live in `avalon_private`; names below omit that prefix.
-- IDs exposed across APIs are UUIDv7/time-ordered UUIDs when supported by the
-  chosen library; internal append sequences use `bigint`.
+- Every newly generated Avalon-owned opaque ID represented as `uuid` is UUIDv7.
+  This includes workspace, work-stream, substream, turn, part, run, step,
+  command, receipt, job, and operation identities created by Avalon. Trusted
+  regional Workers generate canonical entity IDs; approved clients may generate
+  idempotency/operation IDs, whose UUID version and shape are validated at the
+  command boundary. Each runtime uses a pinned RFC 9562-compatible
+  implementation before the mutation transaction. A reviewed database-native
+  generator may replace it only when the deployed Supabase Postgres version and
+  migration tests prove identical UUIDv7 semantics. Auth/provider IDs, retained
+  import IDs, semantic composite keys, content hashes, and physical event rows
+  using `bigint identity` are not rewritten into UUIDv7.
+- UUIDv7's timestamp prefix provides approximate creation-time sorting and
+  B-tree insert locality, not transcript order, event replay, causality, or a
+  security timestamp. Product queries use explicit `created_at`, domain
+  sequence/revision, and stable tie-breaker columns; they never rely on
+  `ORDER BY id` for correctness. Clock skew or several IDs in one millisecond
+  must not change observable behavior.
 - Every timestamp is `timestamptz`; every regional product row includes or can
-  reach `workspace_id` through an indexed foreign key.
+  reach `workspace_id` through an indexed foreign key. Every work-stream-owned
+  row includes or reaches `workstream_id` through the bounded indexed ownership
+  path registered for extraction.
 - Human text is `text`, bounded at the command boundary. Arbitrary provider
   metadata is versioned `jsonb` with a size cap and a GIN index only for a
   measured query.
@@ -1076,12 +1256,21 @@ equivalent.
 - Foreign-key delete behavior is explicit. Large destructive cascades are
   avoided in favor of deletion jobs and tombstones.
 - Append-only tables have identity `bigint` primary keys plus the domain unique
-  key used for cursor/order. Frequently filtered foreign keys are indexed even
-  though Postgres does not create those indexes automatically.
+  key used for cursor/order. Every foreign key is covered by an index whose
+  leftmost columns support the FK lookup, unless an existing primary/unique
+  index already does; Postgres does not create those indexes automatically.
+  Composite and partial indexes follow current query/RLS/retention predicates,
+  not hypothetical DO access patterns.
 - Sealed conversation/event/audit rows are immutable to application roles.
   Corrections append a replacement/tombstone relation.
 - Managed Supabase tables in `auth`, `storage`, `realtime`, `pgmq`, `cron`, and
   extension schemas are platform-owned and intentionally absent below.
+
+Normalization remains the default. A shorthand child table may use only its
+parent ID when that foreign key is indexed and the extraction registry supplies
+the deterministic join back to the work-stream root. Redundant scope columns
+are added only for current RLS, query, retention, or integrity needs established
+by the Supabase design—not solely to imitate a future SQLite layout.
 
 ### Relationship overview
 
@@ -1108,7 +1297,7 @@ flowchart LR
 
 There is no cross-database relationship between a workspace and one of its
 work streams: both rows are in the same regional primary. A command changing a
-work stream locks it and updates `workstream_cards`, sparse user state,
+work stream locks it and updates `workstream_cards`, direct sparse user state,
 `workstream_events`, and `workspace_events` before one commit. Realtime only
 announces that commit. The only normal cross-system edges are global route/
 command to a regional shard/gate, Postgres metadata to Storage bytes, Postgres run state to a
@@ -1119,14 +1308,15 @@ receipt, or pending/finalized state rather than a distributed transaction.
 
 #### Global identity, organization, invitation, and entitlement tables
 
-Supabase-managed `auth.users` remains the credential identity store in the
-global project. Avalon adds the following private global application tables;
-none is copied into a regional product query or treated as sufficient to read
-workspace content.
+The existing Avalon identity provider remains the credential and session
+authority. Supabase Third-Party Auth validates its JWTs; the global project
+stores only the stable application mapping and lifecycle below. None is copied
+into a regional product query or treated as sufficient to read workspace
+content.
 
 | Table | Required columns / constraints | Role |
 | --- | --- | --- |
-| `global_accounts` | `platform_user_id uuid primary key`, `global_auth_user_id uuid not null unique` FK to global `auth.users`, `state` (`active`, `suspended`, `deleted`), `session_epoch bigint not null`, `created_at`, `updated_at` | Stable global person identity and global-session revocation fence |
+| `global_accounts` | `platform_user_id uuid primary key`, `issuer text not null`, `subject text not null`, `state` (`active`, `suspended`, `deleted`), `session_epoch bigint not null`, `created_at`, `updated_at`; unique `(issuer, subject)` | Stable global person identity and global-session revocation fence for an Avalon IdP subject |
 | `organizations` | `organization_id uuid primary key`, `billing_owner_platform_user_id`, `state` (`active`, `suspended`, `closed`), `created_at`, `updated_at`, `closed_at` | Non-content tenant and billing scope |
 | `organization_roles` | `organization_id`, `platform_user_id`, `role` reviewed enum, `state`, `revision bigint`, `created_at`, `updated_at`; primary key `(organization_id, platform_user_id)` | Global account/billing administration only; never a regional workspace-content grant |
 | `workspace_invitations` | `invitation_id uuid primary key`, `workspace_id`, `organization_id`, `inviter_platform_user_id`, normalized destination or provider subject stored under the approved PII policy, `regional_role`, `route_epoch`, `state`, `expires_at`, `accepted_by_platform_user_id`, `created_at`, `updated_at`; unique active invite key | Pre-session invitation discovery and one-time acceptance intent; acceptance still converges to the shard before content access |
@@ -1138,10 +1328,11 @@ people reference `global_accounts`; invitations reference an organization and
 the opaque `workspace_routes` identity. A transaction changing an invitation,
 entitlement, suspension, or deletion appends its matching `routing_commands`
 row before commit. Regional access begins only after the target shard applies
-that command, stores a matching `global_command_receipts` row, and issues or
-refreshes a shard-local session whose live regional membership permits the
-request. This deliberately separates global discoverability and commercial
-control from regional content authorization.
+that command and stores a matching `global_command_receipts` row. The same one-
+hour Avalon IdP JWT is then validated directly by the regional project's Third-
+Party Auth, while live regional membership permits the request. This deliberately
+separates global discoverability and commercial control from regional content
+authorization.
 
 #### Global `regional_shards`
 
@@ -1213,22 +1404,22 @@ replaces an impossible foreign key or distributed transaction.
 
 #### `platform_identities`
 
-Maps a regional Auth principal to Avalon's stable person ID. It is the regional
-bridge that RLS and commands use; `auth.users` is not extended with product
-membership.
+Maps the Avalon IdP principal claims exposed by `auth.jwt()` to Avalon's stable
+person ID. It is the regional bridge that RLS and commands use; no regional
+Supabase-managed user or product membership in `auth.users` is required.
 
 | Column | Type / constraints | Meaning |
 | --- | --- | --- |
-| `regional_auth_user_id` | `uuid primary key`, FK to `auth.users` | Regional session principal |
+| `issuer`, `subject` | `text not null`, composite primary key | Exact Third-Party Auth `iss`/`sub` principal |
 | `platform_user_id` | `uuid not null unique` | Stable Avalon person ID from the identity-provider subject |
-| `issuer`, `subject` | `text not null`, unique pair | Federated identity binding |
 | `session_epoch` | `bigint not null default 1` | Live revocation-sensitive epoch |
 | `state` | enum `active`, `suspended`, `deleted` | Regional account usability |
 | `created_at`, `updated_at` | `timestamptz not null` | Audit times |
 
-Indexes: unique `(issuer, subject)`, `(platform_user_id, state)`. Mapping changes
-are privileged and audited. One global identity can have one regional principal
-per project.
+Indexes: primary `(issuer, subject)` and `(platform_user_id, state)`. Mapping
+changes are privileged and audited. RLS resolves
+`(auth.jwt()->>'iss', auth.jwt()->>'sub')`; it never grants from mutable user
+metadata or assumes `auth.uid()` exists.
 
 #### `workspaces`
 
@@ -1260,7 +1451,15 @@ activity_days, raw_ingress_days, audit_days, export_days, terminal_artifact_days
 legal_hold_mode, created_by, created_at, superseded_at)` is immutable by version
 and unique per workspace/version. Jobs store the applied policy version; a
 policy change schedules explicit deletion/archive work and never silently
-rewrites an active export or legal hold.
+rewrites an active export or legal hold. The service contract fixes Database
+PITR at 14 days, independent Storage object recovery at 30 days, generated
+exports at seven days, operational logs at 30 days, and content-free security/
+audit records at one year. Active-data deletion completes within 24 hours;
+Database backup copies expire within 30 days; search/vector derivatives delete
+within 24 hours and remain rebuildable; and Daytona/provider artifacts persist
+no more than 30 days with zero-retention enabled where available. An explicit,
+scoped legal hold may override the affected deletion/expiry fields and must be
+audited; it never becomes an unscoped workspace-wide boolean by accident.
 
 #### `workspace_members`
 
@@ -1337,7 +1536,9 @@ Unique `(workspace_id, id)` supports composite tenant FKs. Indexes cover
 workspace collection pagination: `(workspace_id, state, last_activity_at desc,
 id)`, `(workspace_id, completed_at desc, id)`, and active-run/operational
 states. Checks ensure `latest_seq < next_seq` and terminal timestamps match
-state. Only command functions update this row.
+state. Only command functions update this row. WorkstreamDO authority-routing
+columns and projection tables are absent; only a future superseding PRD may
+define and add them. Adding them to launch transactions is prohibited.
 
 #### `workstream_cards`
 
@@ -1349,13 +1550,14 @@ not wait for a projector.
 | --- | --- | --- |
 | `workstream_id` | primary/FK | Same identity as work stream |
 | `workspace_id` | FK not null | Fast tenant filtering |
-| `title`, `description`, `origin_kind` | denormalized common fields | Card content |
+| `title`, `short_description`, `origin_kind` | denormalized bounded common fields | Render-complete compact card content; full description stays canonical on `workstreams` |
 | `exact_state`, `state_reason`, `lifecycle_family` | constrained values | Collection placement |
 | `last_activity_at`, `completed_at`, `error_at` | timestamps | Date/order groups |
 | `latest_seq`, `attention_ordinal` | `bigint not null` | Catch-up/unread inputs |
 | `preview_text`, `preview_content_ref_id` | bounded text or FK | Authorized common preview only |
 | `active_run_summary` | bounded `jsonb` | Non-sensitive common status fields |
 | `needs_input` | boolean | Common input requirement |
+| `participant_count`, `activity_count` | nonnegative integer | Compact render-only counts, not participant/activity replicas |
 | `common_revision` | `bigint not null` | Monotonic patch revision |
 | `visibility_epoch` | `bigint not null` | Prevents stale read after ACL change |
 
@@ -1372,10 +1574,11 @@ Sparse overlay for one person.
 | `workspace_id`, `workstream_id`, `platform_user_id` | composite primary/foreign keys | Scoped overlay |
 | `seen_attention_ordinal` | `bigint not null default 0` | Monotonic waterline |
 | `latest_unread_ordinal` | `bigint not null default 0` | Fast unread predicate |
-| `unread_count` | `integer null` | Optional bounded/exact cached count |
+| `unread_count` | `integer null` | Exact cached count only for displayed attention/collection surfaces |
 | `latest_mention_ordinal` | `bigint not null default 0` | Mention predicate |
 | `mentioned_at` | timestamp nullable | Ordering |
 | `needs_your_input` | boolean not null | Targeted request |
+| `assignment_state` | constrained nullable | Render-complete personal assignment state |
 | `pinned`, `muted`, `dismissed` | booleans not null | Explicit preference |
 | `interest_reason_bits` | `integer not null` | Documented derived union bits |
 | `last_opened_at`, `last_interest_at` | timestamps nullable | Recent interest |
@@ -1401,6 +1604,15 @@ audited tombstone but RLS excludes it immediately.
 Unique `(workstream_id, attention_ordinal)`; indexes support audience-specific
 range counts. Workspace-wide events do not eagerly materialize every user row.
 
+`attention_materialization_jobs(attention_event_id primary key,
+next_mentioned_user_id, processed_count, expected_count, state, attempts,
+next_attempt_at, created_at, completed_at)` exists only for explicit-person
+fan-out. `expected_count` is at most 250. Each `sidebar_attention` delivery locks
+the job, upserts a bounded key-ordered batch into `workstream_user_state`,
+advances the cursor, and re-enqueues or completes atomically. A group/workspace
+audience never creates this job; authorized queries fold its audience event
+lazily.
+
 #### `part_mentions`
 
 | Column | Type / constraints | Meaning |
@@ -1412,8 +1624,10 @@ range counts. Workspace-wide events do not eagerly materialize every user row.
 | `created_at` | timestamp | Audit |
 
 Indexes: `(workspace_id, mentioned_user_id, mention_ordinal desc)` and
-`(workstream_id, part_id)`. Mention creation and sidebar overlay update are in
-the part append transaction.
+`(workstream_id, part_id)`. At most 250 explicit people may be mentioned in one
+part. The append transaction stores the canonical mentions and one attention
+event; a logged queue job creates or updates sparse person overlays in bounded
+batches. Group/workspace mentions store one audience event and expand lazily.
 
 #### `workstream_participants` and `workstream_assignments`
 
@@ -1487,13 +1701,13 @@ The canonical provider-neutral append log.
 | `role` | system, user, assistant, tool | Neutral message role |
 | `kind` | text, tool_call, tool_result, attachment, terminal, summary, control, etc. | Typed content |
 | `author_kind`, `author_id` | constrained identity | Human, inherent agent, subagent, connector/system |
-| `inline_text` | text nullable with size cap | Small content |
+| `inline_text` | text nullable with UTF-8 size cap `<= 262144` | Human/assistant text up to 256 KiB |
 | `content_ref_id` | UUID nullable FK | Large/immutable content |
-| `structured_payload` | bounded versioned `jsonb` nullable | Typed non-text fields |
+| `structured_payload` | versioned `jsonb` nullable with serialized size cap `<= 65536` | Tool/connector structured bodies up to 64 KiB |
 | `provider_call_id` | text nullable | Tool pairing/provider reconciliation, not authority |
 | `related_part_id` | UUID nullable FK | Tool result/replacement/promotion relation |
 | `audience_id` | UUID/FK not null | Effective content audience |
-| `authorization_epoch`, `scope_revision` | bigint not null | Projection fence inputs |
+| `authorization_epoch`, `resource_authorization_revision`, `scope_revision` | bigint not null | Projection fence inputs |
 | `content_hash` | fixed hash not null | Deterministic materialization/audit |
 | `source_operation_key` | text nullable | Scoped idempotency provenance |
 | `created_at`, `sealed_at` | timestamps not null | Immutable lifecycle |
@@ -1504,6 +1718,9 @@ operation keys where applicable. Indexes support substream ranges, run/turn,
 audience, and keyset retrieval. Exactly one of inline content, content reference,
 or a kind-valid structured payload is required. UPDATE/DELETE are denied to
 normal application roles after seal.
+Text above 256 KiB, structured bodies above 64 KiB, and every binary payload
+must use a ready private-Storage `content_ref_id`; the database never silently
+truncates them.
 
 #### `input_admission_batches`
 
@@ -1538,6 +1755,7 @@ a batch.
 | `created_at`, `sealed_at`, `expires_at` | timestamps | Recovery, terminal state, and bounded cleanup |
 | `final_checkpoint_revision`, `final_byte_offset` | bigint nullable, nonnegative | Terminal ordered extent; null while streaming |
 | `final_content_hash` | fixed hash nullable | Terminal hash over the ordered chunk sequence |
+| `terminal_content_ref_id` | UUID nullable FK | Verified ready private-Storage object for assistant text above 256 KiB |
 
 A partial unique constraint permits only the winning nonterminal attempt for a
 run/turn, while terminal attempts remain auditable. This root is locked on each
@@ -1558,7 +1776,7 @@ combined.
 | `byte_start`, `byte_end` | bigint not null, `0 <= byte_start <= byte_end` | Half-open byte range in the whole attempt |
 | `checkpoint_revision` | bigint not null, nonnegative | Latest committed CAS revision represented by this chunk |
 | `first_frame_seq`, `through_frame_seq` | bigint not null | Provider/UI frame range represented by committed bytes |
-| `token_estimate_through` | bigint not null, nonnegative | Approximate budget progress; exact usage settles at model-step end |
+| `token_estimate_through` | bigint not null, nonnegative | Approximate usage telemetry; exact usage settles at model-step end |
 | `text_buffer` | text not null with UTF-8 byte-length check `<= 16384` | Provisional bytes for this bounded chunk only |
 | `chunk_hash`, `attempt_hash_through` | fixed hashes not null | Chunk integrity and ordered prefix integrity |
 | `provider_cursor` | bounded encrypted/json reference nullable | Resume coordinate when the provider supports it |
@@ -1587,8 +1805,10 @@ attempt and open chunk, verifies contiguous byte ranges and the ordered hash,
 inserts exactly one sealed `conversation_parts` row, applies semantic run/work-
 stream/event changes, and marks the attempt sealed in one transaction. It does
 not copy a growing row on every token checkpoint or append a durable event for
-every checkpoint. Chunk cleanup happens asynchronously after the recovery
-window. A provider-resumable attempt may continue from its verified cursor;
+every checkpoint. If the assembled assistant text exceeds 256 KiB, a verified
+ready `content_ref` must exist before that terminal transaction and the part
+references it instead of using `inline_text`. Chunk cleanup happens
+asynchronously after the recovery window. A provider-resumable attempt may continue from its verified cursor;
 otherwise a crash supersedes the entire attempt and starts a new one.
 
 #### `compaction_jobs` and `compaction_sources`
@@ -1601,7 +1821,7 @@ otherwise a crash supersedes the entire attempt and starts a new one.
 | `workspace_id`, `workstream_id`, `substream_id` | FKs | Scope |
 | `first_seq`, `last_seq` | bigint not null | Complete-turn frozen range |
 | `source_merkle_hash` | fixed hash not null | Ordered content/lineage digest |
-| `authorization_epoch`, `scope_revision` | bigint not null | Leak/staleness fence |
+| `authorization_epoch`, `resource_authorization_revision`, `scope_revision` | bigint not null | Leak/staleness fence |
 | `format_version`, `model`, `model_version`, `prompt_version` | text not null | Reproducibility |
 | `compaction_key` | text unique not null | Idempotent semantic identity |
 | `state` | queued/running/ready/invalid/failed | Lifecycle |
@@ -1649,23 +1869,25 @@ not change source access.
 Unique `(workspace_id, workspace_seq)`. Indexes support common and target-user
 keyset catch-up. The catch-up function returns authorized rows and a
 `scanned_through` high watermark so a person's cursor can pass sequence values
-used by other users' private events without learning their contents. Partition/
-retention is measured; the cursor lifetime must exceed the supported offline
-window or the API returns `snapshot_required`.
+used by other users' private events without learning their contents. Event rows
+are retained for exactly seven days in ordinary, non-partitioned tables. A
+cursor older than that window returns `snapshot_required`; canonical messages
+and other product retention are unaffected.
 
 #### `workstream_events`
 
 Same pattern with `(workstream_id, workstream_seq)` unique, plus `run_id`,
 `attempt_id`, `part_id`, `byte_offset`, and `target_user_id` where relevant.
-Events identify durable changes/checkpoints; they do not duplicate entire
-conversation bodies. An event is inserted in the same transaction as its row.
+Events identify durable semantic changes and final output boundaries; they do
+not duplicate entire conversation bodies or append one row per active-output
+checkpoint. An event is inserted in the same transaction as its semantic row.
 
 #### `command_receipts`
 
 | Column | Type / constraints | Meaning |
 | --- | --- | --- |
 | `id` | `uuid primary key` | Receipt |
-| `workspace_id`, `actor_id` | FKs/identity | Idempotency scope |
+| `workspace_id`, `workstream_id`, `actor_id` | workspace/actor required; work stream nullable with same-workspace FK | Idempotency scope; work stream required for work-stream-targeted commands |
 | `operation_key` | text not null | Caller-generated key |
 | `operation_kind`, `request_hash` | text/hash not null | Prevents conflicting key reuse |
 | `state` | started/completed/rejected | Command lifecycle |
@@ -1673,8 +1895,12 @@ conversation bodies. An event is inserted in the same transaction as its row.
 | `error_code` | constrained nullable | Stable rejection |
 | `created_at`, `completed_at`, `expires_at` | timestamps | Retention |
 
-Unique `(workspace_id, actor_id, operation_key)`. The function atomically
-claims or returns the receipt; a different request hash is always a conflict.
+Unique `(workspace_id, actor_id, operation_key)`. A partial index on
+`(workspace_id, workstream_id, expires_at) WHERE workstream_id IS NOT NULL`
+supports current incident/retry queries and a future bounded transfer of live
+receipts without indexing workspace-only receipts. Equality scope precedes the
+expiry range. The function atomically claims or returns the receipt; a different
+request hash is always a conflict.
 
 #### `queue_inbox_receipts`, `outbox_messages`, and `dead_letters`
 
@@ -1710,8 +1936,8 @@ authorization and revocation.
 
 | Column | Type / constraints | Meaning |
 | --- | --- | --- |
-| `id` | `uuid primary key` | Full-loop identity |
-| `workspace_id` | FK not null | Region/tenant/budget scope |
+| `id` | `uuid primary key` | Full-loop or bounded one-shot inference identity |
+| `workspace_id` | FK not null | Region/tenant scope |
 | `owner_kind`, `owner_id` | constrained kind + UUID | Work stream or another registered domain owner |
 | `substream_id` | UUID nullable | Conversation destination where applicable |
 | `admission_batch_id` | UUID nullable unique | Exact triggering inputs |
@@ -1719,21 +1945,24 @@ authorization and revocation.
 | `next_action` | constrained enum nullable | Driver instruction, never arbitrary code |
 | `run_revision` | `bigint not null` | All state compare-and-set |
 | `control_revision` | `bigint not null` | Steering fence |
-| `authorization_epoch`, `scope_revision` | bigint not null | Safety/materialization fences |
+| `authorization_epoch`, `resource_authorization_revision`, `scope_revision` | bigint not null | Safety/materialization fences |
 | `next_step_no` | integer not null | Monotonic logical action allocator |
-| `driver_kind`, `driver_instance_id`, `driver_version` | `cloudflare_workflow`, unique ID, version | The one supported full-loop driver binding |
+| `driver_kind`, `driver_instance_id`, `driver_version` | `cloudflare_workflow`, unique ID, version | The one supported inference-run driver binding |
 | `lease_owner`, `lease_token`, `lease_expires_at` | nullable | Supabase-driver bounded claim only |
 | `next_wake_at` | timestamp nullable | Durable due state |
 | `model_provider`, `model_name`, `provider_config_revision` | text/revision | Reproducibility |
-| `token_budget`, `tool_budget`, `cost_budget_micros`, `step_budget`, `elapsed_budget_ms` | nonnegative bigint/int | Product limits |
-| `tokens_used`, `tools_used`, `cost_used_micros`, `steps_used` | nonnegative counters | Enforced usage |
+| `tokens_used`, `tools_used`, `cost_used_micros`, `steps_used`, `elapsed_ms` | nonnegative counters | Observed usage telemetry; not product admission limits |
 | `terminal_reason`, `last_error_class` | constrained nullable | Honest terminal/sidebar state |
 | `created_at`, `started_at`, `last_progress_at`, `completed_at` | timestamps | Operations |
 
 Unique `(owner_kind, owner_id, admission_batch_id)` prevents double admission.
 Partial indexes cover active states/due time, owner history, expired leases, and
-terminal retention. Only a domain admission RPC sets owner-related fields; only
-fenced run RPCs advance execution.
+terminal retention. Work-stream owners require `owner_id` to resolve to a
+`workstreams` row in the same workspace through the domain-admission function,
+and `(workspace_id, owner_kind, owner_id)` is indexed. A database trigger or
+function may enforce this polymorphic relation; the extraction registry records
+that exact predicate. Only a domain admission RPC sets owner-related fields;
+only fenced run RPCs advance execution.
 
 #### `agent_steps`
 
@@ -1743,11 +1972,13 @@ fenced run RPCs advance execution.
 | `run_id`, `step_no` | FK + integer, unique pair | Full-loop order |
 | `attempt_no` | integer not null | Retry attempt within logical step |
 | `kind` | model/tool/terminal/compaction/reconcile/wait/delivery | One bounded action |
-| `state` | planned/started/waiting/succeeded/failed/superseded/unknown | Lifecycle |
+| `state` | planned/started/waiting/succeeded/failed/superseded/response_uncertain | Lifecycle; uncertain responses retry automatically |
 | `expected_run_revision`, `expected_control_revision`, `authorization_epoch`, `scope_revision` | bigint | Commit fences |
 | `input_ref_id`, `output_ref_id` | UUID nullable FK to `content_refs` | Large/redacted action I/O |
 | `input_hash`, `output_hash` | hash nullable | Integrity/idempotency |
 | `provider_request_id`, `provider_result_id` | text nullable | Reconciliation references |
+| `source_seq_fence`, `materializer_version`, `provider_adapter_version`, `materialized_context_hash` | bigint/text/hash nullable | Frozen deterministic model-array inputs for model steps |
+| `resource_authorization_revision` | bigint not null | Resource-access fence rechecked before commit/effect |
 | `retry_class`, `attempts`, `next_attempt_at` | operational fields | Retry policy |
 | `driver_version`, `code_version` | text not null | Deployment compatibility |
 | `started_at`, `heartbeat_at`, `finished_at` | timestamps | Timing/stuck detection |
@@ -1763,7 +1994,7 @@ all fences and does both atomically.
 | `id` | `bigint identity primary key` | Physical row |
 | `run_id`, `run_event_seq` | FK + bigint, unique pair | Durable run audit/order |
 | `run_revision` | bigint not null | Resulting revision |
-| `kind` | transition/control/retry/effect/budget/wait | Event class |
+| `kind` | transition/control/retry/effect/usage/wait | Event class |
 | `step_id`, `effect_id`, `wait_id` | UUID nullable | Related entity |
 | `payload` | bounded redacted `jsonb` | Codes, counts, hashes, no prompt/body |
 | `created_at` | timestamp | Audit |
@@ -1798,18 +2029,20 @@ for this committed row.
 | `workspace_id`, `run_id`, `step_id` | FKs not null | Scope |
 | `effect_kind`, `effect_key` | constrained text | Semantic action in this step |
 | `request_hash` | hash not null | Detects conflicting replay |
-| `state` | planned/started/succeeded/failed/unknown/reconciled | Lifecycle |
+| `state` | planned/started/succeeded/failed/response_uncertain | Lifecycle; uncertain responses retry automatically |
 | `cancellability` | none/cooperative/provider | Steering behavior |
-| `provider`, `provider_reference` | text nullable | Lookup/cancel/reconcile |
+| `provider`, `provider_reference` | text nullable | Lookup/cancel/reattach when available |
 | `result_ref_id`, `result_hash` | UUID/hash nullable | Bounded result |
 | `started_control_revision`, `authorization_epoch` | bigint | Start fence |
-| `attempts`, `next_reconcile_at`, `last_error_class` | operational | Recovery |
+| `attempts`, `next_retry_at`, `last_error_class` | operational | Uniform automatic retry |
 | `planned_at`, `started_at`, `settled_at` | timestamps | Audit |
 
 Unique `(run_id, step_id, effect_kind, effect_key)`. `begin_effect` locks the run,
 checks current control and authorization, and marks `started` in one transaction.
 Different intentional invocations have different step/effect keys even when
-tool/input bytes match.
+tool/input bytes match. A `response_uncertain` effect remains due for automatic
+retry under the same `effect_key`; it never changes to a human-gated unknown
+state solely because the provider lacks lookup support.
 
 #### `terminal_sessions` and `terminal_commands`
 
@@ -1820,15 +2053,19 @@ state, region_policy, created_at, last_used_at, expires_at)` maps an authorized
 run to a Daytona execution environment. `terminal_commands(id, session_id,
 effect_id unique, command_key unique, provider_command_id, state, exit_code,
 stdout_ref_id, stderr_ref_id, last_output_offset, started_at, reconciled_at,
-finished_at)` tracks one command. Provider IDs are never retried blindly.
-Output checkpoints use `content_refs` or bounded append/chunk metadata, and all
-reads recheck work-stream authorization.
+finished_at)` tracks one command. A deterministic named process session runs
+one asynchronous command, and the driver persists the Daytona command ID before
+waiting. Recovery uses `getSession`/`getSessionCommand` and resumes stdout/stderr
+from durable log offsets. Timeout sends TERM and then KILL. The session is
+deleted only after the terminal result is durable; correctness does not depend
+on a callback. Output checkpoints use `content_refs` or bounded append/chunk
+metadata, and all reads recheck work-stream authorization.
 
 #### `driver_bindings`
 
 `driver_bindings(run_id primary key, driver_kind, external_instance_id,
 binding_epoch, state, last_signalled_event_id, created_at, updated_at)` maps the
-Supabase run to a Cloudflare Workflow or Supabase dispatcher. A binding is
+Supabase run to its Cloudflare Workflow. A binding is
 replaceable only through a fenced reconciliation transaction. It contains no
 product body and is not required to reconstruct run truth.
 
@@ -1858,7 +2095,7 @@ Indexes cover workspace/provider/state and operational reconciliation.
 | `provider_event_id` | text not null | Provider dedup key or documented synthetic key |
 | `body_hash`, `byte_size` | hash/bigint not null | Conflicting-replay detection |
 | `raw_content_ref_id` | UUID nullable FK | Large ready Storage body |
-| `bounded_body` | encrypted/bounded bytea nullable | Small raw alternative |
+| `bounded_body` | `bytea` nullable with size check `<= 65536` | Structured connector body up to 64 KiB under platform encryption at rest |
 | `provider_schema_version`, `signature_version` | text | Replay/parser provenance |
 | `state` | accepted/queued/normalized/rejected/quarantined/dead | Lifecycle |
 | `received_at`, `normalized_at` | timestamps | Watermark/latency |
@@ -1867,6 +2104,8 @@ Indexes cover workspace/provider/state and operational reconciliation.
 Unique `(connector_installation_id, provider_event_id)`. A duplicate with a
 different hash cannot fit in or mutate this canonical row. It creates an
 immutable conflict row below. Queue enqueue shares the accepting transaction.
+Exactly one of `bounded_body` or ready `raw_content_ref_id` is required; bodies
+above 64 KiB and binary attachments use private Storage.
 
 #### `ingress_receipt_conflicts`
 
@@ -1875,7 +2114,7 @@ immutable conflict row below. Queue enqueue shares the accepting transaction.
 | `id` | `uuid primary key` | Conflicting delivery evidence |
 | `canonical_receipt_id` | UUID FK not null | Original immutable provider-ID receipt |
 | `conflicting_body_hash`, `byte_size` | hash/bigint not null | Differing bytes |
-| `raw_content_ref_id`, `bounded_body` | one nullable content location | Separately retained conflict body under policy |
+| `raw_content_ref_id`, `bounded_body` | exactly one content location; inline body `<= 65536` bytes | Separately retained conflict body under policy |
 | `signature_version`, `provider_received_at` | text/timestamp | Verification evidence |
 | `state` | quarantined/reviewed/discarded | Operator lifecycle |
 | `created_at`, `reviewed_at`, `reviewed_by` | audit | Handling |
@@ -1904,7 +2143,7 @@ identity/version while activity remains append-only.
 | `event_kind`, `actor_kind`, `actor_ref` | constrained | Actor/action semantics |
 | `object_kind`, `object_ref` | constrained | Subject resource |
 | `provider_occurred_at`, `ingested_at` | timestamps | Provider time vs arrival time |
-| `normalized_payload` | bounded versioned `jsonb` | Queryable safe facts |
+| `normalized_payload` | versioned `jsonb` with serialized size check `<= 65536` | Queryable safe facts up to 64 KiB |
 | `content_ref_id` | UUID nullable | Large/sensitive content |
 | `audience_id`, `authorization_epoch` | FK/bigint | Read/derivation fence |
 | `source_version`, `parser_version` | text | Lineage |
@@ -1914,7 +2153,10 @@ identity/version while activity remains append-only.
 Unique `(workspace_id, event_seq)` and semantic source-version keys. Indexes
 cover time/keyset, object, actor, audience, receipt, and eligible digest/
 opportunity windows. Provider occurrence time never replaces ingestion order as
-the durable cursor.
+the durable cursor. Normalized content above 64 KiB uses `content_ref_id`; only
+its queryable safe summary remains inline. No connector body receives
+application-layer encryption that would prevent authorized relational
+processing.
 
 #### `activity_links` and `activity_cursor_state`
 
@@ -2007,13 +2249,14 @@ transaction. A retry never produces a second work stream or action.
 | `audience_id`, `authorization_epoch` | FK/bigint | Access fence |
 | `source_kind`, `source_id`, `source_revision` | constrained/ref | Owning provenance |
 | `uploaded_by_kind`, `uploaded_by_id`, `upload_operation_key` | identity/key | Upload receipt |
-| `encryption_metadata` | bounded metadata, no key | Optional application encryption descriptor |
 | `created_at`, `ready_at`, `expires_at`, `deleted_at`, `verified_at` | timestamps | Reconciliation |
 
 Unique `(workspace_id, upload_operation_key)` where present and unique object
 path. Indexes cover pending expiry, deleting verification, source, and audience.
 Domain rows may point only to ready content. Storage object ownership is not
-authorization.
+authorization. Ordinary workspace content uses Supabase encryption at rest,
+TLS, RLS, and regional controls; it is not application-layer encrypted, so FTS,
+pgvector, and authorized relational queries remain usable.
 
 #### `storage_reconciliation_jobs`
 
@@ -2098,23 +2341,25 @@ customer content in operator surfaces.
 content_ref_id, byte_size, row_count, content_hash, state, loaded_at,
 validated_at)` describes immutable D1/R2 export chunks staged in the destination
 region. A unique source cursor/hash and per-row import receipts prevent duplicate
-authority. The cutover uses a source write hold/outbox catch-up, invariant check,
-and one source-D1-local authority gate as its linearization point. Global and
-regional route rows are reconciled copies of that gate, never an atomic cross-
-system CAS. It never lets both sides accept independent canonical writes.
+authority. The cutover uses an announced read-only maintenance window of at most
+15 minutes, final copy, invariant check, and one source-D1-local authority gate
+as its linearization point. Global and regional route rows are reconciled copies
+of that gate, never an atomic cross-system CAS. It never lets both sides accept
+independent canonical writes and does not queue held writes.
 
 The temporary source D1 migration schema includes
 `workspace_authority_gates(workspace_id primary key, authority_epoch, state,
-target_region, final_source_cursor, held_through_cursor, closure_receipt_hash,
-updated_at)`, where state is `source_open`, `source_holding`, or
-`source_closed`. `source_held_commands(workspace_id, hold_seq, operation_key,
-request_hash, encrypted_payload_ref, state, created_at)` durably records commands
-accepted during the bounded hold. In destination Supabase,
+target_region, maintenance_started_at, final_source_cursor, final_row_count,
+final_content_hash, closure_receipt_hash, updated_at)`, where state is
+`source_open`, `maintenance_read_only`, or `source_closed`. In destination Supabase,
 `import_authority_receipts(workspace_id primary key, authority_epoch,
-source_closure_receipt_hash, imported_source_cursor, imported_hold_cursor,
-state, verified_at, activated_at)` progresses `prepared -> verified -> active`.
+source_closure_receipt_hash, imported_source_cursor, imported_row_count,
+imported_content_hash, state, verified_at, activated_at)` progresses
+`prepared -> verified -> active`.
 The source gate row is the only authority linearization record; the destination
 and global route may lag it but may never contradict it by accepting writes.
+Before closure, a failed or over-15-minute migration reopens D1. After closure,
+recovery can only finish Supabase activation/global convergence at that epoch.
 
 #### `export_jobs` and `export_chunks`
 
@@ -2123,18 +2368,22 @@ state, manifest_content_ref_id, expires_at, created_at, completed_at)` freezes o
 authorized export. `export_chunks(job_id, chunk_no, source_kind, source_range,
 content_ref_id, content_hash, byte_size, state)` has primary key `(job_id,
 chunk_no)`. Retries reuse completed chunks; the manifest records source
-revisions, omissions, and hashes. Download URLs are generated after live auth
+revisions, omissions, and hashes. `expires_at` is exactly seven days after the
+completed export becomes available. Download URLs are generated after live auth
 and never persisted.
 
 #### `deletion_jobs` and `deletion_receipts`
 
 `deletion_jobs(id, workspace_id, phase, target_kind, target_cursor, state,
-legal_hold_state, attempts, next_attempt_at, last_error, created_at,
+legal_hold_state, deadline_at, attempts, next_attempt_at, last_error, created_at,
 completed_at)` performs bounded relational, Storage, vector/search, export, and
 provider cleanup after admission is closed. `deletion_receipts(workspace_id,
 target_kind, target_key_hash, deletion_version, result, verified_at)` proves each
 non-content target. Database deletion, Storage verification, log/backup
-retention, and external provider cleanup remain distinct phases.
+retention, and external provider cleanup remain distinct phases. Unless an
+explicit scoped legal hold applies, `deadline_at` is no later than 24 hours for
+active product data and search/vector derivatives; backup-object expiry is
+tracked separately and must complete within 30 days.
 
 #### `product_audit_events`
 
@@ -2164,10 +2413,12 @@ without these boundaries is non-conforming.
 `append_user_input` validates identity/membership/audience, claims a command
 receipt, locks `workstreams`, creates/extends a complete user `turn`, allocates
 `seq` and attention ordinal, inserts the part and parsed mentions, upserts the
-common card and affected sparse states, records queue/steer control, appends
-both durable event streams, enqueues `agent_ready` if admission is possible,
-calls database Broadcast with small hints, and finalizes the receipt in one
-transaction.
+common card and directly affected sender state, records queue/steer control,
+appends both durable event streams, enqueues `agent_ready` if admission is
+possible, and enqueues bounded sparse-overlay materialization for up to 250
+explicit mentions. Group/workspace attention remains one lazy audience event.
+The function calls database Broadcast with small hints and finalizes the receipt
+in the same transaction.
 
 #### Change work-stream status or metadata
 
@@ -2180,7 +2431,8 @@ by its field/revision tuple; fetching the durable event or snapshot converges it
 #### Begin and finish an agent effect
 
 `begin_next_step` locks the run and owner work stream when applicable, validates
-all revisions/budgets, creates the step/effect intent, advances the run, and
+all revisions and unavoidable infrastructure constraints, creates the step/
+effect intent, advances the run, and
 returns a bounded action descriptor. The executor calls outside Postgres.
 `complete_step` locks the same entities, rejects stale attempts, records result,
 appends complete tool/assistant parts when appropriate, advances or terminates
@@ -2218,12 +2470,12 @@ locked nor included.
 ## Regional impact
 
 EU and Global/US product shards use the same migrations and API contracts but
-separate database primaries, Auth sessions, Realtime services, Queues, Cron,
-Storage buckets, vector indexes, backups, telemetry, and shard-scoped Cloudflare
-Worker configuration/secrets. A workspace never spans shards while active. A
-user who belongs to workspaces in multiple shards has the necessary shard-local
-sessions and connections after the global route lookup; one session is not
-assumed valid in another project.
+separate database primaries, Third-Party Auth configuration, Realtime services,
+Queues, Cron, Storage buckets, vector indexes, backups, telemetry, and shard-
+scoped Cloudflare Worker configuration/secrets. A workspace never spans shards
+while active. One Avalon IdP JWT can be verified by each configured project,
+but a user still establishes separate Supabase clients and at most one active
+Realtime socket per regional shard after global route lookup.
 
 The global database schema is an allowlist. It contains global identity,
 organization, invitation, billing/entitlement facts plus the shard/route/control
@@ -2232,33 +2484,31 @@ regional-impact review. Ordinary product reads/writes go directly to the chosen
 regional shard after session establishment; the global database is not a SQL
 federation, product cache, sidebar index, or cross-workspace analytics store.
 
-Regional shard selection is necessary but not the entire residency claim.
-Supabase describes Realtime as globally distributed. Cloudflare Workers code
-and secrets are globally deployed; Regional Services constrains eligible HTTPS
-fetch execution but does not cover Worker subrequests, Workflow/Queue/Cron
-triggers, or Smart Placement. Auth email, logs, backups, support access, Storage
-internals, subprocessors, Workflow state/logs, and outbound provider calls need
-contractual confirmation. The executed Supabase and Cloudflare DPA/TIA/
-enterprise agreements, not this architecture diagram, decide whether EU
-promises are met.
+The selected EU promise is durable-data residency, not complete EU processing.
+Database rows, Storage objects, vectors/search derivatives, and Database/
+Storage backups for an EU workspace stay in the approved EU product shard.
+Supabase Realtime/CDN and operational control paths are globally distributed;
+Cloudflare Worker/Workflow execution, logs, and outbound model/Daytona/provider
+processing may be global under the applicable DPA. Avalon relies on explicit
+project/bucket/backup placement, shard-scoped secrets, content-minimized
+Workflow state/logs, denylisted cross-region routes, configuration audits, and
+continuous controls. It does not require a separate contractual guarantee that
+every transient Cloudflare instruction executes in the EU.
 
 For EU workspaces, Avalon must:
 
-- send every content-bearing compute action through an EU Regional Services
-  Worker HTTPS hostname; Workflow/Queue/Cron state and wakes contain opaque IDs;
-- keep Database, Storage, Queues, Cron, Auth bridge, vector/search data, and
-  Avalon-controlled log drains inside the approved path;
-- use EU-compatible model, connector, and Daytona processing or disable that
-  feature fail closed;
-- prohibit an out-of-region read replica or failover target;
+- keep canonical Database, private Storage, vector/search derivatives, and
+  their backups in the approved EU Supabase project/bucket;
+- prohibit an out-of-region durable replica, backup, export default, or failover
+  target;
 - send only globally required identity/billing/invitation and opaque shard/
   route/control metadata to the global database, and only opaque identifiers to
   Workflow state;
-- disable agent/derived compute until Workflow state/logs plus Regional Services
-  execution and outbound-provider processing are contractually approved; there
-  is no Supabase Edge fallback; and
+- configure transient Cloudflare/provider paths and subprocessors under the
+  approved DPA, minimize their content and retention, and continuously detect
+  drift; and
 - exercise export, deletion, restore, support, and incident procedures in the
-  data map.
+  durable-data map.
 
 No synchronous product transaction spans projects. A global account action
 commits a globally safe command and invokes/retries a regional idempotent
@@ -2269,18 +2519,21 @@ degradation is preferable to silent cross-region processing.
 
 Knowing a workspace, work-stream, substream, part, Storage path, Realtime topic,
 run, suggestion, or vector ID grants no access. Regional RLS and command
-functions resolve `auth.uid()` through `platform_identities`, require an active
-session epoch and workspace membership, then enforce work-stream grants,
+functions resolve the Third-Party Auth claims
+`(auth.jwt()->>'iss', auth.jwt()->>'sub')` through `platform_identities`, require
+an active session epoch and workspace membership, then enforce work-stream grants,
 substream/part audience, connector scope, and operation capability.
 
-The client receives an anon key and its regional user session only. Service-role,
+The client receives a publishable/anon project key and its one-hour Avalon IdP
+access JWT only. Service-role,
 direct-database, Vault, Storage S3, connector, model, Daytona, and Workflow
 credentials never enter the desktop or a signed URL payload. Trusted services
 that bypass RLS must pass workspace/owner IDs explicitly and call narrow
 functions that repeat the authorization/epoch checks appropriate to their
 capability.
 
-JWT claims are identity hints, not live workspace authorization. User-editable
+JWT `iss`/`sub` claims identify the principal but are not live workspace
+authorization. User-editable
 metadata never grants access. Strict operations query current membership and
 epochs in Postgres. Membership/resource removal increments the relevant epochs,
 blocks command/materialization/search immediately, invalidates active run steps,
@@ -2310,12 +2563,19 @@ states, and redacted error classes. They exclude prompts, generated content,
 connector bodies, Terminal output, signed URLs, access/refresh tokens, service
 keys, and secrets. Durable product audit rows follow the same minimization.
 
+Ordinary workspace content uses Supabase encryption at rest, TLS, RLS, and
+regional placement; Avalon adds no application-layer content encryption in this
+version. Connector credentials live in Supabase Vault. Model and Daytona
+credentials live only in regional Cloudflare Worker secrets. This keeps
+authorized relational search and vector retrieval usable while separating the
+two credential trust boundaries.
+
 ## Agent behavior
 
 The model receives one ordered, authorized message array at an immutable fence.
 It never reads canonical tables directly, selects its own audience, or sees
 parts arriving after the admitted range. Current system policy, provider config,
-tool catalog, approvals, and budgets are constructed at projection time rather
+tool catalog, and approvals are constructed at projection time rather
 than preserved as an untrusted old system message.
 
 Spawning a sub-agent is one recorded tool lifecycle:
@@ -2330,8 +2590,9 @@ Spawning a sub-agent is one recorded tool lifecycle:
 
 A retry finds the same child/effect by causal occurrence. Equal tool input in a
 later model iteration is a new occurrence. A fresh child gets only its task
-packet; a forked child gets the explicit frozen lineage. The depth and breadth
-budgets prevent branch bombs.
+packet; a forked child gets the explicit frozen lineage. Fixed substream depth
+and structural admission rules prevent unbounded ancestry; this version sets no
+product-level token, tool, cost, elapsed, idle, step, or breadth budget.
 
 ### Full-loop lifetime and Workflow step shape
 
@@ -2364,25 +2625,27 @@ They must be rechecked and account-confirmed before release.
 | Authored step timeout guidance | At most 30 m | Bound attached actions; detach and reconcile longer operations |
 | Non-stream step result / event payload | 1 MiB each | IDs, cursors, hashes only; no content |
 | Persisted state per instance | 1 GB including streamed output | Failure ceiling, not a storage budget |
-| Steps per instance | 10,000 default, configurable to 25,000 | Enforce lower product budget and reserve recovery/terminal steps |
-| Maximum sleep | 365 days | Product elapsed/idle budgets are much lower |
+| Steps per instance | 10,000 default, configurable to 25,000 | Hard infrastructure ceiling; monitor and surface exhaustion honestly |
+| Maximum sleep | 365 days | Hard platform ceiling, not a configured product limit |
 | Running instances | Paid table published 50,000; prose has differed | Use account-confirmed value and conservative 10,000 planning until resolved |
 | Creation | 300/s/account, 100/s/workflow | Rate-limit admission; 429 is non-admission and retried from Supabase |
 | Queued instances | 2,000,000 | Platform capacity is not a user-facing latency SLO |
 | Completed history | 30 days | Supabase retains product history and receipts |
 | Subrequests | 10,000 default, configurable much higher | Count Supabase/provider calls and keep a recovery reserve |
 
-Product budgets remain far below platform maxima. Duration alone is not a
-license for unbounded steps, cost, tokens, tools, retries, output, or idle waits.
-The driver returns small references and never accumulates transcript or Terminal
-output. Stable Workflow instance/step IDs make retries consult Supabase receipts.
-Deleting Workflow history must not affect product history.
+This version intentionally configures no product-level limits. Cloudflare,
+Supabase, model-provider, and Daytona hard ceilings still exist and surface as
+infrastructure/capacity failures; production usage and abuse observations will
+inform later product policy. The driver returns small references and never
+accumulates transcript or Terminal output. Stable Workflow instance/step IDs
+make retries consult Supabase receipts. Deleting Workflow history must not
+affect product history.
 
 Each Workflow continuation invokes one bounded Cloudflare Worker action. A long
 model response may stream within a Workflow step because the paid Workflow wall
 time is unlimited while active CPU remains bounded; it still checkpoints output,
-observes product time/token/subrequest budgets, and cannot make the entire full
-loop one retry unit. A Daytona command is an addressable effect started once,
+observes platform time/token/subrequest ceilings and usage telemetry, and cannot
+make the entire full loop one retry unit. A Daytona command is an addressable effect started once,
 parked through Workflow wait/sleep or callback, and reconciled by provider ID.
 
 Daytona workspaces, command caps, filesystem persistence, egress, secrets,
@@ -2401,16 +2664,16 @@ The generic run contract must cover more than the main work-stream agent:
 | Main work-stream, HyperSight, and inline child-agent loops | Work stream/substream rows plus generic run tables |
 | Automation drafting and elicitation loop | Automation-domain record plus generic run tables |
 | Live meeting control tower and final meeting summary | Meeting-domain record plus generic run tables |
-| Attachment summary and work-stream naming/description | Work stream/content job through a bounded model adapter |
-| Activity structuring and opportunity admission/ranking | Activity/opportunity job through bounded adapters |
+| Attachment summary and work-stream naming/description | Work stream/content job plus one-shot generic run |
+| Activity structuring and opportunity admission/ranking | Activity/opportunity job plus one-shot generic run |
 | Activity digest | Digest job/artifact plus generic run tables when iterative |
 
-A bounded, idempotent model-only classifier may run directly in one regional
-Cloudflare Worker fetch when the caller has already durably recorded admission/
-retry and the call fits conservative limits. Anything iterative, tool-using,
-user/provider-waiting, or likely to outlive one request uses the generic
-Workflow run driver. This avoids one-off loop code without creating another
-orchestrator for every small classification.
+Every model or embedding inference uses the generic Workflow `RunDriver`, even
+when it is a bounded, idempotent one-shot description, attachment summary,
+classification, ranking, or embedding. The one-shot run creates one Workflow,
+performs the bounded Worker call, commits its domain result, and terminates. A
+full loop creates one Workflow for the whole loop. This uniform boundary avoids
+one-off inference retry code; no direct Worker-only inference exception exists.
 
 ## Provider configuration
 
@@ -2418,24 +2681,26 @@ Each regional Supabase shard configures:
 
 - CLI-managed migrations and explicit `api` schema exposure/grants;
 - `pgmq`, `pg_cron`, `pg_net`, `vector`, and required observability extensions,
-  with behavior tested rather than permanently version-pinned;
+  with behavior verified by correctness and failure tests rather than
+  permanently version-pinned;
 - private Realtime with RLS on `realtime.messages`, no public domain channels,
   and account limits sized for one socket per active regional session;
 - logged Basic queues, a few Cron wake schedules, and DLQ/receipt tables;
 - private Storage buckets, file/product size limits, TUS/multipart behavior,
   orphan cleanup, and independent byte backup/retention;
 - pgvector HNSW and FTS indexes per regional dataset;
-- Vault secrets used only by reviewed database-side network calls; model,
-  connector, Daytona, shard-runner, and Supabase server credentials live in the
-  matching Cloudflare Worker secret configuration;
+- connector credentials in Supabase Vault; model, Daytona, shard-runner, and
+  Supabase server credentials in the matching regional Cloudflare Worker secret
+  configuration;
 - Logs/Metrics and optional redacted regional Log Drains;
-- PITR/backups at the contracted plan, plus restore drills that reconcile
+- 14-day Database PITR/backups, plus restore drills that reconcile
   external effects and separately restore Storage.
 
-The desktop uses one anon endpoint/session per active region and one
-multiplexed Realtime connection. Direct database connection strings, pooled
-server credentials, queue APIs, Vault, service-role, and Storage S3 credentials
-are never client configuration.
+The desktop uses each active region's publishable/anon endpoint with the same
+one-hour Avalon IdP JWT, and one multiplexed Realtime connection per regional
+shard with active work. Direct database connection strings, pooled server
+credentials, queue APIs, Vault, service-role, and Storage S3 credentials are
+never client configuration.
 
 The Cloudflare compute plane deploys one Workflow driver plus public/API and
 private execution Worker fetch handlers per shard configuration. Global/US may
@@ -2445,10 +2710,10 @@ never a cross-shard service key with arbitrary table access. Workflow inputs
 are the approved opaque tuple. There is no Supabase Edge deployment, external
 WebSocket hub, Railway/EC2 queue consumer, or always-on loop server.
 
-Before capacity sign-off, record the selected Supabase plan/compute/disk,
-connection ceilings, Realtime connection/message/join limits, Queue behavior,
-Worker CPU/subrequest/placement/Regional Services limits, backup/PITR, Storage
-caps, and Cloudflare Workflow account limits.
+Record the selected Supabase plan/compute/disk, connection ceilings, Realtime
+connection/message/join limits, Queue behavior, Worker CPU/subrequest/placement
+limits, backup/PITR, Storage caps, and Cloudflare Workflow account limits.
+Production telemetry—not a prelaunch capacity/load test—drives later changes.
 Pricing and public limits are inputs, not an availability SLA.
 
 ## Rollout
@@ -2457,30 +2722,31 @@ Rollout is regional and reversible at phase boundaries. D1/R2 remain canonical
 until a workspace's route epoch changes once; Supabase shadow data is never
 silently treated as authority.
 
-### Phase 0 — vendor, legal, and failure spikes
+### Phase 0 — identity, configuration, and failure spikes
 
 Before product migration:
 
-1. prove global-to-shard route envelopes, Auth/OIDC session behavior, stable
-   identity mapping, refresh/logout, membership revocation, Realtime token
-   replacement, and routing outbox/gate/receipt convergence;
-2. obtain written EU answers for Supabase Database, Auth, Realtime, Queues/Cron,
-   Storage, backups/PITR, logs/support plus Cloudflare Workflow/Worker state,
-   logs, Regional Services, triggers/subrequests, and relevant subprocessors;
-3. fail agent/derived compute closed in any shard where that path is unapproved;
-4. verify current paid Supabase/Cloudflare limits and selected account settings;
-5. benchmark private Broadcast/RLS, snapshot handshake, connection backgrounding,
-   token fan-out, and already-joined channel revocation;
-6. load-test `pgmq` latency/throughput/WAL, one-second Cron dispatch, poison/
-   visibility recovery, and interactive-transaction interference;
-7. failure-inject the Workflow/Worker driver across model, Daytona, queue,
-   deployment, early event, steer, unknown effect, and terminal races;
-8. restore a database/PITR backup and separately recover/verify Storage bytes;
-9. benchmark FTS/pgvector recall, RLS filtering, memory, and reindex/rebuild;
-10. select compute/disk/pool/Realtime limits with safety headroom.
+1. prove global-to-shard route envelopes and existing Avalon IdP Third-Party
+   Auth through OIDC discovery/JWKS, stable `(iss, sub)` mapping, one-hour JWT
+   refresh/logout, membership revocation, Realtime token replacement, and
+   routing outbox/gate/receipt convergence;
+2. configure and audit the EU durable-data boundary for Database, Storage,
+   vectors, and backups, plus the DPA-approved global transient processing path;
+3. verify current paid Supabase/Cloudflare hard limits and selected account
+   settings without treating them as product budgets;
+4. correctness-test private Broadcast/RLS, snapshot handshake, body-free
+   background notification, seven-day replay expiry, and one-hour stale-channel
+   behavior;
+5. failure-inject the Workflow/Worker driver across model, Daytona, Queue,
+   deployment, early event, steering, automatic effect retry, and terminal races;
+6. restore a 14-day Database/PITR point and separately recover/verify Storage
+   bytes under the 30-day object-recovery promise; and
+7. verify FTS/pgvector authorization, recall, reindex, rebuild, and 24-hour
+   derivative deletion.
 
-Any launch-blocking vendor fact remains an explicit gate; it is not converted
-into an implementation assumption.
+This phase performs correctness, security, failure, and restore testing. It does
+not run prelaunch capacity/load tests or require a contractual full-EU transient
+processing guarantee; production usage and abuse determine capacity policy.
 
 ### Phase 1 — regional foundation and compatibility schema
 
@@ -2493,7 +2759,16 @@ and Regional Services/placement configuration without global product fields.
 
 All schema changes use checked-in Supabase CLI migrations and one production
 pusher per regional environment. Preview branches are data-less by default and
-receive synthetic race/scale fixtures. Dashboard edits are detected as drift.
+receive synthetic correctness/race fixtures. Dashboard edits are detected as
+drift.
+
+Check in the WorkstreamDO extraction registry with this phase. Add only the two
+currently useful schema accommodations from Appendix A: optional
+`command_receipts.workstream_id` for work-stream commands and the validated,
+indexed work-stream `agent_runs` owner path. CI requires every workspace table
+and owner kind to declare its extraction disposition. Do not add DO authority,
+portable-transition, projection, socket-session, or revocation tables during
+the all-Supabase rollout.
 
 Deploy application writers/readers that understand both current D1/R2 and the
 new Supabase representation behind a per-workspace authority flag/route epoch.
@@ -2517,15 +2792,20 @@ Continuously compare:
 - Storage object manifests and search/vector eligibility;
 - deletion/retention exclusions.
 
+The same fixture corpus also runs the registry's one-work-stream export and
+portable materializer tests. That test proves dormant portability but does not
+open a scale gate, hydrate, instantiate, or write a Durable Object.
+
 Mismatch quarantines the workspace/job; it never self-heals by choosing one
 authority arbitrarily.
 
 ### Phase 3 — realtime and read canary
 
 Canary the Supabase snapshot/event/Broadcast path while canonical writes remain
-on D1. Validate subscribe-buffer-snapshot handshake, gap catch-up, background
-socket close/reopen, 10/20/30 fps local animation independently from the 30-fps
-network maximum, active-output checkpoints, authorization revocation,
+on D1. Validate subscribe-buffer-snapshot handshake, gap catch-up, body-free
+background socket retention/close/reopen, default 20 fps local animation and
+reduced motion from 2 Hz checkpoints, active-output checkpoints, one-hour
+Realtime stale-channel behavior, authorization revocation,
 collection pagination, and fan-out cost. Compare every rendered card and
 transcript to the current authority.
 
@@ -2533,58 +2813,65 @@ Enable Supabase reads only for eligible internal workspaces whose shadow
 invariants and Storage manifests are current. A route flag rolls reads back
 without changing write authority.
 
-### Phase 4 — bounded write cutover
+### Phase 4 — scheduled read-only authority cutover
 
-Cut over one workspace at a time:
+Cut over one regional cohort during an announced maintenance window of at most
+15 minutes. The product shows a maintenance/read-only state; it does not accept
+and hold commands for later replay.
 
-1. mark the migration job `holding` and establish a short source write hold;
-2. drain/copy the source outbox through a final source cursor;
-3. validate counts/hashes/materializations/sidebar/events and Storage readiness;
-4. in one source D1 transaction, seal the final/held cursors and change the
-   source-local authority gate from `source_holding` to `source_closed` at the
-   next epoch; this immutable closure receipt is the sole linearization point;
-5. transfer/verify that closure receipt in destination Supabase, then activate
-   the regional workspace at the same epoch; a crash before activation creates
-   an availability gap, never two writers;
-6. update the global route as a derived, retryable copy. Until it converges, the
-   old source endpoint reads its closed gate and returns an opaque route
-   correction without accepting product writes;
-7. release held client/connector commands to the Supabase idempotent API in
-   original accepted order; and
-8. observe canary SLOs and retain read-only source evidence for the rollback
-   window.
+1. stop new source run/connector admission and let already-started work reach a
+   recorded safe boundary;
+2. change the D1 source gate to `maintenance_read_only`; client writes fail with
+   a retry-after-maintenance response rather than writing either authority;
+3. copy the final source delta and Storage manifest into Supabase staging;
+4. verify row counts, ordered cursors, materializations, sidebar projections,
+   content hashes, run/effect receipts, and Storage readiness;
+5. in one D1 transaction, seal an independently verifiable source-closure
+   receipt containing authority epoch, final cursors, counts, and hashes, and
+   change the source gate to `source_closed`;
+6. verify that immutable receipt in the regional Supabase transaction, activate
+   the workspace at the same epoch, and update the global route as a retryable
+   derived pointer; and
+7. end maintenance only after the Supabase route and write gate are usable,
+   while retaining the closed D1 evidence under the migration retention policy.
 
-If validation fails before source closure, release the hold back to D1. Once the
-source gate is closed it never reopens at that epoch. Recovery resumes destination
-activation/global convergence, or performs a later forward authority move only
-after fencing the destination. Global and destination rows are never described
-as atomically updated with D1. Provider callbacks and run/effect results carry
-epochs and receipts so a late old-system result cannot append canonically.
+There are no dual writes. Historical/shadow copy may run before maintenance,
+but every product command is accepted by only D1 before closure or only
+Supabase after activation. If validation fails before source closure, reopen
+D1 and end maintenance. Once the source closure receipt commits, D1 never
+reopens at that epoch; recovery resumes destination activation/global
+convergence. Provider callbacks and run/effect results carry epochs and receipts
+so a late old-system result cannot append canonically. A cohort that cannot
+finish within 15 minutes aborts before closure and is rescheduled smaller.
 
 ### Phase 5 — run-driver and derived-work cutover
 
-First move bounded compaction, embeddings, connector normalization, digests, and
-suggestions to regional Queues plus Cloudflare Worker/Workflow with shadow
-comparison. Then enable the
-generic run schema for bounded model-only tasks. Finally canary full work-stream
-and non-work-stream loops through the approved driver.
+First move connector normalization and non-inference maintenance to regional
+Queues plus Cloudflare Workers with shadow comparison. Then enable the generic
+run schema and Cloudflare Workflow for every inference, beginning with bounded
+one-shot compaction, embeddings, descriptions, classifications, digests, and
+suggestions. Finally canary full work-stream and non-work-stream loops through
+the same driver.
 
 The current full-loop harness cannot remain one year-long or monolithic step.
 Bind must expose a next-action/checkpoint interface so each model, tool, wait,
 and settlement is independently durable. Daytona commands use start/attach/
 reconcile receipts before long-loop canary.
 
-Driver selection is a regional policy. `cloudflare_workflow` is default only
-where approved; `supabase_state_machine` is supported and continuously tested.
-Moving a nonterminal run between drivers requires a quiescent fenced binding
-change and reconciliation; deployment alone never changes it.
+`cloudflare_workflow` is the only supported inference driver. There is no
+Supabase Edge Function or Queue/Cron state-machine fallback and no direct Worker-
+only one-shot exception. A deployment may replace a driver version only through
+a quiescent fenced binding change; deployment alone never changes a nonterminal
+run.
 
 ### Phase 6 — scale, schema evolution, and source retirement
 
 Expand by workspace cohorts and keep per-region pause, concurrency, backlog-age,
 error, mismatch, and rollback controls. Throttle imports/backfills below
-interactive traffic. Resize compute/disk/Realtime deliberately from measured
-headroom; do not rely on emergency autoscaling.
+interactive traffic. Observe compute/disk/Realtime/Queue usage and abuse in
+production, then resize the one regional shard or add another shard through a
+separately reviewed routing change. This version does not prelaunch load-test
+or table-partition.
 
 Routine compatible schema evolution follows expand/backfill/contract:
 
@@ -2616,8 +2903,10 @@ connector cursors enter reconciliation before execution resumes.
 
 A regional DR exercise recreates Database, Auth configuration, Realtime RLS,
 Queues/Cron, Storage objects/policies, vector indexes, Cloudflare Worker secrets/
-placement/Regional Services and Workflow integration, and observability—not only
-SQL rows. EU recovery remains in the approved boundary.
+placement and Workflow integration, and observability—not only SQL rows. EU
+Database, Storage, vector, and backup recovery remains in the approved durable-
+data boundary; transient recovery processing follows the DPA-approved global
+path.
 
 ## Acceptance
 
@@ -2625,8 +2914,9 @@ SQL rows. EU recovery remains in the approved boundary.
 
 1. Two concurrent writers always observe one committed work-stream order, and
    retries do not duplicate a part.
-2. A complete materialization at the same fence, audience, scope, config, and
-   projector version has the same ordered content hash on every retry.
+2. A complete materialization at the same sequence, audience, resource-
+   authorization, scope, compaction/redaction, config, materializer, and
+   provider-adapter version has the same ordered content hash on every retry.
 3. Tool call/result pairs remain provider valid when human input arrives between
    their physical timestamps; the later user input is admitted at a safe turn
    boundary.
@@ -2660,25 +2950,29 @@ SQL rows. EU recovery remains in the approved boundary.
     screen.
 15. Mark-seen is monotonic, device independent, authorization bounded, and
     cannot acknowledge future/unseen-audience content.
-16. A large workspace-wide event avoids one eager row write per member while
-    preserving correct lazy attention.
+16. An explicit mention of at most 250 people commits once and populates sparse
+    overlays asynchronously in bounded batches. Group/workspace mentions avoid
+    one eager row write per member while preserving correct lazy attention.
 17. Subscribe-buffer-snapshot produces no missed or duplicated committed event
     across the handshake.
 18. Dropped, duplicated, delayed, and out-of-order Broadcasts converge through
     durable cursor catch-up and field/revision comparison.
-19. Reconnect after Realtime Replay limits or event retention either catches up
-    through durable events or receives an explicit snapshot requirement.
+19. Reconnect within the seven-day event window catches up through durable
+    events; an older cursor receives `snapshot_required` without deleting or
+    changing canonical messages.
 20. Active text checkpoints/hints reject stale attempts and reconnect from
-    committed bytes/offset; generated bodies never ride an already-joined
-    channel without the revocable-lease gate, and any later faster path never
-    exceeds 30 fps. At the launch-default 500 ms cadence, a 100-token/second,
+    committed bytes/offset; generated bodies never ride Realtime Broadcast.
+    Human/assistant text above 256 KiB, structured tool/connector bodies above
+    64 KiB, and binary payloads use private Storage. At the 500 ms observed
+    cadence, a 100-token/second,
     10,000-token stream completes in about 100 seconds with at most 200
     nonempty checkpoint transactions, about three 16 KiB chunks under the
     four-byte/token planning assumption, no row/event/database-Broadcast per
     token, and delta-only client fetches. The same batches render continuously
-    at each supported 10/20/30 fps target without increasing database or
-    Realtime cadence. Load tests cover 250/500/1,000 ms checkpoints, all three
-    visual targets, and at least 100 and 1,000 simultaneous observed streams.
+    at 20 fps by default without increasing database or Realtime cadence;
+    reduced-motion clients show the batches immediately. Unobserved output
+    checkpoints at most once per second. Capacity is observed in production,
+    not certified by a prelaunch stream load test.
 21. Completion seals one immutable part and terminal state even if the final
     Broadcast is lost.
 22. One physical regional socket multiplexes expected topics. With A and B both
@@ -2688,23 +2982,29 @@ SQL rows. EU recovery remains in the approved boundary.
     subscribe-buffer-one-statement-snapshot protocol loses or duplicates no
     accepted input, committed byte, or final part across dropped, delayed, or
     out-of-order hints, completion during hydration, and attempt reset. A
-    background idle app closes without periodic churn and restores from cursor
-    on focus.
-23. Membership removal blocks subsequent content fetch/commands immediately and
-    meets the tested stale-channel eviction bound.
+    background app retains one body-free user socket per regional shard while
+    active work requires completion notification, closes it when no obligation
+    remains, and restores from cursor on focus.
+23. Membership removal blocks subsequent content fetch/commands/Storage access
+    immediately. An already-joined body-free private channel may retain stale
+    hint access only until its standard one-hour JWT expires; refresh
+    recalculates channel RLS and no topic rotation is required.
 
 ### Agent loops and external effects
 
-24. The same run contract executes a typical 2–30 minute work-stream loop and
-    at least one non-work-stream iterative loop.
+24. The same Workflow `RunDriver` executes every bounded one-shot inference, a
+    typical 2–30 minute work-stream loop, and at least one non-work-stream
+    iterative loop.
 25. A failure-injected 2+ hour coding session survives deploys, driver retries,
     early events, Realtime loss, and desktop closure without duplicated terminal
-    state or blind tool repetition.
+    state; Daytona recovers its deterministic named session, command ID, and log
+    offsets instead of starting a second command.
 26. Worker/Workflow tests enforce the paid-plan CPU, subrequest, step, result,
-    state, creation, and concurrency budgets; no full loop is one retryable
+    state, creation, and concurrency hard limits; no full loop is one retryable
     Worker request or Workflow step.
 27. Workflow input/result/state inspection contains only approved opaque fields
-    and remains below product budgets/platform limits.
+    and remains below platform limits. Usage telemetry exists, but no product-
+    level token/tool/cost/elapsed/idle/step budget is configured.
 28. Deleting/recreating a driver instance cannot delete, duplicate, or invent
     Supabase run/domain state.
 29. A Workflow event arriving before `waitForEvent`, or a Supabase queue wake
@@ -2712,16 +3012,23 @@ SQL rows. EU recovery remains in the approved boundary.
     once.
 30. Cloudflare creation/running/step/subrequest pressure produces durable queued
     or capacity state, not lost admission.
-31. A `pgmq` delivery crash after domain commit but before delete returns the
-    receipt and does not repeat the operation.
+31. A trusted Worker pulls at most 32 `pgmq` messages with 60-second visibility,
+    renews after 30 seconds with `pgmq.set_vt`, and sends a message to the DLQ
+    after ten reads. A crash after domain commit but before delete returns the
+    receipt and does not repeat the domain mutation.
 32. Queue visibility expiry, poison messages, Cron overlap, and consumer deploy
-    are recovered with bounded retry/DLQ and no user-command corruption.
-33. A Daytona command timing out at the executor is reconciled by provider
-    command ID before any retry. Ambiguous writes surface honestly.
+    are recovered with the defined retry/DLQ policy and no user-command
+    corruption; Queue availability follows the regional Postgres primary.
+33. A Daytona command timing out at the executor reattaches through its named
+    session/provider command ID and durable log offset before TERM/KILL; the
+    session is deleted only after the result is durable.
 34. Steering during a safe read cancels promptly; steering during an unsafe
     Terminal write prevents subsequent effects and reports/reconciles the
     already-started effect.
-35. Budget/authorization/control races have one compare-and-set terminal winner.
+35. Usage/authorization/control races have one compare-and-set terminal winner.
+    Every model/tool provider call retries automatically under the same Avalon
+    operation ID; tests demonstrate and document possible duplicate external
+    effects for a provider that ignores idempotency.
 
 ### Activity, suggestions, Storage, and search
 
@@ -2732,7 +3039,8 @@ SQL rows. EU recovery remains in the approved boundary.
 38. Provider update/delete produces version/tombstone lineage and invalidates
     derived artifacts under current authorization.
 39. Digest source watermark/audience is frozen; late events are next/revised,
-    and delivery retries do not regenerate/re-send blindly.
+    and delivery retries reuse the same Avalon operation ID. A provider that
+    ignores idempotency retains the documented duplicate-delivery risk.
 40. A suggested work stream is absent from real work-stream collections until
     one acceptance transaction creates exactly one work stream/card/initial
     history.
@@ -2751,13 +3059,16 @@ SQL rows. EU recovery remains in the approved boundary.
 
 ### Regional, migration, security, and operations
 
-47. A person receives the correct shard route/session without a token/service
-    key that grants multiple shards. Global route commands converge only through
-    matching shard receipts; stale shard/epoch commands fail closed, and a
-    source closure receipt is the sole workspace-move linearization point.
-48. EU paths fail closed when Supabase Realtime/Auth/Storage/backup/support or
-    Cloudflare Worker/Workflow/Regional Services/provider processing lacks the
-    approved residency contract.
+47. A person's one-hour asymmetric Avalon IdP JWT is accepted directly through
+    Third-Party Auth by configured projects, while live regional membership—not
+    token claims or a service key—grants workspace access. Global route commands
+    converge only through matching shard receipts; stale shard/epoch commands
+    fail closed, and a source closure receipt is the sole workspace-move
+    linearization point.
+48. EU Database, Storage, vectors, and backups remain durably in the EU shard.
+    Realtime/CDN/log/Cloudflare/provider processing may be global under the DPA;
+    configuration audits and continuous controls detect drift without claiming
+    full EU processing residency.
 49. No regional product content appears in the global control database,
     Workflow state, routine logs, queue bodies, or operator migration surfaces;
     the global schema contains only specified identity/invitation/billing and
@@ -2766,80 +3077,563 @@ SQL rows. EU recovery remains in the approved boundary.
     audience, trusted runner, and Storage/Realtime policies; all policy/FK
     predicates have query-plan/index tests.
 51. Additive schema deployment does not rewrite every entity or block hot
-    interactive tables beyond the change budget.
+    interactive tables beyond the reviewed lock-duration threshold.
 52. A paused migration stops new bounded claims; repeated jobs return receipts;
     exceptions quarantine; interactive traffic retains priority.
-53. D1/R2 import compares immutable chunk/row counts and hashes, buffers/catches
-    held writes, closes exactly one source-local authority gate, tolerates a
-    crash at every later destination/global convergence edge, and never has two
-    writers.
-54. PITR/restore tests reconcile runs, effects, queues, connectors, driver state,
-    and independently restored Storage before reopening admission.
+53. D1/R2 import completes final copy, counts/hashes, independently verifiable
+    source closure, and Supabase activation inside an announced read-only
+    maintenance window of at most 15 minutes. It accepts no held or dual writes,
+    tolerates a crash at every later destination/global convergence edge, and
+    never has two writers.
+54. PITR/restore tests exercise 14-day Database recovery and independent 30-day
+    Storage-object recovery, then reconcile runs, effects, queues, connectors,
+    and driver state before reopening admission.
 55. Workspace export includes authorized substreams, parts, activity,
     suggestions, audit, and Storage manifest at a frozen fence.
-56. Workspace deletion revokes admission first, removes/retains each data class
-    according to policy, verifies Storage and derived-index removal, and records
-    non-content receipts.
-57. Load tests establish global-route and shard database/pool/Queue/Cron,
-    Realtime, Worker, Storage, vector, and Workflow headroom plus cost per active/
-    idle user and stream.
+56. Workspace deletion revokes admission first, removes active product data and
+    vector/search derivatives within 24 hours, expires backup copies within 30
+    days, verifies Storage removal, honors only explicit scoped legal holds, and
+    records non-content receipts under the one-year security/audit policy.
+57. Exactly one product shard per region launches without prelaunch capacity/
+    load testing. Production telemetry records database/pool/Queue/Cron,
+    Realtime, Worker, Storage, vector, Workflow, and abuse pressure and informs
+    tier, limits, vertical scaling, or a later additional shard.
 58. Alerts cover global command convergence and route/gate epoch mismatch,
     DB/disk/pool/lock/WAL, queue age/read/DLQ, Cron, Worker/Workflow failure,
-    Realtime gaps/disconnect/RLS, stuck run/unknown effect, ingress lag, Storage
+    Realtime gaps/disconnect/RLS, stuck run/response-uncertain retry, ingress lag, Storage
     orphan, migration mismatch, and deletion/export SLO.
+59. The checked-in extraction registry classifies every regional workspace
+    table, proves an indexed deterministic path to its workspace/work-stream
+    owner where applicable, and fails CI when a new table or owner kind is
+    unclassified.
+60. Work-stream-targeted command receipts are directly selectable by
+    `workstream_id`, and the polymorphic work-stream `agent_runs` owner is
+    same-workspace validated and indexed; every other aggregate leaf has a
+    tested bounded parent join without portability-only denormalization.
+61. Query plans and schema tests prove the compatibility requirement does not
+    add a material launch-mode write, WAL, RLS, query, or storage regression.
+    Future authority-routing, portable-transition, projection, revocation, and
+    DO tables are absent. Appendix A is a dormant contingency and cannot be
+    activated without a superseding architecture decision.
+62. Schema/contract tests reject a newly generated Avalon-owned opaque UUID that
+    is not UUIDv7, prove UUIDv7 values survive JSON/API/Postgres/export/SQLite
+    round trips byte-for-byte, and prove all canonical ordering remains correct
+    under clock regression and same-millisecond ID generation.
 
-## Open questions
+## Resolved architecture interview
 
-1. What Cloudflare contract and tested protocol prove Workflow state/log safety,
-   Regional Services execution, Worker-to-provider processing, placement, and
-   shard-scoped secrets in each launched region? There is no Edge fallback.
-2. What exact Supabase-supported Auth/OIDC topology gives one Avalon identity
-   secure regional sessions, logout, and revocation without shared signing keys?
-3. What contractual EU guarantees cover Supabase Realtime, Auth, Queues/Cron,
-   Storage, logs, backups/support plus Cloudflare Workflow/Worker state, logs,
-   triggers, Regional Services, and outbound subrequests?
-4. What launch workspace/member/work-stream size, active connection count,
-   connector burst, token fan-out, queue latency, and per-shard storage/write
-   load select the compute tier, account limit increases, drain threshold, and
-   number of Supabase shards per region?
-5. What exact event retention/offline support window triggers snapshot rather
-   than cursor replay?
-6. What common and personal card fields are returned inline versus refetched by
-   ID, and which count caches are justified by measured query cost?
-7. What is the final model-context algorithm for each substream kind, promotion,
-   redaction, tool-pairing, and provider adapter version?
-8. Which final text/body sizes remain inline in Postgres versus private
-   Storage? Launch assumes 16 KiB active chunks, 500 ms observed and one-second
-   unobserved checkpoints; does measured WAL/TOAST/vacuum/IO, RLS delta-read,
-   and Realtime fan-out load justify a 250 ms premium tier or a different chunk
-   size, and which 10/20/30 fps local render target best balances perceived
-   flow, client CPU, accessibility, and bounded display lag?
-9. What is the maximum explicit mention fan-out and the lazy audience-attention
-   algorithm for workspace-wide events?
-10. What maximum stale-access window can Supabase Realtime guarantee for an
-    already joined private channel, and what forced disconnect/token renewal
-    mechanism meets the product contract?
-11. Which model/tool providers support abort, idempotency, and result lookup;
-    which effects must become `unknown` after a crash?
-12. Which Daytona API primitives provide addressable start, callback/status,
-    incremental output, cancellation, and idempotency for long commands?
-13. What exact loop budgets apply to tokens, steps, tools, elapsed/idle time,
-    cost, output bytes, children, queue age, Workflow steps, and subrequests?
-14. Which non-work-stream inference paths are genuinely iterative and migrate to
-    `RunDriver` first, versus remaining bounded model-only jobs?
-15. What Queue visibility/renewal API, throughput, latency, retention, DLQ, and
-    availability does the contracted Supabase project provide?
-16. What notification promise lets the desktop close its background Realtime
-    socket while still informing a person of a long-loop completion?
-17. What customer promises cover Database and Storage backup, legal hold,
-    deletion expiry, logs, vectors, provider artifacts, and export retention?
-18. At what measured table/index/vacuum threshold will events/activity be time-
-    partitioned, and how will retention preserve cursor semantics?
-19. Is application-layer encryption required for any connector/Terminal/file
-    class beyond Supabase at-rest controls, and what key service owns it?
-20. What invariant and write-hold duration makes D1/R2 cutover acceptable for a
-    very hot workspace, what source-closure receipt is independently verifiable,
-    and what is the user-visible backpressure/availability-gap contract?
+The 21 architecture choices that previously appeared as open questions are now
+resolved and applied throughout this PRD. The [decision log](#decision-log) is
+the compact index of those normative outcomes. Account-specific hard limits,
+provider behavior, operational measurements, and configuration drift remain
+facts to observe and validate; they are not unresolved product architecture
+choices and do not silently override the decisions above.
+
+## Appendix A: Non-planned WorkstreamDO extraction contingency
+
+### Purpose and guardrail
+
+This appendix preserves a dormant portability contingency. The selected
+architecture is Supabase-only: no metric, cost threshold, or traffic event
+automatically authorizes a WorkstreamDO migration. Regional Postgres remains
+the only product-data authority and Supabase Realtime remains the transport.
+Using any protocol below requires a future superseding PRD and an explicit new
+architecture decision after Supabase-native scaling options are reconsidered.
+
+If that future decision is ever made, the hypothetical extraction moves one work
+stream—not one workspace—into one
+SQLite-backed Cloudflare WorkstreamDO. Workspace membership, connector
+activity, digests, suggestions, user-specific sidebar state, files, search, and
+generic non-work-stream loops remain relational. Postgres receives an ordered
+read model from each extracted DO so workspace/sidebar queries still use one
+regional SQL surface. The resulting target is the architecture specified in
+the [hybrid PRD](../2026-08-16_hybrid-workstream-do-supabase/prd.md).
+
+Compatibility is intentionally semantic rather than physical. The Supabase
+schema may use the full Postgres feature set. Migration code maps the normalized
+aggregate into the DO's tables and proves the same observable invariants; the
+launch schema is not flattened into a future SQLite shape.
+
+### Platform facts revalidated for this appendix
+
+- Supabase Realtime rate limits are plan- and contract-dependent, and message
+  usage counts fanout deliveries. Capacity gates therefore use the contracted
+  regional-project limit and measured recipient fanout, not a copied default.
+- Cloudflare recommends SQLite-backed storage for new Durable Object namespaces;
+  it is private to the object and strongly consistent. Its JavaScript API cannot
+  represent every signed 64-bit integer exactly, so the transformer preserves
+  large Postgres sequences as decimal text rather than routing them through a
+  JavaScript `number`.
+- Cloudflare WebSocket Hibernation can release an idle DO from memory while
+  keeping clients connected. It does not make active inference free and does
+  not replace durable cursor/checkpoint recovery.
+- A future production namespace must use the reviewed regional placement and
+  jurisdiction configuration. Extracting a stream never permits it to leave the
+  workspace's approved data region.
+
+### Table-definition audit
+
+Every table defined in this PRD is accounted for below. “Move” means the
+work-stream-owned rows become canonical in the DO. “Project” means Postgres
+keeps a query/read-model copy driven by ordered DO events. “Retain” means
+Postgres remains canonical. “Rebuild” means the data is derived and need not be
+copied as authority.
+
+#### Global and regional routing/identity
+
+| Tables | Current ownership path | DO disposition | Validation |
+| --- | --- | --- | --- |
+| `global_accounts`, `organizations`, `organization_roles`, `workspace_invitations`, `billing_entitlements` | Global identity/organization keys | Retain globally | No work-stream content and no extraction dependency |
+| `regional_shards`, `workspace_routes` | Global workspace route | Retain globally | Later identifies the regional Postgres shard; it does not route individual DOs |
+| `routing_commands`, `routing_command_attempts`, `routing_command_receipts` | Global workspace command | Retain globally | WorkstreamDO cutover is a regional product operation, not a global product replica |
+| `workspace_route_gates`, `global_command_receipts` | Direct `workspace_id` | Retain regionally | Workspace residency/admission remains Postgres-owned |
+| `platform_identities` | Regional principal → platform user | Retain regionally | Issues live membership decisions and future short-lived DO tickets |
+
+These tables pass without a physical schema change. A global workspace route
+continues to select a regional gateway/shard; the regional directory added in
+the future expand phase selects Postgres or DO for a particular work stream.
+
+#### Workspace and authorization
+
+| Tables | Current ownership path | DO disposition | Validation |
+| --- | --- | --- | --- |
+| `workspaces`, `retention_policies` | Direct workspace root | Retain | Workspace lifecycle, policy, and regional admission never move into child DOs |
+| `workspace_members` | Direct `workspace_id` | Retain | Live membership remains the authorization authority |
+| `workspace_resource_grants` | Direct workspace plus typed resource | Retain | A work-stream resource continues to point at the durable Postgres directory row |
+| `audiences`, `audience_members` | Audience has `workspace_id`; members join by indexed audience FK | Retain; issue bounded audience descriptors/revisions to DO | Normalized membership is preferable to duplicating scope on every member row |
+
+These tables pass. The future DO stores only the audience/resource descriptor,
+authorization epoch, and hashes needed to fence materialization. It does not
+cache an unbounded workspace membership graph. Postgres denies new tickets
+first on removal; active DO sessions use a bounded revocation protocol added in
+the expand phase.
+
+#### Work-stream directory, sidebar, and attention
+
+| Tables | Current ownership path | DO disposition | Validation |
+| --- | --- | --- | --- |
+| `workstreams` | Direct `workspace_id`, stable work-stream UUID | Split: identity/route remains Postgres; common metadata and revisions move; Postgres row becomes ordered projection | Existing stable ID, sequence, revision, and lifecycle fields provide the snapshot root |
+| `workstream_cards` | Direct `workspace_id` + `workstream_id` | Project | Already rebuildable; after cutover only projector functions update DO-owned common fields |
+| `workstream_user_state` | Direct workspace/work stream/person | Retain | Seen, pin, mute, dismiss, and personal interest remain relational and RLS-queryable |
+| `workstream_attention_events`, `part_mentions` | Direct workspace/work stream | Project common message/mention facts; retain personal waterlines | Ordered part/attention IDs are sufficient; projector applies them before emitting workspace events |
+| `attention_materialization_jobs` | Primary/FK to work-stream attention event | Retain/settle before hypothetical transfer | Sparse user-overlay work remains relational and is replayable from the canonical attention event |
+| `workstream_participants`, `workstream_assignments` | Direct or indexed work-stream FK | Retain | Relational user state; assignment effects targeting an active loop use a routed command receipt |
+
+These tables pass. The existing transactionally current sidebar remains an
+advantage until cutover. After cutover, common card/mention facts become
+monotonic projections while user state remains canonical in Postgres. The UI
+must expose bounded synchronization if a DO projection lags; it may not invent
+a current common state from a stale card.
+
+#### Conversation, input, output, and compaction
+
+| Tables | Current ownership path | DO disposition | Validation |
+| --- | --- | --- | --- |
+| `substreams` | Direct workspace/work stream | Move; project query/export summary | Stable lineage, audience, base sequence, scope revision, and depth map directly |
+| `turns` | Direct workspace/work stream/substream | Move; optional support projection | Complete-turn and admission-ordinal semantics are portable |
+| `conversation_parts` | Direct workspace/work stream/substream/turn | Move; project sealed parts | UUID, work-stream sequence, turn ordinal, content hash, audience, and relations are sufficient |
+| `input_admission_batches` | Direct workspace/work stream/substream | Move | Queue/steer mode and control revision remain canonical |
+| `input_admission_batch_turns` | Indexed batch and turn FKs | Move through registered batch join | Normalized join is deterministic; adding redundant scope columns is unnecessary |
+| `active_output_attempts` | Direct workspace/work stream plus run/turn | Move; coalesced projection only | Attempt, reserved part, revision, offset, and hash define restart truth |
+| `active_output_chunks` | Indexed composite attempt FK | Move through attempt join | Bounded 16 KiB chunks and ordered offsets map directly; no scope duplication needed |
+| `compaction_jobs` | Direct workspace/work stream/substream | Move | Frozen sequence/hash/authorization/scope fences are portable |
+| `compaction_sources` | Indexed job and part FKs | Move through job join | Exact source lineage is deterministic and bounded by the job |
+| `substream_promotions` | Direct workspace/work stream | Move; project resulting part | Direction, frozen range, audience fence, and hash are portable |
+
+These tables pass without flattening. The extraction registry must order roots
+before leaves and include each normalized join explicitly. A migration harness
+materializes provider arrays from the exported snapshot and compares their
+ordered hash with Postgres before a candidate DO can activate.
+
+#### Events, receipts, queues, and external delivery
+
+| Tables | Current ownership path | DO disposition | Validation/action |
+| --- | --- | --- | --- |
+| `workspace_events` | Direct workspace | Retain | Workspace/sidebar replay remains Postgres-owned |
+| `workstream_events` | Direct work stream | Copy history into DO; future DO events project back | Existing event cursor is an audit/wake log, so the expand phase adds a portable versioned transition outbox rather than overloading every launch event |
+| `command_receipts` | Workspace plus optional work stream | Copy unexpired work-stream receipts; retain audit copy | **Definition updated:** work-stream-targeted commands require `workstream_id`, making retry scope deterministic without changing workspace command behavior |
+| `queue_inbox_receipts` | Queue semantic key | Drain or settle work-stream messages before closure; retain non-work-stream rows | Transient delivery state is not aggregate history |
+| `outbox_messages` | Direct workspace plus destination/operation | Drain/reconcile affected work-stream effects before closure; retain | Never infer completion from queue deletion |
+| `dead_letters` | Queue semantic key and bounded snapshot | Retain | Operator evidence remains relational; unresolved affected entries block cutover |
+
+The event distinction is important. Realtime/workstream events currently tell a
+client what durable row changed; they need not contain every transition needed
+to hydrate a different authority. Only after a future superseding architecture
+decision would an expand migration add the canonical, versioned transfer/
+projector outbox. Existing hot
+transactions are not charged that write before it is needed.
+
+#### Agent runs, tools, Workflow, and Daytona
+
+| Tables | Current ownership path | DO disposition | Validation/action |
+| --- | --- | --- | --- |
+| `model_provider_configs`, `tool_policies` | Regional or workspace configuration | Retain; DO records immutable ID/revision | Secrets and policy graphs do not move; Worker reauthorizes current use |
+| `agent_runs` | Workspace + checked polymorphic owner | Move work-stream-owned rows; retain every other owner | **Definition clarified:** `(workspace_id, owner_kind, owner_id)` is indexed and the work-stream case resolves to same-workspace `workstreams` |
+| `agent_steps`, `run_events`, `run_control` | Indexed run FK | Move through registered work-stream-run join; retain for non-work-stream runs | No redundant scope columns; owner split occurs at the run root |
+| `run_waits`, `run_wait_events` | Indexed run FK | Move work-stream-owned waits/signals | Early-event semantics and unique event keys are portable |
+| `tool_effects` | Workspace + indexed run/step | Move work-stream-owned intent/result truth; retain projection/audit | Response-uncertain effects retain their operation ID and retry state across the hypothetical transfer |
+| `terminal_sessions` | Direct workspace/work stream/run | Move canonical session/provider references; retain resource metadata | Daytona stays the provider; no sandbox migration occurs |
+| `terminal_commands` | Indexed session/effect FK | Move through session join; retain support projection | Named sessions, provider command IDs, output refs, and offsets reattach safely |
+| `driver_bindings` | Indexed run FK | Move binding truth with work-stream run; Workflow instance itself continues | One stable Workflow ID is rebound by authority epoch; Workflow state is never the transcript |
+
+These tables pass after the selective `agent_runs` ownership clarification.
+The physical generic tables remain idiomatic and owner-neutral. Extraction uses
+the run root to select only `owner_kind = 'workstream'` and the chosen ID; it
+does not add nullable work-stream columns to every generic-run leaf.
+
+#### Connectors and activity
+
+| Tables | Current ownership path | DO disposition | Validation |
+| --- | --- | --- | --- |
+| `connector_installations`, `ingress_receipts`, `connector_resources`, `activity_events` | Direct workspace | Retain | Each event belongs to one workspace and remains relational |
+| `ingress_receipt_conflicts`, `normalization_attempts` | Indexed receipt FK | Retain | Operational/provenance children are not work-stream aggregate state |
+| `activity_links` | Indexed activity event plus typed target | Retain | A link may point to the persistent Postgres work-stream directory ID |
+| `activity_cursor_state` | Indexed installation FK | Retain | Connector reconciliation is workspace/provider state |
+
+These tables pass. Suggested or accepted work may send an idempotent command to
+the routed work-stream authority, but connector ingress and activity are never
+copied into that DO merely because an event links to it.
+
+#### Digests and suggestions
+
+| Tables | Current ownership path | DO disposition | Validation |
+| --- | --- | --- | --- |
+| `digest_schedules`, `digest_jobs`, `digest_sources`, `digests` | Workspace/schedule/activity joins | Retain | Workspace/person derived work remains Postgres-owned |
+| `suggestions`, `suggestion_sources`, `suggestion_feedback` | Direct workspace plus activity joins and optional target | Retain | Proposal, ranking, provenance, and feedback stay relational |
+
+These tables pass. Accepting a new suggested work stream creates its Postgres
+directory row and then invokes the authority selected for that stream. Accepting
+an action on a DO-owned stream records a Postgres intent and reconciles the DO
+receipt by operation key; it never dual-writes the canonical conversation.
+
+#### Content, Storage, and search
+
+| Tables | Current ownership path | DO disposition | Validation |
+| --- | --- | --- | --- |
+| `content_refs`, `storage_reconciliation_jobs` | Direct workspace and source references | Retain | DO stores only opaque ID, expected revision/hash/size, and audience fence |
+| `content_search_documents`, `content_embeddings` | Direct workspace plus typed source | Rebuild/project from sealed DO parts and retained workspace sources | FTS, generated `tsvector`, pgvector, and HNSW remain Postgres-native |
+
+These tables pass. Storage bytes are not copied into SQLite. During migration,
+every referenced `content_ref` must be ready, in-region, hash-matching, and live-
+authorized; unresolved pending/deleting/corrupt references block activation.
+
+#### Migration, import/export, deletion, and audit
+
+| Tables | Current ownership path | DO disposition | Validation |
+| --- | --- | --- | --- |
+| `migration_campaigns`, `migration_jobs`, `migration_receipts`, `migration_exceptions` | Regional campaign and workspace jobs | Retain and extend for per-work-stream transfer | Existing bounded claim/receipt model is reusable |
+| `import_chunks` | Direct workspace | Retain | D1/R2 import remains a separate source migration |
+| `export_jobs`, `export_chunks` | Workspace job and indexed chunk FK | Retain; export reads DO projections or authority snapshot by route | Customer export remains one workspace manifest |
+| `deletion_jobs`, `deletion_receipts` | Direct workspace | Retain; dispatch per-stream deletion to DO when applicable | Workspace admission closes before child cleanup |
+| `product_audit_events` | Workspace/typed target | Retain | Authority-transfer events contain IDs, epochs, hashes, and decisions, never content |
+
+These tables pass. The same migration campaign infrastructure may enumerate
+hot candidate work streams from Postgres; unlike a DO-only fleet migration, it
+does not need to discover or wake every historical object.
+
+### Audit conclusion
+
+The logical schema is WorkstreamDO-extractable without sacrificing its
+relational advantages. Two table-definition clarifications are required now:
+
+1. work-stream-targeted `command_receipts` carry nullable `workstream_id` and a
+   scope/expiry partial index; and
+2. the work-stream form of the polymorphic `agent_runs` owner is validated and
+   indexed at its root.
+
+All other work-stream aggregate roots already store `workstream_id`, and their
+leaf tables have bounded indexed foreign-key paths. Workspace domains that
+should remain relational are deliberately not made DO-shaped. Before any schema
+implementation is approved, CI must prove that every new workspace-scoped table
+is added to the extraction registry with one of the dispositions above.
+
+### Extraction registry
+
+The registry is checked-in typed code plus a versioned test fixture, not
+operator-authored SQL stored in a product table. One entry per regional table
+contains:
+
+- table and registry schema version;
+- ownership classification and canonical authority;
+- root key and the exact parameterized join from `workstreams.id`;
+- dependency/export order and stable row order;
+- inclusion predicate, retention rule, expected cardinality/byte bound;
+- canonical serialization and checksum fields;
+- target DO table or explicit `retain`, `project`, or `rebuild` disposition;
+- references that must be live-validated rather than copied;
+- invariant/test suite that validates the transformed rows.
+
+CI fails when a regional workspace-scoped table, polymorphic owner kind, or
+foreign-key child is absent, has no indexed root path, produces nondeterministic
+ordering, or lacks a disposition. This provides portability pressure without
+adding columns or writes to the production hot path.
+
+### Preconditions for reopening the architecture decision
+
+This PRD defines no WorkstreamDO scale trigger. Realtime message pressure,
+checkpoint WAL/IO, switching latency, tenant isolation, or total cost may justify
+studying alternatives, but none changes authority automatically. The supported
+response remains Supabase-native tuning, a contracted limit change, vertical
+scaling, or another regional product shard until a superseding PRD is approved.
+
+Any future proposal must use sustained production evidence, compare the complete
+hybrid cost—including duplicate projections, revocation, restore, migration,
+and on-call ownership—and explain why Supabase-native options are insufficient.
+Only that new decision may turn the illustrative phases below into a rollout
+plan.
+
+### Target split after extraction
+
+| Domain | Authority after one stream moves |
+| --- | --- |
+| Work-stream common metadata, substreams, parts, compaction, run/control state, work-stream effects, active output | One WorkstreamDO |
+| Participant token stream, reconnect cursor, queue/steer rendezvous | WorkstreamDO hibernatable WebSocket |
+| Full-loop orchestration and bounded compute | Existing Cloudflare Workflow and Workers |
+| Daytona Terminal execution | Existing Daytona provider; DO stores/reconciles receipts |
+| Workspace, membership, authorization policy, connectors, activity, digests, suggestions | Regional Supabase Postgres |
+| Sidebar cards and common work-stream query data | Ordered DO projection in regional Postgres |
+| User seen/mention acknowledgement/pin/mute/assignment overlays | Regional Supabase Postgres |
+| Storage bytes, content metadata, FTS, vectors | Supabase Storage/Postgres |
+| Workspace/sidebar Realtime | Supabase Realtime |
+| Work-stream tokens | Direct DO WebSocket; no Supabase token Broadcast |
+
+There is no WorkspaceDO in this path. A workspace may temporarily contain both
+Postgres-owned and DO-owned work streams. Every request resolves the individual
+stream's authority; sidebar SQL joins both through the Postgres directory/read
+model.
+
+### Phase 0 — prove the target before changing production schema
+
+Build an offline transformer against production-shaped, de-identified fixtures.
+It reads one work stream using the extraction registry, writes the candidate
+WorkstreamDO SQLite shape, and verifies:
+
+- row counts, stable IDs without re-keying, UUID version/byte preservation,
+  sequence bounds, source and transformed Merkle hashes;
+- provider message arrays for every supported substream/audience/materializer;
+- tool call/result pairing and turn admission order;
+- queued/steering control revision and active-run state;
+- active-output offset/chunk/prefix hashes;
+- compaction source and authorization/resource/scope fences;
+- run, wait, effect, Daytona, driver, and unexpired command receipts;
+- referenced content IDs, versions, hashes, sizes, and audiences; and
+- projected card, mention, participant, and support-query results.
+
+This phase changes no authority and deploys no per-work-stream object. It would
+be required only by a future superseding migration decision, not by the all-
+Supabase launch.
+
+### Phase 1 — expand only after a superseding architecture decision
+
+An expand/contract Supabase migration then adds the hybrid control surface:
+
+- `authority_kind`, positive `authority_epoch`, `authority_state`, opaque
+  `authority_ref`, source-closure sequence/hash, and projection watermarks to
+  the work-stream directory;
+- `workstream_authority_transfers` for resumable per-stream movement;
+- versioned portable transition events/outbox beginning at a recorded readiness
+  sequence;
+- `workstream_projection_state`, immutable projection events, and idempotent
+  apply receipts;
+- short-lived DO ticket/session registration, authorization-revocation commands,
+  receipts, and hard lease deadlines; and
+- a narrow router/command API that checks the directory and dispatches to
+  Postgres or WorkstreamDO.
+
+New nullable/defaulted columns are backfilled in bounded batches; new indexes
+are built without blocking hot writes beyond the approved lock threshold. Old code
+continues to treat every stream as Postgres-owned. Only after all writers check
+the route state may any row leave `postgres_writable`.
+
+The portable transition outbox begins before a candidate snapshot. This avoids
+holding a long transaction or requiring the launch `workstream_events` wake log
+to contain every mutation. It is an intentionally temporary/forward-looking
+write cost introduced only when migration is being prepared.
+
+### Phase 2 — select and pre-copy one candidate
+
+Select one stream by stable ID and registry version. Start with idle or terminal
+canaries; active-loop transfer is enabled only after the idle path passes.
+
+1. Record source schema/materializer/registry versions and the portable-event
+   readiness sequence.
+2. Take a consistent snapshot while Postgres remains writable.
+3. Transform and hydrate an inactive candidate DO in the same approved region
+   under destination authority epoch `E+1`.
+4. Replay portable transitions after the snapshot into the inactive candidate.
+5. Re-run hashes, provider-array fixtures, receipt checks, card projection, and
+   Storage/resource validation.
+6. Keep all product reads/writes on Postgres. The candidate rejects user,
+   executor, Workflow, and projector commands because it has no activation
+   receipt.
+
+Pre-copy failure deletes or quarantines the candidate and changes no product
+behavior.
+
+### Phase 3 — quiesce, close, and activate one authority
+
+Cutover has a short per-stream availability gap but no dual writer.
+
+1. Ask the active Workflow/run, if any, to reach a safe boundary. It checkpoints
+   output, stops starting effects, and preserves every started effect's success
+   or response-uncertain automatic-retry state. A Daytona command may continue
+   by provider ID, but
+   its receipt/offset state must be closed and copied.
+2. In one Postgres transaction, lock `workstreams`, reject a stale transfer,
+   set `authority_state = preparing_do`, increment/fence the authority epoch,
+   and record the final source sequence and closure hash. Existing Postgres
+   command functions now return typed `migration_retry` without committing a
+   product mutation.
+3. The desktop retains any unacknowledged message and retries the same operation
+   key. A message acknowledged before closure is in the snapshot/event tail; a
+   message arriving after closure is not acknowledged and therefore cannot be
+   silently lost. A separate hold queue is deliberately avoided until evidence
+   shows the short retry window is insufficient.
+4. Replay the final transition tail into the inactive DO and verify exact
+   closure sequence/hash, unexpired receipts, run/control revision, and content
+   references.
+5. Commit the regional route to `workstream_do` at epoch `E+1`, record an
+   activation outbox item, and permanently disable Postgres canonical commands
+   for that epoch. This transaction is the Postgres-side linearization point.
+6. WorkstreamDO accepts normal commands only after verifying the signed
+   activation record and exact epoch. A failure between steps 5 and 6 creates an
+   availability gap; it cannot create two writers.
+7. The client reconnects by DO cursor and retries its stable operation key. The
+   Workflow resumes the same full-loop identity against the new authority.
+
+No feature flag, Realtime hint, Workflow state, candidate existence, or global
+route makes a DO authoritative. Only the fenced regional transfer receipt and
+matching DO epoch do.
+
+### Phase 4 — project back into relational workspace state
+
+Every canonical DO transaction appends a versioned domain event and projection
+outbox row together. A regional Worker sends contiguous batches to one Postgres
+RPC. The RPC:
+
+1. locks the stream projection watermark;
+2. checks authority epoch, next expected sequence, schema version, operation ID,
+   and payload/batch hash;
+3. rejects a gap or conflicting duplicate;
+4. writes immutable event/part/run projections and common card facts;
+5. joins projected mention/assignment semantics to canonical Postgres user
+   overlays;
+6. appends `workspace_events` for sidebar/offline catch-up;
+7. records the apply receipt and advances the watermark in the same transaction.
+
+Duplicate delivery returns the same receipt. A poison stream is quarantined
+without blocking batches for unrelated streams. Projection lag never permits a
+direct repair write to DO-owned common state. Final/authorization events take
+priority over provisional output; bounded backlog eventually pauses new runs
+rather than dropping canonical events.
+
+### Phase 5 — WebSockets, Realtime, and background clients
+
+After cutover, work-stream participant and temporary executor sockets terminate
+at WorkstreamDO. The socket protocol uses authority epoch, run/control revision,
+durable byte offset, and rolling hash. It follows Cloudflare's WebSocket
+Hibernation API for participant idle time; active inference still consumes
+metered work.
+
+Provider output is batched to the DO, durably checkpointed at the selected
+cadence, and sent directly to current viewers. The desktop animates one delta at
+20 fps by default (or displays the batch immediately for reduced motion) without
+creating platform frames or writes. Supabase
+Realtime continues to carry body-free workspace/sidebar projection hints, not
+tokens.
+
+Switching A→B→A works across mixed authorities because the desktop keeps a
+cursor per work stream. A Postgres-owned stream catches up from durable rows
+after a Supabase hint; a DO-owned stream catches up from its DO cursor. A
+background client closes unused subscriptions and restores from the relevant
+authority without restarting the loop.
+
+### Phase 6 — authorization and revocation
+
+Postgres remains the membership authority. The regional gateway issues a short-
+lived, audience-bounded DO ticket containing workspace/work-stream IDs,
+membership revision, authorization epoch, authority epoch, region, subject, and
+expiry. The DO never treats possession of an ID as access.
+
+Membership or resource removal commits deny-first in Postgres, preventing new
+tickets and RLS/Storage reads. It also dispatches a signed revocation command to
+registered active DOs. A matching DO persists the newer epoch, closes affected
+sockets, fences runs/materialization, and returns a receipt. Ticket/lease expiry
+is the hard bound when delivery is lost.
+
+Under a future superseding PRD, migration would remain blocked until tests prove removal-to-close p95 and the reviewed
+maximum stale-content interval, including hibernated sockets, a lost command,
+an already-running tool, regional outage, and key rotation.
+
+### Phase 7 — illustrative canary and fleet control after future approval
+
+Use the existing regional migration campaign/job/receipt model. A job targets
+one work stream and registry version; claims are bounded, pausable, and fair to
+interactive traffic. Canary order is:
+
+1. synthetic streams;
+2. internal idle streams;
+3. internal active streams without tools;
+4. active streams with ordinary tools;
+5. Daytona coding streams, private substreams, and large histories;
+6. opt-in production workspaces; and
+7. selected hottest streams by region.
+
+The migration need not move every historical stream. Moving only hot/fanout-
+heavy streams can remove most token Realtime pressure while leaving dormant
+streams on the simpler Postgres authority. A whole workspace is not pinned to
+one architecture generation unless product or regulatory requirements later
+justify that restriction.
+
+### Rollback and reverse transfer
+
+Before activation, rollback discards the candidate and clears `preparing_do`
+under the original Postgres epoch. After the DO accepts any canonical command,
+the old Postgres rows are historical/projections and can never be reopened as
+the writer.
+
+Returning to Postgres or replacing a DO is another fenced authority transfer:
+stop new DO commands, reconcile effects, close at a canonical sequence/hash,
+verify a complete Postgres/new-DO candidate through that closure, increment the
+authority epoch, activate exactly one destination, and permanently reject the
+old epoch. PITR, a feature-flag flip, or copying the newest-looking row is not
+rollback.
+
+### Minimum hypothetical migration gates
+
+These gates do not authorize migration. If a future superseding PRD selects the
+hybrid architecture, no production work stream may move until all of these pass:
+
+1. The extraction registry accounts for every regional workspace table and CI
+   rejects an unclassified table or unindexed ownership path.
+2. Offline transformation is byte/hash deterministic and produces identical
+   provider arrays, turn/tool pairs, compaction fences, run state, effects, and
+   content references.
+3. Launch-mode query plans, write latency, WAL, RLS, and storage show no material
+   regression from portability scaffolding; premature columns/projections are
+   absent.
+4. Snapshot plus transition-tail replay converges under continuous 100-token/s
+   output, queued/steering input, compaction, and tool completion.
+5. Failure injection before and after closure, route commit, DO activation,
+   projection commit, and receipt acknowledgement yields zero dual-write
+   intervals and no acknowledged-message loss.
+6. A 2–30 minute loop and a 2+ hour Daytona coding loop resume the same identity
+   without a duplicate Daytona command or output; a generic provider that
+   ignores idempotency retains the documented at-least-once duplicate risk.
+7. Direct DO streaming/reconnect and A→B→A switching meet latency/loss SLOs at
+   10, 50, 100, 300, and target-peak active streams.
+8. Common and user-specific sidebar projections converge within SLO and expose
+   bounded lag honestly.
+9. Membership/resource revocation meets the reviewed hard stale-access bound
+   under notification loss and hibernation.
+10. Coordinated Supabase/DO/Storage/Workflow restore and reverse transfer pass
+    without split-brain.
+11. Measured performance, isolation, or total cost improves enough to fund the
+    second storage/runtime/projection/on-call system.
+
+If the seam gates fail, Avalon scales the all-Supabase design through tuning,
+larger contracted Realtime limits, compute/IO sizing, or additional regional
+project shards instead of accepting an unsafe hybrid.
 
 ## References
 
@@ -2848,6 +3642,9 @@ The detailed product-to-platform analysis and current official links are in
 the current official pages, especially:
 
 - [Supabase Realtime limits](https://supabase.com/docs/guides/realtime/limits)
+- [Supabase Realtime pricing](https://supabase.com/docs/guides/realtime/pricing)
+- [Supabase Third-Party Auth](https://supabase.com/docs/guides/auth/third-party/overview)
+- [Supabase custom and third-party JWTs](https://supabase.com/docs/guides/auth/jwts#using-custom-or-third-party-jwts)
 - [Supabase Broadcast](https://supabase.com/docs/guides/realtime/broadcast)
 - [Supabase Realtime message usage](https://supabase.com/docs/guides/platform/manage-your-usage/realtime-messages)
 - [Supabase compute and disk](https://supabase.com/docs/guides/platform/compute-and-disk)
@@ -2856,7 +3653,13 @@ the current official pages, especially:
 - [Supabase Storage access control](https://supabase.com/docs/guides/storage/security/access-control)
 - [Supabase pgvector indexes](https://supabase.com/docs/guides/ai/vector-indexes)
 - [Supabase database migrations](https://supabase.com/docs/guides/deployment/database-migrations)
+- [RFC 9562 UUIDs](https://www.rfc-editor.org/rfc/rfc9562.html)
+- [PostgreSQL UUID type and UUIDv7 generation](https://www.postgresql.org/docs/current/datatype-uuid.html)
 - [Cloudflare Workflow limits](https://developers.cloudflare.com/workflows/reference/limits/)
 - [Cloudflare Worker placement](https://developers.cloudflare.com/workers/configuration/placement/)
 - [Cloudflare Worker service bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/)
 - [Cloudflare Data Localization for Workers](https://developers.cloudflare.com/data-localization/how-to/workers/)
+- [Cloudflare SQLite-backed Durable Object storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+- [Cloudflare WebSocket Hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)
+- [Cloudflare Durable Object data location](https://developers.cloudflare.com/durable-objects/reference/data-location/)
+- [Hybrid WorkstreamDO and Supabase PRD](../2026-08-16_hybrid-workstream-do-supabase/prd.md)
