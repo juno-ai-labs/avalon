@@ -156,6 +156,7 @@ Producers today:
 | Producer | Event type | Audience | Digestible |
 | --- | --- | --- | --- |
 | `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Avalon records here is somebody addressing somebody |
+| Authoritative `WorkstreamRoom` regional-effect outbox | `workstream.message.posted` and later first-party work-stream events | the work stream; named targets travel in the same immutable effect | decided by the object mutation; messages are digestible |
 | `activity-consumer` after routing | `connector.<provider>.<manifest event type>` — so `connector.github.github.push`, and `connector.google.email.received`, because GitHub's manifest ids carry a provider prefix and Google's do not | the connection's own scope | whatever the connector's manifest declared for that activity type |
 
 ### The digest
@@ -471,6 +472,10 @@ cannot change a saved schedule, cursor, or settlement.
   `listActivityEventsForUser` and nowhere else. Storing recipients instead freezes
   the audience at write time, so someone added to a work stream today would never
   see what happened in it yesterday.
+- **After the DO authority switch, work-stream audience uses the versioned D1
+  directory-user projection**, not the frozen legacy participant table. System
+  work streams are excluded through the matching common projection. Before the
+  switch, the legacy rows remain the authority for the same query.
 - **Recording involvement never grants visibility.** A target row outside the
   audience is stored and still filtered out on read.
 - **`log_sequence` is the only cursor axis.** Never cursor on `created_at`, which
@@ -597,6 +602,21 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-17 — WorkstreamDO events enter the regional activity log durably
+
+**What changed:** Authoritative work-stream mutations emit first-party activity
+events through their local outbox and the regional Queue/D1 inbox. Audience
+resolution switches to common/user directory projections after cutover.
+
+**Why:** Digests still require one regional insertion-ordered log, while message
+and participant authority no longer lives in D1.
+
+**Considered and rejected:** Reading every WorkstreamDO during a digest or
+continuing to resolve post-cutover audience from frozen legacy rows.
+
+**Consequences:** Activity delivery is eventually consistent and idempotent;
+membership remains evaluated at read time from the current regional projection.
+
 ### 2026-08-13 — Digest telemetry cannot interrupt required settlement
 
 **What changed:** Every terminal digest telemetry call now isolates its entire
@@ -632,7 +652,6 @@ high-cardinality content.
 **Consequences:** Product analytics can join configuration cohorts to delivery
 outcomes without becoming the cursor or delivery source of truth. A retry keeps
 the delivery's stable event identity.
-
 ### 2026-08-12 — The schedule's work-stream pointer is dropped, now that the window it was waiting on has closed
 
 **What changed:** `0070_drop_digest_schedule_workstream.sql` drops

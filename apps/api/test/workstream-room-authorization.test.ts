@@ -115,6 +115,7 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): Workstream
         [...storage].filter(([key]) => key.startsWith(prefix)),
       ),
       setAlarm: async () => undefined,
+      getAlarm: async () => null,
       transactionSync: (body: () => unknown) => body(),
       sql,
       transaction: async (body: (t: unknown) => Promise<unknown>) => body({

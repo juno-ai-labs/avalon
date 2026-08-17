@@ -208,6 +208,19 @@ versioned common/user directory projections. Its hidden KV migration, normalized
 schema, fleet import, and authority states are documented in
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
+An authoritative mutation that changes workspace/user surfaces writes a
+versioned regional effect to the object's local outbox in the same SQLite
+transaction. The room alarm publishes only opaque object/message IDs and a hash
+through Cloudflare Queue. The consumer RPCs the regional object for the payload,
+applies an idempotent D1 inbox transaction for sidebar projections, the
+first-party activity log, or a short-lived notification intent, then RPCs an
+acknowledgement to the source object. D1 resolves current membership, profile,
+Slack, and email state. Mention delivery waits for the exact causally required
+viewer-projection version, so Queue reordering cannot outrun a removal. The
+object therefore owns the fact that a mention or state change occurred without
+acquiring workspace credentials, placing product text in Queue storage, or
+turning a failed network call into a lost sidebar update.
+
 The room authorizes every connection against D1 itself rather than trusting the
 one-minute ticket, using the same rule the REST reads apply — see
 [`data-model.md`](data-model.md). That check happens once per socket, so anything
@@ -630,6 +643,22 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-17 — Workstream objects project regional effects through Queue
+
+**What changed:** The work-stream boundary now includes the outbound path from
+an object-local transactional outbox through the regional Queue and D1 inbox to
+sidebar, activity, and notification consumers.
+
+**Why:** Workspace-wide and person-specific query/delivery state must follow an
+object mutation durably even though it belongs in the regional control plane.
+
+**Considered and rejected:** Synchronous D1 and provider calls from the object;
+they cannot atomically follow the local commit and make user latency depend on
+regional/external availability.
+
+**Consequences:** Regional effects are eventually consistent, at-least-once,
+hash-checked, version-ordered, and acknowledged back to their source object.
 
 ### 2026-08-17 — Work-stream authority gains a maintenance-fenced cutover
 

@@ -127,6 +127,14 @@ describe("database migrations", () => {
       expect(database.prepare(
         `SELECT title FROM workstream_directory_projections WHERE workstream_id = 'authority-workstream'`,
       ).get()).toEqual({ title: "After" });
+      expect(() => database.exec(`
+        UPDATE workstream_directory_projections
+           SET title = 'Conflicting', payload_hash = 'different'
+         WHERE workstream_id = 'authority-workstream' AND generation = 1 AND version = 1;
+      `)).toThrow(/workstream_projection_version_conflict/u);
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM workstream_regional_effect_receipts`,
+      ).get()).toEqual({ count: 0 });
     } finally {
       database.close();
     }
