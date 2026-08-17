@@ -574,8 +574,11 @@ future agent tool or plugin, not just this family.
    strict zod parse in the executor enforcing it; the surface is uniform across
    the family. An exclusive or conditional choice between parameters lives in
    the `description` and the executor's parse, never in a root-level
-   `oneOf`/`anyOf` of bare `required` branches — xAI rejects the whole request,
-   and sanitization empties the branches for everyone else.
+   `oneOf`/`anyOf` of bare `required` branches. Bind 13 repairs that shape
+   rather than emptying it, as earlier versions did, but the schema is still not
+   the enforcement point: a branch naming an undeclared property is still pruned
+   away, an unrepairable root union is dropped whole, and `z.toJSONSchema`
+   cannot carry a `.refine()` across the boundary regardless.
 3. References accept names where a person would use a name; ambiguity is an
    error, never a guess.
 4. There is a discovery path for any id, type, or enum the tool requires.

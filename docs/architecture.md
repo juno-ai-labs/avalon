@@ -20,7 +20,7 @@ apps/
 packages/
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
-  agent-harness/           Bind 11/OpenRouter adapter, prompts, skills, classifiers, tools
+  agent-harness/           Bind/OpenRouter adapter, prompts, skills, classifiers, tools
   connectors/              Core adapters and credential-plugin descriptors
 docs/                      Product, architecture, security, setup, runbooks
 ```
@@ -89,7 +89,7 @@ flowchart LR
   C --> D
   C --> S["WorkspaceScheduler DO"]
   S --> W["Generic Workstream Workflow"]
-  W --> A["Avalon Bind 11 adapter"]
+  W --> A["Avalon Bind adapter"]
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
   A --> X["Deferred Terminal plugin"]
@@ -299,7 +299,7 @@ exchange, and GitHub publication. The provider supplies isolation and process/
 filesystem/lifecycle primitives, not Avalon's receipts or authorization. See
 [`terminal-workspaces.md`](terminal-workspaces.md).
 
-The production entry point adapts `@juno-ai/bind` 11.0.0 to Avalon's OpenRouter
+The production entry point adapts `@juno-ai/bind` 13.0.0 to Avalon's OpenRouter
 transport and durable ports. Bind owns transcript healing, plugin and skill
 activation, turn/tool iteration, completion-defect recovery, epoch-aware
 streaming, and classified route traversal. Avalon owns authorization, regional
@@ -522,7 +522,7 @@ document, and it does not absorb one when it grows:
 | Identity, tenancy, and the D1 schema | [`data-model.md`](data-model.md) |
 | The Global/EU boundary in detail | [`regionalization.md`](regionalization.md) |
 | Trust boundaries and the renderer's isolation | [`security.md`](security.md) |
-| The Bind 11 adapter, runs, tools, skills, limits | [`agent-harness.md`](agent-harness.md) |
+| The Bind adapter, runs, tools, skills, limits | [`agent-harness.md`](agent-harness.md) |
 | Socket admission and the ticket | [`realtime-sockets.md`](realtime-sockets.md) |
 | The connector registry and manifest model | [`connectors.md`](connectors.md) |
 | Model routing flags | [`feature-flags.md`](feature-flags.md) |
