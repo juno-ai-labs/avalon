@@ -11,6 +11,7 @@ import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace
 const encoder = new TextEncoder();
 
 interface SocketClaims {
+  sessionId: string;
   userId: string;
   workspaceId: string;
   workstreamId: string;
@@ -37,7 +38,13 @@ function signingKey(env: Env): Uint8Array {
 
 export async function issueSocketTicket(env: Env, auth: AuthContext, workstreamId: string): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
-  return new SignJWT({ purpose: "workstream_socket", wid: auth.workspaceId, wsid: workstreamId, region: auth.region })
+  return new SignJWT({
+    purpose: "workstream_socket",
+    sid: auth.sessionId,
+    wid: auth.workspaceId,
+    wsid: workstreamId,
+    region: auth.region,
+  })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
     .setJti(crypto.randomUUID())
@@ -55,11 +62,13 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
     });
     if (
       payload.purpose !== "workstream_socket" || typeof payload.sub !== "string" ||
+      typeof payload.sid !== "string" ||
       typeof payload.wid !== "string" || typeof payload.wsid !== "string" ||
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
       (payload.region !== "global" && payload.region !== "eu")
     ) throw new Error("Incomplete socket claims");
     return {
+      sessionId: payload.sid,
       userId: payload.sub,
       workspaceId: payload.wid,
       workstreamId: payload.wsid,
@@ -183,6 +192,7 @@ export class SocketService {
     headers.delete("sec-websocket-protocol");
     headers.set("x-avalon-workspace-id", claims.workspaceId);
     headers.set("x-avalon-workstream-id", claims.workstreamId);
+    headers.set("x-avalon-session-id", claims.sessionId);
     headers.set("x-avalon-user-id", claims.userId);
     headers.set("x-avalon-socket-ticket-id", claims.ticketId);
     headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));

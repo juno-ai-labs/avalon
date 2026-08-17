@@ -255,6 +255,17 @@ The room accepts sockets with Cloudflare's hibernation API and stores connection
 identity in serialized attachments. After opening, the client sends `subscribe`
 with its last applied `afterSequence`. Sequence zero receives a snapshot; a
 reconnect within the bounded in-memory event window receives only newer events.
+The foreground composer sends `create_message` over this same socket, not over a
+parallel desktop REST mutation. The command has a stable client message ID and
+an operation ID. Its private success/failure receipt is deliberately outside the
+room sequence; the resulting `message_created` remains the canonical sequenced,
+broadcast event. If the connection drops before the receipt, the desktop
+reconnects and resends the same command for idempotent replay. Every command
+revalidates the regional session and workspace membership, while the persistence
+service rechecks work-stream visibility, so a long-lived socket is not a
+long-lived mutation grant. REST creation remains for compatibility and
+non-desktop ingress.
+
 An active assistant response is the exception to REST-only snapshots: the room
 atomically checkpoints its accumulated text and Bind cursor with each sequenced,
 batched stream frame, and includes that checkpoint in both an initial snapshot
@@ -643,6 +654,27 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-17 — The foreground socket carries authored message commands
+
+**What changed:** Desktop-authored messages now enter the existing WorkstreamDO
+socket as idempotent commands. A private command receipt reports completion,
+while the canonical message continues through the shared ordered event log.
+
+**Why:** A foreground send and its realtime result are one interaction owned by
+one work stream. Splitting request and result across REST and WebSocket made a
+lost HTTP response ambiguous and required a second routing path to the same
+authority.
+
+**Considered and rejected:** A workspace-level socket would add a parent hop to
+every work-stream mutation and make the workspace object a message bottleneck.
+Using the broadcast event as an acknowledgment cannot represent failures after
+the message commit, including a failed harness launch.
+
+**Consequences:** Session identity is part of the verified room attachment,
+authorization is checked again on every message command, and clients retry only
+with the same client message ID. Private receipts never advance or participate
+in replay cursors.
 
 ### 2026-08-17 — Workstream objects project regional effects through Queue
 

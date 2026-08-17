@@ -549,6 +549,12 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 - On first activation after the SQL-store rollout, an existing room imports its hidden `__cf_kv` identity, sequence, checkpoint chunks, HyperSight due item, and socket-ticket receipts. Diagnose failures through `_sql_schema_migrations`, `_data_migrations`, and `object_versions`; a `copied/running` data row means cleanup can resume safely, while an invalid legacy record remains deliberately untouched for repair. `GET /health` reports `schema: workstream-do-v1` and local database bytes.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The client heartbeat is jittered across 45–55 seconds, waits 15 seconds for `pong`, and reconnects with equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not perform application work.
+- Verify foreground message ingress on the existing WorkstreamDO socket: drop
+  the connection after `create_message` but before its private receipt, confirm
+  reconnect resends the same `clientMessageId`, and confirm exactly one
+  sequenced `message_created` row/event exists. A socket attachment from before
+  the session-claim deployment should receive `socket_reconnect_required` and a
+  1012 close on its first attempted write.
 - Batch model `stream_delta` broadcasts. Avoid Durable Object timers, per-connection alarms, and periodic room health polling; each can wake an otherwise idle room and add duration or request cost.
 - Resolve every EU room and scheduler namespace through `durableObjectNamespaceForRegion(..., "eu")`. A direct namespace lookup is a regionalization defect.
 - Monitor reconnect rate, `resync_required` rate, rejected socket origins, active connections, and messages per room. A rise in reconnects or resyncs is an availability signal, not a reason to retain unbounded replay state.

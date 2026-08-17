@@ -57,6 +57,7 @@ import {
   nextTranscriptSequence,
   reconcileCanonicalTranscript,
   useWorkstreamSocket,
+  type SocketState,
 } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
@@ -308,7 +309,7 @@ export function WorkstreamHeader({
   onToggleHyperSight,
 }: {
   workstream: WorkstreamDetail;
-  socketState: ReturnType<typeof useWorkstreamSocket>;
+  socketState: SocketState;
   hypersightOpen: boolean;
   hypersightPreferencePending: boolean;
   onAddParticipant: () => void;
@@ -920,11 +921,12 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && resourceDialogOpen),
     staleTime: 15_000,
   });
-  const socketState = useWorkstreamSocket(
+  const socketConnection = useWorkstreamSocket(
     api,
     id,
     workstream.isSuccess && messages.isSuccess,
   );
+  const socketState = socketConnection.state;
   const transcript = messages.data ?? [];
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
@@ -1262,7 +1264,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       return insertMessage(current, optimistic);
     });
     try {
-      const created = await api.createMessage(id, {
+      const created = await socketConnection.createMessage({
         text,
         clientId,
         mentions,
