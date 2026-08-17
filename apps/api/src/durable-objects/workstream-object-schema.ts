@@ -7,8 +7,10 @@
  * workspace authorization, and rebuildable directory projections afterwards.
  */
 
+import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";
+
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 1;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 2;
 
 export interface WorkstreamObjectSchemaMigration {
   version: number;
@@ -987,6 +989,7 @@ const WORKSTREAM_SCHEMA_V1 = [
 
 export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchemaMigration[] = [
   { version: 1, statements: WORKSTREAM_SCHEMA_V1 },
+  { version: 2, statements: WORKSTREAM_RUNTIME_COMPAT_SCHEMA },
 ];
 
 /** Fast deterministic schema fingerprint; the value is evidence, not authority. */

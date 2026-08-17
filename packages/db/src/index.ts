@@ -216,6 +216,7 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     manualUnreadFromSequenceNumber: null,
     manualUnreadGeneration: 0,
     hasUnread: false,
+    youAreMentioned: false,
     firstUnreadSequenceNumber: null,
     lastActivityAt: String(row.last_activity_at),
     createdAt: String(row.created_at),

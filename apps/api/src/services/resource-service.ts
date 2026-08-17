@@ -24,6 +24,8 @@ function resourceTelemetryConnector(value: unknown):
     || value === 'linear' || value === 'notion' || value === 'slack' || value === 'x') return value;
   return 'avalon';
 }
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 export interface ResolveResourceInput {
   connectionId: string;
@@ -86,6 +88,24 @@ const INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL = `(r.provider != 'resend' OR r.reso
     )
 ))`;
 
+const DO_INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL = `(r.provider != 'resend' OR r.resource_type != 'email' OR EXISTS (
+  SELECT 1
+  FROM workstream_resource_link_projections email_wr
+  JOIN workstream_directory_projections email_w
+    ON email_w.workstream_id = email_wr.workstream_id
+  LEFT JOIN automation_subscriptions email_s ON email_s.id = email_w.automation_subscription_id
+  LEFT JOIN workstream_directory_user_projections email_p
+    ON email_p.workstream_id = email_w.workstream_id AND email_p.user_id = ?
+  WHERE email_wr.resource_id = r.id
+    AND email_w.workspace_id = r.workspace_id
+    AND (
+      email_w.automation_subscription_id IS NULL
+      OR email_s.scope = 'workspace'
+      OR email_s.owner_user_id = ?
+      OR email_p.is_participant = 1
+    )
+))`;
+
 const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
   OR r.attachment_status = 'attached'
   OR r.uploaded_by_user_id = ?)`;
@@ -113,6 +133,21 @@ const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     AND ${NOTE_RESOURCE_VISIBILITY_SQL}
   GROUP BY r.id`;
 
+const DO_RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
+    COALESCE(MAX(CASE WHEN rw.enabled = 1 THEN 1 ELSE 0 END), 0) AS watch_enabled
+  FROM resources r
+  LEFT JOIN workstream_resource_link_projections wr ON wr.resource_id = r.id
+  LEFT JOIN resource_watches rw
+    ON rw.workstream_id = wr.workstream_id
+   AND rw.resource_id = wr.resource_id
+  LEFT JOIN connector_connections c ON c.id = r.connection_id
+  WHERE r.id = ? AND r.workspace_id = ?
+    AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)
+    AND ${DO_INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL}
+    AND ${UPLOAD_RESOURCE_VISIBILITY_SQL}
+    AND ${NOTE_RESOURCE_VISIBILITY_SQL}
+  GROUP BY r.id`;
+
 export class ResourceService {
   private connectorRegistry: ReturnType<typeof connectorRegistryForEnv> | undefined;
 
@@ -127,11 +162,14 @@ export class ResourceService {
   async list(input: ListResourcesInput) {
     const limit = Math.min(Math.max(input.limit, 1), 100);
     const cursor = input.cursor ? decodeResourceCursor(input.cursor) : null;
+    const authority = await readWorkstreamAuthorityControl(this.env);
     const query = input.query?.trim().toLowerCase();
     const filters = [
       "r.workspace_id = ?",
       "(c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
-      INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
+      authority.phase === "durable_object_open"
+        ? DO_INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL
+        : INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
       "(r.provider != 'avalon_upload' OR r.attachment_status = 'attached')",
       NOTE_RESOURCE_VISIBILITY_SQL,
     ];
@@ -239,12 +277,15 @@ export class ResourceService {
   }
 
   async deleteDraft(id: string): Promise<void> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
     const resource = await this.env.DB.prepare(
       `DELETE FROM resources
        WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
          AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
-         AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)
+         AND NOT EXISTS (SELECT 1 FROM ${authority.phase === "durable_object_open"
+          ? "workstream_resource_link_projections"
+          : "workstream_resources"} WHERE resource_id = resources.id)
        RETURNING content_ref, model_content_ref`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<{
       content_ref: string | null;
@@ -437,29 +478,36 @@ export class ResourceService {
     const adapter = this.registry().get(String(connection.connector_type));
     const at = nowIso();
     const mode = resourceWatchMode(adapter.manifest, at);
-    const attached = await this.env.DB.prepare(
-      `SELECT 1 AS attached FROM workstream_resources wr JOIN workstreams w ON w.id = wr.workstream_id
-       WHERE wr.resource_id = ? AND wr.workstream_id = ? AND w.workspace_id = ?`,
-    ).bind(id, workstreamId, this.auth.workspaceId).first();
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    );
+    const attached = await executionEnv.DB.prepare(
+      `SELECT 1 AS attached FROM workstream_resources
+        WHERE resource_id = ? AND workstream_id = ?`,
+    ).bind(id, workstreamId).first();
     if (!attached) throw new ApiError(404, "resource_attachment_not_found", "Attach the resource before enabling a watch");
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        ENABLE_RESOURCE_WATCH_SQL,
-      ).bind(
-        newId(),
-        this.auth.workspaceId,
-        workstreamId,
-        id,
-        resource.connection_id,
-        mode.watchType,
-        mode.nextPollAt,
-        at,
-        at,
-      ),
-      this.env.DB.prepare(
-        "UPDATE workstream_resources SET watch_enabled = 1 WHERE workstream_id = ? AND resource_id = ?",
-      ).bind(workstreamId, id),
-    ]);
+    const watchStatement = this.env.DB.prepare(ENABLE_RESOURCE_WATCH_SQL).bind(
+      newId(),
+      this.auth.workspaceId,
+      workstreamId,
+      id,
+      resource.connection_id,
+      mode.watchType,
+      mode.nextPollAt,
+      at,
+      at,
+    );
+    const attachmentStatement = executionEnv.DB.prepare(
+      "UPDATE workstream_resources SET watch_enabled = 1 WHERE workstream_id = ? AND resource_id = ?",
+    ).bind(workstreamId, id);
+    if (executionEnv === this.env) {
+      await this.env.DB.batch([watchStatement, attachmentStatement]);
+    } else {
+      await watchStatement.run();
+      await attachmentStatement.run();
+    }
     await this.refreshScheduler();
     void emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -486,14 +534,23 @@ export class ResourceService {
     const connection = resource.connection_id == null
       ? null
       : await this.loadConnection(String(resource.connection_id));
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        "UPDATE resource_watches SET enabled = 0, updated_at = ? WHERE workstream_id = ? AND resource_id = ?",
-      ).bind(nowIso(), workstreamId, id),
-      this.env.DB.prepare(
-        "UPDATE workstream_resources SET watch_enabled = 0 WHERE workstream_id = ? AND resource_id = ?",
-      ).bind(workstreamId, id),
-    ]);
+    const executionEnv = await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    );
+    const watchStatement = this.env.DB.prepare(
+      "UPDATE resource_watches SET enabled = 0, updated_at = ? WHERE workstream_id = ? AND resource_id = ?",
+    ).bind(nowIso(), workstreamId, id);
+    const attachmentStatement = executionEnv.DB.prepare(
+      "UPDATE workstream_resources SET watch_enabled = 0 WHERE workstream_id = ? AND resource_id = ?",
+    ).bind(workstreamId, id);
+    if (executionEnv === this.env) {
+      await this.env.DB.batch([watchStatement, attachmentStatement]);
+    } else {
+      await watchStatement.run();
+      await attachmentStatement.run();
+    }
     await this.refreshScheduler();
     void emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -515,8 +572,11 @@ export class ResourceService {
   }
 
   private async loadResource(id: string): Promise<Record<string, unknown>> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
     const row = await this.env.DB.prepare(
-      RESOURCE_WITH_WATCH_STATE_SQL,
+      authority.phase === "durable_object_open"
+        ? DO_RESOURCE_WITH_WATCH_STATE_SQL
+        : RESOURCE_WITH_WATCH_STATE_SQL,
     ).bind(
       id,
       this.auth.workspaceId,

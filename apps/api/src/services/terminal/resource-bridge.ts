@@ -6,7 +6,9 @@ import type { Env } from "../../env";
 import { numericEnv } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
 import { verifyAttachmentMimeType } from "../attachment-mime-verification";
+import { attachWorkstreamRuntimeResource } from "../workstream-object-client";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
+import { regionalDatabase } from "../workstream-runtime-database";
 import type { TerminalResourceBridge } from "./runtime";
 import { TerminalToolError, type TerminalPublishedResourceOutput } from "./tools";
 
@@ -69,6 +71,7 @@ async function invocationFor(database: D1Database, context: HarnessToolContext):
 }
 
 export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
+  const regional = regionalDatabase(env);
   return {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(env.DB, {
@@ -248,14 +251,20 @@ export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
       }
       const invocation = await invocationFor(env.DB, context);
       const providerResourceId = `terminal:${invocation.id}`;
-      const existing = await env.DB.prepare(
-        `SELECT r.id, r.title, r.mime_type, r.content_sha256, r.metadata_json,
-                r.model_content_status, r.created_at
+      const existingLink = await env.DB.prepare(
+        `SELECT r.id
            FROM resources r
            JOIN workstream_resources wr ON wr.resource_id = r.id AND wr.workstream_id = ?
           WHERE r.workspace_id = ? AND r.provider = 'avalon_generated' AND r.provider_resource_id = ?`,
-      ).bind(context.workstreamId, context.workspaceId, providerResourceId).first<PublishedRow>();
-      if (existing) return publishedOutput(existing, bytes.byteLength);
+      ).bind(context.workstreamId, context.workspaceId, providerResourceId).first<{ id: string }>();
+      if (existingLink) {
+        const existing = await regional.prepare(
+          `SELECT id, title, mime_type, content_sha256, metadata_json,
+                  model_content_status, created_at
+             FROM resources WHERE workspace_id = ? AND id = ?`,
+        ).bind(context.workspaceId, existingLink.id).first<PublishedRow>();
+        if (existing) return publishedOutput(existing, bytes.byteLength);
+      }
 
       const sourceName = fileName(input.filePath);
       const mimeType = verifyAttachmentMimeType(bytes, sourceName, null);
@@ -266,7 +275,7 @@ export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
       const resourceId = newId();
       const timestamp = nowIso();
       const objectRef = `${env.AVALON_REGION}/${context.workspaceId}/resources/${resourceId}/terminal/${digest}/${newId()}`;
-      await env.DB.prepare(
+      await regional.prepare(
         `INSERT OR IGNORE INTO resource_object_deletion_outbox
          (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
          VALUES (?, ?, ?, 'original', ?, ?)`,
@@ -284,8 +293,7 @@ export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
         ...(input.description ? { description: input.description } : {}),
       });
       try {
-        await env.DB.batch([
-          env.DB.prepare(
+        await regional.prepare(
             `INSERT INTO resources
              (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
               content_ref, content_sha256, metadata_json, last_hydrated_at, uploaded_by_user_id,
@@ -305,22 +313,22 @@ export function createTerminalResourceBridge(env: Env): TerminalResourceBridge {
             derivativeStatus,
             timestamp,
             timestamp,
-          ),
-          env.DB.prepare(
-            `INSERT INTO workstream_resources
-             (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-             VALUES (?, ?, ?, 0, 'generated', ?)`,
-          ).bind(
-            context.workstreamId,
-            resourceId,
-            context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
-            timestamp,
-          ),
-          env.DB.prepare(
-            "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
-          ).bind(context.workspaceId, objectRef),
-        ]);
+          ).run();
+        await attachWorkstreamRuntimeResource(env, {
+          workspaceId: context.workspaceId,
+          workstreamId: context.workstreamId,
+          resourceId,
+          attachedByUserId: context.executionPrincipal.type === "user"
+            ? context.executionPrincipal.userId
+            : null,
+        });
+        await regional.prepare(
+          "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+        ).bind(context.workspaceId, objectRef).run();
       } catch {
+        await regional.prepare(
+          "DELETE FROM resources WHERE workspace_id = ? AND id = ?",
+        ).bind(context.workspaceId, resourceId).run().catch(() => undefined);
         throw new TerminalToolError(
           "resource_publish_failed",
           "The generated resource could not be recorded. Retry publish_resource; Avalon retained cleanup ownership for the uploaded object.",

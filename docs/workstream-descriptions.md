@@ -128,7 +128,8 @@ statement of intent the work stream has, and risks reverting it.
 `WorkstreamService.update` writes a full rest and records the transcript as read
 through its current end.
 
-That rest lands **in the same D1 batch as the `objective` write itself**, and the
+That rest lands **in the same object-local transaction as the `description`
+write itself**, and the
 ordering matters. As two separate statements there is a window between them in
 which an evaluation can read the newly edited description, find no rest recorded
 yet, claim, and go on to overwrite the text the person just wrote — and its own
@@ -220,7 +221,7 @@ to have in hand.
   stops two runs terminalizing together from both spending a window, and what stops
   a model that is failing from being retried by every run behind it. It is both the
   admission clock and the single-writer claim.
-- **A person's edit and the rest it buys land in one D1 batch.** Split them and an
+- **A person's edit and the rest it buys land in one local transaction.** Split them and an
   evaluation can read the new description, find no rest, claim, and overwrite it —
   with its own guard blind to the problem, because the description it read is the
   one in force.
@@ -319,6 +320,21 @@ Four log events are emitted:
 | `workstream_description_outcome_superseded` | An evaluation finished after a person had edited the description, so its decision was discarded. Carries the decision it would have written. |
 
 ## Changelog
+
+### 2026-08-17 — Description refresh shares the WorkstreamDO transaction
+
+**What changed:** The description and `description_refresh_state` are now
+mutated in one transaction in the owning object.
+
+**Why:** The refresh lease and the product field it protects must have one
+linearization point after the work-stream authority cutover.
+
+**Considered and rejected:** Leaving the refresh row in D1 and coordinating it
+with the local description through retries; that permits an automatic rewrite
+to race and overwrite a person's edit.
+
+**Consequences:** Existing refresh logic keeps its guards and rest windows, but
+all reads and conditional writes use object-local SQL.
 
 No entries yet. This document predates the changelog rule in
 [`module-documents.md`](module-documents.md#starting-one). The reasoning behind each

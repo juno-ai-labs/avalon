@@ -70,6 +70,8 @@ import {
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
 import { withAuthorizedConnection } from "./connector-connection-access";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -963,6 +965,40 @@ export class SlackAgentService {
     const assignmentMetadata = method === "explicit_link"
       ? "assigned_at = ?, assignment_method = 'explicit_link'"
       : "assigned_at = COALESCE(assigned_at, ?), assignment_method = COALESCE(assignment_method, 'verified_email')";
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const sessions = await this.env.DB.prepare(
+        `SELECT id, workspace_id, workstream_id, assigned_user_id, assignment_method
+           FROM slack_agent_sessions
+          WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
+            AND execution_scope = 'workspace'
+            ${assignmentGuard.replaceAll("s.", "")}`,
+      ).bind(connectionId, teamId, slackUserId, ...guardBindings).all<{
+        id: string;
+        workspace_id: string;
+        workstream_id: string;
+        assigned_user_id: string | null;
+        assignment_method: string | null;
+      }>();
+      const assigned = await this.env.DB.prepare(
+        `UPDATE slack_agent_sessions
+            SET assigned_user_id = ?, ${assignmentMetadata}, updated_at = ?
+          WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
+            AND execution_scope = 'workspace'
+            ${assignmentGuard.replaceAll("s.", "")}`,
+      ).bind(userId, at, at, connectionId, teamId, slackUserId, ...guardBindings).run();
+      for (const session of sessions.results ?? []) {
+        await reconcileSlackWorkstreamIdentity(this.env, {
+          workspaceId: session.workspace_id,
+          workstreamId: session.workstream_id,
+          userId,
+          previousAssignedUserId: session.assigned_user_id,
+          mayCorrectVerifiedCreator: method === "explicit_link"
+            && session.assignment_method === "verified_email",
+        });
+      }
+      return Number(assigned.meta.changes ?? 0);
+    }
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workstream_participants
@@ -2634,8 +2670,29 @@ export class SlackAgentService {
       // still see it; `avalon_connect` mints one against the click instead.
       blocks = unlinkedHome();
     } else {
-      const [tasks, automations, personalSlack] = await Promise.all([
-        this.env.DB.prepare(
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      const tasksPromise = authority.phase === "durable_object_open"
+        ? this.env.DB.prepare(
+          `SELECT projection.workstream_id AS id, projection.title,
+                  CASE
+                    WHEN projection.state = 'scheduled' THEN 'scheduled'
+                    WHEN projection.state IN ('running', 'interrupting', 'preparing_context', 'waiting_capacity') THEN 'running'
+                    WHEN projection.state = 'needs_input' THEN 'needs_input'
+                    WHEN projection.state = 'completed' THEN 'completed'
+                    WHEN projection.state IN ('failed', 'budget_exhausted') THEN 'failed'
+                    ELSE 'idle' END AS harness_status
+             FROM workstream_directory_projections projection
+             JOIN workstream_directory_user_projections viewer
+               ON viewer.workstream_id = projection.workstream_id
+              AND viewer.user_id = ?
+            WHERE projection.workspace_id = ? AND viewer.is_participant = 1
+              AND viewer.listable = 1 AND projection.archived_at IS NULL
+              AND projection.system_kind IS NULL
+            ORDER BY CASE projection.state
+              WHEN 'needs_input' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
+              projection.last_activity_at DESC LIMIT 6`,
+        ).bind(link.user_id, connection.workspace_id).all<Record<string, unknown>>()
+        : this.env.DB.prepare(
           // `system_kind` is machinery — a digest run's transcript, say. The
           // owner participates in it, so the join alone would list it here, and
           // Slack has no equivalent of the desktop's Debug enabled to hide it.
@@ -2645,7 +2702,9 @@ export class SlackAgentService {
              AND w.archived_at IS NULL AND w.system_kind IS NULL
            ORDER BY CASE w.harness_status WHEN 'needs_input' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
              w.last_activity_at DESC LIMIT 6`,
-        ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),
+        ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>();
+      const [tasks, automations, personalSlack] = await Promise.all([
+        tasksPromise,
         this.env.DB.prepare(
           PERSONAL_AUTOMATIONS_FOR_HOME_SQL,
         ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),
@@ -2796,7 +2855,25 @@ export class SlackAgentService {
     // not a matter of taste: a link to another Avalon workspace's work stream
     // must fall through to the anonymous card rather than be named in this
     // Slack team. A miss is indistinguishable from a link that never existed.
-    const rows = await this.env.DB.prepare(
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const rows = await this.env.DB.prepare(authority.phase === "durable_object_open"
+      ? `SELECT projection.workstream_id AS id, projection.title,
+                CASE
+                  WHEN projection.state = 'scheduled' THEN 'scheduled'
+                  WHEN projection.state IN ('running', 'interrupting', 'preparing_context', 'waiting_capacity') THEN 'running'
+                  WHEN projection.state = 'needs_input' THEN 'needs_input'
+                  WHEN projection.state = 'completed' THEN 'completed'
+                  WHEN projection.state IN ('failed', 'budget_exhausted') THEN 'failed'
+                  ELSE 'idle' END AS harness_status,
+                projection.last_activity_at,
+                projection.origin_type, template.name AS automation_name
+           FROM workstream_directory_projections projection
+           LEFT JOIN automation_subscriptions subscription
+             ON subscription.id = projection.automation_subscription_id
+           LEFT JOIN automation_templates template ON template.id = subscription.template_id
+          WHERE projection.workspace_id = ? AND projection.archived_at IS NULL
+            AND projection.workstream_id IN (${workstreamIds.map(() => "?").join(", ")})`
+      :
       // Archiving retires a work stream from view, including App Home's own
       // task list, so an archived one falls through to the anonymous card
       // rather than keeping its title alive in Slack.
@@ -3016,6 +3093,267 @@ export class SlackAgentService {
     return postSlackTextChunks(token, channel, prompt);
   }
 
+}
+
+async function reconcileSlackWorkstreamIdentity(
+  env: Env,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    userId: string;
+    previousAssignedUserId: string | null;
+    mayCorrectVerifiedCreator: boolean;
+  },
+): Promise<void> {
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  );
+  const root = await executionEnv.DB.prepare(
+    `SELECT created_by_user_id FROM workstreams
+      WHERE id = ? AND workspace_id = ?`,
+  ).bind(input.workstreamId, input.workspaceId).first<{ created_by_user_id: string | null }>();
+  if (!root) throw new Error("slack_workstream_identity_target_missing");
+  const makeCreator = root.created_by_user_id === null || (
+    input.mayCorrectVerifiedCreator
+    && input.previousAssignedUserId !== null
+    && root.created_by_user_id === input.previousAssignedUserId
+  );
+  const at = nowIso();
+  const statements = [
+    executionEnv.DB.prepare(
+      `INSERT INTO workstream_participants
+         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+       VALUES (?, ?, ?, 'explicit', ?, NULL)
+       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+         removed_at = NULL,
+         joined_at = COALESCE(workstream_participants.joined_at, excluded.joined_at)`,
+    ).bind(input.workstreamId, input.userId, input.userId, at),
+  ];
+  if (makeCreator) {
+    statements.push(
+      executionEnv.DB.prepare(
+        `UPDATE workstreams SET created_by_user_id = ?, updated_at = ?
+          WHERE id = ? AND workspace_id = ?`,
+      ).bind(input.userId, at, input.workstreamId, input.workspaceId),
+      executionEnv.DB.prepare(
+        `UPDATE workstream_participants SET participation_reason = 'creator'
+          WHERE workstream_id = ? AND user_id = ?`,
+      ).bind(input.workstreamId, input.userId),
+    );
+    if (root.created_by_user_id && root.created_by_user_id !== input.userId) {
+      statements.push(executionEnv.DB.prepare(
+        `UPDATE workstream_participants SET participation_reason = 'explicit'
+          WHERE workstream_id = ? AND user_id = ? AND participation_reason = 'creator'`,
+      ).bind(input.workstreamId, root.created_by_user_id));
+    }
+  }
+  await executionEnv.DB.batch(statements);
+}
+
+async function claimWorkspaceSession(
+  env: Env,
+  identity: SlackIdentity,
+  session: SlackSessionRow,
+): Promise<"claimed" | "already_claimed"> {
+  if (session.workspace_id !== identity.auth.workspaceId
+    || session.connection_id !== identity.connection.id
+    || session.slack_team_id !== identity.teamId) {
+    throw new ApiError(403, "slack_claim_workspace_mismatch", "This Slack task belongs to another Avalon workspace");
+  }
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (session.execution_scope === "user") {
+    if (session.linked_user_id === identity.auth.userId) {
+      if (authority.phase === "durable_object_open") {
+        await reconcileSlackWorkstreamIdentity(env, {
+          workspaceId: session.workspace_id,
+          workstreamId: session.workstream_id,
+          userId: identity.auth.userId,
+          previousAssignedUserId: session.assigned_user_id,
+          mayCorrectVerifiedCreator: false,
+        });
+      }
+      return "already_claimed";
+    }
+    throw new ApiError(409, "slack_claim_conflict", "Another Avalon member already claimed this task");
+  }
+  const at = nowIso();
+  const auditId = await stableUuid(`slack-claim:${session.id}:${identity.auth.userId}`);
+  if (authority.phase === "durable_object_open") {
+    const executionEnv = await workstreamExecutionEnvironment(
+      env,
+      session.workspace_id,
+      session.workstream_id,
+    );
+    const mismatchedTarget = await executionEnv.DB.prepare(
+      `SELECT 1 AS mismatched FROM elicitations
+        WHERE workstream_id = ? AND status = 'open' AND target_user_id IS NOT NULL
+          AND target_user_id <> ? LIMIT 1`,
+    ).bind(session.workstream_id, identity.auth.userId).first<{ mismatched: number }>();
+    if (mismatchedTarget) {
+      throw new ApiError(403, "slack_claim_target_mismatch", "This question is targeted to another Avalon member");
+    }
+    const regionalResults = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE slack_agent_sessions
+            SET execution_scope = 'user', linked_user_id = ?, assigned_user_id = ?,
+                assigned_at = ?, assignment_method = 'explicit_link',
+                claimed_by_slack_user_id = ?, claimed_at = ?, updated_at = ?
+          WHERE id = ? AND workspace_id = ? AND connection_id = ? AND execution_scope = 'workspace'`,
+      ).bind(
+        identity.auth.userId,
+        identity.auth.userId,
+        at,
+        identity.slackUserId,
+        at,
+        at,
+        session.id,
+        identity.auth.workspaceId,
+        identity.connection.id,
+      ),
+      env.DB.prepare(
+        `INSERT INTO audit_events
+           (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
+            target_type, target_id, metadata_json, created_at)
+         SELECT ?, workspace_id, 'user', ?, workstream_id,
+                'slack.workspace_workstream.claimed', 'slack_agent_session', id, ?, ?
+           FROM slack_agent_sessions
+          WHERE id = ? AND linked_user_id = ? AND claimed_at = ?
+         ON CONFLICT(id) DO NOTHING`,
+      ).bind(
+        auditId,
+        identity.auth.userId,
+        JSON.stringify({
+          slackTeamId: identity.teamId,
+          slackUserId: identity.slackUserId,
+          explicit: true,
+        }),
+        at,
+        session.id,
+        identity.auth.userId,
+        at,
+      ),
+    ]);
+    if (Number(regionalResults[0]?.meta.changes ?? 0) === 1) {
+      await reconcileSlackWorkstreamIdentity(env, {
+        workspaceId: session.workspace_id,
+        workstreamId: session.workstream_id,
+        userId: identity.auth.userId,
+        previousAssignedUserId: session.assigned_user_id,
+        mayCorrectVerifiedCreator: false,
+      });
+      return "claimed";
+    }
+    const current = await env.DB.prepare(
+      "SELECT execution_scope, linked_user_id FROM slack_agent_sessions WHERE id = ?",
+    ).bind(session.id).first<{ execution_scope: "workspace" | "user"; linked_user_id: string | null }>();
+    if (current?.execution_scope === "user" && current.linked_user_id === identity.auth.userId) {
+      await reconcileSlackWorkstreamIdentity(env, {
+        workspaceId: session.workspace_id,
+        workstreamId: session.workstream_id,
+        userId: identity.auth.userId,
+        previousAssignedUserId: session.assigned_user_id,
+        mayCorrectVerifiedCreator: false,
+      });
+      return "already_claimed";
+    }
+    if (current?.execution_scope === "workspace") {
+      throw new ApiError(403, "slack_claim_target_mismatch", "This question is targeted to another Avalon member");
+    }
+    throw new ApiError(409, "slack_claim_conflict", "Another Avalon member already claimed this task");
+  }
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE slack_agent_sessions
+       SET execution_scope = 'user', linked_user_id = ?, assigned_user_id = ?,
+           assigned_at = ?, assignment_method = 'explicit_link',
+           claimed_by_slack_user_id = ?, claimed_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND connection_id = ? AND execution_scope = 'workspace'
+         AND NOT EXISTS (
+           SELECT 1 FROM elicitations e
+           WHERE e.workstream_id = slack_agent_sessions.workstream_id
+             AND e.status = 'open' AND e.target_user_id IS NOT NULL
+             AND e.target_user_id <> ?
+         )`,
+    ).bind(
+      identity.auth.userId,
+      identity.auth.userId,
+      at,
+      identity.slackUserId,
+      at,
+      at,
+      session.id,
+      identity.auth.workspaceId,
+      identity.connection.id,
+      identity.auth.userId,
+    ),
+    env.DB.prepare(
+      `INSERT INTO workstream_participants
+       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+       SELECT workstream_id, ?, ?, 'explicit', ?, NULL
+       FROM slack_agent_sessions
+       WHERE id = ? AND linked_user_id = ? AND claimed_at = ?
+       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+         removed_at = NULL,
+         joined_at = COALESCE(workstream_participants.joined_at, excluded.joined_at)`,
+    ).bind(identity.auth.userId, identity.auth.userId, at, session.id, identity.auth.userId, at),
+    // The claimer owns an ownerless work stream only when they are the Slack
+    // member who started it; any other claimer is a participant, not its
+    // creator.
+    env.DB.prepare(
+      `UPDATE workstreams
+       SET created_by_user_id = ?, updated_at = ?
+       WHERE created_by_user_id IS NULL
+         AND id IN (
+           SELECT workstream_id FROM slack_agent_sessions
+           WHERE id = ? AND linked_user_id = ? AND claimed_at = ? AND slack_user_id = ?
+         )`,
+    ).bind(identity.auth.userId, at, session.id, identity.auth.userId, at, identity.slackUserId),
+    env.DB.prepare(
+      `UPDATE workstream_participants
+       SET participation_reason = 'creator'
+       WHERE user_id = ? AND participation_reason <> 'creator'
+         AND workstream_id IN (
+           SELECT s.workstream_id FROM slack_agent_sessions s
+           JOIN workstreams w ON w.id = s.workstream_id AND w.created_by_user_id = ?
+           WHERE s.id = ?
+         )`,
+    ).bind(identity.auth.userId, identity.auth.userId, session.id),
+    env.DB.prepare(
+      `INSERT INTO audit_events
+       (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
+        target_type, target_id, metadata_json, created_at)
+       SELECT ?, workspace_id, 'user', ?, workstream_id,
+              'slack.workspace_workstream.claimed', 'slack_agent_session', id, ?, ?
+       FROM slack_agent_sessions
+       WHERE id = ? AND linked_user_id = ? AND claimed_at = ?
+       ON CONFLICT(id) DO NOTHING`,
+    ).bind(
+      auditId,
+      identity.auth.userId,
+      JSON.stringify({
+        slackTeamId: identity.teamId,
+        slackUserId: identity.slackUserId,
+        explicit: true,
+      }),
+      at,
+      session.id,
+      identity.auth.userId,
+      at,
+    ),
+  ]);
+  if (Number(results[0]?.meta.changes ?? 0) === 1) return "claimed";
+  const current = await env.DB.prepare(
+    "SELECT execution_scope, linked_user_id FROM slack_agent_sessions WHERE id = ?",
+  ).bind(session.id).first<{ execution_scope: "workspace" | "user"; linked_user_id: string | null }>();
+  if (current?.execution_scope === "user" && current.linked_user_id === identity.auth.userId) {
+    return "already_claimed";
+  }
+  if (current?.execution_scope === "workspace") {
+    throw new ApiError(403, "slack_claim_target_mismatch", "This question is targeted to another Avalon member");
+  }
+  throw new ApiError(409, "slack_claim_conflict", "Another Avalon member already claimed this task");
 }
 
 const SlackResponseMessageSchema = z.object({

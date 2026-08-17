@@ -1,6 +1,8 @@
 import { createDatabase, newId, nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { publishWorkstreamEvent } from "./integrations";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 interface PrivacyTransitionRow extends Record<string, unknown> {
   id: string;
@@ -33,8 +35,20 @@ export async function processPendingNotePrivacyNotifications(
 }
 
 async function processTransition(env: Env, transition: PrivacyTransitionRow): Promise<void> {
-  const affected = await env.DB.prepare(
-    `SELECT DISTINCT w.id
+  const authority = await readWorkstreamAuthorityControl(env);
+  const affected = await env.DB.prepare(authority.phase === "durable_object_open"
+    ? `SELECT DISTINCT link.workstream_id AS id
+       FROM workstream_resource_link_projections link
+       JOIN workstream_directory_projections w ON w.workstream_id = link.workstream_id
+       LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
+      WHERE link.workspace_id = ? AND link.resource_id = ?
+        AND (
+          (s.id IS NOT NULL AND (s.scope = 'workspace' OR s.owner_user_id IS NULL OR s.owner_user_id != ?))
+          OR
+          (s.id IS NULL AND (w.created_by_user_id IS NULL OR w.created_by_user_id != ?))
+        )
+      ORDER BY link.workstream_id ASC`
+    : `SELECT DISTINCT w.id
      FROM workstream_resources wr
      JOIN workstreams w ON w.id = wr.workstream_id AND w.workspace_id = ?
      LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
@@ -44,22 +58,27 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
          OR
          (s.id IS NULL AND (w.created_by_user_id IS NULL OR w.created_by_user_id != ?))
        )
-     ORDER BY w.id ASC`,
-  ).bind(
+     ORDER BY w.id ASC`)
+    .bind(
     transition.workspace_id,
     transition.resource_id,
     transition.actor_user_id,
     transition.actor_user_id,
   ).all<AffectedWorkstreamRow>();
 
-  const database = createDatabase(env.DB);
   const clientMessageId = `note-privacy:${transition.id}`;
   const text = `${transition.note_title} is now private and no longer accessible`;
   for (const workstream of affected.results) {
+    const executionEnv = await workstreamExecutionEnvironment(
+      env,
+      transition.workspace_id,
+      workstream.id,
+    );
+    const database = createDatabase(executionEnv.DB);
     const messageId = newId();
     const at = nowIso();
-    const results = await env.DB.batch([
-      env.DB.prepare(
+    const results = await executionEnv.DB.batch([
+      executionEnv.DB.prepare(
         `INSERT INTO messages
          (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
           message_type, text_content, structured_content_json, sequence_number, created_at)
@@ -76,7 +95,7 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
         workstream.id,
         transition.workspace_id,
       ),
-      env.DB.prepare(
+      executionEnv.DB.prepare(
         `UPDATE workstreams
          SET next_sequence_number = next_sequence_number + 1,
              latest_attention_sequence_number = next_sequence_number,

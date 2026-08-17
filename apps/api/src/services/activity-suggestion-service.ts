@@ -3,6 +3,8 @@ import { workstreamRoomName } from "../durable-objects/workstream-room";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { createWorkstreamRuntimeSuggestion } from "./workstream-object-client";
 
 /**
  * Which decision produced this card.
@@ -61,6 +63,24 @@ export async function createActivitySuggestion(
   const title = truncateUtf16Safe(input.activityTitle, 300);
   const summary = truncateUtf16Safe(input.activitySummary, 2_000);
   const reason = truncateUtf16Safe(input.reason, 1_200);
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const result = await createWorkstreamRuntimeSuggestion(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      suggestion: {
+        id,
+        activityId: input.activityId,
+        title,
+        summary,
+        confidence: Math.max(0, Math.min(1, input.confidence)),
+        reason,
+        matchedEntities: input.matchedEntities.slice(0, 100),
+        source: input.source,
+      },
+    });
+    return result.inserted;
+  }
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO activity_suggestions (
        id, workspace_id, activity_id, workstream_id, confidence, reason,

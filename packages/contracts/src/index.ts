@@ -294,6 +294,8 @@ export const WorkstreamSchema = z.object({
   manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
   manualUnreadGeneration: z.number().int().nonnegative(),
   hasUnread: z.boolean(),
+  /** True while a person mention sits above this viewer's seen waterline. */
+  youAreMentioned: z.boolean().default(false),
   firstUnreadSequenceNumber: z.number().int().nonnegative().nullable(),
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,

@@ -55,6 +55,7 @@ const detail = {
   manualUnreadFromSequenceNumber: null,
   manualUnreadGeneration: 0,
   hasUnread: true,
+  youAreMentioned: false,
   firstUnreadSequenceNumber: 4,
   createdAt: timestamp,
   updatedAt: timestamp,

@@ -90,6 +90,10 @@ function telemetryConnectorType(value: unknown):
     || value === 'notion' || value === 'slack' || value === 'x' || value === 'generic_webhook') return value;
   return 'avalon';
 }
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import { WorkstreamObjectClient } from "./workstream-object-client";
+import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
+import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
 
 /**
  * `descriptionSource` is the caller's assertion, never inferred from whether
@@ -251,14 +255,19 @@ export async function launchWorkstreamHarness(
   },
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  );
   const id = newId();
   const at = nowIso();
-  const model = await scheduledWorkstreamModelForExisting(env, {
+  const model = await scheduledWorkstreamModelForExisting(executionEnv, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
   });
   const statements = [
-    ...(input.supersedeActiveRun ? [env.DB.prepare(
+    ...(input.supersedeActiveRun ? [executionEnv.DB.prepare(
       `UPDATE harness_runs
           SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
               cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up')
@@ -267,7 +276,7 @@ export async function launchWorkstreamHarness(
           AND parent_tool_call_id IS NULL
           AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
     ).bind(at, input.workspaceId, input.workstreamId)] : []),
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
         status, started_at, model, created_at, trigger_message_id)
@@ -299,14 +308,14 @@ export async function launchWorkstreamHarness(
       input.workspaceId,
       input.workstreamId,
     ),
-    env.DB.prepare(
+    executionEnv.DB.prepare(
       `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
        WHERE id = ? AND workspace_id = ?
          AND EXISTS (SELECT 1 FROM harness_runs WHERE id = ?)`,
     ).bind(at, at, input.workstreamId, input.workspaceId, id),
   ];
   const insertIndex = input.supersedeActiveRun ? 1 : 0;
-  const admission = await env.DB.batch(statements);
+  const admission = await executionEnv.DB.batch(statements);
   if (Number(admission[insertIndex]?.meta.changes ?? 0) !== 1) {
     throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before continuing.");
   }
@@ -685,6 +694,13 @@ export class WorkstreamService {
     this.database = createDatabase(env.DB);
   }
 
+  private async authoritativeClient(id: string): Promise<WorkstreamObjectClient | null> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    return authority.phase === "durable_object_open"
+      ? new WorkstreamObjectClient(this.env, this.auth, id)
+      : null;
+  }
+
   async list(limit: number, before?: string, includeSystem = false) {
     const cursorClause = before ? "AND w.last_activity_at < ?" : "";
     // Two different questions. `system_kind` says this is machinery, which
@@ -764,6 +780,21 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const created = await new WorkstreamObjectCreationService(this.env, this.auth).create(input, {
+        executionPrincipal: { type: "user", userId: this.auth.userId },
+        ...(slackOrigin ? { slackOrigin } : {}),
+        ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
+        ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
+      });
+      if (input.originResource) {
+        const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, input.originResource);
+        if (resourceId) await new WorkstreamObjectClient(this.env, this.auth, created.workstream.id)
+          .attachResource(resourceId);
+      }
+      return created;
+    }
     const attachmentIds = [...new Set(input.attachmentIds)];
     // Two independent reads, and both return without touching D1 when there is
     // nothing to check — which is the common case, so this costs nothing there
@@ -876,6 +907,31 @@ export class WorkstreamService {
     executionPromptHash: string;
     idempotencyKey: string;
   }) {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      return new WorkstreamObjectCreationService(this.env, this.auth).create({
+        objective: input.displayPrompt,
+        openingMessage: input.executionPrompt,
+        clientMessageId: `opportunity:${input.opportunityId}:v${input.version}`,
+        participantUserIds: [],
+        attachmentIds: [],
+        descriptionSource: "derived",
+      }, {
+        openingStructuredContent: {
+          kind: "suggested_work_expansion",
+          label: "Expanded by Avalon from suggested work",
+          opportunityId: input.opportunityId,
+          opportunityVersion: input.version,
+        },
+        opportunitySnapshot: {
+          opportunityId: input.opportunityId,
+          version: input.version,
+          displayPromptHash: input.displayPromptHash,
+          executionPromptHash: input.executionPromptHash,
+        },
+        reason: "work_opportunity",
+      });
+    }
     const workstreamId = newId();
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = {
@@ -1000,6 +1056,8 @@ export class WorkstreamService {
   }
 
   async get(id: string): Promise<WorkstreamDetail> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.get();
     const workstream = await this.requireWorkstream(id);
     const [participants, resources, connections, openElicitations, suggestions, latestHarness] = await Promise.all([
       this.loadParticipants(id),
@@ -1041,11 +1099,15 @@ export class WorkstreamService {
   }
 
   async context(id: string) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.context();
     await this.requireWorkstream(id);
     return { backgroundTasks: await this.loadBackgroundTasks(id) };
   }
 
   async update(id: string, input: UpdateWorkstreamInput) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.update(input);
     const before = await this.requireWorkstreamForUpdate(id);
     if (Object.keys(input).length === 0) throw new ApiError(422, "empty_update", "No work-stream fields were provided");
     const previousScope = before.scope === "personal" ? "personal" : "workspace";
@@ -1216,6 +1278,8 @@ export class WorkstreamService {
   }
 
   async messages(id: string, limit: number, before?: number, after?: number, around?: number) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.messages(limit, before, after, around);
     await this.requireWorkstream(id);
     if (around !== undefined) {
       const olderLimit = Math.max(1, Math.min(50, Math.floor(limit / 4)));
@@ -1256,6 +1320,8 @@ export class WorkstreamService {
   }
 
   async acknowledgeRead(id: string, input: AcknowledgeReadInput) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.acknowledgeRead(input);
     const workstream = await this.requireWorkstream(id);
     if (input.readThroughSequenceNumber > workstream.latestAttentionSequenceNumber) {
       throw new ApiError(422, "invalid_read_sequence", "The read cursor is ahead of the latest message requiring attention");
@@ -1330,6 +1396,8 @@ export class WorkstreamService {
   }
 
   async markUnread(id: string) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.markUnread();
     const workstream = await this.requireWorkstream(id);
     if (workstream.latestAttentionSequenceNumber === 0) return workstream;
     const at = nowIso();
@@ -1512,6 +1580,12 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.createMessage({
+      ...input,
+      ...(slackOrigin ? { slackOrigin } : {}),
+      ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
+    });
     const workstream = await this.requireWorkstream(id);
     const replayed = await this.loadMessageByClientId(id, input.clientMessageId);
     if (replayed) {
@@ -1735,6 +1809,8 @@ export class WorkstreamService {
   }
 
   async addParticipant(id: string, userId: string) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.addParticipant(userId);
     await this.requireWorkstream(id);
     await this.assertMembersExist([userId]);
     await this.database.workstreams.addParticipant(this.auth.workspaceId, id, userId, this.auth.userId, "explicit");
@@ -1764,6 +1840,8 @@ export class WorkstreamService {
   }
 
   async removeParticipant(id: string, userId: string): Promise<void> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.removeParticipant(userId);
     await this.requireWorkstream(id);
     if (userId !== this.auth.userId && this.auth.role !== "owner" && this.auth.role !== "admin") {
       throw new ApiError(403, "participant_removal_denied", "You can only remove yourself from this work stream");
@@ -1790,6 +1868,8 @@ export class WorkstreamService {
   }
 
   async attachResource(id: string, resourceId: string) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.attachResource(resourceId);
     await this.requireWorkstream(id);
     // Inbound-email resources inherit work-stream visibility rather than a
     // connector scope. Authorize the source before allowing an attachment to
@@ -1844,6 +1924,8 @@ export class WorkstreamService {
   }
 
   async detachResource(id: string, resourceId: string): Promise<void> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.detachResource(resourceId);
     await this.requireWorkstream(id);
     const resource = await this.env.DB.prepare(
       `SELECT r.resource_type, c.connector_type, wr.relationship_type
@@ -1887,6 +1969,8 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.answerElicitation(elicitationId, input);
     await this.requireWorkstream(id);
     const duplicate = await this.loadMessageByClientId(id, clientMessageId);
     if (duplicate) return { elicitation: undefined, harnessRunId: null };
@@ -2097,6 +2181,8 @@ export class WorkstreamService {
   }
 
   async stop(id: string): Promise<void> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.stop();
     await this.requireWorkstream(id);
     const active = await this.env.DB.prepare(
       `SELECT id FROM harness_runs
@@ -2129,6 +2215,8 @@ export class WorkstreamService {
   }
 
   async retry(id: string): Promise<{ harnessRunId: string }> {
+    const client = await this.authoritativeClient(id);
+    if (client) return client.retry();
     const workstream = await this.requireWorkstream(id);
     if (workstream.harnessStatus === "running" || workstream.harnessStatus === "scheduled" || workstream.harnessStatus === "needs_input") {
       throw new ApiError(409, "harness_already_running", "This work stream already has an active run");

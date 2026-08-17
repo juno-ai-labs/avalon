@@ -32,6 +32,11 @@ import {
   publishWorkstreamRoomEvent,
 } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
+import {
+  bootstrapWorkstreamRuntimeEnvironment,
+  workstreamExecutionEnvironment,
+} from "../services/workstream-runtime-database";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { runStructuredInference } from "../services/structured-inference";
@@ -525,8 +530,27 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
   const entityKeys = parseStrings(activity.entity_keys_json);
   if (!activity.provider_resource_id && entityKeys.length === 0) return new Set();
 
-  const direct = await env.DB.prepare(
-    `SELECT DISTINCT wr.workstream_id
+  const authority = await readWorkstreamAuthorityControl(env);
+  const direct = await env.DB.prepare(authority.phase === "durable_object_open"
+    ? `SELECT DISTINCT watched.workstream_id
+       FROM resources resource
+       JOIN workstream_resource_link_projections watched
+         ON watched.resource_id = resource.id
+       JOIN workstream_directory_projections workstream
+         ON workstream.workstream_id = watched.workstream_id
+      WHERE resource.workspace_id = ?1
+        AND resource.connection_id = ?2
+        AND resource.provider = ?3
+        AND (
+          resource.provider_resource_id = ?4
+          OR EXISTS (
+            SELECT 1 FROM json_each(?5)
+            WHERE json_each.value = resource.provider_resource_id
+          )
+        )
+        AND workstream.archived_at IS NULL
+        AND watched.watch_enabled = 1`
+    : `SELECT DISTINCT wr.workstream_id
        FROM resources r
        JOIN workstream_resources wr ON wr.resource_id = r.id
        JOIN workstreams w ON w.id = wr.workstream_id
@@ -541,8 +565,7 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
           )
         )
         AND wr.watch_enabled = 1
-        AND w.archived_at IS NULL`
-  )
+        AND w.archived_at IS NULL`)
     .bind(activity.workspace_id, activity.connection_id, activity.provider, activity.provider_resource_id, JSON.stringify(entityKeys))
     .all<{ workstream_id: string }>();
 
@@ -571,15 +594,20 @@ async function injectActivityMessage(
   activity: ActivityRow,
   workstreamId: string
 ): Promise<boolean> {
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    activity.workspace_id,
+    workstreamId,
+  );
   const clientMessageId = `activity:${activity.id}`;
-  const existing = await env.DB.prepare(
+  const existing = await executionEnv.DB.prepare(
     `SELECT 1 FROM messages WHERE workstream_id = ?1 AND client_message_id = ?2 LIMIT 1`
   )
     .bind(workstreamId, clientMessageId)
     .first();
   if (existing) return true;
 
-  const sequence = await env.DB.prepare(
+  const sequence = await executionEnv.DB.prepare(
     `UPDATE workstreams
         SET next_sequence_number = next_sequence_number + 1
       WHERE id = ?1 AND workspace_id = ?2
@@ -592,7 +620,7 @@ async function injectActivityMessage(
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const text = [activity.title, activity.summary].filter(Boolean).join(" — ");
-  const inserted = await env.DB.prepare(
+  const inserted = await executionEnv.DB.prepare(
     `INSERT OR IGNORE INTO messages (
        id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
        message_type, text_content, structured_content_json, sequence_number, created_at, edited_at
@@ -616,7 +644,7 @@ async function injectActivityMessage(
     .run();
   if ((inserted.meta.changes ?? 0) === 0) return true;
 
-  await env.DB.prepare(
+  await executionEnv.DB.prepare(
     `UPDATE workstreams
         SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?1),
             last_activity_at = ?2,
@@ -803,6 +831,7 @@ async function startActivityAutomation(
   let harnessRunId: string;
   const now = new Date().toISOString();
   const principal = ExecutionPrincipalSchema.parse(JSON.parse(subscription.execution_principal_json));
+  const authority = await readWorkstreamAuthorityControl(env);
 
   if (!run) {
     const workstreamId = crypto.randomUUID();
@@ -824,8 +853,21 @@ async function startActivityAutomation(
       workspaceId: activity.workspace_id,
       workstreamId,
     });
-    await env.DB.batch([
-      env.DB.prepare(
+    const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
+      env,
+      activity.workspace_id,
+      workstreamId,
+    );
+    const runStatement = env.DB.prepare(
+      `INSERT INTO automation_runs (
+         id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
+         trigger_activity_id, planned_for, started_at, completed_at, status,
+         result_summary, workflow_instance_id, created_at
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 'running', NULL, NULL, ?7)`,
+    ).bind(runId, activity.workspace_id, subscription.id, workstreamId, activity.event_type, activity.id, now);
+    if (authority.phase === "durable_object_open") await runStatement.run();
+    await executionEnv.DB.batch([
+      executionEnv.DB.prepare(
         `INSERT INTO workstreams (
            id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id,
            automation_subscription_id, automation_run_id, planned_for, harness_status,
@@ -841,14 +883,8 @@ async function startActivityAutomation(
         now,
         modelOverride
       ),
-      env.DB.prepare(
-        `INSERT INTO automation_runs (
-           id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
-           trigger_activity_id, planned_for, started_at, completed_at, status,
-           result_summary, workflow_instance_id, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 'running', NULL, NULL, ?7)`
-      ).bind(runId, activity.workspace_id, subscription.id, workstreamId, activity.event_type, activity.id, now),
-      env.DB.prepare(
+      ...(authority.phase === "durable_object_open" ? [] : [runStatement]),
+      executionEnv.DB.prepare(
         `INSERT INTO harness_runs (
            id, workspace_id, workstream_id, origin, execution_principal_json,
            workflow_instance_id, parent_harness_run_id, status, started_at, completed_at,
@@ -863,7 +899,7 @@ async function startActivityAutomation(
         now,
         model
       ),
-      env.DB.prepare(
+      executionEnv.DB.prepare(
         `UPDATE workstreams SET automation_run_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
       ).bind(runId, workstreamId, activity.workspace_id)
     ]);
@@ -878,7 +914,12 @@ async function startActivityAutomation(
     });
     run = { id: runId, workstream_id: workstreamId, workflow_instance_id: null, status: "running" };
   } else {
-    const harness = await env.DB.prepare(
+    const executionEnv = await workstreamExecutionEnvironment(
+      env,
+      activity.workspace_id,
+      run.workstream_id,
+    );
+    const harness = await executionEnv.DB.prepare(
       `SELECT id FROM harness_runs
         WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
           AND origin != 'hypersight_block'
@@ -942,14 +983,17 @@ async function startActivityAutomation(
     if (!workflowAlreadyExists(error)) throw error;
   }
 
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
-    ).bind(workflowId, run.id, activity.workspace_id),
-    env.DB.prepare(
-      `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
-    ).bind(workflowId, harnessRunId, activity.workspace_id)
-  ]);
+  await env.DB.prepare(
+    `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
+  ).bind(workflowId, run.id, activity.workspace_id).run();
+  const executionEnv = await workstreamExecutionEnvironment(
+    env,
+    activity.workspace_id,
+    run.workstream_id,
+  );
+  await executionEnv.DB.prepare(
+    `UPDATE harness_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
+  ).bind(workflowId, harnessRunId, activity.workspace_id).run();
   return run.workstream_id;
 }
 
@@ -1031,8 +1075,44 @@ async function routeContextually(
   }
   const restrictedUserIds = restrictedActivityUserIds(activity);
   const restrictedUserIdsJson = restrictedUserIds == null ? null : JSON.stringify(restrictedUserIds);
-  const candidates = await env.DB.prepare(
-    `SELECT w.id, w.title, w.objective, w.last_activity_at
+  const authority = await readWorkstreamAuthorityControl(env);
+  const candidates = await env.DB.prepare(authority.phase === "durable_object_open"
+    ? `SELECT w.workstream_id AS id, w.title, w.description AS objective, w.last_activity_at
+       FROM workstream_directory_projections w
+      WHERE w.workspace_id = ?1
+        AND w.archived_at IS NULL
+        AND w.state IN ('idle', 'running', 'interrupting', 'preparing_context',
+                        'waiting_capacity', 'needs_input', 'scheduled')
+        AND (?2 IS NULL OR EXISTS (
+          SELECT 1 FROM json_each(?2) visible_user
+           WHERE w.created_by_user_id = visible_user.value OR EXISTS (
+             SELECT 1 FROM workstream_directory_user_projections participant
+              WHERE participant.workstream_id = w.workstream_id
+                AND participant.user_id = visible_user.value
+                AND participant.is_participant = 1
+           )
+        ))
+        AND (
+          SELECT COUNT(*)
+            FROM workstream_suggestion_feedback_projections dismissed
+           WHERE dismissed.workstream_id = w.workstream_id
+             AND dismissed.source = 'contextual_routing'
+             AND dismissed.status = 'dismissed'
+             AND dismissed.resolved_at >= ?3
+             AND dismissed.resolved_at > COALESCE((
+               SELECT MAX(accepted.resolved_at)
+                 FROM workstream_suggestion_feedback_projections accepted
+                WHERE accepted.workstream_id = w.workstream_id
+                  AND accepted.source = 'contextual_routing'
+                  AND accepted.status = 'accepted'
+             ), '')
+        ) < ?4
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(?5) routed WHERE routed.value = w.workstream_id
+        )
+      ORDER BY w.last_activity_at DESC
+      LIMIT 12`
+    : `SELECT w.id, w.title, w.objective, w.last_activity_at
        FROM workstreams w
       WHERE w.workspace_id = ?1
         AND w.archived_at IS NULL
@@ -1081,8 +1161,7 @@ async function routeContextually(
           SELECT 1 FROM json_each(?5) routed WHERE routed.value = w.id
         )
       ORDER BY w.last_activity_at DESC
-      LIMIT 12`
-  )
+      LIMIT 12`)
     .bind(
       activity.workspace_id,
       restrictedUserIdsJson,
@@ -1144,16 +1223,24 @@ async function isWorkstreamVisibleToUser(
   workstreamId: string,
   userId: string
 ): Promise<boolean> {
-  const visible = await env.DB.prepare(
-    `SELECT 1
+  const authority = await readWorkstreamAuthorityControl(env);
+  const visible = await env.DB.prepare(authority.phase === "durable_object_open"
+    ? `SELECT 1
+       FROM workstream_directory_projections workstream
+       LEFT JOIN workstream_directory_user_projections viewer
+         ON viewer.workstream_id = workstream.workstream_id AND viewer.user_id = ?2
+      WHERE workstream.workstream_id = ?1
+        AND workstream.archived_at IS NULL
+        AND (workstream.scope = 'workspace' OR viewer.is_participant = 1)
+      LIMIT 1`
+    : `SELECT 1
        FROM workstreams w
       WHERE w.id = ?1
         AND (w.created_by_user_id = ?2 OR EXISTS (
           SELECT 1 FROM workstream_participants wp
            WHERE wp.workstream_id = w.id AND wp.user_id = ?2 AND wp.removed_at IS NULL
         ))
-      LIMIT 1`
-  )
+      LIMIT 1`)
     .bind(workstreamId, userId)
     .first();
   return Boolean(visible);

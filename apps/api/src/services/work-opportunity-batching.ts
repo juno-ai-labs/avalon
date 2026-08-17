@@ -165,14 +165,33 @@ export async function enqueueMentionOpportunities(
     "SELECT created_at, text_content FROM messages WHERE id = ? AND workspace_id = ? LIMIT 1",
   ).bind(messageId, workspaceId).first<{ created_at: string; text_content: string }>();
   if (!message) return;
-  await Promise.all([...new Set(targetUserIds)].map((userId) => enqueue(env, {
+  await enqueueMentionOpportunitySnapshot(env, {
     workspaceId,
+    messageId,
+    targetUserIds,
+    occurredAt: message.created_at,
+    inputCharacters: message.text_content.length,
+  });
+}
+
+export async function enqueueMentionOpportunitySnapshot(
+  env: Env,
+  input: {
+    workspaceId: string;
+    messageId: string;
+    targetUserIds: string[];
+    occurredAt: string;
+    inputCharacters: number;
+  },
+): Promise<void> {
+  await Promise.all([...new Set(input.targetUserIds)].map((userId) => enqueue(env, {
+    workspaceId: input.workspaceId,
     partitionKey: `mention:${userId}`,
     audienceScope: "personal",
     audienceUserId: userId,
     sourceKind: "message",
-    sourceId: messageId,
-    occurredAt: message.created_at,
-    inputCharacters: message.text_content.length,
+    sourceId: input.messageId,
+    occurredAt: input.occurredAt,
+    inputCharacters: input.inputCharacters,
   })));
 }

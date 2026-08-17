@@ -322,9 +322,10 @@ generic Cloudflare Workflow instance parameterized by opaque IDs.
 Supported regional work-stream runtimes may discover the deferred Terminal
 plugin. Loading it changes only Bind's prompt/tool surface; the first file,
 command, resource, or repository tool call lazily crosses the regional API into
-one private Daytona sandbox for that work stream. D1 remains the authority for
-generation, mutation leases, tasks, egress revision, retention, resource
-exchange, and GitHub publication. The provider supplies isolation and process/
+one private Daytona sandbox for that work stream. The owning WorkstreamDO is the
+authority for generation, mutation leases, tasks, retention, resource links,
+and GitHub publication receipts; regional D1 owns workspace egress policy,
+connector authority, and resource metadata. The provider supplies isolation and process/
 filesystem/lifecycle primitives, not Avalon's receipts or authorization. See
 [`terminal-workspaces.md`](terminal-workspaces.md).
 
@@ -654,6 +655,22 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-17 — WorkstreamDO is the complete work-stream-down authority
+
+**What changed:** The architecture boundary now places transcript, runs,
+compaction, suggestions, wakeups, and Terminal persistence in one
+SQLite-backed WorkstreamDO. D1 retains workspace/control state and rebuildable
+directory, activity, resource-link, and notification projections.
+
+**Why:** A partial move leaves one logical work-stream mutation split between
+two canonical databases.
+
+**Considered and rejected:** Retaining D1 as a product fallback or Terminal/run
+ledger. Both would allow post-cutover divergence.
+
+**Consequences:** Cross-work-stream consumers use the durable regional-effect
+bridge, and an unavailable object fails closed instead of falling back.
 
 ### 2026-08-17 — The foreground socket carries authored message commands
 

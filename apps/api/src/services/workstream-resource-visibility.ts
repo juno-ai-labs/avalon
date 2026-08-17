@@ -1,4 +1,4 @@
-import type { AttachmentKind, ExecutionPrincipal } from "@avalon/contracts";
+import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } from "@avalon/contracts";
 import { sha256 } from "../lib/crypto";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
@@ -56,43 +56,87 @@ export class WorkstreamResourceInventoryChangedError extends Error {
   }
 }
 
-const VISIBLE_RESOURCE_SELECT = `SELECT r.*, wr.relationship_type, wr.attached_at,
-       CASE WHEN EXISTS (
-         SELECT 1
-           FROM message_attachments ma
-           JOIN messages attachment_message
-             ON attachment_message.id = ma.message_id
-            AND attachment_message.workspace_id = ?1
-            AND attachment_message.workstream_id = ?2
-          WHERE ma.resource_id = r.id
-       ) THEN 1 ELSE 0 END AS message_attachment,
-       CASE WHEN rw.id IS NOT NULL THEN 1 ELSE 0 END AS attached_watch_enabled,
-       COALESCE((
-         SELECT MAX(visible_note.updated_at) FROM notes visible_note
-          WHERE visible_note.resource_id = r.id
-       ), r.updated_at) AS visibility_version
-  FROM workstream_resources wr
-  JOIN workstreams ws ON ws.id = wr.workstream_id AND ws.workspace_id = ?1
-  JOIN resources r ON r.id = wr.resource_id AND r.workspace_id = ws.workspace_id
-  LEFT JOIN resource_watches rw
-    ON rw.workstream_id = wr.workstream_id
-   AND rw.resource_id = wr.resource_id
-   AND rw.enabled = 1
- WHERE wr.workstream_id = ?2
-   AND (r.provider != 'avalon_note' OR EXISTS (
-     SELECT 1 FROM notes visible_note
-      WHERE visible_note.resource_id = r.id
-        AND visible_note.workspace_id = ?1
-        AND visible_note.workspace_id = r.workspace_id
-        AND visible_note.archived_at IS NULL
-        AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?3)
-   ))`;
+interface LocalResourceLink extends Record<string, unknown> {
+  resource_id: string;
+  relationship_type: string;
+  attached_at: string;
+  attached_watch_enabled: number;
+  message_attachment: number;
+}
+
+/**
+ * Resolve the cross-authority resource projection without a cross-database
+ * join. Work-stream membership/watch state comes from the WorkstreamDO; the
+ * workspace-owned resource and note authorization come from regional D1.
+ */
+async function loadVisibleRows(
+  database: D1Database,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    principal: ExecutionPrincipal;
+    resourceIds?: readonly string[];
+  },
+): Promise<VisibleWorkstreamResourceRow[]> {
+  const requested = input.resourceIds ? [...new Set(input.resourceIds)] : null;
+  const localIds = requested && requested.length > 0
+    ? `AND wr.resource_id IN (${requested.map(() => "?").join(", ")})`
+    : "";
+  const links = await database.prepare(
+    `SELECT wr.resource_id, wr.relationship_type, wr.attached_at,
+            wr.watch_enabled AS attached_watch_enabled,
+            CASE WHEN EXISTS (
+              SELECT 1 FROM message_attachments attachment
+              JOIN messages message ON message.id = attachment.message_id
+               WHERE attachment.resource_id = wr.resource_id
+                 AND message.workstream_id = ?
+            ) THEN 1 ELSE 0 END AS message_attachment
+       FROM workstream_resources wr
+      WHERE wr.workstream_id = ? ${localIds}`,
+  ).bind(input.workstreamId, input.workstreamId, ...(requested ?? [])).all<LocalResourceLink>();
+  const local = links.results ?? [];
+  if (local.length === 0) return [];
+  const resources: Array<Record<string, unknown>> = [];
+  for (let offset = 0; offset < local.length; offset += 100) {
+    const ids = local.slice(offset, offset + 100).map((link) => link.resource_id);
+    const placeholders = ids.map(() => "?").join(", ");
+    const result = await database.prepare(
+      `SELECT resource.*,
+              COALESCE((SELECT MAX(note.updated_at) FROM notes note
+                         WHERE note.resource_id = resource.id), resource.updated_at) AS visibility_version
+         FROM resources resource
+        WHERE resource.workspace_id = ? AND resource.id IN (${placeholders})
+          AND (resource.provider != 'avalon_note' OR EXISTS (
+            SELECT 1 FROM notes note
+             WHERE note.resource_id = resource.id AND note.workspace_id = resource.workspace_id
+               AND note.archived_at IS NULL
+               AND (note.scope = 'workspace' OR note.owner_user_id = ?)
+          ))`,
+    ).bind(input.workspaceId, ...ids, principalUserId(input.principal))
+      .all<Record<string, unknown>>();
+    resources.push(...(result.results ?? []));
+  }
+  const byId = new Map(resources.map((resource) => [String(resource.id), resource]));
+  return local.flatMap((link) => {
+    const resource = byId.get(link.resource_id);
+    return resource ? [{
+      ...resource,
+      relationship_type: link.relationship_type,
+      attached_at: link.attached_at,
+      message_attachment: Number(link.message_attachment),
+      attached_watch_enabled: Number(link.attached_watch_enabled),
+      visibility_version: String(resource.visibility_version ?? resource.updated_at),
+    } as VisibleWorkstreamResourceRow] : [];
+  }).sort((left, right) => (
+    right.attached_at.localeCompare(left.attached_at) || left.id.localeCompare(right.id)
+  ));
+}
 
 // This CASE mirrors classifyAttachmentKind. Supported upload MIME is
 // server-verified; the extension branch is only for generic legacy/connector
 // resources. Keeping classification in SQL makes list filtering and inventory
 // aggregation bounded by the requested page rather than the work-stream size.
-const ATTACHMENT_KIND_SQL = `CASE
+export const ATTACHMENT_KIND_SQL = `CASE
   WHEN lower(trim(substr(COALESCE(mime_type, ''), 1, instr(COALESCE(mime_type, '') || ';', ';') - 1))) LIKE 'image/%' THEN 'image'
   WHEN lower(trim(substr(COALESCE(mime_type, ''), 1, instr(COALESCE(mime_type, '') || ';', ';') - 1))) IN ('text/markdown', 'text/x-markdown') THEN 'markdown'
   WHEN lower(trim(substr(COALESCE(mime_type, ''), 1, instr(COALESCE(mime_type, '') || ';', ';') - 1))) = 'application/pdf' THEN 'pdf'
@@ -144,12 +188,8 @@ export async function loadVisibleWorkstreamResources(
     order?: "ascending" | "descending";
   },
 ): Promise<VisibleWorkstreamResourceSet> {
-  const result = await database.prepare(
-    `${VISIBLE_RESOURCE_SELECT}
-     ORDER BY wr.attached_at ${input.order === "ascending" ? "ASC" : "DESC"}, r.id ASC`,
-  ).bind(input.workspaceId, input.workstreamId, principalUserId(input.principal))
-    .all<VisibleWorkstreamResourceRow>();
-  const rows = result.results ?? [];
+  const rows = await loadVisibleRows(database, input);
+  if (input.order === "ascending") rows.reverse();
   const fingerprint = await sha256(JSON.stringify(rows.map((row) => [
     row.id,
     row.attached_at,
@@ -173,14 +213,7 @@ export async function loadVisibleWorkstreamResourcesByIds(
   if (input.resourceIds.length === 0) return [];
   const ids = [...new Set(input.resourceIds)];
   if (ids.length > 8) throw new Error("At most eight resource IDs may be resolved together");
-  const placeholders = ids.map((_id, index) => `?${index + 4}`).join(", ");
-  const result = await database.prepare(
-    `${VISIBLE_RESOURCE_SELECT}
-       AND r.id IN (${placeholders})
-     ORDER BY wr.attached_at DESC, r.id ASC`,
-  ).bind(input.workspaceId, input.workstreamId, principalUserId(input.principal), ...ids)
-    .all<VisibleWorkstreamResourceRow>();
-  return result.results ?? [];
+  return loadVisibleRows(database, { ...input, resourceIds: ids });
 }
 
 export async function loadVisibleWorkstreamResourcePage(
@@ -199,40 +232,21 @@ export async function loadVisibleWorkstreamResourcePage(
   if (input.expectedFingerprint && input.expectedFingerprint !== before) {
     throw new WorkstreamResourceInventoryChangedError();
   }
-  const kindFilter = input.attachmentKind ? `WHERE attachment_kind = '${input.attachmentKind}'` : "";
-  const countResult = await database.prepare(
-    `WITH visible AS (${VISIBLE_RESOURCE_SELECT}),
-          classified AS (SELECT *, ${ATTACHMENT_KIND_SQL} AS attachment_kind FROM visible)
-     SELECT COUNT(*) AS total_visible,
-            SUM(CASE WHEN ${input.attachmentKind ? `attachment_kind = '${input.attachmentKind}'` : "1 = 1"} THEN 1 ELSE 0 END) AS total_matching
-       FROM classified`,
-  ).bind(input.workspaceId, input.workstreamId, principalUserId(input.principal)).first<{
-    total_visible: number;
-    total_matching: number;
-  }>();
-  const pageResult = await database.prepare(
-    `WITH visible AS (${VISIBLE_RESOURCE_SELECT}),
-          classified AS (SELECT *, ${ATTACHMENT_KIND_SQL} AS attachment_kind FROM visible)
-     SELECT * FROM classified
-     ${kindFilter}
-     ${kindFilter ? "AND" : "WHERE"} (?4 IS NULL OR attached_at < ?4 OR (attached_at = ?4 AND id > ?5))
-     ORDER BY attached_at DESC, id ASC
-     LIMIT ?6`,
-  ).bind(
-    input.workspaceId,
-    input.workstreamId,
-    principalUserId(input.principal),
-    input.after?.attachedAt ?? null,
-    input.after?.resourceId ?? null,
-    input.limit + 1,
-  ).all<VisibleWorkstreamResourceRow>();
+  const visible = await loadVisibleRows(database, input);
+  const matching = visible.filter((row) => !input.attachmentKind || classifyAttachmentKind({
+    mimeType: row.mime_type,
+    fileName: row.title,
+  }) === input.attachmentKind);
+  const afterFiltered = matching.filter((row) => !input.after
+    || row.attached_at < input.after.attachedAt
+    || (row.attached_at === input.after.attachedAt && row.id > input.after.resourceId));
+  const fetched = afterFiltered.slice(0, input.limit + 1);
   const after = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
   if (after !== before) throw new WorkstreamResourceInventoryChangedError();
-  const fetched = pageResult.results ?? [];
   return {
     fingerprint: before,
-    totalVisibleResources: countResult?.total_visible ?? 0,
-    totalMatchingResources: countResult?.total_matching ?? 0,
+    totalVisibleResources: visible.length,
+    totalMatchingResources: matching.length,
     rows: fetched.slice(0, input.limit),
     hasMore: fetched.length > input.limit,
   };
@@ -251,25 +265,22 @@ export async function loadVisibleWorkstreamResourceInventory(
   if (input.expectedFingerprint && input.expectedFingerprint !== before) {
     throw new WorkstreamResourceInventoryChangedError();
   }
-  const result = await database.prepare(
-    `WITH visible AS (${VISIBLE_RESOURCE_SELECT}),
-          classified AS (SELECT *, ${ATTACHMENT_KIND_SQL} AS attachment_kind FROM visible)
-     SELECT attachment_kind, COUNT(*) AS count, SUM(message_attachment) AS message_attachments
-       FROM classified
-      GROUP BY attachment_kind`,
-  ).bind(input.workspaceId, input.workstreamId, principalUserId(input.principal)).all<{
-    attachment_kind: AttachmentKind;
-    count: number;
-    message_attachments: number;
-  }>();
+  const visible = await loadVisibleRows(database, input);
+  const counts = new Map<AttachmentKind, { count: number; messageAttachments: number }>();
+  for (const row of visible) {
+    const kind = classifyAttachmentKind({ mimeType: row.mime_type, fileName: row.title });
+    const entry = counts.get(kind) ?? { count: 0, messageAttachments: 0 };
+    entry.count += 1;
+    entry.messageAttachments += Number(row.message_attachment);
+    counts.set(kind, entry);
+  }
   const after = await loadWorkstreamResourceInventoryFingerprint(database, input.workspaceId, input.workstreamId);
   if (after !== before) throw new WorkstreamResourceInventoryChangedError();
-  const rows = result.results ?? [];
   return {
     fingerprint: before,
-    totalVisibleResources: rows.reduce((total, row) => total + row.count, 0),
-    totalVisibleMessageAttachments: rows.reduce((total, row) => total + row.message_attachments, 0),
-    groups: rows.map((row) => ({ kind: row.attachment_kind, count: row.count })),
+    totalVisibleResources: visible.length,
+    totalVisibleMessageAttachments: visible.reduce((total, row) => total + Number(row.message_attachment), 0),
+    groups: [...counts.entries()].map(([kind, count]) => ({ kind, count: count.count })),
   };
 }
 

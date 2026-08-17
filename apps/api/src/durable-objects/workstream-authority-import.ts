@@ -98,6 +98,9 @@ const IMPORT_STAGES = [
     "checkpoint_id", "effect_intent_id", "run_id", "attempt_id", "checkpoint_index", "phase",
     "member_safe_payload_json", "created_at",
   ]],
+  ["attachment_tool_receipts", "attachment_tool_receipts", [
+    "workspace_id", "resource_id", "tool_invocation_id", "derivative_sha256", "created_at",
+  ]],
   ["elicitation_requests", "elicitation_requests", [
     "elicitation_id", "run_id", "prompt", "response_type", "options_json", "minimum_selections",
     "maximum_selections", "target_user_id", "status", "answer_json", "answered_by_user_id",

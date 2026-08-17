@@ -1,35 +1,28 @@
 import {
+  AcknowledgeWorkstreamReadRequestSchema,
+  AnswerElicitationRequestSchema,
   ClientSocketEventSchema,
   IdSchema,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  UpdateWorkstreamRequestSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
-  WorkstreamDetailSchema,
   type ClientSocketEvent,
   type PersonalSocketEvent,
   type ServerSocketEvent,
   type User,
-  type WorkstreamDetail
+  type WorkstreamDetail,
+  type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
-import { truncateUtf16Safe } from "../lib/text";
 import { workstreamVisibilitySql } from "../lib/workstream-visibility";
-import { connectionFromRow } from "../mappers/connection";
-import {
-  toWorkstream,
-  WORKSTREAM_VIEWER_COLUMNS_SQL,
-  WORKSTREAM_VIEWER_JOINS_SQL,
-  workstreamViewerBindings,
-} from "../mappers/workstream";
 import { launchHyperSightRefresh } from "../services/hypersight-service";
-import { loadVisibleWorkstreamResources } from "../services/workstream-resource-visibility";
 import { logWarn } from "../observability/logger";
-import { memberSafeHarnessError, WorkstreamService } from "../services/workstream-service";
+import { WorkstreamService } from "../services/workstream-service";
 import {
   acceptsNewWorkstreamWork,
   permitsLegacyRuntimeDrain,
@@ -47,6 +40,16 @@ import {
   WorkstreamObjectStore,
   type PendingHyperSightRefresh,
 } from "./workstream-object-storage";
+import {
+  InitializeWorkstreamObjectInputSchema,
+  WorkstreamObjectCreateMessageInputSchema,
+  WorkstreamObjectCreateSuggestionInputSchema,
+  WorkstreamObjectProductService,
+} from "./workstream-object-product";
+import {
+  executeWorkstreamRuntimeSql,
+  WorkstreamRuntimeSqlRequestSchema,
+} from "./workstream-runtime-sql";
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
@@ -67,6 +70,64 @@ const BroadcastRequestSchema = z.object({
   event: z.unknown(),
   audienceUserId: IdSchema.optional(),
 }).strict();
+const RuntimeResourceRequestSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  resourceId: IdSchema,
+  attachedByUserId: IdSchema.nullable(),
+  relationshipType: z.string().min(1).max(80).optional(),
+}).strict();
+const RuntimeSuggestionRequestSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  input: WorkstreamObjectCreateSuggestionInputSchema,
+}).strict();
+const RuntimeBootstrapRequestSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  generation: z.number().int().positive(),
+}).strict();
+const ProductAuthSchema = z.object({
+  sessionId: z.string().min(1).max(200),
+  userId: IdSchema,
+  workspaceId: IdSchema,
+  region: z.enum(["global", "eu"]),
+  role: z.enum(["owner", "admin", "member"]),
+}).strict();
+const ProductRequestSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("initialize"), auth: ProductAuthSchema,
+    input: InitializeWorkstreamObjectInputSchema }).strict(),
+  z.object({ operation: z.literal("get"), auth: ProductAuthSchema }).strict(),
+  z.object({ operation: z.literal("context"), auth: ProductAuthSchema }).strict(),
+  z.object({
+    operation: z.literal("messages"),
+    auth: ProductAuthSchema,
+    limit: z.number().int().min(1).max(250),
+    before: z.number().int().positive().optional(),
+    after: z.number().int().nonnegative().optional(),
+    around: z.number().int().positive().optional(),
+  }).strict(),
+  z.object({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }).strict(),
+  z.object({ operation: z.literal("acknowledge_read"), auth: ProductAuthSchema, input: AcknowledgeWorkstreamReadRequestSchema }).strict(),
+  z.object({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }).strict(),
+  z.object({ operation: z.literal("create_message"), auth: ProductAuthSchema,
+    input: WorkstreamObjectCreateMessageInputSchema }).strict(),
+  z.object({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema }).strict(),
+  z.object({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema }).strict(),
+  z.object({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }).strict(),
+  z.object({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }).strict(),
+  z.object({ operation: z.literal("resolve_suggestion"), auth: ProductAuthSchema,
+    suggestionId: IdSchema, action: z.enum(["accepted", "dismissed"]) }).strict(),
+  z.object({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
+    elicitationId: IdSchema, input: AnswerElicitationRequestSchema }).strict(),
+  z.object({ operation: z.literal("stop"), auth: ProductAuthSchema }).strict(),
+  z.object({ operation: z.literal("retry"), auth: ProductAuthSchema }).strict(),
+]).superRefine((value, context) => {
+  if (value.operation !== "messages") return;
+  if ([value.before, value.after, value.around].filter((entry) => entry !== undefined).length > 1) {
+    context.addIssue({ code: "custom", message: "Use only one transcript cursor" });
+  }
+});
 const RoomIdentitySchema = z.object({ workspaceId: IdSchema, workstreamId: IdSchema });
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
@@ -103,15 +164,6 @@ type CreateMessageSocketCommand = Extract<ClientSocketEvent, { type: "create_mes
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
 }
-
-/**
- * The snapshot's work-stream row, read through `toWorkstream` rather than
- * field by field. The viewer columns matter as much as the work stream's own:
- * `WorkstreamDetail` carries per-person read state, so a row selected without
- * the read-state join produces a snapshot that fails contract validation and
- * degrades every initial subscribe into a resync.
- */
-type WorkstreamRow = Record<string, unknown>;
 
 interface UserRow {
   id: string;
@@ -172,16 +224,6 @@ function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-function parseJsonArray(value: unknown): unknown[] {
-  if (typeof value !== "string" || value.length === 0) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 function userFromRow(row: UserRow): User {
   return {
     id: row.id,
@@ -199,21 +241,6 @@ export function workstreamRoomName(
   workstreamId: string
 ): string {
   return `${region}:${workspaceId}:${workstreamId}`;
-}
-
-export async function loadVisibleWorkstreamRoomResources(
-  env: Env,
-  workspaceId: string,
-  workstreamId: string,
-  viewerUserId: string,
-): Promise<Record<string, unknown>[]> {
-  const visible = await loadVisibleWorkstreamResources(env.DB, {
-    workspaceId,
-    workstreamId,
-    principal: { type: "user", userId: viewerUserId },
-    order: "ascending",
-  });
-  return visible.rows;
 }
 
 export function distinctNonParticipantViewers<T extends { userId: string; connectedAt: string }>(
@@ -282,6 +309,7 @@ export class WorkstreamRoom {
    */
   private lastRevalidatedAt = 0;
   private readonly objectStore: WorkstreamObjectStore;
+  private readonly product: WorkstreamObjectProductService;
   private readonly authorityImporter: WorkstreamAuthorityImporter;
   private readonly initialized: Promise<void>;
 
@@ -294,6 +322,7 @@ export class WorkstreamRoom {
       env.APP_VERSION ?? "unknown",
       env.AVALON_REGION,
     );
+    this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
     this.authorityImporter = new WorkstreamAuthorityImporter(state.storage);
     this.initialized = state.blockConcurrencyWhile(async () => {
       await this.objectStore.waitUntilReady();
@@ -334,6 +363,26 @@ export class WorkstreamRoom {
       return this.readRegionalEffect(request);
     }
 
+    if (request.method === "POST" && url.pathname === "/internal/product") {
+      return this.acceptProductRequest(request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/runtime-sql") {
+      return this.acceptRuntimeSql(request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/runtime-resource") {
+      return this.acceptRuntimeResource(request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/runtime-suggestion") {
+      return this.acceptRuntimeSuggestion(request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/runtime-bootstrap") {
+      return this.acceptRuntimeBootstrap(request);
+    }
+
     if (request.method === "GET" && url.pathname === "/presence") {
       const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ viewers: [] });
@@ -346,12 +395,257 @@ export class WorkstreamRoom {
       return jsonResponse({
         ok: true,
         sockets: this.state.getWebSockets().length,
-        schema: "workstream-do-v1",
+        schema: "workstream-do-v2",
         databaseBytes: this.objectStore.databaseSize(),
       });
     }
 
     return jsonResponse({ error: "not_found" }, 404);
+  }
+
+  private async acceptRuntimeSql(request: Request): Promise<Response> {
+    const parsed = WorkstreamRuntimeSqlRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonResponse({ error: "invalid_workstream_runtime_sql" }, 400);
+    try {
+      return jsonResponse(await executeWorkstreamRuntimeSql(
+        this.state.storage,
+        this.product,
+        parsed.data,
+      ));
+    } catch (error) {
+      return jsonResponse({
+        error: error instanceof Error ? error.message : "workstream_runtime_sql_failed",
+      }, 409);
+    }
+  }
+
+  private async acceptRuntimeResource(request: Request): Promise<Response> {
+    const parsed = RuntimeResourceRequestSchema.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return jsonResponse({ error: "invalid_runtime_resource" }, 400);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId) {
+      return jsonResponse({ error: "workstream_runtime_identity_mismatch" }, 409);
+    }
+    try {
+      await this.product.attachRuntimeResource(
+        parsed.data.workspaceId,
+        parsed.data.resourceId,
+        parsed.data.attachedByUserId,
+        parsed.data.relationshipType,
+      );
+      return jsonResponse({ ok: true });
+    } catch (error) {
+      return jsonResponse({
+        error: error instanceof Error ? error.message : "runtime_resource_attach_failed",
+      }, 409);
+    }
+  }
+
+  private async acceptRuntimeSuggestion(request: Request): Promise<Response> {
+    const parsed = RuntimeSuggestionRequestSchema.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return jsonResponse({ error: "invalid_runtime_suggestion" }, 400);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId) {
+      return jsonResponse({ error: "workstream_runtime_identity_mismatch" }, 409);
+    }
+    try {
+      const result = await this.product.createSuggestion(parsed.data.workspaceId, parsed.data.input);
+      if (result.inserted) {
+        await this.publishLocalProductEvent(identity, {
+          type: "activity_suggestion_created",
+          suggestion: result.suggestion,
+        });
+      }
+      return jsonResponse(result);
+    } catch (error) {
+      return jsonResponse({
+        error: error instanceof Error ? error.message : "runtime_suggestion_create_failed",
+      }, 409);
+    }
+  }
+
+  private async acceptRuntimeBootstrap(request: Request): Promise<Response> {
+    const parsed = RuntimeBootstrapRequestSchema.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return jsonResponse({ error: "invalid_runtime_bootstrap" }, 400);
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase !== "durable_object_open" || authority.generation !== parsed.data.generation) {
+      return jsonResponse({ error: "workstream_runtime_bootstrap_fenced" }, 409);
+    }
+    try {
+      this.product.bootstrapRuntimeAuthority(parsed.data);
+      return jsonResponse({ ok: true });
+    } catch (error) {
+      return jsonResponse({
+        error: error instanceof Error ? error.message : "workstream_runtime_bootstrap_failed",
+      }, 409);
+    }
+  }
+
+  private async acceptProductRequest(request: Request): Promise<Response> {
+    const parsed = ProductRequestSchema.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return jsonResponse({ error: "invalid_product_request" }, 400);
+    const current = await this.socketAuth({
+      connectionId: crypto.randomUUID(),
+      workspaceId: parsed.data.auth.workspaceId,
+      workstreamId: this.objectStore.identity()?.workstreamId ?? "",
+      userId: parsed.data.auth.userId,
+      sessionId: parsed.data.auth.sessionId,
+      connectedAt: new Date().toISOString(),
+      afterSequence: 0,
+      subscribed: false,
+    });
+    if (!current || current.role !== parsed.data.auth.role || current.region !== parsed.data.auth.region) {
+      return jsonResponse({ error: "session_revoked" }, 401);
+    }
+    try {
+      if (parsed.data.operation === "initialize") {
+        const result = await this.product.initialize(current, parsed.data.input);
+        const identity = { workspaceId: parsed.data.input.workspaceId, workstreamId: parsed.data.input.workstreamId };
+        const messages = await this.product.messages(current, 1);
+        if (messages.items[0]) {
+          await this.publishLocalProductEvent(identity, {
+            type: "message_created",
+            message: messages.items[0],
+          });
+        }
+        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
+        return jsonResponse({
+          workstream: result.workstream,
+          messageId: result.messageId,
+          harnessRunId: result.harnessRunId,
+        });
+      }
+      if (parsed.data.operation === "get") {
+        return jsonResponse(await this.product.get(current));
+      }
+      if (parsed.data.operation === "context") {
+        return jsonResponse(await this.product.context(current));
+      }
+      if (parsed.data.operation === "messages") {
+        return jsonResponse(await this.product.messages(
+          current,
+          parsed.data.limit,
+          parsed.data.before,
+          parsed.data.after,
+          parsed.data.around,
+        ));
+      }
+      const identity = this.objectStore.identity();
+      if (!identity) return jsonResponse({ error: "workstream_not_found" }, 404);
+      if (parsed.data.operation === "update") {
+        const result = await this.product.update(current, parsed.data.input);
+        for (const event of result.events) await this.publishLocalProductEvent(identity, event);
+        return jsonResponse(result.workstream);
+      }
+      if (parsed.data.operation === "acknowledge_read") {
+        return jsonResponse(await this.product.acknowledgeRead(current, parsed.data.input));
+      }
+      if (parsed.data.operation === "mark_unread") {
+        return jsonResponse(await this.product.markUnread(current));
+      }
+      if (parsed.data.operation === "create_message") {
+        const result = await this.product.createMessage(current, parsed.data.input);
+        if (result.inserted) {
+          await this.publishLocalProductEvent(identity, { type: "message_created", message: result.message });
+        }
+        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
+        return jsonResponse({
+          message: result.message,
+          agentInvoked: result.agentInvoked,
+          harnessRunId: result.harnessRunId,
+        });
+      }
+      if (parsed.data.operation === "add_participant") {
+        const participant = await this.product.addParticipant(current, parsed.data.userId);
+        await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
+        return jsonResponse(participant);
+      }
+      if (parsed.data.operation === "remove_participant") {
+        await this.product.removeParticipant(current, parsed.data.userId);
+        await this.publishLocalProductEvent(identity, {
+          type: "participant_removed",
+          userId: parsed.data.userId,
+        });
+        return jsonResponse({ ok: true });
+      }
+      if (parsed.data.operation === "attach_resource") {
+        const resource = await this.product.attachResource(current, parsed.data.resourceId);
+        await this.publishLocalProductEvent(identity, { type: "resource_attached", resource });
+        return jsonResponse(resource);
+      }
+      if (parsed.data.operation === "detach_resource") {
+        await this.product.detachResource(current, parsed.data.resourceId);
+        return jsonResponse({ ok: true });
+      }
+      if (parsed.data.operation === "resolve_suggestion") {
+        const result = await this.product.resolveSuggestion(
+          current,
+          parsed.data.suggestionId,
+          parsed.data.action,
+        );
+        if (result.changed && result.suggestion) {
+          await this.publishLocalProductEvent(identity, {
+            type: "activity_suggestion_resolved",
+            suggestion: result.suggestion,
+          });
+        }
+        return jsonResponse({ suggestion: result.suggestion, resourceId: result.resourceId });
+      }
+      if (parsed.data.operation === "answer_elicitation") {
+        const result = await this.product.answerElicitation(
+          current,
+          parsed.data.elicitationId,
+          parsed.data.input,
+        );
+        if (result.elicitation) {
+          await this.publishLocalProductEvent(identity, {
+            type: "elicitation_answered",
+            elicitation: result.elicitation,
+          });
+        }
+        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
+        return jsonResponse({ elicitation: result.elicitation, harnessRunId: result.harnessRunId });
+      }
+      if (parsed.data.operation === "stop") {
+        await this.product.stop(current);
+        return jsonResponse({ ok: true });
+      }
+      const result = await this.product.retry(current);
+      await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
+      return jsonResponse({ harnessRunId: result.harnessRunId });
+    } catch (error) {
+      const safe = error instanceof ApiError
+        ? error
+        : new ApiError(500, "workstream_object_request_failed", "The work stream could not be loaded");
+      return jsonResponse({ error: safe.code, message: safe.message, details: safe.details }, safe.status);
+    }
+  }
+
+  private async startProductWorkflow(
+    identity: { workspaceId: string; workstreamId: string },
+    runId: string | null,
+    workflowInput: WorkstreamWorkflowInput | null,
+  ): Promise<void> {
+    if (!runId || !workflowInput) return;
+    const instanceId = `workstream-${runId}`;
+    try {
+      await this.env.WORKSTREAM_LOOP_WORKFLOW.create({ id: instanceId, params: workflowInput });
+    } catch (error) {
+      if (!(error instanceof Error) || !/(already exists|duplicate|conflict)/iu.test(error.message)) {
+        const safe = { code: "workflow_unavailable", message: "The Avalon harness could not complete this run" };
+        await this.product.recordWorkflowFailed(runId, safe);
+        await this.publishLocalProductEvent(identity, { type: "harness_status_changed", status: "failed" });
+        throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+      }
+    }
+    await this.product.recordWorkflowStarted(runId, instanceId);
+    await this.publishLocalProductEvent(identity, { type: "harness_status_changed", status: "running" });
   }
 
   private async acceptAuthorityImport(request: Request): Promise<Response> {
@@ -499,18 +793,16 @@ export class WorkstreamRoom {
     }
 
     try {
-      const result = await new WorkstreamService(
-        this.env,
-        auth,
-        (promise) => this.state.waitUntil(promise),
-        async (_env, workspaceId, workstreamId, event) => {
-          if (
-            workspaceId !== attachment.workspaceId
-            || workstreamId !== attachment.workstreamId
-          ) return false;
-          const response = await this.acceptEvent(new Request(
-            "https://room.internal/internal/events",
-            {
+      if (authority.phase !== "durable_object_open") {
+        const result = await new WorkstreamService(
+          this.env,
+          auth,
+          (promise) => this.state.waitUntil(promise),
+          async (_env, workspaceId, workstreamId, event) => {
+            if (workspaceId !== attachment.workspaceId || workstreamId !== attachment.workstreamId) {
+              return false;
+            }
+            return (await this.acceptEvent(new Request("https://room.internal/internal/events", {
               method: "POST",
               headers: {
                 "content-type": "application/json",
@@ -518,19 +810,36 @@ export class WorkstreamRoom {
                 "x-avalon-workstream-id": workstreamId,
               },
               body: JSON.stringify(event),
-            },
-          ));
-          return response.ok;
-        },
-      ).createMessage(attachment.workstreamId, {
+            }))).ok;
+          },
+        ).createMessage(attachment.workstreamId, {
+          ...command.payload,
+          telemetryOperationId: command.operationId,
+        });
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_succeeded",
+          command: "create_message",
+          clientMessageId: command.payload.clientMessageId,
+          ...result,
+        })));
+        return;
+      }
+      const result = await this.product.createMessage(auth, {
         ...command.payload,
         telemetryOperationId: command.operationId,
       });
+      await this.publishLocalProductEvent(attachment, {
+        type: "message_created",
+        message: result.message,
+      });
+      await this.startProductWorkflow(attachment, result.harnessRunId, result.workflowInput);
       socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
         type: "client_command_succeeded",
         command: "create_message",
         clientMessageId: command.payload.clientMessageId,
-        ...result,
+        message: result.message,
+        agentInvoked: result.agentInvoked,
+        harnessRunId: result.harnessRunId,
       })));
     } catch (error) {
       this.sendCommandFailure(socket, command, error);
@@ -544,6 +853,25 @@ export class WorkstreamRoom {
         });
       }
     }
+  }
+
+  private async publishLocalProductEvent(
+    attachment: Pick<SocketAttachment, "workspaceId" | "workstreamId">,
+    event: Record<string, unknown>,
+  ): Promise<void> {
+    const response = await this.acceptEvent(new Request(
+      "https://room.internal/internal/events",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-avalon-workspace-id": attachment.workspaceId,
+          "x-avalon-workstream-id": attachment.workstreamId,
+        },
+        body: JSON.stringify(event),
+      },
+    ));
+    if (!response.ok) throw new Error("workstream_local_event_publish_failed");
   }
 
   private async socketAuth(attachment: SocketAttachment): Promise<AuthContext | null> {
@@ -733,27 +1061,6 @@ export class WorkstreamRoom {
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
 
-    // The same rule the REST reads enforce, not a copy of it. This authorizer
-    // was a copy, and it had drifted: it checked the automation clause and not
-    // `scope`, so a member who was not a participant could open a socket onto a
-    // private work stream and be sent its transcript.
-    const authorized = await this.env.DB.prepare(
-      `SELECT 1
-         FROM workstreams w
-         JOIN workspace_members wm ON wm.workspace_id = w.workspace_id
-        WHERE w.id = ?1
-          AND w.workspace_id = ?2
-          AND wm.user_id = ?3
-          AND wm.status = 'active'
-          AND w.archived_at IS NULL
-          AND ${workstreamVisibilitySql("?3")}
-        LIMIT 1`
-    )
-      .bind(identity.data.workstreamId, identity.data.workspaceId, identity.data.userId)
-      .first();
-
-    if (!authorized) return jsonResponse({ error: "forbidden" }, 403);
-
     const currentAuthority = await readWorkstreamAuthorityControl(this.env);
     if (!acceptsNewWorkstreamWork(currentAuthority)) {
       return jsonResponse({
@@ -773,6 +1080,29 @@ export class WorkstreamRoom {
         return jsonResponse({ error: "room_identity_mismatch" }, 409);
       }
       throw error;
+    }
+    const authorized = currentAuthority.phase === "durable_object_open"
+      ? Boolean(await this.env.DB.prepare(
+        `SELECT 1 AS one FROM workspace_members
+          WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+      ).bind(identity.data.workspaceId, identity.data.userId).first<{ one: number }>())
+        && this.product.canRead(identity.data.userId)
+      : Boolean(await this.env.DB.prepare(
+        `SELECT 1
+           FROM workstreams w
+           JOIN workspace_members member ON member.workspace_id = w.workspace_id
+          WHERE w.id = ?1 AND w.workspace_id = ?2
+            AND member.user_id = ? AND member.status = 'active'
+            AND w.archived_at IS NULL
+            AND ${workstreamVisibilitySql("?3")}
+          LIMIT 1`,
+      ).bind(
+        identity.data.workstreamId,
+        identity.data.workspaceId,
+        identity.data.userId,
+      ).first());
+    if (!authorized) {
+      return jsonResponse({ error: "forbidden" }, 403);
     }
     if (!this.objectStore.isRealtimeWritable()) {
       return jsonResponse({
@@ -970,18 +1300,29 @@ export class WorkstreamRoom {
     const placeholders = userIds.map(() => "?").join(",");
     let permitted: Set<string>;
     try {
-      const result = await this.env.DB.prepare(
-        `SELECT wm.user_id
-           FROM workspace_members wm
-           JOIN workstreams w ON w.id = ? AND w.workspace_id = ?
-          WHERE wm.workspace_id = w.workspace_id
-            AND wm.status = 'active'
-            AND wm.user_id IN (${placeholders})
-            AND ${workstreamVisibilitySql("wm.user_id")}`
-      )
-        .bind(identity.workstreamId, identity.workspaceId, ...userIds)
-        .all<{ user_id: string }>();
-      permitted = new Set((result.results ?? []).map((row) => row.user_id));
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      if (authority.phase === "durable_object_open") {
+        const result = await this.env.DB.prepare(
+          `SELECT member.user_id
+             FROM workspace_members member
+            WHERE member.workspace_id = ? AND member.status = 'active'
+              AND member.user_id IN (${placeholders})`,
+        ).bind(identity.workspaceId, ...userIds).all<{ user_id: string }>();
+        permitted = new Set((result.results ?? [])
+          .map((row) => row.user_id)
+          .filter((userId) => this.product.canRead(userId)));
+      } else {
+        const result = await this.env.DB.prepare(
+          `SELECT member.user_id
+             FROM workstreams w
+             JOIN workspace_members member ON member.workspace_id = w.workspace_id
+            WHERE w.id = ? AND w.workspace_id = ?
+              AND member.status = 'active' AND member.user_id IN (${placeholders})
+              AND ${workstreamVisibilitySql("member.user_id")}`,
+        ).bind(identity.workstreamId, identity.workspaceId, ...userIds)
+          .all<{ user_id: string }>();
+        permitted = new Set((result.results ?? []).map((row) => row.user_id));
+      }
     } catch {
       if (certain) {
         this.evictEveryReaderPendingReauthorization(sockets);
@@ -1157,12 +1498,17 @@ export class WorkstreamRoom {
     workstreamId: string,
     viewerUserId: string,
   ): Promise<WorkstreamDetail> {
-    return loadWorkstreamRoomSnapshot(this.env, {
-      workspaceId,
-      workstreamId,
-      viewerUserId,
-      viewers: await this.loadViewers(workspaceId, workstreamId),
-    });
+    const attachment = this.state.getWebSockets().map((socket) => this.readAttachment(socket))
+      .find((candidate) => candidate?.userId === viewerUserId);
+    if (!attachment) throw new Error("Snapshot viewer socket is unavailable");
+    const auth = await this.socketAuth(attachment);
+    if (!auth) throw new Error("Snapshot viewer is no longer authorized");
+    const viewers = await this.loadViewers(workspaceId, workstreamId);
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase !== "durable_object_open") {
+      return { ...await new WorkstreamService(this.env, auth).get(workstreamId), viewers };
+    }
+    return this.product.get(auth, viewers);
   }
 
   private async loadViewers(
@@ -1183,11 +1529,13 @@ export class WorkstreamRoom {
         )
       );
 
-    const participantRows = await this.env.DB.prepare(
-      `SELECT user_id FROM workstream_participants
-       WHERE workstream_id = ? AND removed_at IS NULL`,
-    ).bind(workstreamId).all<{ user_id: string }>();
-    const participantIds = new Set((participantRows.results ?? []).map((row) => row.user_id));
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const participantIds = authority.phase === "durable_object_open"
+      ? new Set(this.product.activeParticipantIds())
+      : new Set((await this.env.DB.prepare(
+        `SELECT user_id FROM workstream_participants
+          WHERE workstream_id = ? AND removed_at IS NULL`,
+      ).bind(workstreamId).all<{ user_id: string }>()).results.map((row) => row.user_id));
     const viewers = distinctNonParticipantViewers(attachments, participantIds);
 
     return Promise.all(
@@ -1282,13 +1630,12 @@ export class WorkstreamRoom {
   }
 
   private async currentSequence(workstreamId: string): Promise<number> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") return this.objectStore.currentSequence();
     const canonical = await this.env.DB.prepare(
       `SELECT COALESCE(MAX(sequence_number), 0) AS sequence
-         FROM messages
-        WHERE workstream_id = ?1`
-    )
-      .bind(workstreamId)
-      .first<{ sequence: number }>();
+         FROM messages WHERE workstream_id = ?`,
+    ).bind(workstreamId).first<{ sequence: number }>();
     return this.objectStore.currentSequence(canonical?.sequence ?? 0);
   }
 
@@ -1308,165 +1655,4 @@ export class WorkstreamRoom {
   ): Promise<ServerSocketEvent> {
     return this.objectStore.commitRealtimeEvent(unsequencedEvent, requestedSequence);
   }
-}
-
-/**
- * The canonical work stream one subscriber is sent on connecting.
- *
- * Exported so the shape it produces can be asserted against the contract
- * directly: a snapshot that fails validation is not an error anyone sees — the
- * room answers `snapshot_unavailable`, the client resynchronizes over REST, and
- * every live update between the two is simply missed.
- */
-export async function loadWorkstreamRoomSnapshot(
-  env: Env,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    viewerUserId: string;
-    viewers: WorkstreamDetail["viewers"];
-  },
-): Promise<WorkstreamDetail> {
-  const { workspaceId, workstreamId, viewerUserId, viewers } = input;
-  const row = await env.DB.prepare(
-    `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
-       FROM workstreams w
-       ${WORKSTREAM_VIEWER_JOINS_SQL}
-      WHERE w.id = ? AND w.workspace_id = ? LIMIT 1`
-  )
-    .bind(...workstreamViewerBindings(viewerUserId), workstreamId, workspaceId)
-    .first<WorkstreamRow>();
-  if (!row) throw new Error("Work stream not found");
-
-  const [participantRows, resourceRows, connectionRows, elicitationRows, suggestionRows, latestRun] =
-    await Promise.all([
-      env.DB.prepare(
-        `SELECT u.*, wp.participation_reason, wp.joined_at
-           FROM workstream_participants wp
-           JOIN users u ON u.id = wp.user_id
-          WHERE wp.workstream_id = ?1 AND wp.removed_at IS NULL
-          ORDER BY wp.joined_at`
-      )
-        .bind(workstreamId)
-        .all<UserRow & { participation_reason: string; joined_at: string }>(),
-      loadVisibleWorkstreamRoomResources(env, workspaceId, workstreamId, viewerUserId),
-      env.DB.prepare(
-        `SELECT DISTINCT c.*, owner.name AS owner_name
-           FROM workstream_resources wr
-           JOIN resources r ON r.id = wr.resource_id
-           JOIN connector_connections c ON c.id = r.connection_id
-           LEFT JOIN users owner ON owner.id = c.owner_user_id
-          WHERE wr.workstream_id = ?1
-          ORDER BY c.created_at`
-      )
-        .bind(workstreamId)
-        .all<Record<string, unknown>>(),
-      env.DB.prepare(
-        `SELECT * FROM elicitations
-          WHERE workstream_id = ?1 AND status = 'open'
-          ORDER BY created_at`
-      )
-        .bind(workstreamId)
-        .all<Record<string, unknown>>(),
-      SUGGESTED_CONTEXT_ENABLED
-        ? env.DB.prepare(
-          `SELECT s.*, a.title, a.summary
-             FROM activity_suggestions s
-             JOIN activities a ON a.id = s.activity_id
-            WHERE s.workstream_id = ?1 AND s.status = 'pending'
-            ORDER BY s.created_at DESC`
-        )
-          .bind(workstreamId)
-          .all<Record<string, unknown>>()
-        : Promise.resolve({ results: [] as Record<string, unknown>[] }),
-      // The same columns and the same order as `GET /workstreams/:id`. A
-      // snapshot replaces the client's whole detail, so anything it omits is
-      // lost until the next REST read — omitting the run itself left a running
-      // work stream with no work timer for the life of the run — and anything
-      // it answers differently overwrites the right answer with a wrong one.
-      // `created_at` rather than `started_at` for exactly that reason: a
-      // `scheduled` run is inserted with `started_at` NULL, SQLite sorts NULLs
-      // last under DESC, and this would otherwise hand the client an older run.
-      env.DB.prepare(
-        `SELECT id, origin, status, model, error_json, started_at, completed_at, created_at
-           FROM harness_runs
-          WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
-            AND origin != 'hypersight_block'
-          ORDER BY created_at DESC LIMIT 1`
-      )
-        .bind(workstreamId)
-        .first<Record<string, unknown>>()
-    ]);
-
-  return WorkstreamDetailSchema.parse({
-    ...toWorkstream(row),
-    participants: participantRows.results.map((participant) => ({
-      user: userFromRow(participant),
-      participationReason: participant.participation_reason,
-      joinedAt: participant.joined_at
-    })),
-    viewers,
-    resources: resourceRows.map((resource) => ({
-      id: resource.id,
-      workspaceId: resource.workspace_id,
-      connectionId: resource.connection_id,
-      resourceType: resource.resource_type,
-      provider: resource.provider,
-      providerResourceId: resource.provider_resource_id,
-      title: truncateUtf16Safe(String(resource.title), 300),
-      mimeType: resource.mime_type,
-      canonicalUrl: resource.canonical_url,
-      watchEnabled: Number(resource.attached_watch_enabled) === 1,
-      watchStatus: resource.connection_id == null
-        ? "unsupported"
-        : Number(resource.attached_watch_enabled) === 1 ? "watching" : "paused",
-      lastHydratedAt: resource.last_hydrated_at,
-      createdAt: resource.created_at,
-      updatedAt: resource.updated_at
-    })),
-    connections: connectionRows.results.map((row) => connectionFromRow(row)),
-    openElicitations: elicitationRows.results.map((elicitation) => ({
-      id: elicitation.id,
-      workstreamId: elicitation.workstream_id,
-      harnessRunId: elicitation.harness_run_id,
-      prompt: elicitation.prompt,
-      responseType: elicitation.response_type,
-      options: parseJsonArray(elicitation.options_json),
-      minimumSelections: elicitation.minimum_selections ?? 0,
-      maximumSelections: elicitation.maximum_selections ?? null,
-      targetUserId: elicitation.target_user_id,
-      status: elicitation.status,
-      answer:
-        typeof elicitation.answer_json === "string"
-          ? (JSON.parse(elicitation.answer_json) as unknown)
-          : null,
-      answeredByUserId: elicitation.answered_by_user_id,
-      createdAt: elicitation.created_at,
-      answeredAt: elicitation.answered_at
-    })),
-    suggestions: suggestionRows.results.map((suggestion) => ({
-      id: suggestion.id,
-      activityId: suggestion.activity_id,
-      workstreamId: suggestion.workstream_id,
-      title: truncateUtf16Safe(String(suggestion.title), 300),
-      summary: truncateUtf16Safe(String(suggestion.summary), 2_000),
-      confidence: suggestion.confidence,
-      reason: truncateUtf16Safe(String(suggestion.reason), 1_200),
-      status: suggestion.status,
-      createdAt: suggestion.created_at,
-      resolvedAt: suggestion.resolved_at
-    })),
-    latestHarnessRunId: latestRun?.id == null ? null : String(latestRun.id),
-    latestHarnessRun: latestRun ? {
-      id: String(latestRun.id),
-      origin: String(latestRun.origin),
-      status: String(latestRun.status),
-      model: latestRun.model == null ? null : String(latestRun.model),
-      error: memberSafeHarnessError(latestRun.error_json),
-      requestId: String(latestRun.id),
-      startedAt: latestRun.started_at == null ? null : String(latestRun.started_at),
-      completedAt: latestRun.completed_at == null ? null : String(latestRun.completed_at),
-      createdAt: String(latestRun.created_at)
-    } : null
-  });
 }

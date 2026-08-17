@@ -4,7 +4,6 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlit
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
-import { loadVisibleWorkstreamRoomResources } from "../src/durable-objects/workstream-room";
 import { loadVisibleWorkstreamResources } from "../src/services/workstream-resource-visibility";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
@@ -138,12 +137,11 @@ describe("per-user work-stream read state", () => {
       VALUES ('other-message', '${resourceId}', 0, '2026-02-01T00:00:00.000Z');
     `);
 
-    await expect(loadVisibleWorkstreamRoomResources(
-      env,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      USER_ONE_ID,
-    )).resolves.toEqual([expect.objectContaining({
+    await expect(loadVisibleWorkstreamResources(env.DB, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      principal: { type: "user", userId: USER_ONE_ID },
+    }).then((result) => result.rows)).resolves.toEqual([expect.objectContaining({
       id: resourceId,
       message_attachment: 0,
     })]);
@@ -157,12 +155,11 @@ describe("per-user work-stream read state", () => {
       INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
       VALUES ('message-one', '${resourceId}', 0, '2026-02-01T00:00:00.000Z');
     `);
-    await expect(loadVisibleWorkstreamRoomResources(
-      env,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      USER_ONE_ID,
-    )).resolves.toEqual([expect.objectContaining({
+    await expect(loadVisibleWorkstreamResources(env.DB, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      principal: { type: "user", userId: USER_ONE_ID },
+    }).then((result) => result.rows)).resolves.toEqual([expect.objectContaining({
       id: resourceId,
       message_attachment: 1,
     })]);
@@ -222,18 +219,18 @@ describe("per-user work-stream read state", () => {
       resources: [{ id: resourceId, title: "Renamed private planning note" }],
     });
     await expect(participant.get(WORKSTREAM_ID)).resolves.toMatchObject({ resources: [] });
-    await expect(loadVisibleWorkstreamRoomResources(
-      env,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      USER_ONE_ID,
-    )).resolves.toEqual([expect.objectContaining({ id: resourceId, title: "Renamed private planning note" })]);
-    await expect(loadVisibleWorkstreamRoomResources(
-      env,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      USER_TWO_ID,
-    )).resolves.toEqual([]);
+    await expect(loadVisibleWorkstreamResources(env.DB, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      principal: { type: "user", userId: USER_ONE_ID },
+    }).then((result) => result.rows)).resolves.toEqual([
+      expect.objectContaining({ id: resourceId, title: "Renamed private planning note" }),
+    ]);
+    await expect(loadVisibleWorkstreamResources(env.DB, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      principal: { type: "user", userId: USER_TWO_ID },
+    }).then((result) => result.rows)).resolves.toEqual([]);
 
     const roomFetch = vi.fn(async () => Response.json({ accepted: true }, { status: 202 }));
     Object.assign(env, {

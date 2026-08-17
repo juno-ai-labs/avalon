@@ -68,14 +68,15 @@ describe("resource listing", () => {
     const first = await service.list({ limit: 2 });
     expect(first.items.map((resource) => resource.id)).toEqual([firstResourceId, secondResourceId]);
     expect(first.nextCursor).toEqual(expect.any(String));
-    expect(statements[0]?.sql.replace(/\s+/gu, " ")).toContain(
+    const firstResourceStatement = statements.find((statement) => statement.sql.includes("FROM resources r"));
+    expect(firstResourceStatement?.sql.replace(/\s+/gu, " ")).toContain(
       "WHERE r.workspace_id = ? AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
     );
-    expect(statements[0]?.sql).toContain("ORDER BY r.updated_at DESC, r.id DESC");
-    expect(statements[0]?.values).toEqual([workspaceId, userId, userId, userId, userId, 3]);
+    expect(firstResourceStatement?.sql).toContain("ORDER BY r.updated_at DESC, r.id DESC");
+    expect(firstResourceStatement?.values).toEqual([workspaceId, userId, userId, userId, userId, 3]);
 
     await service.list({ query: "Release_100%", cursor: first.nextCursor!, limit: 2 });
-    const second = statements[1]!;
+    const second = statements.filter((statement) => statement.sql.includes("FROM resources r"))[1]!;
     expect(second.sql).toContain("LOWER(r.title) LIKE ?");
     expect(second.sql).toContain("r.updated_at < ? OR (r.updated_at = ? AND r.id < ?)");
     expect(second.values.slice(0, 9)).toEqual([

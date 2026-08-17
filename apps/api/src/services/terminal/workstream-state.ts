@@ -8,7 +8,6 @@ import { newId, nowIso } from "@avalon/db";
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { connectorRegistryForEnv, githubConnectorConfig } from "../../lib/connector-registry";
-import { WORKSTREAM_VISIBILITY_SQL, workstreamVisibilityBindings } from "../../lib/workstream-visibility";
 import { logWarn } from "../../observability/logger";
 import {
   emitProductUsageTelemetry,
@@ -18,6 +17,9 @@ import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { withAuthorizedConnection } from "../connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "../connector-credential-envelope";
+import { WorkstreamDirectoryService } from "../workstream-directory-service";
+import { readWorkstreamAuthorityControl } from "../workstream-authority";
+import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
 
 export interface TerminalCatalogRepository {
   id: number;
@@ -83,13 +85,18 @@ export class TerminalWorkstreamService {
 
   async get(workstreamId: string) {
     await this.requireVisible(workstreamId);
+    const database = (await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    )).DB;
     const [sandbox, repository] = await Promise.all([
-      this.env.DB.prepare(
+      database.prepare(
         `SELECT state, provider_sandbox_id, last_activity_at, expire_due_at,
                 final_diff_resource_id, failure_code
            FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?`,
       ).bind(this.auth.workspaceId, workstreamId).first<SandboxStateRow>(),
-      this.env.DB.prepare(
+      database.prepare(
         `SELECT connection_id, repository_id, repository_full_name, base_ref, base_sha, head_ref, state
            FROM workstream_terminal_repositories
           WHERE workspace_id = ? AND workstream_id = ?`,
@@ -125,7 +132,12 @@ export class TerminalWorkstreamService {
   async startFresh(workstreamId: string) {
     const telemetryStartedAt = Date.now();
     await this.requireParticipant(workstreamId);
-    const state = await this.env.DB.prepare(
+    const database = (await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    )).DB;
+    const state = await database.prepare(
       "SELECT state FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
     ).bind(this.auth.workspaceId, workstreamId).first<{ state: string }>();
     if (state && !["expired", "failed"].includes(state.state)) {
@@ -153,7 +165,12 @@ export class TerminalWorkstreamService {
   }
 
   private async destroyCurrentSandbox(workstreamId: string): Promise<void> {
-    const row = await this.env.DB.prepare(
+    const database = (await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    )).DB;
+    const row = await database.prepare(
       "SELECT provider_sandbox_id, state, generation FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
     ).bind(this.auth.workspaceId, workstreamId).first<{ provider_sandbox_id: string | null; state: string; generation: number }>();
     if (row?.provider_sandbox_id) {
@@ -170,15 +187,15 @@ export class TerminalWorkstreamService {
       }
       await this.provider.deleteSandbox(row.provider_sandbox_id);
     }
-    const [deleted] = await this.env.DB.batch([
+    const [deleted] = await database.batch([
       row
-        ? this.env.DB.prepare(
+        ? database.prepare(
           "DELETE FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ? AND generation = ?",
         ).bind(this.auth.workspaceId, workstreamId, row.generation)
-        : this.env.DB.prepare(
+        : database.prepare(
           "DELETE FROM workstream_sandboxes WHERE workspace_id = ? AND workstream_id = ?",
         ).bind(this.auth.workspaceId, workstreamId),
-      this.env.DB.prepare(
+      database.prepare(
         `UPDATE workstream_terminal_repositories
             SET bootstrapped_sandbox_generation = NULL, read_token_expires_at = NULL, updated_at = ?
           WHERE workspace_id = ? AND workstream_id = ?
@@ -204,17 +221,35 @@ export class TerminalWorkstreamService {
   }
 
   private async requireVisible(workstreamId: string): Promise<void> {
-    const row = await this.env.DB.prepare(
-      `SELECT w.id FROM workstreams w
-        WHERE w.id = ? AND w.workspace_id = ? AND w.archived_at IS NULL
-          AND ${WORKSTREAM_VISIBILITY_SQL}`,
-    ).bind(workstreamId, this.auth.workspaceId, ...workstreamVisibilityBindings(this.auth.userId)).first<{ id: string }>();
-    if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    const visible = authority.phase === "durable_object_open"
+      ? await new WorkstreamDirectoryService(this.env, this.auth).visible(workstreamId)
+      : Boolean(await this.env.DB.prepare(
+        `SELECT 1 FROM workstreams workstream
+          WHERE workstream.id = ? AND workstream.workspace_id = ?
+            AND workstream.archived_at IS NULL
+            AND (workstream.scope = 'workspace' OR workstream.created_by_user_id = ?
+              OR EXISTS (SELECT 1 FROM workstream_participants participant
+                  WHERE participant.workstream_id = workstream.id
+                    AND participant.user_id = ? AND participant.removed_at IS NULL))`,
+      ).bind(
+        workstreamId,
+        this.auth.workspaceId,
+        this.auth.userId,
+        this.auth.userId,
+      ).first());
+    if (!visible) {
+      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    }
   }
 
   private async requireParticipant(workstreamId: string): Promise<void> {
     await this.requireVisible(workstreamId);
-    const participant = await this.env.DB.prepare(
+    const participant = await (await workstreamExecutionEnvironment(
+      this.env,
+      this.auth.workspaceId,
+      workstreamId,
+    )).DB.prepare(
       `SELECT user_id FROM workstream_participants
         WHERE workstream_id = ? AND user_id = ? AND removed_at IS NULL`,
     ).bind(workstreamId, this.auth.userId).first<{ user_id: string }>();
