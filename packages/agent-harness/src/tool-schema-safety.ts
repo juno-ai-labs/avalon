@@ -16,6 +16,54 @@ const COMPOSITION_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
 
 /**
+ * Whether xAI will read one branch of a **root** union as an object.
+ *
+ * Shared by the report and the repair below so the two cannot drift: a rule
+ * that only half the codebase enforces is worse than one nobody does, because
+ * the guard goes green on exactly the schema the repair lets through.
+ *
+ * Every clause was measured against grok-4.3/4.5/4.6, and confirmed harmless on
+ * gemini-3.5/3.6/3.7-flash and gpt-5.6-terra/sol/luna:
+ *
+ * - `type: "object"` alone qualifies, and `properties` alone qualifies when the
+ *   branch declares no `type` at all.
+ * - **A declared `type` decides by itself.** `{ type: "string", properties: {…} }`
+ *   is rejected exactly like a bare `{ type: "string" }` — the `properties` does
+ *   not rescue a branch whose own `type` contradicts it.
+ * - **A branch carrying its own *union* is rejected even with `type: "object"`.**
+ *   `{ type: "object", anyOf: [...] }` 400s on all three Grok models, so nesting
+ *   a union one level down inside a root branch does not escape the rule; it is
+ *   the same 400 as putting it at the root. Two boundaries here, both measured
+ *   and both easy to get wrong in opposite directions:
+ *   - It is `anyOf`/`oneOf` only. A branch carrying its own **`allOf`** is
+ *     accepted by all nine models, Grok included — an intersection is not a
+ *     union — and Bind 13 deliberately keeps it. Rejecting it here would make
+ *     the repair below delete a root union the sanitizer had preserved,
+ *     destroying a constraint to fix a problem that does not exist.
+ *   - The objection reaches the branch's **own** keywords only — a composition
+ *     under one of its `properties` is accepted by all nine models — so this
+ *     must never become a subtree scan, for the same reason.
+ *
+ * **The rule is stated over a *sanitized* branch**, which is the only form that
+ * reaches a provider, and both callers pass one. It is deliberately literal
+ * about `type` as a result: an array `type` such as `["object", "null"]` reads
+ * as unreadable here, which is wrong for an authored schema and irrelevant for a
+ * sanitized one, because Bind collapses a type array to a scalar before this
+ * ever sees it. Anyone applying this predicate to an authored schema — a legal
+ * shape for a third-party MCP server to serve — should sanitize first.
+ *
+ * Bind 13 handles every clause here, so nothing in the shipped tool surface
+ * currently trips it. It is kept as the statement of the rule itself: the
+ * clauses cost roughly two hundred live provider requests to establish, and
+ * they are what a future sanitizer regression would be measured against.
+ */
+export function readableRootUnionBranch(branch: unknown): boolean {
+  if (!isPlainObject(branch)) return false;
+  if ("type" in branch ? branch.type !== "object" : !isPlainObject(branch.properties)) return false;
+  return !ROOT_UNION_KEYWORDS.some((keyword) => Array.isArray(branch[keyword]));
+}
+
+/**
  * Keywords that assert nothing about an instance. A branch left holding only
  * these has had its constraint erased even though it is not literally empty.
  */
@@ -83,10 +131,24 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  *
  * This compares the authored schema against the sanitized one rather than
  * looking for an empty result, because an emptied branch is only the most
- * visible form. `{ description: "choose a", required: ["a"] }` sanitizes to
- * `{ description: "choose a" }` and `{ type: "object", required: ["query"] }`
- * to `{ type: "object" }` — neither is empty, and the constraint is just as
- * gone. Both are reported here.
+ * visible form. `{ description: "choose a", required: ["a"] }` used to sanitize
+ * to `{ description: "choose a" }` and `{ type: "object", required: ["query"] }`
+ * to `{ type: "object" }` — neither empty, and the constraint just as gone.
+ *
+ * **Bind 12 and 13 repair all of those**: a branch's `required` now resolves
+ * against its parent's `properties`, and the referenced subschemas are copied
+ * down, so the constraint reaches the wire. Two forms still report, and the
+ * second is now the more consequential:
+ *
+ * - `(required dropped)` — a branch naming something *nothing* in scope
+ *   declares, which remains unrepairable and is still pruned away.
+ * - `(composition dropped)` — a whole root union Bind removed, which it does
+ *   when no branch of it can be made usable. See `walkPair` for why a vanished
+ *   keyword has to be reported rather than skipped.
+ *
+ * Keep the check rather than trusting the dependency: it costs nothing when
+ * there is nothing to find, and it is what would notice a bind release that
+ * stopped repairing.
  *
  * The loss is silent on every provider measured: nine live models accept a
  * weakened branch without complaint and let the model send both parameters or
@@ -118,14 +180,10 @@ export function weakenedCompositionBranches(schema: Record<string, unknown>): st
  * request, every tool**, so one bad schema from one remote server takes down a
  * run that had nothing to do with it, including Avalon's own core tools.
  *
- * So the same measured rule is applied as a repair rather than a report: when a
- * root `anyOf`/`oneOf` has a branch xAI will not read as an object, the whole
- * composition is dropped and the rest of the schema is kept. Measured 27/27
- * accepted across nine models, and it is the same trade the four first-party
- * tools took — the constraint was already being erased for every provider by
- * the sanitizer's `required` pruning, and a remote MCP server validates its own
- * arguments regardless, so what is given up here is a wire-level hint that was
- * not being honoured, in exchange for the request surviving at all.
+ * So the same measured rule is applied as a repair rather than a report, using
+ * the literally same predicate — but only where the sanitizer's own output
+ * would still be fatal. That gate is the whole design now: see the body for why
+ * repairing unconditionally became worse than doing nothing.
  *
  * Repair rather than reject, because rejecting is worse in both directions: it
  * removes a capability the person connected on purpose, and it does so on a
@@ -134,16 +192,27 @@ export function weakenedCompositionBranches(schema: Record<string, unknown>): st
  * still owns every other dialect difference.
  */
 export function repairRootUnionForProviders(schema: Record<string, unknown>): Record<string, unknown> {
-  let repaired = schema;
-  for (const keyword of ROOT_UNION_KEYWORDS) {
-    const branches = repaired[keyword];
-    if (!Array.isArray(branches)) continue;
-    const unreadable = branches.some((branch) => !isPlainObject(branch)
-      || !(branch.type === "object" || isPlainObject(branch.properties)));
-    if (!unreadable) continue;
-    repaired = Object.fromEntries(Object.entries(repaired).filter(([key]) => key !== keyword));
-  }
-  return repaired;
+  // Defer to the sanitizer, and intervene only where its output would still be
+  // fatal. This is not an optimization — repairing unconditionally is now
+  // *worse than doing nothing*. Bind 13 turns a remote
+  // `oneOf: [{required:["pageId"]}, {required:["discussionId"]}]` into
+  // self-sufficient object branches that every provider accepts and the model
+  // can read, whereas dropping it first throws that constraint away and tells
+  // the model nothing. Against Bind 11 and 12 the drop was the only thing
+  // standing between a third-party schema and a 400; against a sanitizer that
+  // repairs the shape properly it is pure loss.
+  //
+  // Gating on `nonObjectRootUnionBranches` rather than deleting this outright
+  // keeps the backstop honest: it re-engages by itself for any shape a future
+  // sanitizer stops handling, without anyone having to notice.
+  if (nonObjectRootUnionBranches(schema).length === 0) return schema;
+  // Something fatal survives sanitization, so no root union on this schema can
+  // be trusted to reach the wire. Drop them all rather than reasoning from the
+  // authored branches, which may read as usable while their sanitized form does
+  // not.
+  return Object.fromEntries(
+    Object.entries(schema).filter(([key]) => !ROOT_UNION_KEYWORDS.some((keyword) => keyword === key)),
+  );
 }
 
 function requiredNames(node: Record<string, unknown>): string[] {
@@ -168,8 +237,9 @@ function assertsNothing(node: Record<string, unknown>): boolean {
  * The rule was measured, not inferred, against grok-4.3/4.5/4.6 plus three
  * Gemini and three GPT models:
  *
- * - A root union branch is fine when it is recognizably an object — it declares
- *   `type: "object"` **or** `properties`. Either alone is enough.
+ * - A root union branch is fine when xAI reads it as an object;
+ *   `readableRootUnionBranch` above holds the exact rule and why each clause of
+ *   it is there.
  * - A bare `{ required: [...] }` branch is not, and neither is `{}`, and neither
  *   is an annotation-only `{ description: "…" }`. All three 400, whether the
  *   sanitizer left them that way or the author wrote them that way: the
@@ -196,9 +266,7 @@ export function nonObjectRootUnionBranches(schema: Record<string, unknown>): str
     const branches = root[keyword];
     if (!Array.isArray(branches)) continue;
     branches.forEach((branch, index) => {
-      const objectTyped = isPlainObject(branch)
-        && (branch.type === "object" || isPlainObject(branch.properties));
-      if (!objectTyped) found.push(`/${keyword}/${index}`);
+      if (!readableRootUnionBranch(branch)) found.push(`/${keyword}/${index}`);
     });
   }
   return found;
@@ -208,8 +276,15 @@ export function nonObjectRootUnionBranches(schema: Record<string, unknown>): str
  * Walk the authored schema and its sanitized copy in step, reporting each
  * composition branch the sanitizer took a constraint out of.
  *
- * The two trees are structurally identical — the sanitizer rebuilds the spine
- * but never reorders or drops a branch — so the same path indexes both.
+ * The trees are *nearly* parallel, so the same path indexes both — but not
+ * identical, and the difference matters. Bind 13 removes a root composition
+ * outright when no branch of it can be made usable. That is provider-safe and
+ * deliberate, and it is still an authored constraint that did not reach the
+ * wire, so a vanished keyword is reported rather than skipped. Treating the two
+ * trees as structurally identical, which an earlier version of this walk did,
+ * meant a whole erased union slipped past both checks: `walkPair` stopped at the
+ * missing array, and `nonObjectRootUnionBranches` had nothing left to find
+ * because the union it would have judged was gone.
  */
 function walkPair(
   authored: unknown,
@@ -222,8 +297,12 @@ function walkPair(
   const childDepth = depth + 1;
   for (const keyword of COMPOSITION_KEYWORDS) {
     const authoredBranches = authored[keyword];
+    if (!Array.isArray(authoredBranches)) continue;
     const sanitizedBranches = sanitized[keyword];
-    if (!Array.isArray(authoredBranches) || !Array.isArray(sanitizedBranches)) continue;
+    if (!Array.isArray(sanitizedBranches)) {
+      found.push(`${path}/${keyword} (composition dropped)`);
+      continue;
+    }
     authoredBranches.forEach((authoredBranch, index) => {
       const sanitizedBranch = sanitizedBranches[index];
       const branchPath = `${path}/${keyword}/${index}`;

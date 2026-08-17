@@ -187,16 +187,47 @@ describe("dynamic connector tool schemas", () => {
     )[0]!.inputSchema as Record<string, unknown>;
   };
 
-  it("repairs a remote root union Grok would reject the whole request over", () => {
-    const repaired = validate({
-      type: "object",
-      properties: { pageId: { type: "string" }, discussionId: { type: "string" } },
-      oneOf: [{ required: ["pageId"] }, { required: ["discussionId"] }],
-    });
-
-    expect(repaired.oneOf).toBeUndefined();
-    expect(repaired.properties).toEqual({ pageId: { type: "string" }, discussionId: { type: "string" } });
-    expect(nonObjectRootUnionBranches(repaired)).toEqual([]);
+  it("lets nothing a remote server serves reach the wire in a shape Grok rejects", () => {
+    // Asserted as an outcome rather than a mechanism, because the mechanism has
+    // already moved once. Under bind 11 and 12 this gate had to drop the
+    // composition itself; under bind 13 it defers, because the sanitizer
+    // repairs the shape into readable branches and *keeps* the constraint,
+    // which dropping it would have thrown away. What must hold either way is
+    // that the schema reaching the provider has no unreadable root branch.
+    for (const remote of [
+      // The ordinary "exactly one of these" idiom.
+      {
+        type: "object",
+        properties: { pageId: { type: "string" }, discussionId: { type: "string" } },
+        oneOf: [{ required: ["pageId"] }, { required: ["discussionId"] }],
+      },
+      // Annotation-only branches.
+      {
+        type: "object",
+        properties: { a: { type: "string" } },
+        anyOf: [{ description: "choose a" }, { description: "or not" }],
+      },
+      // A branch whose own `type` contradicts its `properties`.
+      {
+        type: "object",
+        properties: { a: { type: "string" }, b: { type: "string" } },
+        oneOf: [
+          { type: "string", properties: { a: { type: "string" } } },
+          { type: "object", properties: { b: { type: "string" } } },
+        ],
+      },
+      // A branch carrying its own composition.
+      {
+        type: "object",
+        properties: { a: { type: "string" }, b: { type: "string" } },
+        oneOf: [
+          { type: "object", anyOf: [{ properties: { a: { type: "string" } } }] },
+          { type: "object", properties: { b: { type: "string" } } },
+        ],
+      },
+    ]) {
+      expect(nonObjectRootUnionBranches(validate(remote))).toEqual([]);
+    }
   });
 
   it("leaves a remote schema alone when its root union is already object-branched", () => {

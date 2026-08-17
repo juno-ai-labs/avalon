@@ -488,11 +488,20 @@ future agent tool or plugin, not just this family.
   ```
 
   which OpenRouter surfaces as a provider 400 covering the **whole request,
-  every tool**. A branch qualifies if it declares `type: "object"` *or*
-  `properties`; a bare `{ required: [...] }`, an empty `{}`, and an
-  annotation-only `{ description: "…" }` do not. This is not a sanitizer
-  artifact — the authored schema fails identically to the sanitized one. Two
-  limits, both measured: only the **root** is constrained, so the same union
+  every tool**. This is not a sanitizer artifact — the authored schema fails
+  identically to the sanitized one. A branch qualifies when it declares
+  `type: "object"`, or declares no `type` and carries `properties`. Everything
+  else is rejected, and three of those are easy to write by accident:
+
+  - a bare `{ required: [...] }`, an empty `{}`, or an annotation-only
+    `{ description: "…" }`;
+  - `{ type: "string", properties: {…} }` — **a declared `type` decides by
+    itself**, and `properties` does not rescue a branch typed as something else;
+  - `{ type: "object", anyOf: [...] }` — **a branch carrying its own
+    composition** is rejected despite the object type, so moving the union one
+    level down inside a branch buys nothing.
+
+  Two limits, both measured: only the **root** is constrained, so the same union
   nested under a property is fine everywhere; and only a **union** is, so a root
   `allOf` — an intersection — is accepted by all nine models including every
   Grok.
@@ -511,9 +520,18 @@ future agent tool or plugin, not just this family.
 
   Gemini and OpenAI accept that without complaint and let the model send both
   parameters or neither. An emptied branch is only the most visible form:
-  `{ description: "…", required: [...] }` prunes to `{ description: "…" }` and
+  `{ description: "…", required: [...] }` pruned to `{ description: "…" }` and
   `{ type: "object", required: [...] }` to `{ type: "object" }`, neither of them
   empty and both just as unconstrained.
+
+  **Bind 12 and 13 repair that half.** A branch's `required` now resolves against
+  its parent's `properties` and the referenced subschemas are copied down, so the
+  constraint survives to the wire, and Bind 13 additionally drops the root
+  branches it cannot repair rather than forwarding them. The guidance below is
+  unchanged anyway: the schema is still not the enforcement point, a branch
+  naming something nothing declares is still pruned away, and writing the
+  constraint where it is actually enforced does not depend on which version of
+  the sanitizer happens to be installed.
 
   So: state the constraint in the tool's `description`, where every provider
   reads it, and enforce it in the executor's zod parse — which is where it
@@ -556,8 +574,11 @@ future agent tool or plugin, not just this family.
    strict zod parse in the executor enforcing it; the surface is uniform across
    the family. An exclusive or conditional choice between parameters lives in
    the `description` and the executor's parse, never in a root-level
-   `oneOf`/`anyOf` of bare `required` branches — xAI rejects the whole request,
-   and sanitization empties the branches for everyone else.
+   `oneOf`/`anyOf` of bare `required` branches. Bind 13 repairs that shape
+   rather than emptying it, as earlier versions did, but the schema is still not
+   the enforcement point: a branch naming an undeclared property is still pruned
+   away, an unrepairable root union is dropped whole, and `z.toJSONSchema`
+   cannot carry a `.refine()` across the boundary regardless.
 3. References accept names where a person would use a name; ambiguity is an
    error, never a guess.
 4. There is a discovery path for any id, type, or enum the tool requires.

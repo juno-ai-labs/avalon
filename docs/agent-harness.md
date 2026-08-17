@@ -1,6 +1,6 @@
 # Agent harness
 
-Avalon's production loop is an adapter over `@juno-ai/bind` 11.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
+Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
 
 Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
@@ -8,13 +8,13 @@ Each run is one server-side, tool-using loop inherent to a work stream. It is no
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/agent-harness/src/bind-runtime.ts` | The Bind 11 adapter itself — registry construction, the tool loop's hooks, streaming. |
+| `packages/agent-harness/src/bind-runtime.ts` | The Bind adapter itself — registry construction, the tool loop's hooks, streaming. |
 | `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
 | `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
-| `packages/agent-harness/src/tool-schema-safety.ts` | The two standing checks over what Bind's sanitizer *emits*: a root union branch xAI rejects, and a composition branch the sanitizer strips a constraint from. |
+| `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
 | `apps/api/src/workflows/workstream-loop.ts` | The generic Workflow every run is one instance of. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
@@ -604,6 +604,142 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-16 — `@juno-ai/bind` 13, and the compensating layer steps back
+
+**What changed:** the pin moved from 12.0.0 to 13.0.0, which closes the one shape
+12 forwarded into a 400 — a root union branch carrying its own composition.
+`repairRootUnionForProviders` now defers to the sanitizer, returning the schema
+untouched unless `nonObjectRootUnionBranches` reports something still fatal after
+sanitization. `readableRootUnionBranch` is exported and asserted directly.
+
+**Why:** two things, and the second is the one worth remembering.
+
+The bump itself is the upstream fix specified from here, verified against the
+published package before pinning. The gap shape is now dropped; the over-reach
+that a careless version of that fix would have caused is absent — a composition
+under a branch's *property*, one and two levels down, survives untouched, which
+matters because all nine models accept it and destroying it would trade a real
+constraint for nothing. Every 12.0.0 behaviour re-verified: headline repair with
+`required` intact, idempotence, the Gemini dangling-`required` pruning, the
+unrepairable drop, root `allOf` as an intersection, and the copy-down ceiling
+still falling back to dropping. All fifteen emitted shapes accepted 9/9 live.
+
+The second thing is that **our own repair had become worse than doing nothing.**
+Bind 13 turns a remote `oneOf: [{required:["pageId"]}, {required:["discussionId"]}]`
+into self-sufficient object branches every provider accepts and the model can
+read. Dropping that composition first — which is what this layer did
+unconditionally — threw the constraint away and told the model nothing. The layer
+was correct against Bind 11, where the drop was the only thing between a
+third-party schema and a 400 covering the whole request. It stopped being correct
+the moment the dependency started handling the shape properly, and nothing about
+the code would have said so; it would simply have kept quietly deleting
+constraints. Gating it on what the sanitizer actually emits fixes that and keeps
+the backstop, which a deletion would not: the gate re-engages by itself for any
+shape a future sanitizer stops handling, without anyone having to notice.
+
+The checks are now quiet — bind 13 repairs or drops every shape they were built
+to catch — which raised the question of whether they still earn their place. They
+do, but the reason moved: they are a regression detector on the dependency rather
+than a live defence, and that only works if the rules themselves stay asserted.
+So `readableRootUnionBranch` is exported and tested directly against every
+measured clause, including the over-reach guard. Without that, a sanitizer change
+underneath these checks could make them vacuous while they still passed. The
+clauses cost roughly two hundred live provider requests to establish and are the
+durable asset here; the checks that consume them are replaceable.
+
+A future bump should expect these test files to move again, and should ask why
+each expectation changed rather than making it green.
+
+Review caught two errors in the first cut of this, both of them the same mistake
+in opposite directions, and both fixed by measuring rather than arguing. The
+branch predicate rejected a branch carrying its own **`allOf`**, generalised from
+a measurement that only ever covered `anyOf`. An intersection is not a union: a
+branch with its own `allOf` is accepted by all nine models and Bind 13
+deliberately keeps it, so rejecting it would have made the repair delete a root
+union the sanitizer had preserved — the precise harm this change exists to stop.
+And `walkPair` assumed the sanitizer never removes a branch, which stopped being
+true in Bind 13: an unrepairable root union is now deleted whole, and the walk
+skipped it while `nonObjectRootUnionBranches` had nothing left to judge, so an
+erased constraint passed both checks. A vanished composition is now reported as
+`(composition dropped)`.
+
+### 2026-08-16 — `@juno-ai/bind` 12, which repairs most of what the guards were catching
+
+**What changed:** the pin moved from 11.0.0 to 12.0.0. Bind's sanitizer now
+resolves a composition branch's `required` against its parent's `properties` and
+copies the referenced subschemas down, so the "exactly one of these" idiom
+reaches the wire intact instead of as `oneOf: [{}, {}]`. Where a branch cannot be
+made usable it drops the whole root composition rather than emitting an
+unusable root. The guards did not change; their *tests* did, because most of
+their fixtures are no longer defective.
+
+**Why:** this is the upstream half of the 13 August incident, specified from
+here and measured against the same nine models. Verified against the published
+package before pinning: the headline case emits self-sufficient branches with
+`required` intact and is accepted 9/9; sanitization is idempotent; the Gemini
+dangling-`required` pruning that transform exists for is intact; unrepairable
+and conflicting-`type` branches drop the composition and are accepted 9/9; root
+`allOf` is still treated as an intersection; and at 2000 branches × 100
+properties the copy-down hits its ceiling and falls back to dropping rather than
+leaving a half-repaired branch.
+
+One shape is not fixed and is the reason both checks stay: a root union branch
+carrying **its own** composition — `{ type: "object", anyOf: [...] }` — is
+forwarded unchanged and is a hard 400 on grok-4.3/4.5/4.6. `nonObjectRootUnionBranches`
+is now the only thing in front of it, and `repairRootUnionForProviders` is the
+only thing in front of a hosted MCP server serving it. An upstream fix is
+specified; until it ships this repository is the backstop.
+
+The tests were rewritten rather than retargeted, because flipping eight
+expectations to `[]` would have left checks that pass for a function returning
+nothing. `weakenedCompositionBranches` keeps a positive case bind 12 still
+produces — a *nested* branch naming a property nothing in scope declares, which
+remains unrepairable — and the traversal test now uses unresolvable names in
+each position so it still asserts the walk reaches them. `repairRootUnionForProviders`
+never invokes the sanitizer, so its block is version-independent and is now the
+standing coverage for the measured branch rules themselves. Whoever next bumps
+bind should expect this file to move and should check *why* each expectation
+changed rather than making it green.
+
+**Note on the bump itself:** bind's versioning is a release counter, not semver
+— "each published release increments the major and resets the rest" — so 11 → 12
+implies no API break, and none was found. Resolving it did refresh five
+unrelated range dependencies, including `wrangler` and `miniflare`; a no-op
+install on the previous pin produces no drift, so that churn belongs to this
+change and not to a stale lockfile.
+
+### 2026-08-16 — The root-branch rule, tightened to what was actually measured
+
+**What changed:** `readableRootUnionBranch` is now one predicate shared by
+`nonObjectRootUnionBranches` and `repairRootUnionForProviders`, and it rejects
+two shapes the previous test accepted: a branch whose own `type` contradicts its
+`properties` (`{ type: "string", properties: {…} }`), and a branch carrying its
+own composition (`{ type: "object", anyOf: [...] }`). No authored tool has
+either shape, so nothing in the surface changed — this closes false negatives
+rather than fixing a live failure.
+
+**Why:** the original rule was written from a matrix that never tested a branch
+whose `type` and `properties` disagree. Both shapes 400 on grok-4.3/4.5/4.6 with
+the same root-union error as the incident, and both were being passed — by the
+guard *and* by the run-time repair, which is the worse half: a hosted MCP server
+serving either one would have had it forwarded untouched and failed the whole
+request, which is the exact outcome that repair exists to prevent.
+
+The two rules are worth stating plainly because both are the opposite of the
+intuition. A declared `type` decides **alone** — `properties` does not rescue a
+branch typed as something else, so the check cannot be a disjunction over "has
+either marker". And nesting a union one level down inside a root branch does not
+escape the constraint, so `{ type: "object", anyOf: […] }` is not a workaround
+for a root union; it is the same rejection.
+
+Both were found by the reviewer working the corresponding fix in
+`@juno-ai/bind`, whose sanitizer faces the identical rule, and both were
+re-measured here before being adopted rather than taken on report. The predicate
+is shared between the report and the repair for the reason the split nearly
+cost: a rule only half the codebase enforces is worse than one nobody does,
+because the guard goes green on precisely the schema the repair lets through. A
+future change must keep them reading the same function.
 
 ### 2026-08-16 — A tool schema is what the sanitizer emits, and that is now tested
 
