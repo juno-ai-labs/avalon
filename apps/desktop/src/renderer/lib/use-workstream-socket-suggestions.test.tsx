@@ -98,6 +98,7 @@ describe('paused activity suggestions over the work-stream socket', () => {
         protocols: socketTicketProtocols('socket-ticket'),
       })),
       getMessages: vi.fn(async () => []),
+      messageMentionPayload: vi.fn(async () => []),
       getWorkstream: vi.fn(async () => detail()),
       getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     } satisfies WorkstreamSocketApi;

@@ -93,6 +93,7 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
     getSocketTicket: vi.fn(unexpected),
     getWorkstream: vi.fn(unexpected),
     getWorkstreams: vi.fn(unexpected),
+    messageMentionPayload: vi.fn(async () => []),
     ...overrides,
   } satisfies WorkstreamSocketApi;
 }
@@ -139,6 +140,101 @@ afterEach(() => {
 });
 
 describe('useWorkstreamSocket', () => {
+  it('retries an unconfirmed message command after reconnect and resolves its private receipt', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000601';
+    const workspaceId = '00000000-0000-7000-8000-000000000602';
+    const userId = '00000000-0000-7000-8000-000000000603';
+    const messageId = '00000000-0000-7000-8000-000000000604';
+    const clientMessageId = 'client-message-reconnect';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      messageMentionPayload: vi.fn(async () => []),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    let submitted!: Promise<Message>;
+    await act(async () => {
+      submitted = result.current.createMessage({
+        text: 'Please continue.',
+        clientId: clientMessageId,
+      });
+      await Promise.resolve();
+    });
+    const firstCommand = first.send.mock.calls
+      .map(([frame]) => JSON.parse(String(frame)) as { type: string; clientMessageId?: string })
+      .find((frame) => frame.type === 'create_message');
+    expect(firstCommand).toMatchObject({
+      type: 'create_message',
+      payload: {
+        text: 'Please continue.',
+        clientMessageId,
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+
+    act(() => first.close());
+    await act(async () => { await vi.advanceTimersByTimeAsync(750); });
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    const secondCommand = second.send.mock.calls
+      .map(([frame]) => JSON.parse(String(frame)) as { type: string })
+      .find((frame) => frame.type === 'create_message');
+    expect(secondCommand).toEqual(firstCommand);
+
+    act(() => second.message({
+      type: 'client_command_succeeded',
+      command: 'create_message',
+      clientMessageId,
+      message: {
+        id: messageId,
+        clientMessageId,
+        workspaceId,
+        workstreamId,
+        author: {
+          type: 'human',
+          user: {
+            id: userId,
+            email: 'adam@example.com',
+            name: 'Adam',
+            avatarUrl: null,
+            timezone: 'America/Los_Angeles',
+            createdAt: '2026-08-17T12:00:00.000Z',
+          },
+        },
+        messageType: 'text',
+        textContent: 'Please continue.',
+        structuredContent: null,
+        mentions: [],
+        attachments: [],
+        sequenceNumber: 9,
+        createdAt: '2026-08-17T12:00:01.000Z',
+        editedAt: null,
+      },
+      agentInvoked: true,
+      harnessRunId: null,
+    }));
+
+    await expect(submitted).resolves.toMatchObject({
+      id: messageId,
+      clientMessageId,
+      text: 'Please continue.',
+    });
+  });
+
   it('applies personal and shared HyperSight updates without letting stale runs win', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
@@ -1680,7 +1776,7 @@ describe('useWorkstreamSocket', () => {
     const { result } = renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
     await flushPromises();
-    expect(result.current).toBe('unavailable');
+    expect(result.current.state).toBe('unavailable');
     expect(getSocketTicket).not.toHaveBeenCalled();
 
     online = true;

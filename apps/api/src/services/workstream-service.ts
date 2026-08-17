@@ -249,6 +249,7 @@ export async function launchWorkstreamHarness(
     /** Admit only while this is still the latest participant-facing run. */
     expectedLatestHarnessRunId?: string;
   },
+  publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
   const id = newId();
   const at = nowIso();
@@ -376,7 +377,7 @@ export async function launchWorkstreamHarness(
     // The work stream and its run exist whatever the caller does with the 503,
     // so anyone already watching is told the run failed rather than left on a
     // `running` row that nothing will move.
-    await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+    await publishEvent(env, input.workspaceId, input.workstreamId, {
       type: "harness_status_changed",
       status: "failed",
     });
@@ -389,7 +390,7 @@ export async function launchWorkstreamHarness(
     const memberSafe = new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
     throw workflowInstanceWasCreated(error) ? markWorkflowInstanceCreated(memberSafe) : memberSafe;
   }
-  await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+  await publishEvent(env, input.workspaceId, input.workstreamId, {
     type: "harness_status_changed",
     status: "running",
   });
@@ -679,6 +680,7 @@ export class WorkstreamService {
     private readonly env: Env,
     private readonly auth: AuthContext,
     private readonly defer?: (promise: Promise<unknown>) => void,
+    private readonly publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
   ) {
     this.database = createDatabase(env.DB);
   }
@@ -832,7 +834,7 @@ export class WorkstreamService {
     // Ahead of the harness launch below rather than beside it: both land in the
     // same Durable Object log, and a client resyncing from a sequence must not
     // see the run start before the message that triggered it.
-    if (message) await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
+    if (message) await this.publishEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
     // Ahead of the launch so the run's first context read already contains the
     // place it was started from, rather than acquiring it a turn later.
     if (input.originResource) {
@@ -933,7 +935,7 @@ export class WorkstreamService {
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
     const message = messages[0];
     if (message) {
-      await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, {
+      await this.publishEvent(this.env, this.auth.workspaceId, created.workstream.id, {
         type: "message_created",
         message,
       });
@@ -1137,7 +1139,7 @@ export class WorkstreamService {
     // in the header they are reading and in their sidebar. The same event the
     // naming agent publishes carries a human rename to them too.
     if (input.title != null) {
-      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+      await this.publishEvent(this.env, this.auth.workspaceId, id, {
         type: "workstream_renamed",
         title: updated.title,
         titleStatus: "settled",
@@ -1149,7 +1151,7 @@ export class WorkstreamService {
     if (joined) {
       const participant = (await this.loadParticipants(id)).find((item) => item.user.id === this.auth.userId);
       if (participant) {
-        await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+        await this.publishEvent(this.env, this.auth.workspaceId, id, {
           type: "participant_added",
           participant,
         });
@@ -1160,7 +1162,7 @@ export class WorkstreamService {
     // the sockets of those this change just excluded — a member who had it open
     // when it went private would otherwise keep receiving its transcript.
     if (scopeChanged) {
-      const delivered = await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+      const delivered = await this.publishEvent(this.env, this.auth.workspaceId, id, {
         type: "workstream_scope_changed",
         scope: updated.scope,
       });
@@ -1583,7 +1585,7 @@ export class WorkstreamService {
       );
     }
     const messageWithMentions = { ...message, mentions: preparedInput.mentions };
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "message_created", message: messageWithMentions });
+    await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "message_created", message: messageWithMentions });
     const mentionedOtherUsers = personIds.filter((userId) => userId !== this.auth.userId);
     await this.recordMessageActivityEvent(messageWithMentions, workstream, mentionedOtherUsers);
     if (mentionedOtherUsers.length > 0) {
@@ -1743,7 +1745,7 @@ export class WorkstreamService {
     if (!participant) {
       throw new ApiError(409, "participant_reload_failed", "The participant was added but could not be read back");
     }
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "participant_added", participant });
+    await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "participant_added", participant });
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -1770,7 +1772,7 @@ export class WorkstreamService {
       `UPDATE workstream_participants SET removed_at = ?
        WHERE workstream_id = ? AND user_id = ?`,
     ).bind(nowIso(), id, userId).run();
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "participant_removed", userId });
+    await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "participant_removed", userId });
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -1819,7 +1821,7 @@ export class WorkstreamService {
       throw new ApiError(409, "resource_reload_failed", "The resource was attached but could not be read back");
     }
     if (resource.note_scope !== "personal") {
-      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
+      await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
     }
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -1997,7 +1999,7 @@ export class WorkstreamService {
       );
     }
     const updated = (await this.loadElicitations(id, true)).find((item) => item.id === elicitationId);
-    if (updated) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "elicitation_answered", elicitation: updated });
+    if (updated) await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "elicitation_answered", elicitation: updated });
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -2048,7 +2050,7 @@ export class WorkstreamService {
     // transcript upsert prefers the incoming copy and orders it by the newer
     // room sequence that copy arrives with.
     if (suggestion && updated) {
-      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "activity_suggestion_resolved", suggestion: updated });
+      await this.publishEvent(this.env, this.auth.workspaceId, id, { type: "activity_suggestion_resolved", suggestion: updated });
     }
     return { suggestion: updated, resourceId };
   }
@@ -2173,7 +2175,7 @@ export class WorkstreamService {
         ...(newest && newest.id !== latest.trigger_message_id
           ? { transcriptFenceMessageId: newest.id }
           : {}),
-      });
+    }, this.publishEvent);
     this.deferTask(emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -2382,7 +2384,7 @@ export class WorkstreamService {
         telemetrySubjectUserId: this.auth.userId,
       } : {}),
       ...(expectedLatestHarnessRunId ? { expectedLatestHarnessRunId } : {}),
-    });
+    }, this.publishEvent);
   }
 
   private async isActiveParticipant(workstreamId: string, userId: string): Promise<boolean> {

@@ -1396,7 +1396,7 @@ export class AvalonApi {
     return (await this.getMessagePage(id, { signal })).items;
   }
 
-  private async mentionPayload(workstreamId: string, text: string, selected: MentionIdentity[] = []): Promise<Array<{
+  async messageMentionPayload(workstreamId: string, text: string, selected: MentionIdentity[] = []): Promise<Array<{
     type: 'person' | 'connector';
     userId: string | null;
     connectorType: string | null;
@@ -1441,7 +1441,7 @@ export class AvalonApi {
     confirmedParticipantUserIds?: string[];
     attachmentIds?: string[];
   }): Promise<Message> {
-    const mentions = await this.mentionPayload(id, input.text, input.mentions);
+    const mentions = await this.messageMentionPayload(id, input.text, input.mentions);
     const operationId = uuidV7();
     reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
     const response = await this.request(`/workstreams/${encodeURIComponent(id)}/messages`, {

@@ -34,7 +34,8 @@ admission is split in two.
    `GET /realtime/transcription/socket` as an ordinary authenticated request.
    The Worker checks the caller may open that socket and mints a 60-second HS256
    JWT binding user, workspace, region, a one-time `jti`, and — for a room — the
-   work stream. It answers with the handshake URL and the ticket.
+   work stream and current regional session ID. It answers with the handshake
+   URL and the ticket.
 2. **Present.** The client opens the socket with the ticket as the second
    `WebSocket` constructor argument: `[avalon.ticket.v1, <ticket>]`. The browser
    sends those as `Sec-WebSocket-Protocol`, the one request header it will carry
@@ -45,7 +46,9 @@ admission is split in two.
    rejects a region or work-stream mismatch.
 4. **Admit.** A room upgrade is forwarded to the Durable Object, which
    re-authorizes against the same visibility rule the REST reads use and
-   atomically consumes the ticket id. Dictation consumes its `jti` in D1 and
+   atomically consumes the ticket id. The edge passes the verified session ID,
+   not the signed bearer ticket, into the room's serialized attachment so later
+   mutation commands can revalidate it. Dictation consumes its `jti` in D1 and
    reserves a session lease before opening the Azure socket.
 5. **Negotiate.** If the client offered the sentinel, the accepted 101 answers
    with it. Chromium fails a handshake whose subprotocol offer went unanswered,
@@ -76,7 +79,7 @@ sends one.
   deliberate 401, 403, or 409 into an unhandled 500.
 - **The room never receives the signed bearer ticket.** It is verified at the
   edge and stripped from the subrequest. The room receives verified identity,
-  expiry, and JTI headers, reauthorizes against the current workspace and
+  session ID, expiry, and JTI headers, reauthorizes against the current workspace and
   work-stream authority generation, and consumes the JTI in its local
   `durable_inbox_receipts` table. Before cutover visibility is the legacy D1
   row; after cutover workspace membership remains in D1 while personal
@@ -160,6 +163,25 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-17 — Room tickets carry the session needed for later commands
+
+**What changed:** The work-stream ticket binds the current regional session ID,
+and the verified edge forwards that ID into the room's serialized socket
+attachment without forwarding the signed ticket.
+
+**Why:** A hibernating socket can outlive logout, revocation, or membership
+changes. Once the socket became a message-command ingress, connect-time identity
+was insufficient to authorize every later mutation.
+
+**Considered and rejected:** Passing the session bearer or full signed socket
+ticket into the Durable Object would broaden credential exposure. Trusting the
+user/workspace claims for the socket lifetime would let a revoked session keep
+writing until the connection happened to close.
+
+**Consequences:** Every message command can query the current regional session.
+Sockets serialized before this claim existed are deliberately closed with 1012
+when they first try to write and reconnect with a fresh ticket.
 
 ### 2026-08-17 — Admission follows the work-stream authority generation
 

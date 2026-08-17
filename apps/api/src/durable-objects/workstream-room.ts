@@ -4,7 +4,9 @@ import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkstreamSocketCommandResultSchema,
   WorkstreamDetailSchema,
+  type ClientSocketEvent,
   type PersonalSocketEvent,
   type ServerSocketEvent,
   type User,
@@ -12,7 +14,8 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 
-import type { Env } from "../env";
+import type { AuthContext, Env } from "../env";
+import { ApiError } from "../lib/api-error";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { truncateUtf16Safe } from "../lib/text";
 import { workstreamVisibilitySql } from "../lib/workstream-visibility";
@@ -25,7 +28,8 @@ import {
 } from "../mappers/workstream";
 import { launchHyperSightRefresh } from "../services/hypersight-service";
 import { loadVisibleWorkstreamResources } from "../services/workstream-resource-visibility";
-import { memberSafeHarnessError } from "../services/workstream-service";
+import { logWarn } from "../observability/logger";
+import { memberSafeHarnessError, WorkstreamService } from "../services/workstream-service";
 import {
   acceptsNewWorkstreamWork,
   permitsLegacyRuntimeDrain,
@@ -51,6 +55,9 @@ const SocketAttachmentSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   userId: IdSchema,
+  // Absent only on a socket accepted by a pre-command-gateway deployment. A
+  // command on that socket triggers a normal reconnect for a fresh ticket.
+  sessionId: z.string().min(1).max(200).optional(),
   connectedAt: z.string().datetime({ offset: true }),
   afterSequence: z.number().int().nonnegative(),
   subscribed: z.boolean().default(false)
@@ -91,6 +98,7 @@ const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
 ]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
+type CreateMessageSocketCommand = Extract<ClientSocketEvent, { type: "create_message" }>;
 
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
@@ -439,6 +447,11 @@ export class WorkstreamRoom {
       return;
     }
 
+    if (parsed.data.type === "create_message") {
+      await this.acceptCreateMessage(socket, attachment, parsed.data);
+      return;
+    }
+
     // Product mutations are intentionally persisted and authorized through the
     // REST service before their resulting canonical event is published here.
     await this.sendError(
@@ -446,6 +459,156 @@ export class WorkstreamRoom {
       "rest_required",
       "Persist this action through the work-stream API before publishing it."
     );
+  }
+
+  private async acceptCreateMessage(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    command: CreateMessageSocketCommand,
+  ): Promise<void> {
+    if (!attachment.sessionId) {
+      this.sendCommandFailure(socket, command, new ApiError(
+        409,
+        "socket_reconnect_required",
+        "Reconnect before sending this message",
+      ));
+      disconnect(socket, 1012, "Reconnect before sending messages");
+      return;
+    }
+
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(authority) || !this.objectStore.isRealtimeWritable()) {
+      this.sendCommandFailure(socket, command, new ApiError(
+        503,
+        "workstream_maintenance",
+        "This work stream is temporarily unavailable during maintenance",
+      ));
+      disconnect(socket, 1012, "Work stream maintenance");
+      return;
+    }
+
+    const auth = await this.socketAuth(attachment);
+    if (!auth) {
+      this.sendCommandFailure(socket, command, new ApiError(
+        401,
+        "session_revoked",
+        "The session is no longer active",
+      ));
+      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "Session no longer active");
+      return;
+    }
+
+    try {
+      const result = await new WorkstreamService(
+        this.env,
+        auth,
+        (promise) => this.state.waitUntil(promise),
+        async (_env, workspaceId, workstreamId, event) => {
+          if (
+            workspaceId !== attachment.workspaceId
+            || workstreamId !== attachment.workstreamId
+          ) return false;
+          const response = await this.acceptEvent(new Request(
+            "https://room.internal/internal/events",
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-avalon-workspace-id": workspaceId,
+                "x-avalon-workstream-id": workstreamId,
+              },
+              body: JSON.stringify(event),
+            },
+          ));
+          return response.ok;
+        },
+      ).createMessage(attachment.workstreamId, {
+        ...command.payload,
+        telemetryOperationId: command.operationId,
+      });
+      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        type: "client_command_succeeded",
+        command: "create_message",
+        clientMessageId: command.payload.clientMessageId,
+        ...result,
+      })));
+    } catch (error) {
+      this.sendCommandFailure(socket, command, error);
+      if (!(error instanceof ApiError)) {
+        logWarn(this.env, "workstream_socket_create_message_failed", {
+          workspace_id: attachment.workspaceId,
+          workstream_id: attachment.workstreamId,
+          user_id: attachment.userId,
+          client_message_id: command.payload.clientMessageId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
+  }
+
+  private async socketAuth(attachment: SocketAttachment): Promise<AuthContext | null> {
+    const role = this.env.APP_ENV === "development"
+      && this.env.AVALON_DEV_AUTH === "true"
+      && attachment.sessionId === "development"
+      ? await this.env.DB.prepare(
+        `SELECT member.role
+           FROM workspace_members member
+           JOIN workspaces workspace ON workspace.id = member.workspace_id
+          WHERE member.workspace_id = ? AND member.user_id = ?
+            AND member.status = 'active' AND workspace.region = ?`,
+      ).bind(
+        attachment.workspaceId,
+        attachment.userId,
+        this.env.AVALON_REGION,
+      ).first<{ role: AuthContext["role"] }>()
+      : await this.env.DB.prepare(
+        `SELECT member.role
+           FROM sessions session
+           JOIN workspace_members member
+             ON member.workspace_id = session.workspace_id
+            AND member.user_id = session.user_id
+            AND member.status = 'active'
+           JOIN workspaces workspace ON workspace.id = session.workspace_id
+          WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
+            AND session.region = ? AND session.revoked_at IS NULL
+            AND session.expires_at > ? AND workspace.region = ?`,
+      ).bind(
+        attachment.sessionId,
+        attachment.userId,
+        attachment.workspaceId,
+        this.env.AVALON_REGION,
+        new Date().toISOString(),
+        this.env.AVALON_REGION,
+      ).first<{ role: AuthContext["role"] }>();
+    if (!role) return null;
+    return {
+      sessionId: attachment.sessionId!,
+      userId: attachment.userId,
+      workspaceId: attachment.workspaceId,
+      region: this.env.AVALON_REGION,
+      role: role.role,
+    };
+  }
+
+  private sendCommandFailure(
+    socket: WebSocket,
+    command: CreateMessageSocketCommand,
+    error: unknown,
+  ): void {
+    const safe = error instanceof ApiError
+      ? error
+      : new ApiError(500, "message_write_failed", "The message could not be sent");
+    socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+      type: "client_command_failed",
+      command: "create_message",
+      clientMessageId: command.payload.clientMessageId,
+      error: {
+        status: safe.status,
+        code: safe.code,
+        message: safe.message,
+        ...(safe.details ? { details: safe.details } : {}),
+      },
+    })));
   }
 
   async alarm(): Promise<void> {
@@ -551,6 +714,7 @@ export class WorkstreamRoom {
         workspaceId: IdSchema,
         workstreamId: IdSchema,
         userId: IdSchema,
+        sessionId: z.string().min(1).max(200),
         ticketId: z.string().uuid(),
         ticketExpiresAt: z.coerce.number().int().positive(),
         afterSequence: z.coerce.number().int().nonnegative().default(0)
@@ -561,6 +725,7 @@ export class WorkstreamRoom {
         workstreamId:
           request.headers.get("x-avalon-workstream-id") ?? url.searchParams.get("workstreamId"),
         userId: request.headers.get("x-avalon-user-id") ?? url.searchParams.get("userId"),
+        sessionId: request.headers.get("x-avalon-session-id"),
         ticketId: request.headers.get("x-avalon-socket-ticket-id"),
         ticketExpiresAt: request.headers.get("x-avalon-socket-ticket-expires-at"),
         afterSequence: url.searchParams.get("afterSequence") ?? 0
@@ -634,6 +799,7 @@ export class WorkstreamRoom {
       workspaceId: identity.data.workspaceId,
       workstreamId: identity.data.workstreamId,
       userId: identity.data.userId,
+      sessionId: identity.data.sessionId,
       connectedAt: new Date().toISOString(),
       afterSequence: identity.data.afterSequence,
       subscribed: false

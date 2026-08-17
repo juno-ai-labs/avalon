@@ -696,6 +696,7 @@ describe("environment guardrails", () => {
       "00000000-0000-7000-8000-000000000003",
     );
     await expect(verifySocketTicket(env, ticket)).resolves.toMatchObject({
+      sessionId: "session",
       userId: "00000000-0000-7000-8000-000000000001",
       workspaceId: "00000000-0000-7000-8000-000000000002",
       workstreamId: "00000000-0000-7000-8000-000000000003",

@@ -253,6 +253,31 @@ Hibernating WebSockets, serialized socket attachments, auto-response
 `ping`/`pong`, and the bounded in-memory replay window remain. The replay window
 is an optimization, not a write per token.
 
+The foreground desktop also submits each authored `create_message` command over
+that work stream's existing socket. The command carries an operation ID and a
+stable `clientMessageId`; the room revalidates the current regional session and
+workspace membership on every command, and the persistence layer rechecks
+work-stream visibility. A private, unsequenced command receipt tells only the
+submitting socket whether the complete write-and-launch operation succeeded.
+The canonical `message_created` event is still sequenced, replayable, and
+broadcast to every reader, including the sender. The desktop reconciles that
+event with its optimistic row but waits for the private receipt before declaring
+the send successful.
+
+A transport disconnect does not fail an in-flight send immediately. The desktop
+reconnects, subscribes from its last room cursor, and resends the identical
+command; message persistence is idempotent on `clientMessageId`, so this cannot
+create a second transcript row. It gives up after 120 seconds or when the work
+stream is closed or access is revoked. A socket accepted by an older deployment
+has no serialized session ID, so its first command receives
+`socket_reconnect_required` and closes with 1012 rather than being trusted.
+REST message creation remains a compatibility ingress for non-desktop callers.
+In the current serving-contract-0 migration deployment the room delegates this
+write to the legacy D1 service. The serving-contract-1 deployment must replace
+that delegation with the same object-local authoritative transaction and
+regional-effect outbox used by every other post-cutover mutation; contract 0
+cannot open the region.
+
 Active inference is the durable exception. Batched model frames update the room
 cursor, one `active_output_turns` row, and bounded `active_output_chunks` in one
 synchronous local transaction. Chunks are at most 60 KiB UTF-8 and never split
@@ -275,6 +300,12 @@ lose or duplicate text.
 - No region opens until the deployed Worker attests the required DO serving
   contract; an operator cannot substitute a phase edit for code support.
 - The room cursor and active text checkpoint commit together.
+- A desktop user message enters through its foreground WorkstreamDO socket; its
+  canonical event is sequenced even though its private command receipt is not.
+- Retrying a socket command preserves `clientMessageId`; changing it on
+  reconnect would turn transport recovery into a duplicate authored message.
+- Every message command rechecks the live session and workspace authority;
+  socket admission alone is not authorization to mutate indefinitely.
 - Every regional side effect commits to the local outbox with its product
   mutation; direct best-effort D1 writes from an authoritative mutation are
   forbidden.
@@ -335,6 +366,33 @@ Both regional Wrangler dry runs remain required because Node SQLite does not
 prove D1 or workerd behavior.
 
 ## Changelog
+
+### 2026-08-17 — Foreground user messages enter through the work-stream socket
+
+**What changed:** The existing hibernating WorkstreamDO socket now accepts
+idempotent `create_message` commands, revalidates the session for each command,
+and returns a private receipt alongside the normal sequenced canonical event.
+The desktop retains an unconfirmed command across reconnects and resends it
+with the same client message ID.
+
+**Why:** The foreground work stream already owns the ordered realtime channel
+used for its transcript and active inference. Sending the mutation over a
+separate REST request created two transports for one interaction and left a
+dropped response with no protocol-level way to distinguish an uncommitted write
+from a committed message whose acknowledgment was lost.
+
+**Considered and rejected:** A WorkspaceDO socket for user messages would route
+every foreground mutation through an unrelated object before reaching its
+single work-stream authority. Treating `message_created` as the command receipt
+was also rejected because that event is broadcast before harness launch, so it
+cannot prove the complete operation succeeded.
+
+**Consequences:** Socket attachments carry the verified regional session ID,
+old attachments reconnect before their first write, private receipts remain
+outside room replay ordering, and the 120-second client timeout bounds an
+unconfirmed send. The import-only serving contract still writes through the
+legacy service; it must be replaced by local SQL authority before contract 1 can
+open.
 
 ### 2026-08-17 — Durable regional effects feed sidebar and notifications
 
