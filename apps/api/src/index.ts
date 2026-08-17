@@ -28,6 +28,7 @@ import {
   workstreamMaintenanceResponse,
 } from "./services/workstream-authority";
 import { processWorkstreamAuthorityMigration } from "./services/workstream-authority-migration";
+import { reapSettledWorkstreamRegionalEffects } from "./services/workstream-regional-effect-service";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -207,6 +208,7 @@ export default {
         reapDeletedResourceObjects(env),
         processMemoryIndexOutbox(env),
         reapExpiredActivityEvents(env),
+        reapSettledWorkstreamRegionalEffects(env),
         processTelemetry(env),
       ];
       await Promise.all([

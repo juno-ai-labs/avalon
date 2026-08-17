@@ -27,12 +27,15 @@ common/user directory projections for the sidebar.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Object-local DDL, immutable schema fingerprints, and lazy additive schema application. |
-| `apps/api/src/durable-objects/workstream-object-storage.ts` | Existing KV-to-SQL migration plus current room operations for cursors, active output, due work, and ticket receipts. |
+| `apps/api/src/durable-objects/workstream-object-storage.ts` | Existing KV-to-SQL migration plus current room operations for cursors, active output, due work, ticket receipts, and the transactional regional-effect outbox. |
+| `apps/api/src/durable-objects/workstream-regional-effect.ts` | Versioned regional-effect contract, opaque Queue wake-up, and canonical payload hash. |
 | `apps/api/src/durable-objects/workstream-authority-import.ts` | Fixed import-stage contract, reset order, page receipts, verification, and activation. It accepts no arbitrary SQL. |
 | `apps/api/src/services/workstream-authority.ts` | Regional authority phase reader and HTTP/queue maintenance fence. |
 | `apps/api/src/services/workstream-authority-migration.ts` | Bounded D1 source paging, normalization, DO delivery, fleet progress, quarantine, and initial directory projection creation. |
+| `apps/api/src/services/workstream-regional-effect-service.ts` | Idempotent regional D1 inbox, projection/activity application, current-recipient resolution, and mention delivery. |
 | `packages/db/migrations/0077_workstream_do_authority_cutover.sql` | Regional control/route ledgers, legal phase transitions, drain/open guards, D1 directory projections, and legacy writer fences. |
-| `apps/api/src/durable-objects/workstream-room.ts` | Existing sockets plus the internal authority-import endpoint. |
+| `packages/db/migrations/0078_workstream_do_regional_effects.sql` | Regional effect receipts, short-lived notification intents, and projection version/hash guards. |
+| `apps/api/src/durable-objects/workstream-room.ts` | Existing sockets, the shared due-work/outbox alarm, and internal import/effect delivery/ack endpoints. |
 
 ## Storage ownership
 
@@ -75,11 +78,50 @@ overlay: participation, unread count, `you_are_mentioned`, and listability.
 Both rows carry authority generation and monotonic version. They are
 rebuildable; they are never a fallback product authority.
 
-The first maintenance import seeds these projections from the frozen D1 source.
-After cutover, a WorkstreamDO update must commit locally before it emits a
-versioned projection update. Delivery is at least once and D1 applies only a
-newer `(generation, version)`, so an older user patch cannot overwrite a newer
-common or viewer state.
+The first maintenance import seeds these projections from the frozen D1 source
+at bootstrap version `0`; the first object-emitted value starts at version `1`.
+After cutover, `commitWithRegionalEffects` writes each versioned projection or
+immutable activity/notification intent into `durable_outbox` in the same local
+SQLite transaction as its product mutation. Delivery never sits on the user
+response path.
+
+The room alarm sends an opaque wake-up through the existing Cloudflare Queue:
+region/workspace/work-stream/generation/message IDs and a payload hash only.
+Product text and display metadata remain in the regional object. The Queue
+consumer RPCs `/internal/regional-effect-delivery` to fetch the envelope,
+verifies the route generation and payload hash, then commits the D1 effect and
+`workstream_regional_effect_receipts` row in one D1 batch. It finally calls the
+originating object at `/internal/regional-effect-ack`; only that acknowledgement
+deletes the local outbox row. Queue delivery may duplicate or reorder messages.
+Stable message IDs make immutable effects idempotent, while
+`(generation, version)` ordering prevents an old common or viewer projection
+from overwriting a newer one. A mention also names the exact recipient-directory
+version committed ahead of it. The delivery intent waits until that version is
+visible; if a later participant-removal/listability projection arrived first,
+that newer state wins and delivery is skipped.
+
+Effects have four v1 shapes:
+
+| Effect | Regional result |
+| --- | --- |
+| `directory_common` | Title, description, preview, lifecycle, last activity, completion, archive, scope, and system kind for workspace-wide sidebar queries. |
+| `directory_user` | Participation, unread count, mention flag, and listability for Home and the sidebar's work-streams-of-interest views. |
+| `activity_event` | An idempotent first-party `activity_events` row and named targets, used by digests and future notification feeds. |
+| `mention_notification` | A short-lived delivery intent. D1 revalidates active membership and resolves the current user, workspace, Slack connection, email address, and work-stream reply address before delivery. |
+
+Token/`stream_delta` frames never create regional effects. A run may project a
+semantic state transition such as started, needs input, failed, or completed,
+and repeated common/user payloads coalesce in the object before Queue delivery.
+The sidebar therefore does not inherit the 10/20/30 fps rendering cadence.
+
+The DO never receives connector credentials or a user's email address.
+`workstream_notification_intents.payload_json` exists only while delivery is
+pending or retrying and is erased after delivery or a terminal skip, so D1 does
+not become a second transcript. Slack and Resend retain their existing stable
+message/recipient idempotency keys. After the acknowledgement RPC succeeds, D1
+marks its receipt acknowledged; acknowledged receipts and terminal payload-free
+notification rows are reaped after 30 days. Pending effects and delivery
+failures have no time-based deletion.
 
 ## Schema evolution
 
@@ -233,6 +275,11 @@ lose or duplicate text.
 - No region opens until the deployed Worker attests the required DO serving
   contract; an operator cannot substitute a phase edit for code support.
 - The room cursor and active text checkpoint commit together.
+- Every regional side effect commits to the local outbox with its product
+  mutation; direct best-effort D1 writes from an authoritative mutation are
+  forbidden.
+- A regional effect is removed locally only after D1 has durably applied or
+  replayed the matching message ID and payload hash.
 - Constructor initialization never waits on D1, R2, a provider, or another DO.
 - A quarantine never falls back to the old product rows.
 
@@ -248,6 +295,11 @@ lose or duplicate text.
   projection/control recovery source.
 - Objects activated before the regional open remain unavailable behind the
   maintenance fence. This is safe and intentional.
+- Queue retry exhaustion is not data loss: an unacknowledged object outbox row
+  re-arms its alarm and republishes. A poison envelope remains visible in both
+  the Queue DLQ and the owning object until repaired.
+- Equal projection generation/version with different payload hashes raises
+  `workstream_projection_version_conflict`; it never resolves by arrival order.
 
 ## Cloudflare limit and cost validation
 
@@ -262,6 +314,7 @@ executable tests and explicit batch bounds:
 | 100 bound parameters and 100 KB per SQL statement | Import tests reject a stage with more than 100 target columns; schema tests measure every DDL statement. The current widest import stage has 47 columns. |
 | Six simultaneous outbound connections per invocation | Import waves use at most five routes and run separately from telemetry. |
 | Billed SQL rows and active object duration | Token deltas mutate bounded chunks at a coarser durable cadence rather than writing per token. WebSockets use hibernation, so an idle background client does not keep object duration billing active. |
+| Queue operations | Only opaque semantic-effect wake-ups enter Queue; token frames never do, and replaceable sidebar projections coalesce per common/user key. |
 
 Schema installation runs `PRAGMA optimize` only after applying new DDL. The
 constructor does no remote work, and each authority import request is capped at
@@ -273,6 +326,7 @@ constructor does no remote work, and each authority import request is capped at
 | --- | --- |
 | `test/workstream-object-schema.test.ts` | Complete table manifest, schema hash drift, KV migration/recovery, identity fencing, output chunking, and an import/verify/activate generation. |
 | `test/workstream-authority-migration.test.ts` | Every source query against the fully migrated D1 schema and exact normalized target column sets. |
+| `test/workstream-regional-effect-service.test.ts` | Unordered sidebar projection application, D1 receipts, activity ingestion, notification resolution, and payload erasure. |
 | `packages/db/test/migrations.test.ts` | Phase/drain/open guards, route population, legacy writer rejection, and projection writability. |
 | `test/workstream-room-authorization.test.ts` | Socket authorization/revocation on the SQL-backed room. |
 | `test/runtime-components.test.ts` | Cursor/checkpoint folding, chunk bounds, ticket receipts, and replay behavior. |
@@ -281,6 +335,29 @@ Both regional Wrangler dry runs remain required because Node SQLite does not
 prove D1 or workerd behavior.
 
 ## Changelog
+
+### 2026-08-17 — Durable regional effects feed sidebar and notifications
+
+**What changed:** Authoritative WorkstreamDO mutations gain a transactional
+local outbox. A regional Queue bridge applies versioned common/user directory
+projections, first-party activity events, and mention-delivery intents to D1,
+then acknowledges the originating object.
+
+**Why:** Moving product authority into one object per work stream does not move
+workspace-wide queries, user identity, notification preferences, connector
+credentials, or email delivery into that object. A synchronous post-commit D1
+call could be lost, while a D1-first call would expose metadata before the
+canonical mutation existed.
+
+**Considered and rejected:** Direct best-effort D1 calls, synchronous external
+notification delivery inside the object, and using D1 as a second product
+writer. The first loses failures, the second couples user latency and secrets to
+the object, and the third reintroduces split authority.
+
+**Consequences:** Sidebar and notification state is eventually consistent with
+the object, but durable and replayable. Queue order is irrelevant. D1 stores
+only query projections, activity records, receipts, and short-lived delivery
+payloads; the WorkstreamDO remains product authority.
 
 ### 2026-08-17 — Maintenance-fenced D1 to WorkstreamDO authority migration
 

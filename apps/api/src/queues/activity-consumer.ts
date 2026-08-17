@@ -17,6 +17,7 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 
+import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
 import type { Env } from "../env";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import {
@@ -47,6 +48,13 @@ import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
 import { newId } from "@avalon/db";
+import {
+  acknowledgeWorkstreamRegionalEffect,
+  applyWorkstreamRegionalEffect,
+  loadWorkstreamRegionalEffect,
+  markWorkstreamRegionalEffectAcknowledged,
+  processWorkstreamNotificationIntent,
+} from "../services/workstream-regional-effect-service";
 
 interface ActivityRow {
   id: string;
@@ -200,6 +208,46 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
 }
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
+  const regionalEffect = WorkstreamRegionalEffectQueueMessageSchema.safeParse(message.body);
+  if (regionalEffect.success) {
+    if (regionalEffect.data.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    try {
+      const envelope = await loadWorkstreamRegionalEffect(env, regionalEffect.data);
+      if (!envelope) {
+        await markWorkstreamRegionalEffectAcknowledged(
+          env,
+          regionalEffect.data.messageId,
+          regionalEffect.data.payloadHash,
+        );
+        message.ack();
+        return;
+      }
+      const applied = await applyWorkstreamRegionalEffect(env, envelope);
+      if (applied.notificationIntentId) {
+        const outcome = await processWorkstreamNotificationIntent(env, applied.notificationIntentId);
+        if (outcome === "busy") {
+          message.retry({ delaySeconds: 30 });
+          return;
+        }
+      }
+      await acknowledgeWorkstreamRegionalEffect(env, envelope);
+      message.ack();
+    } catch (error) {
+      logWarn(env, "workstream_regional_effect_processing_failed", {
+        workspace_id: regionalEffect.data.workspaceId,
+        workstream_id: regionalEffect.data.workstreamId,
+        message_id: regionalEffect.data.messageId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
+
   const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
   if (slackIngress.success) {
     if (slackIngress.data.region !== env.AVALON_REGION) {

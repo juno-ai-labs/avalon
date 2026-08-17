@@ -585,7 +585,7 @@ generation; never reuse one from a quarantined attempt.
    cron activates each object. Wait until every route is `active`. The region
    remains behind the maintenance response intentionally.
 6. Deploy the Worker whose product reads/writes, Workflow persistence, Terminal
-   persistence, and directory outbox all use the WorkstreamDO. Run the read,
+   persistence, and regional-effect outbox all use the WorkstreamDO. Run the read,
    write, queued/steering, streaming reconnect, Terminal, and sidebar smoke
    tests while the public surface is still closed. That deployment must bump
    `WORKSTREAM_DO_SERVING_CONTRACT_VERSION` to the required version. Cron writes
@@ -597,6 +597,18 @@ generation; never reuse one from a quarantined attempt.
    Worker gate independently rejects an open phase when its own compile-time
    version is too old. Verify HTTP, Queue, cron, two simultaneous streaming work
    streams, and common/user sidebar projections before starting the next region.
+
+After opening, inspect both `workstream_regional_effect_receipts` and the owning
+object's `durable_outbox` when a sidebar badge, digest event, Slack mention, or
+email notification is missing. A receipt with no local outbox row means D1
+applied and acknowledged the effect; an outbox row with no receipt means Queue
+delivery or D1 application is still retrying. Both rows with the same hash mean
+the D1 commit succeeded and only the acknowledgement RPC is retrying. Never
+delete an object outbox row to clear an alert. Repair the consumer and let the
+alarm resend it. `workstream_projection_version_conflict` is a producer bug or
+restore-generation error and requires quarantine, not last-writer-wins repair.
+Acknowledged receipts and terminal notification shells disappear after 30 days;
+pending or unacknowledged rows never age out and must reach zero operationally.
 
 The legacy D1 product triggers are the post-open tripwire. An error containing
 `workstream_do_authoritative` means a missed writer; quarantine and fix that
