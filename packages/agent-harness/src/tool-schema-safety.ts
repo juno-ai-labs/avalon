@@ -38,11 +38,12 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
  *   one of its `properties` is accepted by all nine models — so this must never
  *   become a subtree scan, which would discard legitimate constraints.
  *
- * Bind 12 handles every clause here except the last: a root branch carrying its
- * own composition is forwarded unchanged, so this stays the only thing in front
- * of that 400 until the upstream fix ships.
+ * Bind 13 handles every clause here, so nothing in the shipped tool surface
+ * currently trips it. It is kept as the statement of the rule itself: the
+ * clauses cost roughly two hundred live provider requests to establish, and
+ * they are what a future sanitizer regression would be measured against.
  */
-function readableRootUnionBranch(branch: unknown): boolean {
+export function readableRootUnionBranch(branch: unknown): boolean {
   if (!isPlainObject(branch)) return false;
   if ("type" in branch ? branch.type !== "object" : !isPlainObject(branch.properties)) return false;
   return !COMPOSITION_KEYWORDS.some((keyword) => Array.isArray(branch[keyword]));
@@ -120,11 +121,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * to `{ description: "choose a" }` and `{ type: "object", required: ["query"] }`
  * to `{ type: "object" }` — neither empty, and the constraint just as gone.
  *
- * **Bind 12 repairs all of those**: a branch's `required` now resolves against
- * its parent's `properties`, and the referenced subschemas are copied down, so
- * the constraint reaches the wire. What still reports here is a branch naming
- * something *nothing* in scope declares, which remains unrepairable and is
- * still pruned away. Keep the check rather than trusting the dependency: it
+ * **Bind 12 and 13 repair all of those**: a branch's `required` now resolves
+ * against its parent's `properties`, and the referenced subschemas are copied
+ * down, so the constraint reaches the wire. What still reports here is a branch
+ * naming something *nothing* in scope declares, which remains unrepairable and
+ * is still pruned away. Keep the check rather than trusting the dependency: it
  * costs nothing when there is nothing to find, and it is what would notice a
  * bind release that stopped repairing.
  *
@@ -158,15 +159,10 @@ export function weakenedCompositionBranches(schema: Record<string, unknown>): st
  * request, every tool**, so one bad schema from one remote server takes down a
  * run that had nothing to do with it, including Avalon's own core tools.
  *
- * So the same measured rule is applied as a repair rather than a report — the
- * literally same predicate, `readableRootUnionBranch` — and when a root
- * `anyOf`/`oneOf` has a branch that fails it, the whole composition is dropped
- * and the rest of the schema is kept. Measured 27/27
- * accepted across nine models, and it is the same trade the four first-party
- * tools took — the constraint was already being erased for every provider by
- * the sanitizer's `required` pruning, and a remote MCP server validates its own
- * arguments regardless, so what is given up here is a wire-level hint that was
- * not being honoured, in exchange for the request surviving at all.
+ * So the same measured rule is applied as a repair rather than a report, using
+ * the literally same predicate — but only where the sanitizer's own output
+ * would still be fatal. That gate is the whole design now: see the body for why
+ * repairing unconditionally became worse than doing nothing.
  *
  * Repair rather than reject, because rejecting is worse in both directions: it
  * removes a capability the person connected on purpose, and it does so on a
@@ -175,14 +171,27 @@ export function weakenedCompositionBranches(schema: Record<string, unknown>): st
  * still owns every other dialect difference.
  */
 export function repairRootUnionForProviders(schema: Record<string, unknown>): Record<string, unknown> {
-  let repaired = schema;
-  for (const keyword of ROOT_UNION_KEYWORDS) {
-    const branches = repaired[keyword];
-    if (!Array.isArray(branches)) continue;
-    if (branches.every(readableRootUnionBranch)) continue;
-    repaired = Object.fromEntries(Object.entries(repaired).filter(([key]) => key !== keyword));
-  }
-  return repaired;
+  // Defer to the sanitizer, and intervene only where its output would still be
+  // fatal. This is not an optimization — repairing unconditionally is now
+  // *worse than doing nothing*. Bind 13 turns a remote
+  // `oneOf: [{required:["pageId"]}, {required:["discussionId"]}]` into
+  // self-sufficient object branches that every provider accepts and the model
+  // can read, whereas dropping it first throws that constraint away and tells
+  // the model nothing. Against Bind 11 and 12 the drop was the only thing
+  // standing between a third-party schema and a 400; against a sanitizer that
+  // repairs the shape properly it is pure loss.
+  //
+  // Gating on `nonObjectRootUnionBranches` rather than deleting this outright
+  // keeps the backstop honest: it re-engages by itself for any shape a future
+  // sanitizer stops handling, without anyone having to notice.
+  if (nonObjectRootUnionBranches(schema).length === 0) return schema;
+  // Something fatal survives sanitization, so no root union on this schema can
+  // be trusted to reach the wire. Drop them all rather than reasoning from the
+  // authored branches, which may read as usable while their sanitized form does
+  // not.
+  return Object.fromEntries(
+    Object.entries(schema).filter(([key]) => !ROOT_UNION_KEYWORDS.some((keyword) => keyword === key)),
+  );
 }
 
 function requiredNames(node: Record<string, unknown>): string[] {
