@@ -42,8 +42,9 @@ not a transcript fallback.
 | `apps/api/src/durable-objects/workstream-runtime-sql.ts` | Restricted D1-compatible SQL adapter used by the Bind harness against object-local tables. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
 | `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, persisted workspace affinity, explicit singleton fallback, and runtime jurisdiction validation. |
+| `apps/api/src/lib/uuid-v7.ts` | RFC 9562 UUIDv7 generation for cross-socket/Queue event identities; ordering correctness remains in authority-local waterlines. |
 | `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-`SubstreamAgent` product RPCs. |
-| `apps/api/src/services/workstream-regional-effect-service.ts` | Regional D1 inbox for activity/mention delivery effects and notification delivery. |
+| `apps/api/src/services/workstream-regional-effect-service.ts` | Queue consumer handoff into WorkspaceDO for directory/user/feedback effects, plus the regional D1 inbox for activity/mention delivery and notifications. |
 | `apps/api/src/durable-objects/workspace-scheduler.ts` | One SQLite-backed alarm coordinator per workspace. |
 | `scripts/eslint-rules/durable-object-sql-storage.mjs` | Rejects Durable Object `get`, `put`, `delete`, `list`, and async `transaction` KV calls, including aliases. |
 | `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct/aliased namespace construction and use of the low-level region-only resolver. |
@@ -159,7 +160,7 @@ one persistent workspace connection
   -> create_message naming the target work stream/substream
 
 one connection per selected or background-running work stream
-  <- WorkstreamDO complete revisioned common + viewer metadata
+  <- WorkstreamDO complete independently waterlined common + viewer metadata
 
 one connection per selected or background-running substream
   <- SubstreamAgent snapshot / stream frames / product events
@@ -178,9 +179,11 @@ user create_message after creation
 
 The workspace socket is opened once per authenticated Electron renderer after
 regional session/workspace activation and survives work-stream navigation. Its
-SQL owns the workspace directory and contains monotonically versioned topic
-invalidations for all other workspace modules. A reconnect replays the bounded
-log when available and otherwise invalidates every workspace query surface.
+SQL owns the workspace directory and contains monotonically increasing topic
+waterlines for all other workspace modules. Each event also has a UUIDv7 trace
+identity. A reconnect coalesces every missed topic into one newest-waterline
+event when the bounded log is available and otherwise invalidates every
+workspace query surface; intermediate invalidation states are not product data.
 Directory page requests and their cursors resume through that same socket;
 Electron does not fall back to a D1 work-stream list. A user message is never accepted on either read socket; a
 `create_message` sent there receives `workspace_socket_required`. This keeps
@@ -440,21 +443,26 @@ envelopes by RPC to its parent `WorkstreamDO`.
 per-user projection from each child, and computes one aggregate work-stream
 view. Common state uses a deterministic state priority; last activity is the
 maximum child timestamp. Viewer unread counts sum across children, while
-participation, listability, and “You Are Mentioned” are logical ORs. The parent
-then splits delivery by ownership: directory common/user changes and suggestion
-feedback go by typed RPC to the workspace authority, while activity and mention
-delivery effects remain in its regional Queue outbox:
+participation, listability, and “You Are Mentioned” are logical ORs. Every
+changed aggregate partition gets its own monotonic waterline and UUIDv7 event
+ID in `workstream_state_changes`; pending transitions are not coalesced. The
+UUID is carried unchanged on the direct WorkstreamDO socket and delayed
+workspace path. The parent sends directory common/user changes, suggestion
+feedback, activity, and mention delivery through one Cloudflare Queue outbox;
+the regional consumer resolves the appropriate destination:
 
 ```text
 SubstreamAgent SQLite product transaction
   -> child durable_outbox
   -> authenticated RPC to WorkstreamDO
-  -> WorkstreamDO child receipt + aggregate + durable_outbox transaction
-  -> directory/user/feedback: typed RPC to WorkspaceDO
+  -> WorkstreamDO child receipt + aggregate + state row + durable_outbox transaction
+  -> WorkstreamDO metadata socket publishes common/viewer waterlines immediately
+  -> opaque Cloudflare Queue wake-up for every retained effect
+     -> regional Worker fetches the envelope from WorkstreamDO
+  -> directory/user/feedback: typed RPC from Queue consumer to WorkspaceDO
      -> WorkspaceDO receipt + directory/index transaction + socket publication
      -> acknowledgement deletes the WorkstreamDO outbox item
-  -> activity/mention: opaque Cloudflare Queue wake-up
-     -> regional Worker fetches the envelope from WorkstreamDO
+  -> activity/mention: regional D1 consumer transaction
      -> D1 activity/notification intent + inbox receipt batch
      -> acknowledgement deletes the WorkstreamDO outbox item
 ```
@@ -467,25 +475,33 @@ listability, “You Are Mentioned,” and the Home/sidebar list of work streams 
 interest. Pins, resource links, and resolved suggestion feedback live beside
 those rows so cross-work-stream queries are one local SQLite query rather than a
 fan-out to every child. Electron requests cursor-paged rows over its existing
-WorkspaceDO socket; a monotonically increasing directory version invalidates
-cached pages after any accepted child effect.
+WorkspaceDO socket. Common and viewer rows retain separate monotonic waterlines,
+because Queue is at-least-once and unordered. Electron keeps one shared
+per-work-stream waterline ledger behind the header/detail/sidebar caches. The
+active WorkstreamDO socket normally wins first; the later WorkspaceDO event is
+ignored if it carries no newer common or viewer waterline. If the work stream
+is not open, the WorkspaceDO event advances the same cache and updates the
+sidebar, Active/In Progress/Completed groupings, unread state, and You Are
+Mentioned without polling. Pins remain WorkspaceDO-owned fields and use the
+workspace directory waterline.
 
 Connector events are owned by one workspace and remain in that workspace's
 regional D1 activity-ingestion tables because digests, routing, and suggestions
 query across work streams. When an event is attached/admitted to a particular
 work stream, the child stores its delivery receipt and relevant resource link;
-WorkstreamDO sends that link to WorkspaceDO's inverted index. Work-stream-specific
+WorkstreamDO sends that link through Queue to WorkspaceDO's inverted index. Work-stream-specific
 suggested actions live in that child; workspace-level suggested work streams and
 actions stay in regional D1. Accepted/dismissed local feedback is copied into
-the WorkspaceDO index through the same direct parent RPC so discovery and
+the WorkspaceDO index through the same queued parent handoff so discovery and
 ranking never read a D1 work-stream projection.
 
 ### Durable Object communication: RPC versus Queue
 
-Every object-to-object command uses a typed native RPC method. HTTP `fetch()` is
-reserved for WebSocket upgrades because that platform flow must return a 101
-`Response`; lint rejects `/internal/*` stub fetches. The complete relationship
-map is:
+Every addressed object command uses a typed native RPC method; asynchronous
+cross-work-stream state signals first use Queue and are then delivered by a
+consumer RPC to their named object. HTTP `fetch()` is reserved for WebSocket
+upgrades because that platform flow must return a 101 `Response`; lint rejects
+`/internal/*` stub fetches. The complete relationship map is:
 
 | Sender | Receiver | Primitive | Durable handoff |
 | --- | --- | --- | --- |
@@ -495,10 +511,11 @@ map is:
 | WorkstreamDO | BlockDashboardAgent | typed RPC | parent dispatch outbox; block dispatch ledger |
 | BlockDashboardAgent | SubstreamAgent("0") | typed RPC | block run ledger plus source-local runtime/tool receipts |
 | BlockDashboardAgent | WorkstreamDO | typed RPC | terminal outcome retained until the parent result receipt accepts it |
-| WorkstreamDO | WorkspaceDO | typed RPC | parent directory outbox; workspace receipt plus authoritative directory/index transaction |
-| WorkstreamDO | regional Worker | Cloudflare Queue | activity/mention outbox plus opaque wake-up; minimal D1 inbox then RPC ack |
+| WorkstreamDO | regional Worker | Cloudflare Queue | every directory/user/feedback/activity/mention change is retained in the parent outbox; the message is an opaque UUIDv7 wake-up |
+| regional Queue Worker | WorkspaceDO | typed RPC | unordered directory/user/feedback envelope; generation + per-key waterline, hash receipt, and authoritative directory/index transaction |
+| regional Queue Worker | regional D1 | D1 batch | activity/mention inbox, delivery intent, and receipt only; work-stream directory state never enters D1 |
 
-Queues are deliberately used only at the external/regional fan-out boundary, where
+Queues are deliberately used at the work-stream-to-workspace/regional fan-out boundary, where
 buffering many independent work streams, consumer concurrency, and delivery
 isolation are useful. A Queue cannot target a particular parent DO; it needs a
 Worker consumer to resolve that DO and make another RPC. More importantly,
@@ -508,8 +525,14 @@ the child outbox**: the safe path would be child transaction/outbox, alarm,
 Queue, consumer, parent RPC, parent receipt, and acknowledgement. That adds a
 hop, cost, latency, route reconstruction, and best-effort Queue ordering while
 retaining the code that makes the handoff durable. Direct RPC plus the existing
-SQL outbox is smaller and preserves per-stub E-order; Queue remains appropriate
-only if future load requires explicit asynchronous buffering beyond the parent.
+SQL outbox is smaller and preserves per-stub E-order. The next boundary is
+different: one workspace aggregates many independently busy work streams, so
+Queue provides useful buffering and failure isolation. WorkspaceDO never trusts
+Queue ordering or uniqueness; it accepts only a greater `(authority_generation,
+waterline)` for the affected `common` or `user:<id>` key. A synchronous typed
+RPC is retained only for the maintenance/bootstrap activation fence that must
+materialize the initial directory row before the D1 route opens. Runtime state
+transitions never use that shortcut.
 
 Mention intent delivery rechecks current D1 membership and destination state
 only after WorkspaceDO reports the required viewer-directory version. This prevents an
@@ -597,7 +620,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Migration hash mismatch/schema ahead/foreign-key violation | Constructor activation fails; no request observes a partially migrated schema. |
 | Object ID has the wrong/no jurisdiction in staging or production | Constructor activation fails before serving state; callers cannot silently use the unrestricted graph. |
 | Location hint cannot be honored | Cloudflare selects the nearest available location inside the jurisdiction; correctness and residency do not depend on the best-effort hint. |
-| Workspace socket hibernates | Runtime restores attachments; replayed tickets are rejected, topic versions resume, and pending commands resend under the same client message ID. |
+| Workspace socket hibernates | Runtime restores attachments; replayed tickets are rejected, topic waterlines resume, and pending commands resend under the same client message ID. |
 | Workstream metadata socket hibernates | Runtime restores identity; subscribe returns a complete authoritative viewer snapshot and later effects push newer revisions. |
 | Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
 | Feed replay window lost | Child sends `resync_required`; desktop reloads canonical parts and active output checkpoint. |
@@ -662,10 +685,12 @@ All Durable Object tables are SQLite `STRICT` tables, use integer Unix
 milliseconds internally, bound inline/JSON payloads, and keep external object
 identity in one singleton rather than repeating it on every child row. Live
 WebSockets use hibernation attachments and therefore have no `sockets` table.
-No RPC happens inside a local SQL transaction: the source commits a fact plus
-an outbox intent, and the receiver commits its mutation plus a hash-checked
-receipt. Only an unsent complete replacement may be coalesced; an inflight row
-is retained because it may already have committed across the object boundary.
+No RPC or Queue send happens inside a local SQL transaction: the source commits
+a fact plus an outbox intent, and the receiver commits its mutation plus a
+hash-checked receipt. Work-stream common/viewer state transitions are never
+coalesced; specialized replaceable HyperSight refresh/dispatch rows document
+their own narrower coalescing rules. An inflight row is retained because it may
+already have committed across the object boundary.
 
 ### `WorkspaceDO`
 
@@ -675,10 +700,10 @@ is retained because it may already have committed across the object boundary.
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
 | `socket_ticket_receipts` | Historical v1 per-target ticket receipts retained by append-only migration; no new socket writes this table. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
-| `workspace_sync_events` | Monotonic version, JSON topic set, and occurrence time for the bounded 1,024-event replay window. Rows are invalidations only, never workspace data copies. |
-| `workspace_directory_state` | Singleton monotonically increasing directory version used to invalidate and reconcile Electron pages. |
-| `workspace_workstream_directory` | One authoritative common row per work stream, fenced by generation/source version/hash. Supplies title, description/preview, scope/state, provenance, planning, attention, recency, archive, wakeup, and Terminal scheduling fields. |
-| `workspace_workstream_viewers` | One authoritative viewer overlay per work stream/user with participation, listability, unread/mention state, and waterlines; it cascades from the common row. |
+| `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
+| `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
+| `workspace_workstream_directory` | One authoritative common row per work stream, fenced by authority generation, per-common `waterline`, UUIDv7 `source_event_id`, and hash. Supplies title, description/preview, scope/state, provenance, planning, attention, recency, archive, wakeup, and Terminal scheduling fields. |
+| `workspace_workstream_viewers` | One authoritative viewer overlay per work stream/user, independently fenced by generation, viewer `waterline`, UUIDv7 source event, and hash. It supplies participation, listability, unread/mention state, and read fences and cascades from the common row. |
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
 | `workspace_workstream_suggestion_feedback` | Resolved work-stream action feedback indexed for workspace discovery and ranking. The action itself remains in its SubstreamAgent. |
@@ -686,7 +711,7 @@ is retained because it may already have committed across the object boundary.
 
 `WorkspaceDO` stores the authoritative sidebar/query index, not a copy of D1,
 and stores no transcript. Its socket attachment contains workspace/session
-identity plus the last delivered topic version; each subscribe/command
+identity plus the last delivered topic waterline; each subscribe/command
 revalidates D1 membership, and each command invokes the selected child through
 the Worker-side client. Cross-object relationships carry stable IDs, versions,
 and hashes; no SQL join crosses a Durable Object boundary.
@@ -701,7 +726,9 @@ and hashes; no SQL join crosses a Durable Object boundary.
 | `substream_user_directory` | Latest viewer envelope per child/user pair. |
 | `child_effect_receipts` | Child/message/hash inbox proving idempotent RPC acceptance. |
 | `projection_keys` | Next version and last hash for parent aggregate partitions such as `common` and `user:<id>`. |
-| `durable_outbox` | Hash-checked aggregate or immutable effect waiting for direct WorkspaceDO delivery or regional Queue delivery/ack, according to effect kind. |
+| `workstream_state_clock` | Singleton append sequence and nondecreasing millisecond floor used to create local UUIDv7 trace identities. It is not a distributed causal clock. |
+| `workstream_state_changes` | Immutable bounded tail of common and `user:<id>` aggregate rows. `waterline` orders one key; UUIDv7 `event_id` is carried over both socket paths for tracing/deduplication. |
+| `durable_outbox` | Hash-checked aggregate or immutable effect waiting for Cloudflare Queue delivery/ack. Every common/viewer state change keeps its own row; the payload itself never enters Queue. |
 | `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
 | `block_dashboard_configuration_versions` | Append-only shared block definitions and optimistic configuration version. This is the product authority for which stable block agents exist. |
 | `block_dashboard_block_runs` | Parent-visible queued/running/terminal block state keyed by block run, configuration, block, and transcript trigger. |
@@ -714,6 +741,16 @@ The child tables are inputs to `workstream_metadata` and the aggregate
 projection. No SQL crosses object databases; the child sends an authenticated
 envelope RPC, and the parent commits receipt, child value, aggregate, and outbox
 inside its own transaction.
+
+For common/viewer aggregates, that transaction also appends
+`workstream_state_changes` before the corresponding `durable_outbox` row can be
+observed. Each common or viewer UUIDv7 message/event ID is time sortable to
+milliseconds and remains identical for that row on the WorkstreamDO socket,
+Queue wake-up, WorkspaceDO source row, and WorkspaceDO socket. A complete
+snapshot carries both IDs separately. Independent objects can generate
+same-millisecond IDs in random order, so freshness always compares authority
+generation and the relevant common/viewer waterline, never UUID lexical order
+alone.
 
 HyperSight uses a second parent-owned relationship: the source child sends one
 fenced refresh signal, the parent fans out stable block dispatches, each block
@@ -824,13 +861,47 @@ active-output transactions over about 100 seconds, usually fewer; it does not
 produce 10,000 token rows or any D1 token writes. Final text replaces the active
 checkpoint with one canonical part.
 
-The parent coalesces common/user effects by partition and hash. A streaming work
+The parent suppresses only an unchanged aggregate with the same partition hash;
+every changed common/user transition retains its own state and outbox row. A streaming work
 stream therefore costs realtime child frames and child SQLite checkpoint
 writes, while WorkspaceDO directory traffic is bounded by semantic metadata
 changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-18 — State converges through waterlined sockets and Queue
+
+**What changed:** WorkstreamDO now appends every changed common or viewer
+aggregate to `workstream_state_changes`, gives it an authority-local monotonic
+waterline and UUIDv7 identity, persists the full envelope in its SQL outbox,
+and sends only an opaque wake-up through Cloudflare Queue. The consumer applies
+directory/user/feedback state to WorkspaceDO by typed RPC; WorkspaceDO persists
+independent common/viewer waterlines and publishes current rows. Electron uses
+one shared ledger for both sockets and ignores stale fields independently.
+Workspace query invalidations likewise use a `waterline` plus UUIDv7, coalesce
+missed topics on reconnect, and OAuth completion no longer polls.
+
+**Why:** An active work stream needs the direct socket's low latency, while an
+inactive work stream needs the workspace socket to update the sidebar and
+discovery surfaces. Queue delivery is at-least-once and unordered, so a single
+combined version could let a newer viewer update suppress a delayed common
+update. Timer polling also spent requests while the app was idle and still
+left race windows between two caches.
+
+**Considered and rejected:** A globally causal UUID clock, direct runtime RPC
+for every WorkstreamDO-to-WorkspaceDO transition, one combined common/viewer
+waterline, pending-row coalescing, and retaining periodic query/OAuth polling.
+UUIDv7 is only millisecond-time-sortable across independent writers; Queue is
+valuable specifically as the many-work-stream buffering boundary; and losing
+an intermediate transition is harmless only at receivers, not before durable
+delivery.
+
+**Consequences:** Runtime state transitions always use Queue and are safe under
+duplication/reordering. Maintenance/bootstrap alone may synchronously flush the
+initial directory snapshot before route activation. The UI may receive the
+same event from both sockets without a visual rollback, and every new shared
+state surface must name its authority and monotonic waterline key.
 
 ### 2026-08-18 — WorkspaceDO becomes the cross-work-stream serving authority
 

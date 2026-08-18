@@ -76,11 +76,12 @@ describe('WorkspaceSocketProvider', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
-    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterVersion: 0 }));
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterWaterline: 0 }));
 
     act(() => socket.message({
       type: 'workspace_sync',
-      version: 8,
+      eventId: '00000000-0000-7000-8000-000000000008',
+      waterline: 8,
       occurredAt: '2026-08-17T20:00:00.000Z',
       topics: WORKSPACE_SYNC_TOPICS,
       reason: 'initial',
@@ -109,6 +110,16 @@ describe('WorkspaceSocketProvider', () => {
       ['block-dashboard-preference'],
       ['feature-flags'],
     ]) expect(invalidatedRoots).toContain(JSON.stringify(root));
+    const invalidationCount = invalidations.mock.calls.length;
+    act(() => socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000007',
+      waterline: 7,
+      occurredAt: '2026-08-17T19:59:59.000Z',
+      topics: ['workspace_profile'],
+      reason: 'change',
+    }));
+    expect(invalidations).toHaveBeenCalledTimes(invalidationCount);
   });
 
   it('resends one idempotent message command after reconnect and resumes the sync cursor', async () => {
@@ -143,7 +154,8 @@ describe('WorkspaceSocketProvider', () => {
     act(() => first.open());
     act(() => first.message({
       type: 'workspace_sync',
-      version: 12,
+      eventId: '00000000-0000-7000-8000-000000000012',
+      waterline: 12,
       occurredAt: '2026-08-17T20:00:00.000Z',
       topics: ['workspace_profile'],
       reason: 'change',
@@ -174,7 +186,7 @@ describe('WorkspaceSocketProvider', () => {
     await flushPromises();
     const second = FakeWebSocket.instances[1]!;
     act(() => second.open());
-    expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterVersion: 12 }));
+    expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterWaterline: 12 }));
     expect(second.send).toHaveBeenCalledWith(JSON.stringify(command));
 
     act(() => second.message({
@@ -247,8 +259,16 @@ describe('WorkspaceSocketProvider', () => {
     act(() => socket.message({
       type: 'workspace_workstream_page',
       requestId: command.requestId,
-      directoryVersion: 7,
+      directoryWaterline: 7,
       nextCursor: null,
+      stateVersions: [{
+        workstreamId: '00000000-0000-7000-8000-000000000002',
+        commonEventId: '00000000-0000-7000-8000-000000000007',
+        viewerEventId: '00000000-0000-7000-8001-000000000004',
+        authorityGeneration: 1,
+        commonWaterline: 7,
+        viewerWaterline: 4,
+      }],
       items: [{
         id: '00000000-0000-7000-8000-000000000002',
         workspaceId: '00000000-0000-7000-8000-000000000001',

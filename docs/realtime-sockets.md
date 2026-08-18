@@ -33,9 +33,10 @@ is recorded.
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, replays its version cursor, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Builds the sidebar's infinite query exclusively from WorkspaceDO socket pages and retains the last page while a reconnect retries its request. |
-| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete revisioned WorkstreamDO metadata snapshots to detail and sidebar caches. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
+| `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
@@ -123,6 +124,12 @@ from durable checkpoints when it is opened again.
 
 The workspace socket carries its authoritative work-stream directory rows plus
 durable topic invalidations for the other D1-owned workspace modules. Its
+`workspace_sync_events.waterline` is monotonic inside the WorkspaceDO and each
+row has a UUIDv7 trace ID. Live receivers ignore an equal/older waterline. On
+reconnect the object unions every missed topic and sends one event at the newest
+available waterline; if the bounded 1,024-row window cannot cover the cursor,
+one `history_unavailable` event names every topic. The client needs current
+state, not each invalidation that led to it. Its
 complete topic catalog is:
 
 | Topic | Refetched authoritative surfaces |
@@ -131,6 +138,7 @@ complete topic catalog is:
 | `member_directory` | Active/invited/suspended members, user name/email/avatar/timezone/role/join time, and onboarding membership state. |
 | `invitation_directory` | Pending/accepted/expired/revoked invitations, role, inviter, expiry, acceptance, and delivery-visible state. |
 | `connector_connections` | Connection identity, type, scope/owner, account/display name, capabilities, health/reconnect/error state, catalog capabilities, GitHub repository access, and onboarding connector state. Credentials never enter this feed. |
+| `connector_oauth_attempts` | Signals that a pending OAuth attempt should be read once from its authenticated endpoint. The renderer does not poll while the provider window is open. |
 | `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. |
 | `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. |
 | `automations` | Automation definitions, drafts, subscriptions, pause/archive status, trigger schedules, next/last runs, and work-stream-producing changes. |
@@ -138,26 +146,43 @@ complete topic catalog is:
 | `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. |
 | `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. |
 | `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. |
-| `workstream_directory` | Invalidates the authoritative WorkspaceDO cursor pages used for sidebar membership/order, global Active/In Progress/Completed groupings, and per-viewer pinned, unread, and You Are Mentioned views. A live WorkstreamDO complete snapshot may update the selected row sooner, but D1 is never a list fallback. |
+| `workstream_directory` | Invalidates WorkspaceDO cursor-page membership/order and pin changes. Normal common/viewer state transitions instead push the current waterlined row directly. D1 is never a list fallback. |
 | `viewer_preferences` | Telemetry, HyperSight, and other current-user workspace preference surfaces. |
 | `feature_flags` | Effective client feature gates when a workspace-scoped producer explicitly publishes a change. |
 
 Electron sends `list_workstreams` with a stable request ID, bounded limit,
 optional opaque `(last_activity_at, workstream_id)` cursor, and the system-row preference. WorkspaceDO responds
-with `workspace_workstream_page`, the directory version, parsed work-stream
-rows, and the next cursor. Pending page requests survive a transient reconnect
+with `workspace_workstream_page`, the directory waterline, each row's independent
+common/viewer waterlines plus the corresponding UUIDv7 row identities, parsed work-stream rows,
+and the next cursor. Pending page requests survive a transient reconnect
 and reject only when the provider is disposed or the user/session changes. A
 `workstream_directory` sync invalidation refetches these pages; it never asks a
-REST/D1 list endpoint to reconstruct them.
+REST/D1 list endpoint to reconstruct them. The renderer applies WorkspaceDO-owned
+fields such as pin position only when that row's observed directory waterline is
+newer. Every socket reconnect also reloads a resident directory, because current
+state rows intentionally do not retain every intermediate push for replay.
 
-`WorkstreamDO` always sends a complete revisioned snapshot, not a partial patch.
+`WorkstreamDO` always sends a complete snapshot, not a partial patch.
 Common fields are identity, workspace ID, title/title status, description,
 preview, email address, origin, creator, automation subscription/run, planned
 time, exact and normalized state, attention/unread baseline, last activity,
 completion/archive/create/update timestamps, scope/system kind, next wakeup and
 next Terminal action. Its viewer overlay is participation/listability, unread
 count, mention status, read-through waterline, manual-unread fence/generation,
-and latest mention sequence. Sending null clears a prior value.
+and latest mention sequence. Sending null clears a prior value. Common and
+viewer fields each carry their own authority-local waterline and UUIDv7 row ID.
+The common and viewer IDs are preserved independently across both socket paths;
+they are time-sortable trace/deduplication identities, not a distributed causal
+clock.
+
+The same logical state can arrive first from the active WorkstreamDO socket and
+later from WorkspaceDO after at-least-once, unordered Queue delivery. Both
+handlers write through the same Electron ledger. A field applies only when its
+authority generation is newer or its own common/viewer waterline advances;
+advancing viewer state can never suppress a delayed common update. The direct
+path therefore updates an open header immediately, while the workspace path
+updates an inactive row, sidebar group, unread badge, or You Are Mentioned view.
+No interval polling participates in convergence.
 
 The WorkstreamDO socket carries shared HyperSight configuration and the current
 viewer's HyperSight preference. Each configured block has a direct
@@ -304,8 +329,8 @@ keeping correct for whoever reads the logs.
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, correlated directory pages and pagination, full topic invalidation, version resume, and idempotent command resend. |
-| `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale revision rejection, nullable-field clearing, revocation, and reconnect. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, correlated directory pages/pagination, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @avalon/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
@@ -339,6 +364,32 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-18 — Both control sockets share field-level waterlines
+
+**What changed:** WorkstreamDO metadata and WorkspaceDO directory events now
+carry the same per-field UUIDv7 row identities plus independent common/viewer waterlines.
+The renderer applies both through one query-cache ledger and rejects equal or
+older fields. Workspace directory pages separately fence WorkspaceDO-owned pin
+fields with their directory waterline and reload after reconnect. Workspace
+topic events now expose a `waterline` and UUIDv7,
+coalesce missed topics on reconnect, and signal OAuth completion instead of
+driving an interval poll.
+
+**Why:** Queue-delivered WorkstreamDO-to-WorkspaceDO changes can duplicate and
+reorder, while the direct work-stream socket is deliberately faster for an open
+row. Two caches or one combined version would allow the delayed copy to roll
+back the header/sidebar or a viewer-only update to hide a common update.
+
+**Considered and rejected:** Ordering by UUIDv7 alone, replaying every missed
+invalidation, retaining REST query intervals, and making only one socket update
+the shared work-stream cache. Independent same-millisecond UUIDs are not causal,
+and the product needs both the active low-latency path and inactive sidebar path.
+
+**Consequences:** Receivers care about newest state per authority key rather
+than every intermediate event. New socket-published state must declare its
+waterline, generation, and cache authority; UUID lexical order remains useful
+for tracing only.
 
 ### 2026-08-18 — Workspace socket serves the authoritative work-stream directory
 

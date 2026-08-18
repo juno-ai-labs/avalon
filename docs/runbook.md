@@ -544,8 +544,10 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 - Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, append the external substream ID for each independently provisioned `SubstreamAgent`, and append `block-dashboard:<stable-block-id>` for each configured `BlockDashboardAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
 - Respect the authority phase. Before `durable_object_open`, REST reads the
   legacy D1 source; afterward REST reads the selected `SubstreamAgent`, its
-  parent holds aggregate metadata/outbox, and D1 contains only directory/control
-  projections. The child's bounded replay buffer remains an in-memory
+  parent holds aggregate metadata/outbox, and D1 contains only authority/migration
+  routing plus activity/notification and unrelated relational workspace data;
+  work-stream directory state is in WorkspaceDO. The child's bounded replay
+  buffer remains an in-memory
   optimization. The active checkpoint lives in `active_output_turns` and
   60-KiB `active_output_chunks`, is updated per batched delta, and is removed at
   terminal state. Do not collapse it into one unbounded value.
@@ -575,13 +577,21 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
   1012 close on its first attempted write.
 - Verify workspace convergence by mutating timezone, Terminal policy,
   membership/invitations, and connector health from another client. The
-  WorkspaceDO socket must advance its topic version and refetch only the mapped
-  query roots. Force a replay-window miss and confirm the desktop invalidates
-  every workspace surface once rather than polling indefinitely.
+  WorkspaceDO socket must advance its topic waterline and refetch only the mapped
+  query roots. A reconnect after several changes must receive one newest-waterline
+  event with the union of missed topics. Force a replay-window miss and confirm
+  the desktop invalidates every workspace surface once rather than polling.
 - Verify aggregate convergence by changing title/description/state/read and
-  mention metadata, evicting WorkstreamDO, then subscribing again. The complete
-  snapshot must clear nullable stale fields, ignore lower revisions, and remove
-  the row on authorization revocation.
+  mention metadata, evicting WorkstreamDO, then subscribing again. Confirm each
+  transition created `workstream_state_changes` and `durable_outbox` rows with
+  a UUIDv7 and increasing common or viewer waterline. The direct work-stream
+  socket and Queue-delayed workspace socket must carry the same identity for
+  each matching common or viewer row;
+  the shared Electron cache must clear nullable fields, ignore duplicate/lower
+  waterlines independently, reject an older directory page's pin position, and
+  remove the row on authorization revocation. Reconnect the WorkspaceDO socket
+  after missing a state push and confirm its resident directory reload repairs
+  the gap without a timer.
 - Batch model `stream_delta` broadcasts. The direct child loop may use its reference-counted 30-second keep-alive alarm only while active work exists; avoid per-connection alarms and periodic room health polling.
 - Resolve every workspace-scoped object through
   `durableObjectStubForWorkspace`: Global must derive IDs from
@@ -630,8 +640,10 @@ generation; never reuse one from a quarantined attempt.
    new generation. A page can be retried. Do not manually advance its cursor.
 5. When every route verifies, control advances to `maintenance_verified` and
    cron activates each object. For every work stream it must flush common/user
-   state from WorkstreamDO into WorkspaceDO, verify the workspace directory
+   state synchronously from WorkstreamDO into WorkspaceDO, verify the workspace directory
    row, import the frozen legacy D1 pins, and only then mark the route `active`.
+   This maintenance/bootstrap fence is the only direct parent-to-workspace
+   delivery; after activation every runtime state transition uses Queue.
    Wait until every route is active. The region remains behind the maintenance
    response intentionally.
 6. Deploy the Worker whose product reads/writes, direct Bind-loop persistence,
@@ -653,15 +665,16 @@ generation; never reuse one from a quarantined attempt.
 After opening, inspect the parent `WorkstreamDO.durable_outbox` and source child
 outbox/receipt first. For a missing sidebar badge/resource route/suggestion
 feedback row, inspect `WorkspaceDO.workspace_workstream_effect_receipts` and the
-corresponding `workspace_workstream_*` row. For a missing digest event, Slack
+corresponding `workspace_workstream_*` row's authority generation, waterline,
+and UUIDv7 `source_event_id`. For a missing digest event, Slack
 mention, or email notification, inspect D1
 `workstream_regional_effect_receipts` and notification intents. A receiver
 receipt with no local outbox row means the owning WorkspaceDO or D1 transaction
 committed and acknowledged the effect; an outbox row with no receiver receipt
-means RPC/Queue delivery is still retrying. Both rows with the same hash mean
+means Queue/consumer-RPC delivery is still retrying. Both rows with the same hash mean
 only the acknowledgement RPC is retrying. Never delete an object outbox row to
 clear an alert. Repair the receiver/consumer and let the alarm resend it. A
-generation/version/hash conflict is a producer bug or restore-generation error
+generation/waterline/hash conflict is a producer bug or restore-generation error
 and requires quarantine, not last-writer-wins repair.
 Acknowledged receipts and terminal notification shells disappear after 30 days;
 pending or unacknowledged rows never age out and must reach zero operationally.

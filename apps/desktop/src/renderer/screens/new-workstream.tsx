@@ -286,8 +286,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     queryKey: ['work-opportunities'],
     queryFn: ({ signal }) => api!.getWorkOpportunities(signal),
     enabled: Boolean(api),
-    staleTime: 60_000,
-    refetchInterval: 5 * 60_000,
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
   const waitingWorkstreams = useMemo(

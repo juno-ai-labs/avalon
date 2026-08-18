@@ -143,24 +143,6 @@ async function rejectedTheBearer(response: Response): Promise<boolean> {
   return code !== undefined && sessionRejectionCodes.has(code);
 }
 
-function abortableDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
-      return;
-    }
-    const onAbort = (): void => {
-      window.clearTimeout(timer);
-      reject(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
-    };
-    const timer = window.setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, delayMs);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
 interface RequestOptions<T> {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -2049,25 +2031,6 @@ export class AvalonApi {
       schema: WireConnectorOAuthAttemptSchema,
       signal,
     });
-  }
-
-  async waitForConnectorOAuthAttempt(attemptId: string, signal?: AbortSignal): Promise<ConnectorOAuthAttempt> {
-    const deadline = Date.now() + 16 * 60_000;
-    let retryDelayMs = 750;
-    while (Date.now() < deadline) {
-      signal?.throwIfAborted();
-      try {
-        const attempt = await this.getConnectorOAuthAttempt(attemptId, signal);
-        if (attempt.status !== 'pending') return attempt;
-        retryDelayMs = 1_000;
-      } catch (error) {
-        if (signal?.aborted) throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
-        if (error instanceof ApiError && error.status > 0 && error.status < 500) throw error;
-        retryDelayMs = Math.min(5_000, retryDelayMs * 2);
-      }
-      await abortableDelay(retryDelayMs, signal);
-    }
-    throw new ApiError('Connector authorization could not be confirmed.', 408, 'oauth_attempt_timeout');
   }
 
   async testConnection(id: string): Promise<{ ok: boolean; message: string }> {

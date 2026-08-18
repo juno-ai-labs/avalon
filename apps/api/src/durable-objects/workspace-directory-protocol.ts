@@ -1,9 +1,15 @@
-import { IdSchema, WorkspaceWorkstreamCursorSchema, WorkstreamSchema } from "@avalon/contracts";
+import {
+  IdSchema,
+  WorkspaceWorkstreamCursorSchema,
+  WorkspaceWorkstreamStateVersionSchema,
+  WorkstreamSchema,
+} from "@avalon/contracts";
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
 
 const TimestampSchema = z.string().datetime({ offset: true });
+const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
 
 export const WorkspaceDirectoryListRequestSchema = z.object({
   workspaceId: IdSchema,
@@ -17,9 +23,23 @@ export const WorkspaceDirectoryPageSchema = z.object({
   // Pins are returned in addition to the requested recent-work page so they
   // remain stable above infinite scroll without consuming its cursor budget.
   items: z.array(WorkstreamSchema).max(1_250),
+  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema).max(1_250),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
-  directoryVersion: z.number().int().nonnegative(),
-}).strict();
+  directoryWaterline: z.number().int().nonnegative(),
+}).strict().superRefine((page, context) => {
+  const itemIds = new Set(page.items.map((item) => item.id));
+  const versionIds = new Set(page.stateVersions.map((version) => version.workstreamId));
+  if (itemIds.size !== page.items.length
+    || versionIds.size !== page.stateVersions.length
+    || itemIds.size !== versionIds.size
+    || [...itemIds].some((id) => !versionIds.has(id))) {
+    context.addIssue({
+      code: "custom",
+      path: ["stateVersions"],
+      message: "must contain exactly one state version for every work stream item",
+    });
+  }
+});
 
 export const WorkspaceDirectoryVisibilityRequestSchema = z.object({
   workspaceId: IdSchema,
@@ -202,6 +222,16 @@ export const WorkspaceDirectoryApplyRequestSchema = z.object({
         code: "custom",
         path: ["envelopes", index, "effect", "kind"],
         message: "Only workspace-owned directory effects may use the WorkspaceDO handoff",
+      });
+    }
+    if ((envelope.effect.kind === "directory_common"
+      || envelope.effect.kind === "directory_user"
+      || envelope.effect.kind === "suggestion_feedback")
+      && !UuidV7Schema.safeParse(envelope.messageId).success) {
+      context.addIssue({
+        code: "custom",
+        path: ["envelopes", index, "messageId"],
+        message: "Directory state source identities must be UUIDv7",
       });
     }
   }

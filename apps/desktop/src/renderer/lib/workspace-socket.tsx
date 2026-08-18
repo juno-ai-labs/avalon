@@ -2,6 +2,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceSocketSyncEventSchema,
   WorkspaceWorkstreamPageEventSchema,
+  WorkspaceWorkstreamStateEventSchema,
   WorkstreamSocketCommandResultSchema,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
@@ -18,7 +19,13 @@ import {
   type PropsWithChildren,
 } from 'react';
 import { ApiError, mapMessage, mapWorkstreamSummary, type AvalonApi } from './api';
+import { uuidV7 } from './telemetry';
 import type { Message, WorkstreamSummary } from './types';
+import {
+  applyVersionedWorkstreamState,
+  applyWorkspaceWorkstreamFields,
+  workstreamSummaryState,
+} from './workstream-state-store';
 import { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
@@ -42,6 +49,7 @@ interface PendingWorkstreamPage {
 
 interface WorkspaceSocketContextValue {
   state: WorkspaceSocketState;
+  topicWaterlines: Readonly<Partial<Record<WorkspaceSyncTopic, number>>>;
   createMessage(command: CreateMessageCommand): Promise<Message>;
   listWorkstreams(input: {
     limit: number;
@@ -74,6 +82,7 @@ function invalidateTopic(
       ['github-repository-access'],
       ['workspace-onboarding'],
     ],
+    connector_oauth_attempts: [],
     terminal_policy: [['terminal-workspace-settings']],
     digest_schedule: [['digest-schedule']],
     automations: [['automations'], ['automation'], ['automation-draft']],
@@ -96,6 +105,7 @@ export function WorkspaceSocketProvider({
 }: PropsWithChildren<{ api: WorkspaceSocketApi; workspaceId: string }>): React.JSX.Element {
   const queryClient = useQueryClient();
   const [state, setState] = useState<WorkspaceSocketState>('connecting');
+  const [topicWaterlines, setTopicWaterlines] = useState<Partial<Record<WorkspaceSyncTopic, number>>>({});
   const createMessageRef = useRef<(command: CreateMessageCommand) => Promise<Message>>(
     () => Promise.reject(new ApiError(
       'The workspace is not connected.',
@@ -120,7 +130,7 @@ export function WorkspaceSocketProvider({
     let pongTimer: number | null = null;
     let connecting = false;
     let attempt = 0;
-    let lastVersion = 0;
+    let lastWaterline = -1;
     const pending = new Map<string, PendingCommand>();
     const pendingWorkstreamPages = new Map<string, PendingWorkstreamPage>();
 
@@ -195,7 +205,17 @@ export function WorkspaceSocketProvider({
           if (stopped || socket !== next) return;
           attempt = 0;
           setState('connected');
-          next.send(JSON.stringify({ type: 'subscribe', afterVersion: lastVersion }));
+          next.send(JSON.stringify({
+            type: 'subscribe',
+            afterWaterline: Math.max(0, lastWaterline),
+          }));
+          // Work-stream state pushes intentionally carry only the latest row,
+          // not a replay log. A reconnect therefore reloads any directory that
+          // was already resident; per-row waterlines discard an older page if
+          // the direct WorkstreamDO socket has advanced the shared cache.
+          if (queryClient.getQueryData(WORKSTREAMS_QUERY_KEY) !== undefined) {
+            void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+          }
           sendPending();
           scheduleHeartbeat(next);
         });
@@ -213,8 +233,13 @@ export function WorkspaceSocketProvider({
           }
           const sync = WorkspaceSocketSyncEventSchema.safeParse(decoded);
           if (sync.success) {
-            if (sync.data.version < lastVersion) return;
-            lastVersion = sync.data.version;
+            if (sync.data.waterline <= lastWaterline) return;
+            lastWaterline = sync.data.waterline;
+            setTopicWaterlines((current) => {
+              const nextWaterlines = { ...current };
+              for (const topic of sync.data.topics) nextWaterlines[topic] = sync.data.waterline;
+              return nextWaterlines;
+            });
             for (const topic of sync.data.topics) invalidateTopic(queryClient, topic);
             return;
           }
@@ -224,10 +249,52 @@ export function WorkspaceSocketProvider({
             if (!entry) return;
             pendingWorkstreamPages.delete(workstreamPage.data.requestId);
             window.clearTimeout(entry.timeout);
+            const versions = new Map(workstreamPage.data.stateVersions.map((version) => [
+              version.workstreamId,
+              version,
+            ]));
+            const items = workstreamPage.data.items.map(mapWorkstreamSummary).map((workstream) => {
+              const version = versions.get(workstream.id);
+              if (!version) return workstream;
+              applyVersionedWorkstreamState(queryClient, {
+                workstreamId: workstream.id,
+                stateVersion: version,
+                ...workstreamSummaryState(workstream),
+                visible: true,
+              });
+              applyWorkspaceWorkstreamFields(queryClient, workstream.id, {
+                pinPosition: workstream.pinPosition,
+              }, workstreamPage.data.directoryWaterline);
+              return queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+                ?.find((item) => item.id === workstream.id) ?? workstream;
+            });
             entry.resolve({
-              items: workstreamPage.data.items.map(mapWorkstreamSummary),
+              items,
               nextCursor: workstreamPage.data.nextCursor,
             });
+            return;
+          }
+          const workstreamState = WorkspaceWorkstreamStateEventSchema.safeParse(decoded);
+          if (workstreamState.success) {
+            const workstream = workstreamState.data.workstream
+              ? mapWorkstreamSummary(workstreamState.data.workstream)
+              : queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+                ?.find((item) => item.id === workstreamState.data.workstreamId);
+            const applied = applyVersionedWorkstreamState(queryClient, {
+              workstreamId: workstreamState.data.workstreamId,
+              stateVersion: workstreamState.data.stateVersion,
+              ...(workstream ? workstreamSummaryState(workstream) : {
+                common: {},
+                viewer: {},
+              }),
+              visible: workstreamState.data.workstream !== null,
+            });
+            if (applied.commonApplied) {
+              void queryClient.invalidateQueries({
+                queryKey: ['terminal-workstream', workstreamState.data.workstreamId],
+                exact: true,
+              });
+            }
             return;
           }
           const result = WorkstreamSocketCommandResultSchema.safeParse(decoded);
@@ -286,7 +353,7 @@ export function WorkspaceSocketProvider({
       void connect();
     });
     listWorkstreamsRef.current = (input) => new Promise((resolve, reject) => {
-      const requestId = crypto.randomUUID();
+      const requestId = uuidV7();
       const command: ListWorkstreamsCommand = {
         type: 'list_workstreams',
         requestId,
@@ -354,8 +421,8 @@ export function WorkspaceSocketProvider({
     [],
   );
   const value = useMemo(
-    () => ({ state, createMessage, listWorkstreams }),
-    [createMessage, listWorkstreams, state],
+    () => ({ state, topicWaterlines, createMessage, listWorkstreams }),
+    [createMessage, listWorkstreams, state, topicWaterlines],
   );
   return <WorkspaceSocketContext.Provider value={value}>{children}</WorkspaceSocketContext.Provider>;
 }
@@ -364,4 +431,9 @@ export function useWorkspaceSocket(): WorkspaceSocketContextValue {
   const context = useContext(WorkspaceSocketContext);
   if (!context) throw new Error('useWorkspaceSocket must be used inside WorkspaceSocketProvider');
   return context;
+}
+
+/** Test/embedding escape hatch; product windows always install the provider. */
+export function useOptionalWorkspaceSocket(): WorkspaceSocketContextValue | null {
+  return useContext(WorkspaceSocketContext);
 }

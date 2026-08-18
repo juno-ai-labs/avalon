@@ -12,7 +12,7 @@ import type { WorkstreamSummary } from './types';
  * renames and read-state callbacks all patch this entry directly with
  * `setQueryData`, so a key that varied with the caller's options would leave
  * those writes updating something nobody observes — the sidebar would sit on
- * stale unread counts and titles until the next poll. Options change what the
+ * stale unread counts and titles until the next socket event. Options change what the
  * fetcher asks for, never where the answer is stored.
  */
 export { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
@@ -90,7 +90,7 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
         cursor = result.nextCursor ?? undefined;
         // The list shortened while it was open — archived elsewhere, or simply
         // fewer rows than when it was scrolled. Stop, and stop asking for pages
-        // that are no longer there on every poll from here on.
+        // that are no longer there on every socket-triggered refresh from here on.
         if (!cursor) break;
       }
       pagesLoaded.current = walked;
@@ -111,7 +111,7 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
       includeSystem: debugEnabled,
     })
       .then((page) => {
-        // Counted before the merge so a poll that lands between the two still
+        // Counted before the merge so a socket-triggered refresh that lands between the two still
         // reloads this page rather than dropping it.
         pagesLoaded.current += 1;
         nextCursor.current = page.nextCursor;
