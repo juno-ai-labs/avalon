@@ -562,7 +562,7 @@ pointed here. The delight budget is one moment per surface. Typeface picks
 remain the design system's call within the named neighborhoods.
 
 Drafted in the Bench rebrand working session, 2026-08-18, from founder review
-of the previous draft. PR link to be added when opened.
+of the previous draft. Shipped in #182.
 
 ### 2026-08-18 — Collaboration-first: the crew is out, the shared bench is in
 
@@ -617,7 +617,7 @@ artifacts changed with the body, per the standing rule that changing the voice
 means changing them in the same change.
 
 Drafted in the Bench rebrand working session, 2026-08-18, from the marathon
-ICP/positioning meeting notes of the same day. PR link to be added when opened.
+ICP/positioning meeting notes of the same day. Shipped in #182.
 
 ### 2026-08-18 — Guide created; founding brand decisions recorded
 
@@ -656,5 +656,4 @@ proof artifacts are the reference implementations; changing the voice means
 changing them, in the same change. If the product name moves off "Bench",
 sections 1–3 survive; 5 and 6 are rewritten.
 
-Drafted in the Bench rebrand working session, 2026-08-18. PR link to be added
-when opened.
+Drafted in the Bench rebrand working session, 2026-08-18. Shipped in #182.
