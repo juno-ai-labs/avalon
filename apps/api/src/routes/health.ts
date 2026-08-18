@@ -101,8 +101,16 @@ healthRoutes.get("/", async (c) => {
     message: typeof c.env.ACTIVITY_QUEUE?.send === "function" ? "binding available" : "binding unavailable",
   };
   checks.workflows = {
-    ok: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function" && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function",
-    message: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function" ? "bindings available" : "binding unavailable",
+    ok: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
+      && typeof c.env.WORK_OPPORTUNITY_WORKFLOW?.create === "function",
+    message: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
+      && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
+      && typeof c.env.WORK_OPPORTUNITY_WORKFLOW?.create === "function"
+      ? "bindings available"
+      : "binding unavailable",
   };
   // Flagship bindings are always remote, so this is unavailable under
   // `wrangler dev --local` by design and is only required in production, where

@@ -28,6 +28,7 @@ import {
   assertDurableObjectJurisdiction,
   durableObjectStubForWorkspace,
 } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 import { workstreamVisibilitySql } from "../lib/workstream-visibility";
 import {
   HarnessRunMetricsSchema,
@@ -781,7 +782,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     const parsed = ProductRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_product_request" }, 400);
     const current = await this.socketAuth({
-      connectionId: crypto.randomUUID(),
+      connectionId: uuidV7(),
       workspaceId: parsed.data.auth.workspaceId,
       workstreamId: this.objectStore.identity()?.workstreamId ?? "",
       substreamId: this.externalSubstreamId(),
@@ -1089,7 +1090,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       workstreamId: input.workstreamId,
       limit: 25,
     });
-    const attemptId = crypto.randomUUID();
+    const attemptId = uuidV7();
     const claim = await claimHarnessAttempt(executionEnv.DB, input, {
       attemptId,
       owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
@@ -1440,7 +1441,7 @@ export class SubstreamAgent extends DurableObject<Env> {
           WorkstreamRuntimeSqlRequestSchema.parse({
             workspaceId,
             workstreamId,
-            requestId: crypto.randomUUID(),
+            requestId: uuidV7(),
             statements,
           }),
         );
@@ -2133,7 +2134,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     if (!client || !server) return jsonResponse({ error: "websocket_unavailable" }, 500);
 
     const attachment: SocketAttachment = {
-      connectionId: crypto.randomUUID(),
+      connectionId: uuidV7(),
       workspaceId: identity.data.workspaceId,
       workstreamId: identity.data.workstreamId,
       substreamId: identity.data.substreamId,

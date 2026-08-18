@@ -53,6 +53,28 @@ function roomNamespace(): DurableObjectNamespace {
   return createCloudflareTestBinding<DurableObjectNamespace>(namespace);
 }
 
+function workspaceNamespace(): Env["WORKSPACE_DOS"] {
+  const hashes = new Map<string, string>();
+  const namespace = {
+    idFromName: (name: string) => createTestDurableObjectId(name),
+    get: () => ({
+      ingestConnectorEvent: async (input: { ingressEventId: string; payloadHash: string }) => {
+        const prior = hashes.get(input.ingressEventId);
+        if (prior && prior !== input.payloadHash) throw new Error("connector_event_ingress_idempotency_conflict");
+        hashes.set(input.ingressEventId, input.payloadHash);
+        return {
+          eventId: input.ingressEventId,
+          duplicate: Boolean(prior),
+          processingStatus: "pending" as const,
+          processingAttempt: -1,
+        };
+      },
+    }),
+    jurisdiction: () => namespace,
+  };
+  return createCloudflareTestBinding<Env["WORKSPACE_DOS"]>(namespace);
+}
+
 /**
  * The GitHub credentials are what put GitHub in this env's connector registry,
  * and the registry is what answers whether an event type is digestible. Without
@@ -64,6 +86,8 @@ function envFor(database: DatabaseSync, overrides: Partial<Record<string, unknow
   return createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: roomNamespace(),
+    WORKSPACE_DOS: workspaceNamespace(),
+    CONNECTOR_EVENT_WORKFLOW: { create: vi.fn().mockResolvedValue({}) },
     AVALON_REGION: "global",
     APP_ENV: "test",
     LOG_LEVEL: "error",
@@ -143,7 +167,9 @@ function insertActivity(
     event_type: input.eventType,
     resource_type: "github_pull_request",
     provider_resource_id: "juno-ai-labs/avalon#7",
+    payload_ref: null,
     actor_json: "{}",
+    subject_json: "{}",
     occurred_at: "2026-08-11T11:30:00.000Z",
     received_at: "2026-08-11T11:30:01.000Z",
     title: input.title ?? "juno-ai-labs/avalon: review requested",
@@ -152,7 +178,10 @@ function insertActivity(
     visibility_json: "{}",
     target_user_ids_json: "[]",
     entity_keys_json: "[]",
+    dedupe_key: `dedupe-${input.id}`,
+    raw_content_hash: null,
     metadata_json: "{}",
+    external_people_json: "[]",
     processing_status: "processing",
   } as Parameters<typeof routeContextually>[1];
 }
@@ -216,8 +245,8 @@ function suggestionCount(database: DatabaseSync): number {
     .get() as { count: number }).count;
 }
 
-describe("contextual routing pause boundary", () => {
-  it("skips contextual inference and still batches an unclaimed activity for Suggested work", async () => {
+describe("connector event Queue boundary", () => {
+  it("commits to WorkspaceDO and starts a Workflow without processing the event in the Queue consumer", async () => {
     const database = seededDatabase();
     const env = envFor(database);
     const activityId = "00000000-0000-7000-8000-0000000000f1";
@@ -247,10 +276,27 @@ describe("contextual routing pause boundary", () => {
     expect(suggestionCount(database)).toBe(0);
     expect(database.prepare(
       "SELECT source_id, status FROM opportunity_batch_events WHERE source_kind = 'activity'",
-    ).get()).toEqual({ source_id: activityId, status: "pending" });
+    ).get()).toBeUndefined();
     expect(database.prepare("SELECT processing_status FROM activities WHERE id = ?").get(activityId))
-      .toEqual({ processing_status: "processed" });
+      .toEqual({ processing_status: "processing" });
+    expect(env.CONNECTOR_EVENT_WORKFLOW.create).toHaveBeenCalledWith({
+      id: `connector-event:${activityId}:0`,
+      params: {
+        region: "global",
+        workspaceId: WORKSPACE,
+        eventId: activityId,
+        workflowInstanceId: `connector-event:${activityId}:0`,
+        attempt: 0,
+      },
+    });
     expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+
+    // The first handoff adds host-owned Workflow pointers to D1 metadata. A
+    // Queue replay must strip those before hashing, or the WorkspaceDO receipt
+    // would reject the same ingress UUID as changed content.
+    await consumeActivityQueue(batch, env);
+    expect(ack).toHaveBeenCalledTimes(2);
     expect(retry).not.toHaveBeenCalled();
   });
 });

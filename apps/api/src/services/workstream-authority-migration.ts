@@ -1,5 +1,8 @@
 import type { Env } from "../env";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import {
+  durableObjectStubForWorkspace,
+  workspacePlacementAffinity,
+} from "../lib/durable-object-namespace";
 import {
   WORKSTREAM_AUTHORITY_IMPORT_BUNDLE_STAGE_LIMIT,
   WORKSTREAM_AUTHORITY_CAMPAIGN_PREFIX,
@@ -11,6 +14,11 @@ import {
 } from "../durable-objects/workstream-authority-import";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import {
+  WORKSPACE_PRODUCT_IMPORT_STAGES,
+  type WorkspaceProductImportStage,
+  type WorkspaceProductImportRow,
+} from "../durable-objects/workspace-product-import";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import {
   WORKSTREAM_DO_SERVING_CONTRACT_VERSION,
@@ -32,7 +40,56 @@ interface RouteRow {
   row_counts_json: string | null;
 }
 
+interface WorkspaceProductRouteRow {
+  workspace_id: string;
+  generation: number;
+  state: "pending" | "importing" | "verified" | "active" | "quarantined";
+  stage_index: number;
+  source_cursor: number;
+  row_counts_json: string;
+}
+
 const NEVER_EXPIRES_MS = 253_402_300_799_000;
+const WORKSPACE_PRODUCT_IMPORT_PAGE_SIZE = 100;
+
+function workspaceProductSourceQuery(stage: WorkspaceProductImportStage): string {
+  switch (stage) {
+    case "activity_events":
+    case "activity_event_targets":
+    case "opportunity_batch_windows":
+    case "opportunity_batch_events":
+    case "work_opportunities":
+    case "opportunity_provenance_nodes":
+    case "opportunity_provenance_edges":
+    case "work_opportunity_user_links":
+    case "work_opportunity_user_states":
+    case "suggested_work_sets":
+    case "suggested_work_ranking_rounds":
+      return `SELECT rowid AS source_rowid, * FROM ${stage}
+               WHERE workspace_id = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3`;
+    case "work_opportunity_provenance_roots":
+      return `SELECT root.rowid AS source_rowid, root.*
+                FROM work_opportunity_provenance_roots root
+                JOIN work_opportunities opportunity ON opportunity.id = root.opportunity_id
+               WHERE opportunity.workspace_id = ?1 AND root.rowid > ?2
+               ORDER BY root.rowid LIMIT ?3`;
+    case "work_opportunity_snapshots":
+      return `SELECT snapshot.rowid AS source_rowid, snapshot.*
+                FROM work_opportunity_snapshots snapshot
+                JOIN work_opportunities opportunity ON opportunity.id = snapshot.opportunity_id
+               WHERE opportunity.workspace_id = ?1 AND snapshot.rowid > ?2
+               ORDER BY snapshot.rowid LIMIT ?3`;
+  }
+}
+
+function productImportRow(row: SourceRow): WorkspaceProductImportRow {
+  return Object.fromEntries(Object.entries(row).flatMap(([key, value]) => {
+    if (key === "source_rowid" || key === "workspace_id") return [];
+    return typeof value === "string" || typeof value === "number" || value === null
+      ? [[key, value]]
+      : [];
+  }));
+}
 
 function text(row: SourceRow, key: string, fallback = ""): string {
   const value = row[key];
@@ -798,6 +855,210 @@ async function quarantineRoute(env: Env, route: RouteRow, error: unknown): Promi
   ).bind(code, new Date().toISOString(), route.generation).run();
 }
 
+async function nextWorkspaceProductRoutes(
+  env: Env,
+  generation: number,
+  state: WorkspaceProductRouteRow["state"],
+  limit: number,
+): Promise<WorkspaceProductRouteRow[]> {
+  const rows = await env.DB.prepare(
+    `SELECT workspace_id, generation, state, stage_index, source_cursor, row_counts_json
+       FROM workspace_product_authority_routes
+      WHERE generation = ? AND state = ? ORDER BY workspace_id LIMIT ?`,
+  ).bind(generation, state, limit).all<WorkspaceProductRouteRow>();
+  return rows.results;
+}
+
+async function beginWorkspaceProductRoute(env: Env, route: WorkspaceProductRouteRow): Promise<void> {
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    route.workspace_id,
+    workspaceDOName(env.AVALON_REGION, route.workspace_id),
+  );
+  await workspace.initializeWorkspace(
+    route.workspace_id,
+    await workspacePlacementAffinity(env, route.workspace_id),
+  );
+  await env.DB.prepare(
+    `UPDATE workspace_product_authority_routes
+        SET state = 'importing', stage_index = 0, source_cursor = 0,
+            row_counts_json = '{}', last_error_code = NULL, updated_at = ?
+      WHERE workspace_id = ? AND generation = ? AND state = 'pending'`,
+  ).bind(new Date().toISOString(), route.workspace_id, route.generation).run();
+}
+
+async function importWorkspaceProductPage(env: Env, route: WorkspaceProductRouteRow): Promise<void> {
+  const stage = WORKSPACE_PRODUCT_IMPORT_STAGES[route.stage_index];
+  if (!stage) {
+    await env.DB.prepare(
+      `UPDATE workspace_product_authority_routes SET state = 'verified', updated_at = ?
+        WHERE workspace_id = ? AND generation = ? AND state = 'importing'`,
+    ).bind(new Date().toISOString(), route.workspace_id, route.generation).run();
+    return;
+  }
+  const rows = await env.DB.prepare(workspaceProductSourceQuery(stage))
+    .bind(route.workspace_id, route.source_cursor, WORKSPACE_PRODUCT_IMPORT_PAGE_SIZE)
+    .all<SourceRow>();
+  if (rows.results.length === 0) {
+    const nextStage = route.stage_index + 1;
+    await env.DB.prepare(
+      `UPDATE workspace_product_authority_routes
+          SET stage_index = ?, source_cursor = 0,
+              state = CASE WHEN ? >= ? THEN 'verified' ELSE 'importing' END,
+              updated_at = ?
+        WHERE workspace_id = ? AND generation = ? AND state = 'importing'
+          AND stage_index = ? AND source_cursor = ?`,
+    ).bind(
+      nextStage,
+      nextStage,
+      WORKSPACE_PRODUCT_IMPORT_STAGES.length,
+      new Date().toISOString(),
+      route.workspace_id,
+      route.generation,
+      route.stage_index,
+      route.source_cursor,
+    ).run();
+    return;
+  }
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    route.workspace_id,
+    workspaceDOName(env.AVALON_REGION, route.workspace_id),
+  );
+  const accepted = await workspace.importWorkspaceProductRows({
+    workspaceId: route.workspace_id,
+    stage,
+    rows: rows.results.map(productImportRow),
+  });
+  if (accepted !== rows.results.length) throw new Error("workspace_product_import_incomplete");
+  const nextCursor = Math.max(...rows.results.map((row) => row.source_rowid));
+  const counts = JSON.parse(route.row_counts_json) as Record<string, number>;
+  counts[stage] = Number(counts[stage] ?? 0) + rows.results.length;
+  await env.DB.prepare(
+    `UPDATE workspace_product_authority_routes
+        SET source_cursor = ?, row_counts_json = ?, last_error_code = NULL, updated_at = ?
+      WHERE workspace_id = ? AND generation = ? AND state = 'importing'
+        AND stage_index = ? AND source_cursor = ?`,
+  ).bind(
+    nextCursor,
+    JSON.stringify(counts),
+    new Date().toISOString(),
+    route.workspace_id,
+    route.generation,
+    route.stage_index,
+    route.source_cursor,
+  ).run();
+}
+
+async function quarantineWorkspaceProductRoute(
+  env: Env,
+  route: WorkspaceProductRouteRow,
+  error: unknown,
+): Promise<void> {
+  const code = error instanceof Error ? error.message.slice(0, 180) : "workspace_product_import_failed";
+  await env.DB.prepare(
+    `UPDATE workspace_product_authority_routes
+        SET state = 'quarantined', last_error_code = ?, updated_at = ?
+      WHERE workspace_id = ? AND generation = ?`,
+  ).bind(code, new Date().toISOString(), route.workspace_id, route.generation).run();
+  await env.DB.prepare(
+    `UPDATE workstream_authority_control SET phase = 'quarantined', reason = ?, updated_at = ?
+      WHERE id = 1 AND generation = ?`,
+  ).bind(code, new Date().toISOString(), route.generation).run();
+}
+
+/**
+ * Remove the verified legacy copy before advertising the WorkspaceDO route.
+ *
+ * The maintenance phase has already fenced every producer, so this D1 batch is
+ * a stable, all-or-nothing deletion. Child rows without workspace_id are scoped
+ * through their owning opportunity; every other product row carries the
+ * workspace directly. The route becomes active in the same batch, leaving no
+ * state in which D1 has been scrubbed while the control plane still promises a
+ * legacy rollback source.
+ */
+async function activateWorkspaceProductRoute(env: Env, route: WorkspaceProductRouteRow): Promise<void> {
+  const opportunityIds = `SELECT id FROM work_opportunities WHERE workspace_id = ?`;
+  const nodeIds = `SELECT id FROM opportunity_provenance_nodes WHERE workspace_id = ?`;
+  const at = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM work_opportunity_snapshots WHERE opportunity_id IN (${opportunityIds})`,
+    ).bind(route.workspace_id),
+    env.DB.prepare(
+      `DELETE FROM work_opportunity_provenance_roots WHERE opportunity_id IN (${opportunityIds})`,
+    ).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM work_opportunity_user_links WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM work_opportunity_user_states WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(
+      `DELETE FROM opportunity_provenance_edges
+        WHERE parent_node_id IN (${nodeIds}) OR child_node_id IN (${nodeIds})`,
+    ).bind(route.workspace_id, route.workspace_id),
+    env.DB.prepare(`DELETE FROM opportunity_provenance_nodes WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM suggested_work_ranking_rounds WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM suggested_work_sets WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    // A D1 workstream identity anchor still has an unshipped foreign key to the
+    // opportunity it came from. Keep only that opaque identity row; all prompts,
+    // labels, reasoning, user state, and provenance are redacted or removed.
+    env.DB.prepare(
+      `UPDATE work_opportunities
+          SET audience_scope = 'workspace', audience_user_id = NULL,
+              display_prompt = 'Migrated to WorkspaceDO',
+              execution_prompt = 'Migrated to WorkspaceDO',
+              admission_reasoning = 'Migrated to WorkspaceDO',
+              provider_icon = 'plug', source_label = 'WorkspaceDO identity anchor',
+              status = 'started', started_by_user_id = NULL,
+              start_idempotency_key = NULL, updated_at = ?
+        WHERE workspace_id = ? AND EXISTS (
+          SELECT 1 FROM workstreams WHERE created_from_opportunity_id = work_opportunities.id
+        )`,
+    ).bind(at, route.workspace_id),
+    env.DB.prepare(
+      `DELETE FROM work_opportunities
+        WHERE workspace_id = ? AND NOT EXISTS (
+          SELECT 1 FROM workstreams WHERE created_from_opportunity_id = work_opportunities.id
+        )`,
+    ).bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM opportunity_batch_events WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM opportunity_batch_windows WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM activity_event_targets WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM activity_events WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(`DELETE FROM workspace_opportunity_versions WHERE workspace_id = ?`)
+      .bind(route.workspace_id),
+    env.DB.prepare(
+      `UPDATE workspace_product_authority_routes SET state = 'active', updated_at = ?
+        WHERE workspace_id = ? AND generation = ? AND state = 'verified'`,
+    ).bind(at, route.workspace_id, route.generation),
+  ]);
+}
+
+async function processWorkspaceProductRoutes(
+  env: Env,
+  routes: WorkspaceProductRouteRow[],
+  operation: (env: Env, route: WorkspaceProductRouteRow) => Promise<void>,
+): Promise<boolean> {
+  const results = await Promise.allSettled(routes.map((route) => operation(env, route)));
+  let succeeded = true;
+  for (const [index, result] of results.entries()) {
+    if (result.status === "fulfilled") continue;
+    succeeded = false;
+    const route = routes[index];
+    if (route) await quarantineWorkspaceProductRoute(env, route, result.reason);
+  }
+  return succeeded;
+}
+
 /**
  * Execute bounded maintenance-window import work. The scheduler calls this
  * repeatedly; every page and every D1 cursor update is idempotent.
@@ -848,6 +1109,27 @@ export async function processWorkstreamAuthorityMigration(
           WHERE generation = ? AND state != 'verified'`,
       ).bind(control.generation).first<{ count: number }>();
       if (Number(remaining?.count ?? 0) === 0) {
+        const pendingProducts = await nextWorkspaceProductRoutes(
+          env, control.generation, "pending", batchSize,
+        );
+        if (pendingProducts.length > 0) {
+          if (!await processWorkspaceProductRoutes(env, pendingProducts, beginWorkspaceProductRoute)) return;
+          operationsRemaining -= pendingProducts.length;
+          continue;
+        }
+        const importingProducts = await nextWorkspaceProductRoutes(
+          env, control.generation, "importing", batchSize,
+        );
+        if (importingProducts.length > 0) {
+          if (!await processWorkspaceProductRoutes(env, importingProducts, importWorkspaceProductPage)) return;
+          operationsRemaining -= importingProducts.length;
+          continue;
+        }
+        const remainingProducts = await env.DB.prepare(
+          `SELECT COUNT(*) AS count FROM workspace_product_authority_routes
+            WHERE generation = ? AND state != 'verified'`,
+        ).bind(control.generation).first<{ count: number }>();
+        if (Number(remainingProducts?.count ?? 0) !== 0) return;
         await env.DB.prepare(
           `UPDATE workstream_authority_control
               SET phase = 'maintenance_verified', verified_at = ?, updated_at = ?
@@ -857,6 +1139,18 @@ export async function processWorkstreamAuthorityMigration(
       return;
     }
     if (control.phase === "maintenance_verified") {
+      const verifiedProducts = await nextWorkspaceProductRoutes(
+        env, control.generation, "verified", batchSize,
+      );
+      if (verifiedProducts.length > 0) {
+        if (!await processWorkspaceProductRoutes(
+          env,
+          verifiedProducts,
+          activateWorkspaceProductRoute,
+        )) return;
+        operationsRemaining -= verifiedProducts.length;
+        continue;
+      }
       const verified = await nextRoutes(env, "verified", batchSize);
       if (verified.length > 0) {
         if (!await processRoutes(verified, activateRoute)) return;
@@ -875,12 +1169,17 @@ export async function processWorkstreamAuthorityMigration(
               AND NOT EXISTS (
                 SELECT 1 FROM workstream_authority_routes
                  WHERE generation = ? AND state != 'active'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM workspace_product_authority_routes
+                 WHERE generation = ? AND state != 'active'
               )`,
         ).bind(
           WORKSTREAM_DO_SERVING_CONTRACT_VERSION,
           new Date().toISOString(),
           control.generation,
           WORKSTREAM_DO_SERVING_CONTRACT_VERSION,
+          control.generation,
           control.generation,
         ).run();
       }

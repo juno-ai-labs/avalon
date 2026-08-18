@@ -31,6 +31,8 @@ import {
   blockDashboardBlockResultHash,
   type BlockDashboardBlockDispatch,
 } from "../src/durable-objects/block-dashboard-protocol";
+import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/workspace-activity-event-protocol";
+import type { WorkspaceOpportunityPersistRequest } from "../src/durable-objects/workspace-opportunity-protocol";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000101";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-000000000102";
@@ -65,10 +67,11 @@ async function seedOpenAuthority(): Promise<void> {
       user_id TEXT NOT NULL,
       status TEXT NOT NULL,
       role TEXT NOT NULL,
+      last_seen_at TEXT,
       PRIMARY KEY (workspace_id, user_id)
     )`),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role)
-      VALUES (?, ?, 'active', 'member')`).bind(WORKSPACE_ID, USER_ID),
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, USER_ID),
     env.DB.prepare(`CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -131,6 +134,40 @@ function effectEnvelope(
     requiredProjectionVersion: null,
     payloadHash: workstreamRegionalEffectHash(effect),
     effect,
+  };
+}
+
+function connectorEvent(eventId = "00000000-0000-7000-8000-000000000301") {
+  return {
+    connectorType: "github",
+    activity: {
+      id: eventId,
+      workspaceId: WORKSPACE_ID,
+      region: "global" as const,
+      connectionId: "00000000-0000-7000-8000-000000000302",
+      connectionScope: "workspace" as const,
+      connectionOwnerUserId: null,
+      provider: "github",
+      providerEventId: "delivery-42",
+      eventType: "github.pull_request.edited",
+      resourceType: "github_pull_request",
+      providerResourceId: "juno-ai-labs/avalon#42",
+      actor: { displayName: "Ada" },
+      subject: { number: 42 },
+      occurredAt: "2026-08-18T20:00:00.000Z",
+      receivedAt: "2026-08-18T20:00:01.000Z",
+      title: "Pull request edited",
+      summary: "Ada edited the connector architecture",
+      textSnippet: "Queue to WorkspaceDO to Workflow",
+      payloadRef: "global/provider-webhooks/github/body.json",
+      visibility: {},
+      targetUserIds: [USER_ID],
+      entityKeys: ["github:pr:42"],
+      dedupeKey: "github:delivery-42:pull-request-edited",
+      rawContentHash: "raw-sha256",
+      metadata: { url: "https://github.com/juno-ai-labs/avalon/pull/42" },
+      externalPeople: [],
+    },
   };
 }
 
@@ -328,6 +365,8 @@ describe("Durable Objects in the Workers runtime", () => {
           "_sql_schema_migrations",
           "socket_ticket_receipts",
           "workspace_directory_state",
+          "workspace_connector_event_ingress_receipts",
+          "workspace_connector_events",
           "workspace_identity",
           "workspace_workstream_directory",
           "workspace_workstream_effect_receipts",
@@ -337,6 +376,19 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_workstream_viewers",
           "workspace_sync_events",
           "workspace_socket_ticket_receipts",
+          "workspace_activity_events",
+          "workspace_activity_event_targets",
+          "opportunity_batch_windows",
+          "opportunity_batch_events",
+          "work_opportunities",
+          "opportunity_provenance_nodes",
+          "opportunity_provenance_edges",
+          "work_opportunity_provenance_roots",
+          "work_opportunity_user_links",
+          "work_opportunity_user_states",
+          "suggested_work_sets",
+          "suggested_work_ranking_rounds",
+          "work_opportunity_snapshots",
         ],
       },
       {
@@ -1462,6 +1514,375 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM workspace_workstream_viewers`,
       ).one().count).toBe(1);
+    });
+  });
+
+  it("owns activity, opportunity provenance, and resolved suggestion state in WorkspaceDO SQL", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const activityId = await stub.recordActivityEvent({
+      workspaceId: WORKSPACE_ID,
+      eventType: "workstream.mention.created",
+      subjectType: "workstream",
+      subjectId: WORKSTREAM_ID,
+      subjectSequenceNumber: 7,
+      actorType: "user",
+      actorUserId: USER_ID,
+      actorLabel: "Ada",
+      title: "Ada mentioned you",
+      body: "Review the Durable Object cutover",
+      canonicalUrl: null,
+      audience: { kind: "user", userId: USER_ID },
+      digestible: true,
+      occurredAt: "2026-08-18T20:00:00.000Z",
+      sourceKind: "workstream_message",
+      sourceId: "00000000-0000-7000-8000-000000000401",
+      dedupeKey: "mention:workspace-product-runtime",
+      metadata: { reason: "runtime-test" },
+      targets: [{ userId: USER_ID, relation: "mentioned" }],
+    });
+    await expect(stub.recordActivityEvent({
+      workspaceId: WORKSPACE_ID,
+      eventType: "workstream.mention.created",
+      subjectType: "workstream",
+      subjectId: WORKSTREAM_ID,
+      actorType: "user",
+      actorUserId: USER_ID,
+      actorLabel: "Ada",
+      title: "Duplicate delivery",
+      body: "Must resolve to the first event",
+      canonicalUrl: null,
+      audience: { kind: "user", userId: USER_ID },
+      digestible: true,
+      occurredAt: "2026-08-18T20:00:00.000Z",
+      sourceKind: "workstream_message",
+      sourceId: "00000000-0000-7000-8000-000000000401",
+      dedupeKey: "mention:workspace-product-runtime",
+      metadata: {},
+      targets: [{ userId: USER_ID, relation: "mentioned" }],
+    })).resolves.toBe(activityId);
+    const activityPage = WorkspaceActivityEventListResultSchema.parse(await stub.listActivityEvents({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      from: null,
+      through: 100,
+      notBefore: null,
+      digestibleOnly: false,
+      limit: 20,
+    }));
+    expect(activityPage.items).toHaveLength(1);
+    expect(activityPage.items[0]).toMatchObject({
+      id: activityId,
+      isTarget: true,
+      targetRelations: ["mentioned"],
+      title: "Ada mentioned you",
+    });
+
+    const opportunityId = "00000000-0000-7000-8000-000000000402";
+    const opportunitySourceId = "00000000-0000-7000-8000-000000000403";
+    await expect(stub.ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: opportunitySourceId,
+      payloadHash: `sha256:${"d".repeat(64)}`,
+      event: {
+        connectorType: "github",
+        activity: {
+          id: opportunitySourceId,
+          workspaceId: WORKSPACE_ID,
+          region: "global",
+          connectionId: "00000000-0000-7000-8000-000000000404",
+          connectionScope: "workspace",
+          connectionOwnerUserId: null,
+          provider: "github",
+          providerEventId: "delivery-42",
+          eventType: "pull_request.review_requested",
+          resourceType: "pull_request",
+          providerResourceId: "juno-ai-labs/avalon#42",
+          actor: { login: "ada" },
+          subject: { number: 42 },
+          occurredAt: "2026-08-18T20:00:00.000Z",
+          receivedAt: "2026-08-18T20:00:01.000Z",
+          title: "Cutover review requested",
+          summary: "Review requested",
+          textSnippet: "Ada assigned the WorkspaceDO cutover review.",
+          payloadRef: null,
+          visibility: {},
+          targetUserIds: [],
+          entityKeys: ["github:pr:42"],
+          dedupeKey: "github:delivery-42",
+          rawContentHash: null,
+          metadata: { canonicalUrl: "https://github.com/juno-ai-labs/avalon/pull/42" },
+          externalPeople: [],
+        },
+      },
+    })).resolves.toMatchObject({ eventId: opportunitySourceId, duplicate: false });
+    const hash = "a".repeat(64);
+    const opportunityInput = {
+      workspaceId: WORKSPACE_ID,
+      audience: { scope: "personal", userId: USER_ID },
+      proposedId: opportunityId,
+      existingTargetId: null,
+      sourceFingerprint: hash,
+      displayPrompt: "Review the DO cutover",
+      executionPrompt: "Review the WorkspaceDO authority cutover and report risks.",
+      admissionReasoning: "The member was explicitly asked to review the cutover.",
+      providerIcon: "brand-github",
+      sourceLabel: "From github",
+      displayPromptHash: "b".repeat(64),
+      executionPromptHash: "c".repeat(64),
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      sources: [{
+        id: opportunitySourceId,
+        kind: "activity",
+        provider: "github",
+        providerTenantId: "juno-ai-labs",
+        connectionId: "00000000-0000-7000-8000-000000000404",
+        title: "Cutover review requested",
+        summary: "Review requested",
+        text: "Ada assigned the WorkspaceDO cutover review.",
+        actor: { login: "ada" },
+        subject: { number: 42 },
+        externalPeople: [{ handle: "ada", role: "assignee" }],
+        entityKeys: ["github:pr:42"],
+        canonicalUrl: "https://github.com/juno-ai-labs/avalon/pull/42",
+        workstreamId: null,
+        occurredAt: "2026-08-18T20:00:00.000Z",
+      }],
+      links: [{
+        id: "00000000-0000-7000-8000-000000000405",
+        sourceId: opportunitySourceId,
+        userId: USER_ID,
+        role: "reviewer",
+        resolution: "inferred",
+        reasoning: "The source names this member.",
+        sourceText: "Ada",
+        startOffset: 0,
+        endOffset: 3,
+        verifiedIdentity: null,
+      }],
+      rankUserIds: [USER_ID],
+      eagerUserIds: [],
+      rankDueAt: "2099-01-01T00:00:00.000Z",
+    } satisfies WorkspaceOpportunityPersistRequest;
+    await expect(stub.persistOpportunity(opportunityInput)).resolves.toMatchObject({
+      opportunityId,
+      version: 1,
+    });
+    await expect(stub.persistOpportunity(opportunityInput)).resolves.toMatchObject({
+      opportunityId,
+      version: 1,
+    });
+    await expect(stub.listOpportunities({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      now: "2026-08-18T20:01:00.000Z",
+      limit: 4,
+      scheduleAt: "2026-08-18T20:03:00.000Z",
+    })).resolves.toMatchObject({ items: [{ id: opportunityId, version: 1 }] });
+    await expect(stub.opportunityOriginEvents({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      opportunityId,
+      now: "2026-08-18T20:01:00.000Z",
+      limit: 8,
+    })).resolves.toMatchObject([{
+      connectorType: "github",
+      activity: { id: opportunitySourceId, providerResourceId: "juno-ai-labs/avalon#42" },
+    }]);
+    await env.DB.prepare(
+      `UPDATE workspace_members SET last_seen_at = '2000-01-01T00:00:00.000Z'
+        WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(WORKSPACE_ID, USER_ID).run();
+    await expect(stub.dismissOpportunity({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      opportunityId,
+      now: "2026-08-18T20:01:00.000Z",
+    })).resolves.toBe(true);
+    await expect(stub.listOpportunities({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      now: "2026-08-18T20:01:01.000Z",
+      limit: 4,
+      scheduleAt: "2026-08-18T20:03:00.000Z",
+    })).resolves.toEqual({ items: [] });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM opportunity_provenance_nodes",
+      ).one().count).toBeGreaterThanOrEqual(4);
+      expect(state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM work_opportunity_user_states WHERE opportunity_id = ? AND user_id = ?",
+        opportunityId,
+        USER_ID,
+      ).one().status).toBe("dismissed");
+    });
+  });
+
+  it("imports workspace product rows idempotently and rejects conflicts outside the maintenance route", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
+      ),
+      env.DB.prepare(`CREATE TABLE workspace_product_authority_routes (
+        workspace_id TEXT PRIMARY KEY,
+        generation INTEGER NOT NULL,
+        state TEXT NOT NULL
+      )`),
+      env.DB.prepare(`INSERT INTO workspace_product_authority_routes
+        (workspace_id, generation, state) VALUES (?, 1, 'importing')`).bind(WORKSPACE_ID),
+    ]);
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const eventId = "00000000-0000-7000-8000-000000000421";
+    const activity = {
+      log_sequence: 42,
+      id: eventId,
+      event_type: "workstream.message.posted",
+      subject_type: "workstream",
+      subject_id: WORKSTREAM_ID,
+      subject_sequence_number: 9,
+      actor_type: "user",
+      actor_user_id: USER_ID,
+      actor_label: "Ada",
+      title: "Imported activity",
+      body: "The maintenance cursor and target must survive.",
+      canonical_url: null,
+      audience_kind: "user",
+      audience_user_id: USER_ID,
+      audience_workstream_id: null,
+      digestible: 1,
+      occurred_at: "2098-08-18T20:00:00.000Z",
+      created_at: "2098-08-18T20:00:01.000Z",
+      source_kind: "workstream_message",
+      source_id: "00000000-0000-7000-8000-000000000422",
+      dedupe_key: "maintenance:activity:42",
+      metadata_json: JSON.stringify({ imported: true }),
+    };
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "activity_events",
+      rows: [activity],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "activity_events",
+      rows: [activity],
+    })).resolves.toBe(1);
+    await expect(stub.importWorkspaceProductRows({
+      workspaceId: WORKSPACE_ID,
+      stage: "activity_event_targets",
+      rows: [{
+        event_id: eventId,
+        user_id: USER_ID,
+        relation: "mentioned",
+        created_at: "2098-08-18T20:00:01.000Z",
+      }],
+    })).resolves.toBe(1);
+    await expect(stub.listActivityEvents({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      from: null,
+      through: 42,
+      notBefore: null,
+      digestibleOnly: false,
+      limit: 20,
+    })).resolves.toMatchObject({
+      items: [{ sequence: 42, id: eventId, isTarget: true, targetRelations: ["mentioned"] }],
+    });
+    await runInDurableObject(stub, async (instance) => {
+      await expect(instance.importWorkspaceProductRows({
+        workspaceId: WORKSPACE_ID,
+        stage: "activity_events",
+        rows: [{ ...activity, title: "Conflicting activity" }],
+      })).rejects.toThrow("workspace_product_import_conflict:activity_events");
+    });
+    await env.DB.prepare(
+      `UPDATE workstream_authority_control SET phase = 'durable_object_open' WHERE id = 1`,
+    ).run();
+    await runInDurableObject(stub, async (instance) => {
+      await expect(instance.importWorkspaceProductRows({
+        workspaceId: WORKSPACE_ID,
+        stage: "activity_events",
+        rows: [activity],
+      })).rejects.toThrow("workspace_product_import_not_active");
+    });
+  });
+
+  it("owns connector events, deduplicates Queue replays, and fences Workflow settlement", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const firstId = "00000000-0000-7000-8000-000000000301";
+    const replayId = "00000000-0000-7000-8000-000000000303";
+    const payloadHash = `sha256:${"a".repeat(64)}`;
+    await expect(stub.ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: firstId,
+      payloadHash,
+      event: connectorEvent(firstId),
+    })).resolves.toEqual({
+      eventId: firstId,
+      duplicate: false,
+      processingStatus: "pending",
+      processingAttempt: -1,
+    });
+    await expect(stub.ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: replayId,
+      payloadHash,
+      event: connectorEvent(replayId),
+    })).resolves.toEqual({
+      eventId: firstId,
+      duplicate: true,
+      processingStatus: "pending",
+      processingAttempt: -1,
+    });
+    const workflowInstanceId = `connector-event:${firstId}`;
+    const claim = await stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      workflowInstanceId,
+      attempt: 0,
+    });
+    expect(claim).toMatchObject({
+      outcome: "claimed",
+      event: { connectorType: "github", activity: { id: firstId, workspaceId: WORKSPACE_ID } },
+    });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      workflowInstanceId: "connector-event:other",
+      attempt: 0,
+    })).resolves.toEqual({ outcome: "busy" });
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      workflowInstanceId,
+      outcome: "processed",
+      error: null,
+    });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      workflowInstanceId,
+      attempt: 0,
+    })).resolves.toEqual({ outcome: "processed" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM workspace_connector_events`,
+      ).one().count).toBe(1);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM workspace_connector_event_ingress_receipts`,
+      ).one().count).toBe(2);
     });
   });
 

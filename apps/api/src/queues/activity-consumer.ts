@@ -19,9 +19,15 @@ import { z } from "zod";
 
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
 import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceConnectorEventSchema,
+  type WorkspaceConnectorEvent,
+} from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
+import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
+import { uuidV7 } from "../lib/uuid-v7";
 import {
   BASE_CONFIDENCE_FLOOR,
   DISMISSAL_RUN_LIMIT,
@@ -82,6 +88,7 @@ interface ActivityRow {
   provider_resource_id: string | null;
   payload_ref: string | null;
   actor_json: string;
+  subject_json: string;
   occurred_at: string;
   received_at: string;
   title: string;
@@ -90,7 +97,10 @@ interface ActivityRow {
   visibility_json: string;
   target_user_ids_json: string;
   entity_keys_json: string;
+  dedupe_key: string;
+  raw_content_hash: string | null;
   metadata_json: string;
+  external_people_json: string;
   processing_status: "pending" | "processing" | "processed" | "failed";
 }
 
@@ -156,6 +166,81 @@ function parseStrings(value: string): string[] {
   }
 }
 
+function connectorEventMetadata(value: string): Record<string, unknown> {
+  const metadata = parseRecord(value);
+  delete metadata._processing_claim_id;
+  delete metadata._processing_claimed_at;
+  delete metadata._processing_error;
+  delete metadata._workspace_do_event_id;
+  delete metadata._connector_event_workflow_id;
+  delete metadata._connector_event_attempt;
+  return metadata;
+}
+
+function workspaceConnectorEvent(activity: ActivityRow): WorkspaceConnectorEvent {
+  return WorkspaceConnectorEventSchema.parse({
+    connectorType: activity.connector_type,
+    activity: {
+      id: activity.id,
+      workspaceId: activity.workspace_id,
+      region: activity.workspace_region,
+      connectionId: activity.connection_id,
+      connectionScope: activity.connection_scope,
+      connectionOwnerUserId: activity.connection_owner_user_id,
+      provider: activity.provider,
+      providerEventId: activity.provider_event_id,
+      eventType: activity.event_type,
+      resourceType: activity.resource_type,
+      providerResourceId: activity.provider_resource_id,
+      actor: parseRecord(activity.actor_json),
+      subject: parseRecord(activity.subject_json),
+      occurredAt: activity.occurred_at,
+      receivedAt: activity.received_at,
+      title: activity.title,
+      summary: activity.summary,
+      textSnippet: activity.text_snippet,
+      payloadRef: activity.payload_ref,
+      visibility: parseRecord(activity.visibility_json),
+      targetUserIds: parseStrings(activity.target_user_ids_json),
+      entityKeys: parseStrings(activity.entity_keys_json),
+      dedupeKey: activity.dedupe_key,
+      rawContentHash: activity.raw_content_hash,
+      metadata: connectorEventMetadata(activity.metadata_json),
+      externalPeople: (() => {
+        try {
+          return JSON.parse(activity.external_people_json) as unknown;
+        } catch {
+          return [];
+        }
+      })(),
+    },
+  });
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => (
+    `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+  )).join(",")}}`;
+}
+
+async function connectorEventPayloadHash(event: WorkspaceConnectorEvent): Promise<string> {
+  // Ingress IDs and receipt time describe delivery, not provider identity. A
+  // provider/Queue replay with a new UUID or receive timestamp must still hash
+  // to the canonical event selected by the WorkspaceDO unique keys.
+  const content = {
+    ...event,
+    activity: {
+      ...event.activity,
+      id: "",
+      receivedAt: "",
+    },
+  };
+  return `sha256:${await sha256Hex(canonicalJson(content))}`;
+}
+
 function deepEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -189,10 +274,13 @@ export const activityQueueConsumer = consumeActivityQueue;
 export async function recoverPendingActivityQueue(env: Env, limit = 100): Promise<number> {
   const staleBefore = new Date(Date.now() - 60_000).toISOString();
   const pending = await env.DB.prepare(
-    `SELECT a.id, a.workspace_id, w.region
+    `SELECT a.id, a.workspace_id, w.region, a.processing_status,
+            CAST(COALESCE(json_extract(a.metadata_json, '$._connector_event_attempt'), -1) AS INTEGER) AS connector_event_attempt
      FROM activities a
      JOIN workspaces w ON w.id = a.workspace_id
-     WHERE a.processing_status = 'pending' AND a.received_at <= ?
+     WHERE a.processing_status IN ('pending', 'failed') AND a.received_at <= ?
+       AND (a.processing_status = 'pending'
+         OR CAST(COALESCE(json_extract(a.metadata_json, '$._connector_event_attempt'), -1) AS INTEGER) < 5)
        AND w.region = ?
      ORDER BY a.received_at ASC, a.id ASC
      LIMIT ?`,
@@ -200,6 +288,8 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
     id: string;
     workspace_id: string;
     region: "global" | "eu";
+    processing_status: "pending" | "failed";
+    connector_event_attempt: number;
   }>();
   if (pending.results.length === 0) return 0;
   await env.ACTIVITY_QUEUE.sendBatch(pending.results.map((activity) => ({
@@ -207,7 +297,9 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
       region: activity.region,
       workspaceId: activity.workspace_id,
       activityId: activity.id,
-      attempt: 0,
+      attempt: activity.processing_status === "failed"
+        ? Math.max(0, activity.connector_event_attempt + 1)
+        : Math.max(0, activity.connector_event_attempt),
     }),
   })));
   return pending.results.length;
@@ -297,65 +389,69 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     return;
   }
 
-  const claimId = crypto.randomUUID();
-  let claimed = false;
   try {
     const activity = await loadActivity(env, input);
-    if (!activity || activity.processing_status === "processed") {
+    if (!activity) {
       message.ack();
       return;
     }
-
-    const staleBefore = new Date(Date.now() - 5 * 60_000).toISOString();
-    const claim = await env.DB.prepare(
-      `UPDATE activities
-          SET processing_status = 'processing',
-              metadata_json = json_set(
-                COALESCE(metadata_json, '{}'),
-                '$._processing_claim_id', ?1,
-                '$._processing_claimed_at', ?2
-              )
-        WHERE id = ?3
-          AND workspace_id = ?4
-          AND (
-            processing_status IN ('pending', 'failed')
-            OR (
-              processing_status = 'processing'
-              AND COALESCE(json_extract(metadata_json, '$._processing_claimed_at'), '') < ?5
-            )
-          )`
-    )
-      .bind(claimId, new Date().toISOString(), input.activityId, input.workspaceId, staleBefore)
-      .run();
-    claimed = (claim.meta.changes ?? 0) === 1;
-    if (!claimed) {
-      message.retry({ delaySeconds: 30 });
-      return;
+    const event = workspaceConnectorEvent(activity);
+    const workspace = await workspaceDirectory(env, input.workspaceId);
+    const accepted = await workspace.ingestConnectorEvent({
+      workspaceId: input.workspaceId,
+      ingressEventId: activity.id,
+      payloadHash: await connectorEventPayloadHash(event),
+      event,
+    });
+    const workflowAttempt = accepted.processingStatus === "processing"
+      ? accepted.processingAttempt
+      : accepted.processingStatus === "failed"
+        ? Math.max(input.attempt, accepted.processingAttempt + 1)
+        : Math.max(0, input.attempt);
+    const recordedAttempt = Math.min(workflowAttempt, 5);
+    const workflowInstanceId = `connector-event:${accepted.eventId}:${recordedAttempt}`;
+    if (accepted.processingStatus !== "processed" && workflowAttempt <= 5) {
+      try {
+        await env.CONNECTOR_EVENT_WORKFLOW.create({
+          id: workflowInstanceId,
+          params: {
+            region: input.region,
+            workspaceId: input.workspaceId,
+            eventId: accepted.eventId,
+            workflowInstanceId,
+            attempt: workflowAttempt,
+          },
+        });
+      } catch (error) {
+        if (!(error instanceof Error) || !/(already exists|duplicate|conflict)/iu.test(error.message)) {
+          throw error;
+        }
+      }
     }
-
-    const directWorkstreamIds = await routeDirectWatches(env, activity);
-    const automationWorkstreamIds = await runMatchingAutomations(env, activity);
-    for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
-    const routedContextually = SUGGESTED_CONTEXT_ENABLED
-      ? await routeContextually(env, activity, directWorkstreamIds)
-      : false;
-    if (directWorkstreamIds.size === 0 && !routedContextually) {
-      await enqueueActivityOpportunity(env, activity.id);
-    }
-    await projectActivityEvent(env, activity);
-
     await env.DB.prepare(
       `UPDATE activities
-          SET processing_status = 'processed',
-              metadata_json = json_remove(
-                json_remove(metadata_json, '$._processing_claim_id'),
-                '$._processing_claimed_at'
+          SET processing_status = ?1,
+              metadata_json = json_set(
+                json_remove(
+                  json_remove(COALESCE(metadata_json, '{}'), '$._processing_claim_id'),
+                  '$._processing_claimed_at'
+                ),
+                '$._workspace_do_event_id', ?2,
+                '$._connector_event_workflow_id', ?3,
+                '$._connector_event_attempt', ?4
               )
-        WHERE id = ?1
-          AND workspace_id = ?2
-          AND json_extract(metadata_json, '$._processing_claim_id') = ?3`
+        WHERE id = ?5 AND workspace_id = ?6`
     )
-      .bind(activity.id, activity.workspace_id, claimId)
+      .bind(
+        accepted.processingStatus === "processed"
+          ? "processed"
+          : workflowAttempt <= 5 ? "processing" : "failed",
+        accepted.eventId,
+        workflowInstanceId,
+        recordedAttempt,
+        activity.id,
+        activity.workspace_id,
+      )
       .run();
     const connector = ["generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x"]
       .includes(activity.connector_type)
@@ -377,29 +473,66 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     }
     message.ack();
   } catch (error) {
-    if (claimed) {
-      await env.DB.prepare(
-        `UPDATE activities
-            SET processing_status = 'failed',
-                metadata_json = json_set(
-                  json_remove(metadata_json, '$._processing_claim_id'),
-                  '$._processing_error', ?1
-                )
-          WHERE id = ?2
-            AND workspace_id = ?3
-            AND json_extract(metadata_json, '$._processing_claim_id') = ?4`
-      )
-        .bind(
-          error instanceof Error ? error.message.slice(0, 500) : "activity_processing_failed",
-          input.activityId,
-          input.workspaceId,
-          claimId
-        )
-        .run();
-    }
+    logWarn(env, "connector_event_queue_admission_failed", {
+      workspace_id: input.workspaceId,
+      ingress_event_id: input.activityId,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
     const attempts = Math.max(1, message.attempts);
     message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
   }
+}
+
+/** The connector-event Workflow's idempotent product processing step. */
+export async function processConnectorEvent(
+  env: Env,
+  event: WorkspaceConnectorEvent,
+): Promise<void> {
+  const activity = activityRowFromWorkspaceEvent(event);
+  const directWorkstreamIds = await routeDirectWatches(env, activity);
+  const automationWorkstreamIds = await runMatchingAutomations(env, activity);
+  for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
+  const routedContextually = SUGGESTED_CONTEXT_ENABLED
+    ? await routeContextually(env, activity, directWorkstreamIds)
+    : false;
+  if (directWorkstreamIds.size === 0 && !routedContextually) {
+    await enqueueActivityOpportunity(env, activity.id, activity.workspace_id);
+  }
+  await projectActivityEvent(env, activity);
+}
+
+function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): ActivityRow {
+  const activity = event.activity;
+  return {
+    id: activity.id,
+    workspace_id: activity.workspaceId,
+    workspace_region: activity.region,
+    connection_id: activity.connectionId,
+    connector_type: event.connectorType,
+    connection_scope: activity.connectionScope,
+    connection_owner_user_id: activity.connectionOwnerUserId,
+    provider: activity.provider,
+    provider_event_id: activity.providerEventId,
+    event_type: activity.eventType,
+    resource_type: activity.resourceType,
+    provider_resource_id: activity.providerResourceId,
+    payload_ref: activity.payloadRef,
+    actor_json: JSON.stringify(activity.actor),
+    subject_json: JSON.stringify(activity.subject),
+    occurred_at: activity.occurredAt,
+    received_at: activity.receivedAt,
+    title: activity.title,
+    summary: activity.summary,
+    text_snippet: activity.textSnippet,
+    visibility_json: JSON.stringify(activity.visibility),
+    target_user_ids_json: JSON.stringify(activity.targetUserIds),
+    entity_keys_json: JSON.stringify(activity.entityKeys),
+    dedupe_key: activity.dedupeKey,
+    raw_content_hash: activity.rawContentHash,
+    metadata_json: JSON.stringify(activity.metadata),
+    external_people_json: JSON.stringify(activity.externalPeople ?? []),
+    processing_status: "processing",
+  };
 }
 
 /**
@@ -637,7 +770,7 @@ async function injectActivityMessage(
     .first<{ sequence_number: number }>();
   if (!sequence) return false;
 
-  const id = crypto.randomUUID();
+  const id = uuidV7();
   const createdAt = new Date().toISOString();
   const text = [activity.title, activity.summary].filter(Boolean).join(" — ");
   const inserted = await executionEnv.DB.prepare(
@@ -854,9 +987,9 @@ async function startActivityAutomation(
   const authority = await readWorkstreamAuthorityControl(env);
 
   if (!run) {
-    const workstreamId = crypto.randomUUID();
-    const runId = crypto.randomUUID();
-    harnessRunId = crypto.randomUUID();
+    const workstreamId = uuidV7();
+    const runId = uuidV7();
+    harnessRunId = uuidV7();
     const emailRoute = await emailRouting.reserve({
       region: activity.workspace_region,
       workspaceId: activity.workspace_id,

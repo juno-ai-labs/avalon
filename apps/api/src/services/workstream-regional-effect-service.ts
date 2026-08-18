@@ -3,6 +3,7 @@ import { nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 import {
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -92,8 +93,10 @@ export async function applyQueuedWorkspaceDirectoryEffect(
 
 /**
  * Apply one WorkstreamDO activity/mention effect to the regional delivery plane.
- * D1.batch is the inbox transaction: either the activity/intent and receipt
- * both commit, or neither does. Workspace directory effects never enter here.
+ * Activity commits idempotently in WorkspaceDO before its D1 delivery receipt;
+ * a crash between those authorities retries the same event/dedupe identity.
+ * Mention intent plus receipt remains one D1 transaction. Directory effects
+ * never enter here.
  */
 export async function applyWorkstreamRegionalEffect(
   env: Env,
@@ -158,12 +161,6 @@ export async function applyWorkstreamRegionalEffect(
   switch (message.effect.kind) {
     case "activity_event": {
       const effect = message.effect;
-      const existing = await env.DB.prepare(
-        `SELECT id FROM activity_events WHERE workspace_id = ? AND dedupe_key = ?`,
-      ).bind(message.workspaceId, effect.dedupeKey).first<{ id: string }>();
-      if (existing && existing.id !== effect.eventId) {
-        throw new Error("workstream_effect_activity_id_conflict");
-      }
       const currentActor = effect.actorUserId
         ? await env.DB.prepare(`SELECT id FROM users WHERE id = ?`)
           .bind(effect.actorUserId).first<{ id: string }>()
@@ -176,44 +173,37 @@ export async function applyWorkstreamRegionalEffect(
         ).bind(...effect.targets.map((target) => target.userId)).all<{ id: string }>();
         targetUserIds = new Set((users.results ?? []).map((user) => user.id));
       }
-      const statements = [
-        env.DB.prepare(
-          `INSERT OR IGNORE INTO activity_events
-             (id, workspace_id, event_type, subject_type, subject_id,
-              subject_sequence_number, actor_type, actor_user_id, actor_label,
-              title, body, canonical_url, audience_kind, audience_user_id,
-              audience_workstream_id, occurred_at, created_at, source_kind,
-              source_id, dedupe_key, metadata_json, digestible)
-           VALUES (?, ?, ?, 'workstream', ?, ?, ?, ?, ?, ?, ?, ?,
-                   'workstream', NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          effect.eventId,
-          message.workspaceId,
-          effect.eventType,
-          message.workstreamId,
-          effect.subjectSequenceNumber,
-          effect.actorType,
-          currentActor?.id ?? null,
-          effect.actorLabel,
-          effect.title,
-          effect.body,
-          effect.canonicalUrl,
-          message.workstreamId,
-          effect.occurredAt,
-          at,
-          effect.sourceKind,
-          effect.sourceId,
-          effect.dedupeKey,
-          JSON.stringify(effect.metadata),
-          effect.digestible ? 1 : 0,
-        ),
-        ...effect.targets.filter((target) => targetUserIds.has(target.userId)).map((target) => env.DB.prepare(
-          `INSERT OR IGNORE INTO activity_event_targets
-             (event_id, workspace_id, user_id, relation, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
-        ).bind(effect.eventId, message.workspaceId, target.userId, target.relation, at)),
-        receiptStatement,
-      ];
+      const workspace = await durableObjectStubForWorkspace(
+        env,
+        env.WORKSPACE_DOS,
+        message.workspaceId,
+        workspaceDOName(message.region, message.workspaceId),
+      );
+      const activityEventId = await workspace.recordActivityEvent({
+        workspaceId: message.workspaceId,
+        eventId: effect.eventId,
+        eventType: effect.eventType,
+        subjectType: "workstream",
+        subjectId: message.workstreamId,
+        subjectSequenceNumber: effect.subjectSequenceNumber,
+        actorType: effect.actorType,
+        actorUserId: currentActor?.id ?? null,
+        actorLabel: effect.actorLabel,
+        title: effect.title,
+        body: effect.body,
+        canonicalUrl: effect.canonicalUrl,
+        audience: { kind: "workstream", workstreamId: message.workstreamId },
+        digestible: effect.digestible,
+        occurredAt: effect.occurredAt,
+        sourceKind: effect.sourceKind,
+        sourceId: effect.sourceId,
+        dedupeKey: effect.dedupeKey,
+        metadata: effect.metadata,
+        targets: effect.targets.filter((target) => targetUserIds.has(target.userId)),
+      });
+      if (activityEventId !== effect.eventId) {
+        throw new Error("workstream_effect_activity_id_conflict");
+      }
       if (effect.sourceKind === "workstream_message" && effect.sourceId && targetUserIds.size > 0) {
         await enqueueMentionOpportunitySnapshot(env, {
           workspaceId: message.workspaceId,
@@ -223,7 +213,7 @@ export async function applyWorkstreamRegionalEffect(
           inputCharacters: effect.body.length,
         });
       }
-      await env.DB.batch(statements);
+      await env.DB.batch([receiptStatement]);
       await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
       return { replayed: false, notificationIntentId: null };
     }
@@ -291,7 +281,7 @@ export async function processWorkstreamNotificationIntent(
   env: Env,
   intentId: string,
 ): Promise<"delivered" | "skipped" | "busy"> {
-  const leaseId = crypto.randomUUID();
+  const leaseId = uuidV7();
   const at = nowIso();
   const claim = await env.DB.prepare(
     `UPDATE workstream_notification_intents

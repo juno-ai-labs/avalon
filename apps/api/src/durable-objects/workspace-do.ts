@@ -91,6 +91,86 @@ import {
   type WorkspaceDirectoryVisibleIdsRequest,
 } from "./workspace-directory-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
+import {
+  WorkspaceConnectorEventClaimRequestSchema,
+  WorkspaceConnectorEventClaimResultSchema,
+  WorkspaceConnectorEventIngestRequestSchema,
+  WorkspaceConnectorEventIngestResultSchema,
+  WorkspaceConnectorEventRequestSchema,
+  WorkspaceConnectorEventSchema,
+  WorkspaceConnectorEventSettleRequestSchema,
+  type WorkspaceConnectorEvent,
+  type WorkspaceConnectorEventClaimRequest,
+  type WorkspaceConnectorEventClaimResult,
+  type WorkspaceConnectorEventIngestRequest,
+  type WorkspaceConnectorEventIngestResult,
+  type WorkspaceConnectorEventRequest,
+  type WorkspaceConnectorEventSettleRequest,
+} from "./workspace-connector-event-protocol";
+import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
+import {
+  WorkspaceActivityEventCursorRequestSchema,
+  WorkspaceActivityEventInputSchema,
+  WorkspaceActivityEventListRequestSchema,
+  WorkspaceActivityEventListResultSchema,
+  WorkspaceActivityEventSourceRequestSchema,
+  WorkspaceActivityEventSourceSchema,
+  type WorkspaceActivityEventCursorRequest,
+  type WorkspaceActivityEventInput,
+  type WorkspaceActivityEventListRequest,
+  type WorkspaceActivityEventListResult,
+  type WorkspaceActivityEventSourceRequest,
+} from "./workspace-activity-event-protocol";
+import {
+  WorkspaceOpportunityBatchEventsRequestSchema,
+  WorkspaceOpportunityClaimStartRequestSchema,
+  WorkspaceOpportunityCompleteStartRequestSchema,
+  WorkspaceOpportunityDismissRequestSchema,
+  WorkspaceOpportunityEnqueueRequestSchema,
+  WorkspaceOpportunityEnqueueResultSchema,
+  WorkspaceOpportunityExistingRequestSchema,
+  WorkspaceOpportunityGetRequestSchema,
+  WorkspaceOpportunityImpressionsRequestSchema,
+  WorkspaceOpportunityListRequestSchema,
+  WorkspaceOpportunityListResultSchema,
+  WorkspaceOpportunityOriginEventsRequestSchema,
+  WorkspaceOpportunityOriginEventsResultSchema,
+  WorkspaceOpportunityPersistRequestSchema,
+  WorkspaceOpportunityPersistResultSchema,
+  WorkspaceOpportunityRankingCandidatesRequestSchema,
+  WorkspaceOpportunityRankingRoundRequestSchema,
+  WorkspaceOpportunityRankingSettleRequestSchema,
+  WorkspaceOpportunityRankingStateSchema,
+  WorkspaceOpportunityReleaseStartRequestSchema,
+  WorkspaceOpportunityStoreRankingRequestSchema,
+  WorkspaceOpportunityWindowRequestSchema,
+  WorkspaceOpportunityWindowSchema,
+  WorkspaceOpportunityWindowSettleRequestSchema,
+  WorkspaceOpportunityWorkflowInputSchema,
+  type WorkspaceOpportunityBatchEventsRequest,
+  type WorkspaceOpportunityClaimStartRequest,
+  type WorkspaceOpportunityCompleteStartRequest,
+  type WorkspaceOpportunityDismissRequest,
+  type WorkspaceOpportunityEnqueueRequest,
+  type WorkspaceOpportunityExistingRequest,
+  type WorkspaceOpportunityGetRequest,
+  type WorkspaceOpportunityImpressionsRequest,
+  type WorkspaceOpportunityListRequest,
+  type WorkspaceOpportunityOriginEventsRequest,
+  type WorkspaceOpportunityPersistRequest,
+  type WorkspaceOpportunityRankingCandidatesRequest,
+  type WorkspaceOpportunityRankingRoundRequest,
+  type WorkspaceOpportunityRankingSettleRequest,
+  type WorkspaceOpportunityStoreRankingRequest,
+  type WorkspaceOpportunityWindowRequest,
+  type WorkspaceOpportunityWindowSettleRequest,
+} from "./workspace-opportunity-protocol";
+import { WorkspaceProductStorage } from "./workspace-product-storage";
+import {
+  WorkspaceProductImportRequestSchema,
+  type WorkspaceProductImportRequest,
+} from "./workspace-product-import";
+import { importWorkspaceProductRows } from "./workspace-product-import-storage";
 
 const SocketIdentitySchema = z.object({
   workspaceId: IdSchema,
@@ -150,7 +230,41 @@ interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   pin_position: number | null;
 }
 
+interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
+  event_id: string;
+  payload_hash: string;
+  connection_id: string;
+  connection_scope: "personal" | "workspace";
+  connection_owner_user_id: string | null;
+  connector_type: string;
+  provider: string;
+  provider_event_id: string;
+  event_type: string;
+  resource_type: string | null;
+  provider_resource_id: string | null;
+  actor_json: string;
+  subject_json: string;
+  occurred_at: number;
+  received_at: number;
+  title: string;
+  summary: string;
+  text_snippet: string;
+  payload_ref: string | null;
+  visibility_json: string;
+  target_user_ids_json: string;
+  entity_keys_json: string;
+  dedupe_key: string;
+  raw_content_hash: string | null;
+  metadata_json: string;
+  external_people_json: string;
+  processing_status: "pending" | "processing" | "processed" | "failed";
+  processing_attempt: number;
+}
+
 const MAX_WORKSPACE_PINS_PER_USER = 1_000;
+const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
+const PRODUCT_ALARM_BATCH = 6;
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -180,6 +294,67 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       topics_json TEXT NOT NULL CHECK (json_valid(topics_json) AND length(topics_json) <= 4096),
       occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0)
     ) STRICT`,
+    `CREATE TABLE workspace_connector_events (
+      event_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL UNIQUE,
+      payload_hash TEXT NOT NULL CHECK (
+        substr(payload_hash, 1, 7) = 'sha256:' AND length(payload_hash) = 71
+        AND substr(payload_hash, 8) NOT GLOB '*[^0-9a-f]*'
+      ),
+      connection_id TEXT NOT NULL,
+      connection_scope TEXT NOT NULL CHECK (connection_scope IN ('personal', 'workspace')),
+      connection_owner_user_id TEXT,
+      connector_type TEXT NOT NULL CHECK (length(connector_type) BETWEEN 1 AND 120),
+      provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 120),
+      provider_event_id TEXT NOT NULL CHECK (length(provider_event_id) BETWEEN 1 AND 1000),
+      event_type TEXT NOT NULL CHECK (length(event_type) BETWEEN 1 AND 200),
+      resource_type TEXT CHECK (resource_type IS NULL OR length(resource_type) <= 200),
+      provider_resource_id TEXT CHECK (provider_resource_id IS NULL OR length(provider_resource_id) <= 2000),
+      actor_json TEXT NOT NULL CHECK (json_valid(actor_json) AND length(actor_json) <= 262144),
+      subject_json TEXT NOT NULL CHECK (json_valid(subject_json) AND length(subject_json) <= 262144),
+      occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0),
+      received_at INTEGER NOT NULL CHECK (received_at >= 0),
+      title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 1000),
+      summary TEXT NOT NULL CHECK (length(summary) <= 65536),
+      text_snippet TEXT NOT NULL CHECK (length(text_snippet) <= 4000),
+      payload_ref TEXT CHECK (payload_ref IS NULL OR length(payload_ref) <= 2000),
+      visibility_json TEXT NOT NULL CHECK (json_valid(visibility_json) AND length(visibility_json) <= 262144),
+      target_user_ids_json TEXT NOT NULL CHECK (json_valid(target_user_ids_json) AND length(target_user_ids_json) <= 262144),
+      entity_keys_json TEXT NOT NULL CHECK (json_valid(entity_keys_json) AND length(entity_keys_json) <= 262144),
+      dedupe_key TEXT NOT NULL CHECK (length(dedupe_key) BETWEEN 1 AND 1000),
+      raw_content_hash TEXT CHECK (raw_content_hash IS NULL OR length(raw_content_hash) <= 256),
+      metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json) AND length(metadata_json) <= 524288),
+      external_people_json TEXT NOT NULL CHECK (json_valid(external_people_json) AND length(external_people_json) <= 262144),
+      processing_status TEXT NOT NULL CHECK (processing_status IN ('pending', 'processing', 'processed', 'failed')),
+      processing_attempt INTEGER NOT NULL DEFAULT -1 CHECK (processing_attempt BETWEEN -1 AND 5),
+      workflow_instance_id TEXT CHECK (workflow_instance_id IS NULL OR length(workflow_instance_id) BETWEEN 1 AND 100),
+      claimed_at INTEGER CHECK (claimed_at IS NULL OR claimed_at >= 0),
+      processed_at INTEGER CHECK (processed_at IS NULL OR processed_at >= 0),
+      processing_error TEXT CHECK (processing_error IS NULL OR length(processing_error) <= 1000),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      CHECK (
+        (connection_scope = 'personal' AND connection_owner_user_id IS NOT NULL)
+        OR (connection_scope = 'workspace' AND connection_owner_user_id IS NULL)
+      ),
+      UNIQUE(connection_id, provider_event_id, event_type),
+      UNIQUE(connection_id, dedupe_key)
+    ) STRICT`,
+    `CREATE INDEX workspace_connector_events_processing_idx
+      ON workspace_connector_events(processing_status, received_at, event_sequence)`,
+    `CREATE INDEX workspace_connector_events_connection_idx
+      ON workspace_connector_events(connection_id, occurred_at DESC, event_sequence DESC)`,
+    `CREATE TABLE workspace_connector_event_ingress_receipts (
+      ingress_event_id TEXT PRIMARY KEY,
+      payload_hash TEXT NOT NULL CHECK (
+        substr(payload_hash, 1, 7) = 'sha256:' AND length(payload_hash) = 71
+        AND substr(payload_hash, 8) NOT GLOB '*[^0-9a-f]*'
+      ),
+      connector_event_id TEXT NOT NULL REFERENCES workspace_connector_events(event_id) ON DELETE CASCADE,
+      received_at INTEGER NOT NULL CHECK (received_at >= 0)
+    ) STRICT`,
+    `CREATE INDEX workspace_connector_event_ingress_receipts_retention_idx
+      ON workspace_connector_event_ingress_receipts(received_at, ingress_event_id)`,
     `CREATE TABLE workspace_socket_ticket_receipts (
       ticket_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -299,6 +474,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ) STRICT`,
     `CREATE INDEX workspace_workstream_effect_receipts_received_idx
       ON workspace_workstream_effect_receipts(received_at, message_id)`,
+    ...WORKSPACE_PRODUCT_SCHEMA_STATEMENTS,
     `CREATE TRIGGER workspace_identity_placement_valid_insert
       BEFORE INSERT ON workspace_identity
       WHEN NEW.placement_affinity IS NULL
@@ -352,6 +528,48 @@ function epoch(value: string | null | undefined): number | null {
 
 function iso(value: number | null): string | null {
   return value === null ? null : new Date(value).toISOString();
+}
+
+function workflowAlreadyExists(error: unknown): boolean {
+  return error instanceof Error && /(already exists|duplicate|conflict)/iu.test(error.message);
+}
+
+function connectorEventFromRow(
+  row: WorkspaceConnectorEventRow,
+  workspaceId: string,
+  region: Env["AVALON_REGION"],
+): WorkspaceConnectorEvent {
+  return WorkspaceConnectorEventSchema.parse({
+    connectorType: row.connector_type,
+    activity: {
+      id: row.event_id,
+      workspaceId,
+      region,
+      connectionId: row.connection_id,
+      connectionScope: row.connection_scope,
+      connectionOwnerUserId: row.connection_owner_user_id,
+      provider: row.provider,
+      providerEventId: row.provider_event_id,
+      eventType: row.event_type,
+      resourceType: row.resource_type,
+      providerResourceId: row.provider_resource_id,
+      actor: JSON.parse(row.actor_json) as unknown,
+      subject: JSON.parse(row.subject_json) as unknown,
+      occurredAt: iso(row.occurred_at),
+      receivedAt: iso(row.received_at),
+      title: row.title,
+      summary: row.summary,
+      textSnippet: row.text_snippet,
+      payloadRef: row.payload_ref,
+      visibility: JSON.parse(row.visibility_json) as unknown,
+      targetUserIds: JSON.parse(row.target_user_ids_json) as unknown,
+      entityKeys: JSON.parse(row.entity_keys_json) as unknown,
+      dedupeKey: row.dedupe_key,
+      rawContentHash: row.raw_content_hash,
+      metadata: JSON.parse(row.metadata_json) as unknown,
+      externalPeople: JSON.parse(row.external_people_json) as unknown,
+    },
+  });
 }
 
 function directoryCursor(value: string): { lastActivityAt: number; workstreamId: string } {
@@ -596,6 +814,90 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
+   * Workspace-local product scheduler.
+   *
+   * SQLite decides what is due and fences each claim. The alarm only starts a
+   * deterministic Workflow instance; inference and ranking never run in the
+   * object's single-threaded request path. A dormant member deliberately leaves
+   * a due request parked without another alarm. Their next authenticated read
+   * schedules the object again, avoiding an idle per-workspace polling loop.
+   */
+  override async alarm(): Promise<void> {
+    await this.initialized;
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    const now = Date.now();
+    this.reapExpiredActivityEvents(now);
+    const product = this.productStorage();
+    let launched = 0;
+
+    for (const row of product.dueOpportunityWindows(now, PRODUCT_ALARM_BATCH)) {
+      const claim = product.claimOpportunityWindow(row.window_id, now);
+      if (!claim) continue;
+      const input = WorkspaceOpportunityWorkflowInputSchema.parse({
+        kind: "admission",
+        region: this.env.AVALON_REGION,
+        workspaceId,
+        windowId: claim.windowId,
+        leaseId: claim.leaseId,
+        attempt: claim.attempt,
+      });
+      try {
+        await this.env.WORK_OPPORTUNITY_WORKFLOW.create({
+          id: `opportunity-admission-${claim.windowId}-${claim.attempt}`,
+          params: input,
+        });
+      } catch (error) {
+        if (!workflowAlreadyExists(error)) throw error;
+      }
+      launched += 1;
+    }
+
+    const dueRankings = product.dueRankingRows(now, PRODUCT_ALARM_BATCH);
+    if (dueRankings.length > 0) {
+      const ids = dueRankings.map((row) => row.user_id);
+      const members = await this.env.DB.prepare(
+        `SELECT user_id, last_seen_at FROM workspace_members
+          WHERE workspace_id = ? AND status = 'active'
+            AND user_id IN (SELECT value FROM json_each(?))`,
+      ).bind(workspaceId, JSON.stringify(ids)).all<{ user_id: string; last_seen_at: string | null }>();
+      const lastSeen = new Map(members.results.map((row) => [row.user_id, epoch(row.last_seen_at)]));
+      const dormantCutoff = now - 7 * 24 * 60 * 60_000;
+      const activeCutoff = now - 15 * 60_000;
+      const starvedCutoff = now - 30 * 60_000;
+      const eligible = dueRankings
+        .filter((row) => (lastSeen.get(row.user_id) ?? 0) > dormantCutoff)
+        .sort((left, right) => {
+          const leftUrgent = (lastSeen.get(left.user_id) ?? 0) > activeCutoff || left.due_at <= starvedCutoff;
+          const rightUrgent = (lastSeen.get(right.user_id) ?? 0) > activeCutoff || right.due_at <= starvedCutoff;
+          return Number(rightUrgent) - Number(leftUrgent) || left.due_at - right.due_at;
+        });
+      for (const row of eligible.slice(0, Math.max(0, PRODUCT_ALARM_BATCH - launched))) {
+        const claim = product.claimRanking(row.user_id, row.request_seq, now);
+        if (!claim) continue;
+        const input = WorkspaceOpportunityWorkflowInputSchema.parse({
+          kind: "ranking",
+          region: this.env.AVALON_REGION,
+          workspaceId,
+          userId: claim.userId,
+          requestSeq: claim.requestSeq,
+          leaseId: claim.leaseId,
+        });
+        try {
+          await this.env.WORK_OPPORTUNITY_WORKFLOW.create({
+            id: `opportunity-ranking-${workspaceId}-${claim.userId}-${claim.requestSeq}`,
+            params: input,
+          });
+        } catch (error) {
+          if (!workflowAlreadyExists(error)) throw error;
+        }
+        launched += 1;
+      }
+    }
+    await this.refreshProductAlarm({ suppressPastDue: launched === 0 });
+  }
+
+  /**
    * Record and fan out a workspace-owned surface change. This RPC is called by
    * authenticated HTTP mutations and regional background consumers only; the
    * socket itself never lets a desktop manufacture an invalidation.
@@ -658,6 +960,651 @@ export class WorkspaceDO extends DurableObject<Env> {
   ): Promise<void> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
+  }
+
+  /**
+   * Accept one workspace-scoped connector event from the regional Queue.
+   *
+   * The ingress identifier names a delivery attempt. Provider identity and the
+   * connector dedupe key choose the canonical event, so an at-least-once Queue
+   * delivery or a provider replay cannot create a second durable record.
+   */
+  async ingestConnectorEvent(
+    input: WorkspaceConnectorEventIngestRequest,
+  ): Promise<WorkspaceConnectorEventIngestResult> {
+    await this.initialized;
+    const request = WorkspaceConnectorEventIngestRequestSchema.parse(input);
+    if (!this.workspaceId()) {
+      this.ensureIdentity(
+        request.workspaceId,
+        await workspacePlacementAffinity(this.env, request.workspaceId),
+      );
+    }
+    this.assertWorkspace(request.workspaceId);
+    const activity = request.event.activity;
+    return WorkspaceConnectorEventIngestResultSchema.parse(
+      this.state.storage.transactionSync(() => {
+        const receipt = this.state.storage.sql.exec<{
+          payload_hash: string;
+          connector_event_id: string;
+          processing_status: WorkspaceConnectorEventRow["processing_status"];
+          processing_attempt: number;
+        }>(
+          `SELECT receipt.payload_hash, receipt.connector_event_id, event.processing_status,
+                  event.processing_attempt
+             FROM workspace_connector_event_ingress_receipts receipt
+             JOIN workspace_connector_events event ON event.event_id = receipt.connector_event_id
+            WHERE receipt.ingress_event_id = ?`,
+          request.ingressEventId,
+        ).toArray()[0];
+        if (receipt) {
+          if (receipt.payload_hash !== request.payloadHash) {
+            throw new Error("connector_event_ingress_idempotency_conflict");
+          }
+          return {
+            eventId: receipt.connector_event_id,
+            duplicate: true,
+            processingStatus: receipt.processing_status,
+            processingAttempt: receipt.processing_attempt,
+          };
+        }
+
+        const byProvider = this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
+          `SELECT * FROM workspace_connector_events
+            WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?`,
+          activity.connectionId,
+          activity.providerEventId,
+          activity.eventType,
+        ).toArray()[0];
+        const byDedupe = this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
+          `SELECT * FROM workspace_connector_events
+            WHERE connection_id = ? AND dedupe_key = ?`,
+          activity.connectionId,
+          activity.dedupeKey,
+        ).toArray()[0];
+        if (byProvider && byDedupe && byProvider.event_id !== byDedupe.event_id) {
+          throw new Error("connector_event_identity_collision");
+        }
+        const canonical = byProvider ?? byDedupe;
+        if (canonical && canonical.payload_hash !== request.payloadHash) {
+          throw new Error("connector_event_identity_reused_with_different_content");
+        }
+
+        const now = Date.now();
+        let eventId = canonical?.event_id ?? activity.id;
+        let processingStatus = canonical?.processing_status ?? "pending";
+        if (!canonical) {
+          this.state.storage.sql.exec(
+            `INSERT INTO workspace_connector_events (
+              event_id, payload_hash, connection_id, connection_scope,
+              connection_owner_user_id, connector_type, provider,
+              provider_event_id, event_type, resource_type, provider_resource_id,
+              actor_json, subject_json, occurred_at, received_at, title, summary,
+              text_snippet, payload_ref, visibility_json, target_user_ids_json,
+              entity_keys_json, dedupe_key, raw_content_hash, metadata_json,
+              external_people_json, processing_status, workflow_instance_id,
+              processing_attempt, claimed_at, processed_at, processing_error, created_at, updated_at
+            ) VALUES (
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+              ?, ?, ?, ?, 'pending', NULL, -1, NULL, NULL, NULL, ?, ?
+            )`,
+            activity.id,
+            request.payloadHash,
+            activity.connectionId,
+            activity.connectionScope,
+            activity.connectionOwnerUserId,
+            request.event.connectorType,
+            activity.provider,
+            activity.providerEventId,
+            activity.eventType,
+            activity.resourceType,
+            activity.providerResourceId,
+            JSON.stringify(activity.actor),
+            JSON.stringify(activity.subject),
+            Date.parse(activity.occurredAt),
+            Date.parse(activity.receivedAt),
+            activity.title,
+            activity.summary,
+            activity.textSnippet,
+            activity.payloadRef,
+            JSON.stringify(activity.visibility),
+            JSON.stringify(activity.targetUserIds),
+            JSON.stringify(activity.entityKeys),
+            activity.dedupeKey,
+            activity.rawContentHash,
+            JSON.stringify(activity.metadata),
+            JSON.stringify(activity.externalPeople ?? []),
+            now,
+            now,
+          );
+          eventId = activity.id;
+          processingStatus = "pending";
+        }
+        this.state.storage.sql.exec(
+          `INSERT INTO workspace_connector_event_ingress_receipts
+             (ingress_event_id, payload_hash, connector_event_id, received_at)
+           VALUES (?, ?, ?, ?)`,
+          request.ingressEventId,
+          request.payloadHash,
+          eventId,
+          now,
+        );
+        this.state.storage.sql.exec(
+          `DELETE FROM workspace_connector_event_ingress_receipts
+            WHERE ingress_event_id IN (
+              SELECT ingress_event_id FROM workspace_connector_event_ingress_receipts
+               WHERE received_at < ?
+               ORDER BY received_at, ingress_event_id LIMIT 100
+            )`,
+          now - CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS,
+        );
+        return {
+          eventId,
+          duplicate: Boolean(canonical),
+          processingStatus,
+          processingAttempt: canonical?.processing_attempt ?? -1,
+        };
+      }),
+    );
+  }
+
+  async connectorEvent(input: WorkspaceConnectorEventRequest): Promise<WorkspaceConnectorEvent | null> {
+    await this.initialized;
+    const request = WorkspaceConnectorEventRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
+      `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
+      request.eventId,
+    ).toArray()[0];
+    return row ? connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION) : null;
+  }
+
+  async claimConnectorEvent(
+    input: WorkspaceConnectorEventClaimRequest,
+  ): Promise<WorkspaceConnectorEventClaimResult> {
+    await this.initialized;
+    const request = WorkspaceConnectorEventClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceConnectorEventClaimResultSchema.parse(
+      this.state.storage.transactionSync(() => {
+        const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow & {
+          workflow_instance_id: string | null;
+        }>(
+          `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
+          request.eventId,
+        ).toArray()[0];
+        if (!row) throw new Error("connector_event_not_found");
+        if (row.processing_status === "processed") return { outcome: "processed" as const };
+        if (
+          row.processing_status === "processing"
+          && row.workflow_instance_id !== request.workflowInstanceId
+        ) {
+          return { outcome: "busy" as const };
+        }
+        if (row.processing_status === "failed" && request.attempt <= row.processing_attempt) {
+          return { outcome: "busy" as const };
+        }
+        const now = Date.now();
+        this.state.storage.sql.exec(
+          `UPDATE workspace_connector_events
+              SET processing_status = 'processing', workflow_instance_id = ?,
+                  processing_attempt = ?, claimed_at = ?, processing_error = NULL,
+                  updated_at = ?
+            WHERE event_id = ?`,
+          request.workflowInstanceId,
+          request.attempt,
+          now,
+          now,
+          request.eventId,
+        );
+        return {
+          outcome: "claimed" as const,
+          event: connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION),
+        };
+      }),
+    );
+  }
+
+  async settleConnectorEvent(input: WorkspaceConnectorEventSettleRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorEventSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const now = Date.now();
+    const changed = this.state.storage.sql.exec<{ event_id: string }>(
+      `UPDATE workspace_connector_events
+          SET processing_status = ?, processed_at = CASE WHEN ? = 'processed' THEN ? ELSE NULL END,
+              processing_error = ?, updated_at = ?
+        WHERE event_id = ? AND workflow_instance_id = ? AND processing_status = 'processing'
+        RETURNING event_id`,
+      request.outcome,
+      request.outcome,
+      now,
+      request.error,
+      now,
+      request.eventId,
+      request.workflowInstanceId,
+    ).toArray().length;
+    if (changed === 1) return;
+    const settled = this.state.storage.sql.exec<{
+      processing_status: WorkspaceConnectorEventRow["processing_status"];
+      workflow_instance_id: string | null;
+    }>(
+      `SELECT processing_status, workflow_instance_id
+         FROM workspace_connector_events WHERE event_id = ?`,
+      request.eventId,
+    ).toArray()[0];
+    if (
+      settled?.workflow_instance_id === request.workflowInstanceId
+      && settled.processing_status === request.outcome
+    ) return;
+    throw new Error("connector_event_settlement_fenced");
+  }
+
+  /** Append one first-party activity-log event and all of its target edges atomically. */
+  async recordActivityEvent(input: WorkspaceActivityEventInput): Promise<string> {
+    await this.initialized;
+    const request = WorkspaceActivityEventInputSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const now = Date.now();
+    const proposedId = request.eventId ?? uuidV7(now);
+    const eventId = this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `INSERT OR IGNORE INTO workspace_activity_events (
+          event_id, event_type, subject_type, subject_id, subject_sequence_number,
+          actor_type, actor_user_id, actor_label, title, body, canonical_url,
+          audience_kind, audience_user_id, audience_workstream_id, digestible,
+          occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        proposedId,
+        request.eventType,
+        request.subjectType,
+        request.subjectId,
+        request.subjectSequenceNumber ?? null,
+        request.actorType,
+        request.actorUserId ?? null,
+        request.actorLabel,
+        request.title,
+        request.body ?? "",
+        request.canonicalUrl ?? null,
+        request.audience.kind,
+        request.audience.kind === "user" ? request.audience.userId : null,
+        request.audience.kind === "workstream" ? request.audience.workstreamId : null,
+        request.digestible ? 1 : 0,
+        epoch(request.occurredAt),
+        now,
+        request.sourceKind,
+        request.sourceId ?? null,
+        request.dedupeKey,
+        JSON.stringify(request.metadata ?? {}),
+      );
+      const canonical = this.state.storage.sql.exec<{ event_id: string }>(
+        `SELECT event_id FROM workspace_activity_events WHERE dedupe_key = ?`,
+        request.dedupeKey,
+      ).one().event_id;
+      for (const target of request.targets ?? []) {
+        this.state.storage.sql.exec(
+          `INSERT OR IGNORE INTO workspace_activity_event_targets
+             (event_id, user_id, relation, created_at) VALUES (?, ?, ?, ?)`,
+          canonical,
+          target.userId,
+          target.relation,
+          now,
+        );
+      }
+      return canonical;
+    });
+    await this.refreshProductAlarm();
+    return eventId;
+  }
+
+  /** Read one active member's visibility-filtered, insertion-ordered activity window. */
+  async listActivityEvents(
+    input: WorkspaceActivityEventListRequest,
+  ): Promise<WorkspaceActivityEventListResult> {
+    await this.initialized;
+    const request = WorkspaceActivityEventListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const member = await this.env.DB.prepare(
+      `SELECT 1 FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
+    ).bind(request.workspaceId, request.userId).first();
+    if (!member) return { items: [] };
+    const rows = this.state.storage.sql.exec<{
+      event_sequence: number;
+      event_id: string;
+      event_type: string;
+      subject_type: string;
+      subject_id: string | null;
+      subject_sequence_number: number | null;
+      actor_type: string;
+      actor_user_id: string | null;
+      actor_label: string;
+      title: string;
+      body: string;
+      canonical_url: string | null;
+      occurred_at: number;
+      created_at: number;
+      metadata_json: string;
+      is_target: number;
+      target_relations: string | null;
+    }>(
+      `SELECT event.event_sequence, event.event_id, event.event_type,
+              event.subject_type, event.subject_id, event.subject_sequence_number,
+              event.actor_type, event.actor_user_id, event.actor_label,
+              event.title, event.body, event.canonical_url, event.occurred_at,
+              event.created_at, event.metadata_json,
+              CASE WHEN target.user_id IS NULL THEN 0 ELSE 1 END AS is_target,
+              target.relations AS target_relations
+         FROM workspace_activity_events event
+         LEFT JOIN (
+           SELECT event_id, user_id, group_concat(relation) AS relations
+             FROM workspace_activity_event_targets
+            WHERE user_id = ? GROUP BY event_id, user_id
+         ) target ON target.event_id = event.event_id
+        WHERE (? IS NULL OR event.event_sequence > ?)
+          AND event.event_sequence <= ?
+          AND (? IS NULL OR event.created_at >= ?)
+          AND (? = 0 OR event.digestible = 1)
+          AND (
+            event.audience_kind = 'workspace'
+            OR (event.audience_kind = 'user' AND event.audience_user_id = ?)
+            OR (event.audience_kind = 'workstream' AND EXISTS (
+              SELECT 1 FROM workspace_workstream_directory directory
+              JOIN workspace_workstream_viewers viewer
+                ON viewer.workstream_id = directory.workstream_id
+               AND viewer.authority_generation = directory.authority_generation
+               AND viewer.user_id = ?
+             WHERE directory.workstream_id = event.audience_workstream_id
+               AND directory.archived_at IS NULL AND directory.system_kind IS NULL
+               AND viewer.is_participant = 1
+            ))
+          )
+        ORDER BY event.event_sequence LIMIT ?`,
+      request.userId,
+      request.from ?? null,
+      request.from ?? null,
+      request.through,
+      epoch(request.notBefore ?? null),
+      epoch(request.notBefore ?? null),
+      request.digestibleOnly ? 1 : 0,
+      request.userId,
+      request.userId,
+      request.limit,
+    ).toArray();
+    return WorkspaceActivityEventListResultSchema.parse({
+      items: rows.map((row) => ({
+        sequence: Number(row.event_sequence),
+        id: row.event_id,
+        eventType: row.event_type,
+        subjectType: row.subject_type,
+        subjectId: row.subject_id,
+        subjectSequenceNumber: row.subject_sequence_number,
+        actorType: row.actor_type,
+        actorUserId: row.actor_user_id,
+        actorLabel: row.actor_label,
+        title: row.title,
+        body: row.body,
+        canonicalUrl: row.canonical_url,
+        occurredAt: iso(row.occurred_at),
+        createdAt: iso(row.created_at),
+        metadata: JSON.parse(row.metadata_json) as unknown,
+        isTarget: row.is_target === 1,
+        targetRelations: row.target_relations?.split(",").filter(Boolean) ?? [],
+      })),
+    });
+  }
+
+  async latestActivityEventCursor(input: WorkspaceActivityEventCursorRequest): Promise<number> {
+    await this.initialized;
+    const request = WorkspaceActivityEventCursorRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return Number(this.state.storage.sql.exec<{ sequence: number | null }>(
+      `SELECT MAX(event_sequence) AS sequence FROM workspace_activity_events`,
+    ).one().sequence ?? 0);
+  }
+
+  async activityEventSource(input: WorkspaceActivityEventSourceRequest) {
+    await this.initialized;
+    const request = WorkspaceActivityEventSourceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{
+      event_id: string;
+      source_id: string;
+      title: string;
+      body: string;
+      actor_user_id: string | null;
+      actor_label: string;
+      audience_workstream_id: string | null;
+      occurred_at: number;
+    }>(
+      `SELECT event_id, source_id, title, body, actor_user_id, actor_label,
+              audience_workstream_id, occurred_at
+         FROM workspace_activity_events
+        WHERE source_kind = ? AND source_id = ? LIMIT 1`,
+      request.sourceKind,
+      request.sourceId,
+    ).toArray()[0];
+    return row ? WorkspaceActivityEventSourceSchema.parse({
+      id: row.event_id,
+      sourceId: row.source_id,
+      title: row.title,
+      body: row.body,
+      actorUserId: row.actor_user_id,
+      actorLabel: row.actor_label,
+      audienceWorkstreamId: row.audience_workstream_id,
+      occurredAt: iso(row.occurred_at),
+    }) : null;
+  }
+
+  async enqueueOpportunitySource(input: WorkspaceOpportunityEnqueueRequest) {
+    await this.initialized;
+    const request = WorkspaceOpportunityEnqueueRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceOpportunityEnqueueResultSchema.parse(
+      this.productStorage().enqueueOpportunitySource(request),
+    );
+    await this.refreshProductAlarm();
+    return result;
+  }
+
+  async opportunityWindow(input: WorkspaceOpportunityWindowRequest) {
+    await this.initialized;
+    const request = WorkspaceOpportunityWindowRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceOpportunityWindowSchema.parse(this.productStorage().opportunityWindow(request));
+  }
+
+  async mutateOpportunityBatchEvents(input: WorkspaceOpportunityBatchEventsRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceOpportunityBatchEventsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.productStorage().mutateOpportunityBatchEvents(request);
+  }
+
+  async settleOpportunityWindow(input: WorkspaceOpportunityWindowSettleRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceOpportunityWindowSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.productStorage().settleOpportunityWindow(request);
+    await this.refreshProductAlarm();
+  }
+
+  async existingOpportunities(input: WorkspaceOpportunityExistingRequest) {
+    await this.initialized;
+    const request = WorkspaceOpportunityExistingRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.productStorage().existingOpportunities(request);
+  }
+
+  async persistOpportunity(input: WorkspaceOpportunityPersistRequest) {
+    await this.initialized;
+    const request = WorkspaceOpportunityPersistRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceOpportunityPersistResultSchema.parse(
+      this.productStorage().persistOpportunity(request),
+    );
+    await this.refreshProductAlarm();
+    return result;
+  }
+
+  async markOpportunityRankingDue(
+    workspaceId: string,
+    userIds: string[],
+    delayMs: number,
+    clearFingerprint = false,
+  ): Promise<void> {
+    await this.initialized;
+    this.assertWorkspace(IdSchema.parse(workspaceId));
+    const ids = z.array(IdSchema).max(10_000).parse([...new Set(userIds)]);
+    const delay = z.number().int().min(0).max(24 * 60 * 60_000).parse(delayMs);
+    const now = Date.now();
+    for (const userId of ids) {
+      this.productStorage().markRankingDue(userId, now + delay, now, clearFingerprint);
+    }
+    await this.refreshProductAlarm();
+  }
+
+  async markWorkspaceOpportunityRankingDue(workspaceId: string, delayMs: number): Promise<void> {
+    await this.initialized;
+    this.assertWorkspace(IdSchema.parse(workspaceId));
+    const members = await this.env.DB.prepare(
+      `SELECT user_id FROM workspace_members WHERE workspace_id = ? AND status = 'active'`,
+    ).bind(workspaceId).all<{ user_id: string }>();
+    await this.markOpportunityRankingDue(
+      workspaceId,
+      members.results.map((row) => row.user_id),
+      delayMs,
+    );
+  }
+
+  async opportunityRankingCandidates(input: WorkspaceOpportunityRankingCandidatesRequest) {
+    await this.initialized;
+    const request = WorkspaceOpportunityRankingCandidatesRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.productStorage().rankingCandidates(request);
+  }
+
+  async opportunityRankingState(workspaceId: string, userId: string) {
+    await this.initialized;
+    this.assertWorkspace(IdSchema.parse(workspaceId));
+    return WorkspaceOpportunityRankingStateSchema.parse(
+      this.productStorage().rankingState(IdSchema.parse(userId)),
+    );
+  }
+
+  async recordOpportunityRankingRound(input: WorkspaceOpportunityRankingRoundRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceOpportunityRankingRoundRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.productStorage().recordRankingRound(request);
+  }
+
+  async storeOpportunityRanking(input: WorkspaceOpportunityStoreRankingRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceOpportunityStoreRankingRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.productStorage().storeRanking(request);
+  }
+
+  async settleOpportunityRanking(input: WorkspaceOpportunityRankingSettleRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceOpportunityRankingSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.productStorage().settleRanking(request);
+    await this.refreshProductAlarm();
+  }
+
+  async listOpportunities(input: WorkspaceOpportunityListRequest) {
+    await this.initialized;
+    const request = WorkspaceOpportunityListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceOpportunityListResultSchema.parse(
+      this.productStorage().listOpportunities(request),
+    );
+    await this.refreshProductAlarm();
+    return result;
+  }
+
+  async recordOpportunityImpressions(input: WorkspaceOpportunityImpressionsRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceOpportunityImpressionsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.productStorage().recordImpressions(request);
+    await this.refreshProductAlarm();
+  }
+
+  async dismissOpportunity(input: WorkspaceOpportunityDismissRequest): Promise<boolean> {
+    await this.initialized;
+    const request = WorkspaceOpportunityDismissRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const dismissed = this.productStorage().dismissOpportunity(request);
+    await this.refreshProductAlarm();
+    return dismissed;
+  }
+
+  async getOpportunity(input: WorkspaceOpportunityGetRequest) {
+    await this.initialized;
+    const request = WorkspaceOpportunityGetRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.productStorage().getOpportunity(request);
+  }
+
+  async opportunityOriginEvents(
+    input: WorkspaceOpportunityOriginEventsRequest,
+  ): Promise<WorkspaceConnectorEvent[]> {
+    await this.initialized;
+    const request = WorkspaceOpportunityOriginEventsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const sourceIds = this.productStorage().opportunityActivitySourceIds(request);
+    const events = sourceIds.flatMap((eventId) => {
+      const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
+        `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
+        eventId,
+      ).toArray()[0];
+      return row
+        ? [connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION)]
+        : [];
+    });
+    return WorkspaceOpportunityOriginEventsResultSchema.parse(events);
+  }
+
+  async claimOpportunityStart(input: WorkspaceOpportunityClaimStartRequest) {
+    await this.initialized;
+    const request = WorkspaceOpportunityClaimStartRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.productStorage().claimOpportunityStart(request);
+  }
+
+  async releaseOpportunityStart(input: WorkspaceOpportunityClaimStartRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceOpportunityReleaseStartRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.productStorage().releaseOpportunityStart(request);
+  }
+
+  async completeOpportunityStart(input: WorkspaceOpportunityCompleteStartRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceOpportunityCompleteStartRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.productStorage().completeOpportunityStart(request);
+    await this.refreshProductAlarm();
+  }
+
+  async importWorkspaceProductRows(input: WorkspaceProductImportRequest): Promise<number> {
+    await this.initialized;
+    const request = WorkspaceProductImportRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const route = await this.env.DB.prepare(
+      `SELECT 1 FROM workspace_product_authority_routes route
+        JOIN workstream_authority_control control
+          ON control.id = 1 AND control.generation = route.generation
+       WHERE route.workspace_id = ? AND route.state = 'importing'
+         AND control.phase = 'maintenance_importing' LIMIT 1`,
+    ).bind(request.workspaceId).first();
+    if (!route) throw new Error("workspace_product_import_not_active");
+    const inserted = importWorkspaceProductRows(this.state.storage, request.stage, request.rows);
+    await this.refreshProductAlarm();
+    return inserted;
   }
 
   /** Commit WorkstreamDO-owned facts into the workspace's authoritative directory. */
@@ -1699,6 +2646,40 @@ export class WorkspaceDO extends DurableObject<Env> {
     const placementAffinity = this.placementAffinity();
     if (!placementAffinity) throw new Error("workspace_object_placement_affinity_missing");
     await this.publishSync(["workstream_directory"], workspaceId, placementAffinity);
+  }
+
+  private productStorage(): WorkspaceProductStorage {
+    return new WorkspaceProductStorage(this.state.storage);
+  }
+
+  private reapExpiredActivityEvents(now: number): void {
+    this.state.storage.sql.exec(
+      `DELETE FROM workspace_activity_events
+        WHERE event_sequence IN (
+          SELECT event_sequence FROM workspace_activity_events
+           WHERE created_at < ? ORDER BY event_sequence LIMIT 500
+        )`,
+      now - ACTIVITY_EVENT_RETENTION_MS,
+    );
+  }
+
+  private async refreshProductAlarm(options: { suppressPastDue?: boolean } = {}): Promise<void> {
+    const now = Date.now();
+    const productDue = this.productStorage().nextProductAlarmAt(now, options.suppressPastDue === true);
+    const activity = this.state.storage.sql.exec<{ created_at: number | null }>(
+      `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
+    ).one().created_at;
+    const activityDue = activity === null ? null : Number(activity) + ACTIVITY_EVENT_RETENTION_MS;
+    const candidates = [productDue, activityDue]
+      .filter((value): value is number => value !== null)
+      .map((value) => Math.max(now + 1, value));
+    if (candidates.length === 0) {
+      await this.state.storage.deleteAlarm();
+      return;
+    }
+    const next = Math.min(...candidates);
+    const current = await this.state.storage.getAlarm();
+    if (current === null || current > next) await this.state.storage.setAlarm(next);
   }
 
   private assertWorkspace(workspaceId: string): void {

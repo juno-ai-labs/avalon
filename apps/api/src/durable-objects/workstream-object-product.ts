@@ -25,6 +25,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
+import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
 import { pinnedModelRouting, resolveAgentModelRouting } from "../services/agent-model-flags";
 import { classifyWorkstreamMessage } from "../services/integrations";
@@ -89,6 +90,7 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   clientMessageId: z.string().min(1).max(120),
   participantUserIds: z.array(z.string().uuid()).max(100),
   attachmentIds: z.array(z.string().uuid()).max(10),
+  originResourceIds: z.array(z.string().uuid()).max(8).default([]),
   modelOverride: z.string().max(200).nullable(),
   originType: z.enum(["ad_hoc", "automation"]).default("ad_hoc"),
   automationSubscriptionId: z.string().uuid().nullable().default(null),
@@ -339,6 +341,15 @@ export class WorkstreamObjectProductService {
     if (attachments.length !== input.attachmentIds.length) {
       throw new ApiError(422, "invalid_message_attachment", "One or more attachments are unavailable or already sent");
     }
+    const originResources = input.originResourceIds.length === 0 ? [] : (await this.env.DB.prepare(
+      `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
+              canonical_url, metadata_json, created_at, updated_at
+         FROM resources WHERE workspace_id = ?
+          AND id IN (${input.originResourceIds.map(() => "?").join(",")})`,
+    ).bind(input.workspaceId, ...input.originResourceIds).all<Record<string, unknown>>()).results ?? [];
+    if (originResources.length !== new Set(input.originResourceIds).size) {
+      throw new ApiError(422, "invalid_origin_resource", "One or more origin resources are unavailable");
+    }
     const existing = this.objectStore.identity();
     if (existing && (existing.workspaceId !== input.workspaceId || existing.workstreamId !== input.workstreamId)) {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
@@ -364,8 +375,8 @@ export class WorkstreamObjectProductService {
       };
     }
     const now = Date.now();
-    const messageId = crypto.randomUUID();
-    const runId = crypto.randomUUID();
+    const messageId = uuidV7(now);
+    const runId = uuidV7(now);
     const model = input.modelOverride
       ? pinnedModelRouting(input.modelOverride).model
       : (await resolveAgentModelRouting(this.env, "workstream", {
@@ -450,6 +461,28 @@ export class WorkstreamObjectProductService {
           resourceId, input.creatorUserId, JSON.stringify(descriptor), now, now,
         );
       });
+      for (const resourceId of input.originResourceIds) {
+        const resource = originResources.find((candidate) => String(candidate.id) === resourceId)!;
+        const descriptor = {
+          id: resourceId,
+          connectionId: resource.connection_id == null ? null : String(resource.connection_id),
+          type: String(resource.resource_type),
+          provider: String(resource.provider),
+          providerResourceId: resource.provider_resource_id == null ? null : String(resource.provider_resource_id),
+          title: String(resource.title),
+          mimeType: resource.mime_type == null ? null : String(resource.mime_type),
+          contentRef: resource.content_ref == null ? null : String(resource.content_ref),
+          canonicalUrl: resource.canonical_url == null ? null : String(resource.canonical_url),
+          metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
+        };
+        this.storage.sql.exec(
+          `INSERT OR IGNORE INTO workstream_resource_links
+             (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+              resource_json, attached_at, updated_at)
+           VALUES (?, ?, 0, 'origin', ?, ?, ?)`,
+          resourceId, input.creatorUserId, JSON.stringify(descriptor), now, now,
+        );
+      }
       this.storage.sql.exec(
         `INSERT INTO runs
            (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
@@ -1876,9 +1909,9 @@ export class WorkstreamObjectProductService {
         || (classification.classification === "uncertain" && (activeTask || connectorMentions.length > 0));
     }
     const model = shouldInvoke ? await this.model(root) : null;
-    const messageId = crypto.randomUUID();
-    const runId = shouldInvoke ? crypto.randomUUID() : null;
     const now = Date.now();
+    const messageId = uuidV7(now);
+    const runId = shouldInvoke ? uuidV7(now) : null;
     const affectedUsers = [...new Set([auth.userId, ...personIds, ...input.confirmedParticipantUserIds])];
     const committed = await this.objectStore.commitWithRegionalEffects<LocalMessageWrite>(
       (sql) => {
@@ -2081,7 +2114,7 @@ export class WorkstreamObjectProductService {
           effect: this.userEffect(current, userId),
         }));
         const occurredAt = new Date(now).toISOString();
-        const activityId = crypto.randomUUID();
+        const activityId = uuidV7(now);
         const activity = {
           partitionKey: `activity:${messageId}`,
           sourceVersion: 1,
@@ -2191,8 +2224,8 @@ export class WorkstreamObjectProductService {
     const answer = skipped ? null : input.answer;
     if (!skipped) this.validateElicitationAnswer(row, input.answer, input.customResponse);
     const now = Date.now();
-    const responsePartId = crypto.randomUUID();
-    const runId = crypto.randomUUID();
+    const responsePartId = uuidV7(now);
+    const runId = uuidV7(now);
     const model = await this.model(root);
     let admittedRunId: string | null = null;
     await this.objectStore.commitWithRegionalEffects(
@@ -2389,8 +2422,8 @@ export class WorkstreamObjectProductService {
       `SELECT id, sequence_number FROM parts WHERE substream_id = '0'
         ORDER BY sequence_number DESC LIMIT 1`,
     ));
-    const runId = crypto.randomUUID();
     const now = Date.now();
+    const runId = uuidV7(now);
     const model = await this.model(root);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {

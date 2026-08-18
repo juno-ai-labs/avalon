@@ -17,6 +17,7 @@ import {
   durableObjectStubForWorkspace,
 } from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
+import { uuidV7 } from "../lib/uuid-v7";
 import { logStructuredEvent } from "../observability/logger";
 import { automationModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
 import { fireDigestSchedule } from "../services/digest-run-service";
@@ -732,9 +733,9 @@ export class WorkspaceScheduler extends DurableObject<Env> {
         .bind(schedule.workspace_id, subscriptionId, schedule.next_run_at)
         .first<PlannedWorkstreamRow>();
 
-      const workstreamId = planned?.id ?? crypto.randomUUID();
+      const workstreamId = planned?.id ?? uuidV7(now.getTime());
       const createdWorkstreamId = planned ? null : workstreamId;
-      const runId = crypto.randomUUID();
+      const runId = uuidV7(now.getTime());
       const timestamp = now.toISOString();
       const executionEnv = planned
         ? await workstreamExecutionEnvironment(this.env, schedule.workspace_id, workstreamId)
@@ -899,7 +900,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
       .first<{ id: string }>();
     if (existing) return existing.id;
 
-    const id = crypto.randomUUID();
+    const id = uuidV7(now.getTime());
     const model = await scheduledWorkstreamModelForExisting(executionEnv, { workspaceId, workstreamId });
     await executionEnv.DB.prepare(
       `INSERT INTO harness_runs (
@@ -992,7 +993,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
        ) VALUES (?1, ?2, 'system', NULL, NULL, 'schedule.failed', 'schedule', ?3, ?4, ?5)`
     )
       .bind(
-        crypto.randomUUID(),
+        uuidV7(),
         schedule.workspace_id,
         schedule.id,
         JSON.stringify({ code: "schedule_execution_failed", message: message.slice(0, 500) }),
@@ -1020,7 +1021,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
                  'workstream_wakeup', ?4, ?5, ?6)`
     )
       .bind(
-        crypto.randomUUID(),
+        uuidV7(),
         wakeup.workspace_id,
         wakeup.workstream_id,
         wakeup.id,
@@ -1040,7 +1041,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
                  'resource_watch', ?3, ?4, ?5)`
     )
       .bind(
-        crypto.randomUUID(),
+        uuidV7(),
         watch.workspace_id,
         watch.id,
         JSON.stringify({ code: "resource_watch_poll_failed", message: message.slice(0, 500) }),
