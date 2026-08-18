@@ -1143,7 +1143,7 @@ describe('Avalon API wire adapter', () => {
       kind: 'connector_setup_requested_v2', connector: 'linear', scope: 'personal',
       method: 'oauth', capabilityCount: 'one', operationId: startHeaders.get('X-Avalon-Operation-Id'),
     }));
-    await expect(api.waitForConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
+    await expect(api.getConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
       status: 'succeeded',
       connectionId,
     });
@@ -1152,27 +1152,6 @@ describe('Avalon API wire adapter', () => {
     );
   });
 
-  it('cancels durable connector OAuth polling through its abort signal', async () => {
-    const attemptId = 'b'.repeat(43);
-    const fetchMock = vi.fn().mockResolvedValue(json({
-      attemptId,
-      provider: 'linear',
-      status: 'pending',
-      connectionId: null,
-      errorCode: null,
-      expiresAt: timestamp,
-    }));
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new AvalonApi('https://api.avalon.test', session);
-    const controller = new AbortController();
-
-    const polling = api.waitForConnectorOAuthAttempt(attemptId, controller.signal);
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    controller.abort();
-
-    await expect(polling).rejects.toMatchObject({ name: 'AbortError' });
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
 });
 
 describe('socket ticket transport', () => {

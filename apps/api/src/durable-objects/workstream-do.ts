@@ -18,6 +18,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { AuthContext, Env } from "../env";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -65,6 +66,11 @@ interface StoredProjectionRow extends Record<string, SqlStorageValue> {
   effect_json: string;
 }
 
+interface StoredStateRow extends Record<string, SqlStorageValue> {
+  event_id: string;
+  waterline: number;
+}
+
 interface BlockDashboardConfigurationRow extends Record<string, SqlStorageValue> {
   configuration_version_id: string;
   version_number: number;
@@ -107,6 +113,7 @@ interface WorkstreamMetadataRow extends Record<string, SqlStorageValue> {
   authority_generation: number;
   workspace_id: string;
   workstream_id: string;
+  region: "global" | "eu";
   title: string;
   description: string;
   preview: string;
@@ -213,6 +220,25 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       last_payload_hash TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     ) STRICT`,
+    `CREATE TABLE workstream_state_clock (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      next_sequence INTEGER NOT NULL CHECK (next_sequence > 0),
+      last_event_time INTEGER NOT NULL CHECK (last_event_time >= 0)
+    ) STRICT`,
+    `INSERT INTO workstream_state_clock(id, next_sequence, last_event_time)
+      VALUES (1, 1, 0)`,
+    `CREATE TABLE workstream_state_changes (
+      sequence INTEGER PRIMARY KEY CHECK (sequence > 0),
+      state_key TEXT NOT NULL CHECK (length(state_key) BETWEEN 1 AND 180),
+      waterline INTEGER NOT NULL CHECK (waterline > 0),
+      event_id TEXT NOT NULL UNIQUE CHECK (length(event_id) BETWEEN 1 AND 180),
+      payload_hash TEXT NOT NULL,
+      state_json TEXT NOT NULL CHECK (json_valid(state_json) AND length(state_json) <= 262144),
+      occurred_at INTEGER NOT NULL CHECK (occurred_at >= 0),
+      UNIQUE (state_key, waterline)
+    ) STRICT`,
+    `CREATE INDEX workstream_state_changes_latest_idx
+      ON workstream_state_changes(state_key, waterline DESC)`,
     `CREATE TABLE durable_outbox (
       message_id TEXT PRIMARY KEY,
       partition_key TEXT NOT NULL,
@@ -592,23 +618,18 @@ export class WorkstreamDO extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     await this.initialized;
     const due = this.dueEffects();
-    const workspaceEffects = due.filter((effect) => [
-      "directory_common",
-      "directory_user",
-      "suggestion_feedback",
-    ].includes(effect.effect.kind));
-    if (workspaceEffects.length > 0) {
-      await this.deliverWorkspaceDirectoryEffects(workspaceEffects).catch(() => undefined);
-    }
-    const regionalEffects = due.filter((effect) => !workspaceEffects.includes(effect));
-    if (regionalEffects.length > 0) {
+    if (due.length > 0) {
       try {
-        await this.env.ACTIVITY_QUEUE.sendBatch(regionalEffects.map((effect) => ({
+        // Every committed state change uses the same Queue wake-up path as
+        // activity and notification effects. Queues is intentionally treated
+        // as at-least-once and unordered; the envelope's state-key waterline is
+        // the receiver's freshness authority.
+        await this.env.ACTIVITY_QUEUE.sendBatch(due.map((effect) => ({
           body: workstreamRegionalEffectWakeMessage(effect),
         })));
         const now = Date.now();
         this.state.storage.transactionSync(() => {
-          for (const effect of regionalEffects) {
+          for (const effect of due) {
             const row = first(this.state.storage.sql.exec<{ attempts: number }>(
               `SELECT attempts FROM durable_outbox WHERE message_id = ? AND payload_hash = ?`,
               effect.messageId,
@@ -630,7 +651,7 @@ export class WorkstreamDO extends DurableObject<Env> {
       } catch {
         const retryAt = Date.now() + RETRY_BASE_MS;
         this.state.storage.transactionSync(() => {
-          for (const effect of regionalEffects) {
+          for (const effect of due) {
             this.state.storage.sql.exec(
               `UPDATE durable_outbox SET state = 'pending', attempts = attempts + 1, not_before = ?
                 WHERE message_id = ? AND payload_hash = ?`,
@@ -674,7 +695,7 @@ export class WorkstreamDO extends DurableObject<Env> {
     if (!client || !server) return json({ error: "websocket_unavailable" }, 500);
     const attachment: WorkstreamSocketAttachment = {
       ...identity.data,
-      connectionId: crypto.randomUUID(),
+      connectionId: uuidV7(),
       connectedAt: new Date().toISOString(),
       subscribed: false,
     };
@@ -801,8 +822,8 @@ export class WorkstreamDO extends DurableObject<Env> {
     const launched: BlockDashboardBlockRun[] = [];
     for (const block of parseBlockDashboardBlocks(configuration.blocks_json)) {
       if (block.prompt.trim().length === 0) continue;
-      const blockRunId = crypto.randomUUID();
-      const harnessRunId = crypto.randomUUID();
+      const blockRunId = uuidV7();
+      const harnessRunId = uuidV7();
       const dispatch = BlockDashboardBlockDispatchSchema.parse({
         region: this.env.AVALON_REGION,
         workspaceId: metadata.workspace_id,
@@ -1560,7 +1581,7 @@ export class WorkstreamDO extends DurableObject<Env> {
 
   private metadataRow(): WorkstreamMetadataRow | null {
     return first(this.state.storage.sql.exec<WorkstreamMetadataRow>(
-      `SELECT revision, authority_generation, workspace_id, workstream_id, title, description, preview,
+      `SELECT revision, authority_generation, workspace_id, workstream_id, region, title, description, preview,
               scope, exact_state, system_kind, last_activity_at, completed_at,
               archived_at, email_address, origin_type, created_by_user_id,
               automation_subscription_id, automation_run_id, planned_for,
@@ -1604,6 +1625,27 @@ export class WorkstreamDO extends DurableObject<Env> {
     return this.userProjection(userId)?.isParticipant === true;
   }
 
+  private latestStateRow(stateKey: string): StoredStateRow | null {
+    return first(this.state.storage.sql.exec<StoredStateRow>(
+      `SELECT event_id, waterline FROM workstream_state_changes
+        WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+      stateKey,
+    ));
+  }
+
+  private stateVersionForUser(row: WorkstreamMetadataRow, userId: string) {
+    const common = this.latestStateRow("common");
+    if (!common) throw new Error("workstream_common_state_missing");
+    const viewer = this.latestStateRow(`user:${userId}`);
+    return {
+      commonEventId: common.event_id,
+      viewerEventId: viewer?.event_id ?? null,
+      authorityGeneration: row.authority_generation,
+      commonWaterline: common.waterline,
+      viewerWaterline: viewer?.waterline ?? 0,
+    };
+  }
+
   private metadataForUser(userId: string): WorkstreamControlMetadata | null {
     const row = this.metadataRow();
     if (!row) return null;
@@ -1613,6 +1655,7 @@ export class WorkstreamDO extends DurableObject<Env> {
       ? { dueAt: iso(row.next_wakeup_due_at), promptPreview: promptPreview(row.next_wakeup_prompt) }
       : null;
     return WorkstreamControlMetadataSchema.parse({
+      stateVersion: this.stateVersionForUser(row, userId),
       revision: row.revision,
       id: row.workstream_id,
       workspaceId: row.workspace_id,
@@ -1710,15 +1753,7 @@ export class WorkstreamDO extends DurableObject<Env> {
     ));
     if (previous?.last_payload_hash === payloadHash) return;
     const sourceVersion = previous?.next_version ?? 1;
-    const messageId = crypto.randomUUID();
-    // A pending complete replacement has not crossed the object boundary and
-    // can be coalesced. An inflight row may already have committed at the
-    // regional destination even if its response has not returned, so retain
-    // and retry it until its idempotent acknowledgement arrives.
-    this.state.storage.sql.exec(
-      `DELETE FROM durable_outbox WHERE partition_key = ? AND state = 'pending'`,
-      projectionKey,
-    );
+    const messageId = this.recordStateChange(projectionKey, sourceVersion, effect, payloadHash, now);
     this.state.storage.sql.exec(
       `INSERT INTO projection_keys(projection_key, next_version, last_payload_hash, updated_at)
        VALUES (?, ?, ?, ?)
@@ -1740,6 +1775,59 @@ export class WorkstreamDO extends DurableObject<Env> {
     }, now);
   }
 
+  /**
+   * Append one immutable UI state row before its Queue wake-up can exist.
+   *
+   * The timestamp-prefixed ID is useful for cross-socket traces and sorts by
+   * observed wall time. The state-key waterline remains the correctness clock:
+   * clocks in independent Durable Objects cannot provide a global total order.
+   */
+  private recordStateChange(
+    stateKey: string,
+    waterline: number,
+    effect: WorkstreamRegionalEffect,
+    payloadHash: string,
+    now: number,
+  ): string {
+    const metadata = this.metadataRow();
+    if (!metadata) throw new Error("workstream_metadata_missing");
+    const clock = first(this.state.storage.sql.exec<{
+      next_sequence: number;
+      last_event_time: number;
+    }>(`SELECT next_sequence, last_event_time FROM workstream_state_clock WHERE id = 1`));
+    if (!clock) throw new Error("workstream_state_clock_missing");
+    const occurredAt = Math.max(now, clock.last_event_time);
+    const sequence = clock.next_sequence;
+    const eventId = uuidV7(occurredAt);
+    this.state.storage.sql.exec(
+      `UPDATE workstream_state_clock
+          SET next_sequence = ?, last_event_time = ? WHERE id = 1`,
+      sequence + 1,
+      occurredAt,
+    );
+    this.state.storage.sql.exec(
+      `INSERT INTO workstream_state_changes
+         (sequence, state_key, waterline, event_id, payload_hash, state_json, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      sequence,
+      stateKey,
+      waterline,
+      eventId,
+      payloadHash,
+      JSON.stringify(effect),
+      occurredAt,
+    );
+    // Reconnects need the current row, not every transition ever observed.
+    // Keep a bounded diagnostic/replay tail per independent state key.
+    this.state.storage.sql.exec(
+      `DELETE FROM workstream_state_changes
+        WHERE state_key = ? AND waterline <= ?`,
+      stateKey,
+      waterline - 1_024,
+    );
+    return eventId;
+  }
+
   private enqueueImmutable(substreamId: string, source: WorkstreamRegionalEffectEnvelope, now: number): void {
     let requiredProjectionVersion: number | null = null;
     if (source.effect.kind === "mention_notification") {
@@ -1751,7 +1839,9 @@ export class WorkstreamDO extends DurableObject<Env> {
       requiredProjectionVersion = (projection?.next_version ?? 1) - 1;
       if (requiredProjectionVersion <= 0) throw new Error("workstream_notification_projection_dependency_uncommitted");
     }
-    const messageId = `substream:${substreamId}:${source.messageId}`;
+    const messageId = source.effect.kind === "suggestion_feedback"
+      ? uuidV7(now)
+      : `substream:${substreamId}:${source.messageId}`;
     const payloadHash = workstreamRegionalEffectHash(source.effect, requiredProjectionVersion);
     this.insertOutbox({
       ...source,

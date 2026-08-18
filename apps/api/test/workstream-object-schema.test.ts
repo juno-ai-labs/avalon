@@ -478,20 +478,36 @@ describe("the Workstream Durable Object relational schema", () => {
         partitionKey: "common",
         effect: commonEffect,
       }]);
+      const nextCommonEffect = { ...commonEffect, state: "running", completedAt: null };
+      const nextProjection = await store.commitWithRegionalEffects(() => "committed", [{
+        partitionKey: "common",
+        effect: nextCommonEffect,
+      }]);
       expect(firstProjection).toEqual({ result: "committed", enqueued: 1 });
       expect(duplicateProjection).toEqual({ result: "committed", enqueued: 0 });
+      expect(nextProjection).toEqual({ result: "committed", enqueued: 1 });
 
-      const due = store.dueRegionalEffects(Date.now() + 1);
-      expect(due).toEqual([expect.objectContaining({
-        generation,
-        partitionKey: "common",
-        sourceVersion: 1,
-        effect: commonEffect,
-      })]);
+      const due = store.dueRegionalEffects(Number.MAX_SAFE_INTEGER);
+      expect(due).toEqual([
+        expect.objectContaining({
+          generation,
+          partitionKey: "common",
+          sourceVersion: 1,
+          effect: commonEffect,
+        }),
+        expect.objectContaining({
+          generation,
+          partitionKey: "common",
+          sourceVersion: 2,
+          effect: nextCommonEffect,
+        }),
+      ]);
       expect(workstreamRegionalEffectWakeMessage(due[0]!)).not.toHaveProperty("effect");
       store.markRegionalEffectsQueued(due);
       expect(store.dueRegionalEffects()).toEqual([]);
-      expect(store.acknowledgeRegionalEffect(due[0]!.messageId, due[0]!.payloadHash)).toBe(true);
+      for (const effect of due) {
+        expect(store.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)).toBe(true);
+      }
       expect(database.prepare("SELECT COUNT(*) AS count FROM durable_outbox").get())
         .toEqual({ count: 0 });
 

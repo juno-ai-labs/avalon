@@ -358,11 +358,11 @@ no projection fallback when that object is unavailable.
   not a copy of product state.
 - `WorkspaceDO.workspace_workstream_directory` and
   `workspace_workstream_viewers` are authoritative common and viewer-specific
-  query rows. Equal generation/version with a different hash is rejected.
+  query rows. Equal generation/waterline with a different hash is rejected.
   `workstream_notification_intents` temporarily retains a bounded mention
-  payload plus its required directory version while D1 resolves current
+  payload plus its required viewer waterline while D1 resolves current
   membership/profile/destination state; notification delivery asks WorkspaceDO
-  for that causal version, and a newer revocation/listability row wins;
+  for that causal waterline, and a newer revocation/listability row wins;
   terminal delivery or skip erases `payload_json` rather than retaining a second
   transcript. Acknowledged receipts and terminal intent shells are retained for
   30 days; pending/unacknowledged rows do not expire.
@@ -628,11 +628,33 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-18 — Work-stream projections gain independent state waterlines
+
+**What changed:** WorkstreamDO now records immutable common and `user:<id>`
+state transitions with per-key waterlines and separate common/viewer UUIDv7 row identities before creating
+its Queue outbox row. WorkspaceDO common/viewer tables persist those waterlines
+and source IDs independently. Its generic synchronization and directory clocks
+are explicitly named waterlines. Electron shares the same ledger between the
+WorkstreamDO and WorkspaceDO sockets.
+
+**Why:** The direct socket and at-least-once, unordered Queue path can deliver
+the same transition in either order. A combined version or separate UI caches
+could roll back shared title/status/unread/mention state.
+
+**Considered and rejected:** UUIDv7 as a distributed total clock, overwriting a
+single current row before durable delivery, coalescing pending state outbox
+rows, and using D1 as the reconciliation authority. UUIDv7 supplies useful time
+sorting and trace identity, while authority-local waterlines supply correctness.
+
+**Consequences:** WorkspaceDO accepts only a greater generation/key waterline;
+intermediate UI states may be skipped but every source transition remains
+deliverable until acknowledged. D1 remains outside this serving path.
+
 ### 2026-08-18 — Cross-work-stream indexes move from D1 to WorkspaceDO
 
 **What changed:** WorkspaceDO's single initial SQLite schema now owns common and
 viewer directory rows, pins, resource links, resolved suggestion feedback, a
-directory version, and effect receipts. The unshipped D1 migrations no longer
+directory waterline, and effect receipts. The unshipped D1 migrations no longer
 create the corresponding projection tables; D1 retains only work-stream
 identity anchors, migration/routes, activity/mention receipts, notification
 intents, and unrelated relational workspace modules.
@@ -646,8 +668,9 @@ regional database.
 querying every WorkstreamDO at read time. The former preserves split authority;
 the latter turns a bounded local query into unbounded cross-object fan-out.
 
-**Consequences:** Every WorkstreamDO directory effect is retried to WorkspaceDO
-from its SQL outbox; migration activation flushes and verifies that state before
+**Consequences:** Every WorkstreamDO directory effect is retried through Queue
+to WorkspaceDO from its SQL outbox; migration activation alone synchronously
+flushes and verifies that state before
 opening a route; Electron pages the WorkspaceDO socket; and D1 cannot recover or
 override the directory after cutover.
 

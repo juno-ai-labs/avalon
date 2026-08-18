@@ -8,7 +8,8 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { normalizeHarnessStatus, type AvalonApi } from './api';
-import type { WorkstreamDetail, WorkstreamSummary } from './types';
+import type { WorkstreamSummary } from './types';
+import { applyVersionedWorkstreamState } from './workstream-state-store';
 import { setCachedWorkstreams } from './workstreams-cache';
 
 type WorkstreamControlSocketApi = Pick<AvalonApi, 'getWorkstreamControlSocketTicket'>;
@@ -20,12 +21,17 @@ function reconnectDelay(attempt: number): number {
   return Math.floor(ceiling / 2 + Math.random() * ceiling / 2);
 }
 
-function metadataPatch(metadata: WorkstreamControlMetadata): Partial<WorkstreamSummary> {
+function metadataState(metadata: WorkstreamControlMetadata): {
+  common: Partial<WorkstreamSummary>;
+  viewer: Partial<WorkstreamSummary>;
+  seed: WorkstreamSummary;
+} {
   const manual = metadata.viewer.manualUnreadFromSequenceNumber;
   const seen = metadata.viewer.readThroughSequenceNumber;
   const latest = metadata.latestAttentionSequenceNumber;
   const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
-  return {
+  const common: Partial<WorkstreamSummary> = {
+    id: metadata.id,
     title: metadata.title,
     titleStatus: metadata.titleStatus,
     objective: metadata.description,
@@ -39,12 +45,6 @@ function metadataPatch(metadata: WorkstreamControlMetadata): Partial<WorkstreamS
     plannedFor: metadata.plannedFor ?? undefined,
     harnessStatus: normalizeHarnessStatus(metadata.harnessStatus),
     latestAttentionSequenceNumber: latest,
-    readThroughSequenceNumber: seen,
-    manualUnreadFromSequenceNumber: manual,
-    manualUnreadGeneration: metadata.viewer.manualUnreadGeneration,
-    hasUnread: firstUnread !== null,
-    youAreMentioned: metadata.viewer.youAreMentioned,
-    firstUnreadSequenceNumber: firstUnread,
     lastActivityAt: metadata.lastActivityAt,
     createdAt: metadata.createdAt,
     updatedAt: metadata.updatedAt,
@@ -52,6 +52,48 @@ function metadataPatch(metadata: WorkstreamControlMetadata): Partial<WorkstreamS
     scope: metadata.scope,
     systemKind: metadata.systemKind ?? undefined,
     nextPendingWakeup: metadata.nextPendingWakeup,
+    preview: metadata.preview,
+  };
+  const viewer: Partial<WorkstreamSummary> = {
+    readThroughSequenceNumber: seen,
+    manualUnreadFromSequenceNumber: manual,
+    manualUnreadGeneration: metadata.viewer.manualUnreadGeneration,
+    hasUnread: firstUnread !== null,
+    youAreMentioned: metadata.viewer.youAreMentioned,
+    firstUnreadSequenceNumber: firstUnread,
+  };
+  return {
+    common,
+    viewer,
+    seed: {
+      id: metadata.id,
+      title: metadata.title,
+      titleStatus: metadata.titleStatus,
+      objective: metadata.description,
+      emailAddress: metadata.emailAddress ?? undefined,
+      origin: metadata.originType,
+      createdByUserId: metadata.createdByUserId ?? undefined,
+      automationSubscriptionId: metadata.automationSubscriptionId ?? undefined,
+      automationRunId: metadata.automationRunId ?? undefined,
+      plannedFor: metadata.plannedFor ?? undefined,
+      harnessStatus: normalizeHarnessStatus(metadata.harnessStatus),
+      latestAttentionSequenceNumber: latest,
+      readThroughSequenceNumber: seen,
+      manualUnreadFromSequenceNumber: manual,
+      manualUnreadGeneration: metadata.viewer.manualUnreadGeneration,
+      hasUnread: firstUnread !== null,
+      youAreMentioned: metadata.viewer.youAreMentioned,
+      firstUnreadSequenceNumber: firstUnread,
+      lastActivityAt: metadata.lastActivityAt,
+      createdAt: metadata.createdAt,
+      updatedAt: metadata.updatedAt,
+      archivedAt: metadata.archivedAt ?? undefined,
+      scope: metadata.scope,
+      systemKind: metadata.systemKind ?? undefined,
+      nextPendingWakeup: metadata.nextPendingWakeup,
+      pinPosition: null,
+      preview: metadata.preview,
+    },
   };
 }
 
@@ -72,7 +114,6 @@ export function useWorkstreamControlSocket(
     let pongTimer: number | null = null;
     let connecting = false;
     let attempt = 0;
-    let revision = -1;
 
     const clearReconnect = (): void => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -106,15 +147,17 @@ export function useWorkstreamControlSocket(
       }, reconnectDelay(attempt));
     };
     const applyMetadata = (metadata: WorkstreamControlMetadata): void => {
-      if (metadata.id !== workstreamId || metadata.revision < revision) return;
-      revision = metadata.revision;
-      const patch = metadataPatch(metadata);
-      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
-        current ? { ...current, ...patch } : current);
-      setCachedWorkstreams(queryClient, (current) => {
-        if (!metadata.viewer.listable) return current?.filter((item) => item.id !== workstreamId);
-        return current?.map((item) => item.id === workstreamId ? { ...item, ...patch } : item);
+      if (metadata.id !== workstreamId) return;
+      const state = metadataState(metadata);
+      const applied = applyVersionedWorkstreamState(queryClient, {
+        workstreamId,
+        stateVersion: metadata.stateVersion,
+        ...state,
+        visible: metadata.viewer.listable,
       });
+      if (applied.commonApplied) {
+        void queryClient.invalidateQueries({ queryKey: ['terminal-workstream', workstreamId], exact: true });
+      }
     };
     const connect = async (): Promise<void> => {
       if (stopped || accessRevoked || connecting) return;

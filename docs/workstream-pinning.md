@@ -18,7 +18,7 @@ the different question of who a work stream is *for*.
 | --- | --- |
 | `packages/db/migrations/0064_workstream_pins.sql` | Frozen legacy D1 pins imported during the maintenance cutover; post-cutover triggers reject writes. |
 | `packages/contracts/src/index.ts` | `WorkstreamSchema.pinPosition` — the per-viewer position on the wire — and `ReorderWorkstreamPinsRequestSchema`. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Authoritative `workspace_workstream_pins`, transactional position rewrites, readability checks, directory versioning, and socket invalidation. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Authoritative `workspace_workstream_pins`, transactional position rewrites, readability checks, directory waterline, and socket invalidation. |
 | `apps/api/src/services/workstream-directory-service.ts` | Typed Worker-to-WorkspaceDO pin/unpin/reorder adapter used by the existing HTTP command routes. |
 | `apps/api/src/routes/workstreams.ts` | `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The **Pinned** section, the right-click **Pin** / **Unpin** item, and the drag-and-keyboard reorder. `orderPinnedWorkstreams` decides what the section renders. |
@@ -260,6 +260,25 @@ allocated — `MAX(position) + 1` inside the insert — rather than by the schem
 
 ## Changelog
 
+### 2026-08-18 — Pin pages use the workspace directory waterline
+
+**What changed:** The WorkspaceDO page clock and wire field are now explicitly
+named `directoryWaterline`. Pin responses still replace the complete personal
+order, while other windows receive a waterlined workspace socket invalidation.
+
+**Why:** Work-stream common/viewer state now has separate authority-local
+waterlines. Calling the independent pin/page clock a generic version obscured
+which receiver ordering rule it belongs to.
+
+**Considered and rejected:** Folding pins into WorkstreamDO viewer waterlines.
+One personal reorder spans many work streams and must remain one WorkspaceDO
+transaction.
+
+**Consequences:** Pin fields reconcile under the workspace page/invalidation
+waterline, not either work-stream state waterline. Electron records the last
+directory waterline observed per work stream and refuses an older page's pin
+value, while reconnect reloads a resident directory to repair missed pushes.
+
 ### 2026-08-18 — Pins become WorkspaceDO product state
 
 **What changed:** Pins, position rewrites, readability checks, and pinned-first
@@ -277,7 +296,7 @@ pins in each WorkstreamDO. The first preserves split authority; the second turns
 one reorder into N object mutations with no atomic order.
 
 **Consequences:** WorkspaceDO is the only post-cutover pin writer. Its directory
-version changes after each effective mutation, and the first page may contain
+waterline changes after each effective mutation, and the first page may contain
 up to 1,000 pins in addition to at most 250 recent rows.
 
 ### 2026-08-13 — Command shortcut discovery and use are distinct signals

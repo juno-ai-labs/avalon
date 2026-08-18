@@ -2419,7 +2419,21 @@ export class ConnectionService {
       }
     }
     const settled = await this.loadOAuthAttempt(attemptId);
-    if (settled) await this.emitOAuthOutcome(settled).catch(() => undefined);
+    if (settled) {
+      await this.emitOAuthOutcome(settled).catch(() => undefined);
+      try {
+        await publishWorkspaceSync(this.env, settled.workspace_id, ["connector_oauth_attempts"]);
+      } catch (error) {
+        // The attempt is already durably settled. Reconnect's full workspace
+        // snapshot provides another reconciliation edge if this live signal
+        // cannot reach the hibernating WorkspaceDO.
+        logWarn(this.env, "connector_oauth_attempt_sync_publish_failed", {
+          workspace_id: settled.workspace_id,
+          attempt_id: settled.id,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
   }
 
   private async loadOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttemptRow | null> {

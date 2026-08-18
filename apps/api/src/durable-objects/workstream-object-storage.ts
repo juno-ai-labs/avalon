@@ -8,6 +8,7 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 
+import { uuidV7 } from "../lib/uuid-v7";
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
 import { BlockDashboardContextFenceSchema } from "./block-dashboard-protocol";
 import {
@@ -737,7 +738,7 @@ export class WorkstreamObjectStore {
       const commands = typeof effects === "function"
         ? effects(this.storage.sql, result)
         : effects;
-      const messageIds = commands.map(() => crypto.randomUUID());
+      const messageIds = commands.map(() => uuidV7());
       let enqueued = 0;
       for (const [index, command] of commands.entries()) {
         const effect = WorkstreamRegionalEffectSchema.parse(command.effect);
@@ -760,14 +761,6 @@ export class WorkstreamObjectStore {
           if (previous?.last_payload_hash === payloadHash) continue;
           sourceVersion = previous?.next_version ?? 1;
           messageId = messageIds[index]!;
-          // A queued stale projection may still arrive, but its lower version
-          // cannot overwrite this one. It no longer needs local redelivery.
-          this.storage.sql.exec(
-            `DELETE FROM durable_outbox
-              WHERE channel = ? AND partition_key = ? AND state IN ('pending', 'inflight')`,
-            REGIONAL_EFFECT_CHANNEL,
-            projectionKey,
-          );
           this.storage.sql.exec(
             `INSERT INTO projection_keys
                (projection_key, next_version, last_payload_hash,
@@ -863,7 +856,13 @@ export class WorkstreamObjectStore {
       `SELECT message_id, payload_json, payload_hash, attempts
          FROM durable_outbox
         WHERE channel = ? AND state IN ('pending', 'inflight') AND not_before <= ?
-        ORDER BY created_at, message_id
+        ORDER BY created_at,
+                 CASE json_extract(payload_json, '$.effect.kind')
+                   WHEN 'directory_common' THEN 0
+                   WHEN 'directory_user' THEN 1
+                   ELSE 2
+                 END,
+                 partition_key, source_version, message_id
         LIMIT ?`,
       REGIONAL_EFFECT_CHANNEL,
       now,
