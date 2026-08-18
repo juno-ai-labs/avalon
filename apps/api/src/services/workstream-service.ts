@@ -18,7 +18,9 @@ import type {
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
+import { substreamAgentName } from "../durable-objects/substream-agent";
 import { ApiError } from "../lib/api-error";
+import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
@@ -42,10 +44,9 @@ import {
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
 } from "./integrations";
-import { markWorkflowInstanceCreated, workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
-import { issueSocketTicket } from "./socket-service";
+import { issueSocketTicket, issueWorkspaceSocketTicket } from "./socket-service";
 import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import {
@@ -354,7 +355,30 @@ export async function launchWorkstreamHarness(
    * here instead fails loudly, in front of the person who asked for it.
    */
   try {
-    await startWorkstreamWorkflow(env, workflowInput);
+    const authority = await readWorkstreamAuthorityControl(env);
+    if (authority.phase === "durable_object_open") {
+      const agents = durableObjectNamespaceForRegion(
+        env.SUBSTREAM_AGENTS,
+        env.AVALON_REGION,
+        env.APP_ENV,
+      );
+      const id = agents.idFromName(substreamAgentName(
+        env.AVALON_REGION,
+        input.workspaceId,
+        input.workstreamId,
+      ));
+      const response = await agents.get(id).fetch("https://substream-agent/internal/run-dispatch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...workflowInput, substreamId: "0" }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(typeof body?.error === "string" ? body.error : "substream_agent_unavailable");
+      }
+    } else {
+      await startWorkstreamWorkflow(env, workflowInput);
+    }
   } catch (error) {
     const diagnosticMessage = error instanceof Error ? error.message : "Workflow start failed";
     logStructuredEvent(env, "error", "workstream_harness_launch_failed", {
@@ -397,7 +421,7 @@ export async function launchWorkstreamHarness(
     // The member-safe error carries forward whether an instance is live, so a
     // caller undoing its own preparation is answering the right question.
     const memberSafe = new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
-    throw workflowInstanceWasCreated(error) ? markWorkflowInstanceCreated(memberSafe) : memberSafe;
+    throw memberSafe;
   }
   await publishEvent(env, input.workspaceId, input.workstreamId, {
     type: "harness_status_changed",
@@ -2275,12 +2299,22 @@ export class WorkstreamService {
     return { harnessRunId };
   }
 
-  async socketTicket(id: string) {
+  async socketTicket(id: string, substreamId = "0") {
     await this.requireWorkstream(id);
-    const ticket = await issueSocketTicket(this.env, this.auth, id);
+    const ticket = await issueSocketTicket(this.env, this.auth, id, substreamId);
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = `/socket/workstreams/${id}`;
+    url.pathname = `/socket/workstreams/${id}/substreams/${substreamId}`;
+    url.search = new URLSearchParams({ ticket }).toString();
+    return { url: url.toString(), ticket };
+  }
+
+  async workspaceSocketTicket(id: string, substreamId = "0") {
+    await this.requireWorkstream(id);
+    const ticket = await issueWorkspaceSocketTicket(this.env, this.auth, id, substreamId);
+    const url = new URL(this.env.PUBLIC_API_BASE_URL);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = `/socket/workspaces/${this.auth.workspaceId}/workstreams/${id}/substreams/${substreamId}`;
     url.search = new URLSearchParams({ ticket }).toString();
     return { url: url.toString(), ticket };
   }

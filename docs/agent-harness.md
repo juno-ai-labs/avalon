@@ -1,6 +1,6 @@
 # Agent harness
 
-Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. A Cloudflare Workflow hosts the complete loop. The owning WorkstreamDO stores work-stream admission, leases, transcript, receipts, and terminal state; regional D1 remains authoritative for workspace/connector authority and cross-work-stream projections, while R2 stores large outputs.
+Avalon's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. After the work-stream authority cutover, the owning `SubstreamAgent` Durable Object hosts the complete work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite. Regional D1 remains authoritative for workspace/connector authority and cross-work-stream projections, while R2 stores large outputs. Non-workstream loops and pre-cutover drain may still use Cloudflare Workflows.
 
 Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
@@ -16,7 +16,8 @@ Each run is one server-side, tool-using loop inherent to a work stream. It is no
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
 | `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
-| `apps/api/src/workflows/workstream-loop.ts` | The generic Workflow every run is one instance of. |
+| `apps/api/src/durable-objects/substream-agent.ts` | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
+| `apps/api/src/workflows/workstream-loop.ts` | The legacy/pre-cutover work-stream drain and the reusable Workflow pattern for non-workstream loops. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 
@@ -38,28 +39,26 @@ Every write is conditional on the status the pass started from, which is what ke
 
 ### Admission and immutable run scope
 
-The generic Workflow creates one replay-stable attempt identity, reaps expired attempts, and claims a time-bounded object-local lease. At most one unexpired harness lease may run in a work stream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed.
+The child dispatcher creates one replay-stable run identity; each execution attempt reaps expired attempts and claims a time-bounded object-local lease. At most one unexpired harness lease may run in a substream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed.
 
-A launch is never split across the response that asked for it. The `harness_runs` row, the work stream's `running` status, and the Workflows start all complete before `launchWorkstreamHarness` returns, because `attempt_id` and `lease_expires_at` stay NULL until the Workflow admits the run and nothing reaps that shape — a row claiming `running` with no Workflow behind it is a work stream `stop` cannot terminalize and `retry` refuses. Deferring the start to `waitUntil` was tried and reverted for exactly that reason; see [`workstream-creation.md`](workstream-creation.md). A start that fails marks the run failed, publishes `harness_status_changed`, and answers `503`.
+A launch is never split across the response that asked for it. The run row, work-stream state, and `agent_run_dispatches` admission commit before the child acknowledges launch. The dispatcher itself may continue through `waitUntil`, because the SQL dispatch row—not the in-memory promise—is the durable start signal and constructor/alarm activation resumes it. A start that fails before durable admission marks the run failed, publishes `harness_status_changed`, and answers `503`.
 
 ### Execution primitive and expected duration
 
-One Cloudflare Workflow instance represents one **full Bind loop**, not one
-model turn. The Workflow gives retries, durable instance identity, cancellation
-observation, and a deadline long enough for the product workload; a direct
-Worker request is only the bounded executor for a Workflow step and is not the
-owner of the loop. Most loops are expected to last 2–30 minutes. Time to first
-token is normally 1–5 seconds, ordinary tools take seconds, and a Terminal call
-usually finishes within a minute at p95 but can take 3–5 minutes. Rare coding
-sessions may continue for more than two hours. The one-year Workflow step
-deadline is therefore an operational ceiling, not the product duration target.
+One `SubstreamAgent` execution represents one **full Bind loop**, not one model
+turn. Most loops are expected to last 2–30 minutes. Time to first token is
+normally 1–5 seconds, ordinary tools take seconds, and a Terminal call usually
+finishes within a minute at p95 but can take 3–5 minutes. Rare coding sessions
+may continue for more than two hours.
 
-The WorkstreamDO does not stay awake for that wall time. The Workflow invokes
-the Worker, which calls Bind and checkpoints leases, turns, tool receipts, and
-final messages through the object's local SQL RPC. Hibernating room sockets are
-resumed only for batched stream frames or commands. Terminal remains a plugin in
-the same loop and executes its actual coding commands in Daytona; Cloudflare
-persists and orchestrates the loop but does not replace the Daytona sandbox.
+The child wraps active work in a custom `keepAliveWhile()`, scheduling a
+30-second alarm heartbeat while the in-memory computation exists. Correctness
+does not depend on remaining resident: `agent_run_dispatches`, the attempt
+lease, immutable scope, tool receipts, streaming checkpoint, and final-message
+fence resume or reconcile the run after eviction. Hibernating feed sockets wake
+only for batched frames or product events; user commands arrive through the
+workspace socket. Terminal remains a plugin in the same loop and executes its
+actual coding commands in Daytona.
 
 A run records the message it was triggered by in `harness_runs.trigger_message_id`, because that id is what fences the transcript the run may see — everything up to and including the trigger, nothing after. `retry` creates a new run for a failed one and inherits that stored id rather than reconstructing it: a run with no message behind it (a scheduled wakeup, an activity, an automation run with no opening message, a HyperSight block) stores NULL and replays the whole available transcript, and so does a row written before the column existed. A scheduled digest is not one of these — it appends its brief and launches against that message — and neither is an automation run that has one. Reconstructing the trigger as "the latest human message" — which is what `retry` did before the column existed — is right only while nothing has happened since, and fences finished work out of the replay whenever it has.
 
@@ -165,18 +164,18 @@ The prompt sections are a pure render of run state. Bodies are rebuilt from the 
 4. Stream text through the epoch-aware protocol; reasoning fields are ignored.
 5. Normalize unambiguous schema-declared numeric strings, validate tools, and recheck authority. Bind runs writes sequentially and may overlap independent reads, while returning results in the model's original call order.
 6. Persist each immutable execution plan before execution and make a successful bounded result durable before returning it to Bind.
-7. Persist the complete assistant message, then let the lease-owning Workflow append the terminal lifecycle event.
+7. Persist the complete assistant message, then let the lease-owning child executor append the terminal lifecycle event.
 8. Stop on completion, elicitation, durable cancellation, ambiguous write, limit, lease loss, or failure.
 
 Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY` and from inbound-email runs.
 
 ### Elicitation
 
-The canonical `request_elicitation` tool belongs to `avalon:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. In a work stream, the work stream becomes `needs_input`; a valid answer persists a visible response, clears attention when no blockers remain, and starts a new generic Workflow linked to the previous run. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
+The canonical `request_elicitation` tool belongs to `avalon:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. In a work stream, the work stream becomes `needs_input`; a valid answer persists a visible response, clears attention when no blockers remain, and admits a new run into the same `SubstreamAgent`, linked to the previous run. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
 
 ### Durable receipts and terminal state
 
-Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before the WorkstreamDO authority cutover, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. After cutover, the owning WorkstreamDO stores those records in `tool_effects` and `tool_effect_checkpoints`; the protocol and receipt identity do not change. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
+Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before the Durable Object authority cutover, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. After cutover, the owning `SubstreamAgent` stores those records in `tool_effects` and `tool_effect_checkpoints`; the protocol and receipt identity do not change. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
 
 Before the input hash or any host hook sees arguments, the harness walks the
 tool's provider-facing JSON Schema and normalizes a string only where the field
@@ -268,11 +267,11 @@ Every classified provider attempt appends an immutable inference-ledger row with
 
 ### Streaming stability
 
-OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`. A route restart increments `epoch`; `streamSeq` orders frames within the turn epoch; `reset: true` replaces text from the abandoned attempt. These fields are independent of the WorkstreamRoom event `sequence` used for socket replay.
+OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`. A route restart increments `epoch`; `streamSeq` orders frames within the turn epoch; `reset: true` replaces text from the abandoned attempt. These fields are independent of the SubstreamAgent event `sequence` used for socket replay.
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and retry boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
-The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset while preserving completed text from earlier tool turns. The shell keeps a background subscriber only for running work streams that are not open, and a canonical refresh retains the active transient assistant row until its final row arrives. The current regional work-stream authority stores only the complete final assistant message; terminal REST resynchronization remains canonical. That authority is D1 before the guarded maintenance cutover and the owning WorkstreamDO afterward.
+The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset while preserving completed text from earlier tool turns. The shell keeps a background subscriber only for running work streams that are not open, and a canonical refresh retains the active transient assistant row until its final row arrives. The current regional work-stream authority stores the complete final assistant message plus a bounded active-output checkpoint while streaming; terminal resynchronization remains canonical. That authority is D1 before the guarded maintenance cutover and the owning `SubstreamAgent` afterward.
 
 ### Transcript row attribution
 
@@ -323,9 +322,8 @@ Its output is a tool call. The block is exactly the `markdown` argument passed t
 
 A turn that would end without that call gets one `onTurnWouldEnd` message asking for it, and only one: a block that will not submit twice running is a failed block, and nagging further only spends the run's ceilings. If it still never submits, the run is recorded `failed` with `hypersight_block_not_submitted` rather than completed-and-empty, so a block that renders nothing says why.
 
-HyperSight shares the root run policy: 1,000 routed model attempts, no aggregate
-tool-call, cost, or task-scale wall-time ceiling, and a one-year Workflow step
-deadline. Its read-only tool policy and inability to pause remain independent
+HyperSight shares the root run policy: 1,000 routed model attempts and no aggregate
+tool-call, cost, or task-scale wall-time ceiling. Its read-only tool policy and inability to pause remain independent
 of resource policy. Each terminal refresh contributes one aggregate summary to
 the root-run Analytics Engine dataset, so future ceilings can be selected from
 the measured distributions rather than assumed in advance.
@@ -387,7 +385,7 @@ That split — a labelled trigger message for the model, a system row for the pe
 
 ### Cancellation and deferred systems
 
-Stopping a run persists `cancellation_requested_at`; it does not terminate the Workflow out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. The same leased Workflow then commits one fenced `stopped` lifecycle event and returns the work stream to `idle`, preventing a stop/complete race.
+Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. The same leased child executor then commits one fenced `stopped` lifecycle event and returns the work stream to `idle`, preventing a stop/complete race.
 
 The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, inline child results, and scoped memory remain distinct durable records. Nested child delegation, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.
 
@@ -408,17 +406,14 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   checks the same `producedOutput` flag the route executor clamps traversal on;
   re-rendering a turn someone is part-way through reading is worse than the
   failure it recovers.
-- **At most one unexpired harness lease runs in a work stream**, and scope,
+- **At most one unexpired harness lease runs in a substream**, and scope,
   activation, receipt-plan and completion, checkpoint, and terminal commits all
   require the same attempt ID, lease owner, and expiry. An obsolete executor cannot
   publish a terminal result.
 - **`completed` cannot commit until the final agent message is durable.**
-- **A launch is never split across the response that asked for it.** The
-  `harness_runs` row, the `running` status, and the Workflows start all complete
-  before `launchWorkstreamHarness` returns, because `attempt_id` and
-  `lease_expires_at` stay NULL until the Workflow admits the run and nothing reaps
-  that shape — a row claiming `running` with no Workflow behind it is a work stream
-  `stop` cannot terminalize and `retry` refuses.
+- **A launch is never acknowledged before durable child admission.** The run,
+  state transition, and `agent_run_dispatches` row exist before the request
+  reports success, so constructor/alarm recovery has a durable start signal.
 - **The run scope is frozen, canonically hashed, and immutable.** A replay must
   reproduce it. Connections installed or expanded later cannot enter it; every
   later check may only *remove* authority.
@@ -480,8 +475,8 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   nothing but its work stream's objective, because the protocol projector drops
   those rows as UI state.
 - **A cancellation is a durable request, observed by the lease owner**, which alone
-  commits the fenced `stopped` transition. Stopping never terminates the Workflow
-  out of band.
+  commits the fenced `stopped` transition. Stopping never kills an in-flight
+  provider or tool operation out of band.
 - **A row carries exactly one plugin icon, the one that owns the tool.** Both
   `ToolInvocation.plugin` and the compiler's `tool` stream event hold a single
   nullable plugin, so a row with several icons cannot be represented.
@@ -526,7 +521,7 @@ and general child participants remain deferred product work.
 
 Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
-Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The bind loop runs inside a Workflow step, and a Workers invocation ends when its handler returns, so an `AbortSignal.timeout()` left armed after a fast tool call holds that invocation open with nothing left to do until the runtime cancels it as a hang. The rule and its incident are [`runbook.md`](runbook.md).
+Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
 When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is available in memory for the immediate control decision and is never logged: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose.
 
@@ -623,6 +618,29 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-17 — Work-stream full loops move into `SubstreamAgent`
+
+**What changed:** After the maintenance authority opens, one child Durable
+Object directly runs each complete Bind loop, persists its dispatch and recovery
+state in SQLite, streams from the same object, owns agent timers, and uses a
+custom 30-second alarm keep-alive while in-memory work is active. The generic
+Workflow remains for pre-cutover drain and non-workstream loops.
+Both generic narration and sequenced work-stream deltas now default to the same
+100 ms/2 KB batch boundary, which caps continuous presentation at 10 fps.
+
+**Why:** A substream is the actual model-context and ordering boundary. Keeping
+its full loop, transcript, tool receipts, compaction, streaming cursor, and
+timers together removes a cross-primitive state machine while retaining durable
+recovery through the dispatch ledger and attempt lease.
+
+**Considered and rejected:** Replacing Bind with the Agents SDK, keeping one
+Workflow per work-stream loop after cutover, and one Workflow per turn. Only the
+SDK's narrow keep-alive behavior was worth porting.
+
+**Consequences:** Work-stream run correctness must survive Durable Object
+eviction, and tests must cover eviction/alarm recovery. The prior Workflow-owned
+entry below records the intermediate design that this entry superseded.
 
 ### 2026-08-17 — Full loops run in Workflow and persist in WorkstreamDO SQL
 
@@ -1455,7 +1473,7 @@ progress should terminate and which execution product it applies to.
 
 ### 2026-08-12 — Mid-stream joins resume from an accumulated room checkpoint
 
-**What changed:** `WorkstreamRoom` now folds every `stream_started` and
+**What changed:** `SubstreamAgent` now folds every `stream_started` and
 `stream_delta` event into an active-stream checkpoint and commits its metadata
 and bounded text chunks in the same Durable Object storage transaction as the
 room sequence. A room snapshot carries the accumulated text, the active turn and epoch, the per-turn
@@ -1660,7 +1678,7 @@ the wrong trade. Raise it again, deliberately and with an entry here, rather
 than compressing policy to fit.
 
 Narration frames are coalesced before they leave the compiler, by the same
-2 KB / 75 ms rule the work-stream socket path uses — `createTextDeltaBatcher`
+2 KB / 100 ms rule the work-stream socket path uses — `createTextDeltaBatcher`
 now lives in the harness and both surfaces call it. Unbatched, a narrating
 compile is on the order of a thousand frames, each one an SSE write, a schema
 parse, a React state update, and a forced reflow from the composer's

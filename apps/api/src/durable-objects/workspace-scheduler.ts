@@ -9,12 +9,14 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 import { newId } from "@avalon/db";
+import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { logStructuredEvent } from "../observability/logger";
 import { automationModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
 import { fireDigestSchedule } from "../services/digest-run-service";
+import { startWorkstreamWorkflow } from "../services/integrations";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
@@ -31,12 +33,36 @@ import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
+import {
+  applyDurableObjectSqliteMigrations,
+  type DurableObjectSqliteMigration,
+} from "./sqlite-migrations";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
-const RETRY_STATES_KEY = "schedulerRetryStates";
 const SCHEDULER_RETRY_BASE_MS = 60_000;
 const SCHEDULER_RETRY_MAX_MS = 30 * 60_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
+
+export const WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
+  version: 1,
+  description: "workspace scheduler identity and per-target retry gates",
+  statements: [
+    `CREATE TABLE workspace_scheduler_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      workspace_id TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE TABLE scheduler_retry_states (
+      target_key TEXT PRIMARY KEY,
+      attempt INTEGER NOT NULL CHECK (attempt > 0),
+      retry_at INTEGER NOT NULL CHECK (retry_at >= 0),
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE INDEX scheduler_retry_due_idx
+      ON scheduler_retry_states(retry_at, target_key)`,
+  ],
+}];
 
 const SchedulerRetryStateSchema = z.object({
   attempt: z.number().int().positive(),
@@ -177,13 +203,28 @@ function workflowAlreadyExists(error: unknown): boolean {
 }
 
 /** One serialized alarm coordinator per workspace. */
-export class WorkspaceScheduler {
-  constructor(
-    private readonly state: DurableObjectState,
-    private readonly env: Env
-  ) {}
+export class WorkspaceScheduler extends DurableObject<Env> {
+  private readonly state: DurableObjectState;
+  private readonly initialized: Promise<void>;
 
-  async fetch(request: Request): Promise<Response> {
+  constructor(
+    state: DurableObjectState,
+    env: Env
+  ) {
+    super(state, env);
+    this.state = state;
+    this.initialized = state.blockConcurrencyWhile(async () => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_SCHEDULER_SCHEMA_MIGRATIONS,
+        component: "workspace_scheduler",
+        workerVersionId: env.APP_VERSION ?? "unknown",
+      });
+    });
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    await this.initialized;
     const url = new URL(request.url);
     if (request.method === "POST" && (url.pathname === "/refresh" || url.pathname === "/")) {
       let input: unknown;
@@ -209,7 +250,7 @@ export class WorkspaceScheduler {
 
     if (request.method === "GET" && url.pathname === "/status") {
       return responseJson({
-        workspaceId: (await this.state.storage.get<string>("workspaceId")) ?? null,
+        workspaceId: this.workspaceId(),
         alarmAt: (await this.state.storage.getAlarm()) ?? null
       });
     }
@@ -219,12 +260,22 @@ export class WorkspaceScheduler {
 
   /** RPC-friendly refresh used after every canonical schedule mutation. */
   async refresh(workspaceId: string): Promise<{ alarmAt: string | null }> {
+    await this.initialized;
     const parsedWorkspaceId = IdSchema.parse(workspaceId);
-    const existing = await this.state.storage.get<string>("workspaceId");
+    const existing = this.workspaceId();
     if (existing && existing !== parsedWorkspaceId) {
       throw new Error("scheduler_workspace_mismatch");
     }
-    if (!existing) await this.state.storage.put("workspaceId", parsedWorkspaceId);
+    if (!existing) {
+      const now = Date.now();
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
+         VALUES (1, ?, ?, ?)`,
+        parsedWorkspaceId,
+        now,
+        now,
+      );
+    }
 
     const authority = await readWorkstreamAuthorityControl(this.env);
     const targets = await this.env.DB.prepare(authority.phase === "durable_object_open"
@@ -235,12 +286,6 @@ export class WorkspaceScheduler {
        SELECT 'watch' AS target_kind, id, next_poll_at AS due_at
          FROM resource_watches
         WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL
-       UNION ALL
-       SELECT 'wakeup' AS target_kind, workstream_id AS id,
-              next_wakeup_due_at AS due_at
-         FROM workstream_directory_projections
-        WHERE workspace_id = ?1 AND archived_at IS NULL
-          AND next_wakeup_due_at IS NOT NULL
        UNION ALL
        SELECT 'terminal' AS target_kind, workstream_id AS id,
               next_terminal_action_at AS due_at
@@ -270,7 +315,7 @@ export class WorkspaceScheduler {
 
     if (targets.results.length === 0) {
       await this.state.storage.deleteAlarm();
-      await this.state.storage.delete(RETRY_STATES_KEY);
+      this.state.storage.sql.exec(`DELETE FROM scheduler_retry_states`);
       return { alarmAt: null };
     }
 
@@ -297,8 +342,9 @@ export class WorkspaceScheduler {
     return { alarmAt: new Date(alarmAt).toISOString() };
   }
 
-  async alarm(): Promise<void> {
-    const workspaceId = await this.state.storage.get<string>("workspaceId");
+  override async alarm(): Promise<void> {
+    await this.initialized;
+    const workspaceId = this.workspaceId();
     if (!workspaceId) return;
 
     const authority = await readWorkstreamAuthorityControl(this.env);
@@ -339,9 +385,7 @@ export class WorkspaceScheduler {
         this.env.DB.prepare(authority.phase === "durable_object_open"
           ? `SELECT workstream_id
              FROM workstream_directory_projections
-            WHERE workspace_id = ?1 AND archived_at IS NULL
-              AND next_wakeup_due_at IS NOT NULL AND next_wakeup_due_at <= ?2
-            ORDER BY next_wakeup_due_at, workstream_id LIMIT 100`
+            WHERE workspace_id = ?1 AND 0 = 1`
           : `SELECT workstream_id
                FROM workstream_wakeups
               WHERE workspace_id = ?1 AND status = 'pending' AND due_at <= ?2
@@ -531,18 +575,40 @@ export class WorkspaceScheduler {
   }
 
   private async loadRetryStates(): Promise<SchedulerRetryStates> {
-    const parsed = SchedulerRetryStatesSchema.safeParse(
-      await this.state.storage.get(RETRY_STATES_KEY)
-    );
+    await this.initialized;
+    const raw = Object.fromEntries(this.state.storage.sql.exec<{
+      target_key: string;
+      attempt: number;
+      retry_at: number;
+    }>(`SELECT target_key, attempt, retry_at FROM scheduler_retry_states ORDER BY target_key`)
+      .toArray()
+      .map((row) => [row.target_key, { attempt: row.attempt, retryAt: row.retry_at }]));
+    const parsed = SchedulerRetryStatesSchema.safeParse(raw);
     return parsed.success ? { ...parsed.data } : {};
   }
 
   private async saveRetryStates(retryStates: SchedulerRetryStates): Promise<void> {
-    if (Object.keys(retryStates).length === 0) {
-      await this.state.storage.delete(RETRY_STATES_KEY);
-      return;
-    }
-    await this.state.storage.put(RETRY_STATES_KEY, retryStates);
+    await this.initialized;
+    const now = Date.now();
+    this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(`DELETE FROM scheduler_retry_states`);
+      for (const [targetKey, retry] of Object.entries(retryStates)) {
+        this.state.storage.sql.exec(
+          `INSERT INTO scheduler_retry_states(target_key, attempt, retry_at, updated_at)
+           VALUES (?, ?, ?, ?)`,
+          targetKey,
+          retry.attempt,
+          retry.retryAt,
+          now,
+        );
+      }
+    });
+  }
+
+  private workspaceId(): string | null {
+    return this.state.storage.sql.exec<{ workspace_id: string }>(
+      `SELECT workspace_id FROM workspace_scheduler_state WHERE id = 1`,
+    ).toArray()[0]?.workspace_id ?? null;
   }
 
   private async runSchedule(schedule: ScheduleRow, now: Date): Promise<void> {
@@ -777,7 +843,6 @@ export class WorkspaceScheduler {
       principal,
       now
     );
-    const workflowId = `automation-${run.id}`;
     const input: WorkstreamWorkflowInput = WorkstreamWorkflowInputSchema.parse({
       region: RegionSchema.parse(this.env.AVALON_REGION),
       workspaceId: schedule.workspace_id,
@@ -790,11 +855,7 @@ export class WorkspaceScheduler {
       reason: `Scheduled automation: ${source.template_name}`
     });
 
-    try {
-      await this.env.WORKSTREAM_LOOP_WORKFLOW.create({ id: workflowId, params: input });
-    } catch (error) {
-      if (!workflowAlreadyExists(error)) throw error;
-    }
+    const workflowId = await startWorkstreamWorkflow(this.env, input);
 
     await this.env.DB.prepare(
       `UPDATE automation_runs

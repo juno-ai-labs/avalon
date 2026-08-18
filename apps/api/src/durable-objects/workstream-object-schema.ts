@@ -8,23 +8,16 @@
  */
 
 import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";
+import {
+  applyDurableObjectSqliteMigrations,
+  durableObjectMigrationHash,
+  type DurableObjectSqliteMigration,
+} from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 2;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 4;
 
-export interface WorkstreamObjectSchemaMigration {
-  version: number;
-  statements: readonly string[];
-}
-
-const BOOTSTRAP_MIGRATIONS_TABLE = `
-  CREATE TABLE IF NOT EXISTS _sql_schema_migrations (
-    version INTEGER PRIMARY KEY,
-    implementation_hash TEXT NOT NULL,
-    worker_version_id TEXT NOT NULL,
-    applied_at INTEGER NOT NULL
-  ) STRICT
-`;
+export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
 const WORKSTREAM_SCHEMA_V1 = [
   `PRAGMA foreign_keys = ON`,
@@ -987,22 +980,67 @@ const WORKSTREAM_SCHEMA_V1 = [
   ) STRICT`,
 ] as const;
 
+const WORKSTREAM_SCHEMA_V3 = [
+  // Admitted rows are the durable FIFO. Only an executing row holds the
+  // single-mutator fence for the local substream.
+  `DROP INDEX IF EXISTS runs_mutating_substream_uq`,
+  `CREATE UNIQUE INDEX runs_mutating_substream_uq
+     ON runs(substream_id)
+     WHERE status IN ('running', 'waiting', 'steering')`,
+  `CREATE TABLE IF NOT EXISTS run_steering (
+    run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+    steering_part_id TEXT NOT NULL REFERENCES parts(id) ON DELETE CASCADE,
+    requested_at INTEGER NOT NULL,
+    boundaries_observed INTEGER NOT NULL DEFAULT 0 CHECK (boundaries_observed >= 0),
+    max_boundaries INTEGER NOT NULL DEFAULT 2 CHECK (max_boundaries BETWEEN 1 AND 2),
+    consumed_at INTEGER
+  ) STRICT`,
+  `CREATE INDEX IF NOT EXISTS run_steering_pending_idx
+     ON run_steering(consumed_at, requested_at) WHERE consumed_at IS NULL`,
+  `CREATE TABLE IF NOT EXISTS substream_agent_identity (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    external_substream_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT`,
+  `CREATE TABLE IF NOT EXISTS agent_run_dispatches (
+    run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+    input_json TEXT NOT NULL CHECK (json_valid(input_json)),
+    state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed')),
+    attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+    available_at INTEGER NOT NULL,
+    started_at INTEGER,
+    completed_at INTEGER,
+    last_error_code TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT`,
+  `CREATE INDEX IF NOT EXISTS agent_run_dispatches_ready_idx
+     ON agent_run_dispatches(state, available_at, created_at, run_id)`,
+] as const;
+
+const WORKSTREAM_SCHEMA_V4 = [
+  `ALTER TABLE agent_run_dispatches
+     ADD COLUMN terminal_outcome_json TEXT
+       CHECK (terminal_outcome_json IS NULL OR json_valid(terminal_outcome_json))`,
+  `ALTER TABLE agent_run_dispatches
+     ADD COLUMN settled_at INTEGER`,
+  `ALTER TABLE agent_run_dispatches
+     ADD COLUMN last_settlement_error_code TEXT`,
+] as const;
+
 export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchemaMigration[] = [
-  { version: 1, statements: WORKSTREAM_SCHEMA_V1 },
-  { version: 2, statements: WORKSTREAM_RUNTIME_COMPAT_SCHEMA },
+  { version: 1, description: "normalized workstream product authority", statements: WORKSTREAM_SCHEMA_V1 },
+  { version: 2, description: "Bind runtime compatibility tables", statements: WORKSTREAM_RUNTIME_COMPAT_SCHEMA },
+  { version: 3, description: "SubstreamAgent identity, dispatch, and turn-boundary steering", statements: WORKSTREAM_SCHEMA_V3 },
+  { version: 4, description: "durable SubstreamAgent terminal effect settlement", statements: WORKSTREAM_SCHEMA_V4 },
 ];
 
 /** Fast deterministic schema fingerprint; the value is evidence, not authority. */
 export function workstreamObjectSchemaImplementationHash(
   migration: WorkstreamObjectSchemaMigration,
 ): string {
-  const input = `${migration.version}\n${migration.statements.join(";\n")}`;
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of new TextEncoder().encode(input)) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return `fnv1a64:${hash.toString(16).padStart(16, "0")}`;
+  return durableObjectMigrationHash(migration);
 }
 
 export function applyWorkstreamObjectSchema(
@@ -1010,39 +1048,14 @@ export function applyWorkstreamObjectSchema(
   workerVersionId: string,
   now = Date.now(),
 ): void {
-  storage.transactionSync(() => {
-    const sql = storage.sql;
-    sql.exec(BOOTSTRAP_MIGRATIONS_TABLE);
-    const applied = new Map(
-      sql.exec<{ version: number; implementation_hash: string }>(
-        `SELECT version, implementation_hash FROM _sql_schema_migrations ORDER BY version`,
-      ).toArray().map((row) => [row.version, row.implementation_hash]),
-    );
-    let appliedMigration = false;
-
-    for (const migration of WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS) {
-      const implementationHash = workstreamObjectSchemaImplementationHash(migration);
-      const existingHash = applied.get(migration.version);
-      if (existingHash !== undefined) {
-        if (existingHash !== implementationHash) {
-          throw new Error(`workstream_schema_hash_mismatch:${migration.version}`);
-        }
-        continue;
-      }
-      for (const statement of migration.statements) sql.exec(statement);
-      appliedMigration = true;
+  applyDurableObjectSqliteMigrations({
+    storage,
+    migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+    component: "workstream",
+    workerVersionId,
+    now,
+    afterMigrations: (sql) => {
       sql.exec(
-        `INSERT INTO _sql_schema_migrations
-           (version, implementation_hash, worker_version_id, applied_at)
-         VALUES (?, ?, ?, ?)`,
-        migration.version,
-        implementationHash,
-        workerVersionId,
-        now,
-      );
-    }
-
-    sql.exec(
       `INSERT INTO object_versions
          (id, worker_version_id, contract_version, schema_version, data_version,
           projection_version, restore_generation, updated_at)
@@ -1059,12 +1072,7 @@ export function applyWorkstreamObjectSchema(
       WORKSTREAM_OBJECT_CONTRACT_VERSION,
       WORKSTREAM_OBJECT_SCHEMA_VERSION,
       now,
-    );
-
-    if (appliedMigration) {
-      const violation = sql.exec<Record<string, SqlStorageValue>>(`PRAGMA foreign_key_check`).toArray()[0];
-      if (violation) throw new Error("workstream_schema_foreign_key_violation");
-      sql.exec(`PRAGMA optimize`);
-    }
+      );
+    },
   });
 }

@@ -1192,6 +1192,28 @@ describe('socket ticket transport', () => {
       protocols: socketTicketProtocols('socket-ticket'),
     });
   });
+
+  it('requests a scoped workspace command socket ticket for the selected substream', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return json({
+        url: `wss://api.avalon.test/workspaces/workspace-1/workstreams/${workstreamId}/substreams/substream-1?ticket=workspace-ticket`,
+        ticket: 'workspace-ticket',
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getWorkspaceSocketTicket(workstreamId, 'substream-1')).resolves.toEqual({
+      url: `wss://api.avalon.test/workspaces/workspace-1/workstreams/${workstreamId}/substreams/substream-1`,
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      `/workstreams/${workstreamId}/substreams/substream-1/workspace-socket`,
+    );
+  });
 });
 
 describe('expired access-token recovery', () => {

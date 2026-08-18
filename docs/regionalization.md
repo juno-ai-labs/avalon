@@ -186,7 +186,7 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
 - **Repositories never choose a region from a user-controlled object ID.** Every
   service receives a fixed regional dependency container; the region comes from the
   deployment and the session, never from the request body.
-- **All WorkstreamRoom and WorkspaceScheduler call sites select the namespace
+- **All SubstreamAgent and WorkspaceScheduler call sites select the namespace
   through the shared region helper**, and EU IDs are created and resolved with
   `jurisdiction("eu")`. A namespace selected by hand in one call site is an EU
   object created outside the EU jurisdiction.

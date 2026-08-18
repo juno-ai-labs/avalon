@@ -156,7 +156,7 @@ Producers today:
 | Producer | Event type | Audience | Digestible |
 | --- | --- | --- | --- |
 | `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Avalon records here is somebody addressing somebody |
-| Authoritative `WorkstreamRoom` regional-effect outbox | `workstream.message.posted` and later first-party work-stream events | the work stream; named targets travel in the same immutable effect | decided by the object mutation; messages are digestible |
+| Authoritative `SubstreamAgent` regional-effect outbox | `workstream.message.posted` and later first-party work-stream events | the work stream; named targets travel in the same immutable effect | decided by the object mutation; messages are digestible |
 | `activity-consumer` after routing | `connector.<provider>.<manifest event type>` — so `connector.github.github.push`, and `connector.google.email.received`, because GitHub's manifest ids carry a provider prefix and Google's do not | the connection's own scope | whatever the connector's manifest declared for that activity type |
 
 ### The digest

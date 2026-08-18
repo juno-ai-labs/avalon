@@ -15,8 +15,8 @@ import {
   isPersonalEventAudience,
   planSocketReplay,
   splitActiveStreamCheckpointText,
-  workstreamRoomName,
-} from "../src/durable-objects/workstream-room";
+  substreamAgentName,
+} from "../src/durable-objects/substream-agent";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { durableObjectNamespaceForRegion } from "../src/lib/durable-object-namespace";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
@@ -40,7 +40,7 @@ afterEach(() => {
 
 describe("runtime component invariants", () => {
   it("uses a region/workspace/work-stream stable room name", () => {
-    expect(workstreamRoomName("eu", "workspace-id", "workstream-id")).toBe(
+    expect(substreamAgentName("eu", "workspace-id", "workstream-id")).toBe(
       "eu:workspace-id:workstream-id"
     );
     expect(workspaceSchedulerName("global", "workspace-id")).toBe("global:workspace-id");
@@ -226,9 +226,11 @@ describe("runtime component invariants", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     const setAlarm = vi.fn(async () => undefined);
+    const objectDatabase = new DatabaseSync(":memory:");
     const storage = createCloudflareTestBinding<DurableObjectStorage>({
-      get: async () => "00000000-0000-7000-8000-000000000001",
       setAlarm,
+      transactionSync: <T>(body: () => T) => body(),
+      sql: createTestSqlStorage(objectDatabase),
     });
     const first = vi.fn(async () => ({
       phase: "maintenance_draining",
@@ -238,14 +240,23 @@ describe("runtime component invariants", () => {
     }));
     const prepare = vi.fn(() => ({ first }));
     const scheduler = new WorkspaceScheduler(
-      createCloudflareTestBinding<DurableObjectState>({ storage }),
+      createCloudflareTestBinding<DurableObjectState>({
+        blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
+        storage,
+      }),
       { DB: { prepare } } as never,
+    );
+    storage.sql.exec(
+      `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
+       VALUES (1, ?, 0, 0)`,
+      "00000000-0000-7000-8000-000000000001",
     );
 
     await scheduler.alarm();
 
     expect(prepare).toHaveBeenCalledOnce();
     expect(setAlarm).toHaveBeenCalledWith(Date.now() + 5 * 60_000);
+    objectDatabase.close();
   });
 
   it("persists a retry gate so a failed due target cannot create a one-second alarm loop", async () => {
@@ -271,14 +282,13 @@ describe("runtime component invariants", () => {
       created_at: "2025-12-31T23:54:00.000Z",
       updated_at: "2025-12-31T23:54:00.000Z",
     };
-    const values = new Map<string, unknown>([["workspaceId", workspaceId]]);
+    const objectDatabase = new DatabaseSync(":memory:");
     const setAlarm = vi.fn(async (at: number) => { void at; });
     const storage = createCloudflareTestBinding<DurableObjectStorage>({
-      get: async <T>(key: string) => values.get(key) as T | undefined,
-      put: async (key: string, value: unknown) => { values.set(key, value); },
-      delete: async (key: string) => values.delete(key),
       setAlarm,
       deleteAlarm: vi.fn(async () => undefined),
+      transactionSync: <T>(body: () => T) => body(),
+      sql: createTestSqlStorage(objectDatabase),
     });
     let auditWrites = 0;
     const prepare = vi.fn((sql: string) => ({
@@ -323,8 +333,16 @@ describe("runtime component invariants", () => {
       })),
     }));
     const scheduler = new WorkspaceScheduler(
-      createCloudflareTestBinding<DurableObjectState>({ storage }),
+      createCloudflareTestBinding<DurableObjectState>({
+        blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
+        storage,
+      }),
       { DB: { prepare } } as never,
+    );
+    storage.sql.exec(
+      `INSERT INTO workspace_scheduler_state(id, workspace_id, created_at, updated_at)
+       VALUES (1, ?, 0, 0)`,
+      workspaceId,
     );
 
     await scheduler.alarm();
@@ -335,6 +353,7 @@ describe("runtime component invariants", () => {
     await scheduler.alarm();
     expect(setAlarm.mock.calls.at(-1)?.[0]).toBe(firstAlarm);
     expect(auditWrites).toBe(1);
+    objectDatabase.close();
   });
 
   it("keeps a local calendar hour across the daylight-saving boundary", () => {

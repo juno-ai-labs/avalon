@@ -469,14 +469,15 @@ export class WorkstreamAuthorityImporter {
         const mutableColumns = columns.filter((column) =>
           column !== "workstream_key" && column !== "parent_workspace_key");
         const importedRow = request.rows[0]!;
-        const changed = this.storage.sql.exec(
+        const changed = this.storage.sql.exec<{ id: number }>(
           `UPDATE workstream SET ${mutableColumns.map((column) => `${column} = ?`).join(", ")}
-            WHERE id = 1 AND workstream_key = ? AND parent_workspace_key = ?`,
+            WHERE id = 1 AND workstream_key = ? AND parent_workspace_key = ?
+            RETURNING id`,
           ...mutableColumns.map((column) => importedRow[column] ?? null),
           importedRow.workstream_key ?? null,
           importedRow.parent_workspace_key ?? null,
         );
-        if (changed.rowsWritten !== 1) throw new Error("workstream_import_root_identity_mismatch");
+        if (changed.toArray().length !== 1) throw new Error("workstream_import_root_identity_mismatch");
       } else {
         for (const importedRow of request.rows) {
           this.storage.sql.exec(
@@ -601,15 +602,16 @@ export class WorkstreamAuthorityImporter {
       if (!row || row.phase !== "verified" || row.status !== "completed") {
         throw new Error("workstream_import_not_verified");
       }
-      const changed = this.storage.sql.exec(
+      const changed = this.storage.sql.exec<{ id: number }>(
         `UPDATE workstream
             SET authority_mode = 'authoritative', state_reason_code = 'authoritative', updated_at = ?
           WHERE id = 1 AND authority_generation = ?
-            AND authority_mode IN ('preparing', 'authoritative')`,
+            AND authority_mode IN ('preparing', 'authoritative')
+          RETURNING id`,
         Date.now(),
         request.generation,
       );
-      if (changed.rowsWritten !== 1) throw new Error("workstream_import_activation_failed");
+      if (changed.toArray().length !== 1) throw new Error("workstream_import_activation_failed");
       return { ok: true, phase: "authoritative", resultHash: row.result_hash };
     });
   }

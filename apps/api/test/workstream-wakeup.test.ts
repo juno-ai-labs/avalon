@@ -135,7 +135,7 @@ function fixture(): Fixture {
         },
       }),
     },
-    WORKSTREAM_ROOMS: {
+    SUBSTREAM_AGENTS: {
       idFromName: (name: string) => createTestDurableObjectId(name),
       get: () => ({ fetch: async () => new Response("{}", { status: 200 }) }),
     },

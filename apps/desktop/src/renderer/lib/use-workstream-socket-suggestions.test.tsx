@@ -97,6 +97,11 @@ describe('paused activity suggestions over the work-stream socket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
+      getWorkspaceSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workspaces/commands/${workstreamId}`,
+        ticket: 'workspace-socket-ticket',
+        protocols: socketTicketProtocols('workspace-socket-ticket'),
+      })),
       getMessages: vi.fn(async () => []),
       messageMentionPayload: vi.fn(async () => []),
       getWorkstream: vi.fn(async () => detail()),

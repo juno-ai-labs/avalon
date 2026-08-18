@@ -60,6 +60,7 @@ const messageQuery = z.object({
   "Use only one transcript cursor",
 );
 const resourceBody = z.object({ resourceId: IdSchema });
+const substreamSocketParam = idParam.extend({ substreamId: z.union([z.literal("0"), IdSchema]) });
 
 /**
  * Response contracts for the shapes this route composes itself. The single
@@ -346,5 +347,17 @@ workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) => {
     : await new WorkstreamService(c.env, getAuth(c)).retry(id)), 202);
 });
 workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) =>
-  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id))),
+  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id, "0"))),
+);
+workstreamRoutes.get("/:id/substreams/:substreamId/socket", zValidator("param", substreamSocketParam), async (c) =>
+  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(
+    c.req.valid("param").id,
+    c.req.valid("param").substreamId,
+  ))),
+);
+workstreamRoutes.get("/:id/substreams/:substreamId/workspace-socket", zValidator("param", substreamSocketParam), async (c) =>
+  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).workspaceSocketTicket(
+    c.req.valid("param").id,
+    c.req.valid("param").substreamId,
+  ))),
 );

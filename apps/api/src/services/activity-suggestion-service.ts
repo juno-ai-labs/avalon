@@ -1,5 +1,5 @@
 import { newId, nowIso } from "@avalon/db";
-import { workstreamRoomName } from "../durable-objects/workstream-room";
+import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
@@ -30,17 +30,17 @@ interface CreateActivitySuggestionInput {
   source: ActivitySuggestionSource;
 }
 
-export async function publishWorkstreamRoomEvent(
+export async function publishSubstreamAgentEvent(
   env: Env,
   region: "global" | "eu",
   workspaceId: string,
   workstreamId: string,
   event: unknown,
 ): Promise<void> {
-  const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, region, env.APP_ENV);
-  const id = rooms.idFromName(workstreamRoomName(region, workspaceId, workstreamId));
+  const rooms = durableObjectNamespaceForRegion(env.SUBSTREAM_AGENTS, region, env.APP_ENV);
+  const id = rooms.idFromName(substreamAgentName(region, workspaceId, workstreamId));
   const response = await rooms.get(id).fetch(
-    "https://workstream-room/internal/events",
+    "https://substream-agent/internal/events",
     {
       method: "POST",
       headers: {
@@ -99,7 +99,7 @@ export async function createActivitySuggestion(
   ).run();
   if (Number(inserted.meta.changes ?? 0) === 0) return false;
 
-  await publishWorkstreamRoomEvent(env, input.region, input.workspaceId, input.workstreamId, {
+  await publishSubstreamAgentEvent(env, input.region, input.workspaceId, input.workstreamId, {
     type: "activity_suggestion_created",
     suggestion: {
       id,

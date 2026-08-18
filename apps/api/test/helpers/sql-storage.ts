@@ -12,8 +12,9 @@ export function createTestSqlStorage(database: DatabaseSync): SqlStorage {
     exec: <T extends Record<string, SqlStorageValue>>(query: string, ...bindings: unknown[]) => {
       let rows: T[] = [];
       let rowsWritten = 0;
-      if (isReadStatement(query)) {
+      if (isReadStatement(query) || /\bRETURNING\b/iu.test(query)) {
         rows = database.prepare(query).all(...bindings as SQLInputValue[]) as T[];
+        if (/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/iu.test(query)) rowsWritten = rows.length;
       } else if (bindings.length > 0 || /^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/iu.test(query)) {
         const result = database.prepare(query).run(...bindings as SQLInputValue[]);
         rowsWritten = Number(result.changes);

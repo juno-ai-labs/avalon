@@ -1,11 +1,12 @@
 # Realtime socket admission
 
-Every Avalon WebSocket — the work-stream room the desktop keeps open, and the
-dictation bridge to Azure — is opened with a short-lived ticket rather than the
-session credential. This document owns how that ticket is issued, how it reaches
-the Worker, and how a handshake is accepted or refused. What happens *on* an
-open socket belongs elsewhere: the room's fan-out, replay, and presence are
-`WorkstreamRoom`'s, and the dictation bridge's audio rules are in
+Every Avalon WebSocket — the workspace command socket, direct substream feed,
+and dictation bridge to Azure — is opened with a short-lived ticket rather than
+the session credential. This document owns how a purpose-specific ticket is
+issued, how it reaches the Worker, and how a handshake is accepted or refused.
+What happens *on* an open socket belongs elsewhere: workspace command routing
+is `WorkspaceDO`'s, feed fan-out/replay/presence is `SubstreamAgent`'s, and the
+dictation bridge's audio rules are in
 [`architecture.md`](architecture.md).
 
 The promise it makes is narrow and worth stating plainly: a socket is opened
@@ -20,8 +21,9 @@ is recorded.
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the four helpers both sides share. The single source of the wire format. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies both ticket kinds, reads the presented ticket off a handshake, negotiates the response subprotocol, and admits a work-stream upgrade. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its D1 replay receipt and session lease, and the Azure upgrade. |
-| `apps/api/src/routes/socket.ts` | The two upgrade routes. The query ticket is optional here; the service decides what was presented. |
-| `apps/api/src/durable-objects/workstream-room.ts` | Answers the work-stream upgrade — or refuses it. Receives only verified identity, expiry, and the ticket JTI; never the signed bearer ticket. |
+| `apps/api/src/routes/socket.ts` | Workspace-command, substream-feed, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the hibernating user-command socket and consumes its purpose-specific ticket in SQL. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses a ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
 ## How it works
@@ -30,12 +32,13 @@ A client cannot authenticate a WebSocket handshake the way it authenticates a
 request: a browser sets no headers on one, so `Authorization` is unavailable. So
 admission is split in two.
 
-1. **Issue.** The desktop calls `GET /workstreams/:id/socket` or
-   `GET /realtime/transcription/socket` as an ordinary authenticated request.
-   The Worker checks the caller may open that socket and mints a 60-second HS256
-   JWT binding user, workspace, region, a one-time `jti`, and — for a room — the
-   work stream and current regional session ID. It answers with the handshake
-   URL and the ticket.
+1. **Issue.** The desktop calls
+   `GET /workstreams/:id/substreams/:substreamId/socket` for the feed,
+   `GET /workstreams/:id/substreams/:substreamId/workspace-socket` for commands,
+   or `GET /realtime/transcription/socket`. The Worker checks the caller may
+   open that exact purpose and mints a 60-second HS256 JWT binding user,
+   workspace, region, one-time `jti`, audience, target work stream/substream,
+   and current regional session ID where later commands need it.
 2. **Present.** The client opens the socket with the ticket as the second
    `WebSocket` constructor argument: `[avalon.ticket.v1, <ticket>]`. The browser
    sends those as `Sec-WebSocket-Protocol`, the one request header it will carry
@@ -44,12 +47,14 @@ admission is split in two.
 3. **Verify.** The Worker checks the `Upgrade` header and the exact `Origin`,
    reads the ticket off the offer, verifies the signature and the claims, and
    rejects a region or work-stream mismatch.
-4. **Admit.** A room upgrade is forwarded to the Durable Object, which
-   re-authorizes against the same visibility rule the REST reads use and
-   atomically consumes the ticket id. The edge passes the verified session ID,
-   not the signed bearer ticket, into the room's serialized attachment so later
-   mutation commands can revalidate it. Dictation consumes its `jti` in D1 and
-   reserves a session lease before opening the Azure socket.
+4. **Admit.** A feed upgrade reaches the exact `SubstreamAgent`, which
+   re-authorizes read visibility and atomically consumes its ticket id. A
+   command upgrade reaches the workspace's `WorkspaceDO`, which consumes a
+   separate audience ticket and serializes the verified session/route identity;
+   every later command rechecks the current D1 session and membership before
+   routing to the child. Neither object receives the signed bearer ticket.
+   Dictation consumes its `jti` in D1 and reserves a session lease before
+   opening Azure.
 5. **Negotiate.** If the client offered the sentinel, the accepted 101 answers
    with it. Chromium fails a handshake whose subprotocol offer went unanswered,
    so the answer is required — and it is always the sentinel, never the ticket.
@@ -77,27 +82,28 @@ sends one.
   WebSocket attached, so rebuilding one of the room's JSON rejections throws a
   `RangeError` that no error-middleware branch matches — turning every
   deliberate 401, 403, or 409 into an unhandled 500.
-- **The room never receives the signed bearer ticket.** It is verified at the
-  edge and stripped from the subrequest. The room receives verified identity,
-  session ID, expiry, and JTI headers, reauthorizes against the current workspace and
-  work-stream authority generation, and consumes the JTI in its local
-  `durable_inbox_receipts` table. Before cutover visibility is the legacy D1
-  row; after cutover workspace membership remains in D1 while personal
-  participation/revocation is owned by the WorkstreamDO.
+- **Neither Durable Object receives the signed bearer ticket.** It is verified
+  at the edge and stripped from the subrequest. The feed child consumes the JTI
+  in `durable_inbox_receipts`; the workspace command object consumes it in
+  `socket_ticket_receipts`. Workspace membership remains in D1 while personal
+  participation/revocation is owned by the selected child.
+- **Ticket audiences are not interchangeable.** A feed ticket cannot open the
+  command socket, and a command ticket cannot open a child feed. Otherwise a
+  read credential becomes a write credential.
 - **Origin is checked before the ticket is read.** An exact match against
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
-- **A ticket is single-use.** The room and the dictation bridge each consume the
-  `jti` atomically; a replay is refused rather than opening a second socket.
+- **A ticket is single-use.** Each target object and the dictation bridge consume
+  the `jti` atomically; a replay is refused rather than opening a second socket.
 
 ## Boundary
 
-This module owns admission: issuing a ticket, presenting it, verifying it, and
-answering the handshake. It exposes the four transport helpers in
+This module owns admission: issuing a purpose-specific ticket, presenting it,
+verifying it, and answering the handshake. It exposes the transport helpers in
 `@avalon/contracts/socket-tickets` to both the Worker and the renderer, and
 `issueSocketTicket` / `verifySocketTicket` to the services that need them.
 
-It does not own what happens next. Room subscription, event replay, presence,
-and the `resync_required` contract are `WorkstreamRoom`'s, described in
+It does not own what happens next. Workspace command authorization/routing and
+child subscription, event replay, presence, and `resync_required` are described in
 [`architecture.md`](architecture.md); the reconnect and heartbeat behavior of
 the client is in [`runbook.md`](runbook.md); dictation's audio limits and Azure
 contract are in [`architecture.md`](architecture.md). It depends on
@@ -112,9 +118,9 @@ namespace helper.
 - **Bad signature, wrong audience, expired** — 401 `invalid_socket_ticket`. The
   ticket lives 60 seconds; a client that stalls between issue and open must ask
   for another.
-- **Wrong region or work stream** — 403 `socket_ticket_scope_mismatch`.
+- **Wrong audience, region, work stream, or substream** — 403 `socket_ticket_scope_mismatch`.
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
-- **Room refusal** — the room's own JSON status reaches the client unchanged:
+- **Object refusal** — the object's own JSON status reaches the client unchanged:
   426, 400 `invalid_socket_identity`, 403 `forbidden`, 401
   `socket_ticket_replayed`, 409 `room_identity_mismatch`, 500
   `websocket_unavailable`.
@@ -132,6 +138,8 @@ keeping correct for whoever reads the logs.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @avalon/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating workspace-command attachments, eviction, ticket replay, and read-only child feeds on real workerd. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Separate lazy command/feed connections, reconnect, resync, and switching streams. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -163,6 +171,25 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-17 — Commands and feeds use separate hibernating sockets
+
+**What changed:** User messages now enter one workspace-scoped `WorkspaceDO`
+socket, while the Electron app connects directly to the selected
+`SubstreamAgent` for snapshot, streaming, replay, and download. Tickets carry
+distinct audiences and are consumed in each object's explicit SQLite table.
+
+**Why:** Workspace authorization/routing is the natural write boundary, while a
+direct child feed avoids a parent fan-out hop and lets independently active
+substreams stream and reconnect without blocking one another.
+
+**Considered and rejected:** One bidirectional child socket would put workspace
+write authorization in every agent object. Proxying every token through the
+workspace object would turn it into a throughput and billing hotspot.
+
+**Consequences:** The desktop maintains two lifecycle state machines. A
+`create_message` on the child feed is a protocol error, and switching children
+resumes from each child's own cursor/checkpoint.
 
 ### 2026-08-17 — Room tickets carry the session needed for later commands
 

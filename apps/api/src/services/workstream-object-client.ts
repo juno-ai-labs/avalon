@@ -21,7 +21,7 @@ import type {
 } from "@avalon/contracts";
 import { z } from "zod";
 
-import { workstreamRoomName } from "../durable-objects/workstream-room";
+import { substreamAgentName } from "../durable-objects/names";
 import type {
   InitializeWorkstreamObjectInput,
   WorkstreamObjectCreateMessageInput,
@@ -61,14 +61,19 @@ const InitializedWorkstreamSchema = z.object({
   harnessRunId: z.string().uuid(),
 });
 
-function objectStub(env: Env, workspaceId: string, workstreamId: string): DurableObjectStub {
+function objectStub(
+  env: Env,
+  workspaceId: string,
+  workstreamId: string,
+  substreamId = "0",
+): DurableObjectStub {
   const namespace = durableObjectNamespaceForRegion(
-    env.WORKSTREAM_ROOMS,
+    env.SUBSTREAM_AGENTS,
     env.AVALON_REGION,
     env.APP_ENV,
   );
   return namespace.get(namespace.idFromName(
-    workstreamRoomName(env.AVALON_REGION, workspaceId, workstreamId),
+    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId, substreamId),
   ));
 }
 
@@ -170,6 +175,7 @@ export class WorkstreamObjectClient {
     private readonly env: Env,
     private readonly auth: AuthContext,
     private readonly workstreamId: string,
+    private readonly substreamId = "0",
   ) {}
 
   private async request(body: Record<string, unknown>): Promise<unknown> {
@@ -177,6 +183,7 @@ export class WorkstreamObjectClient {
       this.env,
       this.auth.workspaceId,
       this.workstreamId,
+      this.substreamId,
     ).fetch("https://workstream-object/internal/product", {
       method: "POST",
       headers: { "content-type": "application/json" },

@@ -8,7 +8,7 @@ import {
   workstreamImportHash,
   type WorkstreamAuthorityImportStage,
 } from "../durable-objects/workstream-authority-import";
-import { workstreamRoomName } from "../durable-objects/workstream-room";
+import { substreamAgentName } from "../durable-objects/substream-agent";
 import {
   WORKSTREAM_DO_SERVING_CONTRACT_VERSION,
   type WorkstreamAuthorityControl,
@@ -564,9 +564,9 @@ async function postImport(
   route: RouteRow,
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, env.AVALON_REGION, env.APP_ENV);
-  const id = rooms.idFromName(workstreamRoomName(env.AVALON_REGION, route.workspace_id, route.workstream_id));
-  const response = await rooms.get(id).fetch("https://workstream-room/internal/authority-import", {
+  const rooms = durableObjectNamespaceForRegion(env.SUBSTREAM_AGENTS, env.AVALON_REGION, env.APP_ENV);
+  const id = rooms.idFromName(substreamAgentName(env.AVALON_REGION, route.workspace_id, route.workstream_id));
+  const response = await rooms.get(id).fetch("https://substream-agent/internal/authority-import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
