@@ -4,7 +4,9 @@ import { nowIso } from "@avalon/db";
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { workspaceDOName } from "../durable-objects/names";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logInfo, logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
@@ -96,48 +98,9 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
   // Taking the global 100 first and trimming per connection afterwards lets one
   // busy workspace fill every slot and starve the rest indefinitely.
   const authority = await readWorkstreamAuthorityControl(env);
-  const stale = await env.DB.prepare(authority.phase === "durable_object_open"
-    ? `SELECT * FROM (
-       SELECT link.connection_id, link.slack_channel_id, link.slack_message_ts,
-              link.url, link.workstream_id, link.rendered_status,
-              link.rendered_anonymous, link.rendered_hash,
-              projection.workstream_id AS id, projection.title,
-              CASE
-                WHEN projection.state = 'scheduled' THEN 'scheduled'
-                WHEN projection.state IN ('running', 'interrupting', 'preparing_context', 'waiting_capacity') THEN 'running'
-                WHEN projection.state = 'needs_input' THEN 'needs_input'
-                WHEN projection.state = 'completed' THEN 'completed'
-                WHEN projection.state IN ('failed', 'budget_exhausted') THEN 'failed'
-                ELSE 'idle' END AS harness_status,
-              projection.last_activity_at,
-              projection.origin_type, template.name AS automation_name,
-              projection.last_activity_at AS ordered_activity_at,
-              ROW_NUMBER() OVER (
-                PARTITION BY link.connection_id ORDER BY projection.last_activity_at DESC
-              ) AS connection_rank
-         FROM slack_unfurled_links link
-         JOIN workstream_directory_projections projection
-           ON projection.workstream_id = link.workstream_id
-          AND projection.workspace_id = link.workspace_id
-         JOIN connector_connections connection
-           ON connection.id = link.connection_id AND connection.status <> 'disabled'
-         LEFT JOIN automation_subscriptions subscription
-           ON subscription.id = projection.automation_subscription_id
-         LEFT JOIN automation_templates template ON template.id = subscription.template_id
-        WHERE link.shared_at >= ?1 AND projection.archived_at IS NULL
-          AND ((CASE
-                  WHEN projection.state = 'scheduled' THEN 'scheduled'
-                  WHEN projection.state IN ('running', 'interrupting', 'preparing_context', 'waiting_capacity') THEN 'running'
-                  WHEN projection.state = 'needs_input' THEN 'needs_input'
-                  WHEN projection.state = 'completed' THEN 'completed'
-                  WHEN projection.state IN ('failed', 'budget_exhausted') THEN 'failed'
-                  ELSE 'idle' END) <> link.rendered_status
-               OR projection.updated_at > link.refreshed_at
-               OR link.audience_checked_at < ?2
-               OR link.rendered_hash IS NULL)
-     ) WHERE connection_rank <= ?3 ORDER BY ordered_activity_at DESC LIMIT ?4`
-    :
-    `SELECT * FROM (
+  const rows = authority.phase === "durable_object_open"
+    ? await loadDurableObjectStaleUnfurls(env, since, audienceCutoff)
+    : (await env.DB.prepare(`SELECT * FROM (
        SELECT l.connection_id, l.slack_channel_id, l.slack_message_ts, l.url, l.workstream_id,
               l.rendered_status AS rendered_status, l.rendered_anonymous, l.rendered_hash,
               w.id, ${WORKSTREAM_UNFURL_COLUMNS},
@@ -158,15 +121,9 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
      )
      WHERE connection_rank <= ?3
      ORDER BY ordered_activity_at DESC
-     LIMIT ?4`,
-  ).bind(
-    since,
-    audienceCutoff,
-    MAX_REFRESHES_PER_CONNECTION,
-    MAX_REFRESHES_PER_SWEEP + 1,
-  ).all<Record<string, unknown>>();
-
-  const rows = stale.results ?? [];
+     LIMIT ?4`)
+      .bind(since, audienceCutoff, MAX_REFRESHES_PER_CONNECTION, MAX_REFRESHES_PER_SWEEP + 1)
+      .all<Record<string, unknown>>()).results;
   if (rows.length > MAX_REFRESHES_PER_SWEEP) {
     // Never let a bounded sweep read as "everything is current".
     logInfo(env, "slack_unfurl_refresh_ceiling_reached", {
@@ -195,6 +152,88 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
       });
     }
   }
+}
+
+async function loadDurableObjectStaleUnfurls(
+  env: Env,
+  since: string,
+  audienceCutoff: string,
+): Promise<Record<string, unknown>[]> {
+  const links = await env.DB.prepare(
+    `SELECT link.connection_id, link.slack_channel_id, link.slack_message_ts,
+            link.url, link.workspace_id, link.workstream_id, link.rendered_status,
+            link.rendered_anonymous, link.rendered_hash, link.refreshed_at,
+            link.audience_checked_at
+       FROM slack_unfurled_links link
+       JOIN connector_connections connection
+         ON connection.id = link.connection_id AND connection.status <> 'disabled'
+      WHERE link.shared_at >= ?
+      ORDER BY link.refreshed_at ASC LIMIT 5000`,
+  ).bind(since).all<Record<string, unknown>>();
+  const byWorkspace = new Map<string, Set<string>>();
+  for (const link of links.results ?? []) {
+    const workspaceId = String(link.workspace_id);
+    const workstreamId = String(link.workstream_id);
+    const ids = byWorkspace.get(workspaceId) ?? new Set<string>();
+    ids.add(workstreamId);
+    byWorkspace.set(workspaceId, ids);
+  }
+  const directory = new Map<string, Record<string, unknown>>();
+  for (const [workspaceId, idSet] of byWorkspace) {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    const ids = [...idSet];
+    for (let offset = 0; offset < ids.length; offset += 250) {
+      const page = await workspace.lookupWorkstreamDirectory({
+        workspaceId,
+        workstreamIds: ids.slice(offset, offset + 250),
+      });
+      for (const item of page.items) {
+        directory.set(`${workspaceId}:${item.workstreamId}`, {
+          id: item.workstreamId,
+          title: item.title,
+          harness_status: durableDirectoryHarnessStatus(item.state),
+          last_activity_at: item.lastActivityAt,
+          origin_type: item.originType,
+          automation_name: item.originLabel,
+          archived_at: item.archivedAt,
+          updated_at: item.updatedAt,
+        });
+      }
+    }
+  }
+  const stale: Record<string, unknown>[] = (links.results ?? []).flatMap((link) => {
+    const item = directory.get(`${String(link.workspace_id)}:${String(link.workstream_id)}`);
+    if (!item || item.archived_at !== null) return [];
+    const changed = item.harness_status !== link.rendered_status
+      || String(item.updated_at) > String(link.refreshed_at)
+      || String(link.audience_checked_at) < audienceCutoff
+      || link.rendered_hash === null;
+    return changed ? [{ ...link, ...item, ordered_activity_at: item.last_activity_at }] : [];
+  });
+  const perConnection = new Map<string, number>();
+  return stale.sort((left, right) => (
+    String(right.ordered_activity_at).localeCompare(String(left.ordered_activity_at))
+  )).filter((row) => {
+    const connectionId = String(row.connection_id);
+    const count = perConnection.get(connectionId) ?? 0;
+    if (count >= MAX_REFRESHES_PER_CONNECTION) return false;
+    perConnection.set(connectionId, count + 1);
+    return true;
+  }).slice(0, MAX_REFRESHES_PER_SWEEP + 1);
+}
+
+function durableDirectoryHarnessStatus(state: unknown): string {
+  if (state === "scheduled") return "scheduled";
+  if (["running", "interrupting", "preparing_context", "waiting_capacity"].includes(String(state))) return "running";
+  if (state === "needs_input") return "needs_input";
+  if (state === "completed") return "completed";
+  if (["failed", "budget_exhausted"].includes(String(state))) return "failed";
+  return "idle";
 }
 
 async function refreshConnectionUnfurls(

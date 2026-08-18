@@ -3,8 +3,8 @@
  *
  * The existing namespace migrates through `preparing` and becomes the
  * authoritative work-stream product store only after a maintenance-window
- * import verifies every normalized table. Regional D1 retains only the route,
- * workspace authorization, and rebuildable directory projections afterwards.
+ * import verifies every normalized table. Regional D1 retains the route and
+ * workspace authorization; WorkspaceDO owns cross-work-stream serving state.
  */
 
 import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";

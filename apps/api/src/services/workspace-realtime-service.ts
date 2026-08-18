@@ -32,8 +32,8 @@ export async function publishWorkspaceSync(
 /**
  * Complete workspace-query invalidation map for authenticated desktop writes.
  * Workstream-local detail/feed state is also pushed by WorkstreamDO and
- * SubstreamAgent; its workspace-directory projection is named here because the
- * sidebar is a workspace query owned by neither child socket.
+ * SubstreamAgent; the authoritative workspace-directory topic is named here
+ * because the sidebar is a WorkspaceDO query owned by neither child socket.
  */
 export function workspaceSyncTopicsForMutation(
   method: string,

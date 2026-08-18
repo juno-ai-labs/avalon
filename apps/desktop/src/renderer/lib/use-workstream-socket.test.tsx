@@ -99,7 +99,6 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
     getSocketTicket: vi.fn(unexpected),
     getWorkstreamControlSocketTicket: vi.fn(unexpected),
     getWorkstream: vi.fn(unexpected),
-    getWorkstreams: vi.fn(unexpected),
     messageMentionPayload: vi.fn(async () => []),
     ...overrides,
   } satisfies WorkstreamSocketApi;
@@ -1236,7 +1235,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => [canonicalTool]),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1406,7 +1404,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1437,7 +1434,8 @@ describe('useWorkstreamSocket', () => {
         createdAt: '2026-08-06T05:00:00.000Z',
       },
     } as WorkstreamDetail;
-    const canonicalSummary = workstreamSummary({ id: workstreamId, harnessStatus: 'running' });
+    const cachedSummary = workstreamSummary({ id: workstreamId, harnessStatus: 'completed' });
+    setCachedWorkstreams(queryClient, [cachedSummary]);
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       harnessStatus: 'completed',
@@ -1452,7 +1450,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => canonicalWorkstream),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [canonicalSummary], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1471,10 +1468,13 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.latestHarnessRun).toEqual(
       canonicalWorkstream.latestHarnessRun,
     );
-    // `getWorkstreams` returns a page, while this cache deliberately remains a
-    // flat array. This is the socket reconciliation path that once stored the
-    // page object and crashed the sidebar's first `.filter`.
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([canonicalSummary]);
+    // Cross-workstream serving belongs to the WorkspaceDO socket. A substream
+    // recovery invalidates that query but never merges a parallel REST list.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([{
+      ...cachedSummary,
+      harnessStatus: 'running',
+    }]);
+    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
   });
 
   it('pushes a status change into the sidebar list without waiting for a refetch', async () => {
@@ -1498,7 +1498,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1566,7 +1565,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages,
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1635,7 +1633,6 @@ describe('useWorkstreamSocket', () => {
       })),
       getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => [canonicalTool]),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -1702,7 +1699,6 @@ describe('useWorkstreamSocket', () => {
         harnessStatus: 'running',
       })),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     });
 
     function Socket({ workstreamId }: { workstreamId: string }): null {
@@ -1952,20 +1948,14 @@ describe('useWorkstreamSocket', () => {
       harnessStatus: 'running',
       latestHarnessRunId: harnessRunId,
     });
-    const canonicalWorkstreamPage = {
-      items: [workstreamSummary({ id: 'workstream-one', title: 'Canonical' })],
-      nextCursor: null,
-    } satisfies Awaited<ReturnType<WorkstreamSocketApi['getWorkstreams']>>;
     const getWorkstream = vi.fn(async () => canonicalWorkstream);
     const getMessages = vi.fn()
       .mockRejectedValueOnce(new Error('transient D1 failure'))
       .mockResolvedValueOnce([]);
-    const getWorkstreams = vi.fn(async () => canonicalWorkstreamPage);
     const api = socketApiWith({
       getSocketTicket,
       getWorkstream,
       getMessages,
-      getWorkstreams,
     });
     const { result } = renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), {
       wrapper: createWrapper(queryClient),
@@ -2017,7 +2007,7 @@ describe('useWorkstreamSocket', () => {
     );
     expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Canonical');
     expect(queryClient.getQueryData(['workstreams'])).toEqual([
-      ...canonicalWorkstreamPage.items,
+      workstreamSummary({ id: 'workstream-one', title: 'Stale' }),
       laterPage,
       debugRow,
     ]);

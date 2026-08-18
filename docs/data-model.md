@@ -1,8 +1,10 @@
 # Data model
 
-Avalon's regional data is split by declared authority. D1 owns workspace,
-identity, connector, routing, schedule, audit, and projection state. Serving
-contract 1 makes each `SubstreamAgent` SQLite database the product authority for
+Avalon's regional data is split by declared authority. D1 owns identity,
+membership, connector/automation/activity modules, routing, migration, external
+delivery, schedule, and audit state. `WorkspaceDO` owns the authoritative
+cross-work-stream directory and query indexes; D1 keeps no rebuildable
+work-stream serving projections. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
 its non-agent `WorkstreamDO` parent owns aggregate work-stream metadata and the
 regional effect outbox plus HyperSight configuration/published results. Each
@@ -36,7 +38,8 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/mappers/connection.ts`, `apps/api/src/mappers/workstream.ts` | Row schemas parsed at the read — the pattern the remaining hand-coercing readers are converging on. |
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts` | SQL schemas for workspace sync/command routing, bounded invalidation replay, non-agent child projection aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts` | SQL schemas for the authoritative workspace directory/query index, sync/command routing, bounded invalidation replay, non-agent child aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
+| `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated cross-object query and effect contracts joining WorkstreamDO facts to WorkspaceDO serving state without cross-database SQL. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Per-block SQL identity, socket receipt, durable execution/retry/result-settlement ledger, and full active-output checkpoint. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
@@ -64,12 +67,14 @@ authorization.
 
 ### Realtime synchronization records
 
-Workspace product rows remain relational D1 authority. `WorkspaceDO` stores only
-`workspace_identity`, consumed workspace socket tickets, and a bounded monotonic
-`workspace_sync_events` invalidation log. A log row names typed query topics; it
-never embeds members, invitations, connector state, policies, notes, resources,
-activities, opportunities, or other workspace records. This avoids a second
-workspace database while allowing every open Electron client to converge.
+Most workspace modules remain relational D1 authorities. `WorkspaceDO` is the
+deliberate exception for cross-work-stream serving: it stores the common
+directory, per-viewer overlays, pins, resource-link inverted index, resolved
+suggestion-feedback index, hash receipts, consumed socket tickets, and a bounded
+monotonic `workspace_sync_events` log. A log row names typed query topics; it
+never embeds members, invitations, connector credentials/state, policies,
+notes, activity payloads, opportunities, or other D1-owned records. The
+directory tables are primary workspace-object state, not D1 copies.
 
 `WorkstreamDO.workstream_metadata` is different: it is the authoritative
 cross-substream aggregate. Its revision covers complete common metadata and its
@@ -242,11 +247,10 @@ hash-checked RPCs rather than cross-object SQL joins.
 
 D1 retains a `workstreams` identity anchor because workspace/control tables have
 foreign keys to the stable ID. A post-cutover row has `do_identity_anchor = 1`;
-its metadata and lifecycle columns are not product authority. Common and
-per-user list queries use `workstream_directory_projections` and
-`workstream_directory_user_projections`. Connector routing uses
-`workstream_resource_link_projections`. Those rows are rebuildable outputs of
-the object outbox, not mirrors to read when an object is unavailable.
+its metadata and lifecycle columns are not product authority. Common/per-user
+list queries, pins, connector/resource routing, and resolved work-stream
+suggestion feedback use `WorkspaceDO`'s `workspace_workstream_*` tables. D1 has
+no projection fallback when that object is unavailable.
 
 ### Automations and execution
 
@@ -320,7 +324,7 @@ the object outbox, not mirrors to read when an object is unavailable.
 - Object-local `workstream_wakeups` holds one-shot prompt wake-ups a run scheduled for itself.
   It is separate from `schedules` because a wake-up is one-shot, belongs to a work
   stream rather than a subscription or connection, and carries the prompt text that
-  becomes the resulting run's trigger. The common directory projection exposes
+  becomes the resulting run's trigger. The common WorkspaceDO directory row exposes
   only the next due time so the workspace alarm can call the owner; it does not
   copy the wake-up. `idempotency_key` is unique inside the object,
   so a replayed tool receipt resolves to the wake-up its first attempt created;
@@ -347,18 +351,18 @@ the object outbox, not mirrors to read when an object is unavailable.
 
 ### Activity log and digests
 
-- `workstream_regional_effect_receipts` is the D1 inbox for the authoritative
-  WorkstreamDO outbox. Its message ID and payload hash detect replay or conflict;
+- `workstream_regional_effect_receipts` is the minimal D1 inbox for
+  WorkstreamDO activity-log and mention-delivery effects. Its message ID and payload hash detect replay or conflict;
   `(workstream_id, generation, partition_key, source_version)` prevents two
   different commands from claiming one source position. It is delivery evidence,
   not a copy of product state.
-- `workstream_directory_projections` and
-  `workstream_directory_user_projections` are rebuildable workspace/common and
-  viewer-specific query rows. Equal generation/version with a different hash is
-  rejected. `workstream_notification_intents` temporarily retains a bounded
-  mention payload plus its required viewer-projection version while D1 resolves
-  current membership/profile/destination state; notification delivery waits for
-  that causal projection, and a newer revocation/listability row wins;
+- `WorkspaceDO.workspace_workstream_directory` and
+  `workspace_workstream_viewers` are authoritative common and viewer-specific
+  query rows. Equal generation/version with a different hash is rejected.
+  `workstream_notification_intents` temporarily retains a bounded mention
+  payload plus its required directory version while D1 resolves current
+  membership/profile/destination state; notification delivery asks WorkspaceDO
+  for that causal version, and a newer revocation/listability row wins;
   terminal delivery or skip erases `payload_json` rather than retaining a second
   transcript. Acknowledged receipts and terminal intent shells are retained for
   30 days; pending/unacknowledged rows do not expire.
@@ -538,9 +542,11 @@ collection, opt-out, and destination behavior.
     provider/stable names are unique inside that workspace.** Two live generations
     for one stream would defeat mutation serialization and make authority
     revocation nondeterministic.
-14. **A WorkstreamDO regional effect is acknowledged only after the D1 effect and
-    inbox receipt commit together.** Queue order is never trusted; common/user
-    projections compare generation/version and immutable effects use stable IDs.
+14. **A WorkstreamDO effect is acknowledged only after the owning receiver
+    commits the effect and receipt together.** Directory/user/feedback effects
+    commit in WorkspaceDO; activity/mention effects commit in D1. RPC and Queue
+    order are never trusted, generation/version fences mutable state, and
+    immutable effects use stable IDs.
 
 ## Boundary
 
@@ -621,6 +627,29 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-18 — Cross-work-stream indexes move from D1 to WorkspaceDO
+
+**What changed:** WorkspaceDO's single initial SQLite schema now owns common and
+viewer directory rows, pins, resource links, resolved suggestion feedback, a
+directory version, and effect receipts. The unshipped D1 migrations no longer
+create the corresponding projection tables; D1 retains only work-stream
+identity anchors, migration/routes, activity/mention receipts, notification
+intents, and unrelated relational workspace modules.
+
+**Why:** The workspace object is the natural serialized authority for sidebar,
+discovery, routing, and interest queries. Keeping rebuildable D1 projections
+made correctness cross two authorities and kept product serving coupled to the
+regional database.
+
+**Considered and rejected:** Weakening the WorkspaceDO schema to a cache, or
+querying every WorkstreamDO at read time. The former preserves split authority;
+the latter turns a bounded local query into unbounded cross-object fan-out.
+
+**Consequences:** Every WorkstreamDO directory effect is retried to WorkspaceDO
+from its SQL outbox; migration activation flushes and verifies that state before
+opening a route; Electron pages the WorkspaceDO socket; and D1 cannot recover or
+override the directory after cutover.
 
 ### 2026-08-18 — HyperSight persistence adopts BlockDashboard identifiers
 

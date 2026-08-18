@@ -10,6 +10,7 @@ import {
   type WorkstreamAuthorityImportStage,
 } from "../durable-objects/workstream-authority-import";
 import { substreamAgentName } from "../durable-objects/substream-agent";
+import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import {
   WORKSTREAM_DO_SERVING_CONTRACT_VERSION,
@@ -623,282 +624,6 @@ async function beginRoute(env: Env, route: RouteRow): Promise<void> {
   ).bind(new Date().toISOString(), route.workstream_id, route.generation).run();
 }
 
-async function seedDirectoryProjections(env: Env, route: RouteRow): Promise<void> {
-  const root = await env.DB.prepare(
-    `SELECT rowid AS source_rowid, * FROM workstreams WHERE workspace_id = ? AND id = ?`,
-  ).bind(route.workspace_id, route.workstream_id).first<SourceRow>();
-  if (!root) throw new Error("workstream_import_projection_root_missing");
-  const state = exactState(root);
-  const wakeup = await env.DB.prepare(
-    `SELECT due_at, prompt FROM workstream_wakeups
-      WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'
-      ORDER BY due_at, id LIMIT 1`,
-  ).bind(route.workspace_id, route.workstream_id).first<{ due_at: string; prompt: string }>();
-  const terminal = await env.DB.prepare(
-    `SELECT CASE
-              WHEN state IN ('stopping', 'archiving', 'expiring')
-                THEN lifecycle_claim_expires_at
-              WHEN expire_due_at IS NOT NULL AND (
-                (state = 'running' AND (warm_stop_due_at IS NULL OR expire_due_at <= warm_stop_due_at))
-                OR (state = 'stopped' AND (archive_due_at IS NULL OR expire_due_at <= archive_due_at))
-                OR state = 'archived'
-              ) THEN expire_due_at
-              WHEN state = 'running' THEN warm_stop_due_at
-              WHEN state = 'stopped' THEN archive_due_at
-              ELSE expire_due_at
-            END AS due_at
-       FROM workstream_sandboxes
-      WHERE workspace_id = ? AND workstream_id = ? AND provider_sandbox_id IS NOT NULL`,
-  ).bind(route.workspace_id, route.workstream_id).first<{ due_at: string | null }>();
-  const common = {
-    title: text(root, "title"),
-    description: text(root, "objective"),
-    preview: "",
-    scope: text(root, "scope", "workspace"),
-    state,
-    systemKind: nullableText(root, "system_kind"),
-    lastActivityAt: text(root, "last_activity_at"),
-    completedAt: state === "completed" ? text(root, "updated_at") : null,
-    archivedAt: nullableText(root, "archived_at"),
-    emailAddress: nullableText(root, "email_address"),
-    originType: text(root, "origin_type", "ad_hoc"),
-    createdByUserId: nullableText(root, "created_by_user_id"),
-    automationSubscriptionId: nullableText(root, "automation_subscription_id"),
-    automationRunId: nullableText(root, "automation_run_id"),
-    plannedFor: nullableText(root, "planned_for"),
-    titleStatus: text(root, "title_status", "settled"),
-    latestAttentionOrdinal: integer(root, "latest_attention_sequence_number"),
-    unreadTrackingStartOrdinal: integer(root, "unread_tracking_start_sequence_number"),
-    nextWakeupDueAt: wakeup?.due_at ?? null,
-    nextWakeupPrompt: wakeup?.prompt ?? null,
-    nextTerminalActionAt: terminal?.due_at ?? null,
-    createdAt: text(root, "created_at"),
-    updatedAt: text(root, "updated_at"),
-  };
-  await env.DB.prepare(
-    `INSERT INTO workstream_directory_projections
-       (workspace_id, workstream_id, generation, version, title, description, preview,
-        scope, state, system_kind, last_activity_at, completed_at, archived_at,
-        email_address, origin_type, created_by_user_id, automation_subscription_id,
-        automation_run_id, planned_for, title_status, latest_attention_ordinal,
-        unread_tracking_start_ordinal, next_wakeup_due_at, next_wakeup_prompt,
-        next_terminal_action_at, created_at, updated_at, payload_hash, projected_at)
-     VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(workstream_id) DO UPDATE SET
-       workspace_id = excluded.workspace_id, generation = excluded.generation,
-       version = excluded.version, title = excluded.title, description = excluded.description,
-       preview = excluded.preview, scope = excluded.scope, state = excluded.state,
-       system_kind = excluded.system_kind, last_activity_at = excluded.last_activity_at,
-       completed_at = excluded.completed_at, archived_at = excluded.archived_at,
-       email_address = excluded.email_address, origin_type = excluded.origin_type,
-       created_by_user_id = excluded.created_by_user_id,
-       automation_subscription_id = excluded.automation_subscription_id,
-       automation_run_id = excluded.automation_run_id, planned_for = excluded.planned_for,
-       title_status = excluded.title_status,
-       latest_attention_ordinal = excluded.latest_attention_ordinal,
-       unread_tracking_start_ordinal = excluded.unread_tracking_start_ordinal,
-       next_wakeup_due_at = excluded.next_wakeup_due_at,
-       next_wakeup_prompt = excluded.next_wakeup_prompt,
-       next_terminal_action_at = excluded.next_terminal_action_at,
-       created_at = excluded.created_at, updated_at = excluded.updated_at,
-       payload_hash = excluded.payload_hash, projected_at = excluded.projected_at
-     WHERE excluded.generation > workstream_directory_projections.generation
-        OR (excluded.generation = workstream_directory_projections.generation
-            AND excluded.version >= workstream_directory_projections.version)`,
-  ).bind(
-    route.workspace_id,
-    route.workstream_id,
-    route.generation,
-    common.title,
-    common.description,
-    common.preview,
-    common.scope,
-    common.state,
-    common.systemKind,
-    common.lastActivityAt,
-    common.completedAt,
-    common.archivedAt,
-    common.emailAddress,
-    common.originType,
-    common.createdByUserId,
-    common.automationSubscriptionId,
-    common.automationRunId,
-    common.plannedFor,
-    common.titleStatus,
-    common.latestAttentionOrdinal,
-    common.unreadTrackingStartOrdinal,
-    common.nextWakeupDueAt,
-    common.nextWakeupPrompt,
-    common.nextTerminalActionAt,
-    common.createdAt,
-    common.updatedAt,
-    workstreamImportHash(common),
-    new Date().toISOString(),
-  ).run();
-
-  const projectedAt = new Date().toISOString();
-  await env.DB.prepare(
-    `DELETE FROM workstream_resource_link_projections WHERE workstream_id = ?`,
-  ).bind(route.workstream_id).run();
-  await env.DB.prepare(
-    `INSERT INTO workstream_resource_link_projections
-       (workspace_id, workstream_id, resource_id, watch_enabled,
-        relationship_type, generation, version, projected_at)
-     SELECT ?, wr.workstream_id, wr.resource_id, wr.watch_enabled,
-            wr.relationship_type, ?, 0, ?
-       FROM workstream_resources wr
-      WHERE wr.workstream_id = ?`,
-  ).bind(
-    route.workspace_id,
-    route.generation,
-    projectedAt,
-    route.workstream_id,
-  ).run();
-  await env.DB.prepare(
-    `INSERT INTO workstream_suggestion_feedback_projections
-       (workspace_id, workstream_id, action_id, activity_id, source, status,
-        resolved_at, resolved_by_user_id, generation, version, projected_at)
-     SELECT suggestion.workspace_id, suggestion.workstream_id, suggestion.id,
-            suggestion.activity_id, suggestion.source, suggestion.status,
-            suggestion.resolved_at, suggestion.resolved_by_user_id, ?, 1, ?
-       FROM activity_suggestions suggestion
-      WHERE suggestion.workspace_id = ? AND suggestion.workstream_id = ?
-        AND suggestion.source IN ('contextual_routing', 'suggested_work')
-        AND suggestion.status IN ('accepted', 'dismissed')
-        AND suggestion.resolved_at IS NOT NULL
-     ON CONFLICT(workstream_id, action_id) DO UPDATE SET
-       activity_id = excluded.activity_id, source = excluded.source,
-       status = excluded.status, resolved_at = excluded.resolved_at,
-       resolved_by_user_id = excluded.resolved_by_user_id,
-       generation = excluded.generation, version = excluded.version,
-       projected_at = excluded.projected_at`,
-  ).bind(
-    route.generation,
-    projectedAt,
-    route.workspace_id,
-    route.workstream_id,
-  ).run();
-
-  const viewers = await env.DB.prepare(
-    `WITH interested(user_id) AS (
-       SELECT user_id FROM workstream_participants
-        WHERE workstream_id = ?2
-       UNION
-       SELECT user_id FROM workstream_read_states
-        WHERE workspace_id = ?1 AND workstream_id = ?2
-       UNION
-       SELECT mm.mentioned_user_id FROM message_mentions mm
-        JOIN messages m ON m.id = mm.message_id
-        WHERE m.workspace_id = ?1 AND m.workstream_id = ?2
-          AND mm.mentioned_user_id IS NOT NULL
-     )
-     SELECT interested.user_id,
-            EXISTS (
-              SELECT 1 FROM workstream_participants participant
-               WHERE participant.workstream_id = ?2
-                 AND participant.user_id = interested.user_id
-                 AND participant.removed_at IS NULL
-            ) AS is_participant,
-            COALESCE((
-              SELECT COUNT(*) FROM messages message
-               WHERE message.workspace_id = ?1 AND message.workstream_id = ?2
-                 AND message.message_type != 'tool'
-                 AND message.sequence_number >= CASE
-                   WHEN rs.manual_unread_from_sequence_number IS NOT NULL
-                     THEN rs.manual_unread_from_sequence_number
-                   ELSE MAX(
-                     w.unread_tracking_start_sequence_number,
-                     COALESCE(rs.read_through_sequence_number, 0)
-                   ) + 1
-                 END
-            ), 0) AS unread_count,
-            EXISTS (
-              SELECT 1 FROM message_mentions mention
-               JOIN messages mentioned_message ON mentioned_message.id = mention.message_id
-              WHERE mentioned_message.workspace_id = ?1
-                AND mentioned_message.workstream_id = ?2
-                AND mention.mentioned_user_id = interested.user_id
-                AND mentioned_message.sequence_number > COALESCE(rs.read_through_sequence_number, 0)
-            ) AS you_are_mentioned,
-            COALESCE(rs.read_through_sequence_number, w.unread_tracking_start_sequence_number)
-              AS seen_attention_ordinal,
-            rs.manual_unread_from_sequence_number AS manual_unread_from_ordinal,
-            COALESCE(rs.manual_unread_generation, 0) AS manual_unread_generation,
-            COALESCE((
-              SELECT MAX(mentioned_message.sequence_number)
-                FROM message_mentions mention
-                JOIN messages mentioned_message ON mentioned_message.id = mention.message_id
-               WHERE mentioned_message.workspace_id = ?1
-                 AND mentioned_message.workstream_id = ?2
-                 AND mention.mentioned_user_id = interested.user_id
-            ), 0) AS latest_mention_attention_ordinal
-       FROM interested
-       JOIN workstreams w ON w.id = ?2 AND w.workspace_id = ?1
-       LEFT JOIN workstream_read_states rs
-         ON rs.workstream_id = w.id AND rs.user_id = interested.user_id`,
-  ).bind(route.workspace_id, route.workstream_id).all<{
-    user_id: string;
-    is_participant: number;
-    unread_count: number;
-    you_are_mentioned: number;
-    seen_attention_ordinal: number;
-    manual_unread_from_ordinal: number | null;
-    manual_unread_generation: number;
-    latest_mention_attention_ordinal: number;
-  }>();
-  const viewerStatements = (viewers.results ?? []).map((viewer) => {
-    const projection = {
-      isParticipant: Number(viewer.is_participant) > 0,
-      unreadCount: Number(viewer.unread_count),
-      youAreMentioned: Number(viewer.you_are_mentioned) > 0,
-      listable: common.scope === "workspace" || Number(viewer.is_participant) > 0,
-      seenAttentionOrdinal: Number(viewer.seen_attention_ordinal),
-      manualUnreadFromOrdinal: viewer.manual_unread_from_ordinal,
-      manualUnreadGeneration: Number(viewer.manual_unread_generation),
-      latestMentionAttentionOrdinal: Number(viewer.latest_mention_attention_ordinal),
-    };
-    return env.DB.prepare(
-      `INSERT INTO workstream_directory_user_projections
-       (workspace_id, workstream_id, user_id, generation, version, is_participant,
-          unread_count, you_are_mentioned, listable, payload_hash, projected_at,
-          seen_attention_ordinal, manual_unread_from_ordinal,
-          manual_unread_generation, latest_mention_attention_ordinal)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
-         workspace_id = excluded.workspace_id, generation = excluded.generation,
-         version = excluded.version, is_participant = excluded.is_participant,
-         unread_count = excluded.unread_count, you_are_mentioned = excluded.you_are_mentioned,
-         listable = excluded.listable, payload_hash = excluded.payload_hash,
-         seen_attention_ordinal = excluded.seen_attention_ordinal,
-         manual_unread_from_ordinal = excluded.manual_unread_from_ordinal,
-         manual_unread_generation = excluded.manual_unread_generation,
-         latest_mention_attention_ordinal = excluded.latest_mention_attention_ordinal,
-         projected_at = excluded.projected_at
-       WHERE excluded.generation > workstream_directory_user_projections.generation
-          OR (excluded.generation = workstream_directory_user_projections.generation
-              AND excluded.version >= workstream_directory_user_projections.version)`,
-    ).bind(
-      route.workspace_id,
-      route.workstream_id,
-      viewer.user_id,
-      route.generation,
-      projection.isParticipant ? 1 : 0,
-      projection.unreadCount,
-      projection.youAreMentioned ? 1 : 0,
-      projection.listable ? 1 : 0,
-      workstreamImportHash(projection),
-      new Date().toISOString(),
-      projection.seenAttentionOrdinal,
-      projection.manualUnreadFromOrdinal,
-      projection.manualUnreadGeneration,
-      projection.latestMentionAttentionOrdinal,
-    );
-  });
-  for (let start = 0; start < viewerStatements.length; start += 80) {
-    await env.DB.batch(viewerStatements.slice(start, start + 80));
-  }
-}
-
 async function importRoutePage(env: Env, route: RouteRow): Promise<void> {
   const stage = WORKSTREAM_AUTHORITY_IMPORT_STAGES[route.stage_index];
   const campaignId = `${WORKSTREAM_AUTHORITY_CAMPAIGN_PREFIX}:${route.generation}`;
@@ -910,7 +635,6 @@ async function importRoutePage(env: Env, route: RouteRow): Promise<void> {
     });
     const targetHash = typeof result.resultHash === "string" ? result.resultHash : null;
     if (!targetHash) throw new Error("workstream_import_verification_hash_missing");
-    await seedDirectoryProjections(env, route);
     await env.DB.prepare(
       `UPDATE workstream_authority_routes
           SET state = 'verified', target_hash = ?, imported_at = ?, verified_at = ?,
@@ -1014,6 +738,45 @@ async function activateRoute(env: Env, route: RouteRow): Promise<void> {
     ).bind(route.workstream_id).first<{ target_hash: string | null }>();
     if (target?.target_hash !== result.resultHash) throw new Error("workstream_import_activation_hash_mismatch");
   }
+  const workstream = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSTREAM_DOS,
+    route.workspace_id,
+    workstreamDOName(env.AVALON_REGION, route.workspace_id, route.workstream_id),
+  );
+  await workstream.flushWorkspaceDirectoryEffects();
+
+  const pins = await env.DB.prepare(
+    `SELECT user_id, position, created_at, updated_at
+       FROM workstream_pins
+      WHERE workspace_id = ? AND workstream_id = ?
+      ORDER BY user_id, position`,
+  ).bind(route.workspace_id, route.workstream_id).all<{
+    user_id: string;
+    position: number;
+    created_at: string;
+    updated_at: string;
+  }>();
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    route.workspace_id,
+    workspaceDOName(env.AVALON_REGION, route.workspace_id),
+  );
+  if (!await workspace.hasWorkstreamDirectory({
+    workspaceId: route.workspace_id,
+    workstreamId: route.workstream_id,
+  })) throw new Error("workspace_directory_activation_snapshot_missing");
+  await workspace.importWorkstreamPins({
+    workspaceId: route.workspace_id,
+    workstreamId: route.workstream_id,
+    pins: (pins.results ?? []).map((pin) => ({
+      userId: pin.user_id,
+      position: Number(pin.position),
+      createdAt: pin.created_at,
+      updatedAt: pin.updated_at,
+    })),
+  });
   await env.DB.prepare(
     `UPDATE workstream_authority_routes
         SET state = 'active', activated_at = ?, last_error_code = NULL, updated_at = ?

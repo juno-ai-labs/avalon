@@ -10,6 +10,7 @@ import type { z } from "zod";
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { readWorkstreamAuthorityControl } from "../workstream-authority";
+import { WorkstreamDirectoryService } from "../workstream-directory-service";
 import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
 import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
@@ -416,12 +417,19 @@ export class TerminalSettingsService {
       ).bind(this.auth.workspaceId).all<SandboxRow>();
       return legacy.results ?? [];
     }
-    const directory = await this.env.DB.prepare(
-      `SELECT workstream_id, title FROM workstream_directory_projections
-        WHERE workspace_id = ? AND archived_at IS NULL ORDER BY workstream_id`,
-    ).bind(this.auth.workspaceId).all<{ workstream_id: string; title: string }>();
+    const directory: Array<{ workstream_id: string; title: string }> = [];
+    const service = new WorkstreamDirectoryService(this.env, this.auth);
+    let before: string | undefined;
+    do {
+      const page = await service.list(250, before, true);
+      directory.push(...page.items.map((workstream) => ({
+        workstream_id: workstream.id,
+        title: workstream.title,
+      })));
+      before = page.nextCursor ?? undefined;
+    } while (before);
     const rows: SandboxRow[] = [];
-    const entries = directory.results ?? [];
+    const entries = directory;
     for (let offset = 0; offset < entries.length; offset += 20) {
       const page = entries.slice(offset, offset + 20);
       const loaded = await Promise.all(page.map(async (entry) => {

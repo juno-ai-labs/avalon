@@ -14,6 +14,8 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { workspaceDOName } from "../durable-objects/names";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import { createActivitySuggestion } from "./activity-suggestion-service";
@@ -668,18 +670,22 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
   await syncVerifiedIdentityDirectory(env, window.workspace_id);
   const authority = await readWorkstreamAuthorityControl(env);
   const workRowsPromise = authority.phase === "durable_object_open"
-    ? env.DB.prepare(
-      `SELECT projection.workstream_id AS id, projection.title,
-              projection.description AS objective
-         FROM workstream_directory_projections projection
-         LEFT JOIN workstream_directory_user_projections viewer
-           ON viewer.workstream_id = projection.workstream_id AND viewer.user_id = ?
-        WHERE projection.workspace_id = ? AND projection.archived_at IS NULL
-          AND projection.system_kind IS NULL
-          AND (? = 'workspace' OR projection.scope = 'workspace' OR viewer.is_participant = 1)
-        ORDER BY projection.last_activity_at DESC LIMIT 20`,
-    ).bind(window.audience_user_id, window.workspace_id, window.audience_scope)
-      .all<{ id: string; title: string; objective: string }>()
+    ? durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      window.workspace_id,
+      workspaceDOName(env.AVALON_REGION, window.workspace_id),
+    ).then((workspace) => workspace.recentWorkstreamDirectory({
+      workspaceId: window.workspace_id,
+      userId: window.audience_scope === "workspace" ? null : window.audience_user_id,
+      includeSystem: false,
+      participantsOnly: false,
+      limit: 20,
+    })).then((page) => ({ results: page.items.map((item) => ({
+      id: item.workstreamId,
+      title: item.title,
+      objective: item.description,
+    })) }))
     : env.DB.prepare(
       `SELECT w.id, w.title, w.objective FROM workstreams w
        LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id

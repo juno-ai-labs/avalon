@@ -108,7 +108,6 @@ describe('paused activity suggestions over the work-stream socket', () => {
       getMessages: vi.fn(async () => []),
       messageMentionPayload: vi.fn(async () => []),
       getWorkstream: vi.fn(async () => detail()),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
     } satisfies WorkstreamSocketApi;
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
       wrapper: function Wrapper({ children }: PropsWithChildren): React.JSX.Element {

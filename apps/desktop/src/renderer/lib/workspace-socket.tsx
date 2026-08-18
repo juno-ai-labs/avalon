@@ -1,6 +1,7 @@
 import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceSocketSyncEventSchema,
+  WorkspaceWorkstreamPageEventSchema,
   WorkstreamSocketCommandResultSchema,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
@@ -16,11 +17,12 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-import { ApiError, mapMessage, type AvalonApi } from './api';
-import type { Message } from './types';
+import { ApiError, mapMessage, mapWorkstreamSummary, type AvalonApi } from './api';
+import type { Message, WorkstreamSummary } from './types';
 import { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
+type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 type WorkspaceSocketApi = Pick<AvalonApi, 'getWorkspaceSocketTicket'>;
 export type WorkspaceSocketState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
@@ -31,9 +33,21 @@ interface PendingCommand {
   timeout: number;
 }
 
+interface PendingWorkstreamPage {
+  command: ListWorkstreamsCommand;
+  resolve: (page: { items: WorkstreamSummary[]; nextCursor: string | null }) => void;
+  reject: (error: Error) => void;
+  timeout: number;
+}
+
 interface WorkspaceSocketContextValue {
   state: WorkspaceSocketState;
   createMessage(command: CreateMessageCommand): Promise<Message>;
+  listWorkstreams(input: {
+    limit: number;
+    before?: string;
+    includeSystem: boolean;
+  }): Promise<{ items: WorkstreamSummary[]; nextCursor: string | null }>;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
@@ -89,6 +103,13 @@ export function WorkspaceSocketProvider({
       'workspace_socket_unavailable',
     )),
   );
+  const listWorkstreamsRef = useRef<WorkspaceSocketContextValue['listWorkstreams']>(
+    () => Promise.reject(new ApiError(
+      'The workspace is not connected.',
+      409,
+      'workspace_socket_unavailable',
+    )),
+  );
 
   useEffect(() => {
     let stopped = false;
@@ -101,6 +122,7 @@ export function WorkspaceSocketProvider({
     let attempt = 0;
     let lastVersion = 0;
     const pending = new Map<string, PendingCommand>();
+    const pendingWorkstreamPages = new Map<string, PendingWorkstreamPage>();
 
     const clearReconnect = (): void => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -127,6 +149,7 @@ export function WorkspaceSocketProvider({
     const sendPending = (): void => {
       if (socket?.readyState !== WebSocket.OPEN) return;
       for (const entry of pending.values()) socket.send(JSON.stringify(entry.command));
+      for (const entry of pendingWorkstreamPages.values()) socket.send(JSON.stringify(entry.command));
     };
     const rejectPending = (error: Error): void => {
       for (const entry of pending.values()) {
@@ -134,6 +157,11 @@ export function WorkspaceSocketProvider({
         entry.reject(error);
       }
       pending.clear();
+      for (const entry of pendingWorkstreamPages.values()) {
+        window.clearTimeout(entry.timeout);
+        entry.reject(error);
+      }
+      pendingWorkstreamPages.clear();
     };
     const scheduleReconnect = (): void => {
       if (stopped || accessRevoked || reconnectTimer !== null) return;
@@ -188,6 +216,18 @@ export function WorkspaceSocketProvider({
             if (sync.data.version < lastVersion) return;
             lastVersion = sync.data.version;
             for (const topic of sync.data.topics) invalidateTopic(queryClient, topic);
+            return;
+          }
+          const workstreamPage = WorkspaceWorkstreamPageEventSchema.safeParse(decoded);
+          if (workstreamPage.success) {
+            const entry = pendingWorkstreamPages.get(workstreamPage.data.requestId);
+            if (!entry) return;
+            pendingWorkstreamPages.delete(workstreamPage.data.requestId);
+            window.clearTimeout(entry.timeout);
+            entry.resolve({
+              items: workstreamPage.data.items.map(mapWorkstreamSummary),
+              nextCursor: workstreamPage.data.nextCursor,
+            });
             return;
           }
           const result = WorkstreamSocketCommandResultSchema.safeParse(decoded);
@@ -245,6 +285,27 @@ export function WorkspaceSocketProvider({
       sendPending();
       void connect();
     });
+    listWorkstreamsRef.current = (input) => new Promise((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      const command: ListWorkstreamsCommand = {
+        type: 'list_workstreams',
+        requestId,
+        limit: input.limit,
+        ...(input.before ? { before: input.before } : {}),
+        includeSystem: input.includeSystem,
+      };
+      const timeout = window.setTimeout(() => {
+        pendingWorkstreamPages.delete(requestId);
+        reject(new ApiError(
+          'The work-stream directory could not be loaded. Try again.',
+          0,
+          'workspace_directory_timeout',
+        ));
+      }, COMMAND_TIMEOUT_MS);
+      pendingWorkstreamPages.set(requestId, { command, resolve, reject, timeout });
+      sendPending();
+      void connect();
+    });
 
     const online = (): void => {
       clearReconnect();
@@ -266,6 +327,11 @@ export function WorkspaceSocketProvider({
         409,
         'workspace_socket_closed',
       ));
+      listWorkstreamsRef.current = () => Promise.reject(new ApiError(
+        'The workspace is no longer connected.',
+        409,
+        'workspace_socket_closed',
+      ));
       rejectPending(new ApiError(
         'The workspace closed before the message was confirmed.',
         409,
@@ -283,7 +349,14 @@ export function WorkspaceSocketProvider({
     (command: CreateMessageCommand): Promise<Message> => createMessageRef.current(command),
     [],
   );
-  const value = useMemo(() => ({ state, createMessage }), [createMessage, state]);
+  const listWorkstreams = useCallback<WorkspaceSocketContextValue['listWorkstreams']>(
+    (input) => listWorkstreamsRef.current(input),
+    [],
+  );
+  const value = useMemo(
+    () => ({ state, createMessage, listWorkstreams }),
+    [createMessage, listWorkstreams, state],
+  );
   return <WorkspaceSocketContext.Provider value={value}>{children}</WorkspaceSocketContext.Provider>;
 }
 

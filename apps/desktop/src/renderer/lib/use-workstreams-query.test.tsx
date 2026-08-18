@@ -7,11 +7,11 @@ import type { WorkstreamSummary } from './types';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from './use-workstreams-query';
 import { setCachedWorkstreams } from './workstreams-cache';
 
-const getWorkstreams = vi.hoisted(() => vi.fn());
+const listWorkstreams = vi.hoisted(() => vi.fn());
 const getApplicationSettings = vi.hoisted(() => vi.fn());
 const settingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 
-vi.mock('./app-session', () => ({ useAppSession: () => ({ api: { getWorkstreams } }) }));
+vi.mock('./workspace-socket', () => ({ useWorkspaceSocket: () => ({ listWorkstreams }) }));
 vi.mock('./platform', () => ({
   desktopBridge: () => ({
     getApplicationSettings,
@@ -58,8 +58,8 @@ describe('useWorkstreamsQuery', () => {
   beforeEach(() => {
     settingsListeners.clear();
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    getWorkstreams.mockReset();
-    getWorkstreams.mockResolvedValue({
+    listWorkstreams.mockReset();
+    listWorkstreams.mockResolvedValue({
       items: [summary('workstream-1', 'Launch brief')],
       nextCursor: null,
     });
@@ -106,23 +106,21 @@ describe('useWorkstreamsQuery', () => {
     const { result } = renderHook(() => useWorkstreamsQuery(), { wrapper });
     await waitFor(() => expect(result.current.data).toHaveLength(1));
 
-    expect(getWorkstreams).toHaveBeenCalledTimes(1);
-    expect(getWorkstreams.mock.calls[0]?.[1]).toBe(false);
+    expect(listWorkstreams).toHaveBeenCalledTimes(1);
+    expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ includeSystem: false });
 
     announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
-    await waitFor(() => expect(getWorkstreams).toHaveBeenCalledTimes(2));
-    expect(getWorkstreams.mock.calls[1]?.[1]).toBe(true);
+    await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(2));
+    expect(listWorkstreams.mock.calls[1]?.[0]).toMatchObject({ includeSystem: true });
   });
 
   describe('paging', () => {
     function pagedList(): void {
-      getWorkstreams.mockReset();
-      getWorkstreams.mockImplementation(async (
-        signal: unknown,
-        includeSystem: boolean,
-        before?: string,
-      ) => before === 'cursor-1'
+      listWorkstreams.mockReset();
+      listWorkstreams.mockImplementation(async (
+        input: { before?: string },
+      ) => input.before === 'cursor-1'
         ? { items: [summary('workstream-2', 'Second page')], nextCursor: null }
         : { items: [summary('workstream-1', 'First page')], nextCursor: 'cursor-1' });
     }
@@ -138,8 +136,8 @@ describe('useWorkstreamsQuery', () => {
       await waitFor(() => expect(result.current.data).toHaveLength(2));
       // One request for the page itself: appending is what makes reaching the
       // bottom cost a page rather than the whole list again.
-      expect(getWorkstreams).toHaveBeenCalledTimes(2);
-      expect(getWorkstreams.mock.calls[1]?.[2]).toBe('cursor-1');
+      expect(listWorkstreams).toHaveBeenCalledTimes(2);
+      expect(listWorkstreams.mock.calls[1]?.[0]).toMatchObject({ before: 'cursor-1' });
       expect(result.current.data?.map((item) => item.id))
         .toEqual(['workstream-1', 'workstream-2']);
       // The end of the list, so nothing asks again.
@@ -153,7 +151,7 @@ describe('useWorkstreamsQuery', () => {
       expect(result.current.hasMore).toBe(false);
       act(() => result.current.fetchMore());
 
-      expect(getWorkstreams).toHaveBeenCalledTimes(1);
+      expect(listWorkstreams).toHaveBeenCalledTimes(1);
     });
 
     // The regression a hand-rolled pager invites: the list polls every fifteen
@@ -170,9 +168,9 @@ describe('useWorkstreamsQuery', () => {
         await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       });
 
-      await waitFor(() => expect(getWorkstreams).toHaveBeenCalledTimes(4));
-      expect(getWorkstreams.mock.calls[2]?.[2]).toBeUndefined();
-      expect(getWorkstreams.mock.calls[3]?.[2]).toBe('cursor-1');
+      await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(4));
+      expect(listWorkstreams.mock.calls[2]?.[0]).not.toHaveProperty('before');
+      expect(listWorkstreams.mock.calls[3]?.[0]).toMatchObject({ before: 'cursor-1' });
       expect(result.current.data?.map((item) => item.id))
         .toEqual(['workstream-1', 'workstream-2']);
     });
@@ -181,7 +179,7 @@ describe('useWorkstreamsQuery', () => {
       pagedList();
       const { result } = renderHook(() => useWorkstreamsQuery(), { wrapper });
       await waitFor(() => expect(result.current.data).toHaveLength(1));
-      getWorkstreams.mockRejectedValueOnce(new Error('offline'));
+      listWorkstreams.mockRejectedValueOnce(new Error('offline'));
 
       act(() => result.current.fetchMore());
       await waitFor(() => expect(result.current.isFetchingMore).toBe(false));
@@ -193,7 +191,7 @@ describe('useWorkstreamsQuery', () => {
 
       act(() => result.current.fetchMore());
       await waitFor(() => expect(result.current.data).toHaveLength(2));
-      expect(getWorkstreams.mock.calls.at(-1)?.[2]).toBe('cursor-1');
+      expect(listWorkstreams.mock.calls.at(-1)?.[0]).toMatchObject({ before: 'cursor-1' });
     });
 
     it('starts again from the first page when debugging changes the list', async () => {
@@ -202,15 +200,15 @@ describe('useWorkstreamsQuery', () => {
       await waitFor(() => expect(result.current.data).toHaveLength(1));
       act(() => result.current.fetchMore());
       await waitFor(() => expect(result.current.data).toHaveLength(2));
-      getWorkstreams.mockClear();
+      listWorkstreams.mockClear();
 
       announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
       // The rows are a different population now, so the pages walked before
       // describe a list that no longer exists: one request, from the start.
-      await waitFor(() => expect(getWorkstreams).toHaveBeenCalledTimes(1));
-      expect(getWorkstreams.mock.calls[0]?.[1]).toBe(true);
-      expect(getWorkstreams.mock.calls[0]?.[2]).toBeUndefined();
+      await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(1));
+      expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ includeSystem: true });
+      expect(listWorkstreams.mock.calls[0]?.[0]).not.toHaveProperty('before');
     });
   });
 });
