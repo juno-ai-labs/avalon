@@ -1,0 +1,556 @@
+/*
+ * The theme engine.
+ *
+ * Every colour, radius, and unit of breathing room the renderer draws with is
+ * declared here, once per theme, and nowhere else. `app.css` names tokens; this
+ * file decides what they are. A theme is therefore a block of custom properties
+ * rather than a fork of the stylesheet, and adding one costs a block rather than
+ * an audit of 3,700 lines.
+ *
+ * Read `docs/theming.md` before adding a theme or a token. Two rules matter
+ * enough to restate here:
+ *
+ *   1. Surfaces are named, not numbered. `--canvas`, `--sidebar`, `--surface`,
+ *      `--raised` and `--elevated` are declared outright by each theme because
+ *      their *relationship* inverts between light and dark: a dark theme makes
+ *      a control recede by darkening it, a light theme by greying it. Nothing
+ *      derives one from another.
+ *
+ *   2. Everything monotonic lives on the `--n-*` ramp, which runs from the
+ *      faintest mark a theme can make on its own surface (`--n-1`) to its
+ *      strongest text (`--n-14`). The ramp is ordered by *contrast against the
+ *      surface*, never by lightness, so `--n-3` is a border in every theme
+ *      without the stylesheet knowing which way round the theme is.
+ */
+
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --canvas: #111210;
+  --sidebar: #181916;
+  --surface: #1d1e1b;
+  --surface-2: #22231f;
+  --sunken: #191a17;
+  --raised: #292a26;
+  --raised-hover: #30312c;
+  --elevated: #292a26;
+  --elevated-hover: #383934;
+
+  /* Contrast ramp: faintest mark on --surface through to strongest text */
+  --n-1: #242521;
+  --n-2: #292a26;
+  --n-3: #30312c;
+  --n-4: #343530;
+  --n-5: #3b3c36;
+  --n-6: #44453f;
+  --n-7: #55564f;
+  --n-8: #6f6f68;
+  --n-9: #77766f;
+  --n-10: #94948c;
+  --n-11: #aaa9a2;
+  --n-12: #cac9c2;
+  --n-13: #dfded9;
+  --n-14: #ecebe5;
+
+  /* Accents. Six roles each: the hue itself, a brighter one for hover, a
+   * readable-on-surface text tone, a tinted block, a tinted border, and the
+   * text drawn on top of a filled swatch of the hue. */
+  --brand: #cedc00;
+  --brand-strong: #e0ec25;
+  --brand-soft: #aab96a;
+  --brand-ink: #cedc00;
+  --brand-wash: #25291f;
+  --brand-edge: #3f4932;
+  --brand-on: #11140f;
+
+  --blue: #47c7fc;
+  --blue-strong: #8ec2fb;
+  --blue-soft: #64aaf4;
+  --blue-wash: #15202a;
+  --blue-edge: #283037;
+  --blue-on: #0d1620;
+
+  --green: #6ecb87;
+  --green-strong: #88d29f;
+  --green-fill: #315b44;
+  --green-fill-edge: #3f7255;
+  --green-soft: #93b69c;
+  --green-wash: #1b2b20;
+  --green-edge: #294632;
+  --green-on: #d7f0e0;
+
+  --gold: #e6bd45;
+  --gold-strong: #f0d49c;
+  --gold-soft: #dec38d;
+  --gold-wash: #3a3022;
+  --gold-edge: #604d2c;
+  --gold-on: #1c1608;
+
+  --red: #d8756f;
+  --red-strong: #ef8a83;
+  --red-soft: #dda49e;
+  --red-wash: #3a2422;
+  --red-edge: #5b302d;
+  --red-on: #17100f;
+
+  /* Connector faces. Each keeps enough of the provider's own colour to be
+   * recognised at 20px, on a block the theme can still sit behind. */
+  --face-github: #292a2d;
+  --face-github-ink: #d0cfd0;
+  --face-google: #302b28;
+  --face-google-ink: #e2a084;
+  --face-drive: #29312b;
+  --face-drive-ink: #91c4a1;
+  --face-slack: #2b2f33;
+  --face-slack-ink: #9fc0d4;
+  --face-linear: #2e2b36;
+  --face-linear-ink: #b5a2df;
+  --face-webhook: #312c28;
+  --face-webhook-ink: #d7aa83;
+  --face-search: #283037;
+  --face-search-ink: #8eb8d6;
+  --face-plug: #30302a;
+  --face-plug-ink: #c2bd8a;
+
+  /* Geometry */
+  --radius-xs: 4px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+  --hairline: 1px;
+
+  /* Density. These are the handful of measurements that decide how much air the
+   * interface has; a theme changes its feel mostly by changing them. */
+  --sidebar-width: 300px;
+  --row-height: 31px;
+  --control-height: 32px;
+  --pane-pad: 20px;
+  --stack-gap: 31px;
+  --feed-width: 860px;
+  --feed-width-wide: 920px;
+  --feed-pad-y: 42px;
+  --feed-pad-x: 34px;
+
+  /* Type */
+  --font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-ui);
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --text-base: 14px;
+  --leading-base: 1.48;
+  --weight-strong: 560;
+  /* Micro-labels: the small type over a group of rows. A theme that wants
+   * letterspaced small capitals changes these four and nothing else. */
+  --label-size: 10px;
+  --label-tracking: 0.02em;
+  --label-transform: none;
+  --label-weight: 560;
+
+  /* Depth and ambience */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 12px 35px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 22px 75px rgba(0, 0, 0, 0.52);
+  --shadow-rail: -8px 0 28px rgba(0, 0, 0, 0.16);
+  --shadow-rail-strong: -14px 0 42px rgba(0, 0, 0, 0.38);
+  --shadow-drawer: 12px 0 40px rgba(0, 0, 0, 0.35);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --scrim-soft: rgba(0, 0, 0, 0.3);
+  --scrim-solid: rgba(10, 11, 8, 0.98);
+  --ring: 0 0 0 2px rgba(71, 199, 252, 0.25);
+  --ring-quiet: 0 0 0 2px rgba(130, 151, 172, 0.12);
+  --ring-brand: 0 0 0 2px rgba(206, 220, 0, 0.22);
+  --brand-tint: rgba(206, 220, 0, 0.3);
+  --brand-tint-strong: rgba(206, 220, 0, 0.45);
+  --brand-glow: radial-gradient(circle, rgba(206, 220, 0, 0.055), transparent 62%);
+  --red-tint: rgba(216, 117, 111, 0.13);
+  --red-tint-strong: rgba(216, 117, 111, 0.28);
+  --blue-tint: rgba(71, 199, 252, 0.42);
+  --edge-highlight: rgba(255, 255, 255, 0.035);
+  --shimmer: rgba(255, 255, 255, 0.07);
+  /* Painted over --canvas on the shell. Most themes have nothing to say here. */
+  --canvas-wash: none;
+  /* Inverted pieces: a surface that deliberately opposes the theme, and the
+   * text drawn on one. A tooltip is light on a dark theme and dark on a light
+   * one, so it cannot be a ramp step in either. */
+  --ink-hover: #ffffff;
+  --tooltip-bg: #e9e8e1;
+  --tooltip-ink: #1c1d1a;
+  --ink-on: #171815;
+  --toggle-track: #44453f;
+  --toggle-knob-off: #b0afa8;
+
+  --focus-ring: var(--blue);
+  --focus-ring-quiet: #6a7f95;
+  --selection: rgba(71, 199, 252, 0.28);
+  --scrollbar-thumb: #3a3b35;
+
+  /* Syntax highlighting. `prism-react-renderer` is handed a JavaScript object
+   * rather than a class, so these reach it as `var()` in an inline style. */
+  --code-plain: #e5e4df;
+  --code-comment: #777772;
+  --code-punctuation: #aaa9a3;
+  --code-tag: #ff8a50;
+  --code-number: #e6a06b;
+  --code-string: #b995f5;
+  --code-operator: #d8d7d2;
+  --code-keyword: #ff7b2c;
+  --code-function: #17a9f5;
+  --code-variable: #e8b75c;
+
+  /* One per participant, picked by a hash of their id. Six is enough that a
+   * repeat is rare in a room and few enough that each stays distinguishable. */
+  --person-1: #8db6de;
+  --person-2: #c79bd5;
+  --person-3: #81bfa5;
+  --person-4: #d2a47f;
+  --person-5: #a6a0d9;
+  --person-6: #cf9ba2;
+
+  /* Aliases kept for the vocabulary the stylesheet already spoke. */
+  --ink: var(--n-14);
+  --ink-soft: var(--n-12);
+  --muted: var(--n-10);
+  --muted-2: var(--n-8);
+  --line: var(--n-4);
+  --line-soft: var(--n-2);
+  --line-strong: var(--n-5);
+  --brand-hover: var(--brand-strong);
+  --yellow: var(--gold);
+  --orange: var(--brand-ink);
+}
+
+/*
+ * Light. Drawn from the same family of interfaces the dark theme is: a warm
+ * near-white page, a sidebar that recedes by greying rather than by darkening,
+ * hairline rules instead of visible borders, and controls that sit on the page
+ * as a slightly greyer block rather than a lighter one.
+ *
+ * The ramp is compressed at its faint end and stretched at its strong end,
+ * which is the asymmetry a light interface needs and the reason these values
+ * are written out rather than interpolated from the dark theme's.
+ */
+[data-theme='light'] {
+  color-scheme: light;
+
+  --canvas: #ffffff;
+  --sidebar: #f7f6f2;
+  --surface: #ffffff;
+  --surface-2: #faf9f6;
+  --sunken: #f4f2ed;
+  --raised: #f3f2ed;
+  --raised-hover: #eae8e1;
+  --elevated: #ffffff;
+  --elevated-hover: #f3f2ed;
+
+  --n-1: #f4f2ed;
+  --n-2: #ebe9e2;
+  --n-3: #e2dfd7;
+  --n-4: #d9d5cb;
+  --n-5: #cbc7bb;
+  --n-6: #b6b1a3;
+  --n-7: #9c9789;
+  --n-8: #857f72;
+  --n-9: #746e62;
+  --n-10: #635e53;
+  --n-11: #514c43;
+  --n-12: #3b372f;
+  --n-13: #2a2721;
+  --n-14: #1a1814;
+
+  /* Avalon's chartreuse survives as a fill with dark text on it, and is
+   * replaced by an olive for anything that has to be read as text or a line —
+   * #cedc00 against white is under 1.5:1. */
+  --brand: #cedc00;
+  --brand-strong: #dbe834;
+  --brand-soft: #6b7500;
+  --brand-ink: #67700a;
+  --brand-wash: #f6f8e2;
+  --brand-edge: #dde4a8;
+  --brand-on: #1d2000;
+
+  --blue: #1a7fc4;
+  --blue-strong: #145f96;
+  --blue-soft: #1a6fae;
+  --blue-wash: #eef5fb;
+  --blue-edge: #c3dcef;
+  --blue-on: #ffffff;
+
+  --green: #2e8a54;
+  --green-strong: #247344;
+  --green-fill: #2e8a54;
+  --green-fill-edge: #247344;
+  --green-soft: #35754f;
+  --green-wash: #edf6f0;
+  --green-edge: #bcdcc8;
+  --green-on: #ffffff;
+
+  --gold: #b8860b;
+  --gold-strong: #9a7009;
+  --gold-soft: #8a6208;
+  --gold-wash: #fbf3e0;
+  --gold-edge: #ecd9a8;
+  --gold-on: #241a00;
+
+  --red: #c3453f;
+  --red-strong: #a5332e;
+  --red-soft: #b23a34;
+  --red-wash: #fdeeed;
+  --red-edge: #f2c9c6;
+  --red-on: #ffffff;
+
+  --face-github: #f0efec;
+  --face-github-ink: #24292f;
+  --face-google: #fbeeea;
+  --face-google-ink: #b4472a;
+  --face-drive: #eaf5ee;
+  --face-drive-ink: #1a7a48;
+  --face-slack: #eef2f7;
+  --face-slack-ink: #2f5b80;
+  --face-linear: #f0eefa;
+  --face-linear-ink: #4b41a8;
+  --face-webhook: #fbf1e8;
+  --face-webhook-ink: #97552a;
+  --face-search: #edf3f8;
+  --face-search-ink: #2a5f85;
+  --face-plug: #f4f3e8;
+  --face-plug-ink: #6c6a2c;
+
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  --row-height: 33px;
+  --pane-pad: 22px;
+  --stack-gap: 32px;
+  --feed-pad-y: 46px;
+
+  --shadow-sm: 0 1px 3px rgba(30, 28, 22, 0.09);
+  --shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
+  --shadow-lg: 0 20px 60px rgba(30, 28, 22, 0.18);
+  --shadow-rail: -8px 0 28px rgba(30, 28, 22, 0.08);
+  --shadow-rail-strong: -14px 0 42px rgba(30, 28, 22, 0.14);
+  --shadow-drawer: 12px 0 40px rgba(30, 28, 22, 0.16);
+  --scrim: rgba(38, 36, 30, 0.34);
+  --scrim-soft: rgba(38, 36, 30, 0.18);
+  --scrim-solid: rgba(246, 245, 241, 0.98);
+  --ring: 0 0 0 2px rgba(26, 127, 196, 0.22);
+  --ring-quiet: 0 0 0 2px rgba(96, 92, 83, 0.14);
+  --ring-brand: 0 0 0 2px rgba(140, 152, 0, 0.28);
+  --brand-tint: rgba(140, 152, 0, 0.32);
+  --brand-tint-strong: rgba(140, 152, 0, 0.5);
+  --brand-glow: radial-gradient(circle, rgba(206, 220, 0, 0.14), transparent 62%);
+  --red-tint: rgba(195, 69, 63, 0.1);
+  --red-tint-strong: rgba(195, 69, 63, 0.24);
+  --blue-tint: rgba(26, 127, 196, 0.36);
+  --edge-highlight: rgba(30, 28, 22, 0.05);
+  --shimmer: rgba(30, 28, 22, 0.05);
+  --ink-hover: #000000;
+  --tooltip-bg: #2b2823;
+  --tooltip-ink: #f4f2ed;
+  --ink-on: #ffffff;
+  --toggle-track: #c0bbae;
+  --toggle-knob-off: #ffffff;
+
+  --focus-ring: var(--blue);
+  --focus-ring-quiet: #8fadc4;
+  --selection: rgba(26, 127, 196, 0.2);
+  --scrollbar-thumb: #d2cec4;
+
+  --code-plain: #24231e;
+  --code-comment: #8a857a;
+  --code-punctuation: #5c5850;
+  --code-tag: #b3441c;
+  --code-number: #9a5518;
+  --code-string: #6a3fb5;
+  --code-operator: #3d3a33;
+  --code-keyword: #a8380f;
+  --code-function: #0a6ba8;
+  --code-variable: #8a6208;
+
+  --person-1: #2f6f9e;
+  --person-2: #7a4a91;
+  --person-3: #2f7d5c;
+  --person-4: #9a5f2a;
+  --person-5: #4f4a9e;
+  --person-6: #9b4550;
+}
+
+/*
+ * Airy. A homage rather than a reproduction: a warm near-black page lit from
+ * one corner, amber where the other themes are chartreuse, no borders worth the
+ * name, and roughly half again the spacing everywhere so that the negative
+ * space does the work the lines used to.
+ *
+ * It is a dark theme, so it inherits nothing from `light`; every token it does
+ * not restate comes from the `:root` block above.
+ */
+[data-theme='airy'] {
+  color-scheme: dark;
+
+  --canvas: #0a0806;
+  --sidebar: #0a0806;
+  --surface: #0c0a07;
+  --surface-2: #110e0a;
+  --sunken: #080604;
+  --raised: #16110b;
+  --raised-hover: #1e1711;
+  --elevated: #17120c;
+  --elevated-hover: #221b13;
+
+  --n-1: #16120c;
+  --n-2: #1b1610;
+  --n-3: #221c14;
+  --n-4: #2a2318;
+  --n-5: #342c1f;
+  --n-6: #453c2e;
+  --n-7: #5c5344;
+  --n-8: #766c5c;
+  --n-9: #8a8070;
+  --n-10: #a19684;
+  --n-11: #b8ac99;
+  --n-12: #d3c8b5;
+  --n-13: #e4dbcb;
+  --n-14: #f2ebdf;
+
+  /* Amber carries everything the chartreuse carries elsewhere. */
+  --brand: #e08c3a;
+  --brand-strong: #f0a55a;
+  --brand-soft: #d29757;
+  --brand-ink: #e08c3a;
+  --brand-wash: #1d1409;
+  --brand-edge: #3a2812;
+  --brand-on: #140c04;
+
+  --blue: #7fa8c8;
+  --blue-strong: #9dc0da;
+  --blue-soft: #8fb3ce;
+  --blue-wash: #101820;
+  --blue-edge: #22303c;
+  --blue-on: #0a1119;
+
+  --green: #7fae97;
+  --green-strong: #9cc6b0;
+  --green-fill: #23392e;
+  --green-fill-edge: #375247;
+  --green-soft: #8bb9a2;
+  --green-wash: #0e1712;
+  --green-edge: #1e2f26;
+  --green-on: #cfe6da;
+
+  --gold: #d9b168;
+  --gold-strong: #e9c98d;
+  --gold-soft: #cfa961;
+  --gold-wash: #1c1509;
+  --gold-edge: #382a13;
+  --gold-on: #140f04;
+
+  --red: #cc7a6a;
+  --red-strong: #e09585;
+  --red-soft: #d08a7b;
+  --red-wash: #1d100c;
+  --red-edge: #3a201a;
+  --red-on: #150b08;
+
+  --face-github: #16120c;
+  --face-github-ink: #c9c3ba;
+  --face-google: #1c130c;
+  --face-google-ink: #d9926e;
+  --face-drive: #101711;
+  --face-drive-ink: #8ab99b;
+  --face-slack: #101418;
+  --face-slack-ink: #94b3c9;
+  --face-linear: #14121c;
+  --face-linear-ink: #a99dd0;
+  --face-webhook: #1d150c;
+  --face-webhook-ink: #d9a271;
+  --face-search: #0f151a;
+  --face-search-ink: #8fb0c6;
+  --face-plug: #191509;
+  --face-plug-ink: #c4b478;
+
+  /* Almost nothing is rounded, and almost nothing is boxed. */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+
+  --sidebar-width: 320px;
+  --row-height: 40px;
+  --control-height: 36px;
+  --pane-pad: 34px;
+  --stack-gap: 46px;
+  --feed-width: 880px;
+  --feed-width-wide: 940px;
+  --feed-pad-y: 58px;
+  --feed-pad-x: 46px;
+
+  --font-display: ui-serif, Iowan Old Style, Charter, Georgia, serif;
+  --text-base: 15px;
+  --leading-base: 1.66;
+  --weight-strong: 500;
+  --label-size: 10px;
+  --label-tracking: 0.18em;
+  --label-transform: uppercase;
+  --label-weight: 500;
+
+  --shadow-sm: none;
+  --shadow-md: 0 18px 60px rgba(0, 0, 0, 0.62);
+  --shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.7);
+  --shadow-rail: -10px 0 44px rgba(0, 0, 0, 0.5);
+  --shadow-rail-strong: -16px 0 60px rgba(0, 0, 0, 0.66);
+  --shadow-drawer: 16px 0 56px rgba(0, 0, 0, 0.6);
+  --scrim: rgba(6, 4, 2, 0.72);
+  --scrim-soft: rgba(6, 4, 2, 0.5);
+  --scrim-solid: rgba(7, 5, 3, 0.98);
+  --ring: 0 0 0 2px rgba(224, 140, 58, 0.28);
+  --ring-quiet: 0 0 0 2px rgba(224, 140, 58, 0.12);
+  --ring-brand: 0 0 0 2px rgba(224, 140, 58, 0.26);
+  --brand-tint: rgba(224, 140, 58, 0.34);
+  --brand-tint-strong: rgba(224, 140, 58, 0.5);
+  --brand-glow: radial-gradient(circle, rgba(224, 140, 58, 0.08), transparent 62%);
+  --red-tint: rgba(204, 122, 106, 0.14);
+  --red-tint-strong: rgba(204, 122, 106, 0.3);
+  --blue-tint: rgba(127, 168, 200, 0.34);
+  --edge-highlight: rgba(242, 235, 223, 0.04);
+  --shimmer: rgba(242, 235, 223, 0.05);
+  /* The light in the corner. It is a background-image rather than a colour so
+   * that it can sit under the whole shell without any element owning it. */
+  --canvas-wash:
+    radial-gradient(80% 60% at 88% 8%, rgba(224, 140, 58, 0.09), transparent 62%),
+    radial-gradient(60% 50% at 6% 96%, rgba(224, 140, 58, 0.05), transparent 58%);
+  --ink-hover: #fffaf1;
+  --tooltip-bg: #efe8dc;
+  --tooltip-ink: #17130d;
+  --ink-on: #0c0a07;
+  --toggle-track: #2a2318;
+  --toggle-knob-off: #8a8070;
+
+  --focus-ring: var(--brand);
+  --focus-ring-quiet: #6b5a44;
+  --selection: rgba(224, 140, 58, 0.24);
+  --scrollbar-thumb: #2c2418;
+
+  --code-plain: #e4dbcb;
+  --code-comment: #6e6455;
+  --code-punctuation: #a19684;
+  --code-tag: #e09a5e;
+  --code-number: #d9b168;
+  --code-string: #b9a3d4;
+  --code-operator: #c3b8a6;
+  --code-keyword: #e08c3a;
+  --code-function: #8fb3ce;
+  --code-variable: #d9b168;
+
+  --person-1: #7fa8c8;
+  --person-2: #b39bcc;
+  --person-3: #7fae97;
+  --person-4: #d9a271;
+  --person-5: #9d95c9;
+  --person-6: #c98d92;
+}

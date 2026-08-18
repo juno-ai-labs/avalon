@@ -1,0 +1,131 @@
+import { useEffect, useState } from 'react';
+import {
+  defaultThemeChoice,
+  resolveTheme,
+  type ResolvedTheme,
+  type ThemeChoice,
+} from '../../common/themes';
+import { readDevicePreferences, setDeviceTheme } from './device-preferences';
+import { desktopBridge, desktopServicesAvailable } from './platform';
+
+/**
+ * Applying the chosen theme, and keeping it applied.
+ *
+ * The whole mechanism is one attribute: `data-theme` on `<html>`, which selects
+ * one block of custom properties out of `styles/themes.css`. Nothing else in
+ * the renderer branches on the theme, and no component reads a colour — which
+ * is what keeps a new theme a block of CSS rather than a sweep of components.
+ *
+ * The choice is stored on the device rather than on the account. An appearance
+ * belongs to the screen it is being looked at, and a person who works on a
+ * bright laptop and a dark desktop should not have to keep changing it back.
+ */
+
+const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
+
+export interface ThemeState {
+  choice: ThemeChoice;
+  resolved: ResolvedTheme;
+}
+
+const listeners = new Set<(state: ThemeState) => void>();
+
+/**
+ * jsdom implements no `matchMedia`, and neither does an Electron window early
+ * enough to be certain of. Treating an absent implementation as "not dark"
+ * makes `system` mean light there, which is the answer Chromium gives when the
+ * platform expresses no preference.
+ */
+function systemPrefersDark(): boolean {
+  if (typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia(SYSTEM_DARK_QUERY).matches;
+}
+
+export function readThemeChoice(): ThemeChoice {
+  return readDevicePreferences().theme ?? defaultThemeChoice;
+}
+
+export function resolvedThemeFor(choice: ThemeChoice): ResolvedTheme {
+  return resolveTheme(choice, systemPrefersDark());
+}
+
+/**
+ * Tells the main process what is being drawn, so the *next* window it opens is
+ * constructed with a matching `backgroundColor`. Nothing here waits on it, and
+ * a build without the desktop bridge has no window chrome to colour.
+ */
+function reportToMain(resolved: ResolvedTheme): void {
+  if (!desktopServicesAvailable()) return;
+  void desktopBridge().setWindowTheme(resolved).catch(() => undefined);
+}
+
+/**
+ * Stamps the resolved theme onto the document and announces it.
+ *
+ * The chosen theme is recorded beside the resolved one so that a surface which
+ * wants to say "System" — the Settings picker does — can tell a deliberate
+ * `dark` from a `system` that happens to be resolving dark.
+ */
+export function applyTheme(choice: ThemeChoice): ThemeState {
+  const resolved = resolvedThemeFor(choice);
+  const root = document.documentElement;
+  root.dataset['theme'] = resolved;
+  root.dataset['themeChoice'] = choice;
+  const state: ThemeState = { choice, resolved };
+  reportToMain(resolved);
+  for (const listener of listeners) listener(state);
+  return state;
+}
+
+/**
+ * Applies the stored choice before the first React render.
+ *
+ * Called from the renderer entry point rather than from an effect: an effect
+ * fires after the first paint, so every launch would show a frame of the
+ * default theme before correcting itself — the flash this exists to avoid.
+ */
+export function installTheme(): ThemeState {
+  return applyTheme(readThemeChoice());
+}
+
+export function persistThemeChoice(choice: ThemeChoice): ThemeState {
+  setDeviceTheme(choice);
+  return applyTheme(choice);
+}
+
+/**
+ * Re-resolves `system` when the Mac changes appearance.
+ *
+ * Only `system` listens: a person who asked for Airy has said what they want,
+ * and following the platform anyway would be the bug this subscription looks
+ * like a fix for. The returned function detaches the listener.
+ */
+export function watchSystemAppearance(): () => void {
+  if (typeof window.matchMedia !== 'function') return () => undefined;
+  const query = window.matchMedia(SYSTEM_DARK_QUERY);
+  const handler = (): void => {
+    if (readThemeChoice() !== 'system') return;
+    applyTheme('system');
+  };
+  query.addEventListener('change', handler);
+  return () => query.removeEventListener('change', handler);
+}
+
+/**
+ * The active theme, for a component that has to name it. Reads the document
+ * rather than the store so that a surface mounted after `installTheme` cannot
+ * disagree with what is on screen.
+ */
+export function useTheme(): ThemeState {
+  const [state, setState] = useState<ThemeState>(() => {
+    const choice = readThemeChoice();
+    return { choice, resolved: resolvedThemeFor(choice) };
+  });
+  useEffect(() => {
+    listeners.add(setState);
+    return () => {
+      listeners.delete(setState);
+    };
+  }, []);
+  return state;
+}

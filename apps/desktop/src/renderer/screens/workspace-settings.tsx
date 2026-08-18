@@ -41,6 +41,7 @@ import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings, DesktopTelemetryInspectorEntry } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
+import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { SLACK_PERSONAL_CAPABILITIES } from '../lib/slack-personal-capabilities';
 import { useAppSession } from '../lib/app-session';
@@ -1637,6 +1638,7 @@ export function WorkspaceSettingsScreen({
                 )}
                 {updateProductAnalytics.error && <InlineError>{updateProductAnalytics.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
+                <ThemePicker />
                 {applicationSettings?.menuBarAvailable !== false && (
                   <>
                     <div className="settings-list-card">

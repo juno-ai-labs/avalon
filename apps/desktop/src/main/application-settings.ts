@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { parseResolvedTheme, type ResolvedTheme } from '../common/themes';
+
 const APPLICATION_SETTINGS_FILE_NAME = 'application-settings.json';
 
 export interface StoredApplicationSettings {
@@ -23,6 +25,13 @@ export interface StoredApplicationSettings {
   productAnalyticsPreferenceVersion: number;
   /** A durable offline mutation. Both enable and disable fail closed while set. */
   productAnalyticsPreferencePending: boolean;
+  /**
+   * The appearance the renderer last drew, mirrored here for one purpose: a
+   * window's `backgroundColor` has to be chosen before any renderer exists to
+   * ask. The renderer's own copy in `localStorage` stays authoritative, so a
+   * disagreement between the two resolves itself on the next report.
+   */
+  windowTheme: ResolvedTheme;
 }
 
 interface StoredApplicationSettingsFile extends StoredApplicationSettings {
@@ -37,6 +46,7 @@ export const defaultStoredApplicationSettings: StoredApplicationSettings = {
   productAnalyticsEnabled: true,
   productAnalyticsPreferenceVersion: 0,
   productAnalyticsPreferencePending: false,
+  windowTheme: 'dark',
 };
 
 export function parseStoredApplicationSettings(value: unknown): StoredApplicationSettings {
@@ -52,6 +62,7 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
     productAnalyticsEnabled?: unknown;
     productAnalyticsPreferenceVersion?: unknown;
     productAnalyticsPreferencePending?: unknown;
+    windowTheme?: unknown;
   };
   if (candidate.version !== 1 || typeof candidate.lockdownMode !== 'boolean') {
     return defaultStoredApplicationSettings;
@@ -75,6 +86,9 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
       ? candidate.productAnalyticsPreferenceVersion
       : 0,
     productAnalyticsPreferencePending: candidate.productAnalyticsPreferencePending === true,
+    // A file written before themes existed, or naming one this build removed,
+    // means the appearance Avalon shipped with.
+    windowTheme: parseResolvedTheme(candidate.windowTheme) ?? 'dark',
   };
 }
 
