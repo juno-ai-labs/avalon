@@ -1,8 +1,9 @@
 name: Deploy Avalon API
 
 # Ordinary regional release, in the order docs/runbook.md requires:
-# validate both Wrangler configurations, apply the remote D1 migrations, deploy
-# EU, deploy Global, then call GET /health on both regions.
+# validate hosted resources and both Wrangler configurations, migrate all three
+# Supabase databases when this revision requires it, apply the remote D1
+# migrations, deploy EU, deploy Global, then call GET /health on both regions.
 #
 # The Global Worker holds named service bindings into EU entrypoints, so EU is
 # always deployed first. A release that introduces a brand-new cross-region
@@ -11,7 +12,9 @@ name: Deploy Avalon API
 #
 # Prerequisites this workflow does not perform (one-time, per the runbook):
 # regional resource creation, confirming each configured D1 ID belongs to its
-# intended region, and setting the regional Worker secrets.
+# intended region, setting the regional Worker secrets, and configuring the
+# three migration URLs and matching project refs in the postgres-production
+# environment.
 #
 # Merging to main deploys both regions and applies pending migrations without a
 # human in the loop. The api-production environment exists to scope the
@@ -27,9 +30,15 @@ on:
       # touches only docs, the desktop app, or the site does not redeploy.
       - "apps/api/**"
       - "packages/**"
+      - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "infrastructure/supabase/**"
       - ".github/workflows/deploy-api.yml"
+      - ".github/workflows/migrate-supabase.yml"
+      - "scripts/decide-supabase-migration.mjs"
+      - "scripts/provision-supabase-storage.mjs"
+      - "scripts/validate-supabase-migration-targets.mjs"
       - "scripts/check-regional-health.mjs"
   workflow_dispatch:
     inputs:
@@ -51,6 +60,11 @@ on:
         required: true
         default: true
         type: boolean
+      migrate_postgres:
+        description: Force the three-database Supabase gate; requires protected main
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -60,7 +74,9 @@ permissions:
 # pending runs are dropped. cancel-in-progress stays false so a run that is
 # already applying migrations is never killed halfway through.
 concurrency:
-  group: deploy-api
+  # This group spans preflight, Postgres/D1 migrations, both Worker deploys, and
+  # health. No standalone production schema mutation can interleave with it.
+  group: avalon-production-release
   cancel-in-progress: false
   queue: single
 
@@ -74,24 +90,27 @@ jobs:
     timeout-minutes: 30
     outputs:
       verified_sha: ${{ steps.revision.outputs.sha }}
+      migrate_postgres: ${{ steps.postgres.outputs.required }}
+      postgres_reason: ${{ steps.postgres.outputs.reason }}
     steps:
       - name: Check out the revision being deployed
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
 
       - name: Resolve the verified revision
         id: revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.13.0
           run_install: false
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -111,47 +130,45 @@ jobs:
       - name: Test the release and deployment scripts
         run: pnpm test:scripts
 
-  deploy:
+      - name: Decide whether this release requires the Postgres fleet gate
+        id: postgres
+        env:
+          BEFORE_SHA: ${{ github.event_name == 'push' && github.event.before || '' }}
+          FORCE_POSTGRES_MIGRATION: ${{ inputs.migrate_postgres || false }}
+        run: node scripts/decide-supabase-migration.mjs >> "$GITHUB_OUTPUT"
+
+  preflight:
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     environment: api-production
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      # A push carries no inputs, so it takes the full both-regions path.
-      DEPLOY_EU: ${{ github.event_name != 'workflow_dispatch' || inputs.regions != 'global' }}
-      DEPLOY_GLOBAL: ${{ github.event_name != 'workflow_dispatch' || inputs.regions != 'eu' }}
-      APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' || inputs.apply_migrations }}
-
     steps:
-      # The dispatch input may name a mutable branch, so deploy the immutable
-      # commit that verify resolved rather than resolving the input again.
-      - name: Check out the revision being deployed
-        uses: actions/checkout@v5
+      - name: Check out the verified revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.verify.outputs.verified_sha }}
 
-      - name: Require Cloudflare deployment credentials
-        run: |
-          set -euo pipefail
-          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
-          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
-
-      - name: Require every R2 bucket declared by the regional Wrangler configs
-        run: node scripts/check-cloudflare-r2-buckets.mjs
-
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.13.0
           run_install: false
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
+
+      - name: Require Cloudflare credentials and every configured R2 bucket
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
+          node scripts/check-cloudflare-r2-buckets.mjs
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
@@ -162,29 +179,103 @@ jobs:
           pnpm --filter @avalon/api build
           pnpm --filter @avalon/api build:eu
 
+  migrate-postgres:
+    needs:
+      - verify
+      - preflight
+    if: needs.verify.outputs.migrate_postgres == 'true'
+    uses: ./.github/workflows/migrate-supabase.yml
+    with:
+      ref: ${{ needs.verify.outputs.verified_sha }}
+      release_gate: true
+
+  deploy:
+    needs:
+      - verify
+      - preflight
+      - migrate-postgres
+    if: >-
+      always() &&
+      needs.verify.result == 'success' &&
+      needs.preflight.result == 'success' &&
+      (needs.migrate-postgres.result == 'success' || needs.migrate-postgres.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: api-production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # A push carries no inputs, so it takes the full both-regions path.
+      DEPLOY_EU: ${{ github.event_name != 'workflow_dispatch' || inputs.regions != 'global' }}
+      DEPLOY_GLOBAL: ${{ github.event_name != 'workflow_dispatch' || inputs.regions != 'eu' }}
+      APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' || inputs.apply_migrations }}
+      POSTGRES_MIGRATED: ${{ needs.verify.outputs.migrate_postgres }}
+
+    steps:
+      # The dispatch input may name a mutable branch, so deploy the immutable
+      # commit that verify resolved rather than resolving the input again.
+      - name: Check out the revision being deployed
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.verify.outputs.verified_sha }}
+
+      - name: Require Cloudflare deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: List the pending remote migrations for EU
         if: env.DEPLOY_EU == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @avalon/api db:migrate:remote:list:eu
 
       - name: List the pending remote migrations for Global
         if: env.DEPLOY_GLOBAL == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @avalon/api db:migrate:remote:list
 
       - name: Apply the remote D1 migrations to EU
         if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_EU == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @avalon/api db:migrate:remote:eu
 
       - name: Apply the remote D1 migrations to Global
         if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @avalon/api db:migrate:remote
 
       # EU precedes Global because Global binds named EU entrypoints.
       - name: Deploy the EU Worker
         if: env.DEPLOY_EU == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @avalon/api deploy:eu
 
       - name: Deploy the Global Worker
         if: env.DEPLOY_GLOBAL == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @avalon/api deploy:global
 
       - name: Verify regional health
@@ -207,7 +298,9 @@ jobs:
             echo "- Revision: \`${{ inputs.ref || github.ref_name }}\` (${deployed_sha})"
             echo "- Trigger: \`${GITHUB_EVENT_NAME}\`"
             echo "- Regions: EU \`${DEPLOY_EU}\`, Global \`${DEPLOY_GLOBAL}\`"
-            echo "- Remote migrations applied: \`${APPLY_MIGRATIONS}\`"
+            echo "- Supabase fleet migrations applied: \`${POSTGRES_MIGRATED}\`"
+            echo "- Supabase gate reason: \`${{ needs.verify.outputs.postgres_reason }}\`"
+            echo "- Remote D1 migrations applied: \`${APPLY_MIGRATIONS}\`"
             echo ""
             echo "Remaining human acceptance gates from docs/runbook.md (steps 8-13):"
             echo ""

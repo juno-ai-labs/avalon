@@ -1,0 +1,279 @@
+name: Migrate Avalon Supabase databases
+
+# One schema repository serves three hosted Postgres databases: the Global
+# routing/control project, the Global product shard, and the EU product shard.
+# Applying runs are admitted only by the production API release, whose workflow-
+# level concurrency lock remains held through both Worker deployments. A direct
+# dispatch is a protected-main, read-only fleet preview.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Immutable protected-main revision to migrate
+        required: true
+        type: string
+      release_gate:
+        description: Apply after planning as part of the serialized API release
+        required: true
+        type: boolean
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A called applying run gets a nested, non-conflicting group because its caller
+# already owns avalon-production-release. Direct previews are read-only and use
+# their own run-specific group, so they never deadlock or delay a release.
+concurrency:
+  group: ${{ inputs.release_gate && format('avalon-nested-supabase-{0}', github.run_id) || format('avalon-supabase-preview-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+    steps:
+      - name: Check out the requested revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Authorize the protected main revision
+        id: revision
+        env:
+          RELEASE_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          resolved_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse origin/main)"
+          if [ "$RELEASE_EVENT_NAME" = "push" ]; then
+            git merge-base --is-ancestor "$resolved_sha" "$main_sha" || { echo "Production Supabase access requires a revision merged to protected main"; exit 1; }
+          else
+            test "$resolved_sha" = "$main_sha" || { echo "A manually requested Supabase operation requires the current protected main revision"; exit 1; }
+          fi
+          echo "sha=$resolved_sha" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - global
+          - regional
+    steps:
+      - name: Check out the resolved revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild and test the ${{ matrix.project }} schema locally
+        id: local_schema
+        run: |
+          set -euo pipefail
+          pnpm postgres:${{ matrix.project }}:start
+          pnpm postgres:${{ matrix.project }}:reset
+          pnpm postgres:${{ matrix.project }}:test
+
+      - name: Stop the local Supabase project
+        if: always()
+        run: pnpm postgres:stop
+
+  migrate:
+    needs:
+      - resolve
+      - validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: postgres-production
+    steps:
+      # Setup runs before any production credential enters a step environment.
+      - name: Check out the validated revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate EU product migration target
+        id: validate_target_eu
+        env:
+          SUPABASE_MANAGEMENT_API_TOKEN: ${{ secrets.SUPABASE_MANAGEMENT_API_TOKEN }}
+          SUPABASE_EU_REGIONAL_MIGRATION_DATABASE_URL: ${{ secrets.SUPABASE_EU_REGIONAL_MIGRATION_DATABASE_URL }}
+          SUPABASE_EU_REGIONAL_PROJECT_REF: ${{ vars.SUPABASE_EU_REGIONAL_PROJECT_REF }}
+          SUPABASE_EU_REGIONAL_REGION: ${{ vars.SUPABASE_EU_REGIONAL_REGION }}
+        run: node scripts/validate-supabase-migration-targets.mjs --target=eu-product
+
+      - name: Validate Global product migration target
+        id: validate_target_global_regional
+        env:
+          SUPABASE_MANAGEMENT_API_TOKEN: ${{ secrets.SUPABASE_MANAGEMENT_API_TOKEN }}
+          SUPABASE_GLOBAL_REGIONAL_MIGRATION_DATABASE_URL: ${{ secrets.SUPABASE_GLOBAL_REGIONAL_MIGRATION_DATABASE_URL }}
+          SUPABASE_GLOBAL_REGIONAL_PROJECT_REF: ${{ vars.SUPABASE_GLOBAL_REGIONAL_PROJECT_REF }}
+          SUPABASE_GLOBAL_REGIONAL_REGION: ${{ vars.SUPABASE_GLOBAL_REGIONAL_REGION }}
+        run: node scripts/validate-supabase-migration-targets.mjs --target=global-product
+
+      - name: Validate Global routing/control migration target
+        id: validate_target_global_control
+        env:
+          SUPABASE_MANAGEMENT_API_TOKEN: ${{ secrets.SUPABASE_MANAGEMENT_API_TOKEN }}
+          SUPABASE_GLOBAL_CONTROL_MIGRATION_DATABASE_URL: ${{ secrets.SUPABASE_GLOBAL_CONTROL_MIGRATION_DATABASE_URL }}
+          SUPABASE_GLOBAL_CONTROL_PROJECT_REF: ${{ vars.SUPABASE_GLOBAL_CONTROL_PROJECT_REF }}
+          SUPABASE_GLOBAL_CONTROL_REGION: ${{ vars.SUPABASE_GLOBAL_CONTROL_REGION }}
+        run: node scripts/validate-supabase-migration-targets.mjs --target=global-control
+
+      - name: Require three distinct Supabase projects
+        id: validate_targets
+        env:
+          EU_PROJECT_REF: ${{ steps.validate_target_eu.outputs.project_ref }}
+          GLOBAL_PRODUCT_PROJECT_REF: ${{ steps.validate_target_global_regional.outputs.project_ref }}
+          GLOBAL_CONTROL_PROJECT_REF: ${{ steps.validate_target_global_control.outputs.project_ref }}
+        run: |
+          set -euo pipefail
+          test -n "$EU_PROJECT_REF"
+          test -n "$GLOBAL_PRODUCT_PROJECT_REF"
+          test -n "$GLOBAL_CONTROL_PROJECT_REF"
+          test "$EU_PROJECT_REF" != "$GLOBAL_PRODUCT_PROJECT_REF"
+          test "$EU_PROJECT_REF" != "$GLOBAL_CONTROL_PROJECT_REF"
+          test "$GLOBAL_PRODUCT_PROJECT_REF" != "$GLOBAL_CONTROL_PROJECT_REF"
+
+      # All three dry runs precede every hosted mutation. This catches a missing
+      # history or an unreachable target before the fleet becomes heterogeneous.
+      - name: Plan EU regional migrations
+        id: plan_eu
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_EU_REGIONAL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase db push --workdir infrastructure/supabase/regional --db-url "$DATABASE_URL" --dry-run --skip-vault
+
+      - name: Plan Global regional migrations
+        id: plan_global_regional
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_GLOBAL_REGIONAL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase db push --workdir infrastructure/supabase/regional --db-url "$DATABASE_URL" --dry-run --skip-vault
+
+      - name: Plan Global control migrations
+        id: plan_global_control
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_GLOBAL_CONTROL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase db push --workdir infrastructure/supabase/global --db-url "$DATABASE_URL" --dry-run --skip-vault
+
+      # Product shards precede the routing plane so Global never advertises a
+      # control-plane shape that the selected regional authority cannot serve.
+      - name: Apply EU regional migrations
+        id: apply_eu
+        if: inputs.release_gate
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_EU_REGIONAL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase db push --workdir infrastructure/supabase/regional --db-url "$DATABASE_URL" --yes --skip-vault
+
+      - name: Apply Global regional migrations
+        id: apply_global_regional
+        if: inputs.release_gate
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_GLOBAL_REGIONAL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase db push --workdir infrastructure/supabase/regional --db-url "$DATABASE_URL" --yes --skip-vault
+
+      - name: Provision EU private Storage buckets through the Storage API
+        id: provision_storage_eu
+        if: inputs.release_gate
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_EU_PROJECT_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_EU_STORAGE_ADMIN_KEY }}
+        run: pnpm postgres:storage:provision
+
+      - name: Provision Global private Storage buckets through the Storage API
+        id: provision_storage_global_regional
+        if: inputs.release_gate
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_GLOBAL_REGIONAL_PROJECT_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_GLOBAL_REGIONAL_STORAGE_ADMIN_KEY }}
+        run: pnpm postgres:storage:provision
+
+      - name: Apply Global control migrations
+        id: apply_global_control
+        if: inputs.release_gate
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_GLOBAL_CONTROL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase db push --workdir infrastructure/supabase/global --db-url "$DATABASE_URL" --yes --skip-vault
+
+      - name: List EU regional migration history
+        id: history_eu
+        if: always() && steps.validate_targets.outcome == 'success'
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_EU_REGIONAL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase migration list --workdir infrastructure/supabase/regional --db-url "$DATABASE_URL"
+
+      - name: List Global regional migration history
+        id: history_global_regional
+        if: always() && steps.validate_targets.outcome == 'success'
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_GLOBAL_REGIONAL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase migration list --workdir infrastructure/supabase/regional --db-url "$DATABASE_URL"
+
+      - name: List Global control migration history
+        id: history_global_control
+        if: always() && steps.validate_targets.outcome == 'success'
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_GLOBAL_CONTROL_MIGRATION_DATABASE_URL }}
+        run: pnpm exec supabase migration list --workdir infrastructure/supabase/global --db-url "$DATABASE_URL"
+
+      - name: Record the fleet migration result
+        if: always()
+        env:
+          APPLY_MIGRATIONS: ${{ inputs.release_gate }}
+        run: |
+          if [ "$APPLY_MIGRATIONS" = "true" ]; then
+            heading="Avalon Supabase migration result"
+            order="EU product, Global product, Global routing/control"
+          else
+            heading="Avalon Supabase fleet plan complete — no changes applied"
+            order="Planned apply order: EU product, Global product, Global routing/control"
+          fi
+          {
+            echo "### $heading"
+            echo ""
+            echo "- Revision: \`${{ needs.resolve.outputs.sha }}\`"
+            echo "- Applied: \`$APPLY_MIGRATIONS\`"
+            echo "- Order: $order"
+            echo ""
+            echo "| Target | Plan | Apply | Storage | History |"
+            echo "| --- | --- | --- | --- | --- |"
+            echo "| EU product | \`${{ steps.plan_eu.outcome }}\` | \`${{ steps.apply_eu.outcome }}\` | \`${{ steps.provision_storage_eu.outcome }}\` | \`${{ steps.history_eu.outcome }}\` |"
+            echo "| Global product | \`${{ steps.plan_global_regional.outcome }}\` | \`${{ steps.apply_global_regional.outcome }}\` | \`${{ steps.provision_storage_global_regional.outcome }}\` | \`${{ steps.history_global_regional.outcome }}\` |"
+            echo "| Global routing/control | \`${{ steps.plan_global_control.outcome }}\` | \`${{ steps.apply_global_control.outcome }}\` | n/a | \`${{ steps.history_global_control.outcome }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

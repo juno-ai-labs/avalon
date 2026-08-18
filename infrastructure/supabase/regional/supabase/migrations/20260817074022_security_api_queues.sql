@@ -10,14 +10,9 @@ select pgmq.create('sidebar_attention');
 select pgmq.create('derived_content');
 select pgmq.create('maintenance');
 
-insert into storage.buckets (id, name, public, file_size_limit)
-values
-  ('workspace-content', 'workspace-content', false, 536870912),
-  ('connector-ingress', 'connector-ingress', false, 536870912),
-  ('exports', 'exports', false, 536870912)
-on conflict (id) do update
-set public = false,
-    file_size_limit = excluded.file_size_limit;
+-- Buckets are provisioned through the Supabase Storage API by
+-- scripts/provision-supabase-storage.mjs. Supabase owns the storage schema;
+-- application migrations deliberately never mutate storage.buckets/objects.
 
 insert into avalon_private.model_provider_configs (
   workspace_id, provider, model, revision, state, region_policy,
@@ -46,7 +41,14 @@ as $$
     from avalon_private.connector_resources resource
     where resource.id = p_resource_id
       and resource.state = 'active'
-      and avalon_private.can_access_workspace(resource.workspace_id, 'guest')
+      and avalon_private.can_access_workspace(
+        resource.workspace_id,
+        case p_capability
+          when 'administer' then 'admin'
+          when 'use' then 'member'
+          else 'guest'
+        end
+      )
       and (
         resource.access_mode = 'workspace'
         or exists (
@@ -77,7 +79,14 @@ security definer
 set search_path = ''
 as $$
   select case p_kind
-    when 'workspace' then avalon_private.can_access_workspace(p_id, 'guest')
+    when 'workspace' then avalon_private.can_access_workspace(
+      p_id,
+      case p_capability
+        when 'administer' then 'admin'
+        when 'contribute' then 'member'
+        else 'guest'
+      end
+    )
     when 'workstream' then avalon_private.can_access_workstream(p_id, p_capability)
     when 'substream' then avalon_private.can_access_substream(p_id, p_capability)
     when 'connector_resource' then avalon_private.can_access_connector_resource(p_id, case when p_capability = 'contribute' then 'use' else p_capability end)
@@ -85,10 +94,90 @@ as $$
   end
 $$;
 
+create or replace function avalon_private.current_container_access_revision(
+  p_kind text,
+  p_id uuid
+)
+returns bigint
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select case p_kind
+    when 'workspace' then (
+      select workspace.access_revision
+      from avalon_private.workspaces workspace
+      where workspace.id = p_id and workspace.state = 'active'
+    )
+    when 'workstream' then (
+      select workstream.access_revision
+      from avalon_private.workstreams workstream
+      where workstream.id = p_id
+        and workstream.state not in ('archived', 'deleting')
+    )
+    when 'substream' then (
+      select substream.access_revision
+      from avalon_private.substreams substream
+      where substream.id = p_id and substream.state <> 'deleted'
+    )
+    when 'connector_resource' then (
+      select resource.access_revision
+      from avalon_private.connector_resources resource
+      where resource.id = p_id and resource.state = 'active'
+    )
+    else null
+  end
+$$;
+
+create or replace function avalon_private.can_access_container_at_revision(
+  p_kind text,
+  p_id uuid,
+  p_access_revision bigint,
+  p_capability text default 'view'
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select p_access_revision is not null
+    and avalon_private.current_container_access_revision(p_kind, p_id) = p_access_revision
+    and avalon_private.can_access_container(p_kind, p_id, p_capability)
+$$;
+
 revoke all on function avalon_private.can_access_connector_resource(uuid, text) from public;
 revoke all on function avalon_private.can_access_container(text, uuid, text) from public;
+revoke all on function avalon_private.current_container_access_revision(text, uuid) from public;
+revoke all on function avalon_private.can_access_container_at_revision(text, uuid, bigint, text) from public;
 grant execute on function avalon_private.can_access_connector_resource(uuid, text) to authenticated;
 grant execute on function avalon_private.can_access_container(text, uuid, text) to authenticated;
+grant execute on function avalon_private.current_container_access_revision(text, uuid) to authenticated;
+grant execute on function avalon_private.can_access_container_at_revision(text, uuid, bigint, text) to authenticated;
+
+create or replace function avalon_private.content_topic_for_substream(p_substream_id uuid)
+returns text
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select case
+    when substream.access_mode = 'inherit_workstream' then
+      'workstream:' || workstream.id::text || ':' || workspace.access_revision::text ||
+        ':' || workstream.access_revision::text
+    else
+      'substream:' || substream.id::text || ':' || workspace.access_revision::text ||
+        ':' || workstream.access_revision::text || ':' || substream.access_revision::text
+  end
+  from avalon_private.substreams substream
+  join avalon_private.workstreams workstream on workstream.id = substream.workstream_id
+  join avalon_private.workspaces workspace on workspace.id = substream.workspace_id
+  where substream.id = p_substream_id
+$$;
+
+revoke all on function avalon_private.content_topic_for_substream(uuid) from public;
 
 do $$
 declare
@@ -120,6 +209,9 @@ create policy retention_policies_read_member
 create policy workspace_members_read_member
   on avalon_private.workspace_members for select to authenticated
   using (avalon_private.can_access_workspace(workspace_id, 'guest'));
+create policy workspace_entitlements_read_member
+  on avalon_private.workspace_entitlements for select to authenticated
+  using (avalon_private.can_access_workspace(workspace_id, 'guest'));
 create policy workstreams_read_authorized
   on avalon_private.workstreams for select to authenticated
   using (avalon_private.can_access_workstream(id, 'view'));
@@ -134,16 +226,24 @@ create policy workstream_user_state_read_self
   using (
     platform_user_id = avalon_private.current_platform_user_id()
     and avalon_private.can_access_workstream(workstream_id, 'view')
+    and access_revision = avalon_private.current_container_access_revision('workstream', workstream_id)
   );
 create policy workstream_attention_read_authorized
   on avalon_private.workstream_attention_events for select to authenticated
   using (
     avalon_private.can_access_workstream(workstream_id, 'view')
-    and avalon_private.can_access_container(access_container_kind, access_container_id, 'view')
+    and avalon_private.can_access_container_at_revision(
+      access_container_kind, access_container_id, access_revision, 'view'
+    )
   );
 create policy part_mentions_read_authorized
   on avalon_private.part_mentions for select to authenticated
-  using (avalon_private.can_access_workstream(workstream_id, 'view'));
+  using (
+    avalon_private.can_access_workstream(workstream_id, 'view')
+    and avalon_private.can_access_container_at_revision(
+      'substream', substream_id, access_revision, 'view'
+    )
+  );
 create policy workstream_participants_read_authorized
   on avalon_private.workstream_participants for select to authenticated
   using (avalon_private.can_access_workstream(workstream_id, 'view'));
@@ -179,37 +279,72 @@ create policy active_chunks_read_authorized
   ));
 create policy compactions_read_authorized
   on avalon_private.compaction_jobs for select to authenticated
-  using (avalon_private.can_access_substream(substream_id, 'view'));
+  using (
+    avalon_private.can_access_substream(substream_id, 'view')
+    and workspace_access_revision = avalon_private.current_container_access_revision('workspace', workspace_id)
+    and workstream_access_revision = avalon_private.current_container_access_revision('workstream', workstream_id)
+    and substream_access_revision = avalon_private.current_container_access_revision('substream', substream_id)
+    and scope_revision = (select substream.scope_revision from avalon_private.substreams substream where substream.id = substream_id)
+  );
 create policy workspace_events_read_authorized
   on avalon_private.workspace_events for select to authenticated
   using (
     avalon_private.can_access_workspace(workspace_id, 'guest')
     and (target_user_id is null or target_user_id = avalon_private.current_platform_user_id())
-    and (access_container_kind is null or avalon_private.can_access_container(access_container_kind, access_container_id, 'view'))
+    and (access_container_kind is null or avalon_private.can_access_container_at_revision(
+      access_container_kind, access_container_id, access_revision, 'view'
+    ))
   );
 create policy workstream_events_read_authorized
   on avalon_private.workstream_events for select to authenticated
   using (
     avalon_private.can_access_workstream(workstream_id, 'view')
     and (target_user_id is null or target_user_id = avalon_private.current_platform_user_id())
+    and avalon_private.can_access_container_at_revision(
+      access_container_kind, access_container_id, access_revision, 'view'
+    )
   );
 create policy agent_runs_read_authorized
   on avalon_private.agent_runs for select to authenticated
   using (
-    (owner_kind = 'workstream' and avalon_private.can_access_workstream(owner_id, 'view'))
-    or (owner_kind <> 'workstream' and avalon_private.can_access_workspace(workspace_id, 'guest'))
+    workspace_access_revision = avalon_private.current_container_access_revision('workspace', workspace_id)
+    and (
+      (owner_kind = 'workstream'
+        and workstream_access_revision = avalon_private.current_container_access_revision('workstream', owner_id)
+        and avalon_private.can_access_workstream(owner_id, 'view')
+        and (substream_id is null or (
+          substream_access_revision = avalon_private.current_container_access_revision('substream', substream_id)
+          and avalon_private.can_access_substream(substream_id, 'view')
+        )))
+      or (owner_kind <> 'workstream' and (
+        (execution_principal_kind = 'user' and audience_user_id = avalon_private.current_platform_user_id())
+        or (execution_principal_kind = 'workspace' and avalon_private.can_access_workspace(workspace_id, 'guest'))
+      ))
+    )
   );
 create policy agent_actions_read_authorized
   on avalon_private.agent_actions for select to authenticated
   using (exists (
     select 1 from avalon_private.agent_runs run
     where run.id = agent_actions.run_id
-      and ((run.owner_kind = 'workstream' and avalon_private.can_access_workstream(run.owner_id, 'view'))
-        or (run.owner_kind <> 'workstream' and avalon_private.can_access_workspace(run.workspace_id, 'guest')))
+      and run.workspace_access_revision = avalon_private.current_container_access_revision('workspace', run.workspace_id)
+      and ((run.owner_kind = 'workstream'
+          and run.workstream_access_revision = avalon_private.current_container_access_revision('workstream', run.owner_id)
+          and avalon_private.can_access_workstream(run.owner_id, 'view')
+          and (run.substream_id is null or (
+            run.substream_access_revision = avalon_private.current_container_access_revision('substream', run.substream_id)
+            and avalon_private.can_access_substream(run.substream_id, 'view')
+          )))
+        or (run.owner_kind <> 'workstream' and (
+          (run.execution_principal_kind = 'user' and run.audience_user_id = avalon_private.current_platform_user_id())
+          or (run.execution_principal_kind = 'workspace' and avalon_private.can_access_workspace(run.workspace_id, 'guest'))
+        )))
   ));
 create policy content_refs_read_authorized
   on avalon_private.content_refs for select to authenticated
-  using (state = 'ready' and avalon_private.can_access_container(access_container_kind, access_container_id, 'view'));
+  using (state = 'ready' and avalon_private.can_access_container_at_revision(
+    access_container_kind, access_container_id, access_revision, 'view'
+  ));
 create policy connector_installations_read_member
   on avalon_private.connector_installations for select to authenticated
   using (avalon_private.can_access_workspace(workspace_id, 'member'));
@@ -221,13 +356,17 @@ create policy connector_resource_access_read_authorized
   using (avalon_private.can_access_connector_resource(connector_resource_id, 'view'));
 create policy activity_events_read_authorized
   on avalon_private.activity_events for select to authenticated
-  using (avalon_private.can_access_container(access_container_kind, access_container_id, 'view'));
+  using (avalon_private.can_access_container_at_revision(
+    access_container_kind, access_container_id, access_revision, 'view'
+  ));
 create policy activity_links_read_authorized
   on avalon_private.activity_links for select to authenticated
   using (exists (
     select 1 from avalon_private.activity_events event
     where event.id = activity_links.activity_event_id
-      and avalon_private.can_access_container(event.access_container_kind, event.access_container_id, 'view')
+      and avalon_private.can_access_container_at_revision(
+        event.access_container_kind, event.access_container_id, event.access_revision, 'view'
+      )
   ));
 create policy digest_schedules_read_self
   on avalon_private.digest_schedules for select to authenticated
@@ -237,7 +376,9 @@ create policy digests_read_self
   using (
     target_user_id = avalon_private.current_platform_user_id()
     and state in ('ready', 'delivered')
-    and avalon_private.can_access_container(access_container_kind, access_container_id, 'view')
+    and avalon_private.can_access_container_at_revision(
+      access_container_kind, access_container_id, access_revision, 'view'
+    )
   );
 create policy suggestions_read_authorized
   on avalon_private.suggestions for select to authenticated
@@ -245,7 +386,9 @@ create policy suggestions_read_authorized
     state in ('proposed', 'shown')
     and (target_user_id is null or target_user_id = avalon_private.current_platform_user_id())
     and avalon_private.can_access_workspace(workspace_id, 'guest')
-    and (access_container_kind is null or avalon_private.can_access_container(access_container_kind, access_container_id, 'view'))
+    and (access_container_kind is null or avalon_private.can_access_container_at_revision(
+      access_container_kind, access_container_id, access_revision, 'view'
+    ))
   );
 create policy suggestion_sources_read_authorized
   on avalon_private.suggestion_sources for select to authenticated
@@ -254,20 +397,28 @@ create policy suggestion_sources_read_authorized
     where suggestion.id = suggestion_sources.suggestion_id
       and suggestion.state in ('proposed', 'shown')
       and (suggestion.target_user_id is null or suggestion.target_user_id = avalon_private.current_platform_user_id())
-      and (suggestion.access_container_kind is null or avalon_private.can_access_container(suggestion.access_container_kind, suggestion.access_container_id, 'view'))
+      and (suggestion.access_container_kind is null or avalon_private.can_access_container_at_revision(
+        suggestion.access_container_kind, suggestion.access_container_id,
+        suggestion.access_revision, 'view'
+      ))
   ));
 create policy search_documents_read_authorized
   on avalon_private.content_search_documents for select to authenticated
-  using (state = 'active' and avalon_private.can_access_container(access_container_kind, access_container_id, 'view'));
+  using (state = 'active' and avalon_private.can_access_container_at_revision(
+    access_container_kind, access_container_id, access_revision, 'view'
+  ));
 create policy embeddings_read_authorized
   on avalon_private.content_embeddings for select to authenticated
-  using (state = 'active' and avalon_private.can_access_container(access_container_kind, access_container_id, 'view'));
+  using (state = 'active' and avalon_private.can_access_container_at_revision(
+    access_container_kind, access_container_id, access_revision, 'view'
+  ));
 
 grant select on avalon_private.platform_identities,
   avalon_private.workspaces,
   avalon_private.workspace_route_gates,
   avalon_private.retention_policies,
   avalon_private.workspace_members,
+  avalon_private.workspace_entitlements,
   avalon_private.workstreams,
   avalon_private.workstream_access,
   avalon_private.workstream_cards,
@@ -471,7 +622,7 @@ begin
     attention_ordinal, common_revision, access_revision
   ) values (
     new_workstream_id, p_workspace_id, p_title, left(p_description, 512),
-    'human', 'active', 'in_progress', now(), 0, 0, 1, 1
+    'human', 'scheduled', 'in_progress', now(), 0, 0, 1, 1
   );
   insert into avalon_private.workstream_user_state (
     workspace_id, workstream_id, platform_user_id, access_revision,
@@ -490,16 +641,16 @@ begin
     'workstream', new_workstream_id, 1,
     jsonb_build_object('version', 1, 'workstream_id', new_workstream_id,
       'title', p_title, 'description', left(p_description, 512),
-      'state', 'active', 'lifecycle_family', 'in_progress')
+      'state', 'scheduled', 'lifecycle_family', 'in_progress')
   );
 
   perform avalon_private.safe_realtime_send(
     jsonb_build_object('version', 1, 'workstream_id', new_workstream_id,
       'common_revision', 1, 'access_revision', 1, 'title', p_title,
-      'short_description', left(p_description, 512), 'exact_state', 'active',
+      'short_description', left(p_description, 512), 'exact_state', 'scheduled',
       'lifecycle_family', 'in_progress', 'last_activity_at', now()),
     'workstream_card_upsert',
-    'workspace:' || p_workspace_id::text || ':r' || workspace_revision::text
+    'workspace:' || p_workspace_id::text || ':' || workspace_revision::text
   );
 
   update avalon_private.command_receipts
@@ -514,13 +665,514 @@ begin
 end
 $$;
 
+create or replace function api.create_substream(
+  p_workstream_id uuid,
+  p_kind text,
+  p_parent_substream_id uuid,
+  p_base_seq bigint,
+  p_resource_id uuid,
+  p_resource_revision bigint,
+  p_permitted_user_ids uuid[],
+  p_operation_key text
+)
+returns table (substream_id uuid, scope_revision bigint, access_revision bigint)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  actor uuid := avalon_private.current_platform_user_id();
+  workstream avalon_private.workstreams%rowtype;
+  parent avalon_private.substreams%rowtype;
+  receipt avalon_private.command_receipts%rowtype;
+  new_substream_id uuid := avalon_private.uuid_v7();
+  new_depth smallint;
+  inheritance text;
+  request_hash bytea;
+  permitted_user_id uuid;
+begin
+  if actor is null or p_kind not in (
+      'private_chat', 'human_fork', 'subagent_fresh', 'subagent_fork', 'document_chat'
+    ) or length(p_operation_key) not between 1 and 256
+    or cardinality(coalesce(p_permitted_user_ids, '{}'::uuid[])) > 250 then
+    raise exception using errcode = '22023', message = 'invalid substream command';
+  end if;
+  select * into workstream from avalon_private.workstreams
+  where id = p_workstream_id for update;
+  if not found or not avalon_private.can_access_workstream(workstream.id, 'contribute') then
+    raise exception using errcode = '42501', message = 'workstream contribution denied';
+  end if;
+
+  if p_kind = 'subagent_fresh' then
+    if p_parent_substream_id is not null or p_base_seq is not null
+       or p_resource_id is not null or p_resource_revision is not null then
+      raise exception using errcode = '22023', message = 'fresh subagent cannot inherit context';
+    end if;
+    new_depth := 0;
+    inheritance := 'none';
+  else
+    select * into parent from avalon_private.substreams
+    where id = p_parent_substream_id and workstream_id = workstream.id
+      and state = 'active' for update;
+    if not found or p_base_seq is null or p_base_seq < 0
+       or p_base_seq > workstream.latest_seq or parent.depth >= 4 then
+      raise exception using errcode = '22023', message = 'invalid substream lineage';
+    end if;
+    if exists (
+      with recursive ancestors(id, parent_id) as (
+        select parent.id, parent.parent_substream_id
+        union all
+        select candidate.id, candidate.parent_substream_id
+        from avalon_private.substreams candidate
+        join ancestors on candidate.id = ancestors.parent_id
+      )
+      select 1 from ancestors where id = new_substream_id
+    ) then
+      raise exception using errcode = '23514', message = 'substream lineage cycle';
+    end if;
+    if p_kind = 'document_chat' then
+      if p_resource_id is null or p_resource_revision is null or p_resource_revision < 1 then
+        raise exception using errcode = '22023', message = 'document chat requires a pinned resource version';
+      end if;
+      inheritance := 'document_version';
+    elsif p_resource_id is not null or p_resource_revision is not null then
+      raise exception using errcode = '22023', message = 'resource is valid only for document chat';
+    else
+      inheritance := 'frozen';
+    end if;
+    new_depth := parent.depth + 1;
+  end if;
+
+  request_hash := extensions.digest(convert_to(jsonb_build_object(
+    'workstream_id', p_workstream_id, 'kind', p_kind,
+    'parent_substream_id', p_parent_substream_id, 'base_seq', p_base_seq,
+    'resource_id', p_resource_id, 'resource_revision', p_resource_revision,
+    'permitted_user_ids', (select coalesce(jsonb_agg(id order by id), '[]'::jsonb)
+      from unnest(coalesce(p_permitted_user_ids, '{}'::uuid[])) id)
+  )::text, 'utf8'), 'sha256');
+  select * into receipt from avalon_private.command_receipts
+  where workspace_id = workstream.workspace_id and actor_id = actor
+    and operation_key = p_operation_key for update;
+  if found then
+    if receipt.request_hash <> request_hash then
+      raise exception using errcode = '23505', message = 'operation key reused with different request';
+    end if;
+    return query select receipt.result_id, 1::bigint, receipt.result_revision;
+    return;
+  end if;
+
+  insert into avalon_private.command_receipts (
+    workspace_id, workstream_id, actor_id, operation_key, operation_kind,
+    request_hash, expires_at
+  ) values (
+    workstream.workspace_id, workstream.id, actor, p_operation_key,
+    'create_substream', request_hash, now() + interval '7 days'
+  ) returning * into receipt;
+  insert into avalon_private.substreams (
+    id, workspace_id, workstream_id, kind, parent_substream_id, base_seq,
+    inheritance_mode, access_mode, resource_id, resource_revision,
+    depth, created_by
+  ) values (
+    new_substream_id, workstream.workspace_id, workstream.id, p_kind,
+    p_parent_substream_id, p_base_seq, inheritance, 'restricted',
+    p_resource_id, p_resource_revision, new_depth, actor
+  );
+  insert into avalon_private.substream_access (
+    substream_id, platform_user_id, capability, granted_by
+  ) values (new_substream_id, actor, 'administer', actor);
+  foreach permitted_user_id in array coalesce(p_permitted_user_ids, '{}'::uuid[])
+  loop
+    if permitted_user_id = actor then continue; end if;
+    if not exists (
+      select 1 from avalon_private.workspace_members member
+      where member.workspace_id = workstream.workspace_id
+        and member.platform_user_id = permitted_user_id and member.state = 'active'
+    ) then
+      raise exception using errcode = '42501', message = 'substream viewer is not a workspace member';
+    end if;
+    insert into avalon_private.substream_access (
+      substream_id, platform_user_id, capability, granted_by
+    ) values (new_substream_id, permitted_user_id, 'view', actor);
+  end loop;
+  update avalon_private.command_receipts
+  set state = 'completed', result_kind = 'substream', result_id = new_substream_id,
+      result_revision = 1, completed_at = now()
+  where id = receipt.id;
+  return query select new_substream_id, 1::bigint, 1::bigint;
+end
+$$;
+
+create or replace function avalon_private.interrupt_run_for_access_change(
+  p_workstream_id uuid,
+  p_substream_id uuid,
+  p_operation_key text
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  run avalon_private.agent_runs%rowtype;
+  next_control_revision bigint;
+  signal_id uuid := avalon_private.uuid_v7();
+begin
+  select agent.* into run
+  from avalon_private.workstreams workstream
+  join avalon_private.agent_runs agent on agent.id = workstream.active_run_id
+  where workstream.id = p_workstream_id
+    and (p_substream_id is null or agent.substream_id = p_substream_id)
+    and agent.state in ('running', 'waiting_provider', 'waiting_event', 'waiting_user', 'interrupting')
+  for update of agent;
+  if not found then return; end if;
+
+  next_control_revision := run.control_revision + 1;
+  update avalon_private.agent_runs
+  set control_revision = next_control_revision,
+      state = 'interrupting',
+      run_revision = run_revision + 1,
+      last_progress_at = now()
+  where id = run.id;
+  insert into avalon_private.run_signals (
+    id, run_id, signal_kind, operation_key, expected_control_revision, payload
+  ) values (
+    signal_id, run.id, 'cancel', left('access-change:' || p_operation_key, 256),
+    next_control_revision,
+    jsonb_build_object('version', 1, 'reason', 'authorization_changed')
+  );
+  perform pgmq.send('workflow_signals', jsonb_build_object(
+    'version', 1, 'signal_id', signal_id, 'run_id', run.id,
+    'workflow_instance_id', run.workflow_instance_id,
+    'control_revision', next_control_revision, 'signal_kind', 'cancel'
+  ));
+end
+$$;
+
+revoke all on function avalon_private.interrupt_run_for_access_change(uuid, uuid, text) from public;
+
+create or replace function api.set_workstream_access_mode(
+  p_workstream_id uuid,
+  p_access_mode text,
+  p_expected_access_revision bigint,
+  p_operation_key text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  actor uuid := avalon_private.current_platform_user_id();
+  workstream avalon_private.workstreams%rowtype;
+  workspace_revision bigint;
+  receipt avalon_private.command_receipts%rowtype;
+  request_hash bytea;
+  next_revision bigint;
+  event_cursor bigint;
+  result jsonb;
+begin
+  if actor is null or p_access_mode not in ('workspace', 'restricted')
+     or p_expected_access_revision < 1
+     or length(p_operation_key) not between 1 and 256 then
+    raise exception using errcode = '22023', message = 'invalid workstream access-mode command';
+  end if;
+  select * into workstream from avalon_private.workstreams
+  where id = p_workstream_id for update;
+  if not found or not avalon_private.can_access_workstream(workstream.id, 'administer') then
+    raise exception using errcode = '42501', message = 'workstream administration denied';
+  end if;
+  request_hash := extensions.digest(convert_to(jsonb_build_object(
+    'workstream_id', p_workstream_id, 'access_mode', p_access_mode,
+    'expected_access_revision', p_expected_access_revision
+  )::text, 'utf8'), 'sha256');
+  select * into receipt from avalon_private.command_receipts
+  where workspace_id = workstream.workspace_id and actor_id = actor
+    and operation_key = p_operation_key for update;
+  if found then
+    if receipt.request_hash <> request_hash then
+      raise exception using errcode = '23505', message = 'operation key reused with different request';
+    end if;
+    return receipt.result_payload;
+  end if;
+  if workstream.access_revision <> p_expected_access_revision then
+    raise exception using errcode = '40001', message = 'workstream access revision changed';
+  end if;
+  insert into avalon_private.command_receipts (
+    workspace_id, workstream_id, actor_id, operation_key, operation_kind,
+    request_hash, expires_at
+  ) values (
+    workstream.workspace_id, workstream.id, actor, p_operation_key,
+    'set_workstream_access_mode', request_hash, now() + interval '7 days'
+  ) returning * into receipt;
+  if workstream.access_mode = p_access_mode then
+    result := jsonb_build_object('workstream_id', workstream.id,
+      'access_mode', workstream.access_mode, 'access_revision', workstream.access_revision,
+      'changed', false);
+  else
+    next_revision := workstream.access_revision + 1;
+    if p_access_mode = 'restricted' then
+      insert into avalon_private.workstream_access (
+        workstream_id, platform_user_id, capability, state, granted_by,
+        granted_at, revoked_at
+      ) values (
+        workstream.id, actor, 'administer', 'active', actor, now(), null
+      ) on conflict (workstream_id, platform_user_id) do update
+        set capability = 'administer', state = 'active', granted_by = actor,
+            granted_at = now(), revoked_at = null;
+    end if;
+    update avalon_private.workstreams
+    set access_mode = p_access_mode, access_revision = next_revision,
+        revision = revision + 1, updated_at = now()
+    where id = workstream.id;
+    update avalon_private.workstream_cards
+    set access_revision = next_revision, common_revision = common_revision + 1
+    where workstream_id = workstream.id;
+    update avalon_private.workstream_user_state
+    set access_revision = next_revision, user_revision = user_revision + 1
+    where workstream_id = workstream.id;
+    select access_revision into workspace_revision from avalon_private.workspaces
+    where id = workstream.workspace_id;
+    insert into avalon_private.workspace_events (
+      workspace_id, kind, subject_kind, subject_id, common_revision,
+      access_container_kind, access_container_id, access_revision, payload
+    ) values (
+      workstream.workspace_id, 'workstream_access_changed', 'workstream', workstream.id,
+      workstream.revision + 1, 'workstream', workstream.id, next_revision,
+      jsonb_build_object('version', 1, 'access_mode', p_access_mode,
+        'access_revision', next_revision)
+    ) returning workspace_seq into event_cursor;
+    perform avalon_private.safe_realtime_send(
+      jsonb_build_object('version', 1, 'scanned_through', event_cursor),
+      'workspace_cursor_advanced',
+      'workspace:' || workstream.workspace_id::text || ':' || workspace_revision::text
+    );
+    perform avalon_private.interrupt_run_for_access_change(
+      workstream.id, null, p_operation_key
+    );
+    result := jsonb_build_object('workstream_id', workstream.id,
+      'access_mode', p_access_mode, 'access_revision', next_revision,
+      'changed', true);
+  end if;
+  update avalon_private.command_receipts
+  set state = 'completed', result_kind = 'workstream_access', result_id = workstream.id,
+      result_revision = coalesce(next_revision, workstream.access_revision),
+      result_payload = result, completed_at = now()
+  where id = receipt.id;
+  return result;
+end
+$$;
+
+create or replace function api.set_workstream_access(
+  p_workstream_id uuid,
+  p_target_user_id uuid,
+  p_capability text,
+  p_state text,
+  p_expected_access_revision bigint,
+  p_operation_key text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  actor uuid := avalon_private.current_platform_user_id();
+  workstream avalon_private.workstreams%rowtype;
+  workspace_revision bigint;
+  receipt avalon_private.command_receipts%rowtype;
+  request_hash bytea;
+  next_revision bigint;
+  event_cursor bigint;
+  result jsonb;
+begin
+  if actor is null or p_capability not in ('view', 'contribute', 'administer')
+     or p_state not in ('active', 'revoked') or p_expected_access_revision < 1
+     or length(p_operation_key) not between 1 and 256
+     or (p_target_user_id = actor and p_state = 'revoked') then
+    raise exception using errcode = '22023', message = 'invalid workstream access command';
+  end if;
+  select * into workstream from avalon_private.workstreams
+  where id = p_workstream_id for update;
+  if not found or workstream.access_mode <> 'restricted'
+     or not avalon_private.can_access_workstream(workstream.id, 'administer') then
+    raise exception using errcode = '42501', message = 'restricted workstream administration denied';
+  end if;
+  request_hash := extensions.digest(convert_to(jsonb_build_object(
+    'workstream_id', p_workstream_id, 'target_user_id', p_target_user_id,
+    'capability', p_capability, 'state', p_state,
+    'expected_access_revision', p_expected_access_revision
+  )::text, 'utf8'), 'sha256');
+  select * into receipt from avalon_private.command_receipts
+  where workspace_id = workstream.workspace_id and actor_id = actor
+    and operation_key = p_operation_key for update;
+  if found then
+    if receipt.request_hash <> request_hash then
+      raise exception using errcode = '23505', message = 'operation key reused with different request';
+    end if;
+    return receipt.result_payload;
+  end if;
+  if workstream.access_revision <> p_expected_access_revision then
+    raise exception using errcode = '40001', message = 'workstream access revision changed';
+  end if;
+  if not exists (
+    select 1 from avalon_private.workspace_members member
+    where member.workspace_id = workstream.workspace_id
+      and member.platform_user_id = p_target_user_id and member.state = 'active'
+  ) then
+    raise exception using errcode = '42501', message = 'workstream grantee is not an active workspace member';
+  end if;
+  insert into avalon_private.command_receipts (
+    workspace_id, workstream_id, actor_id, operation_key, operation_kind,
+    request_hash, expires_at
+  ) values (
+    workstream.workspace_id, workstream.id, actor, p_operation_key,
+    'set_workstream_access', request_hash, now() + interval '7 days'
+  ) returning * into receipt;
+  insert into avalon_private.workstream_access (
+    workstream_id, platform_user_id, capability, state, granted_by,
+    granted_at, revoked_at
+  ) values (
+    workstream.id, p_target_user_id, p_capability, p_state, actor, now(),
+    case when p_state = 'revoked' then now() else null end
+  ) on conflict (workstream_id, platform_user_id) do update
+    set capability = excluded.capability, state = excluded.state,
+        granted_by = actor, granted_at = now(), revoked_at = excluded.revoked_at;
+  next_revision := workstream.access_revision + 1;
+  update avalon_private.workstreams
+  set access_revision = next_revision, revision = revision + 1, updated_at = now()
+  where id = workstream.id;
+  update avalon_private.workstream_cards
+  set access_revision = next_revision, common_revision = common_revision + 1
+  where workstream_id = workstream.id;
+  update avalon_private.workstream_user_state
+  set access_revision = next_revision, user_revision = user_revision + 1
+  where workstream_id = workstream.id;
+  select access_revision into workspace_revision from avalon_private.workspaces
+  where id = workstream.workspace_id;
+  insert into avalon_private.workspace_events (
+    workspace_id, kind, subject_kind, subject_id, common_revision,
+    access_container_kind, access_container_id, access_revision, payload
+  ) values (
+    workstream.workspace_id, 'workstream_access_changed', 'workstream', workstream.id,
+    workstream.revision + 1, 'workstream', workstream.id, next_revision,
+    jsonb_build_object('version', 1, 'access_revision', next_revision)
+  ) returning workspace_seq into event_cursor;
+  perform avalon_private.safe_realtime_send(
+    jsonb_build_object('version', 1, 'scanned_through', event_cursor),
+    'workspace_cursor_advanced',
+    'workspace:' || workstream.workspace_id::text || ':' || workspace_revision::text
+  );
+  perform avalon_private.interrupt_run_for_access_change(workstream.id, null, p_operation_key);
+  result := jsonb_build_object('workstream_id', workstream.id,
+    'target_user_id', p_target_user_id, 'capability', p_capability,
+    'state', p_state, 'access_revision', next_revision);
+  update avalon_private.command_receipts
+  set state = 'completed', result_kind = 'workstream_access', result_id = workstream.id,
+      result_revision = next_revision, result_payload = result, completed_at = now()
+  where id = receipt.id;
+  return result;
+end
+$$;
+
+create or replace function api.set_substream_access(
+  p_substream_id uuid,
+  p_target_user_id uuid,
+  p_capability text,
+  p_state text,
+  p_expected_access_revision bigint,
+  p_operation_key text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  actor uuid := avalon_private.current_platform_user_id();
+  substream avalon_private.substreams%rowtype;
+  receipt avalon_private.command_receipts%rowtype;
+  request_hash bytea;
+  next_revision bigint;
+  result jsonb;
+begin
+  if actor is null or p_capability not in ('view', 'contribute', 'administer')
+     or p_state not in ('active', 'revoked') or p_expected_access_revision < 1
+     or length(p_operation_key) not between 1 and 256
+     or (p_target_user_id = actor and p_state = 'revoked') then
+    raise exception using errcode = '22023', message = 'invalid substream access command';
+  end if;
+  select * into substream from avalon_private.substreams
+  where id = p_substream_id for update;
+  if not found or substream.access_mode <> 'restricted'
+     or not avalon_private.can_access_substream(substream.id, 'administer') then
+    raise exception using errcode = '42501', message = 'restricted substream administration denied';
+  end if;
+  request_hash := extensions.digest(convert_to(jsonb_build_object(
+    'substream_id', p_substream_id, 'target_user_id', p_target_user_id,
+    'capability', p_capability, 'state', p_state,
+    'expected_access_revision', p_expected_access_revision
+  )::text, 'utf8'), 'sha256');
+  select * into receipt from avalon_private.command_receipts
+  where workspace_id = substream.workspace_id and actor_id = actor
+    and operation_key = p_operation_key for update;
+  if found then
+    if receipt.request_hash <> request_hash then
+      raise exception using errcode = '23505', message = 'operation key reused with different request';
+    end if;
+    return receipt.result_payload;
+  end if;
+  if substream.access_revision <> p_expected_access_revision then
+    raise exception using errcode = '40001', message = 'substream access revision changed';
+  end if;
+  if not exists (
+    select 1 from avalon_private.workspace_members member
+    where member.workspace_id = substream.workspace_id
+      and member.platform_user_id = p_target_user_id and member.state = 'active'
+  ) then
+    raise exception using errcode = '42501', message = 'substream grantee is not an active workspace member';
+  end if;
+  insert into avalon_private.command_receipts (
+    workspace_id, workstream_id, actor_id, operation_key, operation_kind,
+    request_hash, expires_at
+  ) values (
+    substream.workspace_id, substream.workstream_id, actor, p_operation_key,
+    'set_substream_access', request_hash, now() + interval '7 days'
+  ) returning * into receipt;
+  insert into avalon_private.substream_access (
+    substream_id, platform_user_id, capability, state, granted_by,
+    granted_at, revoked_at
+  ) values (
+    substream.id, p_target_user_id, p_capability, p_state, actor, now(),
+    case when p_state = 'revoked' then now() else null end
+  ) on conflict (substream_id, platform_user_id) do update
+    set capability = excluded.capability, state = excluded.state,
+        granted_by = actor, granted_at = now(), revoked_at = excluded.revoked_at;
+  next_revision := substream.access_revision + 1;
+  update avalon_private.substreams
+  set access_revision = next_revision where id = substream.id;
+  perform avalon_private.interrupt_run_for_access_change(
+    substream.workstream_id, substream.id, p_operation_key
+  );
+  result := jsonb_build_object('substream_id', substream.id,
+    'target_user_id', p_target_user_id, 'capability', p_capability,
+    'state', p_state, 'access_revision', next_revision);
+  update avalon_private.command_receipts
+  set state = 'completed', result_kind = 'substream_access', result_id = substream.id,
+      result_revision = next_revision, result_payload = result, completed_at = now()
+  where id = receipt.id;
+  return result;
+end
+$$;
+
 create or replace function api.append_user_message(
   p_workstream_id uuid,
   p_substream_id uuid,
   p_text text,
   p_operation_key text,
-  p_mode text default 'queue',
-  p_expected_workstream_revision bigint default null
+  p_mode text,
+  p_expected_workstream_revision bigint,
+  p_safe_boundary text default 'after_current_semantic_action',
+  p_mentioned_user_ids uuid[] default '{}'::uuid[]
 )
 returns table (
   part_id uuid,
@@ -552,9 +1204,17 @@ declare
   overlap jsonb;
   workspace_revision bigint;
   new_signal_id uuid := avalon_private.uuid_v7();
+  attention_event_id bigint;
+  mentioned_user_id uuid;
 begin
   if actor is null or length(p_operation_key) not between 1 and 256
-     or octet_length(p_text) > 262144 or p_mode not in ('queue', 'steer') then
+     or octet_length(p_text) > 262144 or p_mode not in ('queue', 'steer')
+     or p_expected_workstream_revision is null
+     or cardinality(coalesce(p_mentioned_user_ids, '{}'::uuid[])) > 250
+     or p_safe_boundary not in (
+       'after_current_semantic_action', 'after_model', 'after_tool',
+       'after_terminal_checkpoint'
+     ) then
     raise exception using errcode = '22023', message = 'invalid message command';
   end if;
   if not avalon_private.can_access_substream(p_substream_id, 'contribute') then
@@ -563,29 +1223,24 @@ begin
 
   request_hash := extensions.digest(convert_to(jsonb_build_object(
     'workstream_id', p_workstream_id, 'substream_id', p_substream_id,
-    'text', p_text, 'mode', p_mode,
-    'expected_workstream_revision', p_expected_workstream_revision
+    'text', p_text, 'mode', p_mode, 'safe_boundary', p_safe_boundary,
+    'expected_workstream_revision', p_expected_workstream_revision,
+    'mentioned_user_ids', (select coalesce(jsonb_agg(id order by id), '[]'::jsonb)
+      from (select distinct id from unnest(coalesce(p_mentioned_user_ids, '{}'::uuid[])) id) mentions)
   )::text, 'utf8'), 'sha256');
 
   select * into workstream
   from avalon_private.workstreams
   where id = p_workstream_id
   for update;
-  if not found or workstream.state in ('completed', 'cancelled', 'deleting', 'deleted') then
+  if not found then
     raise exception using errcode = 'P0001', message = 'workstream does not accept messages';
   end if;
-  if p_expected_workstream_revision is not null
-     and workstream.revision <> p_expected_workstream_revision then
-    raise exception using errcode = '40001', message = 'workstream revision mismatch';
-  end if;
-  select * into substream
-  from avalon_private.substreams
-  where id = p_substream_id and workstream_id = p_workstream_id
-  for update;
-  if not found or substream.state <> 'active' then
-    raise exception using errcode = 'P0001', message = 'substream does not accept messages';
-  end if;
 
+  -- Command replay is resolved before optimistic-concurrency validation. The
+  -- original command necessarily advanced the work-stream revision; requiring
+  -- that stale expected revision again would make a timed-out success
+  -- impossible to retrieve idempotently.
   select * into receipt
   from avalon_private.command_receipts
   where workspace_id = workstream.workspace_id
@@ -605,6 +1260,20 @@ begin
     return;
   end if;
 
+  if workstream.state in ('completed', 'cancelled_cleanly', 'archived', 'deleting') then
+    raise exception using errcode = 'P0001', message = 'workstream does not accept messages';
+  end if;
+  if workstream.revision <> p_expected_workstream_revision then
+    raise exception using errcode = '40001', message = 'workstream revision mismatch';
+  end if;
+  select * into substream
+  from avalon_private.substreams
+  where id = p_substream_id and workstream_id = p_workstream_id
+  for update;
+  if not found or substream.state <> 'active' then
+    raise exception using errcode = 'P0001', message = 'substream does not accept messages';
+  end if;
+
   insert into avalon_private.command_receipts (
     workspace_id, workstream_id, actor_id, operation_key, operation_kind,
     request_hash, expires_at
@@ -620,7 +1289,7 @@ begin
   ) values (
     new_turn_id, workstream.workspace_id, workstream.id, substream.id,
     'user', workstream.next_seq, workstream.next_seq,
-    workstream.next_seq, 'complete', now(), now()
+    null, 'complete', now(), now()
   );
   insert into avalon_private.conversation_parts (
     id, workspace_id, workstream_id, substream_id, turn_id, seq,
@@ -722,11 +1391,13 @@ begin
     end if;
     insert into avalon_private.input_admission_batches (
       id, workspace_id, workstream_id, substream_id, first_seq, last_seq,
-      mode, control_revision, run_id, state, admitted_at
+      mode, control_revision, run_id, state, interrupt_requested_at,
+      requested_boundary
     ) values (
       new_batch_id, workstream.workspace_id, workstream.id, substream.id,
       workstream.next_seq, workstream.next_seq, selected_mode,
-      selected_control_revision, selected_run_id, 'admitted', now()
+      selected_control_revision, selected_run_id, 'pending', now(),
+      p_safe_boundary
     );
     insert into avalon_private.run_signals (
       id, run_id, signal_kind, operation_key, expected_control_revision, payload
@@ -754,15 +1425,20 @@ begin
   update avalon_private.turns
   set admission_batch_id = new_batch_id, run_id = selected_run_id
   where id = new_turn_id;
+  if (select state = 'admitted' from avalon_private.input_admission_batches where id = new_batch_id) then
+    perform avalon_private.admit_batch_turns(new_batch_id);
+  end if;
 
   update avalon_private.workstreams
   set next_seq = next_seq + 1, latest_seq = workstream.next_seq,
       attention_ordinal = new_attention, revision = revision + 1,
-      active_run_id = coalesce(selected_run_id, workstream.active_run_id), state = 'active',
+      active_run_id = coalesce(selected_run_id, workstream.active_run_id),
+      state = case when selected_mode = 'steer' then 'interrupting' else 'running' end,
       state_reason = null, updated_at = now(), last_activity_at = now()
   where id = workstream.id;
   update avalon_private.workstream_cards
-  set exact_state = 'active', lifecycle_family = 'in_progress',
+  set exact_state = case when selected_mode = 'steer' then 'interrupting' else 'running' end,
+      lifecycle_family = 'in_progress',
       state_reason = null, last_activity_at = now(), latest_seq = workstream.next_seq,
       attention_ordinal = new_attention, preview_text = left(p_text, 512),
       active_run_summary = case
@@ -791,7 +1467,47 @@ begin
   ) values (
     workstream.workspace_id, workstream.id, new_attention, new_part_id,
     'message', 'substream', substream.id, substream.access_revision
-  );
+  ) returning id into attention_event_id;
+  foreach mentioned_user_id in array coalesce(p_mentioned_user_ids, '{}'::uuid[])
+  loop
+    if not exists (
+      select 1 from avalon_private.workspace_members member
+      where member.workspace_id = workstream.workspace_id
+        and member.platform_user_id = mentioned_user_id and member.state = 'active'
+    ) or (workstream.access_mode = 'restricted' and not exists (
+      select 1 from avalon_private.workstream_access access
+      where access.workstream_id = workstream.id
+        and access.platform_user_id = mentioned_user_id and access.state = 'active'
+    )) or (substream.access_mode = 'restricted' and not exists (
+      select 1 from avalon_private.substream_access access
+      where access.substream_id = substream.id
+        and access.platform_user_id = mentioned_user_id and access.state = 'active'
+    )) then
+      raise exception using errcode = '42501', message = 'mentioned user cannot access this substream';
+    end if;
+    insert into avalon_private.part_mentions (
+      part_id, mentioned_user_id, workspace_id, workstream_id, substream_id,
+      access_revision, mention_ordinal, source_token
+    ) values (
+      new_part_id, mentioned_user_id, workstream.workspace_id, workstream.id,
+      substream.id, substream.access_revision, new_attention,
+      'person:' || mentioned_user_id::text
+    ) on conflict (part_id, mentioned_user_id) do nothing;
+  end loop;
+  if cardinality(coalesce(p_mentioned_user_ids, '{}'::uuid[])) > 0 then
+    insert into avalon_private.attention_materialization_jobs (
+      attention_event_id, expected_count
+    ) values (
+      attention_event_id,
+      (select count(distinct id)::integer
+       from unnest(p_mentioned_user_ids) id)
+    );
+    perform pgmq.send('sidebar_attention', jsonb_build_object(
+      'version', 1, 'attention_event_id', attention_event_id,
+      'workspace_id', workstream.workspace_id, 'workstream_id', workstream.id,
+      'access_revision', substream.access_revision
+    ));
+  end if;
   insert into avalon_private.workspace_events (
     workspace_id, kind, subject_kind, subject_id, common_revision,
     access_container_kind, access_container_id, access_revision,
@@ -801,14 +1517,17 @@ begin
     workstream.revision + 1, 'workstream', workstream.id, workstream.access_revision,
     jsonb_build_object('version', 1, 'workstream_id', workstream.id,
       'latest_seq', workstream.next_seq, 'attention_ordinal', new_attention,
-      'last_activity_at', now(), 'exact_state', 'active')
+      'last_activity_at', now(), 'exact_state',
+      case when selected_mode = 'steer' then 'interrupting' else 'running' end)
   );
   insert into avalon_private.workstream_events (
     workspace_id, workstream_id, workstream_seq, kind, run_id, part_id,
-    common_revision, payload
+    common_revision, access_container_kind, access_container_id,
+    access_revision, payload
   ) values (
     workstream.workspace_id, workstream.id, workstream.revision + 1,
     'part_committed', selected_run_id, new_part_id, workstream.revision + 1,
+    'substream', substream.id, substream.access_revision,
     jsonb_build_object('version', 1, 'substream_id', substream.id,
       'turn_id', new_turn_id, 'part_id', new_part_id, 'seq', workstream.next_seq,
       'role', 'user', 'kind', 'text')
@@ -844,7 +1563,7 @@ begin
       'requires_fetch', octet_length(p_text) > 131072,
       'previous_batches', overlap),
     'conversation_part',
-    'substream:' || substream.id::text || ':r' || substream.access_revision::text
+    avalon_private.content_topic_for_substream(substream.id)
   );
   select access_revision into workspace_revision
   from avalon_private.workspaces where id = workstream.workspace_id;
@@ -853,10 +1572,11 @@ begin
       'common_revision', workstream.revision + 1,
       'access_revision', workstream.access_revision,
       'latest_seq', workstream.next_seq, 'attention_ordinal', new_attention,
-      'preview_text', left(p_text, 512), 'exact_state', 'active',
+      'preview_text', left(p_text, 512), 'exact_state',
+      case when selected_mode = 'steer' then 'interrupting' else 'running' end,
       'last_activity_at', now()),
     'workstream_card_patch',
-    'workspace:' || workstream.workspace_id::text || ':r' || workspace_revision::text
+    'workspace:' || workstream.workspace_id::text || ':' || workspace_revision::text
   );
 
   update avalon_private.command_receipts
@@ -869,6 +1589,124 @@ begin
 
   return query select new_part_id, new_turn_id, workstream.next_seq,
     selected_mode, selected_run_id, workstream.revision + 1;
+end
+$$;
+
+create or replace function avalon_private.materialize_attention_mentions(
+  p_attention_event_id bigint,
+  p_limit integer default 32
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  job avalon_private.attention_materialization_jobs%rowtype;
+  attention avalon_private.workstream_attention_events%rowtype;
+  target record;
+  processed integer := 0;
+  workspace_revision bigint;
+  next_user uuid;
+begin
+  if p_limit not between 1 and 32 then
+    raise exception using errcode = '22023', message = 'invalid attention materialization batch';
+  end if;
+  select * into job from avalon_private.attention_materialization_jobs
+  where attention_event_id = p_attention_event_id for update;
+  select * into attention from avalon_private.workstream_attention_events
+  where id = p_attention_event_id;
+  if job.attention_event_id is null or attention.id is null then
+    raise exception using errcode = 'P0001', message = 'attention materialization job missing';
+  end if;
+  if job.state = 'completed' then
+    return jsonb_build_object('completed', true, 'processed_count', job.processed_count);
+  end if;
+  update avalon_private.attention_materialization_jobs
+  set state = 'running', attempts = attempts + 1 where attention_event_id = job.attention_event_id;
+  select access_revision into workspace_revision from avalon_private.workspaces
+  where id = attention.workspace_id;
+  for target in
+    select mention.mentioned_user_id
+    from avalon_private.part_mentions mention
+    join avalon_private.workspace_members member
+      on member.workspace_id = mention.workspace_id
+      and member.platform_user_id = mention.mentioned_user_id and member.state = 'active'
+    join avalon_private.substreams substream
+      on substream.id = mention.substream_id
+      and substream.access_revision = mention.access_revision
+      and substream.state <> 'deleted'
+    left join avalon_private.substream_access access
+      on access.substream_id = substream.id
+      and access.platform_user_id = mention.mentioned_user_id and access.state = 'active'
+    join avalon_private.workstreams workstream on workstream.id = mention.workstream_id
+    left join avalon_private.workstream_access stream_access
+      on stream_access.workstream_id = workstream.id
+      and stream_access.platform_user_id = mention.mentioned_user_id
+      and stream_access.state = 'active'
+    where mention.part_id = attention.part_id
+      and (job.next_mentioned_user_id is null
+        or mention.mentioned_user_id > job.next_mentioned_user_id)
+      and (workstream.access_mode = 'workspace' or stream_access.platform_user_id is not null)
+      and (substream.access_mode = 'inherit_workstream' or access.platform_user_id is not null)
+    order by mention.mentioned_user_id
+    limit p_limit
+  loop
+    insert into avalon_private.workstream_user_state (
+      workspace_id, workstream_id, platform_user_id, latest_unread_ordinal,
+      unread_count, latest_mention_ordinal, mentioned_at, access_revision,
+      interest_reason_bits, last_interest_at
+    ) values (
+      attention.workspace_id, attention.workstream_id, target.mentioned_user_id,
+      attention.attention_ordinal, 1, attention.attention_ordinal, now(),
+      (select access_revision from avalon_private.workstreams where id = attention.workstream_id),
+      6, now()
+    ) on conflict (workspace_id, workstream_id, platform_user_id) do update
+      set latest_unread_ordinal = greatest(workstream_user_state.latest_unread_ordinal,
+            excluded.latest_unread_ordinal),
+          unread_count = workstream_user_state.unread_count +
+            case when workstream_user_state.seen_attention_ordinal < attention.attention_ordinal then 1 else 0 end,
+          latest_mention_ordinal = greatest(workstream_user_state.latest_mention_ordinal,
+            excluded.latest_mention_ordinal),
+          mentioned_at = now(), interest_reason_bits = workstream_user_state.interest_reason_bits | 6,
+          last_interest_at = now(), user_revision = workstream_user_state.user_revision + 1,
+          access_revision = excluded.access_revision;
+    insert into avalon_private.workspace_events (
+      workspace_id, kind, subject_kind, subject_id, target_user_id,
+      access_container_kind, access_container_id, access_revision, payload
+    ) values (
+      attention.workspace_id, 'workstream_user_changed', 'workstream', attention.workstream_id,
+      target.mentioned_user_id, attention.access_container_kind,
+      attention.access_container_id, attention.access_revision,
+      jsonb_build_object('version', 1, 'workstream_id', attention.workstream_id,
+        'attention_ordinal', attention.attention_ordinal, 'mentioned', true)
+    );
+    perform avalon_private.safe_realtime_send(
+      jsonb_build_object('version', 1, 'workstream_id', attention.workstream_id,
+        'attention_ordinal', attention.attention_ordinal, 'mentioned', true),
+      'workstream_user_patch',
+      'workspace-user:' || attention.workspace_id::text || ':' ||
+        target.mentioned_user_id::text || ':' || workspace_revision::text
+    );
+    next_user := target.mentioned_user_id;
+    processed := processed + 1;
+  end loop;
+  update avalon_private.attention_materialization_jobs
+  set processed_count = processed_count + processed,
+      next_mentioned_user_id = coalesce(next_user, next_mentioned_user_id),
+      state = case when processed_count + processed >= expected_count then 'completed' else 'queued' end,
+      completed_at = case when processed_count + processed >= expected_count then now() else null end
+  where attention_event_id = job.attention_event_id
+  returning * into job;
+  if job.state <> 'completed' then
+    perform pgmq.send('sidebar_attention', jsonb_build_object(
+      'version', 1, 'attention_event_id', job.attention_event_id,
+      'workspace_id', attention.workspace_id, 'workstream_id', attention.workstream_id,
+      'access_revision', attention.access_revision
+    ));
+  end if;
+  return jsonb_build_object('completed', job.state = 'completed',
+    'processed_count', job.processed_count);
 end
 $$;
 
@@ -886,34 +1724,116 @@ declare
   actor uuid := avalon_private.current_platform_user_id();
   workstream avalon_private.workstreams%rowtype;
   overlay avalon_private.workstream_user_state%rowtype;
+  receipt avalon_private.command_receipts%rowtype;
+  request_hash bytea;
+  visible_seen bigint;
+  latest_visible bigint;
+  remaining_unread integer;
+  workspace_access_revision bigint;
 begin
   if actor is null or not avalon_private.can_access_workstream(p_workstream_id, 'view')
      or p_seen_attention_ordinal < 0
      or length(p_operation_key) not between 1 and 256 then
     raise exception using errcode = '42501', message = 'workstream access denied';
   end if;
-  select * into workstream from avalon_private.workstreams where id = p_workstream_id;
+  select * into workstream from avalon_private.workstreams where id = p_workstream_id for update;
+  request_hash := extensions.digest(convert_to(jsonb_build_object(
+    'workstream_id', p_workstream_id,
+    'seen_attention_ordinal', p_seen_attention_ordinal
+  )::text, 'utf8'), 'sha256');
+  select * into receipt from avalon_private.command_receipts
+  where workspace_id = workstream.workspace_id and actor_id = actor
+    and operation_key = p_operation_key for update;
+  if found then
+    if receipt.request_hash <> request_hash then
+      raise exception using errcode = '23505', message = 'operation key reused with different request';
+    end if;
+    return query select
+      (receipt.result_payload ->> 'seen_attention_ordinal')::bigint,
+      receipt.result_revision;
+    return;
+  end if;
+  insert into avalon_private.command_receipts (
+    workspace_id, workstream_id, actor_id, operation_key, operation_kind,
+    request_hash, expires_at
+  ) values (
+    workstream.workspace_id, workstream.id, actor, p_operation_key,
+    'mark_workstream_seen', request_hash, now() + interval '7 days'
+  ) returning * into receipt;
+  select coalesce(max(event.attention_ordinal), 0) into visible_seen
+  from avalon_private.workstream_attention_events event
+  where event.workstream_id = workstream.id
+    and event.attention_ordinal <= p_seen_attention_ordinal
+    and avalon_private.can_access_container_at_revision(
+      event.access_container_kind, event.access_container_id,
+      event.access_revision, 'view'
+    );
+  select coalesce(max(event.attention_ordinal), visible_seen) into latest_visible
+  from avalon_private.workstream_attention_events event
+  where event.workstream_id = workstream.id
+    and avalon_private.can_access_container_at_revision(
+      event.access_container_kind, event.access_container_id,
+      event.access_revision, 'view'
+    );
+  select count(*)::integer into remaining_unread
+  from avalon_private.workstream_attention_events event
+  where event.workstream_id = workstream.id
+    and event.attention_ordinal > visible_seen
+    and avalon_private.can_access_container_at_revision(
+      event.access_container_kind, event.access_container_id,
+      event.access_revision, 'view'
+    );
   insert into avalon_private.workstream_user_state (
     workspace_id, workstream_id, platform_user_id, seen_attention_ordinal,
     latest_unread_ordinal, unread_count, access_revision, last_opened_at
   ) values (
     workstream.workspace_id, workstream.id, actor,
-    least(p_seen_attention_ordinal, workstream.attention_ordinal),
-    workstream.attention_ordinal, 0, workstream.access_revision, now()
+    visible_seen, latest_visible, remaining_unread, workstream.access_revision, now()
   ) on conflict (workspace_id, workstream_id, platform_user_id) do update
     set seen_attention_ordinal = greatest(workstream_user_state.seen_attention_ordinal,
-          least(excluded.seen_attention_ordinal, workstream.attention_ordinal)),
-        unread_count = 0, last_opened_at = now(),
+          excluded.seen_attention_ordinal),
+        latest_unread_ordinal = greatest(workstream_user_state.latest_unread_ordinal,
+          excluded.latest_unread_ordinal),
+        unread_count = excluded.unread_count, last_opened_at = now(),
         user_revision = workstream_user_state.user_revision + 1,
         access_revision = excluded.access_revision
   returning * into overlay;
+  select access_revision into workspace_access_revision
+  from avalon_private.workspaces where id = workstream.workspace_id;
+  insert into avalon_private.workspace_events (
+    workspace_id, kind, subject_kind, subject_id, user_revision,
+    target_user_id, access_container_kind, access_container_id,
+    access_revision, payload
+  ) values (
+    workstream.workspace_id, 'workstream_user_changed', 'workstream',
+    workstream.id, overlay.user_revision, actor, 'workstream', workstream.id,
+    workstream.access_revision,
+    jsonb_build_object('version', 1, 'workstream_id', workstream.id,
+      'seen_attention_ordinal', overlay.seen_attention_ordinal,
+      'latest_unread_ordinal', overlay.latest_unread_ordinal,
+      'unread_count', overlay.unread_count,
+      'has_unread', coalesce(overlay.unread_count, 0) > 0,
+      'user_revision', overlay.user_revision)
+  );
   perform avalon_private.safe_realtime_send(
     jsonb_build_object('version', 1, 'workstream_id', workstream.id,
       'seen_attention_ordinal', overlay.seen_attention_ordinal,
-      'user_revision', overlay.user_revision, 'has_unread', false),
+      'latest_unread_ordinal', overlay.latest_unread_ordinal,
+      'unread_count', overlay.unread_count,
+      'user_revision', overlay.user_revision,
+      'has_unread', coalesce(overlay.unread_count, 0) > 0),
     'workstream_user_patch',
-    'user:' || actor::text || ':r' || (select account_epoch from avalon_private.platform_identities where platform_user_id = actor)::text
+    'workspace-user:' || workstream.workspace_id::text || ':' || actor::text ||
+      ':' || workspace_access_revision::text
   );
+  update avalon_private.command_receipts
+  set state = 'completed', result_kind = 'workstream_user_state',
+      result_revision = overlay.user_revision,
+      result_payload = jsonb_build_object(
+        'seen_attention_ordinal', overlay.seen_attention_ordinal,
+        'unread_count', overlay.unread_count
+      ), completed_at = now()
+  where id = receipt.id;
   return query select overlay.seen_attention_ordinal, overlay.user_revision;
 end
 $$;
@@ -929,42 +1849,151 @@ security definer
 set search_path = ''
 as $$
 declare
-  oldest bigint;
-  scanned bigint;
-  events jsonb;
+  result jsonb;
 begin
-  if not avalon_private.can_access_workspace(p_workspace_id, 'guest')
-     or p_limit < 1 or p_limit > 500 or p_after < 0 then
+  if p_limit < 1 or p_limit > 500 or p_after < 0 then
     raise exception using errcode = '42501', message = 'workspace event access denied';
   end if;
-  select min(workspace_seq) into oldest
-  from avalon_private.workspace_events
-  where workspace_id = p_workspace_id and created_at >= now() - interval '7 days';
-  if p_after > 0 and oldest is not null and p_after < oldest - 1 then
-    return jsonb_build_object('snapshot_required', true, 'scanned_through', oldest - 1, 'events', '[]'::jsonb);
-  end if;
-  select coalesce(max(workspace_seq), p_after) into scanned
-  from (
-    select workspace_seq
-    from avalon_private.workspace_events
-    where workspace_id = p_workspace_id and workspace_seq > p_after
-      and created_at >= now() - interval '7 days'
-    order by workspace_seq
+  -- Everything that defines this page is derived by one SQL statement and
+  -- therefore one READ COMMITTED statement snapshot. A concurrent append or
+  -- access-revision rotation belongs wholly before or after this page.
+  with authorized as materialized (
+    select avalon_private.current_platform_user_id() as platform_user_id,
+      now() - interval '7 days' as cutoff
+    where avalon_private.can_access_workspace(p_workspace_id, 'guest')
+  ), retained as materialized (
+    select event.*
+    from avalon_private.workspace_events event
+    cross join authorized
+    where event.workspace_id = p_workspace_id
+      and event.created_at >= authorized.cutoff
+  ), bounds as (
+    select min(workspace_seq) as oldest from retained
+  ), page as materialized (
+    select retained.*
+    from retained
+    where retained.workspace_seq > p_after
+    order by retained.workspace_seq
     limit p_limit
-  ) scanned_rows;
-  select coalesce(jsonb_agg(to_jsonb(event) order by event.workspace_seq), '[]'::jsonb) into events
-  from (
-    select *
-    from avalon_private.workspace_events
-    where workspace_id = p_workspace_id and workspace_seq > p_after
-      and workspace_seq <= scanned
-      and created_at >= now() - interval '7 days'
-      and (target_user_id is null or target_user_id = avalon_private.current_platform_user_id())
-      and (access_container_kind is null or avalon_private.can_access_container(access_container_kind, access_container_id, 'view'))
-    order by workspace_seq
-  ) event;
-  return jsonb_build_object('snapshot_required', false, 'scanned_through', scanned, 'events', events);
+  ), watermark as (
+    select coalesce(max(workspace_seq), p_after) as scanned from page
+  ), visible as (
+    select page.*
+    from page
+    cross join authorized
+    where (page.target_user_id is null
+        or page.target_user_id = authorized.platform_user_id)
+      and (page.access_container_kind is null
+        or avalon_private.can_access_container_at_revision(
+          page.access_container_kind, page.access_container_id,
+          page.access_revision, 'view'
+        ))
+  )
+  select case
+    when p_after > 0 and bounds.oldest is not null and p_after < bounds.oldest - 1
+      then jsonb_build_object(
+        'snapshot_required', true,
+        'scanned_through', bounds.oldest - 1,
+        'events', '[]'::jsonb
+      )
+    else jsonb_build_object(
+      'snapshot_required', false,
+      'scanned_through', watermark.scanned,
+      'events', coalesce(
+        (select jsonb_agg(to_jsonb(visible) order by visible.workspace_seq)
+         from visible),
+        '[]'::jsonb
+      )
+    )
+  end into result
+  from authorized
+  cross join bounds
+  cross join watermark;
+  if result is null then
+    raise exception using errcode = '42501', message = 'workspace event access denied';
+  end if;
+  return result;
 end
+$$;
+
+create or replace function api.workspace_sidebar_snapshot(
+  p_workspace_id uuid,
+  p_limit integer default 100,
+  p_before_activity timestamptz default null,
+  p_before_workstream_id uuid default null
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with authorized as (
+    select workspace.id, workspace.access_revision
+    from avalon_private.workspaces workspace
+    where workspace.id = p_workspace_id and workspace.state = 'active'
+      and p_limit between 1 and 250
+      and ((p_before_activity is null) = (p_before_workstream_id is null))
+      and avalon_private.can_access_workspace(workspace.id, 'guest')
+  ), page as (
+    select card.*, user_state.seen_attention_ordinal,
+      greatest(coalesce(user_state.latest_unread_ordinal, 0)
+        - coalesce(user_state.seen_attention_ordinal, 0), 0) > 0 as has_unread,
+      coalesce(user_state.unread_count, 0) as unread_count,
+      coalesce(user_state.latest_mention_ordinal, 0)
+        > coalesce(user_state.seen_attention_ordinal, 0) as you_are_mentioned,
+      coalesce(user_state.needs_your_input, false) as needs_your_input,
+      user_state.assignment_state, coalesce(user_state.pinned, false) as pinned,
+      coalesce(user_state.muted, false) as muted,
+      coalesce(user_state.interest_reason_bits, 0) as interest_reason_bits,
+      coalesce(user_state.user_revision, 0) as user_revision
+    from avalon_private.workstream_cards card
+    join authorized on authorized.id = card.workspace_id
+    left join avalon_private.workstream_user_state user_state
+      on user_state.workspace_id = card.workspace_id
+     and user_state.workstream_id = card.workstream_id
+     and user_state.platform_user_id = avalon_private.current_platform_user_id()
+     and user_state.access_revision = card.access_revision
+    where card.access_revision = avalon_private.current_container_access_revision(
+        'workstream', card.workstream_id
+      )
+      and avalon_private.can_access_workstream(card.workstream_id, 'view')
+      and (p_before_activity is null
+        or (card.last_activity_at, card.workstream_id)
+          < (p_before_activity, p_before_workstream_id))
+    order by card.last_activity_at desc, card.workstream_id desc
+    limit p_limit + 1
+  ), bounded as (
+    select * from page order by last_activity_at desc, workstream_id desc limit p_limit
+  ), totals as (
+    select count(*) filter (where card.lifecycle_family = 'in_progress') as in_progress,
+      count(*) filter (where card.lifecycle_family = 'completed') as completed,
+      count(*) filter (where card.lifecycle_family = 'error') as error,
+      count(*) as workstreams
+    from avalon_private.workstream_cards card
+    join authorized on authorized.id = card.workspace_id
+    where card.access_revision = avalon_private.current_container_access_revision(
+        'workstream', card.workstream_id
+      )
+      and avalon_private.can_access_workstream(card.workstream_id, 'view')
+  ), cursor_row as (
+    select last_activity_at, workstream_id from bounded
+    order by last_activity_at, workstream_id limit 1
+  )
+  select case when exists (select 1 from authorized) then jsonb_build_object(
+    'version', 1,
+    'workspace_id', p_workspace_id,
+    'workspace_access_revision', (select access_revision from authorized),
+    'workspace_seq', coalesce((select max(event.workspace_seq)
+      from avalon_private.workspace_events event
+      where event.workspace_id = p_workspace_id), 0),
+    'counts', to_jsonb((select totals from totals)),
+    'items', coalesce((select jsonb_agg(to_jsonb(item)
+      order by item.last_activity_at desc, item.workstream_id desc) from bounded item), '[]'::jsonb),
+    'next_cursor', case when (select count(*) from page) > p_limit then
+      jsonb_build_object('last_activity_at', (select last_activity_at from cursor_row),
+        'workstream_id', (select workstream_id from cursor_row)) else null end
+  ) else null end
 $$;
 
 create or replace function api.active_output_after(
@@ -1017,14 +2046,21 @@ end
 $$;
 
 revoke all on function api.create_workstream(uuid, text, text, text) from public, anon;
-revoke all on function api.append_user_message(uuid, uuid, text, text, text, bigint) from public, anon;
+revoke all on function api.create_substream(uuid, text, uuid, bigint, uuid, bigint, uuid[], text) from public, anon;
+revoke all on function api.append_user_message(uuid, uuid, text, text, text, bigint, text, uuid[]) from public, anon;
 revoke all on function api.mark_workstream_seen(uuid, bigint, text) from public, anon;
 revoke all on function api.workspace_event_page(uuid, bigint, integer) from public, anon;
+revoke all on function api.workspace_sidebar_snapshot(uuid, integer, timestamptz, uuid) from public, anon;
 revoke all on function api.active_output_after(uuid, uuid, bigint) from public, anon;
 grant execute on function api.create_workstream(uuid, text, text, text) to authenticated;
-grant execute on function api.append_user_message(uuid, uuid, text, text, text, bigint) to authenticated;
+grant execute on function api.create_substream(uuid, text, uuid, bigint, uuid, bigint, uuid[], text) to authenticated;
+grant execute on function api.set_workstream_access_mode(uuid, text, bigint, text) to authenticated;
+grant execute on function api.set_workstream_access(uuid, uuid, text, text, bigint, text) to authenticated;
+grant execute on function api.set_substream_access(uuid, uuid, text, text, bigint, text) to authenticated;
+grant execute on function api.append_user_message(uuid, uuid, text, text, text, bigint, text, uuid[]) to authenticated;
 grant execute on function api.mark_workstream_seen(uuid, bigint, text) to authenticated;
 grant execute on function api.workspace_event_page(uuid, bigint, integer) to authenticated;
+grant execute on function api.workspace_sidebar_snapshot(uuid, integer, timestamptz, uuid) to authenticated;
 grant execute on function api.active_output_after(uuid, uuid, bigint) to authenticated;
 
 create or replace function avalon_private.apply_global_workspace_command(
@@ -1034,6 +2070,7 @@ create or replace function avalon_private.apply_global_workspace_command(
   p_local_shard_id text,
   p_region_key text,
   p_operation_kind text,
+  p_payload jsonb,
   p_payload_hash bytea,
   p_source_closure_cursor text default null,
   p_source_closure_hash bytea default null
@@ -1049,6 +2086,8 @@ declare
   response_hash bytea;
 begin
   if p_route_epoch < 1 or octet_length(p_payload_hash) <> 32
+     or pg_column_size(p_payload) > 16384
+     or extensions.digest(convert_to(p_payload::text, 'utf8'), 'sha256') <> p_payload_hash
      or p_operation_kind not in ('create_workspace', 'suspend_workspace', 'delete_workspace', 'prepare_move', 'activate_move', 'apply_invitation', 'apply_entitlement') then
     raise exception using errcode = '22023', message = 'invalid global workspace command';
   end if;
@@ -1070,7 +2109,7 @@ begin
       id, region_key, shard_id, route_epoch, name, state
     ) values (
       p_workspace_id, p_region_key, p_local_shard_id, p_route_epoch,
-      'Untitled workspace', 'active'
+      coalesce(nullif(left(p_payload ->> 'name', 160), ''), 'Untitled workspace'), 'active'
     ) on conflict (id) do update
       set route_epoch = excluded.route_epoch, updated_at = now()
     where workspaces.region_key = excluded.region_key
@@ -1129,7 +2168,7 @@ begin
     set route_epoch = p_route_epoch, state = 'deleting', deleting_at = now(), updated_at = now()
     where id = p_workspace_id and route_epoch <= p_route_epoch;
     new_state := 'closed';
-  else
+  elsif p_operation_kind = 'apply_invitation' then
     if not exists (
       select 1 from avalon_private.workspace_route_gates gate
       where gate.workspace_id = p_workspace_id
@@ -1137,6 +2176,46 @@ begin
         and gate.authority_state in ('writable', 'read_only')
     ) then
       raise exception using errcode = 'P0001', message = 'workspace route gate mismatch';
+    end if;
+    insert into avalon_private.workspace_invitations (
+      id, workspace_id, route_epoch, email_hash, role, expires_at,
+      applied_command_id
+    ) values (
+      (p_payload ->> 'invitation_id')::uuid, p_workspace_id, p_route_epoch,
+      decode(p_payload ->> 'email_hash', 'hex'), p_payload ->> 'role',
+      (p_payload ->> 'expires_at')::timestamptz, p_command_id
+    ) on conflict (id) do update
+      set state = workspace_invitations.state
+    where workspace_invitations.workspace_id = excluded.workspace_id
+      and workspace_invitations.route_epoch = excluded.route_epoch
+      and workspace_invitations.email_hash = excluded.email_hash
+      and workspace_invitations.role = excluded.role
+      and workspace_invitations.expires_at = excluded.expires_at
+      and workspace_invitations.applied_command_id = excluded.applied_command_id;
+    if not found then
+      raise exception using errcode = '23505', message = 'workspace invitation command conflict';
+    end if;
+    new_state := 'applied';
+  elsif p_operation_kind = 'apply_entitlement' then
+    if not exists (
+      select 1 from avalon_private.workspace_route_gates gate
+      where gate.workspace_id = p_workspace_id
+        and gate.route_epoch = p_route_epoch
+        and gate.authority_state in ('writable', 'read_only')
+    ) then
+      raise exception using errcode = 'P0001', message = 'workspace route gate mismatch';
+    end if;
+    insert into avalon_private.workspace_entitlements (
+      workspace_id, entitlement_key, version, state, value, applied_command_id
+    ) values (
+      p_workspace_id, p_payload ->> 'entitlement_key',
+      (p_payload ->> 'entitlement_version')::bigint,
+      p_payload ->> 'state', coalesce(p_payload -> 'value', '{}'::jsonb), p_command_id
+    ) on conflict (workspace_id, entitlement_key, version) do update
+      set state = excluded.state, value = excluded.value
+    where workspace_entitlements.applied_command_id = excluded.applied_command_id;
+    if not found then
+      raise exception using errcode = '23505', message = 'workspace entitlement command conflict';
     end if;
     new_state := 'applied';
   end if;
@@ -1239,7 +2318,14 @@ create or replace function avalon_private.workflow_begin_action(
   p_action_kind text,
   p_operation_id text
 )
-returns table (action_id uuid, action_no integer, control_revision bigint)
+returns table (
+  action_id uuid,
+  action_no integer,
+  control_revision bigint,
+  action_state text,
+  semantic_outcome text,
+  output_ref uuid
+)
 language plpgsql
 security definer
 set search_path = ''
@@ -1264,7 +2350,8 @@ begin
   ) on conflict (operation_id) do nothing;
   if not found then
     return query
-      select action.id, action.action_no, action.control_revision
+      select action.id, action.action_no, action.control_revision,
+        action.state, action.semantic_outcome, action.output_ref
       from avalon_private.agent_actions action
       where action.operation_id = p_operation_id and action.run_id = p_run_id;
     return;
@@ -1273,7 +2360,61 @@ begin
   set next_action_no = next_action_no + 1, actions_used = actions_used + 1,
       run_revision = run_revision + 1, last_progress_at = now()
   where id = run.id;
-  return query select new_action_id, run.next_action_no, run.control_revision;
+  return query select new_action_id, run.next_action_no, run.control_revision,
+    'started'::text, null::text, null::uuid;
+end
+$$;
+
+create or replace function avalon_private.workflow_record_model_outcome(
+  p_run_id uuid,
+  p_action_id uuid,
+  p_expected_control_revision bigint,
+  p_outcome text
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_outcome not in ('completed', 'needs_input', 'failed', 'stopped') then
+    raise exception using errcode = '22023', message = 'invalid model outcome';
+  end if;
+  update avalon_private.agent_actions action
+  set semantic_outcome = p_outcome
+  from avalon_private.agent_runs run
+  where action.id = p_action_id and action.run_id = p_run_id
+    and action.action_kind = 'model' and action.state in ('started', 'succeeded')
+    and action.control_revision = p_expected_control_revision
+    and run.id = action.run_id and run.control_revision = p_expected_control_revision;
+  if not found then
+    raise exception using errcode = '40001', message = 'model outcome fence mismatch';
+  end if;
+end
+$$;
+
+create or replace function avalon_private.workflow_complete_model_without_output(
+  p_run_id uuid,
+  p_action_id uuid,
+  p_expected_control_revision bigint
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update avalon_private.agent_actions action
+  set state = 'succeeded', completed_at = now()
+  from avalon_private.agent_runs run
+  where action.id = p_action_id and action.run_id = p_run_id
+    and action.action_kind = 'model' and action.state in ('started', 'succeeded')
+    and action.semantic_outcome is not null
+    and action.control_revision = p_expected_control_revision
+    and run.id = action.run_id and run.control_revision = p_expected_control_revision;
+  if not found then
+    raise exception using errcode = '40001', message = 'model completion fence mismatch';
+  end if;
 end
 $$;
 
@@ -1285,7 +2426,16 @@ create or replace function avalon_private.workflow_begin_output_attempt(
   p_part_id uuid,
   p_expires_at timestamptz
 )
-returns table (turn_id uuid, attempt_id uuid, part_id uuid)
+returns table (
+  turn_id uuid,
+  attempt_id uuid,
+  part_id uuid,
+  recovered boolean,
+  checkpoint_revision bigint,
+  byte_offset bigint,
+  recovered_text text,
+  through_frame_seq bigint
+)
 language plpgsql
 security definer
 set search_path = ''
@@ -1295,6 +2445,11 @@ declare
   action avalon_private.agent_actions%rowtype;
   workstream avalon_private.workstreams%rowtype;
   new_turn_id uuid := avalon_private.uuid_v7();
+  existing_attempt avalon_private.active_output_attempts%rowtype;
+  existing_revision bigint;
+  existing_offset bigint;
+  existing_text text;
+  existing_frame bigint;
 begin
   select * into run from avalon_private.agent_runs where id = p_run_id for update;
   select * into action from avalon_private.agent_actions
@@ -1309,12 +2464,35 @@ begin
   if not found or workstream.active_run_id <> run.id then
     raise exception using errcode = '40001', message = 'workstream run ownership lost';
   end if;
+  select attempt.* into existing_attempt
+  from avalon_private.active_output_attempts attempt
+  join avalon_private.turns turn on turn.id = attempt.turn_id
+  where attempt.run_id = run.id and turn.action_id = action.id
+    and attempt.status = 'streaming'
+  order by attempt.created_at desc, attempt.attempt_id desc
+  limit 1
+  for update of attempt;
+  if found then
+    select coalesce(max(chunk.checkpoint_revision), 0),
+      coalesce(max(chunk.byte_end), 0),
+      coalesce(string_agg(chunk.text_buffer, '' order by chunk.chunk_index), ''),
+      coalesce(max(chunk.through_frame_seq), 0)
+    into existing_revision, existing_offset, existing_text, existing_frame
+    from avalon_private.active_output_chunks chunk
+    where chunk.run_id = existing_attempt.run_id
+      and chunk.attempt_id = existing_attempt.attempt_id
+      and chunk.status <> 'abandoned';
+    return query select existing_attempt.turn_id, existing_attempt.attempt_id,
+      existing_attempt.part_id, true, existing_revision, existing_offset,
+      existing_text, existing_frame;
+    return;
+  end if;
   insert into avalon_private.turns (
     id, workspace_id, workstream_id, substream_id, kind, first_seq,
     last_seq, admission_ordinal, status, run_id, action_id
   ) values (
     new_turn_id, run.workspace_id, workstream.id, run.substream_id,
-    'agent', workstream.next_seq, workstream.next_seq, workstream.next_seq,
+    'agent', workstream.next_seq, workstream.next_seq, null,
     'open', run.id, action.id
   );
   insert into avalon_private.active_output_attempts (
@@ -1335,10 +2513,10 @@ begin
       'turn_id', new_turn_id, 'reserved_seq', workstream.next_seq,
       'control_revision', run.control_revision),
     'output_started',
-    'substream:' || run.substream_id::text || ':r' ||
-      (select access_revision from avalon_private.substreams where id = run.substream_id)::text
+    avalon_private.content_topic_for_substream(run.substream_id)
   );
-  return query select new_turn_id, p_attempt_id, p_part_id;
+  return query select new_turn_id, p_attempt_id, p_part_id, false,
+    0::bigint, 0::bigint, ''::text, 0::bigint;
 end
 $$;
 
@@ -1499,9 +2677,7 @@ begin
     );
   end if;
 
-  select 'substream:' || substream.id::text || ':r' || substream.access_revision::text
-  into topic
-  from avalon_private.substreams substream where substream.id = attempt.substream_id;
+  select avalon_private.content_topic_for_substream(attempt.substream_id) into topic;
   perform avalon_private.safe_realtime_send(
     jsonb_build_object('version', 1, 'run_id', p_run_id,
       'attempt_id', p_attempt_id, 'part_id', attempt.part_id,
@@ -1591,6 +2767,7 @@ begin
   update avalon_private.turns
   set status = 'complete', completed_at = now()
   where id = attempt.turn_id;
+  perform avalon_private.assign_turn_admission(attempt.turn_id);
   update avalon_private.active_output_chunks
   set status = 'sealed'
   where run_id = p_run_id and attempt_id = p_attempt_id and status = 'open';
@@ -1607,12 +2784,12 @@ begin
   update avalon_private.workstreams
   set latest_seq = greatest(latest_seq, assistant_seq),
       revision = revision + 1, last_activity_at = now(), updated_at = now(),
-      state = case when state in ('waiting', 'needs_input', 'error') then 'active' else state end,
-      state_reason = case when state in ('waiting', 'needs_input', 'error') then null else state_reason end,
-      error_at = case when state = 'error' then null else error_at end
+      state = case when state in ('waiting_capacity', 'needs_input', 'failed') then 'running' else state end,
+      state_reason = case when state in ('waiting_capacity', 'needs_input', 'failed') then null else state_reason end,
+      error_at = case when state = 'failed' then null else error_at end
   where id = workstream.id;
   update avalon_private.workstream_cards
-  set exact_state = case when exact_state in ('waiting', 'needs_input', 'error') then 'active' else exact_state end,
+  set exact_state = case when exact_state in ('waiting_capacity', 'needs_input', 'failed') then 'running' else exact_state end,
       lifecycle_family = 'in_progress', completed_at = null, error_at = null,
       latest_seq = greatest(latest_seq, assistant_seq), preview_text = left(full_text, 512),
       last_activity_at = now(), common_revision = common_revision + 1,
@@ -1623,11 +2800,14 @@ begin
   where workstream_id = workstream.id;
   insert into avalon_private.workstream_events (
     workspace_id, workstream_id, workstream_seq, kind, run_id,
-    attempt_id, part_id, byte_offset, common_revision, payload
+    attempt_id, part_id, byte_offset, common_revision,
+    access_container_kind, access_container_id, access_revision, payload
   ) values (
     workstream.workspace_id, workstream.id, workstream.revision + 1,
     'output_finalized', run.id, attempt.attempt_id, attempt.part_id,
     p_expected_byte_offset, workstream.revision + 1,
+    'substream', attempt.substream_id,
+    (select access_revision from avalon_private.substreams where id = attempt.substream_id),
     jsonb_build_object('version', 1, 'seq', assistant_seq,
       'terminal_run', p_terminal_run, 'content_hash', encode(actual_hash, 'hex'))
   );
@@ -1640,8 +2820,7 @@ begin
       'requires_fetch', octet_length(full_text) > 131072,
       'content_hash', encode(actual_hash, 'hex'), 'terminal_run', p_terminal_run),
     'output_finalized',
-    'substream:' || attempt.substream_id::text || ':r' ||
-      (select access_revision from avalon_private.substreams where id = attempt.substream_id)::text
+    avalon_private.content_topic_for_substream(attempt.substream_id)
   );
   return attempt.part_id;
 end
@@ -1674,6 +2853,9 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  signal_row avalon_private.run_signals%rowtype;
+  batch_id uuid;
 begin
   if not exists (
     select 1 from avalon_private.agent_runs run
@@ -1681,9 +2863,27 @@ begin
   ) then
     raise exception using errcode = '40001', message = 'signal control revision mismatch';
   end if;
+  select * into signal_row from avalon_private.run_signals
+  where id = p_signal_id and run_id = p_run_id for update;
+  if not found or signal_row.expected_control_revision <> p_expected_control_revision
+     or signal_row.state not in ('pending', 'delivered', 'observed') then
+    raise exception using errcode = '40001', message = 'signal observation fence mismatch';
+  end if;
+  if signal_row.state = 'observed' then return; end if;
   update avalon_private.run_signals
   set state = 'observed', observed_at = now()
   where id = p_signal_id and run_id = p_run_id and state in ('pending', 'delivered');
+  if signal_row.signal_kind = 'steer' then
+    batch_id := (signal_row.payload ->> 'admission_batch_id')::uuid;
+    update avalon_private.input_admission_batches
+    set state = 'admitted', admitted_at = now()
+    where id = batch_id and run_id = p_run_id and mode = 'steer'
+      and state = 'pending' and control_revision = p_expected_control_revision;
+    if not found then
+      raise exception using errcode = '40001', message = 'steering batch admission fence mismatch';
+    end if;
+    perform avalon_private.admit_batch_turns(batch_id);
+  end if;
   update avalon_private.agent_runs run
   set state = 'running', run_revision = run_revision + 1,
       last_progress_at = now()
@@ -1691,10 +2891,10 @@ begin
     and run.control_revision = p_expected_control_revision
     and run.state = 'interrupting'
     and not exists (
-      select 1 from avalon_private.run_signals signal
-      where signal.run_id = run.id
-        and signal.state in ('pending', 'delivered')
-        and signal.expected_control_revision <= p_expected_control_revision
+      select 1 from avalon_private.run_signals pending_signal
+      where pending_signal.run_id = run.id
+        and pending_signal.state in ('pending', 'delivered')
+        and pending_signal.expected_control_revision <= p_expected_control_revision
     );
 end
 $$;
@@ -1726,10 +2926,75 @@ begin
 end
 $$;
 
-create or replace function avalon_private.queue_set_visibility(
+create or replace function avalon_private.queue_claim_inbox(
   p_queue_name text,
+  p_semantic_key text,
   p_message_id bigint,
-  p_visibility_seconds integer default 60
+  p_request_hash bytea
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  receipt avalon_private.queue_inbox_receipts%rowtype;
+  next_claim_token uuid := avalon_private.uuid_v7();
+  created boolean;
+begin
+  if p_queue_name not in ('workflow_starts', 'workflow_signals', 'connector_ingress', 'sidebar_attention', 'derived_content', 'maintenance')
+     or length(p_semantic_key) not between 1 and 512
+     or p_message_id < 1 or octet_length(p_request_hash) <> 32 then
+    raise exception using errcode = '22023', message = 'invalid queue inbox claim';
+  end if;
+  insert into avalon_private.queue_inbox_receipts (
+    queue_name, semantic_key, message_id, request_hash, state,
+    claim_token, lease_expires_at
+  ) values (
+    p_queue_name, p_semantic_key, p_message_id, p_request_hash, 'started',
+    next_claim_token, now() + interval '60 seconds'
+  )
+  on conflict (queue_name, semantic_key) do nothing;
+  created := found;
+  select * into receipt from avalon_private.queue_inbox_receipts
+  where queue_name = p_queue_name and semantic_key = p_semantic_key for update;
+  if receipt.request_hash <> p_request_hash then
+    raise exception using errcode = '23505', message = 'queue semantic key reused with different request';
+  end if;
+  if created then
+    return jsonb_build_object('state', 'acquired', 'claim_token', next_claim_token);
+  end if;
+  if receipt.state = 'completed' then
+    return jsonb_build_object('state', 'completed', 'claim_token', null);
+  end if;
+  if receipt.state = 'started' and receipt.lease_expires_at > now() then
+    return jsonb_build_object('state', 'busy', 'claim_token', null);
+  end if;
+  if receipt.state <> 'quarantined' then
+    next_claim_token := avalon_private.uuid_v7();
+    update avalon_private.queue_inbox_receipts
+    set message_id = p_message_id, state = 'started', attempts = attempts + 1,
+        claim_token = next_claim_token,
+        lease_expires_at = now() + interval '60 seconds',
+        completed_at = null
+    where queue_name = p_queue_name and semantic_key = p_semantic_key
+      and (state <> 'started' or lease_expires_at <= now());
+    if not found then
+      return jsonb_build_object('state', 'busy', 'claim_token', null);
+    end if;
+    return jsonb_build_object('state', 'acquired', 'claim_token', next_claim_token);
+  end if;
+  return jsonb_build_object('state', receipt.state, 'claim_token', null);
+end
+$$;
+
+create or replace function avalon_private.queue_complete_inbox(
+  p_queue_name text,
+  p_semantic_key text,
+  p_message_id bigint,
+  p_request_hash bytea,
+  p_claim_token uuid,
+  p_result_ref uuid default null
 )
 returns boolean
 language plpgsql
@@ -1737,12 +3002,55 @@ security definer
 set search_path = ''
 as $$
 begin
+  update avalon_private.queue_inbox_receipts
+  set state = 'completed', result_ref = p_result_ref, completed_at = now(),
+      claim_token = null, lease_expires_at = null
+  where queue_name = p_queue_name and semantic_key = p_semantic_key
+    and message_id = p_message_id and request_hash = p_request_hash
+    and claim_token = p_claim_token and state = 'started'
+    and lease_expires_at > now();
+  return found;
+end
+$$;
+
+create or replace function avalon_private.queue_set_visibility(
+  p_queue_name text,
+  p_semantic_key text,
+  p_message_id bigint,
+  p_request_hash bytea,
+  p_claim_token uuid,
+  p_visibility_seconds integer default 60
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  renewed boolean;
+begin
   if p_queue_name not in ('workflow_starts', 'workflow_signals', 'connector_ingress', 'sidebar_attention', 'derived_content', 'maintenance')
-     or p_visibility_seconds <> 60 then
+     or length(p_semantic_key) not between 1 and 512
+     or octet_length(p_request_hash) <> 32
+     or p_claim_token is null or p_visibility_seconds <> 60 then
     raise exception using errcode = '22023', message = 'queue visibility policy violation';
   end if;
-  perform pgmq.set_vt(p_queue_name, p_message_id, p_visibility_seconds);
-  return found;
+  perform 1 from avalon_private.queue_inbox_receipts
+  where queue_name = p_queue_name and semantic_key = p_semantic_key
+    and message_id = p_message_id and request_hash = p_request_hash
+    and claim_token = p_claim_token and state = 'started'
+    and lease_expires_at > now()
+  for update;
+  if not found then return false; end if;
+  select exists (
+    select 1 from pgmq.set_vt(p_queue_name, p_message_id, p_visibility_seconds)
+  ) into renewed;
+  if not coalesce(renewed, false) then return false; end if;
+  update avalon_private.queue_inbox_receipts
+  set lease_expires_at = now() + interval '60 seconds'
+  where queue_name = p_queue_name and semantic_key = p_semantic_key
+    and claim_token = p_claim_token;
+  return true;
 end
 $$;
 
@@ -1784,6 +3092,8 @@ create or replace function avalon_private.queue_dead_letter(
   p_queue_name text,
   p_message_id bigint,
   p_semantic_key text,
+  p_request_hash bytea,
+  p_claim_token uuid,
   p_message jsonb,
   p_error_class text,
   p_attempts integer
@@ -1793,13 +3103,25 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  archived boolean;
 begin
   if p_queue_name not in ('workflow_starts', 'workflow_signals', 'connector_ingress', 'sidebar_attention', 'derived_content', 'maintenance')
      or length(p_semantic_key) not between 1 and 512
+     or octet_length(p_request_hash) <> 32 or p_claim_token is null
      or length(p_error_class) not between 1 and 128
      or p_attempts < 10 or pg_column_size(p_message) > 16384 then
     raise exception using errcode = '22023', message = 'queue dead-letter policy violation';
   end if;
+  perform 1 from avalon_private.queue_inbox_receipts
+  where queue_name = p_queue_name and semantic_key = p_semantic_key
+    and message_id = p_message_id and request_hash = p_request_hash
+    and claim_token = p_claim_token and state = 'started'
+    and lease_expires_at > now()
+  for update;
+  if not found then return false; end if;
+  archived := pgmq.archive(p_queue_name, p_message_id);
+  if not archived then return false; end if;
   insert into avalon_private.dead_letters (
     source_queue, semantic_key, message_snapshot, error_class, attempts
   ) values (
@@ -1809,8 +3131,46 @@ begin
         attempts = greatest(dead_letters.attempts, excluded.attempts),
         message_snapshot = excluded.message_snapshot,
         quarantined_at = now();
-  return pgmq.archive(p_queue_name, p_message_id);
+  update avalon_private.queue_inbox_receipts receipt
+  set state = 'quarantined', claim_token = null, lease_expires_at = null,
+      attempts = greatest(receipt.attempts, p_attempts), completed_at = now()
+  where receipt.queue_name = p_queue_name and receipt.semantic_key = p_semantic_key
+    and receipt.claim_token = p_claim_token;
+  return true;
 end
+$$;
+
+create or replace function avalon_private.queue_health()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with required(queue_name) as (
+    values ('workflow_starts'), ('workflow_signals'), ('connector_ingress'),
+      ('sidebar_attention'), ('derived_content'), ('maintenance')
+  ), missing as (
+    select required.queue_name
+    from required
+    left join pgmq.meta meta on meta.queue_name = required.queue_name
+    where meta.queue_name is null
+  )
+  select jsonb_build_object(
+    'ready', not exists (select 1 from missing)
+      and exists (
+        select 1 from cron.job
+        where jobname = 'avalon-enqueue-due-regional-jobs' and active
+      ),
+    'missing_queues', coalesce(
+      (select jsonb_agg(queue_name order by queue_name) from missing),
+      '[]'::jsonb
+    ),
+    'cron_active', exists (
+      select 1 from cron.job
+      where jobname = 'avalon-enqueue-due-regional-jobs' and active
+    )
+  )
 $$;
 
 create or replace function avalon_private.enqueue_due_jobs()
@@ -1862,36 +3222,48 @@ where not exists (
   select 1 from cron.job where jobname = 'avalon-enqueue-due-regional-jobs'
 );
 
-revoke all on function avalon_private.apply_global_workspace_command(uuid, uuid, bigint, text, text, text, bytea, text, bytea) from public;
+revoke all on function avalon_private.apply_global_workspace_command(uuid, uuid, bigint, text, text, text, jsonb, bytea, text, bytea) from public;
 revoke all on function avalon_private.link_platform_identity(uuid, text, text, uuid, bigint) from public;
 revoke all on function avalon_private.workflow_claim_run(uuid, bigint, text) from public;
 revoke all on function avalon_private.workflow_begin_action(uuid, bigint, text, text) from public;
+revoke all on function avalon_private.workflow_record_model_outcome(uuid, uuid, bigint, text) from public;
+revoke all on function avalon_private.workflow_complete_model_without_output(uuid, uuid, bigint) from public;
 revoke all on function avalon_private.workflow_begin_output_attempt(uuid, uuid, bigint, uuid, uuid, timestamptz) from public;
 revoke all on function avalon_private.checkpoint_active_output(uuid, uuid, bigint, bigint, bigint, bigint, text, bigint, bytea, jsonb, jsonb) from public;
 revoke all on function avalon_private.finalize_active_output(uuid, uuid, bigint, bigint, bytea, uuid, boolean) from public;
 revoke all on function avalon_private.workflow_pending_signals(uuid, timestamptz) from public;
 revoke all on function avalon_private.workflow_observe_signal(uuid, uuid, bigint) from public;
+revoke all on function avalon_private.materialize_attention_mentions(bigint, integer) from public;
 revoke all on function avalon_private.queue_read(text, integer, integer) from public;
-revoke all on function avalon_private.queue_set_visibility(text, bigint, integer) from public;
+revoke all on function avalon_private.queue_claim_inbox(text, text, bigint, bytea) from public;
+revoke all on function avalon_private.queue_complete_inbox(text, text, bigint, bytea, uuid, uuid) from public;
+revoke all on function avalon_private.queue_set_visibility(text, text, bigint, bytea, uuid, integer) from public;
 revoke all on function avalon_private.queue_delete(text, bigint) from public;
 revoke all on function avalon_private.queue_archive(text, bigint) from public;
-revoke all on function avalon_private.queue_dead_letter(text, bigint, text, jsonb, text, integer) from public;
+revoke all on function avalon_private.queue_dead_letter(text, bigint, text, bytea, uuid, jsonb, text, integer) from public;
+revoke all on function avalon_private.queue_health() from public;
 revoke all on function avalon_private.enqueue_due_jobs() from public;
 
-grant execute on function avalon_private.apply_global_workspace_command(uuid, uuid, bigint, text, text, text, bytea, text, bytea) to avalon_regional_router;
+grant execute on function avalon_private.apply_global_workspace_command(uuid, uuid, bigint, text, text, text, jsonb, bytea, text, bytea) to avalon_regional_router;
 grant execute on function avalon_private.link_platform_identity(uuid, text, text, uuid, bigint) to avalon_regional_router;
 grant execute on function avalon_private.workflow_claim_run(uuid, bigint, text) to avalon_workflow_runner;
 grant execute on function avalon_private.workflow_begin_action(uuid, bigint, text, text) to avalon_workflow_runner;
+grant execute on function avalon_private.workflow_record_model_outcome(uuid, uuid, bigint, text) to avalon_workflow_runner;
+grant execute on function avalon_private.workflow_complete_model_without_output(uuid, uuid, bigint) to avalon_workflow_runner;
 grant execute on function avalon_private.workflow_begin_output_attempt(uuid, uuid, bigint, uuid, uuid, timestamptz) to avalon_workflow_runner;
 grant execute on function avalon_private.checkpoint_active_output(uuid, uuid, bigint, bigint, bigint, bigint, text, bigint, bytea, jsonb, jsonb) to avalon_workflow_runner;
 grant execute on function avalon_private.finalize_active_output(uuid, uuid, bigint, bigint, bytea, uuid, boolean) to avalon_workflow_runner;
 grant execute on function avalon_private.workflow_pending_signals(uuid, timestamptz) to avalon_workflow_runner;
 grant execute on function avalon_private.workflow_observe_signal(uuid, uuid, bigint) to avalon_workflow_runner;
+grant execute on function avalon_private.materialize_attention_mentions(bigint, integer) to avalon_queue_runner;
 grant execute on function avalon_private.queue_read(text, integer, integer) to avalon_queue_runner;
-grant execute on function avalon_private.queue_set_visibility(text, bigint, integer) to avalon_queue_runner;
+grant execute on function avalon_private.queue_claim_inbox(text, text, bigint, bytea) to avalon_queue_runner;
+grant execute on function avalon_private.queue_complete_inbox(text, text, bigint, bytea, uuid, uuid) to avalon_queue_runner;
+grant execute on function avalon_private.queue_set_visibility(text, text, bigint, bytea, uuid, integer) to avalon_queue_runner;
 grant execute on function avalon_private.queue_delete(text, bigint) to avalon_queue_runner;
 grant execute on function avalon_private.queue_archive(text, bigint) to avalon_queue_runner;
-grant execute on function avalon_private.queue_dead_letter(text, bigint, text, jsonb, text, integer) to avalon_queue_runner;
+grant execute on function avalon_private.queue_dead_letter(text, bigint, text, bytea, uuid, jsonb, text, integer) to avalon_queue_runner;
+grant execute on function avalon_private.queue_health() to avalon_queue_runner;
 
 revoke all on all tables in schema avalon_private from anon, authenticated,
   avalon_workflow_runner, avalon_queue_runner, avalon_regional_router;
@@ -1943,24 +3315,45 @@ using (
   realtime.messages.extension = 'broadcast'
   and (
     exists (
-      select 1 from avalon_private.platform_identities identity
+      select 1
+      from avalon_private.platform_identities identity
       where identity.auth_user_id = (select auth.uid())
         and identity.state = 'active'
-        and (select realtime.topic()) = 'user:' || identity.platform_user_id::text || ':r' || identity.account_epoch::text
+        and (select realtime.topic()) =
+          'region-user:' || identity.platform_user_id::text
+    )
+    or
+    exists (
+      select 1
+      from avalon_private.platform_identities identity
+      join avalon_private.workspace_members member
+        on member.platform_user_id = identity.platform_user_id
+       and member.state = 'active'
+      join avalon_private.workspaces workspace on workspace.id = member.workspace_id
+      where identity.auth_user_id = (select auth.uid())
+        and identity.state = 'active' and workspace.state = 'active'
+        and (select realtime.topic()) = 'workspace-user:' || workspace.id::text || ':' ||
+          identity.platform_user_id::text || ':' || workspace.access_revision::text
     )
     or exists (
       select 1 from avalon_private.workspaces workspace
-      where (select realtime.topic()) = 'workspace:' || workspace.id::text || ':r' || workspace.access_revision::text
+      where (select realtime.topic()) = 'workspace:' || workspace.id::text || ':' || workspace.access_revision::text
         and avalon_private.can_access_workspace(workspace.id, 'guest')
     )
     or exists (
       select 1 from avalon_private.workstreams workstream
-      where (select realtime.topic()) = 'workstream:' || workstream.id::text || ':r' || workstream.access_revision::text
+      join avalon_private.workspaces workspace on workspace.id = workstream.workspace_id
+      where (select realtime.topic()) = 'workstream:' || workstream.id::text || ':' ||
+          workspace.access_revision::text || ':' || workstream.access_revision::text
         and avalon_private.can_access_workstream(workstream.id, 'view')
     )
     or exists (
       select 1 from avalon_private.substreams substream
-      where (select realtime.topic()) = 'substream:' || substream.id::text || ':r' || substream.access_revision::text
+      join avalon_private.workstreams workstream on workstream.id = substream.workstream_id
+      join avalon_private.workspaces workspace on workspace.id = substream.workspace_id
+      where (select realtime.topic()) = 'substream:' || substream.id::text || ':' ||
+          workspace.access_revision::text || ':' || workstream.access_revision::text || ':' ||
+          substream.access_revision::text
         and avalon_private.can_access_substream(substream.id, 'view')
     )
   )
@@ -1977,8 +3370,9 @@ using (
     where content.bucket = storage.objects.bucket_id
       and content.object_path = storage.objects.name
       and content.state = 'ready'
-      and avalon_private.can_access_container(
-        content.access_container_kind, content.access_container_id, 'view'
+      and avalon_private.can_access_container_at_revision(
+        content.access_container_kind, content.access_container_id,
+        content.access_revision, 'view'
       )
   )
 );
@@ -1996,8 +3390,9 @@ with check (
       and content.state = 'pending'
       and content.uploaded_by_kind = 'user'
       and content.uploaded_by_id = avalon_private.current_platform_user_id()
-      and avalon_private.can_access_container(
-        content.access_container_kind, content.access_container_id, 'contribute'
+      and avalon_private.can_access_container_at_revision(
+        content.access_container_kind, content.access_container_id,
+        content.access_revision, 'contribute'
       )
   )
 );

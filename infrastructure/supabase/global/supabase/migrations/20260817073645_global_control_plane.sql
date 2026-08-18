@@ -21,23 +21,28 @@ $$;
 revoke all on schema avalon_private from avalon_global_router;
 grant usage on schema avalon_private to avalon_global_router;
 
-create or replace function avalon_private.uuid_v7()
+create or replace function avalon_private.uuid_v7_from(
+  p_unix_ms bigint,
+  p_random bytea
+)
 returns uuid
 language plpgsql
-volatile
+immutable
 set search_path = ''
 as $$
 declare
-  value bytea := extensions.gen_random_bytes(16);
-  unix_ms bigint := floor(extract(epoch from clock_timestamp()) * 1000);
+  value bytea := p_random;
   hex text;
 begin
-  value := set_byte(value, 0, ((unix_ms >> 40) & 255)::integer);
-  value := set_byte(value, 1, ((unix_ms >> 32) & 255)::integer);
-  value := set_byte(value, 2, ((unix_ms >> 24) & 255)::integer);
-  value := set_byte(value, 3, ((unix_ms >> 16) & 255)::integer);
-  value := set_byte(value, 4, ((unix_ms >> 8) & 255)::integer);
-  value := set_byte(value, 5, (unix_ms & 255)::integer);
+  if p_unix_ms < 0 or p_unix_ms > 281474976710655 or octet_length(p_random) <> 16 then
+    raise exception using errcode = '22023', message = 'uuid v7 input out of range';
+  end if;
+  value := set_byte(value, 0, ((p_unix_ms >> 40) & 255)::integer);
+  value := set_byte(value, 1, ((p_unix_ms >> 32) & 255)::integer);
+  value := set_byte(value, 2, ((p_unix_ms >> 24) & 255)::integer);
+  value := set_byte(value, 3, ((p_unix_ms >> 16) & 255)::integer);
+  value := set_byte(value, 4, ((p_unix_ms >> 8) & 255)::integer);
+  value := set_byte(value, 5, (p_unix_ms & 255)::integer);
   value := set_byte(value, 6, ((get_byte(value, 6) & 15) | 112)::integer);
   value := set_byte(value, 8, ((get_byte(value, 8) & 63) | 128)::integer);
   hex := encode(value, 'hex');
@@ -49,7 +54,31 @@ begin
 end
 $$;
 
+create or replace function avalon_private.uuid_v7()
+returns uuid
+language sql
+volatile
+set search_path = ''
+as $$
+  select avalon_private.uuid_v7_from(
+    floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+    extensions.gen_random_bytes(16)
+  )
+$$;
+
+create or replace function avalon_private.is_uuid_v7(p_value uuid)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select p_value is not null
+    and p_value::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+$$;
+
 revoke all on function avalon_private.uuid_v7() from public;
+revoke all on function avalon_private.uuid_v7_from(bigint, bytea) from public;
+revoke all on function avalon_private.is_uuid_v7(uuid) from public;
 
 create table avalon_private.global_accounts (
   platform_user_id uuid primary key default avalon_private.uuid_v7(),
@@ -127,7 +156,7 @@ create table avalon_private.organization_entitlements (
 
 create table avalon_private.regional_shards (
   shard_id text primary key check (length(shard_id) between 1 and 64),
-  region_key text not null check (length(region_key) between 1 and 32),
+  region_key text not null check (region_key in ('global', 'eu')),
   lifecycle text not null check (lifecycle in ('provisioning', 'active', 'draining', 'read_only', 'unavailable', 'retired')),
   capacity_class text not null check (length(capacity_class) between 1 and 64),
   api_origin_id text not null check (length(api_origin_id) between 1 and 128),
@@ -146,7 +175,7 @@ create index regional_shards_for_admission
 create table avalon_private.workspace_routes (
   workspace_id uuid primary key,
   organization_id uuid not null references avalon_private.organizations(id) on delete restrict,
-  region_key text not null check (length(region_key) between 1 and 32),
+  region_key text not null check (region_key in ('global', 'eu')),
   shard_id text not null references avalon_private.regional_shards(shard_id),
   route_epoch bigint not null default 1 check (route_epoch > 0),
   authority_state text not null check (authority_state in ('creating', 'active', 'suspending', 'moving', 'deleting', 'closed')),
@@ -165,6 +194,31 @@ create index workspace_routes_by_org
   on avalon_private.workspace_routes (organization_id, authority_state, workspace_id);
 create index workspace_routes_by_shard
   on avalon_private.workspace_routes (shard_id, authority_state, workspace_id);
+
+create table avalon_private.workspace_invitations (
+  id uuid primary key default avalon_private.uuid_v7(),
+  workspace_id uuid not null,
+  organization_id uuid not null references avalon_private.organizations(id) on delete cascade,
+  route_epoch bigint not null check (route_epoch > 0),
+  target_shard_id text not null,
+  email_hash bytea not null check (octet_length(email_hash) = 32),
+  role text not null check (role in ('owner', 'admin', 'member', 'guest')),
+  state text not null default 'pending' check (state in ('pending', 'accepted', 'revoked', 'expired')),
+  invited_by uuid not null references avalon_private.global_accounts(platform_user_id),
+  accepted_by uuid references avalon_private.global_accounts(platform_user_id),
+  operation_key text not null check (length(operation_key) between 1 and 256),
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  unique (workspace_id, operation_key),
+  foreign key (workspace_id, route_epoch)
+    references avalon_private.workspace_routes(workspace_id, route_epoch),
+  foreign key (target_shard_id) references avalon_private.regional_shards(shard_id)
+);
+
+create index workspace_invitations_pending
+  on avalon_private.workspace_invitations (email_hash, expires_at, workspace_id)
+  where state = 'pending';
 
 create table avalon_private.routing_commands (
   command_id uuid primary key default avalon_private.uuid_v7(),
@@ -205,6 +259,7 @@ create table avalon_private.routing_command_receipts (
   workspace_id uuid not null references avalon_private.workspace_routes(workspace_id) on delete cascade,
   route_epoch bigint not null,
   target_shard_id text not null references avalon_private.regional_shards(shard_id),
+  payload_hash bytea not null check (octet_length(payload_hash) = 32),
   regional_receipt_id uuid not null,
   regional_state text not null check (length(regional_state) between 1 and 64),
   response_hash bytea not null check (octet_length(response_hash) = 32),
@@ -264,6 +319,7 @@ alter table avalon_private.global_accounts enable row level security;
 alter table avalon_private.organizations enable row level security;
 alter table avalon_private.organization_members enable row level security;
 alter table avalon_private.organization_invitations enable row level security;
+alter table avalon_private.workspace_invitations enable row level security;
 alter table avalon_private.billing_customers enable row level security;
 alter table avalon_private.organization_entitlements enable row level security;
 alter table avalon_private.workspace_routes enable row level security;
@@ -284,6 +340,9 @@ create policy organization_members_read_member
   using (avalon_private.can_read_organization(organization_id));
 create policy organization_invitations_read_member
   on avalon_private.organization_invitations for select to authenticated
+  using (avalon_private.can_read_organization(organization_id));
+create policy workspace_invitations_read_member
+  on avalon_private.workspace_invitations for select to authenticated
   using (avalon_private.can_read_organization(organization_id));
 create policy billing_customers_read_member
   on avalon_private.billing_customers for select to authenticated
@@ -308,6 +367,7 @@ grant select on avalon_private.global_accounts,
   avalon_private.organizations,
   avalon_private.organization_members,
   avalon_private.organization_invitations,
+  avalon_private.workspace_invitations,
   avalon_private.billing_customers,
   avalon_private.organization_entitlements,
   avalon_private.workspace_routes,
@@ -344,6 +404,213 @@ where route.authority_state <> 'closed';
 revoke all on api.account, api.organizations, api.workspace_routes from public, anon;
 grant select on api.account, api.organizations, api.workspace_routes to authenticated;
 
+create or replace function avalon_private.enqueue_routing_command(
+  p_workspace_id uuid,
+  p_expected_route_epoch bigint,
+  p_target_shard_id text,
+  p_operation_kind text,
+  p_operation_key text,
+  p_payload jsonb
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  route avalon_private.workspace_routes%rowtype;
+  existing avalon_private.routing_commands%rowtype;
+  command_id uuid := avalon_private.uuid_v7();
+  payload_hash bytea;
+begin
+  select * into route from avalon_private.workspace_routes
+  where workspace_id = p_workspace_id for update;
+  if not found or route.route_epoch <> p_expected_route_epoch
+     or route.shard_id <> p_target_shard_id
+     or p_operation_kind not in (
+       'create_workspace', 'suspend_workspace', 'delete_workspace',
+       'prepare_move', 'activate_move', 'apply_invitation', 'apply_entitlement'
+     ) or length(p_operation_key) not between 1 and 256
+     or pg_column_size(p_payload) > 16384 then
+    raise exception using errcode = '40001', message = 'routing command fence mismatch';
+  end if;
+  payload_hash := extensions.digest(convert_to(p_payload::text, 'utf8'), 'sha256');
+  select * into existing from avalon_private.routing_commands
+  where workspace_id = p_workspace_id and operation_key = p_operation_key for update;
+  if found then
+    if existing.route_epoch <> p_expected_route_epoch
+       or existing.target_shard_id <> p_target_shard_id
+       or existing.operation_kind <> p_operation_kind
+       or existing.payload_hash <> payload_hash then
+      raise exception using errcode = '23505', message = 'routing operation key conflict';
+    end if;
+    return existing.command_id;
+  end if;
+  insert into avalon_private.routing_commands (
+    command_id, workspace_id, route_epoch, target_shard_id, operation_kind,
+    operation_key, payload_version, payload, payload_hash
+  ) values (
+    command_id, p_workspace_id, p_expected_route_epoch, p_target_shard_id,
+    p_operation_kind, p_operation_key, 1, p_payload, payload_hash
+  );
+  return command_id;
+end
+$$;
+
+create or replace function avalon_private.create_workspace_route_command(
+  p_workspace_id uuid,
+  p_organization_id uuid,
+  p_region_key text,
+  p_shard_id text,
+  p_operation_key text,
+  p_payload jsonb
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  command_id uuid;
+begin
+  if not exists (
+    select 1 from avalon_private.organizations organization
+    where organization.id = p_organization_id and organization.state = 'active'
+  ) or not exists (
+    select 1 from avalon_private.regional_shards shard
+    where shard.shard_id = p_shard_id and shard.region_key = p_region_key
+      and shard.lifecycle = 'active'
+  ) or length(p_operation_key) not between 1 and 256 then
+    raise exception using errcode = '22023', message = 'workspace route command denied';
+  end if;
+  insert into avalon_private.workspace_routes (
+    workspace_id, organization_id, region_key, shard_id, route_epoch,
+    authority_state
+  ) values (
+    p_workspace_id, p_organization_id, p_region_key, p_shard_id, 1, 'creating'
+  ) on conflict (workspace_id) do nothing;
+  if not found and not exists (
+    select 1 from avalon_private.workspace_routes route
+    where route.workspace_id = p_workspace_id
+      and route.organization_id = p_organization_id
+      and route.region_key = p_region_key and route.shard_id = p_shard_id
+      and route.route_epoch = 1 and route.authority_state = 'creating'
+  ) then
+    raise exception using errcode = '23505', message = 'workspace route operation conflict';
+  end if;
+  command_id := avalon_private.enqueue_routing_command(
+    p_workspace_id, 1, p_shard_id, 'create_workspace', p_operation_key, p_payload
+  );
+  return command_id;
+end
+$$;
+
+create or replace function avalon_private.create_workspace_invitation_command(
+  p_workspace_id uuid,
+  p_expected_route_epoch bigint,
+  p_email_hash bytea,
+  p_role text,
+  p_invited_by uuid,
+  p_operation_key text,
+  p_expires_at timestamptz
+)
+returns table (invitation_id uuid, command_id uuid)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  route avalon_private.workspace_routes%rowtype;
+  invitation_id uuid := avalon_private.uuid_v7();
+  command_id uuid;
+begin
+  select * into route from avalon_private.workspace_routes
+  where workspace_id = p_workspace_id for update;
+  if not found or route.route_epoch <> p_expected_route_epoch
+     or route.authority_state not in ('creating', 'active')
+     or p_role not in ('owner', 'admin', 'member', 'guest')
+     or octet_length(p_email_hash) <> 32 or p_expires_at <= now()
+     or not exists (
+       select 1 from avalon_private.organization_members member
+       where member.organization_id = route.organization_id
+         and member.platform_user_id = p_invited_by
+         and member.state = 'active' and member.role in ('owner', 'admin')
+     ) then
+    raise exception using errcode = '42501', message = 'workspace invitation denied';
+  end if;
+  insert into avalon_private.workspace_invitations (
+    id, workspace_id, organization_id, route_epoch, target_shard_id,
+    email_hash, role, invited_by, operation_key, expires_at
+  ) values (
+    invitation_id, route.workspace_id, route.organization_id, route.route_epoch,
+    route.shard_id, p_email_hash, p_role, p_invited_by, p_operation_key, p_expires_at
+  ) on conflict (workspace_id, operation_key) do nothing;
+  if not found then
+    select invitation.id into invitation_id
+    from avalon_private.workspace_invitations invitation
+    where invitation.workspace_id = p_workspace_id
+      and invitation.operation_key = p_operation_key
+      and invitation.email_hash = p_email_hash and invitation.role = p_role;
+    if not found then
+      raise exception using errcode = '23505', message = 'workspace invitation operation conflict';
+    end if;
+  end if;
+  command_id := avalon_private.enqueue_routing_command(
+    route.workspace_id, route.route_epoch, route.shard_id, 'apply_invitation',
+    p_operation_key, jsonb_build_object(
+      'version', 1, 'invitation_id', invitation_id, 'email_hash', encode(p_email_hash, 'hex'),
+      'role', p_role, 'expires_at', p_expires_at
+    )
+  );
+  return query select invitation_id, command_id;
+end
+$$;
+
+create or replace function avalon_private.set_entitlement_command(
+  p_workspace_id uuid,
+  p_expected_route_epoch bigint,
+  p_entitlement_key text,
+  p_state text,
+  p_value jsonb,
+  p_operation_key text
+)
+returns table (entitlement_version bigint, command_id uuid)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  route avalon_private.workspace_routes%rowtype;
+  entitlement_version bigint;
+  command_id uuid;
+begin
+  select * into route from avalon_private.workspace_routes
+  where workspace_id = p_workspace_id for update;
+  if not found or route.route_epoch <> p_expected_route_epoch
+     or p_state not in ('active', 'suspended', 'expired')
+     or length(p_entitlement_key) not between 1 and 128
+     or pg_column_size(p_value) > 8192 then
+    raise exception using errcode = '40001', message = 'entitlement command fence mismatch';
+  end if;
+  select coalesce(max(version), 0) + 1 into entitlement_version
+  from avalon_private.organization_entitlements
+  where organization_id = route.organization_id and entitlement_key = p_entitlement_key;
+  insert into avalon_private.organization_entitlements (
+    organization_id, entitlement_key, version, state, value
+  ) values (
+    route.organization_id, p_entitlement_key, entitlement_version, p_state, p_value
+  );
+  command_id := avalon_private.enqueue_routing_command(
+    route.workspace_id, route.route_epoch, route.shard_id, 'apply_entitlement',
+    p_operation_key, jsonb_build_object(
+      'version', 1, 'entitlement_key', p_entitlement_key,
+      'entitlement_version', entitlement_version, 'state', p_state, 'value', p_value
+    )
+  );
+  return query select entitlement_version, command_id;
+end
+$$;
+
 create or replace function avalon_private.claim_routing_commands(
   p_dispatcher_workflow_id text,
   p_limit integer default 32
@@ -353,6 +620,7 @@ returns table (
   workspace_id uuid,
   route_epoch bigint,
   target_shard_id text,
+  region_key text,
   operation_kind text,
   payload_version integer,
   payload jsonb,
@@ -392,10 +660,46 @@ begin
     returning routing_command_attempts.command_id, routing_command_attempts.attempt_no
   )
   select updated.command_id, updated.workspace_id, updated.route_epoch,
-    updated.target_shard_id, updated.operation_kind, updated.payload_version,
+    updated.target_shard_id, shard.region_key, updated.operation_kind, updated.payload_version,
     updated.payload, updated.payload_hash, attempts.attempt_no
   from updated
-  join attempts using (command_id);
+  join attempts using (command_id)
+  join avalon_private.regional_shards shard
+    on shard.shard_id = updated.target_shard_id;
+end
+$$;
+
+create or replace function avalon_private.fail_routing_command_attempt(
+  p_command_id uuid,
+  p_attempt_no integer,
+  p_error_class text,
+  p_retry_after_seconds integer default 60
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if length(p_error_class) not between 1 and 128
+     or p_retry_after_seconds not between 1 and 3600 then
+    raise exception using errcode = '22023', message = 'invalid routing failure';
+  end if;
+  update avalon_private.routing_command_attempts
+  set finished_at = now(), outcome = 'retryable_error', error_class = p_error_class,
+      next_attempt_at = now() + make_interval(secs => p_retry_after_seconds)
+  where command_id = p_command_id and attempt_no = p_attempt_no
+    and finished_at is null;
+  if not found then
+    raise exception using errcode = '40001', message = 'routing attempt failure fence mismatch';
+  end if;
+  update avalon_private.routing_commands
+  set state = 'pending',
+      not_before = now() + make_interval(secs => p_retry_after_seconds)
+  where command_id = p_command_id and state = 'dispatching';
+  if not found then
+    raise exception using errcode = '40001', message = 'routing command failure fence mismatch';
+  end if;
 end
 $$;
 
@@ -405,6 +709,7 @@ create or replace function avalon_private.acknowledge_routing_command(
   p_workspace_id uuid,
   p_route_epoch bigint,
   p_target_shard_id text,
+  p_payload_hash bytea,
   p_regional_receipt_id uuid,
   p_regional_state text,
   p_response_hash bytea
@@ -425,25 +730,37 @@ begin
   if not found or command.workspace_id <> p_workspace_id
      or command.route_epoch <> p_route_epoch
      or command.target_shard_id <> p_target_shard_id
+     or command.payload_hash <> p_payload_hash
+     or octet_length(p_payload_hash) <> 32
      or octet_length(p_response_hash) <> 32 then
     raise exception using errcode = 'P0001', message = 'routing receipt fence mismatch';
   end if;
 
+  if command.state <> 'dispatching' or not exists (
+    select 1 from avalon_private.routing_command_attempts attempt
+    where attempt.command_id = p_command_id and attempt.attempt_no = p_attempt_no
+      and attempt.finished_at is null
+  ) then
+    raise exception using errcode = '40001', message = 'routing attempt is not current';
+  end if;
+
   insert into avalon_private.routing_command_receipts (
     command_id, workspace_id, route_epoch, target_shard_id,
-    regional_receipt_id, regional_state, response_hash
+    payload_hash, regional_receipt_id, regional_state, response_hash
   ) values (
     p_command_id, p_workspace_id, p_route_epoch, p_target_shard_id,
-    p_regional_receipt_id, p_regional_state, p_response_hash
+    p_payload_hash, p_regional_receipt_id, p_regional_state, p_response_hash
   )
   on conflict (command_id) do update
     set regional_receipt_id = excluded.regional_receipt_id,
         regional_state = excluded.regional_state,
+        payload_hash = excluded.payload_hash,
         response_hash = excluded.response_hash,
         observed_at = now()
   where routing_command_receipts.workspace_id = excluded.workspace_id
     and routing_command_receipts.route_epoch = excluded.route_epoch
     and routing_command_receipts.target_shard_id = excluded.target_shard_id
+    and routing_command_receipts.payload_hash = excluded.payload_hash
     and routing_command_receipts.response_hash = excluded.response_hash;
 
   if not found then
@@ -454,17 +771,49 @@ begin
   set finished_at = now(), outcome = 'delivered'
   where routing_command_attempts.command_id = p_command_id
     and routing_command_attempts.attempt_no = p_attempt_no;
+  if not found then
+    raise exception using errcode = '40001', message = 'routing attempt completion fence mismatch';
+  end if;
 
   update avalon_private.routing_commands
   set state = 'acknowledged', acknowledged_at = coalesce(acknowledged_at, now())
   where routing_commands.command_id = p_command_id;
+
+  update avalon_private.workspace_routes route
+  set authority_state = case command.operation_kind
+      when 'create_workspace' then 'active'
+      when 'activate_move' then 'active'
+      when 'delete_workspace' then 'closed'
+      else route.authority_state
+    end,
+    shard_id = case when command.operation_kind = 'activate_move'
+      then command.target_shard_id else route.shard_id end,
+    source_shard_id = case when command.operation_kind = 'activate_move'
+      then null else route.source_shard_id end,
+    destination_shard_id = case when command.operation_kind = 'activate_move'
+      then null else route.destination_shard_id end,
+    updated_at = now(),
+    closed_at = case when command.operation_kind = 'delete_workspace'
+      then now() else route.closed_at end
+  where route.workspace_id = command.workspace_id
+    and route.route_epoch = command.route_epoch;
 end
 $$;
 
 revoke all on function avalon_private.claim_routing_commands(text, integer) from public;
-revoke all on function avalon_private.acknowledge_routing_command(uuid, integer, uuid, bigint, text, uuid, text, bytea) from public;
+revoke all on function avalon_private.fail_routing_command_attempt(uuid, integer, text, integer) from public;
+revoke all on function avalon_private.enqueue_routing_command(uuid, bigint, text, text, text, jsonb) from public;
+revoke all on function avalon_private.create_workspace_route_command(uuid, uuid, text, text, text, jsonb) from public;
+revoke all on function avalon_private.create_workspace_invitation_command(uuid, bigint, bytea, text, uuid, text, timestamptz) from public;
+revoke all on function avalon_private.set_entitlement_command(uuid, bigint, text, text, jsonb, text) from public;
+revoke all on function avalon_private.acknowledge_routing_command(uuid, integer, uuid, bigint, text, bytea, uuid, text, bytea) from public;
 grant execute on function avalon_private.claim_routing_commands(text, integer) to avalon_global_router;
-grant execute on function avalon_private.acknowledge_routing_command(uuid, integer, uuid, bigint, text, uuid, text, bytea) to avalon_global_router;
+grant execute on function avalon_private.fail_routing_command_attempt(uuid, integer, text, integer) to avalon_global_router;
+grant execute on function avalon_private.enqueue_routing_command(uuid, bigint, text, text, text, jsonb) to avalon_global_router;
+grant execute on function avalon_private.create_workspace_route_command(uuid, uuid, text, text, text, jsonb) to avalon_global_router;
+grant execute on function avalon_private.create_workspace_invitation_command(uuid, bigint, bytea, text, uuid, text, timestamptz) to avalon_global_router;
+grant execute on function avalon_private.set_entitlement_command(uuid, bigint, text, text, jsonb, text) to avalon_global_router;
+grant execute on function avalon_private.acknowledge_routing_command(uuid, integer, uuid, bigint, text, bytea, uuid, text, bytea) to avalon_global_router;
 
 revoke all on all tables in schema avalon_private from anon, authenticated, avalon_global_router;
 grant select on avalon_private.global_accounts,

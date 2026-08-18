@@ -1,5 +1,5 @@
 begin;
-select plan(34);
+select plan(51);
 
 insert into auth.users (id, aud, role, email, created_at, updated_at)
 values ('018f1000-0000-7000-8000-000000000001', 'authenticated', 'authenticated',
@@ -12,7 +12,8 @@ select * from avalon_private.apply_global_workspace_command(
   '018f1000-0000-7000-8000-000000000201',
   '018f1000-0000-7000-8000-000000000301',
   1, 'global-us-1', 'global', 'create_workspace',
-  extensions.digest(convert_to('create-control-test', 'utf8'), 'sha256')
+  '{"version":1,"name":"Control workspace"}'::jsonb,
+  extensions.digest(convert_to('{"name": "Control workspace", "version": 1}', 'utf8'), 'sha256')
 );
 insert into avalon_private.workspace_members (
   workspace_id, platform_user_id, role, state, joined_at
@@ -30,7 +31,7 @@ select * from api.create_workstream(
 select * from api.append_user_message(
   (select id from api.workstreams where title = 'Run control'),
   (select root_substream_id from api.workstreams where title = 'Run control'),
-  'First input', 'control-message-1'
+  'First input', 'control-message-1', 'queue', 1
 );
 
 reset role;
@@ -125,6 +126,47 @@ select is(
   0,
   'stream Broadcast carries the verified overlap window'
 );
+select is(
+  (select recovered from avalon_private.workflow_begin_output_attempt(
+    (select id from avalon_private.agent_runs where workflow_instance_id like 'workstream/%/run/%' order by created_at limit 1),
+    (select id from avalon_private.agent_actions where operation_id = 'control/run-1/model-1'),
+    1,
+    '018f1000-0000-7000-8000-000000000491',
+    '018f1000-0000-7000-8000-000000000492',
+    now() + interval '1 hour'
+  )),
+  true,
+  'a timed-out begin retry recovers the active semantic output attempt'
+);
+select is(
+  (select byte_offset from avalon_private.workflow_begin_output_attempt(
+    (select id from avalon_private.agent_runs where workflow_instance_id like 'workstream/%/run/%' order by created_at limit 1),
+    (select id from avalon_private.agent_actions where operation_id = 'control/run-1/model-1'),
+    1,
+    '018f1000-0000-7000-8000-000000000493',
+    '018f1000-0000-7000-8000-000000000494',
+    now() + interval '1 hour'
+  )),
+  12::bigint,
+  'recovery returns the committed byte offset rather than allocating a competing turn'
+);
+select lives_ok(
+  $$select avalon_private.workflow_record_model_outcome(
+    (select id from avalon_private.agent_runs where workflow_instance_id like 'workstream/%/run/%' order by created_at limit 1),
+    (select id from avalon_private.agent_actions where operation_id = 'control/run-1/model-1'),
+    1, 'completed'
+  )$$,
+  'the semantic model outcome is durable before transcript finalization'
+);
+select is(
+  (select semantic_outcome from avalon_private.workflow_begin_action(
+    (select id from avalon_private.agent_runs
+      where workflow_instance_id like 'workstream/%/run/%' order by created_at limit 1),
+    1, 'model', 'control/run-1/model-1'
+  )),
+  'completed',
+  'a retry can recover the completed semantic outcome before output sealing'
+);
 select lives_ok(
   $$select avalon_private.finalize_active_output(
     (select id from avalon_private.agent_runs where workflow_instance_id like 'workstream/%/run/%' order by created_at limit 1),
@@ -135,6 +177,14 @@ select lives_ok(
   'the first response seals in its reserved sequence'
 );
 select is(
+  (select action_state from avalon_private.workflow_begin_action(
+    (select id from avalon_private.agent_runs where workflow_instance_id like 'workstream/%/run/%' order by created_at limit 1),
+    1, 'model', 'control/run-1/model-1'
+  )),
+  'succeeded',
+  'a Workflow retry observes the already-completed semantic model action'
+);
+select is(
   (select inline_text from avalon_private.conversation_parts where seq = 2
     and workstream_id = (select id from avalon_private.workstreams where title = 'Run control')),
   'first answer',
@@ -142,7 +192,7 @@ select is(
 );
 select is(
   (select state from avalon_private.workstreams where title = 'Run control'),
-  'active',
+  'running',
   'a completed loop does not complete the work stream lifecycle'
 );
 select is(
@@ -255,7 +305,7 @@ select is(
   jsonb_array_length(avalon_private.workflow_materialize_run(
     (select active_run_id from avalon_private.workstreams where title = 'Run control'), 2
   ) -> 'parts'),
-  5,
+  4,
   'rematerialization includes all committed inputs and excludes provisional output'
 );
 select avalon_private.workflow_observe_signal(
@@ -274,6 +324,22 @@ select * from avalon_private.workflow_begin_action(
   (select active_run_id from avalon_private.workstreams where title = 'Run control'),
   2, 'tool', 'control/run-2/tool-1'
 );
+select * from avalon_private.workflow_begin_tool_exchange(
+  (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+  (select id from avalon_private.agent_actions where operation_id = 'control/run-2/tool-1'),
+  2, 'provider-call-1', 'read_file', 'terminal',
+  '{"path":"README.md"}'::jsonb
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '018f1000-0000-7000-8000-000000000001', true);
+select * from api.append_user_message(
+  (select id from api.workstreams where title = 'Run control'),
+  (select root_substream_id from api.workstreams where title = 'Run control'),
+  'Keep this after the file read', 'control-message-mid-tool', 'queue',
+  (select revision from api.workstreams where title = 'Run control')
+);
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
 select lives_ok(
   $$select avalon_private.workflow_begin_tool_effect(
     (select active_run_id from avalon_private.workstreams where title = 'Run control'),
@@ -282,6 +348,16 @@ select lives_ok(
     extensions.digest(convert_to('{"path":"README.md"}', 'utf8'), 'sha256')
   )$$,
   'a tool effect begins only after the new control fence is observed'
+);
+select is(
+  (avalon_private.workflow_begin_tool_effect(
+    (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+    (select id from avalon_private.agent_actions where operation_id = 'control/run-2/tool-1'),
+    2, 'read', 'fetch-1', 'control/run-2/tool-1/effect-1',
+    extensions.digest(convert_to('{"path":"README.md"}', 'utf8'), 'sha256')
+  ) ->> 'recovered')::boolean,
+  true,
+  'a replayed effect intent is marked for reconciliation before provider execution'
 );
 select * from avalon_private.workflow_settle_tool_effect(
   (select id from avalon_private.tool_effects where operation_id = 'control/run-2/tool-1/effect-1'),
@@ -295,7 +371,7 @@ select lives_ok(
     2, 'provider-call-1', 'read_file', 'terminal',
     '{"path":"README.md"}'::jsonb, '{"text":"ok"}'::jsonb, true
   )$$,
-  'tool call and result commit in one transaction'
+  'a late tool result completes its previously durable call'
 );
 select is(
   (select result.seq - call.seq
@@ -303,8 +379,17 @@ select is(
    join avalon_private.conversation_parts result
      on result.related_part_id = call.id
    where call.provider_call_id = 'provider-call-1' and call.kind = 'tool_call'),
-  1::bigint,
-  'no user message can be sequenced between a tool call and its result'
+  2::bigint,
+  'physical history preserves user input received while the tool was running'
+);
+select is(
+  (select string_agg(part.kind, ',' order by turn.admission_ordinal, part.ordinal_in_turn)
+   from avalon_private.conversation_parts part
+   join avalon_private.turns turn on turn.id = part.turn_id
+   where part.source_operation_key = 'control-message-mid-tool'
+      or part.provider_call_id = 'provider-call-1'),
+  'tool_call,tool_result,text',
+  'provider admission keeps a valid tool exchange ahead of intervening user input'
 );
 select is(
   (select count(*)::bigint from avalon_private.conversation_parts
@@ -321,8 +406,119 @@ select is(
 select is(
   (select payload -> 'previous_batches' -> 1 ->> 'text' from realtime.messages
     where event = 'tool_exchange' order by inserted_at desc limit 1),
-  'Stop and use this correction',
-  'tool Broadcast overlaps the preceding committed content batch'
+  'Keep this after the file read',
+  'tool Broadcast overlaps the latest physically committed content batch'
+);
+
+select lives_ok(
+  $$select avalon_private.workflow_prepare_compaction(
+    (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+    2,
+    (select max(seq) from avalon_private.conversation_parts
+      where workstream_id = (select id from avalon_private.workstreams where title = 'Run control')),
+    'provider-messages-v1', 'test-model', 'test-model-v1', 'test-prompt-v1'
+  )$$,
+  'compaction captures an immutable admitted source boundary'
+);
+select is(
+  (select state from avalon_private.compaction_jobs),
+  'running',
+  'prepared compaction remains non-authoritative until its summary commits'
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '018f1000-0000-7000-8000-000000000001', true);
+select lives_ok(
+  $$select * from api.append_user_message(
+    (select id from api.workstreams where title = 'Run control'),
+    (select root_substream_id from api.workstreams where title = 'Run control'),
+    'Arrived while compaction was running', 'control-message-during-compaction', 'queue',
+    (select revision from api.workstreams where title = 'Run control')
+  )$$,
+  'new input can commit while an older immutable range is compacting'
+);
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+select lives_ok(
+  $$select avalon_private.workflow_finalize_compaction(
+    (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+    2, (select id from avalon_private.compaction_jobs),
+    'Earlier context was compacted without consuming newer input.'
+  )$$,
+  'compaction finalizes after revalidating source and authorization revisions'
+);
+select is(
+  (select state from avalon_private.compaction_jobs),
+  'ready',
+  'a revalidated summary becomes the current compacted checkpoint'
+);
+select is(
+  (avalon_private.workflow_materialize_run(
+    (select active_run_id from avalon_private.workstreams where title = 'Run control'), 2
+  ) -> 'parts' -> 0 ->> 'kind'),
+  'summary',
+  'provider projection places the compacted checkpoint before the live tail'
+);
+select is(
+  (select inline_text from avalon_private.conversation_parts
+    where source_operation_key = 'control-message-during-compaction'),
+  'Arrived while compaction was running',
+  'queued messages committed during compaction remain durable for the successor loop'
+);
+
+select * from avalon_private.workflow_begin_action(
+  (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+  2, 'tool', 'control/run-2/tool-stale'
+);
+select * from avalon_private.workflow_begin_tool_exchange(
+  (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+  (select id from avalon_private.agent_actions where operation_id = 'control/run-2/tool-stale'),
+  2, 'provider-call-stale', 'read_file', 'terminal',
+  '{"path":"stale.txt"}'::jsonb
+);
+select * from avalon_private.workflow_begin_tool_effect(
+  (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+  (select id from avalon_private.agent_actions where operation_id = 'control/run-2/tool-stale'),
+  2, 'read', 'fetch-stale', 'control/run-2/tool-stale/effect',
+  extensions.digest(convert_to('{"path":"stale.txt"}', 'utf8'), 'sha256')
+);
+select * from avalon_private.workflow_settle_tool_effect(
+  (select id from avalon_private.tool_effects
+    where operation_id = 'control/run-2/tool-stale/effect'),
+  'succeeded', 'provider-read-stale',
+  extensions.digest(convert_to('{"text":"must-not-admit"}', 'utf8'), 'sha256')
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '018f1000-0000-7000-8000-000000000001', true);
+select * from api.append_user_message(
+  (select id from api.workstreams where title = 'Run control'),
+  (select root_substream_id from api.workstreams where title = 'Run control'),
+  'Steer before the result commits', 'control-message-steer-mid-tool', 'steer',
+  (select revision from api.workstreams where title = 'Run control')
+);
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+select is(
+  (avalon_private.workflow_commit_tool_exchange(
+    (select active_run_id from avalon_private.workstreams where title = 'Run control'),
+    (select id from avalon_private.agent_actions where operation_id = 'control/run-2/tool-stale'),
+    2, 'provider-call-stale', 'read_file', 'terminal',
+    '{"path":"stale.txt"}'::jsonb, '{"text":"must-not-admit"}'::jsonb, true
+  ) ->> 'reason'),
+  'control_revision_changed',
+  'steering supersedes a settled tool action admitted against the old control revision'
+);
+select is(
+  (select status from avalon_private.turns
+    where action_id = (select id from avalon_private.agent_actions
+      where operation_id = 'control/run-2/tool-stale')),
+  'superseded',
+  'the stale open tool turn is retained only as superseded diagnostic history'
+);
+select is(
+  (select count(*)::bigint from avalon_private.conversation_parts
+    where provider_call_id = 'provider-call-stale' and kind = 'tool_result'),
+  0::bigint,
+  'a stale settled result never becomes canonical conversation content'
 );
 
 select * from finish();

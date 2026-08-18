@@ -33,6 +33,7 @@
     "postgres:regional:start": "supabase start --workdir infrastructure/supabase/regional",
     "postgres:regional:reset": "supabase db reset --workdir infrastructure/supabase/regional",
     "postgres:regional:test": "supabase test db --workdir infrastructure/supabase/regional",
+    "postgres:storage:provision": "node scripts/provision-supabase-storage.mjs",
     "postgres:stop": "supabase stop --all --no-backup",
     "health:regions": "node scripts/check-regional-health.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
@@ -65,7 +66,8 @@
     "typescript": "catalog:",
     "typescript-eslint": "latest",
     "vitest": "latest",
-    "ws": "8.21.0"
+    "ws": "8.21.0",
+    "yaml": "2.9.0"
   },
   "description": "Avalon is a work-stream-first desktop workspace where people and an agent collaborate in the same durable context. It combines an Electron desktop client with a regional Hono API on Cloudflare Workers, D1, R2, Durable Objects, Queues, and Workflows.",
   "main": "index.js",

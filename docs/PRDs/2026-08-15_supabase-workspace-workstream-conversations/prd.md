@@ -1025,10 +1025,15 @@ deletes an ordinary successful delivery or archives the message when auditable
 delivery history is required. Trusted Cloudflare Workers pull with
 `pgmq.read(queue_name, 60, 32)`: a batch of at most 32 and a 60-second visibility
 timeout. Work expected to continue renews visibility after 30 seconds through
-`api.renew_queue_message`, a `SECURITY DEFINER` wrapper around `pgmq.set_vt`
-that hardcodes the allowed queue names/ranges, validates ownership, uses an empty
+`avalon_private.queue_set_visibility`, a `SECURITY DEFINER` wrapper around
+`pgmq.set_vt` that hardcodes the allowed queue names/ranges and requires the
+current claim token, message ID, semantic key, and request hash, uses an empty
 `search_path`, and has `PUBLIC` execution revoked. A message enters the explicit
-dead-letter queue after ten reads.
+dead-letter queue after ten reads only if the caller still owns that exact live
+claim. Invalid bodies are claimed under `message-<queue message ID>` before
+schema validation. Dead-letter insertion, receipt quarantine, and PGMQ archive
+are one transaction, so an expired consumer cannot archive a successor's live
+delivery.
 
 Queue Workers connect through Supavisor transaction mode as a dedicated
 `avalon_queue_runner` login whose only grants are execute on the reviewed
@@ -1132,9 +1137,11 @@ Six logical private topic classes are sufficient for the active surface:
   actual bounded personal-overlay patches;
 - `workstream:<workstream_id>:<workspace_access_revision>:<workstream_access_revision>`:
   actual foreground committed inline parts and active-output text batches;
-- `substream:<substream_id>:<substream_access_revision>`: content for a
-  restricted lane when it must stream independently, with the same actual
-  bounded inline-part envelope;
+- `substream:<substream_id>:<workspace_access_revision>:<workstream_access_revision>:<substream_access_revision>`:
+  content for a restricted lane when it must stream independently, with the
+  same actual bounded inline-part envelope. Carrying every enclosing access
+  revision strands an already joined channel after a workspace-, work-stream-,
+  or substream-level revocation;
 - `region-user:<user_id>`: notification-only completion/needs-input coordinates
   while that user has active work in the regional shard;
 - Workflow `sendEvent`, not a Realtime topic, carries run-control signal IDs.
@@ -1992,7 +1999,8 @@ request hash is always a conflict.
 #### `queue_inbox_receipts`, `outbox_messages`, and `dead_letters`
 
 `queue_inbox_receipts(queue_name, semantic_key, message_id, request_hash,
-state, result_ref, attempts, created_at, completed_at)` is unique by queue and
+state, claim_token, lease_expires_at, result_ref, attempts, created_at,
+completed_at)` is unique by queue and
 semantic key. `outbox_messages(id, workspace_id, destination_kind,
 destination_ref, operation_key, payload_ref, state, attempts, next_attempt_at,
 last_error, created_at)` represents a required external delivery only when a
@@ -2407,6 +2415,12 @@ imported_content_hash, state, verified_at, activated_at)` progresses
 `prepared -> verified -> active`.
 The source gate row is the only authority linearization record; the destination
 and global route may lag it but may never contradict it by accepting writes.
+Every D1 table with direct `workspace_id` ownership, and every relationship
+table that inherits workspace ownership through a parent, has insert/update/
+delete triggers that require the gate to remain writable. `workspaces` itself
+has update/delete guards. Only authority-gate, export-manifest, and comparison
+evidence is allowed to mutate during or after closure, and a schema inventory
+test fails when a future workspace-owned table omits those fences.
 Before closure, a failed or over-15-minute migration reopens D1. After closure,
 recovery can only finish Supabase activation/global convergence at that epoch.
 
@@ -2912,6 +2926,12 @@ reopens at that epoch; recovery resumes destination activation/global
 convergence. Provider callbacks and run/effect results carry epochs and receipts
 so a late old-system result cannot append canonically. A cohort that cannot
 finish within 15 minutes aborts before closure and is rescheduled smaller.
+The D1 fence applies to every row with actual workspace ownership. Nullable
+workspace references on global telemetry are not captured by a workspace
+cutover. Foreign-key child cascades are authorized by the already-fenced parent
+delete, while standalone deletion of the workspace authority gate is forbidden;
+these exceptions preserve referential cleanup without reopening a product write
+path.
 
 ### Phase 5 — Workflow and derived-work cutover
 

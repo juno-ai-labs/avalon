@@ -55,6 +55,43 @@ destination verification, desktop session/Realtime rollout, and route
 activation all complete. [`supabase-postgres.md`](supabase-postgres.md) owns the
 full gate and failure model.
 
+Create a `postgres-production` GitHub environment for schema deployment and add
+these environment secrets:
+
+- `SUPABASE_GLOBAL_CONTROL_MIGRATION_DATABASE_URL`
+- `SUPABASE_GLOBAL_REGIONAL_MIGRATION_DATABASE_URL`
+- `SUPABASE_EU_REGIONAL_MIGRATION_DATABASE_URL`
+
+Add the corresponding non-secret environment variables:
+
+- `SUPABASE_GLOBAL_CONTROL_PROJECT_REF`
+- `SUPABASE_GLOBAL_REGIONAL_PROJECT_REF`
+- `SUPABASE_EU_REGIONAL_PROJECT_REF`
+
+These are elevated migration connections, not the least-privilege runtime-role
+URLs. Use each project's direct Postgres URL when the runner has IPv6, or its
+Supavisor **session-mode** URL on port 5432 when it does not. Percent-encode
+password characters that are reserved in a URL. Do not use transaction mode on
+port 6543, expose a URL through `VITE_`, or substitute Supabase's API
+`service_role` key. Each project ref must be the 20-character ref from its
+Supabase project URL. The workflow extracts the ref from each database URL,
+requires it to match the variable for that slot, verifies the hosted project
+kind/region through the Management API, and requires all three refs to be
+distinct before it plans or applies a migration. This catches a swapped,
+duplicated, or wrong-region target before credentials can mutate it. The regional schema
+intentionally creates roles, extensions, queues, cron jobs, and Storage
+policies.
+
+Like `api-production`, `postgres-production` scopes credentials rather than
+adding a human gate. Configure each environment's deployment branches and tags
+to **Selected branches and tags**, with protected `main` as the only branch and
+no tag rule. That restriction is the backstop that prevents a workflow added on
+an unreviewed branch from requesting production credentials; the workflow's own
+immutable-SHA check is deliberately a second boundary. Do not configure required
+reviewers: every applicable merge to `main` is already an authorized continuous
+deployment, and pausing the database job would also pause the Worker release
+behind it.
+
 One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data. Both regions do send it an evaluation context carrying workspace, work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email domains — bounded by the rules in [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
@@ -433,9 +470,21 @@ For ordinary releases after both entrypoints exist:
 2. Create or confirm each region's named Cloudflare resources. Scoped memory requires `avalon-global-memory` and `avalon-eu-memory` Vectorize indexes with 1,024 dimensions and cosine distance, plus the Workers AI binding declared by each API Worker.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
-5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
+5. Let `.github/workflows/deploy-api.yml` decide whether this revision needs the
+   three-database Supabase gate. It runs the hosted-resource check and both
+   Wrangler dry builds first. It then calls `.github/workflows/migrate-supabase.yml`
+   when either Worker selects `shadow`/`postgres`, a Supabase migration-owned
+   file changed, or a protected-main operator explicitly forces the gate. The
+   called workflow rebuilds and tests both schema families locally, plans the
+   EU product shard, Global product shard, and Global routing/control database
+   before mutating any of them, then migrates in that order. A direct dispatch
+   of the migration workflow is a current-protected-main, read-only preview; it
+   cannot apply. An ordinary D1-authority release with no Supabase migration source
+   change skips this gate. Next the API workflow lists and applies pending D1
+   migrations to EU and Global. The unsuffixed `pnpm db:migrate` targets local
+   Wrangler state only and never touches a hosted database.
 6. Deploy the EU Worker, then the Global Worker. For the first inbound-email release and the first shared-Notion-ingress release, use the three-stage bootstrap order above instead.
-7. Call `GET /health` on both regional APIs with `pnpm health:regions`, which fails unless both regions report `ok`. That now includes the Worker's own environment contract: a region missing a required secret answers `503` here and names the keys, rather than reporting healthy while every other route returns `service_misconfigured`.
+7. Call `GET /health` on both regional APIs with `pnpm health:regions`, which fails unless both regions report `ok`. That now includes the Worker's own environment contract: a region missing a required secret answers `503` here and names the keys, rather than reporting healthy while every other route returns `service_misconfigured`. A `shadow`/`postgres` candidate also remains `503` while `POSTGRES_AUTHORITY_RUNTIME_BLOCKERS` is nonempty; remove blockers only in the reviewed change that implements and tests each named surface.
 8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
 9. Complete one Google identity login in a provider test account.
 10. Connect **Google Mail + Calendar** and verify a Gmail read, Gmail draft, Calendar read, and Calendar test-event create/update. Delete the provider-side test fixture afterward.
@@ -448,10 +497,55 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 
 ### Automated workflows
 
-Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
+The GitHub Actions workflows below carry the mechanical parts of this
+procedure. Local schema validation uses the same checked-in commands, but only
+the production workflow owns fleet ordering, protected-main authorization,
+hosted credentials, and the release-wide lock; a local run is not an
+interchangeable production migration path.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It does not create resources, confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/migrate-supabase.yml` is the reusable step-5 Postgres gate.
+  It uses the repository-pinned Supabase CLI, validates Global and regional
+  migrations with local pgTAP projects, verifies the three expected and
+  distinct project refs, and obtains every hosted `db push --dry-run` plan
+  before mutation. Applying runs are accepted only from the API release and
+  migrate EU product, Global product, then Global routing/control. A direct
+  dispatch must resolve to the current protected `main` revision and is
+  preview-only. A push-triggered apply may use the pushed revision after a newer
+  merge lands only when Git proves it remains an ancestor of protected `main`;
+  this prevents a harmless concurrent merge from invalidating an in-flight
+  release without admitting an unreviewed ref. Each target URL enters only its
+  own identity-validation and CLI steps; the distinctness check receives the
+  three non-secret refs after validation. Setup actions and one target's CLI
+  never receive the other targets' URLs.
+  Every target's migration-history command runs even after a partial apply
+  failure, while the job still fails.
+  Recover by rerunning the same protected revision or landing a forward
+  migration. Do not run `migration repair`, edit production schema in the
+  Dashboard, or launch another migration pusher while recovering.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7. It verifies the
+  repository, then checks hosted R2 resources and runs both Wrangler dry builds
+  before any remote database mutation. It conditionally calls the Postgres gate
+  when the authority, migration-source diff, or protected-main force flag
+  requires it; an ordinary D1-only release does not depend on the candidate
+  Supabase fleet. It then applies remote D1 migrations, deploys EU then Global,
+  and performs the regional health check. One `avalon-production-release` lock
+  spans preflight, both database systems, both Worker deployments, and health,
+  so a second schema revision cannot interleave between a migration and its
+  Workers. It runs automatically on merges to `main` that touch `apps/api`,
+  `packages` (including `packages/db/migrations`), `infrastructure/supabase`,
+  the root manifest or lockfile, the workspace file, or either deployment
+  workflow; documentation, desktop, and site-only merges do not redeploy. A
+  `workflow_dispatch` run can restrict Worker regions, skip D1 migration, and
+  deploy an arbitrary immutable ref while D1 remains authoritative. It cannot
+  give that arbitrary ref Postgres production authority: any release requiring
+  the Supabase gate must resolve exactly to current protected `main`. The verify
+  job resolves the revision once, and preflight, the called database workflow,
+  and deploy all check out that SHA. The workflow does not create resources,
+  confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and
+  one-time — and it must not be used for the three-stage inbound-email bootstrap
+  or another release that introduces a new cross-region entrypoint. Hold such a
+  change out of `main` until the staged rollout is complete.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 
 #### Releasing the desktop app
@@ -504,13 +598,30 @@ That commit is load-bearing rather than tidy bookkeeping. `plan-release.mjs` tre
 
 The site build only queries the live channel when the config is unpublished: `pnpm deploy` sets `AVALON_RELEASE_DISCOVERY=1`, and `discoverDesktopRelease` returns the configured version immediately when `published` is `true`, falling back to reading `latest-mac.yml` and verifying the canonical installer when it is not. That makes the committed config authoritative for a published channel, and it is why a standalone site deploy between a release and its recorded config would advertise the superseded version. The download link is the canonical `Avalon.dmg` regardless, so the failure is a wrong version string rather than a broken download. `scripts/check-site-release-config.mjs` runs in the site deployment and fails on that mismatch, naming the fix; an unreachable manifest is reported and passed over rather than blocking an unrelated copy change.
 
-Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable `CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API deployment and in `site-production` for the site deployment, and the existing `desktop-release` environment for the macOS release. Worker secrets are never held by Actions; they are set per region with Wrangler.
+Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable
+`CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API
+deployment and in `site-production` for the site deployment; the three migration
+URL secrets and three expected project-ref variables listed under required
+hosted resources in `postgres-production`; and the existing `desktop-release`
+environment for the macOS release. Worker secrets are never held by Actions;
+they are set per region with Wrangler.
 
 Deployments cannot overlap. Each workflow declares a concurrency group, so a second run waits for the first to finish, and a burst of merges collapses to the newest commit: GitHub keeps only one run pending per group and drops the superseded ones. Runs already in progress are never cancelled, so a migration cannot be interrupted halfway. Each run deploys the commit that triggered it, not the tip of `main` at the time it starts.
 
 The one interaction the platform does not sequence is an API deployment overlapping a macOS release, because they are separate workflows. The visible symptom is the desktop release failing its regional health gate while a Worker deployment is mid-flight; re-dispatch the tag once the API run is green. Avoid tagging a desktop release in the same minutes as an API-touching merge.
 
-Because API deployment is continuous, a merge to `main` is a production release. Do not add required reviewers to `api-production`; that environment scopes the Cloudflare token to the deployment job and is not an approval gate. Migrations apply automatically, so a migration is live the moment its pull request merges: an irreversible or destructive migration must be split into backward-compatible steps, and a rollback is a forward migration, never a redeployment of the previous Worker. A failed deployment leaves the migrations applied; recover by fixing forward on `main`.
+Because API deployment is continuous, a merge to `main` is a production release. Do not add required reviewers to `api-production`; that environment scopes the Cloudflare token to the deployment job and is not an approval gate. Keep its environment deployment rule restricted to protected `main`, even though a dispatch may check out an arbitrary immutable ref after the workflow itself starts from `main`. Migrations apply automatically, so a migration is live the moment its pull request merges: an irreversible or destructive migration must be split into backward-compatible steps, and a rollback is a forward migration, never a redeployment of the previous Worker. A failed deployment leaves the migrations applied; recover by fixing forward on `main`.
+
+Supabase fleet migration is serialized but cannot be one transaction across
+three Postgres servers. All remote dry runs happen first, which avoids beginning
+when one database is unreachable or its history is already incompatible. If EU
+or Global product commits and a later target fails, the Worker deployment stays
+blocked. Inspect the failed target and the three `migration list` outputs, then
+rerun the same immutable revision: `supabase db push` skips migrations already
+recorded in `supabase_migrations.schema_migrations`. If the SQL itself is wrong,
+land a forward migration and rerun. Never automatically roll back DDL or change
+history with `migration repair`; escalate genuine history drift for a manual
+database review.
 
 ### The window between a migration and the Worker that needs it
 

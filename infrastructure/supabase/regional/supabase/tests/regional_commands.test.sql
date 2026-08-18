@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(32);
 
 insert into auth.users (id, aud, role, email, created_at, updated_at)
 values
@@ -19,7 +19,8 @@ select * from avalon_private.apply_global_workspace_command(
   '018f0000-0000-7000-8000-000000000201',
   '018f0000-0000-7000-8000-000000000301',
   1, 'global-us-1', 'global', 'create_workspace',
-  extensions.digest(convert_to('create', 'utf8'), 'sha256')
+  '{"version":1,"name":"Command workspace"}'::jsonb,
+  extensions.digest(convert_to('{"name": "Command workspace", "version": 1}', 'utf8'), 'sha256')
 );
 insert into avalon_private.workspace_members (
   workspace_id, platform_user_id, role, state, joined_at
@@ -61,7 +62,7 @@ select lives_ok(
   $$select * from api.append_user_message(
     (select id from api.workstreams where title = 'Investigate latency'),
     (select root_substream_id from api.workstreams where title = 'Investigate latency'),
-    'Please inspect the slow request', 'message-1'
+    'Please inspect the slow request', 'message-1', 'queue', 1
   )$$,
   'first message is admitted and starts one durable loop'
 );
@@ -91,7 +92,7 @@ select lives_ok(
   $$select * from api.append_user_message(
     (select id from api.workstreams where title = 'Investigate latency'),
     (select root_substream_id from api.workstreams where title = 'Investigate latency'),
-    'Please inspect the slow request', 'message-1'
+    'Please inspect the slow request', 'message-1', 'queue', 1
   )$$,
   'exact message retry returns its durable receipt'
 );
@@ -179,6 +180,122 @@ select is(
   (select count(*)::bigint from api.workstream_sidebar),
   0::bigint,
   'an authenticated outsider sees no workspace sidebar rows'
+);
+
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+insert into avalon_private.workspace_members (
+  workspace_id, platform_user_id, role, state, joined_at
+) values (
+  '018f0000-0000-7000-8000-000000000301',
+  '018f0000-0000-7000-8000-000000000102', 'guest', 'active', now()
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '018f0000-0000-7000-8000-000000000002', true);
+select is(
+  (select count(*)::bigint from api.workstream_sidebar),
+  1::bigint,
+  'a workspace guest can view a workspace-mode work stream'
+);
+select throws_ok(
+  $$select * from api.append_user_message(
+    (select id from api.workstreams where title = 'Investigate latency'),
+    (select root_substream_id from api.workstreams where title = 'Investigate latency'),
+    'A guest must not contribute', 'guest-message-denied', 'queue',
+    (select revision from api.workstreams where title = 'Investigate latency')
+  )$$,
+  '42501', 'substream contribution denied',
+  'workspace membership capability is enforced before workstream access mode'
+);
+
+reset role;
+select set_config('request.jwt.claim.sub', '018f0000-0000-7000-8000-000000000002', true);
+select is(
+  avalon_private.can_access_container(
+    'workspace', '018f0000-0000-7000-8000-000000000301', 'administer'
+  ),
+  false,
+  'a workspace guest cannot satisfy an administer container capability'
+);
+select set_config('request.jwt.claim.sub', '018f0000-0000-7000-8000-000000000001', true);
+select is(
+  avalon_private.can_access_container(
+    'workspace', '018f0000-0000-7000-8000-000000000301', 'administer'
+  ),
+  true,
+  'a workspace owner satisfies the administer container capability'
+);
+set local role authenticated;
+select is(
+  (api.set_workstream_access_mode(
+    (select id from api.workstreams where title = 'Investigate latency'),
+    'restricted', 1, 'restrict-stream-1'
+  ) ->> 'access_revision')::bigint,
+  2::bigint,
+  'changing access mode rotates the workstream authorization fence'
+);
+
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+select is(
+  (select state from avalon_private.agent_runs),
+  'interrupting',
+  'an access change durably interrupts an active loop'
+);
+select is(
+  (select signal_kind from avalon_private.run_signals
+    where operation_key = 'access-change:restrict-stream-1'),
+  'cancel',
+  'the interrupted loop receives a durable cancellation signal'
+);
+select matches(
+  avalon_private.content_topic_for_substream(
+    (select root_substream_id from avalon_private.workstreams where title = 'Investigate latency')
+  ),
+  ':1:2$',
+  'the content topic includes current workspace and workstream access revisions'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '018f0000-0000-7000-8000-000000000002', true);
+select is(
+  (select count(*)::bigint from api.workstream_sidebar),
+  0::bigint,
+  'restriction immediately removes a workspace guest without a grant'
+);
+
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '018f0000-0000-7000-8000-000000000001', true);
+select is(
+  (api.set_workstream_access(
+    (select id from api.workstreams where title = 'Investigate latency'),
+    '018f0000-0000-7000-8000-000000000102', 'view', 'active', 2,
+    'grant-stream-view-1'
+  ) ->> 'access_revision')::bigint,
+  3::bigint,
+  'an explicit grant rotates the fence again'
+);
+select is(
+  (api.set_workstream_access(
+    (select id from api.workstreams where title = 'Investigate latency'),
+    '018f0000-0000-7000-8000-000000000102', 'view', 'active', 2,
+    'grant-stream-view-1'
+  ) ->> 'access_revision')::bigint,
+  3::bigint,
+  'an exact access-command retry resolves before the stale revision check'
+);
+
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '018f0000-0000-7000-8000-000000000002', true);
+select is(
+  (select count(*)::bigint from api.conversation_parts),
+  2::bigint,
+  'a newly authorized viewer can read canonical history under live access'
 );
 
 select * from finish();

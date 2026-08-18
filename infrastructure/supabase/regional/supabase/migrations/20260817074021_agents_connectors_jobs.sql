@@ -101,6 +101,7 @@ create table avalon_private.agent_runs (
   owner_id uuid not null,
   execution_principal_kind text not null check (execution_principal_kind in ('user', 'workspace')),
   execution_principal_id uuid not null,
+  audience_user_id uuid,
   substream_id uuid references avalon_private.substreams(id),
   admission_batch_id uuid unique references avalon_private.input_admission_batches(id)
     deferrable initially deferred,
@@ -130,7 +131,12 @@ create table avalon_private.agent_runs (
   started_at timestamptz,
   last_progress_at timestamptz,
   completed_at timestamptz,
-  unique nulls not distinct (owner_kind, owner_id, admission_batch_id)
+  unique nulls not distinct (owner_kind, owner_id, admission_batch_id),
+  check (
+    owner_kind = 'workstream'
+    or execution_principal_kind = 'workspace'
+    or audience_user_id = execution_principal_id
+  )
 );
 
 create index agent_runs_active_owner
@@ -160,6 +166,9 @@ create table avalon_private.agent_actions (
   control_revision bigint not null check (control_revision > 0),
   input_ref uuid,
   output_ref uuid,
+  semantic_outcome text check (semantic_outcome is null or semantic_outcome in (
+    'completed', 'needs_input', 'failed', 'stopped'
+  )),
   operation_id text not null unique check (length(operation_id) between 1 and 256),
   started_at timestamptz,
   completed_at timestamptz,

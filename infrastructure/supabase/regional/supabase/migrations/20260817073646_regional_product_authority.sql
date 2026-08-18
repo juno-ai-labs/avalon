@@ -28,23 +28,28 @@ $$;
 revoke all on schema avalon_private from avalon_workflow_runner, avalon_queue_runner, avalon_regional_router;
 grant usage on schema avalon_private to avalon_workflow_runner, avalon_queue_runner, avalon_regional_router;
 
-create or replace function avalon_private.uuid_v7()
+create or replace function avalon_private.uuid_v7_from(
+  p_unix_ms bigint,
+  p_random bytea
+)
 returns uuid
 language plpgsql
-volatile
+immutable
 set search_path = ''
 as $$
 declare
-  value bytea := extensions.gen_random_bytes(16);
-  unix_ms bigint := floor(extract(epoch from clock_timestamp()) * 1000);
+  value bytea := p_random;
   hex text;
 begin
-  value := set_byte(value, 0, ((unix_ms >> 40) & 255)::integer);
-  value := set_byte(value, 1, ((unix_ms >> 32) & 255)::integer);
-  value := set_byte(value, 2, ((unix_ms >> 24) & 255)::integer);
-  value := set_byte(value, 3, ((unix_ms >> 16) & 255)::integer);
-  value := set_byte(value, 4, ((unix_ms >> 8) & 255)::integer);
-  value := set_byte(value, 5, (unix_ms & 255)::integer);
+  if p_unix_ms < 0 or p_unix_ms > 281474976710655 or octet_length(p_random) <> 16 then
+    raise exception using errcode = '22023', message = 'uuid v7 input out of range';
+  end if;
+  value := set_byte(value, 0, ((p_unix_ms >> 40) & 255)::integer);
+  value := set_byte(value, 1, ((p_unix_ms >> 32) & 255)::integer);
+  value := set_byte(value, 2, ((p_unix_ms >> 24) & 255)::integer);
+  value := set_byte(value, 3, ((p_unix_ms >> 16) & 255)::integer);
+  value := set_byte(value, 4, ((p_unix_ms >> 8) & 255)::integer);
+  value := set_byte(value, 5, (p_unix_ms & 255)::integer);
   value := set_byte(value, 6, ((get_byte(value, 6) & 15) | 112)::integer);
   value := set_byte(value, 8, ((get_byte(value, 8) & 63) | 128)::integer);
   hex := encode(value, 'hex');
@@ -56,7 +61,31 @@ begin
 end
 $$;
 
+create or replace function avalon_private.uuid_v7()
+returns uuid
+language sql
+volatile
+set search_path = ''
+as $$
+  select avalon_private.uuid_v7_from(
+    floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+    extensions.gen_random_bytes(16)
+  )
+$$;
+
+create or replace function avalon_private.is_uuid_v7(p_value uuid)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select p_value is not null
+    and p_value::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+$$;
+
 revoke all on function avalon_private.uuid_v7() from public;
+revoke all on function avalon_private.uuid_v7_from(bigint, bytea) from public;
+revoke all on function avalon_private.is_uuid_v7(uuid) from public;
 
 create sequence avalon_private.workspace_event_sequence as bigint;
 create sequence avalon_private.activity_event_sequence as bigint;
@@ -78,7 +107,7 @@ create index platform_identities_active
 
 create table avalon_private.workspaces (
   id uuid primary key,
-  region_key text not null check (length(region_key) between 1 and 32),
+  region_key text not null check (region_key in ('global', 'eu')),
   shard_id text not null check (length(shard_id) between 1 and 64),
   route_epoch bigint not null check (route_epoch > 0),
   name text not null check (length(name) between 1 and 160),
@@ -98,7 +127,7 @@ create index workspaces_operational
 create table avalon_private.workspace_route_gates (
   workspace_id uuid primary key references avalon_private.workspaces(id) on delete cascade,
   local_shard_id text not null,
-  region_key text not null,
+  region_key text not null check (region_key in ('global', 'eu')),
   route_epoch bigint not null check (route_epoch > 0),
   authority_state text not null check (authority_state in ('pending', 'writable', 'read_only', 'closed')),
   source_closure_cursor text,
@@ -159,6 +188,36 @@ create index workspace_members_by_user
 create index workspace_members_by_role
   on avalon_private.workspace_members (workspace_id, state, role, platform_user_id);
 
+create table avalon_private.workspace_invitations (
+  id uuid primary key,
+  workspace_id uuid not null references avalon_private.workspaces(id) on delete cascade,
+  route_epoch bigint not null check (route_epoch > 0),
+  email_hash bytea not null check (octet_length(email_hash) = 32),
+  role text not null check (role in ('owner', 'admin', 'member', 'guest')),
+  state text not null default 'pending' check (state in ('pending', 'accepted', 'revoked', 'expired')),
+  expires_at timestamptz not null,
+  applied_command_id uuid not null unique,
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  foreign key (workspace_id, route_epoch)
+    references avalon_private.workspaces(id, route_epoch)
+);
+
+create index workspace_invitations_pending
+  on avalon_private.workspace_invitations (workspace_id, email_hash, expires_at)
+  where state = 'pending';
+
+create table avalon_private.workspace_entitlements (
+  workspace_id uuid not null references avalon_private.workspaces(id) on delete cascade,
+  entitlement_key text not null check (length(entitlement_key) between 1 and 128),
+  version bigint not null check (version > 0),
+  state text not null check (state in ('active', 'suspended', 'expired')),
+  value jsonb not null default '{}'::jsonb check (pg_column_size(value) <= 8192),
+  applied_command_id uuid not null unique,
+  effective_at timestamptz not null default now(),
+  primary key (workspace_id, entitlement_key, version)
+);
+
 create table avalon_private.workstreams (
   id uuid primary key default avalon_private.uuid_v7(),
   workspace_id uuid not null references avalon_private.workspaces(id) on delete cascade,
@@ -167,7 +226,11 @@ create table avalon_private.workstreams (
   origin_kind text not null check (origin_kind in ('human', 'suggestion', 'automation', 'import', 'connector', 'system')),
   origin_id uuid,
   access_mode text not null default 'workspace' check (access_mode in ('workspace', 'restricted')),
-  state text not null default 'active' check (state in ('planned', 'active', 'waiting', 'needs_input', 'error', 'completed', 'cancelled', 'deleting', 'deleted')),
+  state text not null default 'scheduled' check (state in (
+    'scheduled', 'preparing_context', 'running', 'interrupting',
+    'waiting_capacity', 'needs_input', 'completed', 'cancelled_cleanly',
+    'failed', 'archived', 'deleting', 'restoring'
+  )),
   state_reason text check (state_reason is null or length(state_reason) <= 512),
   next_seq bigint not null default 1 check (next_seq > 0),
   latest_seq bigint not null default 0 check (latest_seq >= 0),
@@ -189,7 +252,7 @@ create table avalon_private.workstreams (
   unique (root_substream_id),
   check (latest_seq < next_seq),
   check ((state = 'completed') = (completed_at is not null)),
-  check ((state = 'error') = (error_at is not null))
+  check ((state = 'failed') = (error_at is not null))
 );
 
 create index workstreams_by_collection
@@ -223,7 +286,7 @@ create table avalon_private.workstream_cards (
   origin_kind text not null,
   exact_state text not null,
   state_reason text check (state_reason is null or length(state_reason) <= 512),
-  lifecycle_family text not null check (lifecycle_family in ('planned', 'in_progress', 'completed')),
+  lifecycle_family text not null check (lifecycle_family in ('in_progress', 'completed', 'error')),
   last_activity_at timestamptz not null,
   completed_at timestamptz,
   error_at timestamptz,
@@ -313,6 +376,8 @@ create table avalon_private.part_mentions (
   mentioned_user_id uuid not null,
   workspace_id uuid not null references avalon_private.workspaces(id) on delete cascade,
   workstream_id uuid not null references avalon_private.workstreams(id) on delete cascade,
+  substream_id uuid not null,
+  access_revision bigint not null check (access_revision > 0),
   mention_ordinal bigint not null check (mention_ordinal > 0),
   source_token text not null check (length(source_token) between 1 and 256),
   created_at timestamptz not null default now(),
@@ -321,6 +386,8 @@ create table avalon_private.part_mentions (
 
 create index part_mentions_by_user
   on avalon_private.part_mentions (workspace_id, mentioned_user_id, mention_ordinal desc);
+create index part_mentions_by_substream_revision
+  on avalon_private.part_mentions (substream_id, access_revision, mention_ordinal desc);
 
 create table avalon_private.workstream_participants (
   workspace_id uuid not null references avalon_private.workspaces(id) on delete cascade,
@@ -403,8 +470,15 @@ as $$
     select 1
     from avalon_private.workstreams workstream
     where workstream.id = p_workstream_id
-      and workstream.state <> 'deleted'
-      and avalon_private.can_access_workspace(workstream.workspace_id, 'guest')
+      and workstream.state not in ('archived', 'deleting')
+      and avalon_private.can_access_workspace(
+        workstream.workspace_id,
+        case p_capability
+          when 'administer' then 'admin'
+          when 'contribute' then 'member'
+          else 'guest'
+        end
+      )
       and (
         workstream.access_mode = 'workspace'
         or exists (

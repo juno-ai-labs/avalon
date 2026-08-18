@@ -6,6 +6,8 @@ import { logEvent } from "../observability/logger";
 import {
   createPostgresClient,
   EXPECTED_POSTGRES_ROLE,
+  POSTGRES_AUTHORITY_RUNTIME_BLOCKERS,
+  postgresAuthorityRuntimeReady,
   postgresHealthRoles,
   productDataAuthority,
 } from "../postgres/runtime";
@@ -82,15 +84,23 @@ healthRoutes.get("/", async (c) => {
   if (dataAuthority === "d1") {
     checks.postgres = { ok: true, message: "standby; D1 remains authoritative" };
   } else {
+    checks["postgres.runtime"] = postgresAuthorityRuntimeReady()
+      ? { ok: true, message: "product runtime complete" }
+      : {
+          ok: false,
+          message: `product runtime incomplete: ${POSTGRES_AUTHORITY_RUNTIME_BLOCKERS.join("; ")}`,
+        };
     const roleChecks = await Promise.all(postgresHealthRoles(c.env).map(async (role) => {
       let postgresClient: ReturnType<typeof createPostgresClient> | undefined;
       let check: { ok: boolean; message: string };
       try {
         postgresClient = createPostgresClient(c.env, role);
         const result = await postgresClient.health();
-        check = result.role === EXPECTED_POSTGRES_ROLE[role]
-          ? { ok: true, message: "available" }
-          : { ok: false, message: "unexpected database role" };
+        check = result.role !== EXPECTED_POSTGRES_ROLE[role]
+          ? { ok: false, message: "unexpected database role" }
+          : result.ready
+            ? { ok: true, message: "available" }
+            : { ok: false, message: "required database capability unavailable" };
       } catch {
         check = { ok: false, message: "unavailable" };
       } finally {
@@ -107,9 +117,14 @@ healthRoutes.get("/", async (c) => {
       checks[`postgres.${role}`] = check;
     }
     const unavailableRoles = roleChecks.filter(({ check }) => !check.ok).map(({ role }) => role);
-    checks.postgres = unavailableRoles.length === 0
+    checks.postgres = unavailableRoles.length === 0 && postgresAuthorityRuntimeReady()
       ? { ok: true, message: `${dataAuthority} authority available` }
-      : { ok: false, message: `${dataAuthority} authority unavailable: ${unavailableRoles.join(", ")}` };
+      : {
+          ok: false,
+          message: unavailableRoles.length > 0
+            ? `${dataAuthority} authority unavailable: ${unavailableRoles.join(", ")}`
+            : `${dataAuthority} authority unavailable: product runtime incomplete`,
+        };
   }
   try {
     await c.env.PAYLOADS.list({ limit: 1 });

@@ -2394,6 +2394,18 @@ describe("database migrations", () => {
          harness_status, last_activity_at, created_at, updated_at)
       VALUES ('authority-workstream', 'authority-workspace', 'Authority', 'Move safely', 'ad_hoc',
               'authority-owner', 'idle', '2026-08-17', '2026-08-17', '2026-08-17');
+      INSERT OR IGNORE INTO workspace_members
+        (workspace_id, user_id, role, status, joined_at, last_seen_at)
+      VALUES ('authority-workspace', 'authority-owner', 'owner', 'active',
+              '2026-08-17', '2026-08-17');
+      INSERT INTO workstream_participants
+        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+      VALUES ('authority-workstream', 'authority-owner', 'authority-owner', 'explicit', '2026-08-17');
+      INSERT INTO telemetry_profile_jobs
+        (id, subject_user_id, workspace_id, job_kind, destination_analytics_id,
+         properties_json, version, state, created_at, delete_at)
+      VALUES ('global-profile-job', 'authority-owner', NULL, 'person_profile', 'person-one',
+              '{}', 1, 'pending', '2026-08-17', '2026-11-15');
     `);
 
     expect(database.prepare(
@@ -2403,6 +2415,9 @@ describe("database migrations", () => {
       source_state: "writable",
       route_epoch: 1,
     });
+    expect(() => database.prepare(
+      "DELETE FROM workspace_authority_gates WHERE workspace_id = ?",
+    ).run("authority-workspace")).toThrow(/workspace_authority_gate_delete_forbidden/u);
 
     database.prepare(
       `UPDATE workspace_authority_gates
@@ -2412,6 +2427,27 @@ describe("database migrations", () => {
     expect(() => database.prepare(
       "UPDATE workstreams SET title = ? WHERE id = ?",
     ).run("Should not write", "authority-workstream")).toThrow(/workspace_source_not_writable/u);
+    expect(() => database.prepare(
+      "UPDATE workspace_members SET last_seen_at = ? WHERE workspace_id = ? AND user_id = ?",
+    ).run("2026-08-17T01:01:00Z", "authority-workspace", "authority-owner"))
+      .toThrow(/workspace_source_not_writable/u);
+    expect(() => database.prepare(
+      "UPDATE workspaces SET name = ? WHERE id = ?",
+    ).run("Should not rename", "authority-workspace"))
+      .toThrow(/workspace_source_not_writable/u);
+    expect(() => database.prepare(
+      `INSERT INTO workstream_participants
+        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+       VALUES (?, ?, ?, 'explicit', ?)`,
+    ).run(
+      "authority-workstream", "authority-owner", "authority-owner", "2026-08-17T01:01:00Z",
+    )).toThrow(/workspace_source_not_writable/u);
+    expect(() => database.prepare(
+      "DELETE FROM workstream_participants WHERE workstream_id = ? AND user_id = ?",
+    ).run("authority-workstream", "authority-owner")).toThrow(/workspace_source_not_writable/u);
+    expect(database.prepare(
+      "UPDATE telemetry_profile_jobs SET state = 'terminal' WHERE id = 'global-profile-job'",
+    ).run().changes).toBe(1);
     expect(() => database.prepare(
       `UPDATE workspace_authority_gates
        SET authority_mode = 'postgres'
@@ -2441,6 +2477,50 @@ describe("database migrations", () => {
       { name: "workspace_postgres_export_manifests" },
       { name: "workspace_postgres_shadow_comparisons" },
     ]);
+    database.close();
+  });
+
+  it("requires source-closure triggers on every workspace-owned D1 table", () => {
+    const database = migrateFreshDatabase();
+    const tables = database.prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
+    ).all() as Array<{ name: string }>;
+    const parents = new Map(tables.map(({ name }) => [
+      name,
+      (database.prepare(`PRAGMA foreign_key_list("${name}")`).all() as Array<{ table: string }>)
+        .map((foreignKey) => foreignKey.table),
+    ]));
+    const reachesWorkspace = (table: string, seen = new Set<string>()): boolean => {
+      if (table === "workspaces") return true;
+      if (seen.has(table)) return false;
+      seen.add(table);
+      return (parents.get(table) ?? []).some((parent) => reachesWorkspace(parent, new Set(seen)));
+    };
+    const controlTables = new Set([
+      "workspace_authority_gates",
+      "workspace_postgres_export_manifests",
+      "workspace_postgres_shadow_comparisons",
+    ]);
+    const noForeignKeyWorkspaceChildren = new Set(["note_resource_deletion_outbox"]);
+    const triggers = database.prepare(
+      `SELECT tbl_name, name FROM sqlite_master
+       WHERE type = 'trigger' AND name LIKE 'authority_fence_%'`,
+    ).all() as Array<{ tbl_name: string; name: string }>;
+    const triggerNames = new Set(triggers.map((trigger) => trigger.name));
+    for (const { name } of tables) {
+      const columns = database.prepare(`PRAGMA table_info("${name}")`)
+        .all() as Array<{ name: string }>;
+      const workspaceOwned = columns.some((column) => column.name === "workspace_id")
+        || reachesWorkspace(name)
+        || noForeignKeyWorkspaceChildren.has(name);
+      if (!workspaceOwned || controlTables.has(name)) continue;
+      const operations = name === "workspaces" ? ["update", "delete"] : ["insert", "update", "delete"];
+      for (const operation of operations) {
+        expect(triggerNames, `${name} must reject ${operation} after source closure`)
+          .toContain(`authority_fence_${name}_${operation}`);
+      }
+    }
     database.close();
   });
 });

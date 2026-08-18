@@ -9,20 +9,27 @@ Cloudflare runtime adapters selected by an explicit authority route.
 
 ## Implementation status on 2026-08-17
 
-Phases 1 and 2 are implemented behind `PRODUCT_DATA_AUTHORITY`, which remains
-`d1` in both checked-in deployments. Phase 3's relational command protocol,
-active-output streaming, queue/steer control, connector ingress/activity,
-suggestion acceptance, compaction materialization, and the first full-loop
-Workflow host are implemented and covered by database/Worker tests. That host
-currently runs Bind as one retryable Workflow step; splitting model, tool,
-Terminal, and settlement into independently durable semantic steps remains a
-Phase 3 canary gate. Production plugin and Daytona execution are intentionally
-still on the D1 host until their Postgres receipt adapters and the desktop
-Supabase session/Realtime client land. Phase 4
+Phase 1 and the schema/client foundation of Phase 2 are implemented behind
+`PRODUCT_DATA_AUTHORITY`, which remains `d1` in both checked-in deployments.
+The source-local authority gate, schema-wide direct/inherited D1 write fences,
+and destination receipt check fail closed, but
+the desktop Supabase session/Realtime transport is not implemented, so a
+Postgres-routed workspace is deliberately refused by legacy Worker routes
+rather than falling through to D1. Phase 3 has tested relational commands for
+conversation ordering, active-output recovery, queue/steer, access-revision
+revocation, sidebar snapshots, compaction, connector ingress/activity,
+suggestion acceptance, search, and the first full-loop Workflow host. The
+Workflow retry finalizes an already-recorded model outcome without reinference,
+supersedes an unresumable partial stream, and refuses to replay a previously
+claimed tool effect without reconciliation. The approved
+Postgres-native plugin surface, complete Daytona reconciliation, and consumers
+for connector/derived-content/maintenance queues remain outstanding. Phase 4
 has source gates, import/route receipts, leased migration slices, and pause
 fences; export execution, observability dashboards, and a live internal
-migration remain outstanding. Phases 4–5 therefore remain rollout work, and no
-workspace is authorized to cut over from this branch alone.
+migration remain outstanding. Phases 2–5 therefore remain rollout work, and no
+workspace is authorized to cut over from this branch alone. This is enforced in
+code: `POSTGRES_AUTHORITY_RUNTIME_BLOCKERS` makes health and per-workspace
+authority resolution fail closed until those named surfaces land.
 
 ## Phase 1 — Reproducible platform projects
 

@@ -4,7 +4,10 @@ create table avalon_private.substreams (
   id uuid primary key default avalon_private.uuid_v7(),
   workspace_id uuid not null references avalon_private.workspaces(id) on delete cascade,
   workstream_id uuid not null references avalon_private.workstreams(id) on delete cascade,
-  kind text not null check (kind in ('main', 'private', 'fork', 'subagent', 'document', 'scratch')),
+  kind text not null check (kind in (
+    'main', 'private_chat', 'human_fork', 'subagent_fresh',
+    'subagent_fork', 'document_chat'
+  )),
   parent_substream_id uuid references avalon_private.substreams(id),
   base_seq bigint check (base_seq is null or base_seq >= 0),
   inheritance_mode text not null default 'none' check (inheritance_mode in ('none', 'frozen', 'document_version')),
@@ -20,9 +23,18 @@ create table avalon_private.substreams (
   completed_at timestamptz,
   unique (workspace_id, workstream_id, id),
   check (
-    (parent_substream_id is null and inheritance_mode = 'none' and base_seq is null)
-    or (parent_substream_id is not null and inheritance_mode <> 'none' and base_seq is not null)
-    or (kind = 'document' and inheritance_mode = 'document_version' and resource_id is not null and resource_revision is not null)
+    (kind = 'main' and parent_substream_id is null and inheritance_mode = 'none'
+      and base_seq is null and access_mode = 'inherit_workstream' and depth = 0)
+    or (kind = 'subagent_fresh' and parent_substream_id is null
+      and inheritance_mode = 'none' and base_seq is null
+      and access_mode = 'restricted' and depth = 0)
+    or (kind in ('private_chat', 'human_fork', 'subagent_fork')
+      and parent_substream_id is not null and inheritance_mode = 'frozen'
+      and base_seq is not null and access_mode = 'restricted')
+    or (kind = 'document_chat' and parent_substream_id is not null
+      and inheritance_mode in ('frozen', 'document_version') and base_seq is not null
+      and resource_id is not null and resource_revision is not null
+      and access_mode = 'restricted')
   )
 );
 
@@ -121,6 +133,9 @@ create unique index conversation_parts_provider_call
 alter table avalon_private.part_mentions
   add constraint part_mentions_part_fk
   foreign key (part_id) references avalon_private.conversation_parts(id) on delete cascade;
+alter table avalon_private.part_mentions
+  add constraint part_mentions_substream_fk
+  foreign key (substream_id) references avalon_private.substreams(id) on delete cascade;
 alter table avalon_private.workstream_attention_events
   add constraint workstream_attention_part_fk
   foreign key (part_id) references avalon_private.conversation_parts(id) on delete cascade;
@@ -136,8 +151,14 @@ create table avalon_private.input_admission_batches (
   control_revision bigint not null check (control_revision > 0),
   run_id uuid,
   state text not null default 'pending' check (state in ('pending', 'admitted', 'superseded', 'cancelled')),
+  interrupt_requested_at timestamptz,
+  requested_boundary text check (requested_boundary is null or requested_boundary in (
+    'after_current_semantic_action', 'after_model', 'after_tool', 'after_terminal_checkpoint'
+  )),
   created_at timestamptz not null default now(),
-  admitted_at timestamptz
+  admitted_at timestamptz,
+  check ((mode = 'steer') = (interrupt_requested_at is not null)),
+  check ((mode = 'steer') = (requested_boundary is not null))
 );
 
 create index input_admission_pending
@@ -302,6 +323,9 @@ create table avalon_private.workstream_events (
   target_user_id uuid,
   common_revision bigint,
   user_revision bigint,
+  access_container_kind text not null check (access_container_kind in ('workspace', 'workstream', 'substream', 'connector_resource')),
+  access_container_id uuid not null,
+  access_revision bigint not null check (access_revision > 0),
   payload jsonb not null default '{}'::jsonb check (pg_column_size(payload) <= 16384),
   created_at timestamptz not null default now(),
   unique (workstream_id, workstream_seq)
@@ -309,6 +333,8 @@ create table avalon_private.workstream_events (
 
 create index workstream_events_catchup
   on avalon_private.workstream_events (workstream_id, workstream_seq, target_user_id);
+create index workstream_events_access
+  on avalon_private.workstream_events (access_container_kind, access_container_id, access_revision, workstream_seq);
 create index workstream_events_retention
   on avalon_private.workstream_events (created_at, id);
 
@@ -342,10 +368,13 @@ create table avalon_private.queue_inbox_receipts (
   message_id bigint,
   request_hash bytea not null check (octet_length(request_hash) = 32),
   state text not null check (state in ('started', 'completed', 'failed', 'quarantined')),
+  claim_token uuid,
+  lease_expires_at timestamptz,
   result_ref uuid,
   attempts integer not null default 1 check (attempts > 0),
   created_at timestamptz not null default now(),
   completed_at timestamptz,
+  check ((state = 'started') = (claim_token is not null and lease_expires_at is not null)),
   primary key (queue_name, semantic_key)
 );
 
@@ -380,6 +409,61 @@ create table avalon_private.dead_letters (
   operator_id uuid,
   unique (source_queue, semantic_key)
 );
+
+create or replace function avalon_private.assign_turn_admission(p_turn_id uuid)
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  target avalon_private.turns%rowtype;
+  next_ordinal bigint;
+begin
+  select * into target from avalon_private.turns where id = p_turn_id for update;
+  if not found or target.status <> 'complete' then
+    raise exception using errcode = '40001', message = 'only a complete turn can be admitted';
+  end if;
+  if target.admission_ordinal is not null then return target.admission_ordinal; end if;
+  perform 1 from avalon_private.substreams where id = target.substream_id for update;
+  select coalesce(max(admission_ordinal), 0) + 1 into next_ordinal
+  from avalon_private.turns where substream_id = target.substream_id;
+  update avalon_private.turns set admission_ordinal = next_ordinal where id = target.id;
+  return next_ordinal;
+end
+$$;
+
+create or replace function avalon_private.admit_batch_turns(p_batch_id uuid)
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  batch avalon_private.input_admission_batches%rowtype;
+  batch_turn record;
+  admitted_count bigint := 0;
+begin
+  select * into batch from avalon_private.input_admission_batches
+  where id = p_batch_id for update;
+  if not found or batch.state <> 'admitted' then
+    raise exception using errcode = '40001', message = 'batch is not admitted';
+  end if;
+  for batch_turn in
+    select membership.turn_id
+    from avalon_private.input_admission_batch_turns membership
+    where membership.batch_id = batch.id
+    order by membership.admission_ordinal
+  loop
+    perform avalon_private.assign_turn_admission(batch_turn.turn_id);
+    admitted_count := admitted_count + 1;
+  end loop;
+  return admitted_count;
+end
+$$;
+
+revoke all on function avalon_private.assign_turn_admission(uuid) from public;
+revoke all on function avalon_private.admit_batch_turns(uuid) from public;
 
 create or replace function avalon_private.can_access_substream(
   p_substream_id uuid,

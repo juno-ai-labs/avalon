@@ -26,6 +26,7 @@ import {
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
+import { ApiError } from "../lib/api-error";
 import { getAuth } from "../middleware/auth";
 import { WorkstreamService } from "../services/workstream-service";
 import { HyperSightService } from "../services/hypersight-service";
@@ -33,7 +34,11 @@ import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperation
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
 import { TerminalWorkstreamService } from "../services/terminal/workstream-state";
-import { createPostgresClient, productDataAuthority } from "../postgres/runtime";
+import {
+  createPostgresClient,
+  productDataAuthority,
+  resolveWorkspaceAuthority,
+} from "../postgres/runtime";
 import { signalPostgresAgentLoop, startPostgresAgentLoop } from "../postgres/workflow-control";
 
 const idParam = z.object({ id: IdSchema });
@@ -125,11 +130,12 @@ workstreamRoutes.post(
   "/:id/postgres-runs/:runId/wake",
   zValidator("param", postgresRunParam),
   async (c) => {
-    if (productDataAuthority(c.env) !== "postgres") {
+    const auth = getAuth(c);
+    const authority = await resolveWorkspaceAuthority(c.env, auth.workspaceId);
+    if (productDataAuthority(c.env) !== "postgres" || authority.authority !== "postgres") {
       return c.json({ error: { code: "postgres_authority_inactive", message: "Postgres is not authoritative" } }, 409);
     }
     const { id: workstreamId, runId } = c.req.valid("param");
-    const auth = getAuth(c);
     const client = createPostgresClient(c.env, "regional_router");
     try {
       const descriptor = await client.workflowWakeDescriptor({
@@ -160,6 +166,22 @@ workstreamRoutes.post(
     }
   },
 );
+
+// Product reads/writes move to RLS-protected Supabase views/RPCs with the
+// project-local session after source closure. Never let a legacy Worker route
+// fall through to D1 for a workspace whose destination is authoritative.
+workstreamRoutes.use("*", async (c, next) => {
+  const auth = getAuth(c);
+  const authority = await resolveWorkspaceAuthority(c.env, auth.workspaceId);
+  if (authority.authority === "postgres") {
+    throw new ApiError(
+      409,
+      "workspace_authority_moved",
+      "Reconnect this workspace through its regional Supabase session",
+    );
+  }
+  await next();
+});
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");

@@ -120,6 +120,11 @@
       "binding": "EU_TELEMETRY_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "TelemetryRegionalBridge"
+    },
+    {
+      "binding": "EU_POSTGRES_ROUTING_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "PostgresRegionalRoutingBridge"
     }
   ],
   // These are one-time hosted resources: Wrangler deploy validates the binding

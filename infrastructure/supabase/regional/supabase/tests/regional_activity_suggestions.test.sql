@@ -12,7 +12,8 @@ select * from avalon_private.apply_global_workspace_command(
   '018f2000-0000-7000-8000-000000000201',
   '018f2000-0000-7000-8000-000000000301',
   1, 'global-us-1', 'global', 'create_workspace',
-  extensions.digest(convert_to('create-activity-test', 'utf8'), 'sha256')
+  '{"version":1,"name":"Activity workspace"}'::jsonb,
+  extensions.digest(convert_to('{"name": "Activity workspace", "version": 1}', 'utf8'), 'sha256')
 );
 insert into avalon_private.workspace_members (
   workspace_id, platform_user_id, role, state, joined_at
@@ -139,13 +140,18 @@ insert into avalon_private.suggestions (
   'workspace', '018f2000-0000-7000-8000-000000000301',
   'Investigate latency', 'A connector message asks for a latency investigation.',
   'detector-v1', 'model-v1', 'prompt-v1', 'latency-investigation',
-  0.9, 1, 1, 1, now() + interval '1 day'
+  0.9,
+  (select event_seq from avalon_private.activity_events
+    where id = '018f2000-0000-7000-8000-000000000501'),
+  1, 1, now() + interval '1 day'
 );
 insert into avalon_private.suggestion_sources (
   suggestion_id, activity_event_id, source_revision, content_hash
 ) values (
   '018f2000-0000-7000-8000-000000000601',
-  '018f2000-0000-7000-8000-000000000501', 1,
+  '018f2000-0000-7000-8000-000000000501',
+  (select event_seq from avalon_private.activity_events
+    where id = '018f2000-0000-7000-8000-000000000501'),
   (select content_hash from avalon_private.activity_events
     where id = '018f2000-0000-7000-8000-000000000501')
 );

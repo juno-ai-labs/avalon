@@ -21,6 +21,7 @@ import type { RegionalTelemetryBridgeRpcBinding } from "./telemetry/regional-bri
 import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
 import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
+import type { PostgresRegionalRoutingBridgeBinding } from "./postgres/routing-control";
 
 export const HYPERSIGHT_MODEL = "x-ai/grok-4.3";
 
@@ -64,6 +65,7 @@ export interface Env {
   EU_NOTION_BRIDGE?: NotionRegionalBridgeRpcBinding;
   EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;
   EU_TELEMETRY_BRIDGE?: RegionalTelemetryBridgeRpcBinding;
+  EU_POSTGRES_ROUTING_BRIDGE?: PostgresRegionalRoutingBridgeBinding;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;

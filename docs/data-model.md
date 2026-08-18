@@ -509,6 +509,36 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-17 — D1 source closure covers the complete workspace graph
+
+**What changed:** Migration `0078_workspace_authority_write_fences.sql` adds
+insert/update/delete guards to every table that owns a workspace directly or
+inherits one through a parent, plus update/delete guards on `workspaces` itself.
+Migration-control gates, manifests, and comparison evidence are the only
+allowlist. The migration suite discovers workspace ownership from columns and
+foreign keys and requires matching triggers for future tables. Nullable
+workspace references fence only non-null tenant rows. Inherited child deletes
+recognize an already-fenced parent cascade, and a separate trigger prevents an
+authority gate from being deleted while its workspace still exists.
+
+**Why:** The initial root-table fence did not stop last-seen membership writes,
+workspace settings, relationship children, provider callbacks, background
+jobs, or late run/effect settlement. Any one after the closure receipt would
+make D1 a second writer and invalidate the authority handoff.
+
+**Considered and rejected:** Depending on route middleware cannot cover
+provider and scheduled execution, and fencing only high-volume roots mistakes
+write frequency for authority. SQLite has no dynamic wildcard trigger, so the
+explicit trigger set is paired with an exhaustive schema test.
+
+**Consequences:** A newly added workspace table must be fenced in the same
+migration. Writes after `closing` fail with `workspace_source_not_writable`;
+only the three transfer-evidence tables continue recording cutover state.
+Global telemetry rows with no workspace remain writable, and cascade cleanup
+does not turn a valid root deletion into a partial failure.
+
+Design: [Supabase workspace/work-stream conversations PRD](PRDs/2026-08-15_supabase-workspace-workstream-conversations/prd.md).
+
 ### 2026-08-17 — D1 records source closure before Postgres may become authoritative
 
 **What changed:** Migration `0077_postgres_authority_gates.sql` adds one

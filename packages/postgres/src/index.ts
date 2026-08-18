@@ -27,6 +27,7 @@ export interface RoutingCommand {
   workspaceId: string;
   routeEpoch: number;
   targetShardId: string;
+  regionKey: string;
   operationKind: string;
   payloadVersion: number;
   payload: JsonValue;
@@ -131,6 +132,7 @@ export interface GlobalCommandReceipt {
   workspaceId: string;
   routeEpoch: number;
   targetShardId: string;
+  payloadHash: Uint8Array;
   regionalReceiptId: string;
   regionalState: string;
   responseHash: Uint8Array;
@@ -143,6 +145,7 @@ export interface RegionalGlobalCommand {
   localShardId: string;
   regionKey: string;
   operationKind: string;
+  payload: JsonValue;
   payloadHash: Uint8Array;
   sourceClosureCursor?: string;
   sourceClosureHash?: Uint8Array;
@@ -153,6 +156,7 @@ interface ClaimRoutingRow {
   workspace_id: string;
   route_epoch: string | number;
   target_shard_id: string;
+  region_key: string;
   operation_kind: string;
   payload_version: number;
   payload: JsonValue;
@@ -276,8 +280,12 @@ export function assertTransactionPoolerUrl(connectionString: string): URL {
   return url;
 }
 
-export function uuidV7(now = Date.now()): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
+export function uuidV7From(now: number, randomBytes: Uint8Array): string {
+  if (!Number.isSafeInteger(now) || now < 0 || now > 0xffff_ffff_ffff) {
+    throw new RangeError("uuid_v7_timestamp_out_of_range");
+  }
+  if (randomBytes.byteLength !== 16) throw new RangeError("uuid_v7_random_bytes_invalid");
+  const bytes = Uint8Array.from(randomBytes);
   let timestamp = BigInt(now);
   for (let index = 5; index >= 0; index -= 1) {
     bytes[index] = Number(timestamp & 0xffn);
@@ -287,6 +295,10 @@ export function uuidV7(now = Date.now()): string {
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function uuidV7(now = Date.now()): string {
+  return uuidV7From(now, crypto.getRandomValues(new Uint8Array(16)));
 }
 
 export class AvalonPostgresClient {
@@ -312,13 +324,43 @@ export class AvalonPostgresClient {
     await this.#sql.end({ timeout: 5 });
   }
 
-  async health(): Promise<{ databaseTime: Date; role: string }> {
-    const rows = await this.#sql<{ database_time: Date; role: string }[]>`
-      select now() as database_time, current_user as role
+  async health(): Promise<{
+    databaseTime: Date;
+    role: string;
+    ready: boolean;
+    detail?: JsonValue;
+  }> {
+    if (this.role === "queue_runner") {
+      const rows = await this.#sql<{
+        database_time: Date;
+        role: string;
+        detail: JsonValue;
+      }[]>`
+        select now() as database_time, current_user as role,
+          avalon_private.queue_health() as detail
+      `;
+      const row = rows[0];
+      if (!row) throw new Error("postgres_health_empty");
+      const detail = objectValue(row.detail, "postgres_queue_health");
+      return {
+        databaseTime: row.database_time,
+        role: row.role,
+        ready: detail.ready === true,
+        detail: jsonValue(detail, "postgres_queue_health"),
+      };
+    }
+    const requiredFunction = {
+      global_router: "avalon_private.claim_routing_commands(text,integer)",
+      regional_router: "avalon_private.workspace_authority_descriptor(uuid,bigint,bytea)",
+      workflow_runner: "avalon_private.workflow_claim_run(uuid,bigint,text)",
+    }[this.role];
+    const rows = await this.#sql<{ database_time: Date; role: string; ready: boolean }[]>`
+      select now() as database_time, current_user as role,
+        has_function_privilege(current_user, ${requiredFunction}, 'EXECUTE') as ready
     `;
     const row = rows[0];
     if (!row) throw new Error("postgres_health_empty");
-    return { databaseTime: row.database_time, role: row.role };
+    return { databaseTime: row.database_time, role: row.role, ready: row.ready };
   }
 
   async claimRoutingCommands(workflowId: string, limit = 32): Promise<RoutingCommand[]> {
@@ -331,6 +373,7 @@ export class AvalonPostgresClient {
       workspaceId: row.workspace_id,
       routeEpoch: safeInteger(row.route_epoch, "route_epoch"),
       targetShardId: row.target_shard_id,
+      regionKey: row.region_key,
       operationKind: row.operation_kind,
       payloadVersion: row.payload_version,
       payload: row.payload,
@@ -348,9 +391,25 @@ export class AvalonPostgresClient {
         ${receipt.workspaceId}::uuid,
         ${receipt.routeEpoch},
         ${receipt.targetShardId},
+        ${receipt.payloadHash}::bytea,
         ${receipt.regionalReceiptId}::uuid,
         ${receipt.regionalState},
         ${receipt.responseHash}::bytea
+      )
+    `;
+  }
+
+  async failRoutingCommandAttempt(input: {
+    commandId: string;
+    attemptNo: number;
+    errorClass: string;
+    retryAfterSeconds?: number;
+  }): Promise<void> {
+    this.#requireRole("global_router");
+    await this.#sql`
+      select avalon_private.fail_routing_command_attempt(
+        ${input.commandId}::uuid, ${input.attemptNo}, ${input.errorClass},
+        ${input.retryAfterSeconds ?? 60}
       )
     `;
   }
@@ -373,6 +432,7 @@ export class AvalonPostgresClient {
         ${command.localShardId},
         ${command.regionKey},
         ${command.operationKind},
+        ${this.#sql.json(command.payload)}::jsonb,
         ${command.payloadHash}::bytea,
         ${command.sourceClosureCursor ?? null},
         ${command.sourceClosureHash ?? null}::bytea
@@ -405,6 +465,26 @@ export class AvalonPostgresClient {
       throw new Error("workflow_wake_descriptor_contract_invalid");
     }
     return value;
+  }
+
+  async workspaceAuthorityDescriptor(input: {
+    workspaceId: string;
+    expectedRouteEpoch: number;
+    sourceClosureHash: Uint8Array;
+  }): Promise<{ writable: boolean; workspace_id: string; route_epoch: number }> {
+    this.#requireRole("regional_router");
+    const rows = await this.#sql<{ value: unknown }[]>`
+      select avalon_private.workspace_authority_descriptor(
+        ${input.workspaceId}::uuid,
+        ${input.expectedRouteEpoch},
+        ${input.sourceClosureHash}::bytea
+      ) as value
+    `;
+    return z.object({
+      writable: z.boolean(),
+      workspace_id: z.string().uuid(),
+      route_epoch: z.coerce.number().int().positive(),
+    }).passthrough().parse(rows[0]?.value);
   }
 
   async linkPlatformIdentity(input: {
@@ -447,12 +527,22 @@ export class AvalonPostgresClient {
     expectedControlRevision: number;
     actionKind: "model" | "tool" | "terminal" | "wait" | "materialize" | "finalize";
     operationId: string;
-  }): Promise<{ actionId: string; actionNo: number; controlRevision: number }> {
+  }): Promise<{
+    actionId: string;
+    actionNo: number;
+    controlRevision: number;
+    state: "planned" | "started" | "succeeded" | "failed" | "superseded";
+    semanticOutcome?: "completed" | "needs_input" | "failed" | "stopped";
+    outputRef?: string;
+  }> {
     this.#requireRole("workflow_runner");
     const rows = await this.#sql<{
       action_id: string;
       action_no: number;
       control_revision: string | number;
+      action_state: "planned" | "started" | "succeeded" | "failed" | "superseded";
+      semantic_outcome: "completed" | "needs_input" | "failed" | "stopped" | null;
+      output_ref: string | null;
     }[]>`
       select * from avalon_private.workflow_begin_action(
         ${input.runId}::uuid,
@@ -467,7 +557,42 @@ export class AvalonPostgresClient {
       actionId: row.action_id,
       actionNo: row.action_no,
       controlRevision: safeInteger(row.control_revision, "control_revision"),
+      state: row.action_state,
+      ...(row.semantic_outcome === null ? {} : { semanticOutcome: row.semantic_outcome }),
+      ...(row.output_ref === null ? {} : { outputRef: row.output_ref }),
     };
+  }
+
+  async recordModelOutcome(input: {
+    runId: string;
+    actionId: string;
+    expectedControlRevision: number;
+    outcome: "completed" | "needs_input" | "failed" | "stopped";
+  }): Promise<void> {
+    this.#requireRole("workflow_runner");
+    await this.#sql`
+      select avalon_private.workflow_record_model_outcome(
+        ${input.runId}::uuid,
+        ${input.actionId}::uuid,
+        ${input.expectedControlRevision},
+        ${input.outcome}
+      )
+    `;
+  }
+
+  async completeModelWithoutOutput(input: {
+    runId: string;
+    actionId: string;
+    expectedControlRevision: number;
+  }): Promise<void> {
+    this.#requireRole("workflow_runner");
+    await this.#sql`
+      select avalon_private.workflow_complete_model_without_output(
+        ${input.runId}::uuid,
+        ${input.actionId}::uuid,
+        ${input.expectedControlRevision}
+      )
+    `;
   }
 
   async materializeRun(runId: string, expectedControlRevision: number): Promise<MaterializedRun> {
@@ -502,6 +627,43 @@ export class AvalonPostgresClient {
       throw new Error("materialized_run_contract_invalid");
     }
     return value;
+  }
+
+  async prepareCompaction(input: {
+    runId: string;
+    expectedControlRevision: number;
+    throughSeq: number;
+    formatVersion: string;
+    model: string;
+    modelVersion: string;
+    promptVersion: string;
+  }): Promise<Record<string, unknown>> {
+    this.#requireRole("workflow_runner");
+    const rows = await this.#sql<{ value: unknown }[]>`
+      select avalon_private.workflow_prepare_compaction(
+        ${input.runId}::uuid, ${input.expectedControlRevision}, ${input.throughSeq},
+        ${input.formatVersion}, ${input.model}, ${input.modelVersion}, ${input.promptVersion}
+      ) as value
+    `;
+    return objectValue(rows[0]?.value, "compaction_preparation");
+  }
+
+  async finalizeCompaction(input: {
+    runId: string;
+    expectedControlRevision: number;
+    jobId: string;
+    summary: string;
+  }): Promise<string> {
+    this.#requireRole("workflow_runner");
+    const rows = await this.#sql<{ part_id: string }[]>`
+      select avalon_private.workflow_finalize_compaction(
+        ${input.runId}::uuid, ${input.expectedControlRevision},
+        ${input.jobId}::uuid, ${input.summary}
+      ) as part_id
+    `;
+    const partId = rows[0]?.part_id;
+    if (!partId) throw new Error("compaction_summary_part_missing");
+    return partId;
   }
 
   async finishRun(input: {
@@ -550,12 +712,26 @@ export class AvalonPostgresClient {
     attemptId: string;
     partId: string;
     expiresAt: Date;
-  }): Promise<{ turnId: string; attemptId: string; partId: string }> {
+  }): Promise<{
+    turnId: string;
+    attemptId: string;
+    partId: string;
+    recovered: boolean;
+    checkpointRevision: number;
+    byteOffset: number;
+    recoveredText: string;
+    throughFrameSeq: number;
+  }> {
     this.#requireRole("workflow_runner");
     const rows = await this.#sql<{
       turn_id: string;
       attempt_id: string;
       part_id: string;
+      recovered: boolean;
+      checkpoint_revision: string | number;
+      byte_offset: string | number;
+      recovered_text: string;
+      through_frame_seq: string | number;
     }[]>`
       select * from avalon_private.workflow_begin_output_attempt(
         ${input.runId}::uuid,
@@ -568,7 +744,16 @@ export class AvalonPostgresClient {
     `;
     const row = rows[0];
     if (!row) throw new Error("output_attempt_missing");
-    return { turnId: row.turn_id, attemptId: row.attempt_id, partId: row.part_id };
+    return {
+      turnId: row.turn_id,
+      attemptId: row.attempt_id,
+      partId: row.part_id,
+      recovered: row.recovered,
+      checkpointRevision: safeInteger(row.checkpoint_revision, "checkpoint_revision"),
+      byteOffset: safeInteger(row.byte_offset, "byte_offset"),
+      recoveredText: row.recovered_text,
+      throughFrameSeq: safeInteger(row.through_frame_seq, "through_frame_seq"),
+    };
   }
 
   async beginToolEffect(input: {
@@ -613,6 +798,30 @@ export class AvalonPostgresClient {
     return objectValue(rows[0]?.value, "tool_effect_settlement");
   }
 
+  async beginToolExchange(input: {
+    runId: string;
+    actionId: string;
+    expectedControlRevision: number;
+    providerCallId: string;
+    toolName: string;
+    pluginId: string;
+    toolInput: JsonValue;
+  }): Promise<Record<string, unknown>> {
+    this.#requireRole("workflow_runner");
+    const rows = await this.#sql<{ value: unknown }[]>`
+      select avalon_private.workflow_begin_tool_exchange(
+        ${input.runId}::uuid,
+        ${input.actionId}::uuid,
+        ${input.expectedControlRevision},
+        ${input.providerCallId},
+        ${input.toolName},
+        ${input.pluginId},
+        ${this.#sql.json(input.toolInput)}::jsonb
+      ) as value
+    `;
+    return objectValue(rows[0]?.value, "tool_call_receipt");
+  }
+
   async commitToolExchange(input: {
     runId: string;
     actionId: string;
@@ -639,6 +848,23 @@ export class AvalonPostgresClient {
       ) as value
     `;
     return objectValue(rows[0]?.value, "tool_exchange_receipt");
+  }
+
+  async findToolResult(input: {
+    runId: string;
+    providerCallId: string;
+    pluginId: string;
+    toolName: string;
+    requestHash: Uint8Array;
+  }): Promise<JsonValue | null> {
+    this.#requireRole("workflow_runner");
+    const rows = await this.#sql<{ value: unknown }[]>`
+      select avalon_private.workflow_find_tool_result(
+        ${input.runId}::uuid, ${input.providerCallId}, ${input.pluginId},
+        ${input.toolName}, ${input.requestHash}::bytea
+      ) as value
+    `;
+    return rows[0]?.value == null ? null : jsonValue(rows[0].value, "tool_result_replay");
   }
 
   async supersedeOutput(input: {
@@ -738,12 +964,77 @@ export class AvalonPostgresClient {
     }));
   }
 
-  async renewQueueMessage(queueName: string, messageId: number): Promise<boolean> {
+  async renewQueueMessage(input: {
+    queueName: string;
+    semanticKey: string;
+    messageId: number;
+    requestHash: Uint8Array;
+    claimToken: string;
+  }): Promise<boolean> {
     this.#requireRole("queue_runner");
     const rows = await this.#sql<{ renewed: boolean }[]>`
-      select avalon_private.queue_set_visibility(${queueName}, ${messageId}, 60) as renewed
+      select avalon_private.queue_set_visibility(
+        ${input.queueName}, ${input.semanticKey}, ${input.messageId},
+        ${input.requestHash}::bytea, ${input.claimToken}::uuid, 60
+      ) as renewed
     `;
     return rows[0]?.renewed ?? false;
+  }
+
+  async claimQueueInbox(input: {
+    queueName: string;
+    semanticKey: string;
+    messageId: number;
+    requestHash: Uint8Array;
+  }): Promise<{
+    state: "acquired" | "busy" | "completed" | "failed" | "quarantined";
+    claimToken?: string;
+  }> {
+    this.#requireRole("queue_runner");
+    const rows = await this.#sql<{ value: unknown }[]>`
+      select avalon_private.queue_claim_inbox(
+        ${input.queueName}, ${input.semanticKey}, ${input.messageId},
+        ${input.requestHash}::bytea
+      ) as value
+    `;
+    const claim = z.object({
+      state: z.enum(["acquired", "busy", "completed", "failed", "quarantined"]),
+      claim_token: z.string().uuid().nullable(),
+    }).parse(rows[0]?.value);
+    if (claim.state === "acquired" && claim.claim_token === null) {
+      throw new Error("queue_inbox_claim_token_missing");
+    }
+    return {
+      state: claim.state,
+      ...(claim.claim_token === null ? {} : { claimToken: claim.claim_token }),
+    };
+  }
+
+  async completeQueueInbox(input: {
+    queueName: string;
+    semanticKey: string;
+    messageId: number;
+    requestHash: Uint8Array;
+    claimToken: string;
+    resultRef?: string;
+  }): Promise<boolean> {
+    this.#requireRole("queue_runner");
+    const rows = await this.#sql<{ completed: boolean }[]>`
+      select avalon_private.queue_complete_inbox(
+        ${input.queueName}, ${input.semanticKey}, ${input.messageId},
+        ${input.requestHash}::bytea, ${input.claimToken}::uuid,
+        ${input.resultRef ?? null}::uuid
+      ) as completed
+    `;
+    return rows[0]?.completed ?? false;
+  }
+
+  async materializeAttentionMentions(attentionEventId: number): Promise<Record<string, unknown>> {
+    this.#requireRole("queue_runner");
+    const rows = await this.#sql<{ value: unknown }[]>`
+      select avalon_private.materialize_attention_mentions(${attentionEventId}, 32) as value
+    `;
+    return objectValue(rows[0]?.value, "attention_materialization");
   }
 
   async deleteQueueMessage(queueName: string, messageId: number): Promise<boolean> {
@@ -766,6 +1057,8 @@ export class AvalonPostgresClient {
     queueName: string;
     messageId: number;
     semanticKey: string;
+    requestHash: Uint8Array;
+    claimToken: string;
     message: JsonValue;
     errorClass: string;
     attempts: number;
@@ -774,6 +1067,7 @@ export class AvalonPostgresClient {
     const rows = await this.#sql<{ archived: boolean }[]>`
       select avalon_private.queue_dead_letter(
         ${input.queueName}, ${input.messageId}, ${input.semanticKey},
+        ${input.requestHash}::bytea, ${input.claimToken}::uuid,
         ${this.#sql.json(input.message)}::jsonb, ${input.errorClass}, ${input.attempts}
       ) as archived
     `;

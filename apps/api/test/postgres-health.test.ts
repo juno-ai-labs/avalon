@@ -70,7 +70,7 @@ function installClients(resultFor: (role: DatabaseRole) => string | Error): void
     health: async () => {
       const result = resultFor(role);
       if (result instanceof Error) throw result;
-      return { databaseTime: new Date(0), role: result };
+      return { databaseTime: new Date(0), role: result, ready: true };
     },
     close: async () => undefined,
   }));
@@ -81,7 +81,7 @@ describe("Postgres authority health", () => {
     mocks.createPostgresClient.mockReset();
   });
 
-  it("probes every database role required by the Global Worker", async () => {
+  it("probes every role but blocks authority until the product runtime is complete", async () => {
     installClients((role) => EXPECTED_POSTGRES_ROLE[role]);
 
     const response = await probe();
@@ -89,14 +89,18 @@ describe("Postgres authority health", () => {
       checks: Record<string, { ok: boolean; message: string }>;
     };
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     expect(mocks.createPostgresClient.mock.calls.map((call) => call[1])).toEqual([
       "regional_router",
       "workflow_runner",
       "queue_runner",
       "global_router",
     ]);
-    expect(body.checks.postgres).toEqual({ ok: true, message: "postgres authority available" });
+    expect(body.checks.postgres).toEqual({
+      ok: false,
+      message: "postgres authority unavailable: product runtime incomplete",
+    });
+    expect(body.checks["postgres.runtime"]?.ok).toBe(false);
     for (const role of ["regional_router", "workflow_runner", "queue_runner", "global_router"] as const) {
       expect(body.checks[`postgres.${role}`]).toEqual({ ok: true, message: "available" });
     }
