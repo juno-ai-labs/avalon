@@ -40,7 +40,7 @@ import { connectionFromRow } from "../mappers/connection";
 import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
 import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
 import { withAuthorizedConnection } from "./connector-connection-access";
@@ -57,6 +57,7 @@ import {
   telemetryCountBucket,
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
+import { publishWorkspaceSync } from "./workspace-realtime-service";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 
@@ -72,6 +73,26 @@ const capabilityScopes: Record<string, readonly string[]> = {
   "sheets.read": GoogleCapabilityScopes.sheetsRead,
   "sheets.write": GoogleCapabilityScopes.sheetsWrite,
 };
+
+async function publishConnectorWorkspaceSync(env: Env, workspaceId: string): Promise<void> {
+  try {
+    await publishWorkspaceSync(env, workspaceId, [
+      "connector_connections",
+      "resources",
+      "automations",
+      "digest_schedule",
+    ]);
+  } catch (error) {
+    // Connector authorization is already committed and must not be reported as
+    // failed merely because a hibernating sync object was briefly unavailable.
+    // Reconnect returns a full workspace invalidation; this warning identifies
+    // the live-update gap for operators.
+    logWarn(env, "connector_workspace_sync_publish_failed", {
+      workspace_id: workspaceId,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  }
+}
 
 const googleBroaderProviderScopeAliases: Readonly<Record<string, readonly string[]>> = {
   "https://www.googleapis.com/auth/gmail.modify": ["https://mail.google.com/"],
@@ -570,6 +591,7 @@ export class ConnectionService {
     if (attemptId) redirect.searchParams.set("attempt", attemptId);
     redirect.searchParams.set("provider", "google");
     if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return redirect.toString();
   }
 
@@ -904,6 +926,7 @@ export class ConnectionService {
     if (attemptId) redirect.searchParams.set("attempt", attemptId);
     redirect.searchParams.set("provider", "github");
     if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return redirect.toString();
   }
 
@@ -1100,6 +1123,7 @@ export class ConnectionService {
           connectionId,
           row.workspace_id,
         ).run();
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
         throw error;
       }
     }
@@ -1131,6 +1155,7 @@ export class ConnectionService {
           connectionId,
           row.workspace_id,
         ).run();
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
         throw error;
       }
     }
@@ -1147,6 +1172,7 @@ export class ConnectionService {
           `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
            WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
         ).bind(JSON.stringify({ code: "slack_route_registration_failed", message: error instanceof Error ? error.message : "Slack route registration failed", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
+        await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
         throw error;
       }
       try {
@@ -1174,6 +1200,7 @@ export class ConnectionService {
     if (attemptId) redirect.searchParams.set("attempt", attemptId);
     redirect.searchParams.set("provider", provider);
     if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
+    await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return redirect.toString();
   }
 
@@ -2739,11 +2766,11 @@ export class ConnectionService {
   }
 
   private async refreshScheduler(workspaceId: string): Promise<void> {
-    const scheduler = durableObjectStubForRegion(
+    const scheduler = await durableObjectStubForWorkspace(
+      this.env,
       this.env.WORKSPACE_SCHEDULERS,
-      this.env.AVALON_REGION,
+      workspaceId,
       `${this.env.AVALON_REGION}:${workspaceId}`,
-      this.env.APP_ENV,
     );
     const response = await scheduler.fetch("https://scheduler.internal/refresh", {
       method: "POST",

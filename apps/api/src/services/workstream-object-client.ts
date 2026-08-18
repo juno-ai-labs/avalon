@@ -29,7 +29,7 @@ import type {
 import type { WorkstreamObjectCreateSuggestionInput } from "../durable-objects/workstream-object-product";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 const MessagePageSchema = z.object({
@@ -61,17 +61,17 @@ const InitializedWorkstreamSchema = z.object({
   harnessRunId: z.string().uuid(),
 });
 
-function objectStub(
+async function objectStub(
   env: Env,
   workspaceId: string,
   workstreamId: string,
   substreamId = "0",
-): DurableObjectStub {
-  return durableObjectStubForRegion(
+): Promise<DurableObjectStub> {
+  return durableObjectStubForWorkspace(
+    env,
     env.SUBSTREAM_AGENTS,
-    env.AVALON_REGION,
+    workspaceId,
     substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId, substreamId),
-    env.APP_ENV,
   );
 }
 
@@ -101,7 +101,7 @@ export async function attachWorkstreamRuntimeResource(
     ).run();
     return;
   }
-  const response = await objectStub(env, input.workspaceId, input.workstreamId).fetch(
+  const response = await (await objectStub(env, input.workspaceId, input.workstreamId)).fetch(
     "https://workstream-object/internal/runtime-resource",
     {
       method: "POST",
@@ -123,7 +123,7 @@ export async function createWorkstreamRuntimeSuggestion(
     suggestion: WorkstreamObjectCreateSuggestionInput;
   },
 ): Promise<{ suggestion: z.infer<typeof ActivitySuggestionSchema>; inserted: boolean }> {
-  const response = await objectStub(env, input.workspaceId, input.workstreamId).fetch(
+  const response = await (await objectStub(env, input.workspaceId, input.workstreamId)).fetch(
     "https://workstream-object/internal/runtime-suggestion",
     {
       method: "POST",
@@ -177,12 +177,12 @@ export class WorkstreamObjectClient {
   ) {}
 
   private async request(body: Record<string, unknown>): Promise<unknown> {
-    const response = await objectStub(
+    const response = await (await objectStub(
       this.env,
       this.auth.workspaceId,
       this.workstreamId,
       this.substreamId,
-    ).fetch("https://workstream-object/internal/product", {
+    )).fetch("https://workstream-object/internal/product", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...body, auth: this.auth }),

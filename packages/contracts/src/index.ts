@@ -1411,6 +1411,132 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
 ]);
 
 /**
+ * Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket.
+ * The socket carries durable invalidations rather than copying regional D1
+ * rows into a second authority; the desktop refetches each named surface with
+ * its existing authenticated REST contract.
+ */
+export const WORKSPACE_SYNC_TOPICS = [
+  "workspace_profile",
+  "member_directory",
+  "invitation_directory",
+  "connector_connections",
+  "terminal_policy",
+  "digest_schedule",
+  "automations",
+  "notes",
+  "resources",
+  "activity",
+  "work_opportunities",
+  "workstream_directory",
+  "viewer_preferences",
+  "feature_flags",
+] as const;
+export const WorkspaceSyncTopicSchema = z.enum(WORKSPACE_SYNC_TOPICS);
+
+export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("subscribe"),
+    afterVersion: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    type: z.literal("create_message"),
+    workstreamId: IdSchema,
+    substreamId: z.union([z.literal("0"), IdSchema]),
+    operationId: IdSchema,
+    payload: CreateMessageRequestSchema,
+  }).strict(),
+]);
+
+export const WorkspaceSocketSyncEventSchema = z.object({
+  type: z.literal("workspace_sync"),
+  version: z.number().int().nonnegative(),
+  occurredAt: TimestampSchema,
+  topics: z.array(WorkspaceSyncTopicSchema).min(1),
+  reason: z.enum(["initial", "change", "history_unavailable"]),
+}).strict();
+
+/**
+ * The WorkstreamDO-owned common metadata plus the authenticated viewer overlay.
+ * Transcript, tools, presence, and streaming output intentionally remain on
+ * the selected SubstreamAgent feed.
+ */
+export const WorkstreamControlMetadataSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  id: IdSchema,
+  workspaceId: IdSchema,
+  title: z.string().min(1).max(500),
+  description: z.string().max(4_000),
+  preview: z.string().max(1_000),
+  emailAddress: z.string().email().max(254).nullable(),
+  originType: WorkstreamOriginSchema,
+  createdByUserId: IdSchema.nullable(),
+  automationSubscriptionId: IdSchema.nullable(),
+  automationRunId: IdSchema.nullable(),
+  plannedFor: TimestampSchema.nullable(),
+  titleStatus: z.enum(["naming", "automatic", "settled"]),
+  exactState: z.string().min(1).max(80),
+  harnessStatus: HarnessStatusSchema,
+  latestAttentionSequenceNumber: z.number().int().nonnegative(),
+  unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
+  lastActivityAt: TimestampSchema,
+  completedAt: TimestampSchema.nullable(),
+  archivedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  scope: ScopeSchema,
+  systemKind: z.enum(["digest"]).nullable(),
+  nextPendingWakeup: z.object({
+    dueAt: TimestampSchema,
+    promptPreview: z.string().min(1).max(WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH + 1),
+  }).nullable(),
+  nextTerminalActionAt: TimestampSchema.nullable(),
+  viewer: z.object({
+    isParticipant: z.boolean(),
+    listable: z.boolean(),
+    unreadCount: z.number().int().nonnegative(),
+    youAreMentioned: z.boolean(),
+    readThroughSequenceNumber: z.number().int().nonnegative(),
+    manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
+    manualUnreadGeneration: z.number().int().nonnegative(),
+    latestMentionSequenceNumber: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+export const WorkstreamControlSocketClientEventSchema = z.object({
+  type: z.literal("subscribe"),
+}).strict();
+
+export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("workstream_metadata"),
+    occurredAt: TimestampSchema,
+    metadata: WorkstreamControlMetadataSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("hypersight_configuration_updated"),
+    occurredAt: TimestampSchema,
+    hypersight: HyperSightSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("hypersight_block_run_updated"),
+    occurredAt: TimestampSchema,
+    run: HyperSightBlockRunSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("hypersight_preference_updated"),
+    occurredAt: TimestampSchema,
+    preference: HyperSightPreferenceSchema,
+  }).strict(),
+]);
+
+export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
+export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
+export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
+export type WorkstreamControlMetadata = z.infer<typeof WorkstreamControlMetadataSchema>;
+export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocketEventSchema>;
+
+/**
  * A direct response to one client command. It is deliberately outside the room
  * event sequence: the canonical `message_created` event is replayable and
  * broadcast, while this receipt is private to the socket that submitted it.
@@ -1726,6 +1852,12 @@ export const SlackSearchAuthorizationSchema = z.object({
   actionToken: z.string().min(1).max(4096)
 }).strict();
 
+export const WorkstreamCompactionFenceSchema = z.object({
+  checkpointRunId: IdSchema,
+  compactedThroughSequence: z.number().int().nonnegative(),
+  checkpointHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
+}).strict();
+
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
@@ -1747,6 +1879,16 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * parsing unchanged.
    */
   transcriptFenceMessageId: IdSchema.nullable().optional(),
+  /**
+   * Immutable lower boundary for the projected model array.
+   *
+   * `undefined` keeps the normal behavior of resolving the latest authorized
+   * checkpoint when the run begins. `null` pins the array to the beginning of
+   * the substream. An object pins one exact completed checkpoint by run,
+   * waterline, and content hash so sibling derived agents cannot observe
+   * different compactions while starting at different times.
+   */
+  compactionFence: WorkstreamCompactionFenceSchema.nullable().optional(),
   automationSubscriptionId: IdSchema.nullable(),
   activityId: IdSchema.nullable(),
   /**
@@ -2232,6 +2374,7 @@ export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
 export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
 export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+export type WorkstreamCompactionFence = z.infer<typeof WorkstreamCompactionFenceSchema>;
 
 export const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
 export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verified", "failed"]);

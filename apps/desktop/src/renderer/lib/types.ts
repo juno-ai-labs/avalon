@@ -98,6 +98,7 @@ export interface WorkstreamSummary {
   objective?: string;
   emailAddress?: string;
   origin: 'ad_hoc' | 'automation';
+  createdByUserId?: string;
   automationName?: string;
   /**
    * Set when an automation generated this work stream, which is what makes its
@@ -105,14 +106,20 @@ export interface WorkstreamSummary {
    * that decides who reads it, so it is not offered as one.
    */
   automationSubscriptionId?: string;
+  automationRunId?: string;
   harnessStatus: HarnessStatus;
   latestAttentionSequenceNumber: number;
   readThroughSequenceNumber: number;
   manualUnreadFromSequenceNumber: number | null;
   manualUnreadGeneration: number;
   hasUnread: boolean;
+  /** A person mention exists above this viewer's read waterline. */
+  youAreMentioned?: boolean;
   firstUnreadSequenceNumber: number | null;
   lastActivityAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  archivedAt?: string;
   plannedFor?: string;
   preview?: string;
   /**

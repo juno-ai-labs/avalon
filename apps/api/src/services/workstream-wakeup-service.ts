@@ -19,7 +19,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { substreamAgentName } from "../durable-objects/names";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
@@ -623,14 +623,14 @@ export function wakeupExecutionPrincipal(row: WorkstreamWakeupRow): ExecutionPri
  * D1 until some unrelated schedule happens to wake the same Durable Object.
  */
 export async function refreshWorkspaceSchedulerAlarm(
-  env: Pick<Env, "WORKSPACE_SCHEDULERS" | "AVALON_REGION" | "APP_ENV">,
+  env: Pick<Env, "DB" | "WORKSPACE_SCHEDULERS" | "AVALON_REGION" | "APP_ENV">,
   workspaceId: string,
 ): Promise<void> {
-  const scheduler = durableObjectStubForRegion(
+  const scheduler = await durableObjectStubForWorkspace(
+    env,
     env.WORKSPACE_SCHEDULERS,
-    env.AVALON_REGION,
+    workspaceId,
     `${env.AVALON_REGION}:${workspaceId}`,
-    env.APP_ENV,
   );
   const response = await scheduler.fetch("https://scheduler.internal/refresh", {
     method: "POST",
@@ -658,16 +658,16 @@ export async function refreshAgentTimerAlarm(
     await refreshWorkspaceSchedulerAlarm(env, workspaceId);
     return;
   }
-  const agent = durableObjectStubForRegion(
+  const agent = await durableObjectStubForWorkspace(
+    env,
     env.SUBSTREAM_AGENTS,
-    env.AVALON_REGION,
+    workspaceId,
     substreamAgentName(
       env.AVALON_REGION,
       workspaceId,
       workstreamId,
       substreamId,
     ),
-    env.APP_ENV,
   );
   const response = await agent.fetch("https://substream-agent/internal/refresh-agent-alarm", {
     method: "POST",

@@ -23,7 +23,7 @@ test("rejects direct Durable Object namespace routing operations", () => {
   for (const method of ["get", "getByName", "idFromName", "idFromString", "jurisdiction", "newUniqueId"]) {
     const messages = lint(`env.SUBSTREAM_AGENTS.${method}(value)`);
     assert.equal(messages.length, 1, method);
-    assert.match(messages[0].message, /durableObjectStubForRegion/u);
+    assert.match(messages[0].message, /durableObjectStubForWorkspace/u);
   }
   assert.equal(lint(`env.CRASH_SYMBOLICATOR.getByName(crashId)`).length, 1);
 });
@@ -46,15 +46,16 @@ test("rejects a namespace returned from a direct jurisdiction call", () => {
   assert.equal(messages.length, 2);
 });
 
-test("allows the centralized regional stub resolver and unrelated namespaces", () => {
+test("rejects the low-level regional resolver outside its boundary", () => {
+  assert.equal(lint(`durableObjectStubForRegion(namespace, region, name, environment, hint)`).length, 1);
+});
+
+test("allows the centralized workspace and singleton resolvers and unrelated namespaces", () => {
   assert.deepEqual(lint(`
-    const stub = durableObjectStubForRegion(
-      env.SUBSTREAM_AGENTS,
-      env.AVALON_REGION,
-      name,
-      env.APP_ENV,
-    );
+    const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, workspaceId, name);
+    const singleton = durableObjectStubForRegionalSingleton(env, env.CRASH_SYMBOLICATOR, crashId);
     await stub.fetch(request);
+    await singleton.fetch(request);
     cache.get(key);
   `), []);
 });
