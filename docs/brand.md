@@ -106,8 +106,9 @@ what the name means.
 The before: everyone's best thinking happens alone, in a private chat tab.
 What the team gets is a pasted final answer with the reasoning amputated, and
 a sidebar of vaguely-titled sessions nobody can navigate. The after: the work
-sits on the bench. A colleague opens the stream, sees how you got here, takes
-the last 10%, hands it back. No copy-paste, no "wait, what's the context?"
+sits on the bench. A colleague opens the stream, sees how the work got to
+where it is, and takes it the rest of the way — no copy-paste, and no asking
+for context that's already there.
 
 **The rule:** every artifact must be traceable to this idea. Before shipping
 anything, ask: *does this show work coming out of a private chat onto a shared
@@ -145,7 +146,8 @@ knows it.
 **Who he is not.** Not a boss (he works), not a founder (he doesn't pitch), not
 a bro (see below), not a wizard (nothing here is magic, and he'd be insulted
 by the suggestion — it's skill and a well-organized floor, and he can show you
-both).
+both). And not a copywriter: he has never composed a slogan in his life, which
+is what [rule 4.3](#43-plain-sentences-you-could-say-out-loud) protects.
 
 **His stance toward the reader.** The reader is smart and capable and has
 simply never been shown these tools. He never talks down, never over-reassures,
@@ -184,12 +186,12 @@ from a real week beat category words every time. And per
 [section 1](#1-positioning), aim at the backlog, not the routine.
 
 > ✗ Streamline your team's AI-powered collaboration.
-> ✓ The blog post that's been "this week" for three weeks. Put it on the
+> ✓ That blog post that's been "this week" for three weeks? Put it on the
 > bench.
 
 > ✗ Share AI-generated insights across your organization.
-> ✓ Simon opens your deck draft, sees the three versions you already tried,
-> and doesn't suggest any of them again.
+> ✓ Simon can open your deck draft and see the three versions you already
+> tried, so he doesn't suggest them again.
 
 ### 4.2 Show before you claim
 
@@ -199,24 +201,41 @@ makes the same move — a colleague trusts work because the iterations are
 visible — so the copy that sells it must work the same way.
 
 > ✗ Bench transforms how modern teams collaborate with AI.
-> ✓ Watch Maria hand half-finished work to Simon — and watch him finish it
-> without asking a single "wait, what's the context?" Two minutes.
+> ✓ Watch Simon pick up Maria's half-finished deck and finish it without
+> asking her a single question. The whole demo is two minutes.
 
 > ✗ Our intelligent workspace understands your business context.
 > ✓ The brand voice doc, the customer definition, last quarter's decisions —
-> on the bench, where every draft gets checked against them.
+> it's all on the bench, and every draft gets checked against it.
 
-### 4.3 Short declaratives. No hype.
+### 4.3 Plain sentences you could say out loud
 
-Periods, not exclamation marks. One strong claim beats three weak ones.
+No hype, and no ad-copy either. **The test: read the line aloud. If it
+wouldn't survive being said across a desk to a colleague, it doesn't ship.**
+Terse means fewer ideas per sentence — never amputated grammar. The failure
+mode this rule exists for is compression that mangles syntax until the line
+sounds like a print ad instead of a person; it reads as uncanny even when the
+reader can't say why. Banned constructions, with our own rejected lines as the
+counterexamples:
+
+- **Reversal punchlines** (X doesn't do A; A does X): ~~"On Bench, you don't
+  get benched. The busywork does."~~
+- **Fragments chained for rhythm**: ~~"Nothing to paste. The work is already
+  where your team is."~~
+- **Pronouns that make the reader re-read**: ~~"Engineers have had a shared
+  floor for years. This one doesn't require being one."~~
+
+Also: periods, not exclamation marks. One strong claim beats three weak ones.
 Confidence is quiet — the foreman doesn't hype the table saw; he says what it
 does and lets you watch it cut.
 
 > ✗ Unleash seamless AI collaboration and 10x your team's productivity!
-> ✓ One link. They see the work, not just the answer.
+> ✓ Send one link and your teammate sees the whole piece of work, not just
+> the answer.
 
 > ✗ Say goodbye to messy copy-paste workflows forever!
-> ✓ Nothing to paste. The work is already where your team is.
+> ✓ Nothing gets pasted anywhere. Your teammate opens the session and it's
+> all there.
 
 ### 4.4 Talk to a smart new hire
 
@@ -226,12 +245,13 @@ job is condescension. Our reader already runs daily ChatGPT sessions — write
 to that, never beneath it.
 
 > ✗ Don't worry — it's just like ChatGPT, but even easier! Anyone can use it!
-> ✓ If you run ChatGPT sessions all day, you already know how to use Bench.
-> The difference is your team's in it.
+> ✓ If you use ChatGPT every day, you already know how to use Bench. The
+> difference is that your team is in there with you.
 
 > ✗ Even non-technical users can collaborate with AI!
-> ✓ Engineers have had a shared floor for years. This one doesn't require
-> being one.
+> ✓ Engineers have worked this way for years — one shared place where anyone
+> can see the work and its history. Bench is that for the rest of the
+> company.
 
 ### 4.5 Bench tasks, never people
 
@@ -241,10 +261,11 @@ hero. Judgment calls always stay visibly with the reader: Bench drafts, flags,
 and lays the work out; the person decides.
 
 > ✗ Let AI take over your team's work.
-> ✓ Bench flags the ten conflicts. You resolve eight, tag your CEO on two.
+> ✓ Bench flags the ten conflicts. You resolve eight and tag your CEO on the
+> last two.
 
 > ✗ Bench replaces hours of manual effort.
-> ✓ On Bench, you don't get benched. The busywork does.
+> ✓ Bench does the busywork. The decisions stay yours.
 
 ### Tone by surface
 
@@ -338,7 +359,7 @@ with standing approval, because it can be answered in workload, which makes the
 joke do product work instead of just being a joke:
 
 > What do you bench?
-> "The whole candidate pipeline — and Simon can pick any of it up."
+> "The whole candidate pipeline."
 > "Every investor update in the building."
 
 **Second-tier lines** — "You don't need a spotter", "show me how much you
@@ -348,14 +369,35 @@ spearhead test.
 **Swag-only:** "Do you even bench?" It's the funniest and the most locker-room;
 on a t-shirt at a conference it's charming, in a feed it's a door policy.
 
-Two standing rules: the answer to any gym line must resolve to *work*, never to
-actual lifting culture; and no spice may break the "bench tasks, never people"
-rule — nobody gets benched in a Bench joke.
+Three standing rules: the answer to any gym line must resolve to *work*, never
+to actual lifting culture; no spice may break the "bench tasks, never people"
+rule — nobody gets benched in a Bench joke; and spice obeys
+[rule 4.3](#43-plain-sentences-you-could-say-out-loud) like everything else —
+a pun is fine, a reversal punchline is not.
 
 ## 7. Visual direction
 
 This is direction for the design system, not the system itself. The design
-language is derived from the same character as the voice: the well-run shop.
+language draws on the well-run shop — but:
+
+**The shop is a reference, not a theme.** Bench's UI is a serious, modern
+software product. Nothing in it is skeuomorphic: no plywood panels, no
+masking-tape stickers, no construction-site props, no wood grain. The shop
+supplies a sensibility — materials, marks, drawing traditions — and it shows
+up in accents, iconography, illustration, and marketing surfaces, never as
+set dressing on the product itself.
+
+**Serious, with a sprinkle of delight.** The budget is roughly one moment of
+playfulness per surface, earned through craft: a hard hat in the logo, one
+animated tool in an empty state, a satisfying mechanical interaction. Delight
+is seasoning; a themed UI is a costume, and costumes are off-brand.
+
+**Worked-in, not staged.** A real bench is messy in a way its owner can read —
+work is chaotic, and pretending otherwise is a lie the audience can smell.
+The brand is comfortable showing work-in-progress: drafts, flags, rejected
+options, half-done states. The frame stays ruthlessly simple and organized;
+the work sitting on it is allowed to look alive. Design's job is to keep the
+mess navigable, never to pretend it doesn't exist.
 
 **The defining motif — the shadow board.** A pegboard where every tool has a
 drawn outline showing where it belongs. It is the whole brand in one image:
@@ -370,24 +412,39 @@ margins, the flags, not a lone polished output. A screenshot that shows one
 pristine answer is off-brand; one that shows the work getting there is the
 brand.
 
-**Materials:** graph paper, birch ply, steel, stencil lettering, chalk lines,
-masking tape. Texture that implies weight and use, applied with restraint — the
-shop is *clean*. Ruthless simplicity and organization are the brief; clutter is
-off-brand even when it's on-material.
+**Materials:** pegboard, graph paper (square and isometric grids), paper
+off-white, steel. Texture that implies weight and use, applied with restraint
+— the shop is *clean*. Ruthless simplicity and organization are the brief;
+clutter is off-brand even when it's on-material.
 
 **Color:** paper off-white grounds, charcoal and steel neutrals, and one
 **shop-safety-yellow accent used like a chalk line, not a paint job** — it
 marks the thing that matters on a screen and nothing else. No gradients as
 identity.
 
-**Type:** an industrial grotesque with DIN/stencil flavor for headlines; a
-plain, highly readable grotesque for body; monospace for data, runs, and
-receipts. Nothing rounded-friendly, nothing sci-fi.
+**Type:** three roles, named by neighborhood — the design system makes the
+final picks.
 
-**Imagery:** technical linework and isometric drawings; real product
-screenshots showing real named work (an actual pipeline report, an actual
-draft with flags on it). Never abstract 3D blobs, orbs, neural-network art, or
-robots.
+- *Headlines:* a sturdy grotesque with engineering DNA — the DIN family
+  (FF DIN, D-DIN) descends from German road-sign and technical-drawing
+  lettering, which is exactly the flavor; a plain Neue Haas-style grotesque is
+  the acceptable alternative.
+- *Body:* a highly readable workhorse grotesque — the Inter / Suisse Int'l
+  neighborhood.
+- *Data, runs, receipts:* a monospace — IBM Plex Mono / JetBrains Mono
+  neighborhood.
+
+What this rules out: rounded-terminal "friendly startup" faces (Nunito,
+Quicksand) and techno/sci-fi faces (Eurostile, Orbitron).
+
+**Imagery:** measured isometric drawings in the tradition of early-1900s
+architectural survey work — the canonical reference is the isometric cutaway
+of St Paul's Cathedral, which shows the outside of the thing and its inner
+workings in one image. That is proof-of-work as a drawing, and it is the
+house illustration style: precise linework, cutaways and exploded views,
+simple solids on an isometric grid. Real product screenshots show real named
+work (an actual pipeline report, an actual draft with flags on it). Never
+abstract 3D blobs, orbs, neural-network art, or robots.
 
 **Banned outright** — the visual equivalents of the banned-word list, i.e. the
 default AI-startup look: purple-to-blue gradients, glassmorphism, floating
@@ -399,37 +456,42 @@ parts. Nothing floats, nothing bounces, nothing shimmers.
 
 ## 8. Proof artifacts
 
-The voice, demonstrated. These are reference implementations: when writing
-something new, start from the nearest one. Each notes the rules it exercises.
+The voice, demonstrated — **one artifact per surface.** Only the first is
+homepage copy; the rest are product UI, Slack, and social, each written in
+that surface's register from the tone table. When writing something new, start
+from the artifact whose surface matches.
 
-**Homepage hero** *(core idea; sessions lead, zero automation, zero spice)*
+**Homepage hero** *(the only homepage copy here; sessions lead, zero
+automation, zero spice)*
 
 > **Your best work is happening in a chat window. Alone.**
 >
 > Bench is the collaborative AI workspace: the same sessions you already run,
-> on a surface your team can see. Simon opens your draft, sees how you got
-> here, takes the last mile — no copy-paste, no "what's the context?"
+> on a surface your team shares. When you hand off a draft, your colleague
+> gets all of it — the versions, the reasoning, the open questions — and
+> takes it the rest of the way.
 >
 > [ Put something on the bench ]  [ Watch a handoff — 2 min ]
 
-**Empty state, first session** *(4.1 name the work; 4.4 smart new hire)*
+**Empty state, first session** *(product UI; 4.1, 4.4)*
 
 > Nothing on the bench yet.
 >
-> Start with the thing you'd normally take to ChatGPT. Same work — but here,
-> your team can pick it up where you leave it.
+> Start with something you'd normally take to ChatGPT. It's the same work —
+> except here, your team can pick it up where you leave off.
 
-**Handoff notification** *(proof-of-work; 4.5 judgment stays with the reader)*
+**Handoff notification** *(product UI, quiet register; proof-of-work; 4.5)*
 
-> Maria handed you the launch post. Eight conflicts resolved, two need your
-> call — the whole trail is on the bench.
+> Maria handed you the launch post — eight conflicts resolved, two waiting on
+> your call. Open the workstream to see how she got here.
 
-**Slack delivery** *(Slack as on-ramp: summary lands there, work lives here)*
+**Slack delivery** *(Slack as on-ramp: the summary lands there, the work
+lives here)*
 
-> Done — 32 follow-ups drafted, 3 flagged for review. Full work on the bench:
-> [link]
+> Finished the follow-ups — 32 drafted, 3 flagged for your review. Full
+> workstream: [link]
 
-**Error message** *(tone-by-surface: plain, owned, next step; no jokes)*
+**Error message** *(plain, owned, next step; no jokes)*
 
 > This run stopped — the spreadsheet it reads was moved. Point it at the new
 > location and it picks up where it left off.
@@ -439,19 +501,68 @@ something new, start from the nearest one. Each notes the rules it exercises.
 > What do you bench?
 >
 > Maria benches her whole candidate pipeline. Dev benches every investor
-> update in the building — and their teams can pick any of it up.
+> update in the building.
 >
-> Bench — collaborative AI workspace, for people with real work to do.
+> Bench. The collaborative AI workspace.
 
 **The spearhead's message** *(the artifact the whole brand is tested against:
 what the first adopter pastes into the team Slack. If our copy can't sound
 like this, it's overwritten.)*
 
-> Been running Bench for two weeks — it's where I do my ChatGPT stuff now.
-> The difference: Dev opened my pricing session yesterday, saw how I got the
-> numbers, and finished the doc himself. Ten minutes to see it — worth a look.
+> Been using Bench for two weeks — it's basically where I do my ChatGPT work
+> now. The difference is Dev opened my pricing session yesterday, saw how I
+> got the numbers, and finished the doc himself. Worth ten minutes to look
+> at.
 
 ## Changelog
+
+### 2026-08-18 — The read-aloud rule; the shop becomes a reference, not a theme
+
+**What changed:** Rule 4.3 is rebuilt around a read-aloud test — a line that
+wouldn't survive being said across a desk doesn't ship — with three named
+banned constructions (reversal punchlines, fragments chained for rhythm,
+pronouns that force a re-read), and the guide's own rejected lines kept in the
+rule as counterexamples. Every rewrite pair and proof artifact was rewritten
+to pass the test; "On Bench, you don't get benched" is dead everywhere,
+including as spice. Section 7 is reframed: the shop is a reference, not a
+theme — no skeuomorphic UI, materials trimmed to pegboard, graph paper, paper
+off-white, and steel — plus a playfulness budget (one moment of delight per
+surface), a "worked-in, not staged" principle, type roles named with concrete
+typeface neighborhoods, and the imagery direction anchored to measured
+isometric survey drawing, with the St Paul's cutaway as the canonical
+reference. Section 8 now states explicitly that only the hero is homepage
+copy; each artifact is labeled with its surface.
+
+**Why:** Founder review flagged the copy as uncanny — grammatically stumbling,
+over-compressed, "an ad, not a person." The diagnosis: the terseness rule was
+being satisfied by amputating syntax instead of by cutting ideas, which is
+itself a recognizable AI-copy signature — the exact disease this guide exists
+to prevent, reproduced inside the guide. The same review corrected the visual
+direction: plywood-and-masking-tape components read as construction cosplay,
+where the intent is a serious modern tool with shop sensibility and a sprinkle
+of delight. It also surfaced a truth the previous draft papered over: a real
+bench is messy in a way its owner can read, because work is chaotic — so the
+brand shows work-in-progress honestly instead of staging perfection, and the
+design keeps the mess navigable rather than denying it. The reference images
+(the St Paul's isometric cutaway; a simple solid on an isometric grid) were
+supplied in the same review and make the imagery direction concrete: a cutaway
+shows the outside and the workings at once, which is proof-of-work as a
+drawing.
+
+**Considered and rejected:** Keeping "On Bench, you don't get benched. The
+busywork does." as campaign spice. It's the cleverest line the brand has
+produced and it still fails the read-aloud test; grandfathering it would teach
+every future writer that the rule bends for a good enough pun.
+
+**Consequences:** Every line is read aloud before it ships, spice included.
+The failed lines stay in 4.3 as counterexamples and must not be deleted when
+the section is next edited — they are the specification. No skeuomorphic shop
+element ever appears in the UI; anyone proposing a textured wood panel gets
+pointed here. The delight budget is one moment per surface. Typeface picks
+remain the design system's call within the named neighborhoods.
+
+Drafted in the Bench rebrand working session, 2026-08-18, from founder review
+of the previous draft. PR link to be added when opened.
 
 ### 2026-08-18 — Collaboration-first: the crew is out, the shared bench is in
 
