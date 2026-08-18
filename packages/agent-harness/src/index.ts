@@ -1110,7 +1110,7 @@ export function createTextDeltaBatcher(
   options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
 ): TextDeltaBatcher {
   const maxCharacters = options.maxCharacters ?? 2_048;
-  const maxDelayMs = options.maxDelayMs ?? 75;
+  const maxDelayMs = options.maxDelayMs ?? 100;
   const now = options.now ?? Date.now;
   let pending = "";
   let lastFlushAt = now();

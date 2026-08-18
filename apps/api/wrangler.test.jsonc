@@ -1,0 +1,42 @@
+{
+  "name": "avalon-do-runtime-tests",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "APP_ENV": "test",
+    "APP_VERSION": "workerd-test",
+    "AVALON_REGION": "global",
+    "PUBLIC_API_BASE_URL": "https://api.test",
+    "PUBLIC_WEB_BASE_URL": "https://app.test",
+    "ALLOWED_ORIGINS": "app://avalon",
+    "DESKTOP_DEEP_LINK_URI": "avalon://auth/callback",
+    "LOG_LEVEL": "error"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "avalon-do-runtime-tests",
+      "database_id": "00000000-0000-0000-0000-000000000001"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
+      { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
+      { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
+      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SubstreamAgent", "WorkstreamDO", "WorkspaceDO", "WorkspaceScheduler"]
+    }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "ACTIVITY_QUEUE", "queue": "avalon-do-runtime-test-activity" }
+    ]
+  }
+}

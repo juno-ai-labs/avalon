@@ -4,7 +4,7 @@ import { connectorRetryAfterMs } from "@avalon/connectors";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { z } from "zod";
 
-import { workstreamRoomName } from "../durable-objects/workstream-room";
+import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import {
@@ -160,7 +160,12 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       return authority;
     });
     const executionEnv = authority.phase === "durable_object_open"
-      ? withWorkstreamRuntimeDatabase(this.env, input.workspaceId, input.workstreamId)
+      ? withWorkstreamRuntimeDatabase(
+        this.env,
+        input.workspaceId,
+        input.workstreamId,
+        input.substreamId,
+      )
       : this.env;
     const runtimeDb = executionEnv.DB;
 
@@ -512,14 +517,21 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
   private async publishBestEffort(input: WorkstreamWorkflowInput, event: unknown): Promise<void> {
     try {
       const rooms = durableObjectNamespaceForRegion(
-        this.env.WORKSTREAM_ROOMS,
+        this.env.SUBSTREAM_AGENTS,
         input.region,
         this.env.APP_ENV,
       );
       const id = rooms.idFromName(
-        workstreamRoomName(input.region, input.workspaceId, input.workstreamId),
+        // Workflow execution remains available for non-workstream loops and
+        // recovery, so retain exact child routing when it is used.
+        substreamAgentName(
+          input.region,
+          input.workspaceId,
+          input.workstreamId,
+          input.substreamId,
+        ),
       );
-      await rooms.get(id).fetch("https://workstream-room/internal/events", {
+      await rooms.get(id).fetch("https://substream-agent/internal/events", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

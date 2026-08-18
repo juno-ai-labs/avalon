@@ -235,7 +235,7 @@ describe("per-user work-stream read state", () => {
     const roomFetch = vi.fn(async () => Response.json({ accepted: true }, { status: 202 }));
     Object.assign(env, {
       AVALON_REGION: "global",
-      WORKSTREAM_ROOMS: {
+      SUBSTREAM_AGENTS: {
         idFromName: () => ({ toString: () => "room-id" }),
         get: () => ({ fetch: roomFetch }),
       },

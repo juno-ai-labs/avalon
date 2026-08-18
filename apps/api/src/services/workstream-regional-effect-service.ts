@@ -10,6 +10,7 @@ import {
   type WorkstreamRegionalEffectEnvelope,
   type WorkstreamRegionalEffectQueueMessage,
 } from "../durable-objects/workstream-regional-effect";
+import { workstreamDOName } from "../durable-objects/names";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
@@ -596,9 +597,9 @@ export async function acknowledgeWorkstreamRegionalEffect(
   env: Env,
   message: WorkstreamRegionalEffectEnvelope,
 ): Promise<void> {
-  const objectName = `${message.region}:${message.workspaceId}:${message.workstreamId}`;
-  const objectId = env.WORKSTREAM_ROOMS.idFromName(objectName);
-  const response = await env.WORKSTREAM_ROOMS.get(objectId).fetch(
+  const objectName = workstreamDOName(message.region, message.workspaceId, message.workstreamId);
+  const objectId = env.WORKSTREAM_DOS.idFromName(objectName);
+  const response = await env.WORKSTREAM_DOS.get(objectId).fetch(
     "https://workstream.internal/internal/regional-effect-ack",
     {
       method: "POST",
@@ -656,9 +657,9 @@ export async function loadWorkstreamRegionalEffect(
   input: WorkstreamRegionalEffectQueueMessage,
 ): Promise<WorkstreamRegionalEffectEnvelope | null> {
   const wake = WorkstreamRegionalEffectQueueMessageSchema.parse(input);
-  const objectName = `${wake.region}:${wake.workspaceId}:${wake.workstreamId}`;
-  const objectId = env.WORKSTREAM_ROOMS.idFromName(objectName);
-  const response = await env.WORKSTREAM_ROOMS.get(objectId).fetch(
+  const objectName = workstreamDOName(wake.region, wake.workspaceId, wake.workstreamId);
+  const objectId = env.WORKSTREAM_DOS.idFromName(objectName);
+  const response = await env.WORKSTREAM_DOS.get(objectId).fetch(
     "https://workstream.internal/internal/regional-effect-delivery",
     {
       method: "POST",

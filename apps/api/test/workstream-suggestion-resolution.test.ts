@@ -171,7 +171,7 @@ function environment(database: DatabaseSync, published?: unknown[]): Env {
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
-    ...(published ? { WORKSTREAM_ROOMS: recordingRooms(published) } : {}),
+    ...(published ? { SUBSTREAM_AGENTS: recordingRooms(published) } : {}),
   });
 }
 

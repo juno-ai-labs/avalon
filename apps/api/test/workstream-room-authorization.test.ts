@@ -1,9 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WorkstreamSocketCommandResultSchema } from "@avalon/contracts";
 
-import { WorkstreamRoom } from "../src/durable-objects/workstream-room";
-import { WorkstreamService } from "../src/services/workstream-service";
+import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
@@ -46,7 +44,7 @@ function seededDatabase(): DatabaseSync {
     INSERT INTO sessions
       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
     VALUES ('${SESSION}', '${PARTICIPANT}', '${WORKSPACE}', 'global',
-            'workstream-room-session-hash', '2099-08-11T09:00:00.000Z', '${at}');
+            'substream-agent-session-hash', '2099-08-11T09:00:00.000Z', '${at}');
     INSERT INTO workstreams
       (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
        created_by_user_id, harness_status, next_sequence_number, last_activity_at,
@@ -78,6 +76,7 @@ function fakeSocket(userId: string): FakeSocket {
     connectionId: "8f14e45f-ceea-467a-9e6f-1a9f9c8b3f21",
     workspaceId: WORKSPACE,
     workstreamId: WORKSTREAM,
+    substreamId: "0",
     userId,
     sessionId: SESSION,
     connectedAt: at,
@@ -95,7 +94,7 @@ function fakeSocket(userId: string): FakeSocket {
   };
 }
 
-function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): WorkstreamRoom {
+function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): SubstreamAgent {
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
   ]);
@@ -134,48 +133,17 @@ function roomFor(database: DatabaseSync, sockets: FakeSocket[] = []): Workstream
       }),
     },
   });
-  return new WorkstreamRoom(
+  return new SubstreamAgent(
     state,
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
   );
 }
 
-describe("message commands over the work-stream socket", () => {
-  it("revalidates the session and returns a private receipt for the canonical write", async () => {
+describe("message commands over the SubstreamAgent socket", () => {
+  it("rejects writes because user messages enter through the WorkspaceDO socket", async () => {
     const socket = fakeSocket(PARTICIPANT);
-    const messageId = "00000000-0000-7000-8000-0000000000c6";
     const operationId = "00000000-0000-7000-8000-0000000000c7";
     const clientMessageId = "socket-client-message";
-    const createMessage = vi.spyOn(WorkstreamService.prototype, "createMessage")
-      .mockResolvedValue({
-        message: {
-          id: messageId,
-          clientMessageId,
-          workspaceId: WORKSPACE,
-          workstreamId: WORKSTREAM,
-          author: {
-            type: "human",
-            user: {
-              id: PARTICIPANT,
-              email: "one@example.com",
-              name: "One",
-              avatarUrl: null,
-              timezone: "UTC",
-              createdAt: at,
-            },
-          },
-          messageType: "text",
-          textContent: "Continue",
-          structuredContent: null,
-          mentions: [],
-          attachments: [],
-          sequenceNumber: 1,
-          createdAt: at,
-          editedAt: null,
-        },
-        agentInvoked: true,
-        harnessRunId: null,
-      });
     const room = roomFor(seededDatabase(), [socket]);
 
     await room.webSocketMessage(socket as unknown as WebSocket, JSON.stringify({
@@ -190,30 +158,22 @@ describe("message commands over the work-stream socket", () => {
       },
     }));
 
-    expect(createMessage).toHaveBeenCalledWith(WORKSTREAM, expect.objectContaining({
-      text: "Continue",
-      clientMessageId,
-      telemetryOperationId: operationId,
-    }));
-    expect(WorkstreamSocketCommandResultSchema.parse(JSON.parse(socket.sent.at(-1)!))).toMatchObject({
-      type: "client_command_succeeded",
-      command: "create_message",
-      clientMessageId,
-      message: { id: messageId },
-      agentInvoked: true,
-      harnessRunId: null,
+    expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({
+      type: "error",
+      code: "workspace_socket_required",
     });
     expect(socket.closes).toEqual([]);
   });
 });
 
-function publish(room: WorkstreamRoom, event: Record<string, unknown>): Promise<Response> {
+function publish(room: SubstreamAgent, event: Record<string, unknown>): Promise<Response> {
   return room.fetch(new Request("https://room.internal/internal/events", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-avalon-workspace-id": WORKSPACE,
       "x-avalon-workstream-id": WORKSTREAM,
+      "x-avalon-substream-id": "0",
     },
     body: JSON.stringify(event),
   }));
@@ -227,12 +187,13 @@ function publish(room: WorkstreamRoom, event: Record<string, unknown>): Promise<
  * step later, and the difference between "refused at the gate" and "let
  * through" is legible as 403 against 401.
  */
-function connectAs(room: WorkstreamRoom, userId: string): Promise<Response> {
+function connectAs(room: SubstreamAgent, userId: string): Promise<Response> {
   return room.fetch(new Request("https://room.internal/socket", {
     headers: {
       Upgrade: "websocket",
       "x-avalon-workspace-id": WORKSPACE,
       "x-avalon-workstream-id": WORKSTREAM,
+      "x-avalon-substream-id": "0",
       "x-avalon-user-id": userId,
       "x-avalon-session-id": "test-session",
       "x-avalon-socket-ticket-id": "3f1b0f4a-59cb-4f5f-8d1e-6d3e5a2a9c11",

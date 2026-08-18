@@ -110,7 +110,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
       idFromName: vi.fn(() => objectId),
       get: vi.fn(() => ({ fetch })),
     });
-    const env = createTestEnv({ WORKSTREAM_ROOMS: rooms });
+    const env = createTestEnv({ WORKSTREAM_DOS: rooms });
 
     expect(wake).not.toHaveProperty("effect");
     await expect(loadWorkstreamRegionalEffect(env, wake)).resolves.toEqual(envelope);
@@ -228,7 +228,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
       });
       await acknowledgeWorkstreamRegionalEffect(createTestEnv({
         DB: sqliteD1(database),
-        WORKSTREAM_ROOMS: rooms,
+        WORKSTREAM_DOS: rooms,
       }), newerMessage);
       expect(database.prepare(
         `SELECT acknowledged_at IS NOT NULL AS acknowledged

@@ -94,7 +94,7 @@ function fixture(): {
     APP_ENV: "test",
     AVALON_REGION: "global",
     DB: { prepare, batch },
-    WORKSTREAM_ROOMS: namespace,
+    SUBSTREAM_AGENTS: namespace,
     WORKSTREAM_LOOP_WORKFLOW: { create: startWorkflow },
   });
   return { database, env, publish, startWorkflow };

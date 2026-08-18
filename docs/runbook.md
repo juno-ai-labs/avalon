@@ -541,23 +541,24 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 
 ## Realtime operations and cost controls
 
-- Use one deterministic WorkstreamRoom per work stream, scoped by region and workspace. Do not allocate a room per socket or user.
+- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, and append the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
 - Respect the authority phase. Before `durable_object_open`, REST reads the
-  legacy D1 source; afterward REST reads the WorkstreamDO and D1 contains only
-  directory projections. The room's bounded replay buffer remains an in-memory
+  legacy D1 source; afterward REST reads the selected `SubstreamAgent`, its
+  parent holds aggregate metadata/outbox, and D1 contains only directory/control
+  projections. The child's bounded replay buffer remains an in-memory
   optimization. The active checkpoint lives in `active_output_turns` and
   60-KiB `active_output_chunks`, is updated per batched delta, and is removed at
   terminal state. Do not collapse it into one unbounded value.
-- On first activation after the SQL-store rollout, an existing room imports its hidden `__cf_kv` identity, sequence, checkpoint chunks, HyperSight due item, and socket-ticket receipts. Diagnose failures through `_sql_schema_migrations`, `_data_migrations`, and `object_versions`; a `copied/running` data row means cleanup can resume safely, while an invalid legacy record remains deliberately untouched for repair. `GET /health` reports `schema: workstream-do-v1` and local database bytes.
+- Every object constructor applies only bounded, append-only SQL migrations under `blockConcurrencyWhile()`. Diagnose failures through `_sql_schema_migrations`; a hash mismatch means history was edited, `schema_ahead` means the Worker is older than the object, and a foreign-key violation requires quarantine. Product data moves only through the maintenance import, never a hidden KV importer.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The client heartbeat is jittered across 45–55 seconds, waits 15 seconds for `pong`, and reconnects with equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not perform application work.
-- Verify foreground message ingress on the existing WorkstreamDO socket: drop
+- Verify foreground message ingress on the workspace command socket: drop
   the connection after `create_message` but before its private receipt, confirm
   reconnect resends the same `clientMessageId`, and confirm exactly one
   sequenced `message_created` row/event exists. A socket attachment from before
   the session-claim deployment should receive `socket_reconnect_required` and a
   1012 close on its first attempted write.
-- Batch model `stream_delta` broadcasts. Avoid Durable Object timers, per-connection alarms, and periodic room health polling; each can wake an otherwise idle room and add duration or request cost.
+- Batch model `stream_delta` broadcasts. The direct child loop may use its reference-counted 30-second keep-alive alarm only while active work exists; avoid per-connection alarms and periodic room health polling.
 - Resolve every EU room and scheduler namespace through `durableObjectNamespaceForRegion(..., "eu")`. A direct namespace lookup is a regionalization defect.
 - Monitor reconnect rate, `resync_required` rate, rejected socket origins, active connections, and messages per room. A rise in reconnects or resyncs is an availability signal, not a reason to retain unbounded replay state.
 - Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Avalon ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
@@ -594,8 +595,9 @@ generation; never reuse one from a quarantined attempt.
 5. When every route verifies, control advances to `maintenance_verified` and
    cron activates each object. Wait until every route is `active`. The region
    remains behind the maintenance response intentionally.
-6. Deploy the Worker whose product reads/writes, Workflow persistence, Terminal
-   persistence, and regional-effect outbox all use the WorkstreamDO. Run the read,
+6. Deploy the Worker whose product reads/writes, direct Bind-loop persistence,
+   Terminal persistence, and child/parent regional-effect outboxes use the
+   `SubstreamAgent`/`WorkstreamDO` hierarchy. Run the read,
    write, queued/steering, streaming reconnect, Terminal, and sidebar smoke
    tests while the public surface is still closed. That deployment must bump
    `WORKSTREAM_DO_SERVING_CONTRACT_VERSION` to the required version. The complete
@@ -609,8 +611,9 @@ generation; never reuse one from a quarantined attempt.
    version is too old. Verify HTTP, Queue, cron, two simultaneous streaming work
    streams, and common/user sidebar projections before starting the next region.
 
-After opening, inspect both `workstream_regional_effect_receipts` and the owning
-object's `durable_outbox` when a sidebar badge, digest event, Slack mention, or
+After opening, inspect `workstream_regional_effect_receipts`, the parent
+`WorkstreamDO.durable_outbox`, and the source child outbox/receipt when a sidebar
+badge, digest event, Slack mention, or
 email notification is missing. A receipt with no local outbox row means D1
 applied and acknowledged the effect; an outbox row with no receipt means Queue
 delivery or D1 application is still retrying. Both rows with the same hash mean
@@ -1120,9 +1123,9 @@ procedures.
 
 The harness tries configured fallback models within its per-request and stream
 watchdogs plus the caller's run policy. Root ordinary work-stream and HyperSight
-runs allow 1,000 routed model attempts and have a one-year Workflow deadline;
-inline children and bounded one-shot callers retain their smaller wall-time and
-iteration ceilings. If all models fail, the run becomes `failed`
+runs allow 1,000 routed model attempts; durable child dispatch and attempt
+leases recover long runs across eviction. Inline children and bounded one-shot
+callers retain their smaller wall-time and iteration ceilings. If all models fail, the run becomes `failed`
 and the work stream retains its persisted context. Check redacted structured
 logs by request, workspace, work-stream, and harness-run IDs; never add prompt
 bodies or credentials to logs.
@@ -1178,7 +1181,8 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 
 - Before the authority phase opens, D1 is canonical for work streams, messages,
   runs, schedules, connector metadata, and audit events. After it opens, each
-  WorkstreamDO is canonical for its work-stream product tables; D1 stays
+  `SubstreamAgent` is canonical for its substream product tables,
+  `WorkstreamDO` is canonical for aggregate metadata/outbox, and D1 stays
   canonical for schedules, connector/workspace metadata, audit, and directory
   projections.
 - R2 stores large payloads, uploads, and snapshots referenced by their owning

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { workstreamRoomName } from "../durable-objects/workstream-room";
+import { substreamAgentName } from "../durable-objects/names";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -15,6 +15,10 @@ interface BoundStatement {
   params: RuntimeValue[];
   local: boolean;
 }
+
+type LocalStatementExecutor = (
+  statements: Array<{ sql: string; params: RuntimeValue[] }>,
+) => Promise<WorkstreamRuntimeSqlResult[]>;
 
 const responseSchema = z.object({
   results: z.array(z.object({
@@ -33,6 +37,8 @@ const LOCAL_TABLES = [
   "repository_publications",
   "workstream_participants",
   "harness_runs",
+  "runs",
+  "run_steering",
   "harness_run_scopes",
   "harness_run_memory_contexts",
   "harness_run_plugin_activations",
@@ -125,6 +131,8 @@ class WorkstreamRuntimeDatabase implements D1Database {
     private readonly env: Env,
     private readonly workspaceId: string,
     private readonly workstreamId: string,
+    private readonly substreamId = "0",
+    private readonly localExecutor?: LocalStatementExecutor,
   ) {}
 
   prepare(sql: string): D1PreparedStatement {
@@ -168,15 +176,19 @@ class WorkstreamRuntimeDatabase implements D1Database {
   }
 
   private async executeLocal(statements: BoundStatement[]): Promise<WorkstreamRuntimeSqlResult[]> {
+    if (this.localExecutor) {
+      return this.localExecutor(statements.map(({ sql, params }) => ({ sql, params })));
+    }
     const namespace = durableObjectNamespaceForRegion(
-      this.env.WORKSTREAM_ROOMS,
+      this.env.SUBSTREAM_AGENTS,
       this.env.AVALON_REGION,
       this.env.APP_ENV,
     );
-    const stub = namespace.get(namespace.idFromName(workstreamRoomName(
+    const stub = namespace.get(namespace.idFromName(substreamAgentName(
       this.env.AVALON_REGION,
       this.workspaceId,
       this.workstreamId,
+      this.substreamId,
     )));
     const response = await stub.fetch("https://workstream-object/internal/runtime-sql", {
       method: "POST",
@@ -222,8 +234,10 @@ export function workstreamRuntimeDatabase(
   env: Env,
   workspaceId: string,
   workstreamId: string,
+  substreamId = "0",
+  localExecutor?: LocalStatementExecutor,
 ): D1Database {
-  return new WorkstreamRuntimeDatabase(env, workspaceId, workstreamId);
+  return new WorkstreamRuntimeDatabase(env, workspaceId, workstreamId, substreamId, localExecutor);
 }
 
 /** Preserve every Worker binding while substituting the runtime database port. */
@@ -231,8 +245,16 @@ export function withWorkstreamRuntimeDatabase(
   env: Env,
   workspaceId: string,
   workstreamId: string,
+  substreamId = "0",
+  localExecutor?: LocalStatementExecutor,
 ): Env {
-  const database = workstreamRuntimeDatabase(env, workspaceId, workstreamId);
+  const database = workstreamRuntimeDatabase(
+    env,
+    workspaceId,
+    workstreamId,
+    substreamId,
+    localExecutor,
+  );
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === "DB") return database;
@@ -294,11 +316,11 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
     ),
   ]);
   const namespace = durableObjectNamespaceForRegion(
-    env.WORKSTREAM_ROOMS,
+    env.SUBSTREAM_AGENTS,
     env.AVALON_REGION,
     env.APP_ENV,
   );
-  const stub = namespace.get(namespace.idFromName(workstreamRoomName(
+  const stub = namespace.get(namespace.idFromName(substreamAgentName(
     env.AVALON_REGION,
     workspaceId,
     workstreamId,

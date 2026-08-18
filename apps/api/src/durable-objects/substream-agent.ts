@@ -7,8 +7,7 @@ import {
   ServerSocketEventSchema,
   UpdateWorkstreamRequestSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-  WorkstreamSocketCommandResultSchema,
-  type ClientSocketEvent,
+  WorkstreamWorkflowInputSchema,
   type PersonalSocketEvent,
   type ServerSocketEvent,
   type User,
@@ -16,13 +15,40 @@ import {
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
+import { DurableObject } from "cloudflare:workers";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { workstreamVisibilitySql } from "../lib/workstream-visibility";
-import { launchHyperSightRefresh } from "../services/hypersight-service";
+import {
+  HarnessRunMetricsSchema,
+  recordHarnessRunObservation,
+} from "../observability/harness-run-observability";
+import {
+  hyperSightBlockRunFromRow,
+  launchHyperSightRefresh,
+  publishHyperSightRun,
+  type HyperSightBlockRunRow,
+} from "../services/hypersight-service";
 import { logWarn } from "../observability/logger";
-import { WorkstreamService } from "../services/workstream-service";
+import {
+  claimHarnessAttempt,
+  reapStaleHarnessRuns,
+  terminalizeHarnessAttempt,
+  terminalizeQueuedHarnessRun,
+} from "../runtime/harness-run-runtime";
+import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
+import { deliverAutomationResultEmail } from "../services/automation-email-service";
+import { settleDigestRun } from "../services/digest-run-settlement";
+import { SlackAgentService } from "../services/slack-agent-service";
+import { refreshWorkstreamDescription } from "../services/workstream-description-service";
+import { refreshWorkstreamName } from "../services/workstream-naming-service";
+import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
+import {
+  fireWorkstreamWakeup,
+  WorkstreamService,
+} from "../services/workstream-service";
+import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
 import {
   acceptsNewWorkstreamWork,
   permitsLegacyRuntimeDrain,
@@ -34,8 +60,9 @@ import {
 } from "./workstream-authority-import";
 import {
   WorkstreamRegionalEffectAckSchema,
-  workstreamRegionalEffectWakeMessage,
+  type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
+import { workstreamDOName } from "./names";
 import {
   WorkstreamObjectStore,
   type PendingHyperSightRefresh,
@@ -50,6 +77,7 @@ import {
   executeWorkstreamRuntimeSql,
   WorkstreamRuntimeSqlRequestSchema,
 } from "./workstream-runtime-sql";
+import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
@@ -57,6 +85,7 @@ const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
   workspaceId: IdSchema,
   workstreamId: IdSchema,
+  substreamId: z.union([z.literal("0"), IdSchema]),
   userId: IdSchema,
   // Absent only on a socket accepted by a pre-command-gateway deployment. A
   // command on that socket triggers a normal reconnect for a fresh ticket.
@@ -86,6 +115,20 @@ const RuntimeBootstrapRequestSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   generation: z.number().int().positive(),
+}).strict();
+const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
+const AgentTerminalOutcomeSchema = z.object({
+  status: z.enum(["completed", "needs_input", "failed", "stopped"]),
+  messageId: IdSchema.optional(),
+  error: z.object({ code: z.string(), message: z.string() }).optional(),
+  metrics: HarnessRunMetricsSchema.optional(),
+  cancellationReason: z.string().nullable().optional(),
+}).strict();
+type AgentTerminalOutcome = z.infer<typeof AgentTerminalOutcomeSchema>;
+const AgentTimerRefreshRequestSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  substreamId: z.union([z.literal("0"), IdSchema]),
 }).strict();
 const ProductAuthSchema = z.object({
   sessionId: z.string().min(1).max(200),
@@ -131,6 +174,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
 const RoomIdentitySchema = z.object({ workspaceId: IdSchema, workstreamId: IdSchema });
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
+const MAX_SOCKET_SNAPSHOT_BYTES = 900_000;
 /**
  * How stale the room lets its picture of who may read this work stream get.
  *
@@ -144,6 +188,8 @@ const AUTHORIZATION_REVALIDATE_MS = 30_000;
 const HYPERSIGHT_DEBOUNCE_MS = 1_200;
 const HYPERSIGHT_MAX_DEBOUNCE_MS = 5_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
+/** Matches the Agents SDK default, while keeping Avalon independent of it. */
+const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
   "message_created",
   "stream_completed",
@@ -159,8 +205,6 @@ const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
 ]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
-type CreateMessageSocketCommand = Extract<ClientSocketEvent, { type: "create_message" }>;
-
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
 }
@@ -198,7 +242,7 @@ function retractsReadAccess(event: ServerSocketEvent): boolean {
  * Take a socket out of the room and close it.
  *
  * The attachment is marked unsubscribed first, which is what {@link
- * WorkstreamRoom.broadcast} filters on. Closing alone would leave the guarantee
+ * SubstreamAgent.broadcast} filters on. Closing alone would leave the guarantee
  * to the runtime — `send` on a closed socket throws, and that throw is caught —
  * so a disconnected reader would be spared the next frame by accident rather
  * than on purpose. On a privacy path that is the wrong place for the rule to
@@ -235,13 +279,7 @@ function userFromRow(row: UserRow): User {
   };
 }
 
-export function workstreamRoomName(
-  region: "global" | "eu",
-  workspaceId: string,
-  workstreamId: string
-): string {
-  return `${region}:${workspaceId}:${workstreamId}`;
-}
+export { substreamAgentName } from "./names";
 
 export function distinctNonParticipantViewers<T extends { userId: string; connectedAt: string }>(
   attachments: T[],
@@ -292,13 +330,15 @@ export function planSocketReplay(
 }
 
 /**
- * The hibernating realtime and storage authority for one work stream.
+ * The hibernating realtime, loop, and storage authority for one substream.
  *
- * Before the guarded D1 import opens, the room coordinates live events around
- * the legacy product rows. After it opens, the same object-local SQL database
- * is the product authority; REST remains the recovery surface in both phases.
+ * Main child `0` receives the guarded maintenance import from the historical
+ * one-room-per-workstream object. After activation, every child's local SQL is
+ * authoritative for its own transcript and loop state; REST is a recovery
+ * surface, never a second writer.
  */
-export class WorkstreamRoom {
+export class SubstreamAgent extends DurableObject<Env> {
+  private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
   private recentEventBytes = 0;
   private replayFloorSequence: number | null = null;
@@ -312,11 +352,15 @@ export class WorkstreamRoom {
   private readonly product: WorkstreamObjectProductService;
   private readonly authorityImporter: WorkstreamAuthorityImporter;
   private readonly initialized: Promise<void>;
+  private keepAliveRefs = 0;
+  private runDrain: Promise<void> | null = null;
 
   constructor(
-    private readonly state: DurableObjectState,
-    private readonly env: Env
+    state: DurableObjectState,
+    env: Env
   ) {
+    super(state, env);
+    this.state = state;
     this.objectStore = new WorkstreamObjectStore(
       state.storage,
       env.APP_VERSION ?? "unknown",
@@ -326,22 +370,85 @@ export class WorkstreamRoom {
     this.authorityImporter = new WorkstreamAuthorityImporter(state.storage);
     this.initialized = state.blockConcurrencyWhile(async () => {
       await this.objectStore.waitUntilReady();
+      // Existing one-room-per-workstream objects become the main child during
+      // the maintenance cutover. A non-main child records its external id on
+      // its first scoped request and may never change it afterward.
+      if (this.objectStore.identity()) this.ensureSubstreamIdentity("0");
       const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
       const nextHyperSightAt = this.objectStore.nextHyperSightDueAt();
       const nextAlarmAt = minimumTimestamp(nextEffectAt, nextHyperSightAt);
       if (nextAlarmAt !== null) await this.ensureAlarmNoLaterThan(nextAlarmAt);
+      this.resumeRunDrain();
     });
     // Exact text ping/pong frames are answered by the runtime without waking a
     // hibernated object, so keepalives do not accrue Durable Object duration.
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
-  async fetch(request: Request): Promise<Response> {
+  private ensureSubstreamIdentity(substreamId: string): void {
+    const existing = this.state.storage.sql.exec<{ external_substream_id: string }>(
+      `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+    ).toArray()[0];
+    if (existing && existing.external_substream_id !== substreamId) {
+      throw new Error("substream_agent_identity_mismatch");
+    }
+    if (existing) return;
+    const now = Date.now();
+    this.state.storage.sql.exec(
+      `INSERT INTO substream_agent_identity
+         (id, external_substream_id, created_at, updated_at)
+       VALUES (1, ?, ?, ?)`,
+      substreamId,
+      now,
+      now,
+    );
+  }
+
+  private externalSubstreamId(): string {
+    return this.state.storage.sql.exec<{ external_substream_id: string }>(
+      `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+    ).toArray()[0]?.external_substream_id ?? "0";
+  }
+
+  /**
+   * Keep this isolate warm while in-memory Bind work is active.
+   *
+   * This is the narrow, reference-counted mechanism used by the Agents SDK:
+   * the first lease caps the shared alarm at 30 seconds, nested leases share
+   * it, and the final idempotent disposer recomputes the alarm exclusively
+   * from durable work. The count is intentionally in memory; an evicted
+   * isolate also lost the computation it protected, and the durable dispatch
+   * ledger is what restarts that computation.
+   */
+  async keepAlive(): Promise<() => void> {
+    this.keepAliveRefs += 1;
+    if (this.keepAliveRefs === 1) await this.scheduleNextAlarm();
+    let disposed = false;
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      this.keepAliveRefs = Math.max(0, this.keepAliveRefs - 1);
+      if (this.keepAliveRefs === 0) {
+        this.state.waitUntil(this.scheduleNextAlarm().catch(() => undefined));
+      }
+    };
+  }
+
+  async keepAliveWhile<T>(fn: () => Promise<T>): Promise<T> {
+    const dispose = await this.keepAlive();
+    try {
+      return await fn();
+    } finally {
+      dispose();
+    }
+  }
+
+  override async fetch(request: Request): Promise<Response> {
     await this.initialized;
     const url = new URL(request.url);
 
     if (request.method === "GET" && (url.pathname === "/socket" || url.pathname === "/")) {
-      return this.connect(request, url);
+      return this.acceptSocket(request, url);
     }
 
     if (
@@ -383,6 +490,29 @@ export class WorkstreamRoom {
       return this.acceptRuntimeBootstrap(request);
     }
 
+    if (request.method === "POST" && url.pathname === "/internal/run-dispatch") {
+      return this.acceptRunDispatch(request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/refresh-agent-alarm") {
+      const parsed = AgentTimerRefreshRequestSchema.safeParse(await request.json().catch(() => null));
+      const identity = this.objectStore.identity();
+      if (!parsed.success || !identity
+        || identity.workspaceId !== parsed.data.workspaceId
+        || identity.workstreamId !== parsed.data.workstreamId) {
+        return jsonResponse({ error: "substream_timer_identity_mismatch" }, 409);
+      }
+      try {
+        this.ensureSubstreamIdentity(parsed.data.substreamId);
+        await this.scheduleNextAlarm();
+        return jsonResponse({ ok: true });
+      } catch (error) {
+        return jsonResponse({
+          error: error instanceof Error ? error.message : "substream_timer_refresh_failed",
+        }, 409);
+      }
+    }
+
     if (request.method === "GET" && url.pathname === "/presence") {
       const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ viewers: [] });
@@ -409,11 +539,14 @@ export class WorkstreamRoom {
     );
     if (!parsed.success) return jsonResponse({ error: "invalid_workstream_runtime_sql" }, 400);
     try {
-      return jsonResponse(await executeWorkstreamRuntimeSql(
+      const result = await executeWorkstreamRuntimeSql(
         this.state.storage,
         this.product,
         parsed.data,
-      ));
+      );
+      await this.scheduleNextAlarm();
+      this.resumeRunDrain();
+      return jsonResponse(result);
     } catch (error) {
       return jsonResponse({
         error: error instanceof Error ? error.message : "workstream_runtime_sql_failed",
@@ -487,6 +620,30 @@ export class WorkstreamRoom {
     }
   }
 
+  private async acceptRunDispatch(request: Request): Promise<Response> {
+    const parsed = RuntimeDispatchRequestSchema.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return jsonResponse({ error: "invalid_substream_run_dispatch" }, 400);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId) {
+      return jsonResponse({ error: "substream_run_identity_mismatch" }, 409);
+    }
+    const substreamId = parsed.data.substreamId ?? "0";
+    try {
+      this.ensureSubstreamIdentity(substreamId);
+      await this.enqueueAgentRun(parsed.data.harnessRunId, {
+        ...parsed.data,
+        substreamId,
+      });
+      return jsonResponse({ accepted: true }, 202);
+    } catch (error) {
+      return jsonResponse({
+        error: error instanceof Error ? error.message : "substream_run_dispatch_failed",
+      }, 409);
+    }
+  }
+
   private async acceptProductRequest(request: Request): Promise<Response> {
     const parsed = ProductRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_product_request" }, 400);
@@ -494,6 +651,7 @@ export class WorkstreamRoom {
       connectionId: crypto.randomUUID(),
       workspaceId: parsed.data.auth.workspaceId,
       workstreamId: this.objectStore.identity()?.workstreamId ?? "",
+      substreamId: this.externalSubstreamId(),
       userId: parsed.data.auth.userId,
       sessionId: parsed.data.auth.sessionId,
       connectedAt: new Date().toISOString(),
@@ -633,19 +791,623 @@ export class WorkstreamRoom {
     workflowInput: WorkstreamWorkflowInput | null,
   ): Promise<void> {
     if (!runId || !workflowInput) return;
-    const instanceId = `workstream-${runId}`;
-    try {
-      await this.env.WORKSTREAM_LOOP_WORKFLOW.create({ id: instanceId, params: workflowInput });
-    } catch (error) {
-      if (!(error instanceof Error) || !/(already exists|duplicate|conflict)/iu.test(error.message)) {
-        const safe = { code: "workflow_unavailable", message: "The Avalon harness could not complete this run" };
-        await this.product.recordWorkflowFailed(runId, safe);
-        await this.publishLocalProductEvent(identity, { type: "harness_status_changed", status: "failed" });
-        throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+    const input = WorkstreamWorkflowInputSchema.parse({
+      ...workflowInput,
+      substreamId: this.externalSubstreamId(),
+    });
+    await this.enqueueAgentRun(runId, input);
+  }
+
+  private async enqueueAgentRun(runId: string, input: WorkstreamWorkflowInput): Promise<void> {
+    const now = Date.now();
+    this.state.storage.sql.exec(
+      `INSERT INTO agent_run_dispatches
+         (run_id, input_json, state, attempt, available_at, started_at,
+          completed_at, last_error_code, created_at, updated_at)
+       VALUES (?, ?, 'queued', 0, ?, NULL, NULL, NULL, ?, ?)
+       ON CONFLICT(run_id) DO NOTHING`,
+      runId,
+      JSON.stringify(input),
+      now,
+      now,
+      now,
+    );
+    await this.ensureAlarmNoLaterThan(now + 1);
+    this.resumeRunDrain();
+  }
+
+  private resumeRunDrain(): void {
+    if (this.runDrain) return;
+    const drain = Promise.resolve()
+      .then(() => this.drainRunQueue())
+      .catch((error: unknown) => {
+        logWarn(this.env, "substream_agent_drain_failed", {
+          workspace_id: this.objectStore.identity()?.workspaceId,
+          workstream_id: this.objectStore.identity()?.workstreamId,
+          substream_id: this.externalSubstreamId(),
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      })
+      .finally(() => {
+        if (this.runDrain === drain) this.runDrain = null;
+        this.state.waitUntil(this.scheduleNextAlarm().catch(() => undefined));
+      });
+    this.runDrain = drain;
+    this.state.waitUntil(drain);
+  }
+
+  private async drainRunQueue(): Promise<void> {
+    while (true) {
+      const now = Date.now();
+      const row = this.state.storage.sql.exec<{
+        run_id: string;
+        input_json: string;
+        state: "queued" | "running";
+      }>(
+        `SELECT run_id, input_json, state FROM agent_run_dispatches
+          WHERE state IN ('queued', 'running') AND available_at <= ?
+          ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END,
+                   created_at, run_id LIMIT 1`,
+        now,
+      ).toArray()[0];
+      if (!row) return;
+
+      const input = WorkstreamWorkflowInputSchema.parse(JSON.parse(row.input_json));
+      const identity = { workspaceId: input.workspaceId, workstreamId: input.workstreamId };
+      try {
+        if (row.state === "queued") {
+          await this.product.recordWorkflowStarted(row.run_id, `substream-agent:${row.run_id}`);
+          await this.publishLocalProductEvent(identity, {
+            type: "harness_status_changed",
+            status: "running",
+          });
+        }
+        this.state.storage.sql.exec(
+          `UPDATE agent_run_dispatches
+              SET state = 'running', attempt = attempt + 1,
+                  started_at = COALESCE(started_at, ?), updated_at = ?
+            WHERE run_id = ? AND state IN ('queued', 'running')`,
+          now,
+          now,
+          row.run_id,
+        );
+        const result = await this.keepAliveWhile(() => this.executeAgentRun(input));
+        if (result.retryAt !== null) {
+          this.state.storage.sql.exec(
+            `UPDATE agent_run_dispatches
+                SET state = 'running', available_at = ?, last_error_code = ?, updated_at = ?
+              WHERE run_id = ?`,
+            result.retryAt,
+            result.errorCode,
+            Date.now(),
+            row.run_id,
+          );
+          return;
+        }
+        this.state.storage.sql.exec(
+          `UPDATE agent_run_dispatches
+              SET state = ?, completed_at = ?, last_error_code = ?, updated_at = ?
+            WHERE run_id = ?`,
+          result.status === "failed" ? "failed" : "completed",
+          Date.now(),
+          result.errorCode,
+          Date.now(),
+          row.run_id,
+        );
+      } catch (error) {
+        const safe = {
+          code: error instanceof Error && "code" in error && typeof error.code === "string"
+            ? error.code
+            : "agent_loop_failed",
+          message: "The Avalon harness could not complete this run",
+        };
+        await this.product.recordWorkflowFailed(row.run_id, safe).catch(() => undefined);
+        this.state.storage.sql.exec(
+          `UPDATE agent_run_dispatches
+              SET state = 'failed', completed_at = ?, last_error_code = ?, updated_at = ?
+            WHERE run_id = ?`,
+          Date.now(),
+          safe.code,
+          Date.now(),
+          row.run_id,
+        );
+        await this.publishLocalProductEvent(identity, {
+          type: "harness_status_changed",
+          status: "failed",
+        }).catch(() => undefined);
       }
     }
-    await this.product.recordWorkflowStarted(runId, instanceId);
-    await this.publishLocalProductEvent(identity, { type: "harness_status_changed", status: "running" });
+  }
+
+  private async executeAgentRun(input: WorkstreamWorkflowInput): Promise<{
+    status: WorkstreamHarnessResult["status"];
+    errorCode: string | null;
+    retryAt: number | null;
+  }> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (!acceptsNewWorkstreamWork(authority)) {
+      return { status: "failed", errorCode: null, retryAt: Date.now() + MAINTENANCE_RECHECK_MS };
+    }
+    const executionEnv = this.localRuntimeEnvironment(
+      input.workspaceId,
+      input.workstreamId,
+      input.substreamId ?? "0",
+    );
+    const terminalReceipt = this.state.storage.sql.exec<{
+      terminal_outcome_json: string | null;
+      settled_at: number | null;
+    }>(
+      `SELECT terminal_outcome_json, settled_at
+         FROM agent_run_dispatches WHERE run_id = ?`,
+      input.harnessRunId,
+    ).toArray()[0];
+    if (terminalReceipt?.terminal_outcome_json) {
+      const terminalOutcome = AgentTerminalOutcomeSchema.parse(
+        JSON.parse(terminalReceipt.terminal_outcome_json),
+      );
+      if (terminalReceipt.settled_at !== null) {
+        return {
+          status: terminalOutcome.status,
+          errorCode: terminalOutcome.error?.code ?? null,
+          retryAt: null,
+        };
+      }
+      return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
+    }
+    await reapStaleHarnessRuns(executionEnv.DB, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      limit: 25,
+    });
+    const attemptId = crypto.randomUUID();
+    const claim = await claimHarnessAttempt(executionEnv.DB, input, {
+      attemptId,
+      owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
+      leaseSeconds: 300,
+    });
+    if (claim.state === "busy") {
+      const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
+      return {
+        status: "failed",
+        errorCode: null,
+        retryAt: Number.isFinite(leaseAt) ? Math.max(Date.now() + 1_000, leaseAt + 1) : Date.now() + 5_000,
+      };
+    }
+    if (claim.state === "terminal") {
+      try {
+        const recovered = await this.loadTerminalOutcome(executionEnv, input, claim.status);
+        return this.persistAndSettleAgentRun(executionEnv, input, recovered);
+      } catch (error) {
+        logWarn(this.env, "substream_agent_terminal_recovery_failed", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          substream_id: input.substreamId ?? "0",
+          harness_run_id: input.harnessRunId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+        return {
+          status: claim.status,
+          errorCode: "agent_terminal_recovery_failed",
+          retryAt: Date.now() + 30_000,
+        };
+      }
+    }
+    if (claim.state === "cancelled") {
+      await terminalizeQueuedHarnessRun(
+        executionEnv.DB,
+        input,
+        { attemptId, owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}` },
+        { code: "run_cancelled", message: "The run was stopped before it started" },
+        "stopped",
+      );
+      return this.persistAndSettleAgentRun(executionEnv, input, {
+        status: "stopped",
+        error: { code: "run_cancelled", message: "The run was stopped before it started" },
+        cancellationReason: "run_cancelled",
+      });
+    }
+
+    if (input.reason === "hypersight_block") {
+      await this.updateHyperSightRun(executionEnv, input, "running");
+    }
+
+    let outcome: WorkstreamHarnessResult;
+    try {
+      outcome = await runWorkstreamHarness(
+        executionEnv,
+        input,
+        (event) => this.publishAgentRuntimeEvent(event),
+        { lease: claim.lease, publishRealtime: false },
+      );
+    } catch (error) {
+      const code = error instanceof Error && "code" in error && typeof error.code === "string"
+        ? error.code
+        : "harness_execution_failed";
+      outcome = {
+        status: code === "run_cancelled" ? "stopped" : "failed",
+        error: { code, message: "The Avalon harness could not complete this run" },
+      };
+    }
+    const stopState = await executionEnv.DB.prepare(
+      `SELECT status, cancellation_requested_at, cancellation_reason
+         FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
+    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{
+      status: string;
+      cancellation_requested_at: string | null;
+      cancellation_reason: string | null;
+    }>();
+    const effectiveStatus = stopState?.status === "stopped" || stopState?.cancellation_requested_at
+      ? "stopped"
+      : outcome.status;
+    await terminalizeHarnessAttempt(executionEnv.DB, input, claim.lease, {
+      status: effectiveStatus,
+      ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
+      ...(outcome.error ? { error: outcome.error } : {}),
+      memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
+    });
+    if (outcome.messageId) {
+      const messages = await this.product.messagesForRuntime(250);
+      const message = messages.items.find((candidate) => candidate.id === outcome.messageId);
+      if (message) await this.publishAgentRuntimeEvent({ type: "stream_completed", message });
+    }
+    const root = this.product.runtimeStatus();
+    await this.publishAgentRuntimeEvent({
+      type: "harness_status_changed",
+      status: root,
+    });
+    return this.persistAndSettleAgentRun(executionEnv, input, {
+      ...outcome,
+      status: effectiveStatus,
+      cancellationReason: stopState?.cancellation_reason ?? null,
+    });
+  }
+
+  private async persistAndSettleAgentRun(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    rawOutcome: AgentTerminalOutcome,
+  ): Promise<{
+    status: WorkstreamHarnessResult["status"];
+    errorCode: string | null;
+    retryAt: number | null;
+  }> {
+    const outcome = AgentTerminalOutcomeSchema.parse(rawOutcome);
+    this.state.storage.sql.exec(
+      `UPDATE agent_run_dispatches
+          SET terminal_outcome_json = ?, settled_at = NULL,
+              last_settlement_error_code = NULL, updated_at = ?
+        WHERE run_id = ?`,
+      JSON.stringify(outcome),
+      Date.now(),
+      input.harnessRunId,
+    );
+    return this.settleAgentRunWithRetry(executionEnv, input, outcome);
+  }
+
+  private async settleAgentRunWithRetry(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    outcome: AgentTerminalOutcome,
+  ): Promise<{
+    status: WorkstreamHarnessResult["status"];
+    errorCode: string | null;
+    retryAt: number | null;
+  }> {
+    try {
+      await this.settleAgentRun(executionEnv, input, outcome);
+      this.state.storage.sql.exec(
+        `UPDATE agent_run_dispatches
+            SET settled_at = ?, last_settlement_error_code = NULL, updated_at = ?
+          WHERE run_id = ? AND terminal_outcome_json IS NOT NULL`,
+        Date.now(),
+        Date.now(),
+        input.harnessRunId,
+      );
+      return {
+        status: outcome.status,
+        errorCode: outcome.error?.code ?? null,
+        retryAt: null,
+      };
+    } catch (error) {
+      const code = error instanceof Error && "code" in error && typeof error.code === "string"
+        ? error.code
+        : "agent_run_settlement_failed";
+      const attempt = this.state.storage.sql.exec<{ attempt: number }>(
+        `SELECT attempt FROM agent_run_dispatches WHERE run_id = ?`,
+        input.harnessRunId,
+      ).toArray()[0]?.attempt ?? 1;
+      const delay = Math.min(5 * 60_000, 5_000 * 2 ** Math.min(Math.max(attempt - 1, 0), 6));
+      this.state.storage.sql.exec(
+        `UPDATE agent_run_dispatches
+            SET last_settlement_error_code = ?, updated_at = ? WHERE run_id = ?`,
+        code,
+        Date.now(),
+        input.harnessRunId,
+      );
+      logWarn(this.env, "substream_agent_settlement_failed", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        substream_id: input.substreamId ?? "0",
+        harness_run_id: input.harnessRunId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      return { status: outcome.status, errorCode: code, retryAt: Date.now() + delay };
+    }
+  }
+
+  private async loadTerminalOutcome(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    status: WorkstreamHarnessResult["status"],
+  ): Promise<AgentTerminalOutcome> {
+    const row = await executionEnv.DB.prepare(
+      `SELECT status, final_message_id, error_json, cancellation_reason
+         FROM harness_runs
+        WHERE id = ? AND workspace_id = ? AND workstream_id = ?
+          AND terminalized_at IS NOT NULL`,
+    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{
+      status: string;
+      final_message_id: string | null;
+      error_json: string | null;
+      cancellation_reason: string | null;
+    }>();
+    if (!row || row.status !== status) throw new Error("agent_terminal_outcome_missing");
+    let error: { code: string; message: string } | undefined;
+    if (row.error_json) {
+      try {
+        const parsed = z.object({ code: z.string(), message: z.string() }).safeParse(
+          JSON.parse(row.error_json),
+        );
+        if (parsed.success) error = parsed.data;
+      } catch {
+        // Old terminal rows may carry a different member-safe shape. Status and
+        // final message remain sufficient to resume idempotent settlement.
+      }
+    }
+    return AgentTerminalOutcomeSchema.parse({
+      status,
+      ...(row.final_message_id ? { messageId: row.final_message_id } : {}),
+      ...(error ? { error } : {}),
+      cancellationReason: row.cancellation_reason,
+    });
+  }
+
+  private async settleAgentRun(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    outcome: AgentTerminalOutcome,
+  ): Promise<void> {
+    await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
+    if (outcome.metrics) {
+      recordHarnessRunObservation(this.env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        harnessRunId: input.harnessRunId,
+        source: input.reason === "hypersight_block" ? "hypersight" : "workstream",
+        status: outcome.status,
+        ...(outcome.error ? { failureCode: outcome.error.code } : {}),
+        metrics: outcome.metrics,
+      });
+    }
+
+    await this.finalizeAutomation(executionEnv, input, outcome);
+    if (input.reason === "hypersight_block") {
+      await this.updateHyperSightRun(
+        executionEnv,
+        input,
+        outcome.status === "completed"
+          ? "completed"
+          : outcome.status === "stopped" ? "stopped" : "failed",
+        outcome.error,
+      );
+      return;
+    }
+
+    if (outcome.cancellationReason !== "superseded_by_follow_up") {
+      await this.deliverAgentRunResult(input, outcome);
+    }
+    await refreshWorkstreamName(executionEnv, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+    });
+    await refreshWorkstreamDescription(executionEnv, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+    });
+  }
+
+  private async deliverAgentRunResult(
+    input: WorkstreamWorkflowInput,
+    outcome: AgentTerminalOutcome,
+  ): Promise<void> {
+    const messages = outcome.messageId
+      ? (await this.product.messagesForRuntime(250)).items
+      : [];
+    const message = outcome.messageId
+      ? messages.find((candidate) => candidate.id === outcome.messageId)
+      : undefined;
+    const text = message?.textContent
+      ?? (outcome.status === "stopped"
+        ? "Avalon stopped this task."
+        : outcome.status === "needs_input"
+          ? "Avalon needs more information before it can continue this task."
+          : outcome.status === "failed"
+            ? outcome.error?.message ?? "Avalon could not complete this task."
+            : "Avalon completed the task without a text response.");
+    if (input.digestDeliveryId) {
+      await settleDigestRun(
+        this.env,
+        input.digestDeliveryId,
+        outcome.status,
+        message?.textContent ?? null,
+      );
+      return;
+    }
+
+    const slack = new SlackAgentService(this.env);
+    await slack.deliverWorkstreamOutcome(
+      input.workspaceId,
+      input.workstreamId,
+      text,
+      `${input.harnessRunId}:${outcome.status}`,
+      outcome.status,
+    );
+    if (!input.automationSubscriptionId) return;
+    const automation = await this.env.DB.prepare(
+      `SELECT template.name FROM automation_subscriptions subscription
+        JOIN automation_templates template ON template.id = subscription.template_id
+       WHERE subscription.id = ? AND subscription.workspace_id = ?`,
+    ).bind(input.automationSubscriptionId, input.workspaceId).first<{ name: string }>();
+    const result = {
+      workspaceId: input.workspaceId,
+      automationSubscriptionId: input.automationSubscriptionId,
+      workstreamId: input.workstreamId,
+      title: automation?.name ?? "Avalon automation result",
+      text,
+      outcomeStatus: outcome.status,
+    };
+    const failures = (await Promise.allSettled([
+      slack.deliverAutomationResult(result),
+      deliverAutomationResultEmail(this.env, result),
+    ])).flatMap((settled) => settled.status === "rejected" ? [settled.reason as unknown] : []);
+    for (const failure of failures) {
+      logWarn(this.env, "automation_result_delivery_failed", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        reason: failure instanceof Error ? failure.message : "unknown",
+      });
+    }
+    if (failures.length > 0) throw failures[0];
+  }
+
+  private async finalizeAutomation(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    outcome: AgentTerminalOutcome,
+  ): Promise<void> {
+    if (!input.automationSubscriptionId) return;
+    const owned = await executionEnv.DB.prepare(
+      `SELECT 1 AS owned FROM harness_runs
+        WHERE id = ? AND workspace_id = ? AND workstream_id = ?
+          AND terminalized_at IS NOT NULL`,
+    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ owned: number }>();
+    if (!owned) throw new Error("automation_run_terminal_fence_missing");
+    const automationStatus = outcome.status === "stopped" ? "failed" : outcome.status;
+    await this.env.DB.prepare(
+      `UPDATE automation_runs
+          SET status = ?1,
+              completed_at = CASE WHEN ?1 IN ('completed', 'failed') THEN ?2 ELSE completed_at END,
+              result_summary = COALESCE(result_summary, ?3)
+        WHERE workstream_id = ?4 AND automation_subscription_id = ?5 AND workspace_id = ?6`,
+    ).bind(
+      automationStatus,
+      new Date().toISOString(),
+      outcome.error?.message.slice(0, 500) ?? null,
+      input.workstreamId,
+      input.automationSubscriptionId,
+      input.workspaceId,
+    ).run();
+  }
+
+  private async updateHyperSightRun(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    status: HyperSightBlockRunRow["status"],
+    error?: { code: string; message: string },
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    await executionEnv.DB.prepare(
+      `UPDATE hypersight_block_runs
+          SET status = ?, error_json = ?,
+              started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END,
+              completed_at = CASE WHEN ? IN ('completed', 'failed', 'stopped') THEN ? ELSE completed_at END
+        WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
+    ).bind(
+      status,
+      error ? JSON.stringify(error) : null,
+      status,
+      now,
+      status,
+      now,
+      input.harnessRunId,
+      input.workspaceId,
+      input.workstreamId,
+    ).run();
+    const row = await executionEnv.DB.prepare(
+      `SELECT id, block_id, configuration_version_id, trigger_sequence,
+              status, markdown, error_json, created_at, started_at, completed_at
+         FROM hypersight_block_runs
+        WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
+    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
+      .first<HyperSightBlockRunRow>();
+    if (row) {
+      await publishHyperSightRun(
+        executionEnv,
+        input.workspaceId,
+        input.workstreamId,
+        hyperSightBlockRunFromRow(row),
+      );
+    }
+  }
+
+  private localRuntimeEnvironment(
+    workspaceId: string,
+    workstreamId: string,
+    substreamId: string,
+  ): Env {
+    return withWorkstreamRuntimeDatabase(
+      this.env,
+      workspaceId,
+      workstreamId,
+      substreamId,
+      async (statements) => {
+        const result = await executeWorkstreamRuntimeSql(
+          this.state.storage,
+          this.product,
+          WorkstreamRuntimeSqlRequestSchema.parse({
+            workspaceId,
+            workstreamId,
+            requestId: crypto.randomUUID(),
+            statements,
+          }),
+        );
+        return result.results;
+      },
+    );
+  }
+
+  private async fireNextAgentTimer(): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    const executionEnv = this.localRuntimeEnvironment(
+      identity.workspaceId,
+      identity.workstreamId,
+      this.externalSubstreamId(),
+    );
+    const wakeup = await executionEnv.DB.prepare(
+      `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
+              due_at, status, version, created_at
+         FROM workstream_wakeups
+        WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'
+          AND due_at <= ? ORDER BY due_at, id LIMIT 1`,
+    ).bind(identity.workspaceId, identity.workstreamId, new Date().toISOString())
+      .first<WorkstreamWakeupRow>();
+    if (!wakeup) return;
+    await fireWorkstreamWakeup(executionEnv, wakeup);
+  }
+
+  private async publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void> {
+    const parsed = ServerSocketEventSchema.parse({
+      ...event,
+      sequence: 0,
+      occurredAt: new Date().toISOString(),
+    });
+    const sequenced = await this.commitRealtimeEvent(parsed);
+    this.recordRecentEvent(sequenced);
+    this.broadcast(sequenced);
+    if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(sequenced.type)) {
+      await this.scheduleHyperSightRefresh(sequenced.sequence);
+    }
   }
 
   private async acceptAuthorityImport(request: Request): Promise<Response> {
@@ -667,12 +1429,24 @@ export class WorkstreamRoom {
         for (const socket of this.state.getWebSockets()) {
           disconnect(socket, 1012, "Work stream maintenance");
         }
+        this.ensureSubstreamIdentity("0");
         this.objectStore.ensureIdentity({
           workspaceId: parsed.data.workspaceId,
           workstreamId: parsed.data.workstreamId,
         }, this.env.AVALON_REGION);
       }
-      return jsonResponse(this.authorityImporter.execute(parsed.data));
+      const result = this.authorityImporter.execute(parsed.data);
+      if (parsed.data.operation === "activate") {
+        await this.product.enqueueDirectorySnapshot();
+        const effects = this.objectStore.dueRegionalEffects(Date.now(), 100);
+        if (effects.length > 0) {
+          await this.forwardEffectsToWorkstreamDO(effects);
+          for (const effect of effects) {
+            this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
+          }
+        }
+      }
+      return jsonResponse(result);
     } catch (error) {
       return jsonResponse({
         error: error instanceof Error ? error.message : "authority_import_failed",
@@ -701,7 +1475,7 @@ export class WorkstreamRoom {
       : jsonResponse({ error: "regional_effect_not_found" }, 404);
   }
 
-  async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+  override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
     await this.initialized;
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
     let decoded: unknown;
@@ -709,13 +1483,13 @@ export class WorkstreamRoom {
     try {
       decoded = JSON.parse(raw);
     } catch {
-      await this.sendError(socket, "invalid_json", "Socket messages must be JSON.");
+      this.sendError(socket, "invalid_json", "Socket messages must be JSON.");
       return;
     }
 
     const parsed = ClientSocketEventSchema.safeParse(decoded);
     if (!parsed.success) {
-      await this.sendError(socket, "invalid_event", "The socket event is not valid.");
+      this.sendError(socket, "invalid_event", "The socket event is not valid.");
       return;
     }
 
@@ -742,117 +1516,21 @@ export class WorkstreamRoom {
     }
 
     if (parsed.data.type === "create_message") {
-      await this.acceptCreateMessage(socket, attachment, parsed.data);
+      this.sendError(
+        socket,
+        "workspace_socket_required",
+        "Send new user messages through the workspace command socket.",
+      );
       return;
     }
 
     // Product mutations are intentionally persisted and authorized through the
     // REST service before their resulting canonical event is published here.
-    await this.sendError(
+    this.sendError(
       socket,
       "rest_required",
       "Persist this action through the work-stream API before publishing it."
     );
-  }
-
-  private async acceptCreateMessage(
-    socket: WebSocket,
-    attachment: SocketAttachment,
-    command: CreateMessageSocketCommand,
-  ): Promise<void> {
-    if (!attachment.sessionId) {
-      this.sendCommandFailure(socket, command, new ApiError(
-        409,
-        "socket_reconnect_required",
-        "Reconnect before sending this message",
-      ));
-      disconnect(socket, 1012, "Reconnect before sending messages");
-      return;
-    }
-
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (!acceptsNewWorkstreamWork(authority) || !this.objectStore.isRealtimeWritable()) {
-      this.sendCommandFailure(socket, command, new ApiError(
-        503,
-        "workstream_maintenance",
-        "This work stream is temporarily unavailable during maintenance",
-      ));
-      disconnect(socket, 1012, "Work stream maintenance");
-      return;
-    }
-
-    const auth = await this.socketAuth(attachment);
-    if (!auth) {
-      this.sendCommandFailure(socket, command, new ApiError(
-        401,
-        "session_revoked",
-        "The session is no longer active",
-      ));
-      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "Session no longer active");
-      return;
-    }
-
-    try {
-      if (authority.phase !== "durable_object_open") {
-        const result = await new WorkstreamService(
-          this.env,
-          auth,
-          (promise) => this.state.waitUntil(promise),
-          async (_env, workspaceId, workstreamId, event) => {
-            if (workspaceId !== attachment.workspaceId || workstreamId !== attachment.workstreamId) {
-              return false;
-            }
-            return (await this.acceptEvent(new Request("https://room.internal/internal/events", {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                "x-avalon-workspace-id": workspaceId,
-                "x-avalon-workstream-id": workstreamId,
-              },
-              body: JSON.stringify(event),
-            }))).ok;
-          },
-        ).createMessage(attachment.workstreamId, {
-          ...command.payload,
-          telemetryOperationId: command.operationId,
-        });
-        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-          type: "client_command_succeeded",
-          command: "create_message",
-          clientMessageId: command.payload.clientMessageId,
-          ...result,
-        })));
-        return;
-      }
-      const result = await this.product.createMessage(auth, {
-        ...command.payload,
-        telemetryOperationId: command.operationId,
-      });
-      await this.publishLocalProductEvent(attachment, {
-        type: "message_created",
-        message: result.message,
-      });
-      await this.startProductWorkflow(attachment, result.harnessRunId, result.workflowInput);
-      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-        type: "client_command_succeeded",
-        command: "create_message",
-        clientMessageId: command.payload.clientMessageId,
-        message: result.message,
-        agentInvoked: result.agentInvoked,
-        harnessRunId: result.harnessRunId,
-      })));
-    } catch (error) {
-      this.sendCommandFailure(socket, command, error);
-      if (!(error instanceof ApiError)) {
-        logWarn(this.env, "workstream_socket_create_message_failed", {
-          workspace_id: attachment.workspaceId,
-          workstream_id: attachment.workstreamId,
-          user_id: attachment.userId,
-          client_message_id: command.payload.clientMessageId,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      }
-    }
   }
 
   private async publishLocalProductEvent(
@@ -918,33 +1596,17 @@ export class WorkstreamRoom {
     };
   }
 
-  private sendCommandFailure(
-    socket: WebSocket,
-    command: CreateMessageSocketCommand,
-    error: unknown,
-  ): void {
-    const safe = error instanceof ApiError
-      ? error
-      : new ApiError(500, "message_write_failed", "The message could not be sent");
-    socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
-      type: "client_command_failed",
-      command: "create_message",
-      clientMessageId: command.payload.clientMessageId,
-      error: {
-        status: safe.status,
-        code: safe.code,
-        message: safe.message,
-        ...(safe.details ? { details: safe.details } : {}),
-      },
-    })));
-  }
-
-  async alarm(): Promise<void> {
+  override async alarm(): Promise<void> {
     await this.initialized;
     const pending = this.objectStore.pendingHyperSightRefresh();
     const nextHyperSightAt = this.objectStore.nextHyperSightDueAt();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
-    if (!pending && nextEffectAt === null) return;
+    const nextAgentTimerAt = this.nextAgentTimerAt();
+    const hasRunDispatch = this.nextRunDispatchAt() !== null;
+    if (!pending && nextEffectAt === null && nextAgentTimerAt === null && !hasRunDispatch) {
+      await this.scheduleNextAlarm();
+      return;
+    }
     const authority = await readWorkstreamAuthorityControl(this.env);
     if (!acceptsNewWorkstreamWork(authority)) {
       await this.state.storage.setAlarm(Date.now() + MAINTENANCE_RECHECK_MS);
@@ -955,10 +1617,10 @@ export class WorkstreamRoom {
       const effects = this.objectStore.dueRegionalEffects();
       if (effects.length > 0) {
         try {
-          await this.env.ACTIVITY_QUEUE.sendBatch(effects.map((effect) => ({
-            body: workstreamRegionalEffectWakeMessage(effect),
-          })));
-          this.objectStore.markRegionalEffectsQueued(effects);
+          await this.forwardEffectsToWorkstreamDO(effects);
+          for (const effect of effects) {
+            this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
+          }
         } catch {
           const retryAt = Date.now() + 5_000;
           this.objectStore.deferRegionalEffects(effects, retryAt);
@@ -967,8 +1629,13 @@ export class WorkstreamRoom {
       }
     }
 
+    if (nextAgentTimerAt !== null && nextAgentTimerAt <= Date.now()) {
+      await this.fireNextAgentTimer();
+    }
+
     if (!pending || nextHyperSightAt === null || nextHyperSightAt > Date.now()) {
-      await this.ensureNextWorkAlarm();
+      this.resumeRunDrain();
+      await this.scheduleNextAlarm();
       return;
     }
     this.objectStore.deletePendingHyperSightRefresh();
@@ -994,10 +1661,44 @@ export class WorkstreamRoom {
       this.objectStore.failPendingHyperSightRefresh(pending, retryAt);
       await this.ensureAlarmNoLaterThan(retryAt);
     }
-    await this.ensureNextWorkAlarm();
+    this.resumeRunDrain();
+    await this.scheduleNextAlarm();
   }
 
-  async webSocketClose(
+  private async forwardEffectsToWorkstreamDO(
+    effects: readonly WorkstreamRegionalEffectEnvelope[],
+  ): Promise<void> {
+    const firstEffect = effects[0];
+    if (!firstEffect) return;
+    if (effects.some((effect) => (
+      effect.region !== firstEffect.region
+      || effect.workspaceId !== firstEffect.workspaceId
+      || effect.workstreamId !== firstEffect.workstreamId
+      || effect.generation !== firstEffect.generation
+    ))) throw new Error("substream_effect_batch_identity_mismatch");
+    const namespace = this.env.WORKSTREAM_DOS;
+    const stub = namespace.get(namespace.idFromName(workstreamDOName(
+      firstEffect.region,
+      firstEffect.workspaceId,
+      firstEffect.workstreamId,
+    )));
+    for (let offset = 0; offset < effects.length; offset += 25) {
+      const response = await stub.fetch("https://workstream.internal/internal/substream-effects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          substreamId: this.externalSubstreamId(),
+          envelopes: effects.slice(offset, offset + 25),
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(typeof body?.error === "string" ? body.error : "workstream_parent_effect_failed");
+      }
+    }
+  }
+
+  override async webSocketClose(
     socket: WebSocket,
     code: number,
     reason: string,
@@ -1012,7 +1713,7 @@ export class WorkstreamRoom {
     }
   }
 
-  async webSocketError(socket: WebSocket): Promise<void> {
+  override async webSocketError(socket: WebSocket): Promise<void> {
     const attachment = this.readAttachment(socket);
     try {
       socket.close(1011, "Realtime connection failed");
@@ -1024,7 +1725,7 @@ export class WorkstreamRoom {
     }
   }
 
-  private async connect(request: Request, url: URL): Promise<Response> {
+  private async acceptSocket(request: Request, url: URL): Promise<Response> {
     const authority = await readWorkstreamAuthorityControl(this.env);
     if (!acceptsNewWorkstreamWork(authority)) {
       return jsonResponse({
@@ -1041,6 +1742,7 @@ export class WorkstreamRoom {
       .object({
         workspaceId: IdSchema,
         workstreamId: IdSchema,
+        substreamId: z.union([z.literal("0"), IdSchema]),
         userId: IdSchema,
         sessionId: z.string().min(1).max(200),
         ticketId: z.string().uuid(),
@@ -1052,6 +1754,8 @@ export class WorkstreamRoom {
           request.headers.get("x-avalon-workspace-id") ?? url.searchParams.get("workspaceId"),
         workstreamId:
           request.headers.get("x-avalon-workstream-id") ?? url.searchParams.get("workstreamId"),
+        substreamId:
+          request.headers.get("x-avalon-substream-id") ?? url.searchParams.get("substreamId"),
         userId: request.headers.get("x-avalon-user-id") ?? url.searchParams.get("userId"),
         sessionId: request.headers.get("x-avalon-session-id"),
         ticketId: request.headers.get("x-avalon-socket-ticket-id"),
@@ -1071,6 +1775,7 @@ export class WorkstreamRoom {
     }
 
     try {
+      this.ensureSubstreamIdentity(identity.data.substreamId);
       this.objectStore.ensureIdentity({
         workspaceId: identity.data.workspaceId,
         workstreamId: identity.data.workstreamId,
@@ -1128,6 +1833,7 @@ export class WorkstreamRoom {
       connectionId: crypto.randomUUID(),
       workspaceId: identity.data.workspaceId,
       workstreamId: identity.data.workstreamId,
+      substreamId: identity.data.substreamId,
       userId: identity.data.userId,
       sessionId: identity.data.sessionId,
       connectedAt: new Date().toISOString(),
@@ -1386,11 +2092,37 @@ export class WorkstreamRoom {
   }
 
   private async ensureNextWorkAlarm(): Promise<void> {
-    const dueAt = minimumTimestamp(
+    await this.scheduleNextAlarm();
+  }
+
+  private nextAgentTimerAt(): number | null {
+    return this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(due_at) AS due_at FROM workstream_wakeups WHERE status = 'pending'`,
+    ).toArray()[0]?.due_at ?? null;
+  }
+
+  private nextRunDispatchAt(): number | null {
+    return this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(available_at) AS due_at FROM agent_run_dispatches
+        WHERE state = 'queued' ${this.runDrain ? "" : "OR state = 'running'"}`,
+    ).toArray()[0]?.due_at ?? null;
+  }
+
+  private async scheduleNextAlarm(): Promise<void> {
+    const durableDueAt = minimumTimestamp(
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextHyperSightDueAt(),
+      this.nextAgentTimerAt(),
+      this.nextRunDispatchAt(),
     );
-    if (dueAt !== null) await this.ensureAlarmNoLaterThan(dueAt);
+    const dueAt = this.keepAliveRefs > 0
+      ? minimumTimestamp(durableDueAt, Date.now() + KEEP_ALIVE_INTERVAL_MS)
+      : durableDueAt;
+    if (dueAt === null) {
+      await this.state.storage.deleteAlarm();
+      return;
+    }
+    await this.state.storage.setAlarm(Math.max(Date.now() + 1, dueAt));
   }
 
   private async fulfillSubscription(
@@ -1475,21 +2207,39 @@ export class WorkstreamRoom {
       const attachment = this.readAttachment(socket);
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
       const workstream = await this.loadSnapshot(workspaceId, workstreamId, attachment.userId);
+      const auth = await this.socketAuth(attachment);
+      if (!auth) throw new Error("Snapshot viewer is no longer authorized");
+      const canonicalFeed = await this.product.messages(auth, 250);
+      const messageFeed = { ...canonicalFeed, items: [...canonicalFeed.items] };
       const sequence = knownSequence ?? await this.currentSequence(workstreamId);
       const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
-      const event = ServerSocketEventSchema.parse({
-        type: "snapshot",
-        sequence,
-        occurredAt: new Date().toISOString(),
-        workstream,
-        activeStreams: workstream.harnessStatus === "running"
-          ? storedCheckpoints.filter((checkpoint) =>
-              checkpoint.harnessRunId === workstream.latestHarnessRunId)
-          : [],
-      });
-      socket.send(JSON.stringify(event));
+      const activeStreams = workstream.harnessStatus === "running"
+        ? storedCheckpoints.filter((checkpoint) =>
+            checkpoint.harnessRunId === workstream.latestHarnessRunId)
+        : [];
+      const buildEvent = () => ServerSocketEventSchema.parse({
+          type: "snapshot",
+          sequence,
+          occurredAt: new Date().toISOString(),
+          workstream,
+          messageFeed,
+          activeStreams,
+        });
+      let event = buildEvent();
+      let encoded = JSON.stringify(event);
+      while (textEncoder.encode(encoded).byteLength > MAX_SOCKET_SNAPSHOT_BYTES
+        && messageFeed.items.length > 1) {
+        messageFeed.items.shift();
+        messageFeed.nextCursor = String(messageFeed.items[0]!.sequenceNumber);
+        event = buildEvent();
+        encoded = JSON.stringify(event);
+      }
+      if (textEncoder.encode(encoded).byteLength > MAX_SOCKET_SNAPSHOT_BYTES) {
+        throw new Error("substream_snapshot_frame_too_large");
+      }
+      socket.send(encoded);
     } catch {
-      await this.sendError(socket, "snapshot_unavailable", "Canonical work-stream state is unavailable.");
+      this.sendError(socket, "snapshot_unavailable", "Canonical work-stream state is unavailable.");
     }
   }
 
@@ -1609,10 +2359,13 @@ export class WorkstreamRoom {
     }
   }
 
-  private async sendError(socket: WebSocket, code: string, message: string): Promise<void> {
+  private sendError(socket: WebSocket, code: string, message: string): void {
     const event = ServerSocketEventSchema.parse({
       type: "error",
-      sequence: await this.allocateSequence(),
+      // A private protocol error is not part of the canonical feed. Reusing
+      // the current cursor avoids creating a transcript gap merely because a
+      // client sent a malformed or misrouted frame.
+      sequence: this.objectStore.currentSequence(),
       occurredAt: new Date().toISOString(),
       code,
       message

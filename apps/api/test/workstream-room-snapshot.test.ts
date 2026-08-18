@@ -14,7 +14,7 @@ const at = "2026-08-11T09:00:00.000Z";
 
 const databases: DatabaseSync[] = [];
 
-async function loadWorkstreamRoomSnapshot(
+async function loadSubstreamAgentSnapshot(
   env: Env,
   input: { workspaceId: string; workstreamId: string; viewerUserId: string; viewers: [] },
 ) {
@@ -37,7 +37,7 @@ describe("work-stream room snapshot", () => {
     const database = seededDatabase();
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
-    const snapshot = await loadWorkstreamRoomSnapshot(env, {
+    const snapshot = await loadSubstreamAgentSnapshot(env, {
       workspaceId,
       workstreamId,
       viewerUserId: readerId,
@@ -81,7 +81,7 @@ describe("work-stream room snapshot", () => {
     `);
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
-    const snapshot = await loadWorkstreamRoomSnapshot(env, {
+    const snapshot = await loadSubstreamAgentSnapshot(env, {
       workspaceId,
       workstreamId,
       viewerUserId: readerId,
@@ -112,7 +112,7 @@ describe("work-stream room snapshot", () => {
     );
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
-    const snapshot = await loadWorkstreamRoomSnapshot(env, {
+    const snapshot = await loadSubstreamAgentSnapshot(env, {
       workspaceId,
       workstreamId,
       viewerUserId: readerId,
@@ -154,7 +154,7 @@ describe("work-stream room snapshot", () => {
     );
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
-    const snapshot = await loadWorkstreamRoomSnapshot(env, {
+    const snapshot = await loadSubstreamAgentSnapshot(env, {
       workspaceId,
       workstreamId,
       viewerUserId: readerId,
@@ -174,7 +174,7 @@ describe("work-stream room snapshot", () => {
     // The row was created hours ago and its naming pass never settled it, so
     // the placeholder title is the title — a skeleton in front of it would
     // pulse for as long as the work stream exists.
-    const stalled = await loadWorkstreamRoomSnapshot(env, {
+    const stalled = await loadSubstreamAgentSnapshot(env, {
       workspaceId,
       workstreamId,
       viewerUserId: readerId,
@@ -184,7 +184,7 @@ describe("work-stream room snapshot", () => {
 
     database.prepare("UPDATE workstreams SET created_at = ? WHERE id = ?")
       .run(new Date().toISOString(), workstreamId);
-    const fresh = await loadWorkstreamRoomSnapshot(env, {
+    const fresh = await loadSubstreamAgentSnapshot(env, {
       workspaceId,
       workstreamId,
       viewerUserId: readerId,
@@ -197,7 +197,7 @@ describe("work-stream room snapshot", () => {
     const database = seededDatabase();
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" });
 
-    const other = await loadWorkstreamRoomSnapshot(env, {
+    const other = await loadSubstreamAgentSnapshot(env, {
       workspaceId,
       workstreamId,
       viewerUserId: otherId,

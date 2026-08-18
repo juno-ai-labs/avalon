@@ -29,7 +29,7 @@ import {
 } from "../services/activity-routing-feedback";
 import {
   createActivitySuggestion,
-  publishWorkstreamRoomEvent,
+  publishSubstreamAgentEvent,
 } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
@@ -42,6 +42,7 @@ import { automationModelOverride, scheduledWorkstreamModel } from "../services/a
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
+import { startWorkstreamWorkflow } from "../services/integrations";
 import {
   activityOriginLocator,
   attachWorkstreamOriginResource,
@@ -148,11 +149,6 @@ function parseStrings(value: string): string[] {
   } catch {
     return [];
   }
-}
-
-function workflowAlreadyExists(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return /(already exists|duplicate|conflict)/i.test(error.message);
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {
@@ -674,7 +670,7 @@ async function injectActivityMessage(
     createdAt,
     editedAt: null
   };
-  await publishWorkstreamRoomEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
+  await publishSubstreamAgentEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
     type: "message_created",
     message: canonicalMessage
   });
@@ -964,7 +960,6 @@ async function startActivityAutomation(
   }
 
   if (["completed", "failed", "needs_input"].includes(run.status)) return run.workstream_id;
-  const workflowId = `activity-${subscription.id}-${activity.id}`;
   const workflowInput: WorkstreamWorkflowInput = WorkstreamWorkflowInputSchema.parse({
     region: activity.workspace_region,
     workspaceId: activity.workspace_id,
@@ -977,11 +972,7 @@ async function startActivityAutomation(
     reason: `Connected activity matched ${subscription.template_name}`
   });
 
-  try {
-    await env.WORKSTREAM_LOOP_WORKFLOW.create({ id: workflowId, params: workflowInput });
-  } catch (error) {
-    if (!workflowAlreadyExists(error)) throw error;
-  }
+  const workflowId = await startWorkstreamWorkflow(env, workflowInput);
 
   await env.DB.prepare(
     `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,

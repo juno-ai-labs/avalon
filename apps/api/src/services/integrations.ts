@@ -81,6 +81,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { z } from "zod";
+import { substreamAgentName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { countEnv, numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
@@ -160,7 +161,7 @@ import {
   formatWakeupLocalTime,
   listPendingWorkstreamWakeups,
   loadWorkstreamWakeup,
-  refreshWorkspaceSchedulerAlarm,
+  refreshAgentTimerAlarm,
   resolveWakeupInstant,
 } from "./workstream-wakeup-service";
 import {
@@ -195,6 +196,7 @@ import {
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -296,7 +298,7 @@ function hyperSightSubmissionPlugin(
   };
 }
 
-type WorkstreamHarnessResult = {
+export type WorkstreamHarnessResult = {
   status: "completed" | "needs_input" | "failed" | "stopped";
   messageId?: string;
   error?: { code: string; message: string };
@@ -1601,14 +1603,43 @@ async function assertAutomationCreatorConnectionAuthorized(
 }
 
 export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflowInput): Promise<string> {
-  const instanceId = `workstream-${input.harnessRunId}`;
-  try {
-    await env.WORKSTREAM_LOOP_WORKFLOW.create({ id: instanceId, params: input });
-  } catch (error) {
-    // Workflow IDs are deterministic, so a duplicate means an earlier attempt
-    // reached Cloudflare but failed before Avalon could persist the launch.
-    // Either way an instance now exists, which is what the marker below reports.
-    if (!workflowAlreadyExists(error)) throw error;
+  const authority = await readWorkstreamAuthorityControl(env);
+  const substreamId = input.substreamId ?? "0";
+  const instanceId = authority.phase === "durable_object_open"
+    ? `substream-agent:${substreamId}:${input.harnessRunId}`
+    : `workstream-${input.harnessRunId}`;
+  if (authority.phase === "durable_object_open") {
+    const namespace = durableObjectNamespaceForRegion(
+      env.SUBSTREAM_AGENTS,
+      input.region,
+      env.APP_ENV,
+    );
+    const response = await namespace.get(namespace.idFromName(substreamAgentName(
+      input.region,
+      input.workspaceId,
+      input.workstreamId,
+      substreamId,
+    ))).fetch("https://substream-agent/internal/runtime-dispatch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...input, substreamId }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: unknown } | null;
+      throw new Error(typeof body?.error === "string"
+        ? body.error
+        : `substream_agent_dispatch_failed:${response.status}`);
+    }
+    await response.arrayBuffer();
+  } else {
+    try {
+      await env.WORKSTREAM_LOOP_WORKFLOW.create({ id: instanceId, params: input });
+    } catch (error) {
+      // Workflow IDs are deterministic, so a duplicate means an earlier attempt
+      // reached Cloudflare but failed before Avalon could persist the launch.
+      // Either way an instance now exists, which is what the marker below reports.
+      if (!workflowAlreadyExists(error)) throw error;
+    }
   }
   const launchedAt = nowIso();
   try {
@@ -1680,7 +1711,7 @@ function createSequencedStreamDeltaBatcher(
   options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
 ): SequencedStreamDeltaBatcher {
   const maxCharacters = options.maxCharacters ?? 2_048;
-  const maxDelayMs = options.maxDelayMs ?? 75;
+  const maxDelayMs = options.maxDelayMs ?? 100;
   const now = options.now ?? Date.now;
   let pending: Extract<HarnessEvent, { type: "stream_delta" }> | null = null;
   let lastFlushAt = now();
@@ -1734,7 +1765,7 @@ export async function publishWorkstreamEvent(
   event: Omit<ServerSocketEvent, "sequence" | "occurredAt"> | Record<string, unknown>,
 ): Promise<boolean> {
   try {
-    const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, env.AVALON_REGION, env.APP_ENV);
+    const rooms = durableObjectNamespaceForRegion(env.SUBSTREAM_AGENTS, env.AVALON_REGION, env.APP_ENV);
     const id = rooms.idFromName(`${env.AVALON_REGION}:${workspaceId}:${workstreamId}`);
     const response = await rooms.get(id).fetch("https://room.internal/internal/events", {
       method: "POST",
@@ -1763,7 +1794,7 @@ export async function publishPersonalWorkstreamEvent(
   event: Omit<PersonalSocketEvent, "occurredAt"> | Record<string, unknown>,
 ): Promise<void> {
   try {
-    const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, env.AVALON_REGION, env.APP_ENV);
+    const rooms = durableObjectNamespaceForRegion(env.SUBSTREAM_AGENTS, env.AVALON_REGION, env.APP_ENV);
     const id = rooms.idFromName(`${env.AVALON_REGION}:${workspaceId}:${workstreamId}`);
     await rooms.get(id).fetch("https://room.internal/internal/events", {
       method: "POST",
@@ -1783,7 +1814,7 @@ export async function runWorkstreamHarness(
   env: Env,
   input: WorkstreamWorkflowInput,
   onEvent?: (event: Record<string, unknown>) => void | Promise<void>,
-  runtime?: { lease: AttemptLease },
+  runtime?: { lease: AttemptLease; publishRealtime?: boolean },
 ): Promise<WorkstreamHarnessResult> {
   const runStartedAtMs = Date.now();
   const database = createDatabase(env.DB);
@@ -2017,7 +2048,7 @@ export async function runWorkstreamHarness(
   const publishEvent = async (event: Record<string, unknown>) => {
     const publishers = [
       ...(onEvent ? [{ channel: "runtime_observer", publish: onEvent }] : []),
-      ...(!hyperSightRun ? [{
+      ...(!hyperSightRun && runtime?.publishRealtime !== false ? [{
         channel: "workstream_realtime",
         publish: (publishedEvent: Record<string, unknown>) => publishWorkstreamEvent(
           env,
@@ -2323,6 +2354,28 @@ export async function runWorkstreamHarness(
     onLiveness: async (stage) => {
       await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
       await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+      if (stage === "iteration_boundary") {
+        const steering = await env.DB.prepare(
+          `UPDATE run_steering
+              SET boundaries_observed = boundaries_observed + 1,
+                  consumed_at = CASE
+                    WHEN boundaries_observed + 1 >= max_boundaries THEN ? ELSE consumed_at END
+            WHERE run_id = ? AND consumed_at IS NULL
+            RETURNING boundaries_observed, max_boundaries, consumed_at`,
+        ).bind(Date.now(), input.harnessRunId).first<{
+          boundaries_observed: number;
+          max_boundaries: number;
+          consumed_at: number | null;
+        }>();
+        if (steering?.consumed_at !== null && steering?.consumed_at !== undefined) {
+          await env.DB.prepare(
+            `UPDATE runs SET cancellation_reason = 'steered_by_follow_up',
+                    revision = revision + 1, updated_at = ?
+              WHERE run_id = ? AND status = 'running' AND terminalized_at IS NULL`,
+          ).bind(Date.now(), input.harnessRunId).run();
+          stopController.abort("steered_by_follow_up");
+        }
+      }
     },
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
       const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, harnessTools);
@@ -6008,7 +6061,12 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           // next to a pending wake-up in a workspace with nothing else due,
           // where no later alarm would ever arrive to notice the row.
           if (replayed.status === "pending") {
-            await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+            await refreshAgentTimerAlarm(
+              env,
+              input.workspaceId,
+              input.workstreamId,
+              input.substreamId ?? "0",
+            );
           }
           const persistedDueAt = new Date(replayed.dueAt);
           return {
@@ -6051,7 +6109,12 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           idempotencyKey: providerIdempotencyKey,
         });
         try {
-          await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+          await refreshAgentTimerAlarm(
+            env,
+            input.workspaceId,
+            input.workstreamId,
+            input.substreamId ?? "0",
+          );
         } catch (error) {
           // The row exists but nothing is armed to fire it, and a workspace with
           // no other due target will never wake to notice. Roll the insert back
@@ -6158,7 +6221,12 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             summary: "Could not cancel a wake-up: it is no longer pending",
           };
         }
-        await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+        await refreshAgentTimerAlarm(
+          env,
+          input.workspaceId,
+          input.workstreamId,
+          input.substreamId ?? "0",
+        );
         return {
           output: { wakeupId: args.wakeupId, status: "cancelled" },
           summary: "Cancelled a scheduled wake-up",

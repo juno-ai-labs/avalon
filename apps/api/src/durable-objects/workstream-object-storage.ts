@@ -15,13 +15,6 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
 
-const LEGACY_ROOM_IDENTITY_KEY = "roomIdentity";
-const LEGACY_EVENT_SEQUENCE_KEY = "eventSequence";
-const LEGACY_ACTIVE_CHECKPOINT_KEY = "activeStreamCheckpoints";
-const LEGACY_ACTIVE_CHUNK_PREFIX = "activeStreamCheckpointText:";
-const LEGACY_HYPERSIGHT_KEY = "pendingHyperSightRefresh";
-const LEGACY_SOCKET_TICKET_PREFIX = "socket-ticket:";
-const LEGACY_KV_CAMPAIGN_ID = "workstream-room-kv-to-sql-v1";
 const HYPERSIGHT_JOB_KEY = "hypersight_refresh";
 const ACTIVE_OUTPUT_CHUNK_MAX_BYTES = 60 * 1024;
 const SOCKET_TICKET_RECEIPT_RETENTION_MS = 5 * 60_000;
@@ -37,19 +30,6 @@ const RoomIdentitySchema = z.object({
 const PendingHyperSightRefreshSchema = RoomIdentitySchema.extend({
   triggerSequence: z.number().int().nonnegative(),
   firstQueuedAt: z.number().int().nonnegative(),
-});
-
-const StoredLegacyActiveCheckpointSchema = z.object({
-  messageId: z.string().uuid(),
-  harnessRunId: z.string().uuid(),
-  turnId: z.string().min(1).max(180),
-  epoch: z.number().int().nonnegative(),
-  streamSeq: z.number().int().nonnegative(),
-  seenTurnIds: z.array(z.string().min(1).max(180)),
-  textChunkCount: z.number().int().nonnegative(),
-  turnStartOffset: z.number().int().nonnegative(),
-  roomSequence: z.number().int().nonnegative(),
-  createdAt: z.string().datetime({ offset: true }),
 });
 
 interface RealtimeStateRow extends Record<string, SqlStorageValue> {
@@ -78,11 +58,6 @@ interface DueWorkRow extends Record<string, SqlStorageValue> {
 
 interface DueWorkTimeRow extends Record<string, SqlStorageValue> {
   due_at: number;
-}
-
-interface DataMigrationRow extends Record<string, SqlStorageValue> {
-  phase: string;
-  status: string;
 }
 
 interface RegionalEffectOutboxRow extends Record<string, SqlStorageValue> {
@@ -399,28 +374,6 @@ function writeActiveStreamCheckpoints(
   }
 }
 
-async function readLegacyActiveStreamCheckpoints(
-  storage: DurableObjectStorage,
-  storedValue: unknown,
-): Promise<{ checkpoints: ActiveStreamCheckpoint[]; keys: string[] }> {
-  const legacy = ActiveStreamCheckpointsSchema.safeParse(storedValue);
-  if (legacy.success) return { checkpoints: legacy.data, keys: [LEGACY_ACTIVE_CHECKPOINT_KEY] };
-
-  const stored = StoredLegacyActiveCheckpointSchema.safeParse(storedValue);
-  if (!stored.success) return { checkpoints: [], keys: [] };
-  const keys = [LEGACY_ACTIVE_CHECKPOINT_KEY];
-  const chunks: string[] = [];
-  for (let index = 0; index < stored.data.textChunkCount; index += 1) {
-    const key = `${LEGACY_ACTIVE_CHUNK_PREFIX}${String(index).padStart(8, "0")}`;
-    const chunk = await storage.get(key);
-    if (typeof chunk !== "string") throw new Error("legacy_active_checkpoint_chunk_missing");
-    keys.push(key);
-    chunks.push(chunk);
-  }
-  const hydrated = ActiveStreamCheckpointsSchema.parse([{ ...stored.data, text: chunks.join("") }]);
-  return { checkpoints: hydrated, keys };
-}
-
 function insertIdentity(
   storage: DurableObjectStorage,
   identity: WorkstreamObjectIdentity,
@@ -472,181 +425,17 @@ function insertIdentity(
   );
 }
 
-async function deleteLegacyKeys(storage: DurableObjectStorage, keys: string[]): Promise<void> {
-  for (let start = 0; start < keys.length; start += 128) {
-    await storage.delete(keys.slice(start, start + 128));
-  }
-}
-
-function completeLegacyKvMigration(storage: DurableObjectStorage, now: number): void {
-  storage.transactionSync(() => {
-    storage.sql.exec(
-      `INSERT INTO _data_migrations
-         (campaign_id, target_version, phase, cursor, source_fence, source_hash,
-          result_hash, pitr_bookmark, status, attempts, last_error_code, updated_at)
-       VALUES (?, 1, 'completed', NULL, NULL, NULL, NULL, NULL, 'completed', 1, NULL, ?)
-       ON CONFLICT(campaign_id) DO UPDATE SET
-         phase = 'completed', status = 'completed', last_error_code = NULL,
-         updated_at = excluded.updated_at`,
-      LEGACY_KV_CAMPAIGN_ID,
-      now,
-    );
-    storage.sql.exec(
-      `UPDATE object_versions
-          SET data_version = MAX(data_version, 1), updated_at = ?
-        WHERE id = 1 AND data_version < 1`,
-      now,
-    );
-  });
-}
-
-async function migrateLegacyKv(
-  storage: DurableObjectStorage,
-  region: "global" | "eu",
-): Promise<void> {
-  const existingMigration = first(storage.sql.exec<DataMigrationRow>(
-    `SELECT phase, status FROM _data_migrations WHERE campaign_id = ?`,
-    LEGACY_KV_CAMPAIGN_ID,
-  ));
-  if (existingMigration?.status === "completed") {
-    storage.sql.exec(
-      `UPDATE object_versions SET data_version = 1, updated_at = ?
-        WHERE id = 1 AND data_version < 1`,
-      Date.now(),
-    );
-    return;
-  }
-
-  const values = await storage.get([
-    LEGACY_ROOM_IDENTITY_KEY,
-    LEGACY_EVENT_SEQUENCE_KEY,
-    LEGACY_ACTIVE_CHECKPOINT_KEY,
-    LEGACY_HYPERSIGHT_KEY,
-  ]);
-  const ticketEntries = await storage.list<number>({ prefix: LEGACY_SOCKET_TICKET_PREFIX });
-  const chunkEntries = await storage.list<string>({ prefix: LEGACY_ACTIVE_CHUNK_PREFIX });
-  const legacyKeys = [...new Set([
-    ...values.keys(),
-    ...ticketEntries.keys(),
-    ...chunkEntries.keys(),
-  ])];
-  const now = Date.now();
-
-  // A prior activation committed the relational copy but stopped during the
-  // asynchronous KV cleanup. The SQL copy is already the recovery source, so
-  // parsing a now-partial legacy checkpoint would turn a harmless cleanup
-  // retry into an outage. Finish deleting only the known legacy key families.
-  if (existingMigration?.phase === "copied") {
-    await deleteLegacyKeys(storage, legacyKeys);
-    completeLegacyKvMigration(storage, now);
-    return;
-  }
-
-  const active = await readLegacyActiveStreamCheckpoints(
-    storage,
-    values.get(LEGACY_ACTIVE_CHECKPOINT_KEY),
-  );
-  const identity = RoomIdentitySchema.safeParse(values.get(LEGACY_ROOM_IDENTITY_KEY));
-  const sequence = z.number().int().nonnegative().safeParse(values.get(LEGACY_EVENT_SEQUENCE_KEY));
-  const hypersight = PendingHyperSightRefreshSchema.safeParse(values.get(LEGACY_HYPERSIGHT_KEY));
-  if (legacyKeys.length === 0) {
-    completeLegacyKvMigration(storage, now);
-    return;
-  }
-  if (values.has(LEGACY_ROOM_IDENTITY_KEY) && !identity.success) {
-    throw new Error("legacy_room_identity_invalid");
-  }
-  if (values.has(LEGACY_EVENT_SEQUENCE_KEY) && !sequence.success) {
-    throw new Error("legacy_event_sequence_invalid");
-  }
-  if (values.has(LEGACY_ACTIVE_CHECKPOINT_KEY) && active.keys.length === 0) {
-    throw new Error("legacy_active_checkpoint_invalid");
-  }
-  if (values.has(LEGACY_HYPERSIGHT_KEY) && !hypersight.success) {
-    throw new Error("legacy_hypersight_refresh_invalid");
-  }
-  for (const [key, expiresAt] of ticketEntries) {
-    const ticketId = key.slice(LEGACY_SOCKET_TICKET_PREFIX.length);
-    if (!z.string().uuid().safeParse(ticketId).success || !Number.isFinite(expiresAt)) {
-      throw new Error("legacy_socket_ticket_invalid");
-    }
-  }
-
-  storage.transactionSync(() => {
-    if (identity.success) insertIdentity(storage, identity.data, region, now);
-    if (sequence.success) {
-      storage.sql.exec(
-        `INSERT INTO realtime_state(id, event_sequence, updated_at)
-         VALUES (1, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           event_sequence = MAX(realtime_state.event_sequence, excluded.event_sequence),
-           updated_at = excluded.updated_at`,
-        sequence.data,
-        now,
-      );
-    }
-    if (active.checkpoints.length > 0) {
-      if (!identity.success) throw new Error("legacy_active_checkpoint_identity_missing");
-      writeActiveStreamCheckpoints(storage, active.checkpoints, null);
-    }
-    if (hypersight.success) {
-      storage.sql.exec(
-        `INSERT INTO due_work(job_key, kind, due_at, epoch, payload_json, attempts, last_error_code, updated_at)
-         VALUES (?, 'hypersight_refresh', ?, 0, ?, 0, NULL, ?)
-         ON CONFLICT(job_key) DO UPDATE SET
-           due_at = MIN(due_work.due_at, excluded.due_at),
-           payload_json = excluded.payload_json,
-           updated_at = excluded.updated_at`,
-        HYPERSIGHT_JOB_KEY,
-        now,
-        JSON.stringify(hypersight.data),
-        now,
-      );
-    }
-    for (const [key, expiresAt] of ticketEntries) {
-      const ticketId = key.slice(LEGACY_SOCKET_TICKET_PREFIX.length);
-      storage.sql.exec(
-        `INSERT OR IGNORE INTO durable_inbox_receipts
-           (channel, source_kind, source_id, source_generation, message_id,
-            partition_key, source_version, source_epoch, request_hash,
-            result_code, result_hash, received_at)
-         VALUES ('socket_ticket', 'regional_service', 'socket_edge', 1, ?,
-                 'socket_ticket', 1, 0, ?, 'consumed', ?, ?)`,
-        ticketId,
-        `expires:${expiresAt}`,
-        `expires:${expiresAt}`,
-        Math.max(0, expiresAt * 1_000 - 60_000),
-      );
-    }
-    storage.sql.exec(
-      `INSERT INTO _data_migrations
-         (campaign_id, target_version, phase, cursor, source_fence, source_hash,
-          result_hash, pitr_bookmark, status, attempts, last_error_code, updated_at)
-       VALUES (?, 1, 'copied', NULL, NULL, NULL, NULL, NULL, 'running', 1, NULL, ?)
-       ON CONFLICT(campaign_id) DO UPDATE SET
-         phase = 'copied', status = 'running', attempts = _data_migrations.attempts + 1,
-         last_error_code = NULL, updated_at = excluded.updated_at`,
-      LEGACY_KV_CAMPAIGN_ID,
-      now,
-    );
-  });
-
-  await deleteLegacyKeys(storage, legacyKeys);
-  completeLegacyKvMigration(storage, Date.now());
-}
-
 export class WorkstreamObjectStore {
   private readonly ready: Promise<void>;
 
   constructor(
     private readonly storage: DurableObjectStorage,
     workerVersionId: string,
-    region: "global" | "eu",
+    _region: "global" | "eu",
   ) {
-    this.ready = (async () => {
-      applyWorkstreamObjectSchema(storage, workerVersionId);
-      await migrateLegacyKv(storage, region);
-    })();
+    void _region;
+    applyWorkstreamObjectSchema(storage, workerVersionId);
+    this.ready = Promise.resolve();
   }
 
   waitUntilReady(): Promise<void> {
@@ -767,19 +556,20 @@ export class WorkstreamObjectStore {
         receivedAt - SOCKET_TICKET_RECEIPT_RETENTION_MS,
       );
       const requestHash = `expires:${expiresAt}`;
-      const result = this.storage.sql.exec(
+      const result = this.storage.sql.exec<{ message_id: string }>(
         `INSERT OR IGNORE INTO durable_inbox_receipts
            (channel, source_kind, source_id, source_generation, message_id,
             partition_key, source_version, source_epoch, request_hash,
             result_code, result_hash, received_at)
          VALUES ('socket_ticket', 'regional_service', 'socket_edge', 1, ?,
-                 'socket_ticket', 1, 0, ?, 'consumed', ?, ?)`,
+                 'socket_ticket', 1, 0, ?, 'consumed', ?, ?)
+         RETURNING message_id`,
         ticketId,
         requestHash,
         requestHash,
         receivedAt,
       );
-      return result.rowsWritten === 1;
+      return result.toArray().length === 1;
     });
   }
 
@@ -949,12 +739,13 @@ export class WorkstreamObjectStore {
           payloadHash,
           effect,
         });
-        const inserted = this.storage.sql.exec(
+        const inserted = this.storage.sql.exec<{ message_id: string }>(
           `INSERT OR IGNORE INTO durable_outbox
              (message_id, channel, destination_kind, destination_id, partition_key,
               source_version, source_epoch, contract_version, payload_json, payload_ref,
               payload_hash, state, attempts, not_before, created_at, acked_at)
-           VALUES (?, ?, 'queue', ?, ?, ?, ?, 1, ?, NULL, ?, 'pending', 0, ?, ?, NULL)`,
+           VALUES (?, ?, 'queue', ?, ?, ?, ?, 1, ?, NULL, ?, 'pending', 0, ?, ?, NULL)
+           RETURNING message_id`,
           messageId,
           REGIONAL_EFFECT_CHANNEL,
           authority.region,
@@ -966,7 +757,7 @@ export class WorkstreamObjectStore {
           Date.now(),
           Date.now(),
         );
-        if (inserted.rowsWritten === 0) {
+        if (inserted.toArray().length === 0) {
           const existing = first(this.storage.sql.exec<{ payload_hash: string }>(
             `SELECT payload_hash FROM durable_outbox WHERE message_id = ?`,
             messageId,
@@ -1072,13 +863,14 @@ export class WorkstreamObjectStore {
   }
 
   acknowledgeRegionalEffect(messageId: string, payloadHash: string): boolean {
-    return this.storage.sql.exec(
+    return this.storage.sql.exec<{ message_id: string }>(
       `DELETE FROM durable_outbox
-        WHERE channel = ? AND message_id = ? AND payload_hash = ?`,
+        WHERE channel = ? AND message_id = ? AND payload_hash = ?
+        RETURNING message_id`,
       REGIONAL_EFFECT_CHANNEL,
       messageId,
       payloadHash,
-    ).rowsWritten === 1;
+    ).toArray().length === 1;
   }
 
   nextRegionalEffectDueAt(): number | null {

@@ -2,8 +2,10 @@
 
 Avalon's regional data is split by declared authority. D1 owns workspace,
 identity, connector, routing, schedule, audit, and projection state. Serving
-contract 1 makes each `WorkstreamRoom` SQLite database the product authority for
-exactly one work stream after the guarded regional generation opens. Frozen
+contract 1 makes each `SubstreamAgent` SQLite database the product authority for
+one independently ordered substream after the guarded regional generation opens;
+its non-agent `WorkstreamDO` parent owns aggregate work-stream metadata and the
+regional effect outbox. Frozen
 legacy D1 product rows are migration input and writer tripwires, never a serving
 fallback. The checked-in migrations are the authoritative D1 schema and the
 object schema registry is the authoritative DO schema. This document maps both
@@ -26,7 +28,8 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/lib/workstream-visibility.ts` | The single expression of who may read a work stream, parameterized by the SQL naming the reader. |
 | `apps/api/src/mappers/connection.ts`, `apps/api/src/mappers/workstream.ts` | Row schemas parsed at the read — the pattern the remaining hand-coercing readers are converging on. |
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
-| `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `WorkstreamRoom`. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts` | SQL schemas for workspace command routing and non-agent child projection aggregation. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
@@ -46,7 +49,10 @@ includes it. Knowing an object ID is never sufficient authorization.
 
 ### Work streams
 
-- The object-local `workstream` row is the product root. `origin_type`
+- The main `SubstreamAgent`'s object-local `workstream` row is the product root;
+  each provisioned child carries the bounded root facts needed to authorize and
+  project its own context, while `WorkstreamDO.workstream_metadata` is the
+  aggregate cross-child view. `origin_type`
   distinguishes ad hoc work
   from automation output without splitting the UI. `objective` is the work
   stream's description; `description_source` records whether a person wrote it
@@ -553,6 +559,26 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-17 — Work-stream authority is split across parent and substream SQL
+
+**What changed:** `WorkspaceDO` owns command-ticket SQL, the model-free
+`WorkstreamDO` owns child projection receipts and the aggregate regional outbox,
+and each `SubstreamAgent` owns one independently ordered message/run context.
+Main child `0` receives the maintenance import; new children require explicit
+provisioning.
+
+**Why:** Transcript and full-loop ordering are substream-local, while sidebar,
+activity, and viewer-interest queries need one work-stream aggregate and one
+workspace/regional delivery path.
+
+**Considered and rejected:** Treating the parent as transcript authority and
+copying every child message into it. That would restore a single serialization
+and storage bottleneck.
+
+**Consequences:** Cross-object relationships are RPC/outbox contracts, never SQL
+joins. The authoritative DDL/catalog for all four Durable Object classes is in
+[`workstream-durable-object.md`](workstream-durable-object.md).
+
 ### 2026-08-17 — Serving names now match the WorkstreamDO authority
 
 **What changed:** The work-stream map now names the normalized object-local root,
@@ -609,7 +635,7 @@ projection changes use numbered migrations.
 ### 2026-08-16 — Object-local SQL is named separately from canonical D1
 
 **What changed:** The data map now identifies the versioned SQLite schema owned
-by each existing `WorkstreamRoom` and points to its module contract. At that
+by each existing `SubstreamAgent` and points to its module contract. At that
 stage, canonical work-stream metadata and completed transcript rows still
 remained in regional D1.
 

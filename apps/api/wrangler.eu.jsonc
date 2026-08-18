@@ -136,14 +136,19 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "WORKSTREAM_ROOMS", "class_name": "WorkstreamRoom" },
+      { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
+      { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
+      { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
-    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] }
+    { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
+    { "tag": "v3", "renamed_classes": [{ "from": "WorkstreamRoom", "to": "SubstreamAgent" }] },
+    { "tag": "v4", "new_sqlite_classes": ["WorkstreamDO"] },
+    { "tag": "v5", "new_sqlite_classes": ["WorkspaceDO"] }
   ],
   "queues": {
     "producers": [

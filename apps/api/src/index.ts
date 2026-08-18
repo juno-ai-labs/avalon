@@ -94,7 +94,9 @@ async function processTelemetry(env: Env): Promise<void> {
   });
 }
 
-export { WorkstreamRoom } from "./durable-objects/workstream-room";
+export { SubstreamAgent } from "./durable-objects/substream-agent";
+export { WorkstreamDO } from "./durable-objects/workstream-do";
+export { WorkspaceDO } from "./durable-objects/workspace-do";
 export { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 export { WorkstreamLoopWorkflow } from "./workflows/workstream-loop";

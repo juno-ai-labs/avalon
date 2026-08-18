@@ -1311,6 +1311,8 @@ export const CreateMessageRequestSchema = z.object({
   mentions: z.array(MentionSchema).default([]),
   confirmedParticipantUserIds: z.array(IdSchema).default([]),
   attachmentIds: z.array(IdSchema).max(10).default([]),
+  /** Steer yields the in-flight loop at a turn boundary; queue never interrupts it. */
+  runMode: z.enum(["steer", "queue"]).optional(),
 }).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "A message must include text or an attachment",
 });
@@ -1489,6 +1491,12 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
     workstream: WorkstreamDetailSchema,
+    /** Newest canonical transcript page, downloaded over the SubstreamAgent socket. */
+    messageFeed: z.object({
+      items: z.array(MessageSchema).max(250),
+      nextCursor: z.string().nullable(),
+      newerCursor: z.string().nullable(),
+    }).default({ items: [], nextCursor: null, newerCursor: null }),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
   }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
@@ -1722,6 +1730,8 @@ export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   workstreamId: IdSchema,
+  /** External child identity. Existing producers and the main feed use `0`. */
+  substreamId: z.union([z.literal("0"), IdSchema]).optional(),
   harnessRunId: IdSchema,
   triggerMessageId: IdSchema.nullable(),
   /**
