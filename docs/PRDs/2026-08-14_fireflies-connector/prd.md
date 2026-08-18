@@ -65,8 +65,9 @@ copy.
    provider-authored tools under the existing hosted-MCP pass-through rules.
 4. A finished Fireflies meeting summary becomes exactly one digestible
    connector activity in the owning workspace — within minutes when webhooks
-   are configured, and within one poll interval otherwise — and automations
-   can subscribe to and digest it whichever transport delivered it.
+   are configured, and within one poll interval otherwise for any meeting
+   summarized within the poll's 48-hour overlap window — and automations can
+   subscribe to and digest it whichever transport delivered it.
 5. Connection health is honest: an invalid or revoked API key flips the
    connection to `needs_reconnect` on the next use, `POST /connections/:id/test`
    reports it, and the desktop offers a working recovery path (re-keying for
@@ -250,14 +251,42 @@ that the checkpointed runner requires — the Google-callback
 (default hourly, not the 300-second Google constant, because of the plan
 quotas below).
 
+**The overlap window is a bounded guarantee, not an unbounded one.** Because
+the watermark lives in meeting-date space, a meeting whose summary lands more
+than 48 hours after the meeting itself is already behind
+`highWatermark − 48h` and polling will never emit it; for that case the
+webhook is the only delivery path. Fireflies summarizes within minutes
+normally, so the window covers ordinary operation and a long provider
+backlog, but a recording uploaded days later against an old meeting date is
+outside it by construction. Widening the overlap trades quota for coverage
+(each poll re-reads the window), so 48 hours is the starting value and open
+question 5 records what would change it.
+
+**What the poll emits.** The poll emits `meeting.summarized` only for
+meetings whose GraphQL response carries populated summary fields
+(`overview` or `action_items`); a meeting without them is skipped and picked
+up on a later pass once Fireflies finishes summarizing. The poll never emits
+`meeting.transcribed` at all — that event exists only to give webhook-configured
+workspaces an early operational signal, and emitting it from the poll would
+mean every meeting ingests twice on the poll path for no added information.
+
 ### Failure states
 
 Fireflies plan quotas are small (50 requests/day on Free, 500/day on Pro,
 60/min on Business/Enterprise), and polling and interactive tools spend the
 same budget. A provider 429 or quota exhaustion therefore must not be retried
-inside the poll step: the stream sets a rate-limit-derived
-`failurePollIntervalSeconds` so the next attempt waits out the window instead
-of the 60-second default, and the checkpoint does not advance. To the model,
+inside the poll step: the stream declares a static
+`failurePollIntervalSeconds` of 3,600 — one hour, matching the ordinary poll
+cadence — so a rate-limited stream waits out a per-minute window comfortably
+and costs at most one wasted request per hour against a daily quota, and the
+checkpoint does not advance. The value is **static by necessity**: the runner
+reads `failurePollIntervalSeconds` off the stream descriptor
+(`packages/connectors/src/types.ts:546`) and discards the `retryAfterMs` that
+`connectorRetryAfterMs` parses from the provider response, so a
+per-failure interval derived from `Retry-After` is not expressible today.
+Making it dynamic is a runner platform change — accepting a backoff timestamp
+back from a failed stream — and is explicitly out of this PRD's scope
+(open question 6). To the model,
 the same condition surfaces as a retryable-once rate-limit error (contract
 below). Fireflies reports application errors such as `auth_failed` inside an
 HTTP 200 GraphQL body, so the adapter translates `errors[].code` into
@@ -302,12 +331,15 @@ None yet.
    GraphQL document with validated variables. Rejected: a raw GraphQL
    pass-through tool — unbounded read authority, introspection exposure, and
    un-reviewable field access.
-4. **Only `meeting.summarized` is digestible, and the poll stream itself is
-   declared digestible.** `meeting.transcribed` is operational. Rejected:
-   making both digestible — one meeting would digest twice minutes apart. The
-   stream-level declaration matters because a non-digestible polling stream
-   stamps withholding onto everything it returns, which would silently defeat
-   Goal 4 on the poll path.
+4. **Only `meeting.summarized` is digestible, the poll stream itself is
+   declared digestible, and the poll emits only that one event type.**
+   `meeting.transcribed` is operational and webhook-only. Rejected: making
+   both digestible — one meeting would digest twice minutes apart; and
+   rejected: emitting both from the poll — the poll sees a finished meeting
+   once, so a transcribed event there is a duplicate row carrying nothing the
+   summarized event does not. The stream-level declaration matters because a
+   non-digestible polling stream stamps withholding onto everything it
+   returns, which would silently defeat Goal 4 on the poll path.
 5. **Accept degraded visibility on non-Enterprise keys, and disclose in both
    directions.** The connection reads whatever the key's account can see;
    the modal reports the detected coverage after verification, and also states
@@ -341,9 +373,16 @@ None yet.
    PRD keeps because the containment (confirmed-write treatment, exclusion
    from email-triggered automations and sub-agents, per-member scoping) is
    the same one Granola/Slack/Notion personal connections already live under.
-9. **Rollout gates on a region enablement variable, not a client feature
-   flag.** `firefliesConnectorConfig(env)` returns `null` unless
-   `FIREFLIES_CONNECTOR_ENABLED` is set (the X-connector shape), so the
+9. **Rollout gates on a purpose-built region enablement variable, not a
+   client feature flag and not a secret's absence.** X gates on the *real*
+   secret it needs (`xConnectorConfig` returns `null` without
+   `TWITTER_API_IO_API_KEY`); Fireflies has no server-side secret to gate on,
+   because both credentials are customer-supplied, so this is a synthetic
+   boolean whose only job is the rollout gate — and it therefore has to be
+   plumbed deliberately rather than falling out of an existing config read
+   (see the touch list in **Rollout**).
+   `firefliesConnectorConfig(env)` returns `null` unless
+   `FIREFLIES_CONNECTOR_ENABLED` is set, so the
    catalog omits the type and the API refuses creation region-by-region.
    Rejected: the client-feature-flag gate this PRD originally proposed — no
    flag plumbing exists anywhere near the connector catalog, and building
@@ -375,10 +414,10 @@ extend the `connector_type` CHECK with `'fireflies'`:
   `(workspace_id, connector_type) WHERE connector_type = 'fireflies' AND
   scope = 'workspace' AND status <> 'disabled'`, and
   `connector_connections_fireflies_personal_active_user_uq` with the personal
-  predicate. (Granola's workspace index carries no status predicate; the
-  `status <> 'disabled'` here is a deliberate improvement so a disabled row
-  does not block re-connecting, matching how `model_plugin_id` is reclaimed —
-  not a parity claim.)
+  predicate — exact parity with Granola, whose workspace and personal indexes
+  both carry `status <> 'disabled'`
+  (`packages/db/migrations/0048_granola_connector.sql:91-96`), so a disabled
+  row does not block re-connecting.
 - Add `'fireflies'` to the `connector_oauth_attempts.provider` CHECK (no FK
   children; safe) and to `ConnectorOAuthProviders` in
   `packages/contracts/src/connector-oauth-providers.ts`.
@@ -701,9 +740,23 @@ and no per-provider secrets unless the DCR precondition fails.
 
 `firefliesConnectorConfig(env)` in `apps/api/src/lib/connector-registry.ts`
 returns `null` unless the non-secret `FIREFLIES_CONNECTOR_ENABLED` variable is
-set in the region's Wrangler config — the X-connector gating shape — so an
-unset region has no `fireflies` in `GET /connections/catalog` and refuses
-creation. The desktop `connectorProviders` card ships in the same release
+set in the region's Wrangler config, so an unset region has no `fireflies` in
+`GET /connections/catalog` and refuses creation.
+
+Because the variable is synthetic rather than a credential the connector
+needs (key design decision 9), it does not arrive through an existing config
+read and has to be added in three places, all in the same change:
+
+| Where | What |
+| --- | --- |
+| `apps/api/src/env.ts` | `FIREFLIES_CONNECTOR_ENABLED?: string;` on the `Env` interface, alongside the other optional integration values (`TWITTER_API_IO_API_KEY` at `:124` is the neighbouring shape). It is **not** added to `assertEnvContract`'s required set — an unset value is the off state, not a misconfiguration. |
+| `apps/api/wrangler.global.jsonc` | An entry in `vars` — a plain non-secret string, never `wrangler secret`. |
+| `apps/api/wrangler.eu.jsonc` | The same entry, so the regions stay in step and either can be enabled independently. |
+
+`.env.example` gains it too, with the one-line comment its neighbours carry,
+since local development reads it the same way.
+
+The desktop `connectorProviders` card ships in the same release
 that enables the variable (a card whose type is absent from the catalog
 renders as a visible "Unavailable" card, so the card must not ship ahead of
 the gate). Ship workspace scope first, personal MCP second if sequencing
@@ -735,7 +788,9 @@ rest are automatable.
 3. Exactly-once: for one meeting, deliver the webhook then run the poll, and
    separately run the poll then deliver the webhook — one activity row in
    both orders. A meeting summarized hours after its meeting date is caught
-   by the overlap window.
+   by the overlap window; a meeting whose summary is still absent produces no
+   activity on that pass and one `meeting.summarized` on a later pass, and no
+   poll pass ever produces a `meeting.transcribed` row.
 4. A digest automation subscribed to the connection digests the summary
    activity — including one that arrived by poll, which proves the stream's
    digestible declaration.
@@ -749,7 +804,8 @@ rest are automatable.
    `/ingest/fireflies/:id` is rejected with no row written; a replayed valid
    post ingests at most once (receipt dedupe).
 8. A provider 429 pauses the poll stream — checkpoint unchanged, no in-step
-   retry — and the next scheduled run resumes from the same cursor.
+   retry, next attempt one hour out per the static
+   `failurePollIntervalSeconds` — and that run resumes from the same cursor.
 9. Unsetting `FIREFLIES_CONNECTOR_ENABLED` in one region removes `fireflies`
    from that region's catalog and tool surface; existing rows are retained
    and other regions are unaffected.
@@ -763,7 +819,7 @@ rest are automatable.
 2. **Poll cadence per plan tier.** Hourly is the default; whether to let the
    admin pick a cadence, and whether to surface a plan-tier hint in the
    connect modal, waits for real usage. The quota-safety mechanics (no
-   in-step 429 retry, rate-limit-derived failure interval) are in scope
+   in-step 429 retry, static hourly failure interval) are in scope
    regardless.
 3. **Personal MCP tool drift.** Fireflies marks several MCP tools
    experimental; the pass-through's surface hash already detects change, but
@@ -772,5 +828,20 @@ rest are automatable.
 4. **`meeting.transcribed` promotion.** If real workspaces disable Fireflies
    AI summaries, `meeting.summarized` never fires and their meetings produce
    no digestible activity. If support requests show this, promote
-   `meeting.transcribed` to digestible for connections where no summary
-   arrives — a decision-log entry when evidence exists.
+   `meeting.transcribed` to digestible — and emit it from the poll, which
+   this PRD does not — for connections where no summary arrives. A
+   decision-log entry when evidence exists.
+5. **Is a 48-hour overlap window wide enough?** A meeting summarized more
+   than 48 hours after its meeting date is invisible to polling by
+   construction, so webhook-less workspaces would miss it entirely. Widening
+   costs quota on every pass (the window is re-read each time), so the answer
+   wants real data on Fireflies' summarization lag — particularly for audio
+   uploaded against an old meeting date. Does not block the build; the
+   boundary is documented behavior until it changes.
+6. **Should the poll runner accept dynamic backoff?** `failurePollIntervalSeconds`
+   is static per stream and the runner discards the provider's `Retry-After`,
+   so a rate-limited Fireflies stream waits a fixed hour rather than exactly
+   as long as the provider asked. Teaching `pollCheckpointedActivityStreams`
+   to accept a backoff timestamp from a failed stream would benefit every
+   polling connector, not just this one — a platform change worth its own
+   PRD, and out of scope here.
