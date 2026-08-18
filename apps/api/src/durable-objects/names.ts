@@ -14,8 +14,10 @@ export function workstreamDOName(region: Region, workspaceId: string, workstream
  * One agent object per substream.
  *
  * The main substream deliberately retains the historical WorkstreamRoom name.
- * Renaming the class during the maintenance deployment therefore preserves its
- * SQLite database, while additional substreams receive independent objects.
+ * Class rename can preserve an already-jurisdictional object, while the
+ * maintenance import populates a new jurisdictional ID when the historical
+ * name lived in an unrestricted namespace. Additional substreams receive
+ * independent objects.
  */
 export function substreamAgentName(
   region: Region,

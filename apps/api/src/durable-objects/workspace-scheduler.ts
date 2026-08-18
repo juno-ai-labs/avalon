@@ -12,6 +12,7 @@ import { newId } from "@avalon/db";
 import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
+import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { logStructuredEvent } from "../observability/logger";
 import { automationModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
@@ -212,6 +213,7 @@ export class WorkspaceScheduler extends DurableObject<Env> {
     env: Env
   ) {
     super(state, env);
+    assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.initialized = state.blockConcurrencyWhile(async () => {
       applyDurableObjectSqliteMigrations({

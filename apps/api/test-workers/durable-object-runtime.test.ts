@@ -348,6 +348,9 @@ describe("Durable Objects in the Workers runtime", () => {
     await replay.arrayBuffer();
 
     await evictDurableObject(stub);
+    const pong = nextMessage(socket!);
+    socket!.send("ping");
+    expect((await pong).data).toBe("pong");
     const closed = new Promise<CloseEvent>((resolve) => {
       socket!.addEventListener("close", resolve, { once: true });
     });
@@ -390,6 +393,10 @@ describe("Durable Objects in the Workers runtime", () => {
     const socket = response.webSocket;
     expect(socket).toBeDefined();
     socket!.accept();
+    await evictDurableObject(stub);
+    const pong = nextMessage(socket!);
+    socket!.send("ping");
+    expect((await pong).data).toBe("pong");
     const receipt = nextMessage(socket!);
     socket!.send(JSON.stringify({
       type: "create_message",

@@ -18,8 +18,15 @@ import {
   substreamAgentName,
 } from "../src/durable-objects/substream-agent";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
-import { durableObjectNamespaceForRegion } from "../src/lib/durable-object-namespace";
-import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
+import {
+  assertDurableObjectJurisdiction,
+  durableObjectStubForRegion,
+} from "../src/lib/durable-object-namespace";
+import {
+  createCloudflareTestBinding,
+  createTestDurableObjectId,
+  createTestJurisdictionalDurableObjectId,
+} from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
 function timing(overrides: Partial<ScheduleTiming> = {}): ScheduleTiming {
@@ -51,15 +58,65 @@ describe("runtime component invariants", () => {
     expect(isPersonalEventAudience("user-two", "user-one")).toBe(false);
   });
 
-  it("pins EU Durable Object IDs to the EU jurisdiction namespace", () => {
-    const euNamespace = createCloudflareTestBinding<DurableObjectNamespace>({});
-    const jurisdiction = vi.fn(() => euNamespace);
+  it("locks Durable Object IDs and first placement to the product region", () => {
+    const usStub = {};
+    const euStub = {};
+    const usId = createTestDurableObjectId("us-id");
+    const euId = createTestDurableObjectId("eu-id");
+    const usGet = vi.fn(() => usStub);
+    const euGet = vi.fn(() => euStub);
+    const usIdFromName = vi.fn(() => usId);
+    const euIdFromName = vi.fn(() => euId);
+    const usNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
+      get: usGet,
+      idFromName: usIdFromName,
+    });
+    const euNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
+      get: euGet,
+      idFromName: euIdFromName,
+    });
+    const jurisdiction = vi.fn((value: DurableObjectJurisdiction) => (
+      value === "us" ? usNamespace : euNamespace
+    ));
     const namespace = createCloudflareTestBinding<DurableObjectNamespace>({ jurisdiction });
 
-    expect(durableObjectNamespaceForRegion(namespace, "eu")).toBe(euNamespace);
-    expect(jurisdiction).toHaveBeenCalledWith("eu");
-    expect(durableObjectNamespaceForRegion(namespace, "global")).toBe(namespace);
-    expect(durableObjectNamespaceForRegion(namespace, "eu", "development")).toBe(namespace);
+    expect(durableObjectStubForRegion(namespace, "global", "workspace-one", "production")).toBe(usStub);
+    expect(durableObjectStubForRegion(namespace, "eu", "workspace-two", "production")).toBe(euStub);
+    expect(jurisdiction.mock.calls).toEqual([["us"], ["eu"]]);
+    expect(usIdFromName).toHaveBeenCalledWith("workspace-one");
+    expect(euIdFromName).toHaveBeenCalledWith("workspace-two");
+    expect(usGet).toHaveBeenCalledWith(usId, { locationHint: "wnam" });
+    expect(euGet).toHaveBeenCalledWith(euId, { locationHint: "weur" });
+  });
+
+  it("omits unsupported jurisdiction and location options in local workerd", () => {
+    const stub = {};
+    const id = createTestDurableObjectId("local-id");
+    const get = vi.fn(() => stub);
+    const idFromName = vi.fn(() => id);
+    const jurisdiction = vi.fn();
+    const namespace = createCloudflareTestBinding<DurableObjectNamespace>({
+      get,
+      idFromName,
+      jurisdiction,
+    });
+
+    expect(durableObjectStubForRegion(namespace, "eu", "local", "test")).toBe(stub);
+    expect(jurisdiction).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledWith(id);
+  });
+
+  it("fails closed when a production object was created outside its jurisdiction", () => {
+    expect(() => assertDurableObjectJurisdiction(
+      createTestJurisdictionalDurableObjectId("us-object", "us"),
+      "global",
+      "production",
+    )).not.toThrow();
+    expect(() => assertDurableObjectJurisdiction(
+      createTestJurisdictionalDurableObjectId("eu-object", "eu"),
+      "global",
+      "production",
+    )).toThrow("durable_object_jurisdiction_mismatch:us:eu");
   });
 
   it("replays an available in-memory window and explicitly resyncs after hibernation", () => {

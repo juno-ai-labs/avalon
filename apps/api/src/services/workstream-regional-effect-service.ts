@@ -2,6 +2,7 @@ import { nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import {
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -598,8 +599,13 @@ export async function acknowledgeWorkstreamRegionalEffect(
   message: WorkstreamRegionalEffectEnvelope,
 ): Promise<void> {
   const objectName = workstreamDOName(message.region, message.workspaceId, message.workstreamId);
-  const objectId = env.WORKSTREAM_DOS.idFromName(objectName);
-  const response = await env.WORKSTREAM_DOS.get(objectId).fetch(
+  const workstream = durableObjectStubForRegion(
+    env.WORKSTREAM_DOS,
+    message.region,
+    objectName,
+    env.APP_ENV,
+  );
+  const response = await workstream.fetch(
     "https://workstream.internal/internal/regional-effect-ack",
     {
       method: "POST",
@@ -658,8 +664,13 @@ export async function loadWorkstreamRegionalEffect(
 ): Promise<WorkstreamRegionalEffectEnvelope | null> {
   const wake = WorkstreamRegionalEffectQueueMessageSchema.parse(input);
   const objectName = workstreamDOName(wake.region, wake.workspaceId, wake.workstreamId);
-  const objectId = env.WORKSTREAM_DOS.idFromName(objectName);
-  const response = await env.WORKSTREAM_DOS.get(objectId).fetch(
+  const workstream = durableObjectStubForRegion(
+    env.WORKSTREAM_DOS,
+    wake.region,
+    objectName,
+    env.APP_ENV,
+  );
+  const response = await workstream.fetch(
     "https://workstream.internal/internal/regional-effect-delivery",
     {
       method: "POST",

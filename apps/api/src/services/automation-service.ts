@@ -16,7 +16,7 @@ import { AutomationCompilerError, OpenRouterError } from "@avalon/agent-harness"
 import type { AutomationCompilerStreamEvent } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
@@ -2108,9 +2108,13 @@ export class AutomationService {
   }
 
   private async refreshScheduler(): Promise<void> {
-    const schedulers = durableObjectNamespaceForRegion(this.env.WORKSPACE_SCHEDULERS, this.env.AVALON_REGION, this.env.APP_ENV);
-    const id = schedulers.idFromName(`${this.env.AVALON_REGION}:${this.auth.workspaceId}`);
-    const response = await schedulers.get(id).fetch("https://scheduler.internal/refresh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId: this.auth.workspaceId, region: this.env.AVALON_REGION }) });
+    const scheduler = durableObjectStubForRegion(
+      this.env.WORKSPACE_SCHEDULERS,
+      this.env.AVALON_REGION,
+      `${this.env.AVALON_REGION}:${this.auth.workspaceId}`,
+      this.env.APP_ENV,
+    );
+    const response = await scheduler.fetch("https://scheduler.internal/refresh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId: this.auth.workspaceId, region: this.env.AVALON_REGION }) });
     if (!response.ok) throw new Error(`Scheduler refresh failed (${response.status})`);
   }
 }

@@ -559,7 +559,12 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
   the session-claim deployment should receive `socket_reconnect_required` and a
   1012 close on its first attempted write.
 - Batch model `stream_delta` broadcasts. The direct child loop may use its reference-counted 30-second keep-alive alarm only while active work exists; avoid per-connection alarms and periodic room health polling.
-- Resolve every EU room and scheduler namespace through `durableObjectNamespaceForRegion(..., "eu")`. A direct namespace lookup is a regionalization defect.
+- Resolve every product and crash-processing object through
+  `durableObjectStubForRegion`: Global must derive IDs from
+  `jurisdiction("us")` and EU from `jurisdiction("eu")`; the resolver also
+  supplies the `wnam`/`weur` first-placement hint. A direct namespace lookup is
+  a linted regionalization defect. The hint is best effort and never evidence
+  of residency; inspect `ctx.id.jurisdiction`/constructor failures for the lock.
 - Monitor reconnect rate, `resync_required` rate, rejected socket origins, active connections, and messages per room. A rise in reconnects or resyncs is an availability signal, not a reason to retain unbounded replay state.
 - Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Avalon ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
 - The renderer captures mono PCM16 in a 24 kHz `AudioWorklet`, sends bounded chunks, and explicitly commits when the user stops. Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.
@@ -589,7 +594,10 @@ generation; never reuse one from a quarantined attempt.
    work stream at the frozen sequence fence and activates legacy product-table
    writer triggers. A `workstream_do_authoritative` error during import is a
    late writer, not permission to remove the fence.
-4. Let cron process the campaign. Monitor counts grouped by `state` and inspect
+4. Let cron process the campaign. The importer resolves every target through
+   the jurisdiction-locked namespace, so an unrestricted Global predecessor is
+   a different object and must not be reused or treated as fallback. Monitor
+   counts grouped by `state` and inspect
    `last_error_code`; `quarantined` stops the region and requires repair plus a
    new generation. A page can be retried. Do not manually advance its cursor.
 5. When every route verifies, control advances to `maintenance_verified` and

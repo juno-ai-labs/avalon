@@ -59,6 +59,32 @@ admission is split in two.
    with it. Chromium fails a handshake whose subprotocol offer went unanswered,
    so the answer is required — and it is always the sentinel, never the ticket.
 
+### Hibernation lifecycle
+
+The workspace and substream objects follow Cloudflare's [WebSocket Hibernation
+server pattern](https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/):
+
+- The edge Worker validates the method, route, `Upgrade`, origin, ticket, and
+  target before invoking a Durable Object, avoiding object requests for invalid
+  handshakes.
+- The object calls `state.acceptWebSocket(server, tags)` rather than
+  `server.accept()`, then immediately calls `server.serializeAttachment(...)`.
+  Acceptance must precede attachment so the socket is registered with the
+  hibernation API before recoverable connection state is associated with it.
+- Neither object relies on an in-memory session map. Event handlers enumerate
+  `state.getWebSockets()` when they need the connected set and validate
+  `deserializeAttachment()` at every use, so eviction loses no required state.
+- Exact text `ping` frames receive `pong` through
+  `setWebSocketAutoResponse()`, without waking an idle object. The current
+  compatibility date also enables runtime close-frame replies; close handlers
+  only perform product cleanup such as presence refresh.
+- Continuous model fragments are coalesced into one frame every 100 ms or
+  2,048 characters. That sits at the upper end of Cloudflare's recommended
+  50–100 ms batching window and prevents token-sized WebSocket messages.
+- Application timers exist only while a full agent loop is active. An idle
+  socket has no interval or timeout in the object, so it can hibernate without
+  accruing duration charges.
+
 ### The deprecated query transport
 
 The issuing endpoints still return a URL containing `?ticket=`, and both upgrade
@@ -171,6 +197,26 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-17 — Socket acceptance follows the documented hibernation lifecycle
+
+**What changed:** Both Durable Objects now register the server socket with
+`acceptWebSocket()` before serializing its attachment. Real-workerd eviction
+tests cover attachment recovery and runtime auto-response for workspace and
+substream sockets.
+
+**Why:** Cloudflare's lifecycle registers a socket as hibernatable first and
+then associates the state a replacement isolate will deserialize. Matching that
+order removes dependence on permissive runtime behavior and makes the recovery
+contract explicit.
+
+**Considered and rejected:** Maintaining a second in-memory session map merely
+to mirror the example. Avalon already enumerates `getWebSockets()` and validates
+attachments at each use, which survives hibernation without duplicate state.
+
+**Consequences:** New socket acceptors must preserve accept-then-attach ordering,
+keep attachment data below Cloudflare's 16 KiB bound, and add forced-eviction
+coverage in the workerd suite.
 
 ### 2026-08-17 — Commands and feeds use separate hibernating sockets
 

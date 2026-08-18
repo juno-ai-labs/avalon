@@ -206,15 +206,25 @@ identity, crash, and restricted operator flow.
 Within each regional workspace, one `WorkspaceDO` routes user commands, every
 work stream maps to one model-free `WorkstreamDO`, and every independent model
 context maps to one `SubstreamAgent`. Main external substream `0` retains the
-historical room object identity during class rename; additional children append
-their substream ID. EU calls resolve each namespace through
-`jurisdiction("eu")`. All namespaces are SQLite-backed and use explicit SQL
-only. Before guarded maintenance cutover, D1 serves work-stream product rows;
+historical room name during class rename; additional children append
+their substream ID. Every staging/production lookup resolves through a restricted
+namespace: `jurisdiction("us")` for Global and `jurisdiction("eu")` for EU,
+with a best-effort `wnam` or `weur` hint on every possible first `get()`. The
+maintenance import creates the restricted target graph; an unrestricted Global
+predecessor is a different ID and is not a serving fallback. All namespaces are
+SQLite-backed and use explicit SQL only. Before guarded maintenance cutover, D1
+serves work-stream product rows;
 afterward each child owns its ordered parts, runs/tools, compaction, timers,
 suggestions, and Terminal state, while its parent aggregates common/user
 metadata. D1 retains workspace authority/routing and versioned query
 projections. The normalized schemas, fleet import, and authority states are in
 [`workstream-durable-object.md`](workstream-durable-object.md).
+
+`WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for command
+admission, metadata, directory aggregation, and regional effects. Feed sockets,
+transcript reads, streaming checkpoints, and loop execution route directly to
+the selected `SubstreamAgent` data plane. Parents therefore never become the
+throughput ceiling for their children.
 
 An authoritative child mutation that changes workspace/user surfaces writes a
 versioned effect to the child's local outbox in the same SQLite transaction.
@@ -643,9 +653,10 @@ that takes both regions down without Cloudflare credentials.
 The Global and EU deployments run the same Worker code and share nothing but the
 identity control plane and the named RPC bridges. Each retains its own D1, ordinary
 R2, dedicated telemetry R2, Durable Object namespaces, telemetry crash processor,
-session-signing and credential-encryption keys, and Worker secrets. EU Durable
-Object namespaces and its telemetry bucket resolve with EU jurisdiction; EU has no
-PostHog or telemetry Analytics Engine destination.
+session-signing and credential-encryption keys, and Worker secrets. Global
+Durable Objects resolve in the US jurisdiction; EU Durable Objects and its
+telemetry bucket resolve in the EU jurisdiction. EU has no PostHog or telemetry
+Analytics Engine destination.
 
 This is a logical and storage boundary for the prototype, not a claim that all
 subprocessors provide complete EU-only processing. The Global identity control
@@ -670,6 +681,30 @@ access and no-egress symbolication.
 
 ## Changelog
 
+### 2026-08-17 — Durable Object routing becomes a locked placement boundary
+
+**What changed:** All product and crash-processing Durable Object stubs now come
+from one US/EU jurisdiction resolver with a location hint on every possible
+first `get()`. Product objects verify their runtime jurisdiction, ESLint blocks
+namespace-routing bypasses, and the control/data split is explicit: parents own
+metadata and administration while child traffic routes directly.
+
+**Why:** Region-prefixed names do not constrain execution or storage, Global was
+previously unrestricted, and background delivery paths could bypass the EU-only
+helper. A hint used only at nominal creation is insufficient because Cloudflare
+honors only whichever `get()` reaches a new object first.
+
+**Considered and rejected:** Naming conventions as residency, direct binding
+calls reviewed by convention, and parent-proxied feeds. None creates an
+enforceable placement boundary, and the last collapses the data-plane shards
+behind one control-plane bottleneck.
+
+**Consequences:** Global uses `us`/`wnam`; EU uses `eu`/`weur`. Hints are
+best-effort and do not move objects. The authority import populates the locked
+graph, and an unrestricted predecessor cannot be used for recovery. Local
+workerd omits unsupported jurisdictional routing while unit tests validate the
+production call contract.
+
 ### 2026-08-17 — The stateful hierarchy becomes workspace, work stream, substream
 
 **What changed:** The regional graph is now `WorkspaceDO -> WorkstreamDO (no
@@ -687,7 +722,8 @@ per work stream, and proxying child feeds through either parent.
 
 **Consequences:** Every cross-object relationship is a typed RPC plus durable
 receipt/outbox rather than a SQL join. Main child `0` preserves the historical
-object during maintenance class rename.
+name during maintenance class rename; the newer jurisdiction entry above
+defines when that name resolves to a distinct imported object.
 
 ### 2026-08-17 — WorkstreamDO is the complete work-stream-down authority
 

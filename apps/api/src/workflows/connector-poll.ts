@@ -8,7 +8,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { z } from "zod";
 
 import type { Env } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { logStructuredEvent } from "../observability/logger";
 import {
   advanceOwningPollTarget,
@@ -168,11 +168,13 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       // attempt may have committed D1 but lost its response before re-arming
       // the workspace alarm.
       await step.do("refresh-workspace-scheduler", async () => {
-        const schedulers = durableObjectNamespaceForRegion(this.env.WORKSPACE_SCHEDULERS, input.region, this.env.APP_ENV);
-        const schedulerId = schedulers.idFromName(
-          `${input.region}:${input.workspaceId}`
+        const scheduler = durableObjectStubForRegion(
+          this.env.WORKSPACE_SCHEDULERS,
+          input.region,
+          `${input.region}:${input.workspaceId}`,
+          this.env.APP_ENV,
         );
-        const response = await schedulers.get(schedulerId).fetch(
+        const response = await scheduler.fetch(
           "https://scheduler.internal/refresh",
           {
             method: "POST",

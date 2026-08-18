@@ -22,6 +22,7 @@ import {
   noProductionDoubleAssertionRule,
 } from "./scripts/eslint-rules/type-assertion-boundaries.mjs";
 import { durableObjectSqlStorageRule } from "./scripts/eslint-rules/durable-object-sql-storage.mjs";
+import { durableObjectRegionRoutingRule } from "./scripts/eslint-rules/durable-object-region-routing.mjs";
 
 export default tseslint.config(
   {
@@ -57,6 +58,7 @@ export default tseslint.config(
           "no-direct-workstreams-cache-write": noDirectWorkstreamsCacheWriteRule,
           "no-production-double-assertion": noProductionDoubleAssertionRule,
           "durable-object-sql-storage": durableObjectSqlStorageRule,
+          "durable-object-region-routing": durableObjectRegionRoutingRule,
         },
       },
     },
@@ -66,6 +68,13 @@ export default tseslint.config(
       // separate copies of the helper that replaces it.
       "avalon/no-raw-entry-point-check": "error",
       "avalon/provider-json-schema-complexity": "error",
+    },
+  },
+  {
+    files: ["apps/api/src/**/*.{ts,tsx}"],
+    ignores: ["apps/api/src/lib/durable-object-namespace.ts"],
+    rules: {
+      "avalon/durable-object-region-routing": "error",
     },
   },
   {

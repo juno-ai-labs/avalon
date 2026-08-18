@@ -40,7 +40,7 @@ import { connectionFromRow } from "../mappers/connection";
 import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
 import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
 import { withAuthorizedConnection } from "./connector-connection-access";
@@ -2739,9 +2739,13 @@ export class ConnectionService {
   }
 
   private async refreshScheduler(workspaceId: string): Promise<void> {
-    const schedulers = durableObjectNamespaceForRegion(this.env.WORKSPACE_SCHEDULERS, this.env.AVALON_REGION, this.env.APP_ENV);
-    const id = schedulers.idFromName(`${this.env.AVALON_REGION}:${workspaceId}`);
-    const response = await schedulers.get(id).fetch("https://scheduler.internal/refresh", {
+    const scheduler = durableObjectStubForRegion(
+      this.env.WORKSPACE_SCHEDULERS,
+      this.env.AVALON_REGION,
+      `${this.env.AVALON_REGION}:${workspaceId}`,
+      this.env.APP_ENV,
+    );
+    const response = await scheduler.fetch("https://scheduler.internal/refresh", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspaceId, region: this.env.AVALON_REGION }),
