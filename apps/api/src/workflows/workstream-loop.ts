@@ -7,6 +7,7 @@ import { z } from "zod";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
@@ -129,7 +130,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     const runtimeDb = executionEnv.DB;
 
     const identity = await step.do("create-durable-attempt-identity", async (): Promise<AttemptIdentity> => {
-      const attemptId = crypto.randomUUID();
+      const attemptId = uuidV7();
       return { attemptId, owner: `workflow:${input.harnessRunId}:${attemptId}` };
     });
 

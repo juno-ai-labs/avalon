@@ -39,6 +39,7 @@ interface CreateOptions {
     displayPromptHash: string;
     executionPromptHash: string;
   };
+  originResourceIds?: string[];
   executionPrincipal?: ExecutionPrincipal;
   slackOrigin?: SlackOriginContext;
   slackSearchAuthorization?: SlackSearchAuthorization;
@@ -163,6 +164,7 @@ export class WorkstreamObjectCreationService {
       clientMessageId: body.clientMessageId,
       participantUserIds: body.participantUserIds,
       attachmentIds: body.attachmentIds,
+      originResourceIds: options.originResourceIds ?? [],
       modelOverride: body.modelOverride ?? null,
       originType: "ad_hoc",
       automationSubscriptionId: null,

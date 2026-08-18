@@ -16,6 +16,11 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceOpportunityRankingCandidatesResultSchema,
+  type WorkspaceOpportunityWorkflowInput,
+} from "../durable-objects/workspace-opportunity-protocol";
+import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import { createActivitySuggestion } from "./activity-suggestion-service";
@@ -426,7 +431,85 @@ async function mapConcurrent<T, R>(items: T[], limit: number, work: (item: T) =>
 }
 
 async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): Promise<ModelSource | null> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  const workspace = authority.phase === "durable_object_open"
+    ? await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    )
+    : null;
   if (event.source_kind === "activity") {
+    if (workspace) {
+      const durable = WorkspaceConnectorEventSchema.nullable().parse(
+        await workspace.connectorEvent({ workspaceId, eventId: event.source_id }),
+      );
+      if (!durable) return null;
+      const activity = durable.activity;
+      const connection = await env.DB.prepare(
+        `SELECT provider_account_id FROM connector_connections
+          WHERE id = ? AND workspace_id = ? LIMIT 1`,
+      ).bind(activity.connectionId, workspaceId).first<{ provider_account_id: string | null }>();
+      const metadata = activity.metadata;
+      const actor = boundedRecord(activity.actor);
+      const subject = boundedRecord(activity.subject);
+      let hydratedText = "";
+      let hydratedCanonicalUrl: string | null = null;
+      let hydratedPeople: Array<Record<string, unknown>> = [];
+      if (
+        ["notion", "granola"].includes(activity.provider)
+        && activity.providerResourceId !== null
+        && activity.resourceType !== null
+      ) {
+        try {
+          const hydrated = await hydrateConnectorActivitySource(env, {
+            workspaceId,
+            connectionId: activity.connectionId,
+            providerResourceId: activity.providerResourceId,
+            resourceType: activity.resourceType,
+          });
+          hydratedText = hydrated == null ? "" : JSON.stringify(hydrated).slice(0, 8_000);
+          if (activity.provider === "granola") {
+            const hydratedRecord = boundedRecord(hydrated);
+            hydratedCanonicalUrl = [hydratedRecord.web_url, hydratedRecord.webUrl, hydratedRecord.url]
+              .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null;
+            hydratedPeople = granolaHydratedPeople(
+              hydrated,
+              connection?.provider_account_id ?? null,
+            );
+          }
+        } catch (error) {
+          if (isTransientSourceHydrationError(error)) throw error;
+          logWarn(env, "work_opportunity_source_hydration_failed", {
+            activity_id: event.source_id,
+            provider: activity.provider,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+      }
+      const explicitPeople = (activity.externalPeople ?? []).slice(0, 100);
+      return {
+        id: event.source_id,
+        kind: "activity",
+        provider: activity.provider,
+        providerTenantId: connection?.provider_account_id ?? null,
+        connectionId: activity.connectionId,
+        title: activity.title.slice(0, 1_000),
+        summary: activity.summary.slice(0, 3_000),
+        text: (hydratedText || activity.textSnippet).slice(0, 8_000),
+        actor,
+        subject,
+        externalPeople: explicitPeople.length > 0 || hydratedPeople.length > 0
+          ? [...explicitPeople, ...hydratedPeople].slice(0, 100)
+          : deriveExternalPeople(activity.provider, connection?.provider_account_id ?? null, actor, subject),
+        entityKeys: activity.entityKeys.slice(0, 20).map((item) => item.slice(0, 200)),
+        canonicalUrl: [hydratedCanonicalUrl, metadata.canonicalUrl, metadata.canonical_url, metadata.url]
+          .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null,
+        workstreamId: null,
+        occurredAt: activity.occurredAt,
+      };
+    }
     const row = await env.DB.prepare(
       `SELECT a.*, c.provider_account_id
        FROM activities a JOIN connector_connections c ON c.id = a.connection_id
@@ -495,7 +578,35 @@ async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): 
       occurredAt: String(row.occurred_at),
     };
   }
-  const authority = await readWorkstreamAuthorityControl(env);
+  if (workspace) {
+    const activity = await workspace.activityEventSource({
+      workspaceId,
+      sourceKind: "workstream_message",
+      sourceId: event.source_id,
+    });
+    if (!activity?.audienceWorkstreamId) return null;
+    const author = activity.actorUserId
+      ? await env.DB.prepare("SELECT id, name, email FROM users WHERE id = ? LIMIT 1")
+        .bind(activity.actorUserId).first<{ id: string; name: string; email: string }>()
+      : null;
+    return {
+      id: event.source_id,
+      kind: "message",
+      provider: "avalon",
+      providerTenantId: workspaceId,
+      connectionId: null,
+      title: activity.title,
+      summary: "A workspace member mentioned someone in an Avalon work stream.",
+      text: activity.body.slice(0, 8_000),
+      actor: author ?? { id: activity.actorUserId, name: activity.actorLabel },
+      subject: {},
+      externalPeople: [],
+      entityKeys: [activity.audienceWorkstreamId],
+      canonicalUrl: null,
+      workstreamId: activity.audienceWorkstreamId,
+      occurredAt: activity.occurredAt,
+    };
+  }
   const row = await env.DB.prepare(authority.phase === "durable_object_open"
     ? `SELECT activity.source_id AS id, activity.body AS text_content,
               activity.occurred_at AS created_at,
@@ -669,13 +780,16 @@ async function syncVerifiedIdentityDirectory(env: Env, workspaceId: string): Pro
 async function loadAdmissionContext(env: Env, window: WindowRow) {
   await syncVerifiedIdentityDirectory(env, window.workspace_id);
   const authority = await readWorkstreamAuthorityControl(env);
-  const workRowsPromise = authority.phase === "durable_object_open"
+  const workspacePromise = authority.phase === "durable_object_open"
     ? durableObjectStubForWorkspace(
       env,
       env.WORKSPACE_DOS,
       window.workspace_id,
       workspaceDOName(env.AVALON_REGION, window.workspace_id),
-    ).then((workspace) => workspace.recentWorkstreamDirectory({
+    )
+    : null;
+  const workRowsPromise = workspacePromise
+    ? workspacePromise.then((workspace) => workspace.recentWorkstreamDirectory({
       workspaceId: window.workspace_id,
       userId: window.audience_scope === "workspace" ? null : window.audience_user_id,
       includeSystem: false,
@@ -701,6 +815,26 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
     ).bind(
       window.workspace_id, window.audience_scope, window.audience_user_id, window.audience_user_id,
     ).all<{ id: string; title: string; objective: string }>();
+  const opportunityRowsPromise = workspacePromise
+    ? workspacePromise.then((workspace) => workspace.existingOpportunities({
+      workspaceId: window.workspace_id,
+      audience: { scope: window.audience_scope, userId: window.audience_user_id },
+      now: nowIso(),
+      limit: 12,
+    })).then((results) => ({ results: results.map((row) => ({
+      id: row.id,
+      display_prompt: row.displayPrompt,
+      admission_reasoning: row.admissionReasoning,
+    })) }))
+    : env.DB.prepare(
+      `SELECT id, display_prompt, admission_reasoning FROM work_opportunities
+       WHERE workspace_id = ? AND status = 'active' AND expires_at > ?
+         AND ((? = 'workspace' AND audience_scope = 'workspace')
+           OR (? = 'personal' AND audience_scope = 'personal' AND audience_user_id = ?))
+       ORDER BY updated_at DESC LIMIT 12`,
+    ).bind(
+      window.workspace_id, nowIso(), window.audience_scope, window.audience_scope, window.audience_user_id,
+    ).all<{ id: string; display_prompt: string; admission_reasoning: string }>();
   const [memberRows, identityRows, workRows, opportunityRows] = await Promise.all([
     env.DB.prepare(
       `SELECT u.id, u.name, u.email FROM workspace_members wm JOIN users u ON u.id = wm.user_id
@@ -711,15 +845,7 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
        FROM external_user_identities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 1000`,
     ).bind(window.workspace_id).all<Record<string, unknown>>(),
     workRowsPromise,
-    env.DB.prepare(
-      `SELECT id, display_prompt, admission_reasoning FROM work_opportunities
-       WHERE workspace_id = ? AND status = 'active' AND expires_at > ?
-         AND ((? = 'workspace' AND audience_scope = 'workspace')
-           OR (? = 'personal' AND audience_scope = 'personal' AND audience_user_id = ?))
-       ORDER BY updated_at DESC LIMIT 12`,
-    ).bind(
-      window.workspace_id, nowIso(), window.audience_scope, window.audience_scope, window.audience_user_id,
-    ).all<{ id: string; display_prompt: string; admission_reasoning: string }>(),
+    opportunityRowsPromise,
   ]);
   const aliases = new Map<string, string[]>();
   for (const identity of identityRows.results) {
@@ -774,6 +900,17 @@ async function markSuggestedWorkDue(
 ): Promise<void> {
   const targets = [...new Set(userIds)].filter((userId) => userId.length > 0);
   if (targets.length === 0) return;
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    await workspace.markOpportunityRankingDue(workspaceId, targets, delayMs);
+    return;
+  }
   const at = nowIso();
   const dueAt = new Date(Date.now() + delayMs).toISOString();
   const statements = targets.map((userId) => env.DB.prepare(
@@ -806,6 +943,17 @@ async function markWorkspaceSuggestedWorkDue(
   workspaceId: string,
   delayMs: number = DUE_DEBOUNCE_MS,
 ): Promise<void> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    await workspace.markWorkspaceOpportunityRankingDue(workspaceId, delayMs);
+    return;
+  }
   const at = nowIso();
   const dueAt = new Date(Date.now() + delayMs).toISOString();
   await env.DB.prepare(
@@ -994,6 +1142,115 @@ async function persistDecision(
   const referenced = sources.filter((source) => decision.sourceIds.includes(source.id));
   if (referenced.length === 0) return { opportunityId: null, eagerUserIds: [] };
   const fingerprint = await opportunityFingerprint(window, referenced);
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const memberById = new Map(members.map((member) => [member.id, member]));
+    const links = await Promise.all(decision.linkedUsers.map(async (link) => {
+      const source = referenced.find((item) => item.id === link.sourceId);
+      if (!source) return null;
+      const requestedUserId = link.userId && memberById.has(link.userId) ? link.userId : null;
+      const member = requestedUserId ? memberById.get(requestedUserId) : null;
+      const people = source.externalPeople.filter(
+        (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
+      );
+      const ownerPronoun = window.audience_scope === "personal"
+        && requestedUserId === window.audience_user_id
+        && /^(?:you|your|yours)$/iu.test(link.sourceText.trim());
+      const verifiedEvidence = ownerPronoun || Boolean(
+        source.provider !== "generic_webhook" && member && people.some((person) => {
+          const tenant = String(person.providerTenantId ?? source.providerTenantId ?? "");
+          const provider = identityProvider(String(person.provider ?? source.provider));
+          const subject = person.providerUserId == null ? null : String(person.providerUserId);
+          const handle = typeof person.handle === "string" ? person.handle.toLocaleLowerCase() : null;
+          const email = typeof person.email === "string" ? person.email.toLocaleLowerCase() : null;
+          return (subject && member.verifiedAliases.includes(`${provider}:${tenant}:id:${subject}`))
+            || (handle && member.verifiedAliases.includes(`${provider}:${tenant}:handle:${handle}`))
+            || (email && (
+              member.email.toLocaleLowerCase() === email || member.verifiedAliases.includes(`email:${email}`)
+            ));
+        }),
+      );
+      const requestedResolution = link.resolution === "verified" && !verifiedEvidence
+        ? "inferred"
+        : link.resolution;
+      const resolution = requestedUserId
+        ? requestedResolution
+        : (requestedResolution === "ambiguous" ? "ambiguous" : "unresolved");
+      const allowedTarget = window.audience_scope === "workspace" || requestedUserId === window.audience_user_id;
+      const userId = allowedTarget && (resolution === "verified" || resolution === "inferred")
+        ? requestedUserId
+        : null;
+      const verifiedIdentity = resolution === "verified" && userId
+        ? await env.DB.prepare(
+          `SELECT id, provider, provider_tenant_id FROM external_user_identities
+            WHERE workspace_id = ? AND user_id = ? AND provider = ? AND provider_tenant_id = ?
+            ORDER BY updated_at DESC LIMIT 1`,
+        ).bind(
+          window.workspace_id,
+          userId,
+          identityProvider(source.provider),
+          source.providerTenantId ?? "",
+        ).first<{ id: string; provider: string; provider_tenant_id: string }>()
+        : null;
+      return {
+        id: newId(),
+        sourceId: link.sourceId,
+        userId,
+        role: link.role,
+        resolution,
+        reasoning: link.reasoning,
+        sourceText: link.sourceText,
+        startOffset: link.startOffset,
+        endOffset: link.endOffset,
+        verifiedIdentity: verifiedIdentity ? {
+          id: verifiedIdentity.id,
+          provider: verifiedIdentity.provider,
+          providerTenantId: verifiedIdentity.provider_tenant_id,
+        } : null,
+      };
+    }));
+    const normalizedLinks = links.filter((link): link is NonNullable<typeof link> => link !== null);
+    const eagerUserIds = [...new Set(normalizedLinks.flatMap((link) => (
+      link.userId && (link.resolution === "verified"
+        || (link.resolution === "inferred" && window.audience_scope === "workspace"))
+        ? [link.userId]
+        : []
+    )))];
+    const rankUserIds = window.audience_scope === "personal"
+      ? (window.audience_user_id ? [window.audience_user_id] : [])
+      : (await env.DB.prepare(
+        `SELECT user_id FROM workspace_members WHERE workspace_id = ? AND status = 'active' LIMIT 10000`,
+      ).bind(window.workspace_id).all<{ user_id: string }>()).results.map((row) => row.user_id);
+    const displayPrompt = decision.displayPrompt.trim().slice(0, 180);
+    const executionPrompt = decision.executionPrompt.trim().slice(0, 20_000);
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      window.workspace_id,
+      workspaceDOName(env.AVALON_REGION, window.workspace_id),
+    );
+    const persisted = await workspace.persistOpportunity({
+      workspaceId: window.workspace_id,
+      audience: { scope: window.audience_scope, userId: window.audience_user_id },
+      proposedId: newId(),
+      existingTargetId: decision.action === "update_existing" ? decision.existingTargetId : null,
+      sourceFingerprint: fingerprint,
+      displayPrompt,
+      executionPrompt,
+      admissionReasoning: decision.admissionReasoning.trim().slice(0, 20_000),
+      providerIcon: iconForProvider(referenced[0]?.provider ?? "plug"),
+      sourceLabel: sourceLabel(referenced).slice(0, 180),
+      displayPromptHash: await sha256(displayPrompt),
+      executionPromptHash: await sha256(executionPrompt),
+      expiresAt: new Date(Date.now() + OPPORTUNITY_TTL_MS).toISOString(),
+      sources: referenced,
+      links: normalizedLinks,
+      rankUserIds,
+      eagerUserIds,
+      rankDueAt: new Date(Date.now() + DUE_DEBOUNCE_MS).toISOString(),
+    });
+    return { opportunityId: persisted.opportunityId, eagerUserIds: persisted.eagerUserIds };
+  }
   const existing = decision.action === "update_existing" && decision.existingTargetId
     ? await env.DB.prepare(
       `SELECT id, version FROM work_opportunities
@@ -1181,11 +1438,10 @@ async function processModelBatch(
   window: WindowRow,
   batch: Array<{ event: BatchEventRow; source: ModelSource }>,
   context: Awaited<ReturnType<typeof loadAdmissionContext>>,
+  durableLeaseId?: string,
 ): Promise<{ ok: boolean; eagerUserIds: string[] }> {
   const at = nowIso();
-  await env.DB.batch(batch.map(({ event }) => env.DB.prepare(
-    `UPDATE opportunity_batch_events SET status = 'processing', attempt_count = attempt_count + 1, updated_at = ? WHERE id = ?`,
-  ).bind(at, event.id)));
+  await mutateOpportunityEvents(env, window, batch.map(({ event }) => event.id), "processing", null, durableLeaseId, at);
   try {
     const { result } = await runStructuredInference(env, {
       role: "work_opportunity_admission",
@@ -1218,17 +1474,52 @@ async function processModelBatch(
       const persisted = await persistDecision(env, window, decision, batch.map(({ source }) => source), context.members);
       eagerUserIds.push(...persisted.eagerUserIds);
     }
-    await env.DB.batch(batch.map(({ event }) => env.DB.prepare(
-      `UPDATE opportunity_batch_events SET status = 'completed', error_text = NULL, updated_at = ? WHERE id = ?`,
-    ).bind(nowIso(), event.id)));
+    await mutateOpportunityEvents(
+      env, window, batch.map(({ event }) => event.id), "completed", null, durableLeaseId,
+    );
     return { ok: true, eagerUserIds };
   } catch (error) {
     const message = (error instanceof Error ? error.message : "Opportunity batch failed").slice(0, 2_000);
-    await env.DB.batch(batch.map(({ event }) => env.DB.prepare(
-      `UPDATE opportunity_batch_events SET status = 'failed', error_text = ?, updated_at = ? WHERE id = ?`,
-    ).bind(message, nowIso(), event.id)));
+    await mutateOpportunityEvents(
+      env, window, batch.map(({ event }) => event.id), "failed", message, durableLeaseId,
+    );
     return { ok: false, eagerUserIds: [] };
   }
+}
+
+async function mutateOpportunityEvents(
+  env: Env,
+  window: WindowRow,
+  eventIds: string[],
+  outcome: "processing" | "completed" | "failed" | "missing",
+  error: string | null,
+  durableLeaseId?: string,
+  at = nowIso(),
+): Promise<void> {
+  if (eventIds.length === 0) return;
+  if (durableLeaseId) {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      window.workspace_id,
+      workspaceDOName(env.AVALON_REGION, window.workspace_id),
+    );
+    await workspace.mutateOpportunityBatchEvents({
+      workspaceId: window.workspace_id,
+      windowId: window.id,
+      leaseId: durableLeaseId,
+      eventIds,
+      outcome,
+      error,
+    });
+    return;
+  }
+  const status = outcome === "missing" ? "completed" : outcome;
+  await env.DB.batch(eventIds.map((id) => env.DB.prepare(
+    `UPDATE opportunity_batch_events SET status = ?,
+       attempt_count = attempt_count + CASE WHEN ? = 'processing' THEN 1 ELSE 0 END,
+       error_text = ?, updated_at = ? WHERE id = ?`,
+  ).bind(status, outcome, error, at, id)));
 }
 
 async function requeueFailures(env: Env, window: WindowRow): Promise<void> {
@@ -1291,7 +1582,85 @@ async function processWindow(env: Env, window: WindowRow): Promise<string[]> {
   return [...new Set(results.flatMap((result) => result.eagerUserIds))];
 }
 
+export async function processClaimedOpportunityWindow(
+  env: Env,
+  input: Extract<WorkspaceOpportunityWorkflowInput, { kind: "admission" }>,
+): Promise<void> {
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    input.workspaceId,
+    workspaceDOName(env.AVALON_REGION, input.workspaceId),
+  );
+  const stored = await workspace.opportunityWindow({
+    workspaceId: input.workspaceId,
+    windowId: input.windowId,
+    leaseId: input.leaseId,
+  });
+  const window: WindowRow = {
+    id: stored.id,
+    workspace_id: input.workspaceId,
+    partition_key: stored.partitionKey,
+    audience_scope: stored.audience.scope,
+    audience_user_id: stored.audience.userId,
+    first_event_at: stored.firstEventAt,
+    last_event_at: stored.lastEventAt,
+  };
+  const events: BatchEventRow[] = stored.events.map((event) => ({
+    id: event.id,
+    source_kind: event.sourceKind,
+    source_id: event.sourceId,
+    occurred_at: event.occurredAt,
+    input_characters: event.inputCharacters,
+    attempt_count: event.attemptCount,
+  }));
+  const loaded = await Promise.all(events.map(async (event) => ({
+    event,
+    source: await loadSource(env, input.workspaceId, event),
+  })));
+  const valid = loaded.filter(
+    (item): item is { event: BatchEventRow; source: ModelSource } => item.source !== null,
+  );
+  await mutateOpportunityEvents(
+    env,
+    window,
+    loaded.filter((item) => item.source === null).map((item) => item.event.id),
+    "missing",
+    "Source no longer exists",
+    input.leaseId,
+  );
+  const context = await loadAdmissionContext(env, window);
+  if (env.OPENROUTER_API_KEY) {
+    await mapConcurrent(packBatches(valid), MAX_MODEL_CONCURRENCY, (batch) =>
+      processModelBatch(env, window, batch, context, input.leaseId));
+  } else {
+    await mutateOpportunityEvents(
+      env,
+      window,
+      valid.map(({ event }) => event.id),
+      "processing",
+      null,
+      input.leaseId,
+    );
+    await mutateOpportunityEvents(
+      env,
+      window,
+      valid.map(({ event }) => event.id),
+      "failed",
+      "Model unavailable",
+      input.leaseId,
+    );
+  }
+  await workspace.settleOpportunityWindow({
+    workspaceId: input.workspaceId,
+    windowId: input.windowId,
+    leaseId: input.leaseId,
+    retryDelayMs: RETRY_DELAY_MS,
+  });
+}
+
 export async function processDueOpportunityWindows(env: Env): Promise<void> {
+  if ((await readWorkstreamAuthorityControl(env)).phase === "durable_object_open") return;
   const due = await env.DB.prepare(
     `SELECT id, workspace_id, partition_key, audience_scope, audience_user_id, first_event_at, last_event_at
      FROM opportunity_batch_windows
@@ -1361,6 +1730,25 @@ async function loadBoundedProvenance(env: Env, opportunityId: string, userId: st
 }
 
 async function rankingCandidates(env: Env, workspaceId: string, userId: string) {
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    const candidates = WorkspaceOpportunityRankingCandidatesResultSchema.parse(
+      await workspace.opportunityRankingCandidates({ workspaceId, userId, now: nowIso() }),
+    );
+    return candidates.map((candidate) => boundRankingCandidate({
+      ...candidate,
+      public: {
+        ...candidate.public,
+        icon: AutomationPluginIconSchema.catch("plug").parse(candidate.public.icon),
+      } satisfies WorkOpportunity,
+    }));
+  }
   const [rows, currentSet] = await Promise.all([
     env.DB.prepare(
     `SELECT o.id, o.version, o.display_prompt, o.admission_reasoning, o.provider_icon, o.source_label,
@@ -1449,7 +1837,25 @@ async function rankBatch(
   const result = ranking.result;
   const allowed = new Set(candidates.map((candidate) => candidate.id));
   const ids = [...new Set(result.orderedOpportunityIds)].filter((id) => allowed.has(id)).slice(0, 4);
-  await env.DB.prepare(
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    await workspace.recordOpportunityRankingRound({
+      workspaceId,
+      userId,
+      roundId: newId(),
+      candidateIds: candidates.map((candidate) => candidate.id),
+      selectedIds: ids,
+      reasoning: result.rankingReasoning,
+      model: ranking.model,
+      roundNumber,
+    });
+  } else await env.DB.prepare(
     `INSERT INTO suggested_work_ranking_rounds
      (id, workspace_id, user_id, candidate_ids_json, selected_ids_json, reasoning, model, round_number, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1486,17 +1892,40 @@ export async function rankWorkOpportunitiesForUser(
 ): Promise<WorkOpportunity[]> {
   const candidates = await rankingCandidates(env, workspaceId, userId);
   const fingerprint = await sha256(candidates.map((candidate) => `${candidate.id}:${candidate.version}`).sort().join("|"));
-  const cached = await env.DB.prepare(
-    `SELECT candidate_fingerprint, opportunity_ids_json, status
-     FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?`,
-  ).bind(workspaceId, userId).first<Record<string, unknown>>();
+  const authority = await readWorkstreamAuthorityControl(env);
+  let cachedFingerprint: string | undefined;
+  let cachedIds: string[];
+  let cachedStatus: string | undefined;
+  if (authority.phase === "durable_object_open") {
+    const cached = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    ).then((workspace) => workspace.opportunityRankingState(workspaceId, userId));
+    cachedFingerprint = cached?.candidateFingerprint;
+    cachedIds = cached?.opportunityIds ?? [];
+    cachedStatus = cached?.status;
+  } else {
+    const cached = await env.DB.prepare(
+      `SELECT candidate_fingerprint, opportunity_ids_json, status
+       FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(workspaceId, userId).first<{
+      candidate_fingerprint: string;
+      opportunity_ids_json: string;
+      status: string;
+    }>();
+    cachedFingerprint = cached?.candidate_fingerprint;
+    cachedIds = parseArray(cached?.opportunity_ids_json).filter((id): id is string => typeof id === "string");
+    cachedStatus = cached?.status;
+  }
   // The fingerprint is the whole freshness test. It hashes the id and version of
   // every candidate this member is eligible for, so it already covers an
   // admission, a revision, an expiry, a dismissal and an opportunity leaving
   // `active` — everything the workspace version counter that used to sit beside
   // it could see, and several things it could not.
-  if (!force && cached?.status === "ready" && cached.candidate_fingerprint === fingerprint) {
-    const ids = parseArray(cached.opportunity_ids_json).filter((id): id is string => typeof id === "string");
+  if (!force && cachedStatus === "ready" && cachedFingerprint === fingerprint) {
+    const ids = cachedIds;
     const byId = new Map(candidates.map((candidate) => [candidate.id, candidate.public]));
     return ids.map((id) => byId.get(id)).filter((item): item is WorkOpportunity => Boolean(item)).slice(0, 4);
   }
@@ -1512,7 +1941,7 @@ export async function rankWorkOpportunitiesForUser(
   // Stored against an empty fingerprint deliberately: it is a placeholder, not a
   // ranking, and if the tournament below never completes the next scheduler pass
   // has to see a cache miss and try again rather than treat this as the answer.
-  if (parseArray(cached?.opportunity_ids_json).length === 0 && recencyOrder.length > 0) {
+  if (cachedIds.length === 0 && recencyOrder.length > 0) {
     await storeRankingSet(
       env, workspaceId, userId, "", recencyOrder,
       "Provisional order, most recently revised first, while the ranking runs.",
@@ -1604,6 +2033,25 @@ async function storeRankingSet(
   // Still nullable: a deployment with no structured model configured resolves an
   // empty default, and the column has always recorded that as NULL.
   const { model } = await resolveAgentModelRouting(env, "work_opportunity_ranking", { workspaceId, userId });
+  const authority = await readWorkstreamAuthorityControl(env);
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, workspaceId),
+    );
+    await workspace.storeOpportunityRanking({
+      workspaceId,
+      userId,
+      candidateFingerprint: fingerprint,
+      opportunityIds: ids,
+      reasoning: reasoning.slice(0, 20_000),
+      model: model.length > 0 ? model : null,
+      status,
+    });
+    return;
+  }
   // Writes the ranking and nothing else. The outstanding request and the lease
   // that claims it belong to the scheduler, which settles both once the run it
   // claimed is actually over — this is called mid-run for the provisional write
@@ -1674,6 +2122,7 @@ interface DueRankingRow {
  * whose gets spent on first.
  */
 export async function processDueSuggestedWork(env: Env): Promise<void> {
+  if ((await readWorkstreamAuthorityControl(env)).phase === "durable_object_open") return;
   const at = nowIso();
   const deadline = Date.now() + SCHEDULER_BUDGET_MS;
   const activeSince = new Date(Date.now() - ACTIVE_MEMBER_WINDOW_MS).toISOString();
@@ -1759,6 +2208,39 @@ export async function processDueSuggestedWork(env: Env): Promise<void> {
   }
 }
 
+export async function processClaimedOpportunityRanking(
+  env: Env,
+  input: Extract<WorkspaceOpportunityWorkflowInput, { kind: "ranking" }>,
+): Promise<void> {
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    input.workspaceId,
+    workspaceDOName(env.AVALON_REGION, input.workspaceId),
+  );
+  try {
+    await rankWorkOpportunitiesForUser(env, input.workspaceId, input.userId);
+  } catch (error) {
+    await workspace.settleOpportunityRanking({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      leaseId: input.leaseId,
+      requestSeq: input.requestSeq,
+      outcome: "failed",
+      retryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
+    });
+    throw error;
+  }
+  await workspace.settleOpportunityRanking({
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    leaseId: input.leaseId,
+    requestSeq: input.requestSeq,
+    outcome: "completed",
+    retryAt: null,
+  });
+}
+
 export class WorkOpportunityService {
   constructor(
     private readonly env: Env,
@@ -1781,6 +2263,18 @@ export class WorkOpportunityService {
    */
   async list(limit: number) {
     const size = Math.min(4, limit);
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const workspace = await this.workspaceProduct();
+      const result = await workspace.listOpportunities({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        now: nowIso(),
+        limit: size,
+        scheduleAt: new Date(Date.now() + DUE_DEBOUNCE_MS).toISOString(),
+      });
+      return WorkOpportunityPageSchema.parse(result);
+    }
     const stored = await this.env.DB.prepare(
       "SELECT opportunity_ids_json, due_at FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ? LIMIT 1",
     ).bind(this.auth.workspaceId, this.auth.userId).first<{ opportunity_ids_json: string; due_at: string | null }>();
@@ -1866,6 +2360,18 @@ export class WorkOpportunityService {
     if (ids.length === 0) return;
     const at = nowIso();
     const rerankBefore = new Date(Date.now() - IMPRESSION_RERANK_INTERVAL_MS).toISOString();
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const workspace = await this.workspaceProduct();
+      await workspace.recordOpportunityImpressions({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        opportunityIds: ids,
+        now: at,
+        rerankBefore,
+      });
+      return;
+    }
     await this.env.DB.batch([
       ...ids.map((id) => this.env.DB.prepare(
       `INSERT INTO work_opportunity_user_states
@@ -1901,6 +2407,18 @@ export class WorkOpportunityService {
   }
 
   async dismiss(id: string): Promise<void> {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const workspace = await this.workspaceProduct();
+      const dismissed = await workspace.dismissOpportunity({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        opportunityId: id,
+        now: nowIso(),
+      });
+      if (!dismissed) throw new ApiError(404, "work_opportunity_not_found", "Suggested work was not found");
+      return;
+    }
     const visible = await this.visibleOpportunity(id);
     if (!visible) throw new ApiError(404, "work_opportunity_not_found", "Suggested work was not found");
     const at = nowIso();
@@ -1922,6 +2440,10 @@ export class WorkOpportunityService {
   }
 
   async start(id: string, version: number, idempotencyKey: string) {
+    const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      return this.startDurable(id, version, idempotencyKey);
+    }
     const opportunity = await this.visibleOpportunity(id);
     if (!opportunity) throw new ApiError(404, "work_opportunity_not_found", "Suggested work was not found");
     if (Number(opportunity.version) !== version) {
@@ -2111,6 +2633,91 @@ export class WorkOpportunityService {
          AND (o.audience_scope = 'workspace' OR o.audience_user_id = ?)
          AND COALESCE(s.status, '') != 'dismissed' LIMIT 1`,
     ).bind(this.auth.userId, id, this.auth.workspaceId, nowIso(), this.auth.userId).first<Record<string, unknown>>();
+  }
+
+  private workspaceProduct() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+  }
+
+  private async startDurable(id: string, version: number, idempotencyKey: string) {
+    const workspace = await this.workspaceProduct();
+    const request = {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      opportunityId: id,
+      now: nowIso(),
+      version,
+      idempotencyKey,
+    };
+    const claim = await workspace.claimOpportunityStart(request);
+    if (claim.outcome === "not_found") {
+      throw new ApiError(404, "work_opportunity_not_found", "Suggested work was not found");
+    }
+    if (claim.outcome === "stale") {
+      throw new ApiError(409, "stale_work_opportunity", "This suggestion changed; review the latest version before starting");
+    }
+    const opportunity = claim.opportunity as Record<string, unknown> | null;
+    if (!opportunity) throw new ApiError(404, "work_opportunity_not_found", "Suggested work was not found");
+    if (claim.outcome === "busy") {
+      throw new ApiError(409, "work_opportunity_already_claimed", "This suggestion has already been started or changed");
+    }
+    if (claim.outcome === "replay") {
+      const durable = opportunity.created_workstream_id && opportunity.created_message_id
+        ? {
+          workstreamId: String(opportunity.created_workstream_id),
+          messageId: String(opportunity.created_message_id),
+        }
+        : await this.findDurableStart(id);
+      if (durable) {
+        await workspace.completeOpportunityStart({
+          ...request,
+          workstreamId: durable.workstreamId,
+          messageId: durable.messageId,
+          snapshotId: newId(),
+        });
+        return this.startedResponse(durable);
+      }
+      throw new ApiError(409, "work_opportunity_start_in_progress", "This suggestion is still being started");
+    }
+
+    let createdResult: Awaited<ReturnType<WorkstreamService["createFromOpportunity"]>>;
+    try {
+      createdResult = await new WorkstreamService(this.env, this.auth, this.defer).createFromOpportunity({
+        opportunityId: id,
+        version,
+        displayPrompt: String(opportunity.display_prompt),
+        executionPrompt: String(opportunity.execution_prompt),
+        displayPromptHash: String(opportunity.display_prompt_hash),
+        executionPromptHash: String(opportunity.execution_prompt_hash),
+        idempotencyKey,
+      });
+    } catch (error) {
+      const durable = await this.findDurableStart(id);
+      if (durable) {
+        await workspace.completeOpportunityStart({
+          ...request,
+          workstreamId: durable.workstreamId,
+          messageId: durable.messageId,
+          snapshotId: newId(),
+        });
+      } else {
+        await workspace.releaseOpportunityStart(request);
+      }
+      throw error;
+    }
+    const durable = { workstreamId: createdResult.workstream.id, messageId: createdResult.messageId };
+    await workspace.completeOpportunityStart({
+      ...request,
+      workstreamId: durable.workstreamId,
+      messageId: durable.messageId,
+      snapshotId: newId(),
+    });
+    return createdResult;
   }
 }
 

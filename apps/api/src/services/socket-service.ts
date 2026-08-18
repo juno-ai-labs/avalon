@@ -16,6 +16,7 @@ import {
   durableObjectStubForWorkspace,
   workspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 
 const encoder = new TextEncoder();
 
@@ -80,7 +81,7 @@ export async function issueSocketTicket(
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
-    .setJti(crypto.randomUUID())
+    .setJti(uuidV7())
     .setIssuer("avalon-api")
     .setAudience("avalon-workstream-socket")
     .setIssuedAt(now)
@@ -101,7 +102,7 @@ export async function issueWorkspaceSocketTicket(
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
-    .setJti(crypto.randomUUID())
+    .setJti(uuidV7())
     .setIssuer("avalon-api")
     .setAudience("avalon-workspace-socket")
     .setIssuedAt(now)
@@ -178,7 +179,7 @@ export async function issueWorkstreamControlSocketTicket(
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
-    .setJti(crypto.randomUUID())
+    .setJti(uuidV7())
     .setIssuer("avalon-api")
     .setAudience("avalon-workstream-control-socket")
     .setIssuedAt(now)
@@ -203,7 +204,7 @@ export async function issueBlockDashboardBlockSocketTicket(
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
-    .setJti(crypto.randomUUID())
+    .setJti(uuidV7())
     .setIssuer("avalon-api")
     .setAudience("avalon-block-dashboard-block-socket")
     .setIssuedAt(now)
@@ -274,7 +275,7 @@ export async function issueTranscriptionSocketTicket(env: Env, auth: AuthContext
   return new SignJWT({ purpose: "transcription_socket", wid: auth.workspaceId, region: auth.region })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
-    .setJti(crypto.randomUUID())
+    .setJti(uuidV7())
     .setIssuer("avalon-api")
     .setAudience("avalon-transcription-socket")
     .setIssuedAt(now)

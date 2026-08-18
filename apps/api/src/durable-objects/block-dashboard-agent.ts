@@ -17,6 +17,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
 import { assertDurableObjectJurisdiction, durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
 import {
   claimHarnessAttempt,
@@ -394,7 +395,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
     if (!client || !server) return json({ error: "websocket_unavailable" }, 500);
     const attachment: BlockDashboardSocketAttachment = {
       ...identity.data,
-      connectionId: crypto.randomUUID(),
+      connectionId: uuidV7(),
       connectedAt: new Date().toISOString(),
       subscribed: false,
       authorizedAt: Date.now(),
@@ -904,7 +905,7 @@ export class BlockDashboardAgent extends DurableObject<Env> {
       workstreamId: dispatch.workstreamId,
       limit: 25,
     });
-    const attemptId = crypto.randomUUID();
+    const attemptId = uuidV7();
     const owner = `block-dashboard-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;
     const claim = await claimHarnessAttempt(executionEnv.DB, input, {
       attemptId,

@@ -90,6 +90,7 @@ function workspaceSyncNamespace() {
     get: () => ({
       initializeWorkspace: vi.fn(async () => undefined),
       publishSync: vi.fn(async () => 1),
+      recordActivityEvent: vi.fn(async (input: { eventId?: string }) => input.eventId),
       notificationDirectoryState: vi.fn(async () => ({
         authorityGeneration: 1,
         viewerVersion: 1,
@@ -253,7 +254,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
     }
   });
 
-  it("stores activity and mention intents, then erases notification content after delivery", async () => {
+  it("stores activity in WorkspaceDO and mention intent in D1, then erases delivered content", async () => {
     const database = seedAuthority();
     const env = createTestEnv({
       DB: sqliteD1(database),
@@ -288,13 +289,8 @@ describe("the WorkstreamDO regional effect inbox", () => {
         sourceVersion: 3,
       }));
       expect(database.prepare(
-        `SELECT event_type, audience_kind, audience_workstream_id FROM activity_events
-          WHERE id = ?`,
-      ).get(EVENT_ID)).toEqual({
-        event_type: "workstream.message.posted",
-        audience_kind: "workstream",
-        audience_workstream_id: WORKSTREAM_ID,
-      });
+        `SELECT COUNT(*) AS count FROM activity_events WHERE id = ?`,
+      ).get(EVENT_ID)).toEqual({ count: 0 });
 
       const mention: WorkstreamRegionalEffect = {
         kind: "mention_notification",

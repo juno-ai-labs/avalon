@@ -78,6 +78,25 @@ describe("database migrations", () => {
         VALUES ('authority-workstream', 'authority-workspace', 'Before', 'Objective', 'ad_hoc',
                 'authority-user', 'completed', 4, '2026-08-16T00:00:00.000Z',
                 '2026-08-16T00:00:00.000Z', '2026-08-16T00:00:00.000Z');
+        INSERT INTO work_opportunities
+          (id, workspace_id, audience_scope, display_prompt, execution_prompt,
+           admission_reasoning, source_fingerprint, display_prompt_hash,
+           execution_prompt_hash, expires_at, created_at, updated_at)
+        VALUES ('migrated-opportunity', 'authority-workspace', 'workspace',
+                'Imported suggestion', 'Imported private execution prompt',
+                'Imported reasoning', 'source-fingerprint', 'display-hash',
+                'execution-hash', '2099-01-01T00:00:00.000Z',
+                '2026-08-16T00:00:00.000Z', '2026-08-16T00:00:00.000Z');
+        UPDATE workstreams SET created_from_opportunity_id = 'migrated-opportunity'
+         WHERE id = 'authority-workstream';
+        INSERT INTO activity_events
+          (id, workspace_id, event_type, subject_type, actor_type, actor_label,
+           title, body, audience_kind, occurred_at, created_at, source_kind,
+           dedupe_key, metadata_json, digestible)
+        VALUES ('migrated-activity', 'authority-workspace', 'test.created', 'workspace',
+                'system', 'Avalon', 'Imported activity', '', 'workspace',
+                '2026-08-16T00:00:00.000Z', '2026-08-16T00:00:00.000Z',
+                'test', 'migrated-activity', '{}', 0);
         UPDATE workstream_authority_control
            SET phase = 'maintenance_draining', generation = 1,
                started_at = '2026-08-16T01:00:00.000Z', updated_at = '2026-08-16T01:00:00.000Z'
@@ -112,6 +131,10 @@ describe("database migrations", () => {
         state: "pending",
         source_fence_sequence: 3,
       });
+      expect(database.prepare(
+        `SELECT state, stage_index, source_cursor
+           FROM workspace_product_authority_routes WHERE workspace_id = 'authority-workspace'`,
+      ).get()).toEqual({ state: "pending", stage_index: 0, source_cursor: 0 });
       expect(() => database.exec(`
         UPDATE workstream_authority_control
            SET phase = 'maintenance_verified', updated_at = '2026-08-16T01:02:00.000Z'
@@ -120,10 +143,29 @@ describe("database migrations", () => {
       database.exec(`
         UPDATE workstream_authority_routes SET state = 'verified'
          WHERE workstream_id = 'authority-workstream';
+        UPDATE workspace_product_authority_routes SET state = 'verified'
+         WHERE workspace_id = 'authority-workspace';
         UPDATE workstream_authority_control
            SET phase = 'maintenance_verified', updated_at = '2026-08-16T01:03:00.000Z'
          WHERE id = 1;
+        DELETE FROM activity_events WHERE workspace_id = 'authority-workspace';
+        UPDATE work_opportunities
+           SET display_prompt = 'Migrated to WorkspaceDO',
+               execution_prompt = 'Migrated to WorkspaceDO',
+               admission_reasoning = 'Migrated to WorkspaceDO'
+         WHERE id = 'migrated-opportunity';
       `);
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM activity_events WHERE workspace_id = 'authority-workspace'`,
+      ).get()).toEqual({ count: 0 });
+      expect(database.prepare(
+        `SELECT display_prompt, execution_prompt, admission_reasoning
+           FROM work_opportunities WHERE id = 'migrated-opportunity'`,
+      ).get()).toEqual({
+        display_prompt: "Migrated to WorkspaceDO",
+        execution_prompt: "Migrated to WorkspaceDO",
+        admission_reasoning: "Migrated to WorkspaceDO",
+      });
       expect(() => database.exec(`
         UPDATE workstream_authority_control
            SET phase = 'durable_object_open', updated_at = '2026-08-16T01:04:00.000Z'
@@ -132,6 +174,8 @@ describe("database migrations", () => {
       database.exec(`
         UPDATE workstream_authority_routes SET state = 'active'
          WHERE workstream_id = 'authority-workstream';
+        UPDATE workspace_product_authority_routes SET state = 'active'
+         WHERE workspace_id = 'authority-workspace';
       `);
       expect(() => database.exec(`
         UPDATE workstream_authority_control
@@ -149,6 +193,9 @@ describe("database migrations", () => {
       expect(() => database.exec(
         `UPDATE workstreams SET title = 'Forbidden' WHERE id = 'authority-workstream'`,
       )).toThrow(/workstream_do_authoritative/u);
+      expect(() => database.exec(
+        `UPDATE work_opportunities SET display_prompt = 'Forbidden' WHERE id = 'migrated-opportunity'`,
+      )).toThrow(/workspace_do_authoritative/u);
       expect(() => database.exec(`
         INSERT INTO messages
           (id, workspace_id, workstream_id, author_type, message_type, text_content,
@@ -156,6 +203,16 @@ describe("database migrations", () => {
         VALUES ('forbidden-message', 'authority-workspace', 'authority-workstream', 'system',
                 'text', 'forbidden', 4, '2026-08-16T01:06:00.000Z');
       `)).toThrow(/workstream_do_authoritative/u);
+      expect(() => database.exec(`
+        INSERT INTO activity_events
+          (id, workspace_id, event_type, subject_type, actor_type, actor_label,
+           title, body, audience_kind, occurred_at, created_at, source_kind,
+           dedupe_key, metadata_json, digestible)
+        VALUES ('forbidden-activity', 'authority-workspace', 'test.created', 'workspace',
+                'system', 'Avalon', 'Forbidden activity', '', 'workspace',
+                '2026-08-16T01:06:00.000Z', '2026-08-16T01:06:00.000Z',
+                'test', 'forbidden-activity', '{}', 0);
+      `)).toThrow(/workspace_do_authoritative/u);
       const productProjectionTables = database.prepare(
         `SELECT name FROM sqlite_master
           WHERE type = 'table' AND name IN (

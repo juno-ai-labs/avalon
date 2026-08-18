@@ -90,6 +90,26 @@ export default tseslint.config(
     },
   },
   {
+    files: [
+      "apps/api/src/durable-objects/**/*.ts",
+      "apps/api/src/runtime/harness-run-runtime.ts",
+      "apps/api/src/workflows/workstream-loop.ts",
+      "apps/api/src/services/socket-service.ts",
+      "apps/api/src/services/workstream-regional-effect-service.ts",
+      "apps/api/src/services/workstream-runtime-database.ts",
+      "apps/api/src/queues/activity-consumer.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.type='MemberExpression'][callee.object.name='crypto'][callee.property.name='randomUUID']",
+          message: "Use uuidV7() for Avalon-owned agent, transport, and durable-record identities.",
+        },
+      ],
+    },
+  },
+  {
     ignores: ["packages/contracts/src/url-schemas.ts"],
     rules: {
       "avalon/no-bare-zod-url": "error",

@@ -16,6 +16,7 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
     WORKSTREAM_DOS: binding(), WORKSPACE_DOS: binding(),
     WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
     WORKSTREAM_LOOP_WORKFLOW: binding(), CONNECTOR_POLL_WORKFLOW: binding(),
+    CONNECTOR_EVENT_WORKFLOW: binding(), WORK_OPPORTUNITY_WORKFLOW: binding(),
     APP_ENV: "production",
     AVALON_REGION: "global",
     LOG_LEVEL: "info",

@@ -5,6 +5,7 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { uuidV7 } from "../lib/uuid-v7";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 type RuntimeValue = string | number | null;
@@ -194,7 +195,7 @@ class WorkstreamRuntimeDatabase implements D1Database {
     const response = await stub.executeRuntimeSql({
       workspaceId: this.workspaceId,
       workstreamId: this.workstreamId,
-      requestId: crypto.randomUUID(),
+      requestId: uuidV7(),
       statements: statements.map(({ sql, params }) => ({ sql, params })),
     });
     if (response.status < 200 || response.status >= 300) {

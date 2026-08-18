@@ -1,5 +1,7 @@
 import type { StructuredFailureDetail, WorkstreamWorkflowInput } from "@avalon/contracts";
 
+import { uuidV7 } from "../lib/uuid-v7";
+
 const TERMINAL_STATUSES = new Set(["completed", "needs_input", "failed", "stopped"]);
 
 export type HarnessTerminalStatus = "completed" | "needs_input" | "failed" | "stopped";
@@ -242,7 +244,7 @@ export async function claimHarnessAttempt(
   options: AttemptIdentity & { leaseSeconds?: number },
 ): Promise<AttemptClaim> {
   const leaseSeconds = Math.max(10, Math.min(300, Math.trunc(options.leaseSeconds ?? 60)));
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const results = await db.batch([
     db.prepare(
       `UPDATE harness_runs
@@ -401,11 +403,11 @@ export async function admitInlineChildAttempt(
   );
   const maxDepth = Math.max(1, Math.min(16, Math.trunc(options.maxDepth ?? 2)));
   const leaseSeconds = Math.max(10, Math.min(300, Math.trunc(options.leaseSeconds ?? 60)));
-  const childHarnessRunId = options.childHarnessRunId ?? crypto.randomUUID();
-  const attemptId = options.attemptId ?? crypto.randomUUID();
+  const childHarnessRunId = options.childHarnessRunId ?? uuidV7();
+  const attemptId = options.attemptId ?? uuidV7();
   const owner = options.owner ?? `inline-child:${childHarnessRunId}:${attemptId}`;
   const objectiveHash = await sha256Hex(options.objective);
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const now = new Date().toISOString();
 
   // This early assertion gives callers a precise cancellation/ownership error.
@@ -777,7 +779,7 @@ export async function terminalizeQueuedHarnessRun(
   status: "failed" | "stopped" = "failed",
 ): Promise<"terminalized" | "already_terminal"> {
   const now = new Date().toISOString();
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const memberSafePayload = stableJson({ code: error.code.slice(0, 120) });
   const errorJson = safeErrorJson(error);
   const results = await db.batch([
@@ -1242,7 +1244,7 @@ export async function persistHarnessFinalMessage(
   } else {
     await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
   }
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const eventPayload = stableJson({
     finalMessageId: message.id,
     hostOutcome: {
@@ -1593,14 +1595,14 @@ export async function persistToolExecutionPlan(
   plan: ToolExecutionPlan,
 ): Promise<ToolPlanClaim> {
   await assertHarnessAttemptOwned(db, plan.harnessRunId, lease);
-  const invocationId = plan.invocationId ?? crypto.randomUUID();
+  const invocationId = plan.invocationId ?? uuidV7();
   const executionPlanJson = stableJson(plan.plan);
   const executionPlanHash = await sha256Hex(executionPlanJson);
   const compatiblePriorPlanHashes = new Set(await Promise.all(
     (plan.compatiblePriorPlans ?? []).map((compatiblePlan) => sha256Hex(stableJson(compatiblePlan))),
   ));
   const now = new Date().toISOString();
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const results = await db.batch([
     db.prepare(
       `INSERT INTO tool_invocations
@@ -1736,7 +1738,7 @@ export async function checkpointToolInvocation(
 ): Promise<void> {
   await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
   const now = new Date().toISOString();
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const index = Math.max(1, Math.trunc(input.checkpointIndex));
   const results = await db.batch([
     db.prepare(
@@ -1812,7 +1814,7 @@ export async function completeToolInvocation(
 ): Promise<"persisted" | "already_persisted"> {
   await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
   const now = new Date().toISOString();
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const index = Math.max(1, Math.trunc(input.checkpointIndex));
   const boundedSummary = input.outputSummary.slice(0, 4_000);
   const results = await db.batch([
@@ -1922,7 +1924,7 @@ export async function finalizeToolInvocationFailure(
 ): Promise<"persisted" | "already_persisted"> {
   await assertHarnessAttemptOwned(db, input.harnessRunId, lease);
   const now = new Date().toISOString();
-  const checkpointId = crypto.randomUUID();
+  const checkpointId = uuidV7();
   const phase = input.phase.slice(0, 120);
   const code = input.error.code.slice(0, 120);
   const message = input.error.message.slice(0, 500);
@@ -2216,7 +2218,7 @@ export async function terminalizeInlineChildAttempt(
   const resultJson = stableJson(sanitizedOutcome);
   const resultHash = await sha256Hex(resultJson);
   const now = new Date().toISOString();
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const memberPayload = stableJson({
     ...(sanitizedOutcome.error ? { code: sanitizedOutcome.error.code } : {}),
   });
@@ -2379,7 +2381,7 @@ export async function terminalizeHarnessAttempt(
     }
   }
   const now = new Date().toISOString();
-  const lifecycleId = crypto.randomUUID();
+  const lifecycleId = uuidV7();
   const payload = stableJson(outcome.memberSafePayload ?? {});
   const workstreamStatus = outcome.status === "stopped" ? "idle" : outcome.status;
   const results = await db.batch([
@@ -2486,7 +2488,7 @@ export async function recordInferenceAttempt(
   db: D1Database,
   record: InferenceAttemptRecord,
 ): Promise<string> {
-  const id = record.id ?? crypto.randomUUID();
+  const id = record.id ?? uuidV7();
   await db.prepare(
     `INSERT INTO inference_attempts
      (id, harness_run_id, workspace_id, workstream_id, attempt_id, turn_id,
@@ -2557,7 +2559,7 @@ export async function reapStaleHarnessRuns(
   const reaped: string[] = [];
   for (const row of rows.results ?? []) {
     const now = new Date().toISOString();
-    const eventId = crypto.randomUUID();
+    const eventId = uuidV7();
     const results = await db.batch([
       db.prepare(
         `INSERT INTO harness_run_lifecycle_events
@@ -2691,7 +2693,7 @@ export async function reapStaleHarnessRuns(
 
   for (const row of childRows.results ?? []) {
     const now = new Date().toISOString();
-    const eventId = crypto.randomUUID();
+    const eventId = uuidV7();
     const status = row.cancellation_requested_at ? "stopped" : "failed";
     const error = row.cancellation_requested_at
       ? { code: "run_cancelled", message: "The child run was cancelled" }

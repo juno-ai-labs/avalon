@@ -19,6 +19,8 @@ import type {
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { substreamAgentName } from "../durable-objects/substream-agent";
+import { workspaceDOName } from "../durable-objects/names";
+import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
@@ -935,6 +937,7 @@ export class WorkstreamService {
   }) {
     const authority = await readWorkstreamAuthorityControl(this.env);
     if (authority.phase === "durable_object_open") {
+      const originResourceIds = await this.resolveDurableOpportunityOriginResources(input.opportunityId);
       return new WorkstreamObjectCreationService(this.env, this.auth).create({
         objective: input.displayPrompt,
         openingMessage: input.executionPrompt,
@@ -955,6 +958,7 @@ export class WorkstreamService {
           displayPromptHash: input.displayPromptHash,
           executionPromptHash: input.executionPromptHash,
         },
+        originResourceIds,
         reason: "work_opportunity",
       });
     }
@@ -3000,6 +3004,66 @@ export class WorkstreamService {
         opportunity_id: opportunityId,
         reason: error instanceof Error ? error.message : "unknown",
       });
+    }
+  }
+
+  /**
+   * Resolve WorkspaceDO-owned provenance before initialize starts the first run.
+   *
+   * SubstreamAgent enqueues the Workflow inside the initialize RPC, so attaching
+   * these after creation would race the run's first context read. WorkspaceDO
+   * returns only roots visible to this member; this second check deliberately
+   * keeps restricted connector objects out of a workspace-visible resource list.
+   */
+  private async resolveDurableOpportunityOriginResources(opportunityId: string): Promise<string[]> {
+    try {
+      const workspace = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.WORKSPACE_DOS,
+        this.auth.workspaceId,
+        workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+      );
+      const events = WorkspaceOpportunityOriginEventsResultSchema.parse(
+        await workspace.opportunityOriginEvents({
+          workspaceId: this.auth.workspaceId,
+          userId: this.auth.userId,
+          opportunityId,
+          now: nowIso(),
+          limit: MAX_OPPORTUNITY_ORIGIN_RESOURCES,
+        }),
+      );
+      const resourceIds: string[] = [];
+      for (const event of events) {
+        const activity = event.activity;
+        if (!activityIsWorkspaceVisible({
+          connection_scope: activity.connectionScope,
+          connection_owner_user_id: activity.connectionOwnerUserId,
+          target_user_ids_json: JSON.stringify(activity.targetUserIds),
+          visibility_json: JSON.stringify(activity.visibility),
+        })) continue;
+        const descriptor = await describeWorkstreamOrigin(this.env, {
+          connectorType: event.connectorType,
+          connectionId: activity.connectionId,
+          provider: activity.provider,
+          locator: activityOriginLocator({
+            resource_type: activity.resourceType,
+            provider_resource_id: activity.providerResourceId,
+            title: activity.title,
+            metadata_json: JSON.stringify(activity.metadata),
+          }),
+        });
+        if (!descriptor) continue;
+        const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, descriptor);
+        if (resourceId && !resourceIds.includes(resourceId)) resourceIds.push(resourceId);
+      }
+      return resourceIds;
+    } catch (error) {
+      logWarn(this.env, "workstream_opportunity_origin_resolve_failed", {
+        workspace_id: this.auth.workspaceId,
+        opportunity_id: opportunityId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      return [];
     }
   }
 
