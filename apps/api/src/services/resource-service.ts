@@ -10,6 +10,7 @@ import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { encryptString, sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { workspaceDOName } from "../durable-objects/names";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import {
   materializeAttachmentDerivative,
@@ -88,24 +89,6 @@ const INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL = `(r.provider != 'resend' OR r.reso
     )
 ))`;
 
-const DO_INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL = `(r.provider != 'resend' OR r.resource_type != 'email' OR EXISTS (
-  SELECT 1
-  FROM workstream_resource_link_projections email_wr
-  JOIN workstream_directory_projections email_w
-    ON email_w.workstream_id = email_wr.workstream_id
-  LEFT JOIN automation_subscriptions email_s ON email_s.id = email_w.automation_subscription_id
-  LEFT JOIN workstream_directory_user_projections email_p
-    ON email_p.workstream_id = email_w.workstream_id AND email_p.user_id = ?
-  WHERE email_wr.resource_id = r.id
-    AND email_w.workspace_id = r.workspace_id
-    AND (
-      email_w.automation_subscription_id IS NULL
-      OR email_s.scope = 'workspace'
-      OR email_s.owner_user_id = ?
-      OR email_p.is_participant = 1
-    )
-))`;
-
 const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
   OR r.attachment_status = 'attached'
   OR r.uploaded_by_user_id = ?)`;
@@ -134,19 +117,16 @@ const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
   GROUP BY r.id`;
 
 const DO_RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
-    COALESCE(MAX(CASE WHEN rw.enabled = 1 THEN 1 ELSE 0 END), 0) AS watch_enabled
+    CASE WHEN EXISTS (
+      SELECT 1 FROM resource_watches rw
+       WHERE rw.resource_id = r.id AND rw.workspace_id = r.workspace_id AND rw.enabled = 1
+    ) THEN 1 ELSE 0 END AS watch_enabled
   FROM resources r
-  LEFT JOIN workstream_resource_link_projections wr ON wr.resource_id = r.id
-  LEFT JOIN resource_watches rw
-    ON rw.workstream_id = wr.workstream_id
-   AND rw.resource_id = wr.resource_id
   LEFT JOIN connector_connections c ON c.id = r.connection_id
   WHERE r.id = ? AND r.workspace_id = ?
     AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)
-    AND ${DO_INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL}
     AND ${UPLOAD_RESOURCE_VISIBILITY_SQL}
-    AND ${NOTE_RESOURCE_VISIBILITY_SQL}
-  GROUP BY r.id`;
+    AND ${NOTE_RESOURCE_VISIBILITY_SQL}`;
 
 export class ResourceService {
   private connectorRegistry: ReturnType<typeof connectorRegistryForEnv> | undefined;
@@ -167,19 +147,15 @@ export class ResourceService {
     const filters = [
       "r.workspace_id = ?",
       "(c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
-      authority.phase === "durable_object_open"
-        ? DO_INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL
-        : INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
+      ...(authority.phase === "durable_object_open" ? [] : [INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL]),
       "(r.provider != 'avalon_upload' OR r.attachment_status = 'attached')",
       NOTE_RESOURCE_VISIBILITY_SQL,
     ];
-    const bindings: unknown[] = [
-      this.auth.workspaceId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-    ];
+    const bindings: unknown[] = [this.auth.workspaceId, this.auth.userId];
+    if (authority.phase !== "durable_object_open") {
+      bindings.push(this.auth.userId, this.auth.userId);
+    }
+    bindings.push(this.auth.userId);
 
     if (query) {
       const pattern = `%${escapeLikePattern(query)}%`;
@@ -210,10 +186,21 @@ export class ResourceService {
        ORDER BY r.updated_at DESC, r.id DESC
        LIMIT ?`,
     ).bind(...bindings, limit + 1).all<Record<string, unknown>>();
-    const rows = result.results.slice(0, limit);
+    const consumed = result.results.slice(0, limit);
+    const rows: Record<string, unknown>[] = [];
+    if (authority.phase === "durable_object_open") {
+      // A page can contain one hundred resources. Keep cross-DO authorization
+      // reads serial so one REST request cannot exceed the Worker's concurrent
+      // outbound-connection allowance.
+      for (const row of consumed) {
+        if (await this.canReadInboundEmailResource(row)) rows.push(row);
+      }
+    } else {
+      rows.push(...consumed);
+    }
     const hasMore = result.results.length > limit;
     const items = rows.map(toResource);
-    const last = rows.at(-1);
+    const last = consumed.at(-1);
     return {
       items,
       nextCursor: hasMore && last
@@ -278,14 +265,25 @@ export class ResourceService {
 
   async deleteDraft(id: string): Promise<void> {
     const authority = await readWorkstreamAuthorityControl(this.env);
+    if (authority.phase === "durable_object_open") {
+      const workspace = await this.workspaceDirectory();
+      const links = await workspace.workstreamsForResource({
+        workspaceId: this.auth.workspaceId,
+        resourceId: id,
+        watchedOnly: false,
+      });
+      if (links.workstreamIds.length > 0) {
+        throw new ApiError(404, "attachment_draft_not_found", "The draft attachment is unavailable or already sent");
+      }
+    }
     const resource = await this.env.DB.prepare(
       `DELETE FROM resources
        WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
          AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
-         AND NOT EXISTS (SELECT 1 FROM ${authority.phase === "durable_object_open"
-          ? "workstream_resource_link_projections"
-          : "workstream_resources"} WHERE resource_id = resources.id)
+         ${authority.phase === "durable_object_open"
+          ? ""
+          : "AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)"}
        RETURNING content_ref, model_content_ref`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<{
       content_ref: string | null;
@@ -577,17 +575,65 @@ export class ResourceService {
       authority.phase === "durable_object_open"
         ? DO_RESOURCE_WITH_WATCH_STATE_SQL
         : RESOURCE_WITH_WATCH_STATE_SQL,
-    ).bind(
-      id,
-      this.auth.workspaceId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-      this.auth.userId,
-    ).first<Record<string, unknown>>();
+    ).bind(...(authority.phase === "durable_object_open"
+      ? [id, this.auth.workspaceId, this.auth.userId, this.auth.userId, this.auth.userId]
+      : [
+          id,
+          this.auth.workspaceId,
+          this.auth.userId,
+          this.auth.userId,
+          this.auth.userId,
+          this.auth.userId,
+          this.auth.userId,
+        ])).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "resource_not_found", "Resource not found");
+    if (authority.phase === "durable_object_open" && !await this.canReadInboundEmailResource(row)) {
+      throw new ApiError(404, "resource_not_found", "Resource not found");
+    }
     return row;
+  }
+
+  private async canReadInboundEmailResource(resource: Record<string, unknown>): Promise<boolean> {
+    if (resource.provider !== "resend" || resource.resource_type !== "email") return true;
+    const workspace = await this.workspaceDirectory();
+    const access = await workspace.resourceAccess({
+      workspaceId: this.auth.workspaceId,
+      resourceId: String(resource.id),
+      userId: this.auth.userId,
+    });
+    if (access.items.length === 0) return false;
+    const subscriptionIds = [...new Set(access.items.flatMap((item) => (
+      item.automationSubscriptionId ? [item.automationSubscriptionId] : []
+    )))];
+    const subscriptions = new Map<string, { scope: string; owner_user_id: string | null }>();
+    if (subscriptionIds.length > 0) {
+      const placeholders = subscriptionIds.map(() => "?").join(",");
+      const rows = await this.env.DB.prepare(
+        `SELECT id, scope, owner_user_id FROM automation_subscriptions
+          WHERE workspace_id = ? AND id IN (${placeholders})`,
+      ).bind(this.auth.workspaceId, ...subscriptionIds).all<{
+        id: string;
+        scope: string;
+        owner_user_id: string | null;
+      }>();
+      for (const row of rows.results ?? []) subscriptions.set(row.id, row);
+    }
+    return access.items.some((item) => {
+      if (!item.automationSubscriptionId) return true;
+      const subscription = subscriptions.get(item.automationSubscriptionId);
+      return subscription?.scope === "workspace"
+        || subscription?.owner_user_id === this.auth.userId
+        || item.isParticipant;
+    });
+  }
+
+  private workspaceDirectory() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
   }
 
   private async loadConnection(id: string): Promise<Record<string, unknown>> {

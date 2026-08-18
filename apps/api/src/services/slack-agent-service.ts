@@ -44,7 +44,9 @@ import {
 } from "./slack-workstream-card";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
+import { workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
 import { withDeadline } from "../lib/deadline";
 import { randomToken, sha256 } from "../lib/crypto";
@@ -82,6 +84,15 @@ interface SlackConnectionRow extends Record<string, unknown> {
   credential_key_version?: number;
   granted_scopes_json: string;
   status: string;
+}
+
+function directoryHarnessStatus(state: string): string {
+  if (state === "scheduled") return "scheduled";
+  if (["running", "interrupting", "preparing_context", "waiting_capacity"].includes(state)) return "running";
+  if (state === "needs_input") return "needs_input";
+  if (state === "completed") return "completed";
+  if (["failed", "budget_exhausted"].includes(state)) return "failed";
+  return "idle";
 }
 
 interface SlackLinkedAccount {
@@ -2672,26 +2683,26 @@ export class SlackAgentService {
     } else {
       const authority = await readWorkstreamAuthorityControl(this.env);
       const tasksPromise = authority.phase === "durable_object_open"
-        ? this.env.DB.prepare(
-          `SELECT projection.workstream_id AS id, projection.title,
-                  CASE
-                    WHEN projection.state = 'scheduled' THEN 'scheduled'
-                    WHEN projection.state IN ('running', 'interrupting', 'preparing_context', 'waiting_capacity') THEN 'running'
-                    WHEN projection.state = 'needs_input' THEN 'needs_input'
-                    WHEN projection.state = 'completed' THEN 'completed'
-                    WHEN projection.state IN ('failed', 'budget_exhausted') THEN 'failed'
-                    ELSE 'idle' END AS harness_status
-             FROM workstream_directory_projections projection
-             JOIN workstream_directory_user_projections viewer
-               ON viewer.workstream_id = projection.workstream_id
-              AND viewer.user_id = ?
-            WHERE projection.workspace_id = ? AND viewer.is_participant = 1
-              AND viewer.listable = 1 AND projection.archived_at IS NULL
-              AND projection.system_kind IS NULL
-            ORDER BY CASE projection.state
-              WHEN 'needs_input' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
-              projection.last_activity_at DESC LIMIT 6`,
-        ).bind(link.user_id, connection.workspace_id).all<Record<string, unknown>>()
+        ? this.workspaceDirectory(connection.workspace_id).then((workspace) => (
+          workspace.recentWorkstreamDirectory({
+            workspaceId: connection.workspace_id,
+            userId: link.user_id,
+            includeSystem: false,
+            participantsOnly: true,
+            limit: 50,
+          })
+        )).then((page) => ({
+          results: page.items.map((item) => ({
+            id: item.workstreamId,
+            title: item.title,
+            harness_status: directoryHarnessStatus(item.state),
+            last_activity_at: item.lastActivityAt,
+          })).sort((left, right) => {
+            const priority = (status: unknown) => status === "needs_input" ? 0 : status === "running" ? 1 : 2;
+            return priority(left.harness_status) - priority(right.harness_status)
+              || String(right.last_activity_at).localeCompare(String(left.last_activity_at));
+          }).slice(0, 6),
+        }))
         : this.env.DB.prepare(
           // `system_kind` is machinery — a digest run's transcript, say. The
           // owner participates in it, so the join alone would list it here, and
@@ -2856,24 +2867,20 @@ export class SlackAgentService {
     // must fall through to the anonymous card rather than be named in this
     // Slack team. A miss is indistinguishable from a link that never existed.
     const authority = await readWorkstreamAuthorityControl(this.env);
-    const rows = await this.env.DB.prepare(authority.phase === "durable_object_open"
-      ? `SELECT projection.workstream_id AS id, projection.title,
-                CASE
-                  WHEN projection.state = 'scheduled' THEN 'scheduled'
-                  WHEN projection.state IN ('running', 'interrupting', 'preparing_context', 'waiting_capacity') THEN 'running'
-                  WHEN projection.state = 'needs_input' THEN 'needs_input'
-                  WHEN projection.state = 'completed' THEN 'completed'
-                  WHEN projection.state IN ('failed', 'budget_exhausted') THEN 'failed'
-                  ELSE 'idle' END AS harness_status,
-                projection.last_activity_at,
-                projection.origin_type, template.name AS automation_name
-           FROM workstream_directory_projections projection
-           LEFT JOIN automation_subscriptions subscription
-             ON subscription.id = projection.automation_subscription_id
-           LEFT JOIN automation_templates template ON template.id = subscription.template_id
-          WHERE projection.workspace_id = ? AND projection.archived_at IS NULL
-            AND projection.workstream_id IN (${workstreamIds.map(() => "?").join(", ")})`
-      :
+    const rows = authority.phase === "durable_object_open"
+      ? await this.workspaceDirectory(workspaceId).then((workspace) => (
+        workspace.lookupWorkstreamDirectory({ workspaceId, workstreamIds })
+      )).then((result) => ({ results: result.items
+        .filter((item) => item.archivedAt === null)
+        .map((item) => ({
+          id: item.workstreamId,
+          title: item.title,
+          harness_status: directoryHarnessStatus(item.state),
+          last_activity_at: item.lastActivityAt,
+          origin_type: item.originType,
+          automation_name: item.originLabel,
+        })) }))
+      : await this.env.DB.prepare(
       // Archiving retires a work stream from view, including App Home's own
       // task list, so an archived one falls through to the anonymous card
       // rather than keeping its title alive in Slack.
@@ -2882,7 +2889,7 @@ export class SlackAgentService {
          ${WORKSTREAM_UNFURL_JOINS}
         WHERE w.workspace_id = ? AND w.archived_at IS NULL
           AND w.id IN (${workstreamIds.map(() => "?").join(", ")})`,
-    ).bind(workspaceId, ...workstreamIds).all<Record<string, unknown>>();
+      ).bind(workspaceId, ...workstreamIds).all<Record<string, unknown>>();
     return new Map((rows.results ?? []).map((row) => [String(row.id), workstreamUnfurlSummary(row)]));
   }
 
@@ -2910,6 +2917,15 @@ export class SlackAgentService {
         LIMIT 1`,
     ).bind(connectionId, workspaceId, teamId, slackUserId).first<{ linked: number }>();
     return row !== null;
+  }
+
+  private workspaceDirectory(workspaceId: string) {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, workspaceId),
+    );
   }
 
   private async linkedIdentity(teamId: string, slackUserId: string): Promise<SlackIdentity | null> {

@@ -62,7 +62,7 @@ describe("database migrations", () => {
     database.close();
   });
 
-  it("fences the maintenance cutover and leaves only directory projections writable", () => {
+  it("fences the maintenance cutover and leaves the workspace directory out of D1", () => {
     const database = migrateFreshDatabase();
     try {
       database.exec(`
@@ -156,22 +156,16 @@ describe("database migrations", () => {
         VALUES ('forbidden-message', 'authority-workspace', 'authority-workstream', 'system',
                 'text', 'forbidden', 4, '2026-08-16T01:06:00.000Z');
       `)).toThrow(/workstream_do_authoritative/u);
-      database.exec(`
-        INSERT INTO workstream_directory_projections
-          (workspace_id, workstream_id, generation, version, title, description, preview,
-           scope, state, last_activity_at, payload_hash, projected_at)
-        VALUES ('authority-workspace', 'authority-workstream', 1, 1, 'After', 'Description', '',
-                'workspace', 'completed', '2026-08-16T01:05:00.000Z', 'hash',
-                '2026-08-16T01:05:00.000Z');
-      `);
-      expect(database.prepare(
-        `SELECT title FROM workstream_directory_projections WHERE workstream_id = 'authority-workstream'`,
-      ).get()).toEqual({ title: "After" });
-      expect(() => database.exec(`
-        UPDATE workstream_directory_projections
-           SET title = 'Conflicting', payload_hash = 'different'
-         WHERE workstream_id = 'authority-workstream' AND generation = 1 AND version = 1;
-      `)).toThrow(/workstream_projection_version_conflict/u);
+      const productProjectionTables = database.prepare(
+        `SELECT name FROM sqlite_master
+          WHERE type = 'table' AND name IN (
+            'workstream_directory_projections',
+            'workstream_directory_user_projections',
+            'workstream_resource_link_projections',
+            'workstream_suggestion_feedback_projections'
+          )`,
+      ).all();
+      expect(productProjectionTables).toEqual([]);
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM workstream_regional_effect_receipts`,
       ).get()).toEqual({ count: 0 });

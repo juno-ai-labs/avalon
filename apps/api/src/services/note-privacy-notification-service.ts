@@ -1,5 +1,7 @@
 import { createDatabase, newId, nowIso } from "@avalon/db";
+import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { publishWorkstreamEvent } from "./integrations";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
@@ -36,19 +38,46 @@ export async function processPendingNotePrivacyNotifications(
 
 async function processTransition(env: Env, transition: PrivacyTransitionRow): Promise<void> {
   const authority = await readWorkstreamAuthorityControl(env);
-  const affected = await env.DB.prepare(authority.phase === "durable_object_open"
-    ? `SELECT DISTINCT link.workstream_id AS id
-       FROM workstream_resource_link_projections link
-       JOIN workstream_directory_projections w ON w.workstream_id = link.workstream_id
-       LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-      WHERE link.workspace_id = ? AND link.resource_id = ?
-        AND (
-          (s.id IS NOT NULL AND (s.scope = 'workspace' OR s.owner_user_id IS NULL OR s.owner_user_id != ?))
-          OR
-          (s.id IS NULL AND (w.created_by_user_id IS NULL OR w.created_by_user_id != ?))
-        )
-      ORDER BY link.workstream_id ASC`
-    : `SELECT DISTINCT w.id
+  let affectedRows: AffectedWorkstreamRow[];
+  if (authority.phase === "durable_object_open") {
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      transition.workspace_id,
+      workspaceDOName(env.AVALON_REGION, transition.workspace_id),
+    );
+    const access = await workspace.resourceAccess({
+      workspaceId: transition.workspace_id,
+      resourceId: transition.resource_id,
+      userId: transition.actor_user_id,
+    });
+    const subscriptionIds = [...new Set(access.items.flatMap((item) => (
+      item.automationSubscriptionId ? [item.automationSubscriptionId] : []
+    )))];
+    const subscriptions = new Map<string, { scope: string; owner_user_id: string | null }>();
+    if (subscriptionIds.length > 0) {
+      const placeholders = subscriptionIds.map(() => "?").join(",");
+      const rows = await env.DB.prepare(
+        `SELECT id, scope, owner_user_id FROM automation_subscriptions
+          WHERE workspace_id = ? AND id IN (${placeholders})`,
+      ).bind(transition.workspace_id, ...subscriptionIds).all<{
+        id: string;
+        scope: string;
+        owner_user_id: string | null;
+      }>();
+      for (const row of rows.results ?? []) subscriptions.set(row.id, row);
+    }
+    affectedRows = access.items.filter((item) => {
+      if (!item.automationSubscriptionId) {
+        return item.createdByUserId === null || item.createdByUserId !== transition.actor_user_id;
+      }
+      const subscription = subscriptions.get(item.automationSubscriptionId);
+      return subscription?.scope === "workspace"
+        || subscription?.owner_user_id === null
+        || subscription?.owner_user_id !== transition.actor_user_id;
+    }).map((item) => ({ id: item.workstreamId }));
+  } else {
+    const affected = await env.DB.prepare(`SELECT DISTINCT w.id
      FROM workstream_resources wr
      JOIN workstreams w ON w.id = wr.workstream_id AND w.workspace_id = ?
      LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
@@ -64,11 +93,13 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
     transition.resource_id,
     transition.actor_user_id,
     transition.actor_user_id,
-  ).all<AffectedWorkstreamRow>();
+    ).all<AffectedWorkstreamRow>();
+    affectedRows = affected.results;
+  }
 
   const clientMessageId = `note-privacy:${transition.id}`;
   const text = `${transition.note_title} is now private and no longer accessible`;
-  for (const workstream of affected.results) {
+  for (const workstream of affectedRows) {
     const executionEnv = await workstreamExecutionEnvironment(
       env,
       transition.workspace_id,

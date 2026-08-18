@@ -629,8 +629,11 @@ generation; never reuse one from a quarantined attempt.
    `last_error_code`; `quarantined` stops the region and requires repair plus a
    new generation. A page can be retried. Do not manually advance its cursor.
 5. When every route verifies, control advances to `maintenance_verified` and
-   cron activates each object. Wait until every route is `active`. The region
-   remains behind the maintenance response intentionally.
+   cron activates each object. For every work stream it must flush common/user
+   state from WorkstreamDO into WorkspaceDO, verify the workspace directory
+   row, import the frozen legacy D1 pins, and only then mark the route `active`.
+   Wait until every route is active. The region remains behind the maintenance
+   response intentionally.
 6. Deploy the Worker whose product reads/writes, direct Bind-loop persistence,
    Terminal persistence, and child/parent regional-effect outboxes use the
    `SubstreamAgent`/`WorkstreamDO` hierarchy. Run the read,
@@ -645,26 +648,30 @@ generation; never reuse one from a quarantined attempt.
    route in the generation is active and the serving contract is attested. The
    Worker gate independently rejects an open phase when its own compile-time
    version is too old. Verify HTTP, Queue, cron, two simultaneous streaming work
-   streams, and common/user sidebar projections before starting the next region.
+   streams, and common/user WorkspaceDO sidebar pages before starting the next region.
 
-After opening, inspect `workstream_regional_effect_receipts`, the parent
-`WorkstreamDO.durable_outbox`, and the source child outbox/receipt when a sidebar
-badge, digest event, Slack mention, or
-email notification is missing. A receipt with no local outbox row means D1
-applied and acknowledged the effect; an outbox row with no receipt means Queue
-delivery or D1 application is still retrying. Both rows with the same hash mean
-the D1 commit succeeded and only the acknowledgement RPC is retrying. Never
-delete an object outbox row to clear an alert. Repair the consumer and let the
-alarm resend it. `workstream_projection_version_conflict` is a producer bug or
-restore-generation error and requires quarantine, not last-writer-wins repair.
+After opening, inspect the parent `WorkstreamDO.durable_outbox` and source child
+outbox/receipt first. For a missing sidebar badge/resource route/suggestion
+feedback row, inspect `WorkspaceDO.workspace_workstream_effect_receipts` and the
+corresponding `workspace_workstream_*` row. For a missing digest event, Slack
+mention, or email notification, inspect D1
+`workstream_regional_effect_receipts` and notification intents. A receiver
+receipt with no local outbox row means the owning WorkspaceDO or D1 transaction
+committed and acknowledged the effect; an outbox row with no receiver receipt
+means RPC/Queue delivery is still retrying. Both rows with the same hash mean
+only the acknowledgement RPC is retrying. Never delete an object outbox row to
+clear an alert. Repair the receiver/consumer and let the alarm resend it. A
+generation/version/hash conflict is a producer bug or restore-generation error
+and requires quarantine, not last-writer-wins repair.
 Acknowledged receipts and terminal notification shells disappear after 30 days;
 pending or unacknowledged rows never age out and must reach zero operationally.
 
 The legacy D1 product triggers are the post-open tripwire. An error containing
 `workstream_do_authoritative` means a missed writer; quarantine and fix that
 path. Do not remove the trigger or fall back to D1. Directory projection tables,
-workspace resources, pins, schedules, connector delivery, audit, and telemetry
-remain valid D1 writers.
+work-stream resource-link projections, and work-stream pins do not exist after
+this unshipped cutover. Workspace resource records, schedules for D1-owned
+modules, connector delivery, audit, and telemetry remain valid D1 writers.
 
 ## Timezones
 
@@ -1218,13 +1225,16 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 - Before the authority phase opens, D1 is canonical for work streams, messages,
   runs, schedules, connector metadata, and audit events. After it opens, each
   `SubstreamAgent` is canonical for its substream product tables,
-  `WorkstreamDO` is canonical for aggregate metadata/outbox, and D1 stays
-  canonical for schedules, connector/workspace metadata, audit, and directory
-  projections.
+  `WorkstreamDO` is canonical for aggregate metadata/outbox, `WorkspaceDO` is
+  canonical for cross-work-stream directory/viewer/pin/resource/feedback
+  indexes, and D1 stays canonical for identity/membership, schedules and
+  connector/workspace/activity modules that remain relational, migration,
+  external delivery, and audit.
 - R2 stores large payloads, uploads, and snapshots referenced by their owning
   regional database.
 - Use D1 PITR before the work-stream authority open. After open, use object
-  PITR/repair for product state and D1 recovery for control/projections.
+  PITR/repair for product and directory state and D1 recovery for its remaining
+  control/relational modules.
 - Production never loads `packages/db/seed.sql`.
 - Restore D1 and its corresponding R2 objects as a region-consistent set before resuming Queue consumers or scheduler alarms.
 

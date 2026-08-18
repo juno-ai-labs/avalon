@@ -8,9 +8,11 @@ import type {
 import { newId } from "@avalon/db";
 import type { z } from "zod";
 
+import { workspaceDOName, workstreamDOName, substreamAgentName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { workstreamImportHash } from "../durable-objects/workstream-authority-import";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
@@ -133,14 +135,13 @@ export class WorkstreamObjectCreationService {
            (workspace_id, workstream_id, generation, object_name, state, stage_index,
             source_cursor, source_fence_sequence, source_hash, target_hash,
             row_counts_json, imported_at, verified_at, activated_at, updated_at)
-         VALUES (?, ?, ?, ?, 'active', 0, 0, 0, 'created_in_do', 'created_in_do',
-                 '{}', ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, 'verified', 0, 0, 0, 'created_in_do', 'created_in_do',
+                 '{}', ?, ?, NULL, ?)`,
       ).bind(
         this.auth.workspaceId,
         receipt.workstream_id,
         control.generation,
         `${this.env.AVALON_REGION}:${this.auth.workspaceId}:${receipt.workstream_id}`,
-        at,
         at,
         at,
         at,
@@ -183,6 +184,54 @@ export class WorkstreamObjectCreationService {
       } : {}),
       reason: options.reason ?? "opening_message",
     });
+    const substream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.SUBSTREAM_AGENTS,
+      this.auth.workspaceId,
+      substreamAgentName(
+        this.env.AVALON_REGION,
+        this.auth.workspaceId,
+        receipt.workstream_id,
+      ),
+    );
+    await substream.flushEffectsToWorkstreamDO();
+    const workstream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      this.auth.workspaceId,
+      workstreamDOName(
+        this.env.AVALON_REGION,
+        this.auth.workspaceId,
+        receipt.workstream_id,
+      ),
+    );
+    await workstream.flushWorkspaceDirectoryEffects();
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+    if (!await workspace.hasWorkstreamDirectory({
+      workspaceId: this.auth.workspaceId,
+      workstreamId: receipt.workstream_id,
+    })) throw new Error("workspace_directory_creation_snapshot_missing");
+    const activatedAt = new Date().toISOString();
+    const activated = await this.env.DB.prepare(
+      `UPDATE workstream_authority_routes
+          SET state = 'active', activated_at = COALESCE(activated_at, ?), updated_at = ?
+        WHERE workspace_id = ? AND workstream_id = ? AND generation = ?
+          AND state IN ('verified', 'active')`,
+    ).bind(
+      activatedAt,
+      activatedAt,
+      this.auth.workspaceId,
+      receipt.workstream_id,
+      control.generation,
+    ).run();
+    if (Number(activated.meta.changes ?? 0) !== 1) {
+      throw new Error("workstream_create_route_activation_failed");
+    }
     await emailRouting.setStatus({ ...routeInput, status: "active" });
     await this.env.DB.prepare(
       `UPDATE workstream_create_receipts

@@ -20,6 +20,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Slack unfurl | `unfurlAvalonLinks` in `apps/api/src/services/slack-agent-service.ts` |
 | The card's blocks and its one status table | `slack-workstream-card.ts` |
 | The refresh sweep | `refreshSlackWorkstreamUnfurls`, wired into `scheduled` in `apps/api/src/index.ts` |
+| Authoritative title/status/recency lookup | `WorkspaceDO.lookupWorkstreamDirectory`, batched per workspace by the posting and refresh paths |
 | Slack blocks, DMs, and mention email | `slack-agent-service.ts`, `slack-mention-service.ts`, `mention-email-service.ts` |
 | Copy work-stream link | `apps/desktop/src/renderer/screens/workstream.tsx`, `apps/desktop/src/renderer/components/sidebar.tsx` |
 | Open the deep link | `emitDeepLink` in `apps/desktop/src/main/index.ts`, `apps/desktop/src/renderer/lib/app-session.tsx` |
@@ -72,6 +73,12 @@ The card carries the work stream's **title, last activity, and automation
 origin**, plus a **status badge only while it is `running`, `needs_input`, or
 `failed`** — enough to know whether the link is worth opening and whether the agent
 is blocked.
+
+After the work-stream authority cutover these fields come from the owning
+WorkspaceDO directory, not a D1 work-stream projection. The Slack installation,
+credentials, link occurrence, and channel/message coordinates remain relational
+D1 state; only the work-stream summary is joined in application code through a
+bounded typed RPC.
 
 `completed`, `scheduled`, and `idle` render no badge. "Completed" is not something
 a reader can act on, and a settled work stream stops producing the changes that
@@ -131,8 +138,8 @@ current, and a work stream that resolved outside the connection's workspace must
 never give the sweep a row it would act on.
 
 The rewrite runs from the five-minute maintenance sweep rather than from the status
-writes. `harness_status` is written from seven places across the runtime, the
-scheduler, and the tool layer; hooking each would be seven chances to miss a
+writes. Workstream status is aggregated inside many independently active object
+paths; hooking external Slack writes to each would create many chances to miss a
 transition and no cheaper. A sweep is one place, it coalesces a burst of transitions
 into a single rewrite, and a failed refresh is retried next pass instead of lost.
 The cost is up to five minutes of staleness.
@@ -152,8 +159,10 @@ is currently on the message, so an identical card is never rewritten.
 decides which rows are looked at. Those are different, and the gap is worth stating
 plainly.
 
-Selection matches on status drift, an edit to the work stream itself, the 24-hour
-audience clock, or a missing hash. The edit arm is what covers a rename: the title
+After cutover the sweep first loads at most 5,000 recent D1 link occurrences,
+groups their distinct work-stream IDs by workspace, and calls WorkspaceDO in
+pages of 250. It then selects cards on status drift, an edit to the work stream
+itself, the 24-hour audience clock, or a missing hash. The edit arm is what covers a rename: the title
 renders but no status moves, so `updated_at > refreshed_at` is the only thing that
 would notice. **A card therefore catches up with an edit on the next five-minute
 sweep, not a day later.**
@@ -244,6 +253,7 @@ The refresh sweep's bounds, all deliberate:
 
 | Bound | Value | Why |
 | --- | --- | --- |
+| Candidate link scan | 5,000 recent D1 occurrences, then WorkspaceDO lookups in 250-ID pages | Bounds relational coordinates loaded before authoritative work-stream filtering without issuing one object RPC per link |
 | Trigger | `harness_status` differs from `rendered_status`, the work stream was edited since the card was last written (`updated_at > refreshed_at`), the audience has not been revalidated in 24 hours, **or** the row has no `rendered_hash` | Comparing last activity would mark nearly every row stale every pass, since any message bumps it. The audience clock is separate because a channel can become externally shared while the work stream sits still |
 | Rewrite | Only when the card's **rendered blocks** hash differently from what is posted | The real question is "would this render differently?", and no stored field answers it: the drawing code can change, the title and activity stamp both render, and an anonymous card is identical whatever the status does. A selected row whose hash matches records its new status and posts nothing |
 | Age | Links shared in the last 30 days | Nobody is rereading an older message |
@@ -260,6 +270,9 @@ The refresh sweep's bounds, all deliberate:
 - **A refresh that fails with a terminal Slack reason** — the message or channel is
   gone — deletes the row rather than retrying forever. Anything else leaves
   `rendered_status` untouched so the next sweep tries again.
+- **A WorkspaceDO lookup failure leaves every affected link untouched.** D1 is
+  not a summary fallback; the next five-minute sweep retries the authoritative
+  object.
 - **Up to five minutes of staleness** is the accepted cost of sweeping rather than
   hooking the seven `harness_status` writers.
 
@@ -269,7 +282,7 @@ The refresh sweep's bounds, all deliberate:
 | --- | --- |
 | `packages/contracts/src/workstream-links.test.ts` | Minting, parsing all three accepted forms, look-alike origin rejection, and the throw on a non-UUID. |
 | `apps/site/test/site.test.ts` | That the `_redirects` rewrite rule is present — the one thing markup tests cannot see. |
-| `apps/api/test/slack-unfurl-refresh.test.ts` | Selection, the hash gate, the audience clock, redaction, the per-sweep and per-workspace bounds, and terminal-reason deletion. |
+| `apps/api/test/slack-unfurl-refresh.test.ts` | WorkspaceDO directory lookup, selection, the hash gate, the audience clock, redaction, the per-sweep/per-connection bounds, and terminal-reason deletion. |
 | `apps/api/test/slack-agent-ingress.test.ts` | `link_shared` handling and the card posted in response. |
 
 The trap is that the sweep's rules are all relative-time comparisons
@@ -280,10 +293,32 @@ a test that leans on real time either passes by accident or fails on a slow mach
 
 `slack_unfurled_links` records which Slack message carries which work-stream link,
 plus `rendered_status`, `rendered_anonymous`, `rendered_hash`, and `refreshed_at` —
-the four fields the selection query and the rewrite gate read.
+the four D1 fields the selection/rewrite gate reads. Current title, automation
+origin, work-stream update time, recency, archive, and harness status are not
+copied into this table; they come from `WorkspaceDO.workspace_workstream_directory`.
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Changelog
+
+### 2026-08-18 — Slack cards join work-stream summaries from WorkspaceDO
+
+**What changed:** New unfurls and the refresh sweep resolve title, status,
+recency, archive, and automation origin from authoritative WorkspaceDO directory
+RPCs. The sweep retains D1 link/connection coordinates, batches distinct IDs per
+workspace, and never falls back to the frozen D1 work-stream row.
+
+**Why:** Slack delivery coordinates are a relational connector workload, but the
+card summary is work-stream product state. Copying that summary into D1 solely
+for the join would keep a second serving authority alive.
+
+**Considered and rejected:** One RPC per card and retaining D1 directory
+projections for Slack. Batching avoids the first; the second defeats the
+authority cutover.
+
+**Consequences:** A WorkspaceDO outage delays a card/refresh rather than serving
+stale D1 metadata. The sweep loads at most 5,000 link candidates, looks up at
+most 250 work streams per RPC, and still applies the existing 100-global and
+20-per-connection rewrite bounds.
 
 ### 2026-08-13 — Browser handoffs are measurable without becoming link telemetry
 
@@ -302,6 +337,6 @@ overstate conversion.
 
 **Consequences:** Site and desktop signals describe opposite sides of the
 handoff and can be compared only in aggregate today; the public anonymous epoch
-is not linked to the desktop account. This is the first changelog entry because
-the document predates the changelog rule; earlier reasoning remains inline and
-was not reconstructed.
+is not linked to the desktop account. This was the first recorded changelog
+entry; the document predates the changelog rule and earlier reasoning remains
+inline rather than being reconstructed.

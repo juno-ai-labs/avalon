@@ -7,7 +7,6 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "../src/durable-objects/workstream-regional-effect";
 import {
-  acknowledgeWorkstreamRegionalEffect,
   applyWorkstreamRegionalEffect,
   loadWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
@@ -88,6 +87,13 @@ function workspaceSyncNamespace() {
     get: () => ({
       initializeWorkspace: vi.fn(async () => undefined),
       publishSync: vi.fn(async () => 1),
+      notificationDirectoryState: vi.fn(async () => ({
+        authorityGeneration: 1,
+        viewerVersion: 1,
+        listable: true,
+        title: "Regional effects",
+        emailAddress: "regional-effects@example.com",
+      })),
     }),
   });
 }
@@ -131,7 +137,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
     expect(loadRegionalEffect).toHaveBeenCalledOnce();
   });
 
-  it("keeps the newest common and user sidebar projections under unordered replay", async () => {
+  it("rejects workspace-owned directory effects from the regional Queue consumer", async () => {
     const database = seedAuthority();
     const env = createTestEnv({
       DB: sqliteD1(database),
@@ -139,10 +145,10 @@ describe("the WorkstreamDO regional effect inbox", () => {
       WORKSPACE_DOS: workspaceSyncNamespace(),
     });
     try {
-      const older: WorkstreamRegionalEffect = {
+      const common: WorkstreamRegionalEffect = {
         kind: "directory_common",
-        title: "Older",
-        description: "Older description",
+        title: "Workspace-owned",
+        description: "This belongs in WorkspaceDO",
         preview: "",
         scope: "workspace",
         state: "running",
@@ -151,109 +157,16 @@ describe("the WorkstreamDO regional effect inbox", () => {
         completedAt: null,
         archivedAt: null,
       };
-      const newer: WorkstreamRegionalEffect = { ...older, title: "Newest", state: "completed" };
-      const newerMessage = message(newer, {
-        messageId: "common-v2",
-        partitionKey: "common",
-        sourceVersion: 2,
-      });
-      await applyWorkstreamRegionalEffect(env, newerMessage);
-      await applyWorkstreamRegionalEffect(env, message(older, {
+      const commonMessage = message(common, {
         messageId: "common-v1",
         partitionKey: "common",
         sourceVersion: 1,
-      }));
-
-      expect(database.prepare(
-        `SELECT version, title, state FROM workstream_directory_projections
-          WHERE workstream_id = ?`,
-      ).get(WORKSTREAM_ID)).toEqual({ version: 2, title: "Newest", state: "completed" });
+      });
+      await expect(applyWorkstreamRegionalEffect(env, commonMessage))
+        .rejects.toThrow("workspace_owned_effect_misdirected_to_regional_queue");
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM workstream_regional_effect_receipts`,
-      ).get()).toEqual({ count: 2 });
-
-      const userEffect: WorkstreamRegionalEffect = {
-        kind: "directory_user",
-        userId: USER_ID,
-        isParticipant: true,
-        unreadCount: 3,
-        youAreMentioned: true,
-        listable: true,
-      };
-      const userMessage = message(userEffect, {
-        messageId: "user-v1",
-        partitionKey: `user:${USER_ID}`,
-        sourceVersion: 1,
-      });
-      await expect(applyWorkstreamRegionalEffect(env, userMessage)).resolves.toEqual({
-        replayed: false,
-        notificationIntentId: null,
-      });
-      await expect(applyWorkstreamRegionalEffect(env, userMessage)).resolves.toEqual({
-        replayed: true,
-        notificationIntentId: null,
-      });
-      expect(database.prepare(
-        `SELECT unread_count, you_are_mentioned
-           FROM workstream_directory_user_projections
-          WHERE workstream_id = ? AND user_id = ?`,
-      ).get(WORKSTREAM_ID, USER_ID)).toEqual({ unread_count: 3, you_are_mentioned: 1 });
-
-      database.prepare(
-        `UPDATE workspace_members SET status = 'suspended'
-          WHERE workspace_id = ? AND user_id = ?`,
-      ).run(WORKSPACE_ID, USER_ID);
-      await applyWorkstreamRegionalEffect(env, message({
-        ...userEffect,
-        unreadCount: 4,
-      }, {
-        messageId: "user-v2-after-revocation",
-        partitionKey: `user:${USER_ID}`,
-        sourceVersion: 2,
-      }));
-      expect(database.prepare(
-        `SELECT COUNT(*) AS count FROM workstream_directory_user_projections
-          WHERE workstream_id = ? AND user_id = ?`,
-      ).get(WORKSTREAM_ID, USER_ID)).toEqual({ count: 0 });
-
-      const revokedMention = message({
-        kind: "mention_notification",
-        intentId: `mention:${MESSAGE_ID}:${USER_ID}`,
-        messageId: MESSAGE_ID,
-        recipientUserId: USER_ID,
-        authorUserId: AUTHOR_ID,
-        authorNameSnapshot: "Author",
-        workstreamTitleSnapshot: "Regional effects",
-        messageText: "No longer visible",
-        occurredAt: AT,
-      }, {
-        messageId: "notification-after-revocation",
-        partitionKey: `notification:${MESSAGE_ID}:${USER_ID}`,
-        sourceVersion: 3,
-      });
-      await expect(applyWorkstreamRegionalEffect(env, revokedMention)).resolves.toEqual({
-        replayed: false,
-        notificationIntentId: null,
-      });
-      expect(database.prepare(
-        `SELECT COUNT(*) AS count FROM workstream_notification_intents`,
       ).get()).toEqual({ count: 0 });
-
-      const objectId = createTestDurableObjectId("effect-ack-object");
-      const rooms = createCloudflareTestBinding<DurableObjectNamespace>({
-        idFromName: vi.fn(() => objectId),
-        get: vi.fn(() => ({ acknowledgeRegionalEffect: vi.fn(async () => undefined) })),
-      });
-      await acknowledgeWorkstreamRegionalEffect(createTestEnv({
-        APP_ENV: "test",
-        AVALON_REGION: "global",
-        DB: sqliteD1(database),
-        WORKSTREAM_DOS: rooms,
-      }), newerMessage);
-      expect(database.prepare(
-        `SELECT acknowledged_at IS NOT NULL AS acknowledged
-           FROM workstream_regional_effect_receipts WHERE message_id = ?`,
-      ).get(newerMessage.messageId)).toEqual({ acknowledged: 1 });
     } finally {
       database.close();
     }
@@ -313,19 +226,6 @@ describe("the WorkstreamDO regional effect inbox", () => {
         messageText: "Please review this",
         occurredAt: AT,
       };
-      const viewer: WorkstreamRegionalEffect = {
-        kind: "directory_user",
-        userId: USER_ID,
-        isParticipant: true,
-        unreadCount: 1,
-        youAreMentioned: true,
-        listable: true,
-      };
-      await applyWorkstreamRegionalEffect(env, message(viewer, {
-        messageId: `viewer:${MESSAGE_ID}:${USER_ID}`,
-        partitionKey: `user:${USER_ID}`,
-        sourceVersion: 1,
-      }));
       const applied = await applyWorkstreamRegionalEffect(env, message(mention, {
         messageId: `notification:${MESSAGE_ID}:${USER_ID}`,
         partitionKey: `notification:${MESSAGE_ID}:${USER_ID}`,

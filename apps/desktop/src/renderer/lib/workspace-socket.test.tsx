@@ -204,4 +204,85 @@ describe('WorkspaceSocketProvider', () => {
       text: command.payload.text,
     });
   });
+
+  it('pages the authoritative work-stream directory over the workspace socket', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.avalon.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    let listWorkstreams: ReturnType<typeof useWorkspaceSocket>['listWorkstreams'] | null = null;
+    function Probe(): null {
+      const workspaceSocket = useWorkspaceSocket();
+      useEffect(() => {
+        listWorkstreams = workspaceSocket.listWorkstreams;
+      }, [workspaceSocket.listWorkstreams]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Probe />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    let result: Promise<unknown> | null = null;
+    act(() => {
+      result = listWorkstreams!({ limit: 250, includeSystem: false });
+    });
+    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as {
+      type: string;
+      requestId: string;
+    };
+    expect(command).toMatchObject({ type: 'list_workstreams', limit: 250, includeSystem: false });
+    act(() => socket.message({
+      type: 'workspace_workstream_page',
+      requestId: command.requestId,
+      directoryVersion: 7,
+      nextCursor: null,
+      items: [{
+        id: '00000000-0000-7000-8000-000000000002',
+        workspaceId: '00000000-0000-7000-8000-000000000001',
+        title: 'Socket-owned directory',
+        titleStatus: 'settled',
+        objective: 'Served by WorkspaceDO SQL',
+        emailAddress: null,
+        originType: 'ad_hoc',
+        originLabel: null,
+        createdByUserId: '00000000-0000-7000-8000-000000000003',
+        automationSubscriptionId: null,
+        automationRunId: null,
+        plannedFor: null,
+        harnessStatus: 'running',
+        latestAttentionSequenceNumber: 4,
+        readThroughSequenceNumber: 2,
+        manualUnreadFromSequenceNumber: null,
+        manualUnreadGeneration: 0,
+        hasUnread: true,
+        youAreMentioned: true,
+        firstUnreadSequenceNumber: 3,
+        lastActivityAt: '2026-08-17T20:00:00.000Z',
+        createdAt: '2026-08-17T19:00:00.000Z',
+        updatedAt: '2026-08-17T20:00:00.000Z',
+        archivedAt: null,
+        scope: 'workspace',
+        systemKind: null,
+        nextPendingWakeup: null,
+        pinPosition: null,
+      }],
+    }));
+    await expect(result).resolves.toMatchObject({
+      nextCursor: null,
+      items: [{ id: '00000000-0000-7000-8000-000000000002', title: 'Socket-owned directory' }],
+    });
+  });
 });

@@ -1753,6 +1753,33 @@ export class SubstreamAgent extends DurableObject<Env> {
     };
   }
 
+  /**
+   * Synchronous creation/maintenance fence for effects already committed by
+   * this child. Normal mutations use the alarm; callers that are about to make
+   * a route discoverable must prove the parent has accepted every older fact.
+   */
+  async flushEffectsToWorkstreamDO(): Promise<number> {
+    await this.initialized;
+    let delivered = 0;
+    for (let batch = 0; batch < 400; batch += 1) {
+      // An explicit route fence overrides alarm backoff: a previous ambiguous
+      // RPC may have deferred the exact snapshot this caller has to prove.
+      const effects = this.objectStore.dueRegionalEffects(Number.MAX_SAFE_INTEGER, 100);
+      if (effects.length === 0) break;
+      await this.forwardEffectsToWorkstreamDO(effects);
+      for (const effect of effects) {
+        if (this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)) {
+          delivered += 1;
+        }
+      }
+    }
+    if (this.objectStore.dueRegionalEffects(Number.MAX_SAFE_INTEGER, 1).length > 0) {
+      throw new Error("substream_parent_effect_flush_limit");
+    }
+    await this.scheduleNextAlarm();
+    return delivered;
+  }
+
   override async alarm(): Promise<void> {
     await this.initialized;
     const pending = this.objectStore.pendingBlockDashboardRefresh();

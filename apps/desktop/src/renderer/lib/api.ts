@@ -231,17 +231,6 @@ export interface MentionIdentity {
   connectorType: string | null;
 }
 
-/**
- * How many work streams one sidebar page asks for.
- *
- * The service's ceiling, kept there rather than lowered now that the list pages:
- * a first page this size means the overwhelming majority of workspaces are one
- * request as they always were, and paging engages only where it was needed —
- * past the point a single page could hold the list at all.
- */
-const WORKSTREAM_PAGE_SIZE = 250;
-
-const wireWorkstreamPageSchema = CursorPageSchema(WireWorkstreamSchema);
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireMessagePageSchema = CursorPageSchema(WireMessageSchema).extend({
   newerCursor: z.string().nullable().default(null),
@@ -351,7 +340,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
   };
 }
 
-function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
+export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
   return {
     id: workstream.id,
     title: workstream.title,
@@ -1012,31 +1001,6 @@ export class AvalonApi {
       nextPendingWakeup: null,
       pinPosition: null,
     };
-  }
-
-  /**
-   * `includeSystem` widens what the sidebar shows, not who may see it: the API
-   * still only returns a system work stream to someone who participates in it.
-   */
-  /**
-   * One page of the work-stream list, with the cursor for the next one.
-   *
-   * `before` is the previous page's `nextCursor`, which the service derives from
-   * the paged rows alone — pinned and system work streams arrive appended to the
-   * first page and are excluded from the paging, so following the cursor never
-   * returns them twice.
-   */
-  async getWorkstreams(
-    signal?: AbortSignal,
-    includeSystem = false,
-    before?: string,
-  ): Promise<{ items: WorkstreamSummary[]; nextCursor: string | null }> {
-    const page = await this.request(
-      `/workstreams?limit=${WORKSTREAM_PAGE_SIZE}${includeSystem ? '&includeSystem=true' : ''}`
-      + `${before ? `&before=${encodeURIComponent(before)}` : ''}`,
-      { schema: wireWorkstreamPageSchema, signal },
-    );
-    return { items: page.items.map(mapWorkstreamSummary), nextCursor: page.nextCursor };
   }
 
   async getWorkOpportunities(signal?: AbortSignal): Promise<WorkOpportunity[]> {

@@ -21,7 +21,7 @@ mention, or changing what a connector can deliver to a person.
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
-| The work-stream list every surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` |
+| The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
 
 ## How it works
@@ -292,8 +292,8 @@ both.
   own access. Another member cannot open it knowing its id, because the brief
   inside is assembled from their private activity.
 - **`system_kind` — whether it is machinery.** This decides whether the row is
-  *listed*: off by default, and `GET /workstreams?includeSystem=true` asks for
-  it, which the desktop sends when Application → Developer → **Debug enabled**
+  *listed*: off by default, and the WorkspaceDO directory request's
+  `includeSystem: true` asks for it, which the desktop sends when Application → Developer → **Debug enabled**
   is on. It widens what is shown, never who may read it. A private work stream
   that is not machinery is protected exactly the same way.
 
@@ -340,25 +340,21 @@ should take, and the cascade already takes the messages, tool invocations and
 artifacts.
 
 **They are listed the same way everything else is**, paged by recency, with no
-cap and no separate section. `WorkstreamService.list` filters them out unless the
-caller passes `includeSystem`, and when it does they simply take their place in
+cap and no separate section. WorkspaceDO filters them out unless the caller
+passes `includeSystem`, and when it does they simply take their place in
 the order. With Debug enabled a daily digest therefore does take the newest
 pages — but the sidebar follows `nextCursor` as it scrolls, so that costs a
 scroll rather than the rows themselves. Lifting them out into a bounded set was
 tried and reverted: it put a second population inside one method, with its own
 cap and its own ordering, to solve a reachability problem that paging had already
 solved. See [`workstream-pinning.md`](workstream-pinning.md), which owns
-`GET /workstreams` paging.
+workspace-directory paging.
 
-What the accumulation does change is the index. The ordinary list — every listing
-outside Debug enabled, so very nearly all of them — carries
-`system_kind IS NULL`, and on the shared `workstreams_sidebar_recency_idx` it
-would step over each digest row newer than the last row it returns, a scan that
-grows with digest history for a result set that does not.
-`workstreams_sidebar_recency_ordinary_idx` is that clause as a partial index.
-There is deliberately no counterpart for machinery: a listing that asks for it
-asks for everything, so it has no predicate a partial index could serve, and it
-keeps the general one.
+What the accumulation does change is the index. The ordinary WorkspaceDO query
+uses `workspace_workstream_directory_list_idx` over archive, system kind,
+recency, and work-stream ID, so hidden digest rows do not require a fan-out or a
+scan of child databases. A listing that asks for machinery uses the same bounded
+local SQLite authority and simply widens its predicate.
 
 #### Delivery
 
@@ -472,9 +468,9 @@ cannot change a saved schedule, cursor, or settlement.
   `listActivityEventsForUser` and nowhere else. Storing recipients instead freezes
   the audience at write time, so someone added to a work stream today would never
   see what happened in it yesterday.
-- **After the DO authority switch, work-stream audience uses the versioned D1
-  directory-user projection**, not the frozen legacy participant table. System
-  work streams are excluded through the matching common projection. Before the
+- **After the DO authority switch, work-stream audience uses the versioned
+  WorkspaceDO viewer directory**, not the frozen legacy participant table.
+  System work streams are excluded through the matching common row. Before the
   switch, the legacy rows remain the authority for the same query.
 - **Recording involvement never grants visibility.** A target row outside the
   audience is stored and still filtered out on read.
@@ -532,7 +528,7 @@ first consumer. It does not own:
 | Which connector activity types are worth telling someone about | [`connectors.md`](connectors.md#declaring-what-a-digest-may-read), [`connector-digestibility.md`](connector-digestibility.md) |
 | The `activities` ingest table and the pipeline that fills it | [`connectors.md`](connectors.md) |
 | The agent loop a digest run rides on | [`agent-harness.md`](agent-harness.md) |
-| `GET /workstreams` paging, which digest work streams take their place in | [`workstream-pinning.md`](workstream-pinning.md) |
+| WorkspaceDO directory paging, which digest work streams take their place in | [`workstream-pinning.md`](workstream-pinning.md) |
 | The scheduler and its alarm | [`architecture.md`](architecture.md) |
 | The columns and their constraints | [`data-model.md`](data-model.md) |
 | The other consumer of a connector's `userDelivery` surface | [`workstream-email-addresses.md`](workstream-email-addresses.md) |
@@ -601,6 +597,26 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-18 — Activity audience and system-work-stream lists use WorkspaceDO
+
+**What changed:** Post-cutover activity-event audience resolution asks
+WorkspaceDO for visible work-stream IDs, and renderer list pagination/system-row
+filtering is served from the same object's authoritative directory. D1 retains
+the insertion-ordered `activity_events` log and digest schedules/deliveries, but
+not work-stream audience or sidebar projections.
+
+**Why:** The log is a relational workspace-wide workload, while participant
+visibility and list placement are work-stream product state. Keeping the former
+in D1 does not require copying the latter there.
+
+**Considered and rejected:** Reading every WorkstreamDO for each digest page and
+retaining D1 common/user projections only for audience joins. The former is
+unbounded; the latter restores a second authority solely to make one join local.
+
+**Consequences:** Activity reads perform one bounded WorkspaceDO visibility call
+before their D1 query. A WorkspaceDO outage fails the audience read closed;
+frozen legacy participant rows are never a post-cutover fallback.
 
 ### 2026-08-17 — WorkstreamDO events enter the regional activity log durably
 

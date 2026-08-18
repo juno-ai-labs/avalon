@@ -18,7 +18,9 @@ import {
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
+import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import {
   BASE_CONFIDENCE_FLOOR,
@@ -527,26 +529,34 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
   if (!activity.provider_resource_id && entityKeys.length === 0) return new Set();
 
   const authority = await readWorkstreamAuthorityControl(env);
-  const direct = await env.DB.prepare(authority.phase === "durable_object_open"
-    ? `SELECT DISTINCT watched.workstream_id
-       FROM resources resource
-       JOIN workstream_resource_link_projections watched
-         ON watched.resource_id = resource.id
-       JOIN workstream_directory_projections workstream
-         ON workstream.workstream_id = watched.workstream_id
-      WHERE resource.workspace_id = ?1
-        AND resource.connection_id = ?2
-        AND resource.provider = ?3
-        AND (
-          resource.provider_resource_id = ?4
-          OR EXISTS (
-            SELECT 1 FROM json_each(?5)
-            WHERE json_each.value = resource.provider_resource_id
-          )
-        )
-        AND workstream.archived_at IS NULL
-        AND watched.watch_enabled = 1`
-    : `SELECT DISTINCT wr.workstream_id
+  let directWorkstreamIds: string[];
+  if (authority.phase === "durable_object_open") {
+    const resources = await env.DB.prepare(
+      `SELECT id FROM resources
+        WHERE workspace_id = ?1 AND connection_id = ?2 AND provider = ?3
+          AND (provider_resource_id = ?4 OR EXISTS (
+            SELECT 1 FROM json_each(?5) WHERE json_each.value = provider_resource_id
+          ))`,
+    ).bind(
+      activity.workspace_id,
+      activity.connection_id,
+      activity.provider,
+      activity.provider_resource_id,
+      JSON.stringify(entityKeys),
+    ).all<{ id: string }>();
+    const workspace = await workspaceDirectory(env, activity.workspace_id);
+    const resolvedWorkstreamIds = new Set<string>();
+    for (const resource of resources.results ?? []) {
+      const resolved = await workspace.workstreamsForResource({
+        workspaceId: activity.workspace_id,
+        resourceId: resource.id,
+        watchedOnly: true,
+      });
+      for (const workstreamId of resolved.workstreamIds) resolvedWorkstreamIds.add(workstreamId);
+    }
+    directWorkstreamIds = [...resolvedWorkstreamIds];
+  } else {
+    const direct = await env.DB.prepare(`SELECT DISTINCT wr.workstream_id
        FROM resources r
        JOIN workstream_resources wr ON wr.resource_id = r.id
        JOIN workstreams w ON w.id = wr.workstream_id
@@ -564,22 +574,24 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
         AND w.archived_at IS NULL`)
     .bind(activity.workspace_id, activity.connection_id, activity.provider, activity.provider_resource_id, JSON.stringify(entityKeys))
     .all<{ workstream_id: string }>();
+    directWorkstreamIds = direct.results.map((row) => row.workstream_id);
+  }
 
   const routed = new Set<string>();
   const restrictedUserIds = restrictedActivityUserIds(activity);
-  for (const row of direct.results) {
+  for (const workstreamId of directWorkstreamIds) {
     if (restrictedUserIds != null) {
       let visible = false;
       for (const userId of restrictedUserIds) {
-        if (await isWorkstreamVisibleToUser(env, row.workstream_id, userId)) {
+        if (await isWorkstreamVisibleToUser(env, activity.workspace_id, workstreamId, userId)) {
           visible = true;
           break;
         }
       }
       if (!visible) continue;
     }
-    if (await injectActivityMessage(env, activity, row.workstream_id)) {
-      routed.add(row.workstream_id);
+    if (await injectActivityMessage(env, activity, workstreamId)) {
+      routed.add(workstreamId);
     }
   }
   return routed;
@@ -1067,43 +1079,21 @@ async function routeContextually(
   const restrictedUserIds = restrictedActivityUserIds(activity);
   const restrictedUserIdsJson = restrictedUserIds == null ? null : JSON.stringify(restrictedUserIds);
   const authority = await readWorkstreamAuthorityControl(env);
-  const candidates = await env.DB.prepare(authority.phase === "durable_object_open"
-    ? `SELECT w.workstream_id AS id, w.title, w.description AS objective, w.last_activity_at
-       FROM workstream_directory_projections w
-      WHERE w.workspace_id = ?1
-        AND w.archived_at IS NULL
-        AND w.state IN ('idle', 'running', 'interrupting', 'preparing_context',
-                        'waiting_capacity', 'needs_input', 'scheduled')
-        AND (?2 IS NULL OR EXISTS (
-          SELECT 1 FROM json_each(?2) visible_user
-           WHERE w.created_by_user_id = visible_user.value OR EXISTS (
-             SELECT 1 FROM workstream_directory_user_projections participant
-              WHERE participant.workstream_id = w.workstream_id
-                AND participant.user_id = visible_user.value
-                AND participant.is_participant = 1
-           )
-        ))
-        AND (
-          SELECT COUNT(*)
-            FROM workstream_suggestion_feedback_projections dismissed
-           WHERE dismissed.workstream_id = w.workstream_id
-             AND dismissed.source = 'contextual_routing'
-             AND dismissed.status = 'dismissed'
-             AND dismissed.resolved_at >= ?3
-             AND dismissed.resolved_at > COALESCE((
-               SELECT MAX(accepted.resolved_at)
-                 FROM workstream_suggestion_feedback_projections accepted
-                WHERE accepted.workstream_id = w.workstream_id
-                  AND accepted.source = 'contextual_routing'
-                  AND accepted.status = 'accepted'
-             ), '')
-        ) < ?4
-        AND NOT EXISTS (
-          SELECT 1 FROM json_each(?5) routed WHERE routed.value = w.workstream_id
-        )
-      ORDER BY w.last_activity_at DESC
-      LIMIT 12`
-    : `SELECT w.id, w.title, w.objective, w.last_activity_at
+  const candidates = authority.phase === "durable_object_open"
+    ? await (await workspaceDirectory(env, activity.workspace_id)).routingCandidates({
+      workspaceId: activity.workspace_id,
+      restrictedUserIds,
+      excludedWorkstreamIds: [...excludedWorkstreamIds],
+      feedbackSince: dismissalRunCutoff(),
+      dismissalLimit: DISMISSAL_RUN_LIMIT,
+      limit: 12,
+    }).then((result) => ({ results: result.items.map((item) => ({
+      id: item.workstreamId,
+      title: item.title,
+      objective: item.description,
+      last_activity_at: item.lastActivityAt,
+    })) }))
+    : await env.DB.prepare(`SELECT w.id, w.title, w.objective, w.last_activity_at
        FROM workstreams w
       WHERE w.workspace_id = ?1
         AND w.archived_at IS NULL
@@ -1211,20 +1201,19 @@ async function routeContextually(
 
 async function isWorkstreamVisibleToUser(
   env: Env,
+  workspaceId: string,
   workstreamId: string,
   userId: string
 ): Promise<boolean> {
   const authority = await readWorkstreamAuthorityControl(env);
-  const visible = await env.DB.prepare(authority.phase === "durable_object_open"
-    ? `SELECT 1
-       FROM workstream_directory_projections workstream
-       LEFT JOIN workstream_directory_user_projections viewer
-         ON viewer.workstream_id = workstream.workstream_id AND viewer.user_id = ?2
-      WHERE workstream.workstream_id = ?1
-        AND workstream.archived_at IS NULL
-        AND (workstream.scope = 'workspace' OR viewer.is_participant = 1)
-      LIMIT 1`
-    : `SELECT 1
+  if (authority.phase === "durable_object_open") {
+    return (await workspaceDirectory(env, workspaceId)).canReadWorkstream({
+      workspaceId,
+      workstreamId,
+      userId,
+    });
+  }
+  const visible = await env.DB.prepare(`SELECT 1
        FROM workstreams w
       WHERE w.id = ?1
         AND (w.created_by_user_id = ?2 OR EXISTS (
@@ -1235,6 +1224,15 @@ async function isWorkstreamVisibleToUser(
     .bind(workstreamId, userId)
     .first();
   return Boolean(visible);
+}
+
+function workspaceDirectory(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId),
+  );
 }
 
 export const __testing = {
