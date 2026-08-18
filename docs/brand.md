@@ -6,9 +6,12 @@ posts, error messages, sales notes — sounds and looks like it came from one
 author with one point of view, no matter who or what wrote it, or when.
 
 Naming status: the product currently ships as Avalon; "Bench" is the leading
-candidate and this guide is written as if it were final. If the name changes,
-the positioning, core idea, and character sections survive intact; the lexicon,
-wordplay policy, and any name-dependent lines are rewritten.
+candidate and this guide is written as if it were final. Until the rename
+ships, "Bench" is the name in brand and marketing work produced from this
+guide, while "Avalon" stays correct in engineering documents, code, and
+package names. If the name changes, the positioning, core idea, and character
+sections survive intact; the lexicon, wordplay policy, and any name-dependent
+lines are rewritten.
 
 ## How to use this document
 
@@ -31,7 +34,7 @@ wordplay policy, and any name-dependent lines are rewritten.
 descriptor; removing any one of the three words loses meaning. People do their
 AI work in Bench the way they do it today in ChatGPT or Claude, with one
 difference that is the whole product: the work is on a shared surface.
-Colleagues enter the stream itself — the context, the iterations, the
+Colleagues enter the workstream itself — the context, the iterations, the
 reasoning — not a pasted final answer.
 
 **The problem it exists for.** Valuable knowledge work now happens inside LLM
@@ -56,6 +59,9 @@ workload — recruiting, GTM, marketing, IT, ops, finance. Two tiers matter:
 - **The spearhead** — the curiosity-driven builder who will bang their head
   against a wall for a payoff, adopts first, and mandates the tool for
   colleagues ("if you get a SAFE note, you're uploading it here, full stop").
+  The spearhead is also the brand's standing bar: **the spearhead test** —
+  would the spearhead paste this line into the team Slack without apologizing
+  for it? Anything that fails is rewritten, however clever it is.
 - **The AI-forward colleague** — uses AI daily but doesn't self-generate
   automations or think in workflows. Thinks in tasks. Smart, not less capable
   than an engineer — just never trained to automate, because no trade outside
@@ -106,7 +112,7 @@ what the name means.
 The before: everyone's best thinking happens alone, in a private chat tab.
 What the team gets is a pasted final answer with the reasoning amputated, and
 a sidebar of vaguely-titled sessions nobody can navigate. The after: the work
-sits on the bench. A colleague opens the stream, sees how the work got to
+sits on the bench. A colleague opens the workstream, sees how the work got to
 where it is, and takes it the rest of the way — no copy-paste, and no asking
 for context that's already there.
 
@@ -308,10 +314,17 @@ room and it doesn't need a headcount. Do not use "crew" in any copy; see the
 
 Functional, descriptive names, lowercase seriousness: *workstreams*, *runs*,
 *handoffs*, *projects*. No cute names, no portmanteaus, no "-ify", no mascots
-— and **no "AI-" prefixes on features**: labeling a feature "AI-powered"
-measurably lowers purchase intent for high-stakes products (Washington State
-University study), and it violates 4.2 besides — it's a claim where a
-functional name would be a demonstration. "AI" earns its place in exactly one
+— and **no "AI-" prefixes on features**: in the WSU-led study behind this
+rule, disclosing "AI" in a product description lowered emotional trust and
+purchase intent, with the effect strongest for high-risk purchases (Cicek,
+Gursoy & Lu, "Adverse impacts of revealing the presence of 'Artificial
+Intelligence (AI)' technology in product and service descriptions on purchase
+intentions," *Journal of Hospitality Marketing & Management* 34(1), 2024,
+[doi:10.1080/19368623.2024.2368040](https://doi.org/10.1080/19368623.2024.2368040)).
+The study covers descriptions rather than feature names specifically, so the
+durable reason for the ban is rule 4.2 — an "AI-powered" label is a claim
+where a functional name would be a demonstration — with the study as
+supporting evidence. "AI" earns its place in exactly one
 spot: the category descriptor, "collaborative AI workspace", where it
 self-selects the audience we want.
 
@@ -362,7 +375,7 @@ joke do product work instead of just being a joke:
 > "The whole candidate pipeline."
 > "Every investor update in the building."
 
-**Second-tier lines** — "You don't need a spotter", "show me how much you
+**Second-tier lines** — "You don't need a spotter," "show me how much you
 bench" — usable in campaigns at the copywriter's judgment, subject to the
 spearhead test.
 
@@ -438,9 +451,11 @@ What this rules out: rounded-terminal "friendly startup" faces (Nunito,
 Quicksand) and techno/sci-fi faces (Eurostile, Orbitron).
 
 **Imagery:** measured isometric drawings in the tradition of early-1900s
-architectural survey work — the canonical reference is the isometric cutaway
-of St Paul's Cathedral, which shows the outside of the thing and its inner
-workings in one image. That is proof-of-work as a drawing, and it is the
+architectural survey work — the canonical reference is the 1920s measured
+isometric cutaway of St Paul's Cathedral, drawn by R. B. Brook-Greaves in
+collaboration with W. Godfrey Allen under Mervyn Macartney, Surveyor to the
+Fabric, which shows the outside of the thing and its inner workings in one
+image. That is proof-of-work as a drawing, and it is the
 house illustration style: precise linework, cutaways and exploded views,
 simple solids on an isometric grid. Real product screenshots show real named
 work (an actual pipeline report, an actual draft with flags on it). Never
