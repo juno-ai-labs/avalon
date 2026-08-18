@@ -1665,6 +1665,13 @@ export class AvalonApi {
     });
   }
 
+  getHyperSightBlockSocketTicket(id: string, blockId: string): Promise<SocketTicket> {
+    return this.request(
+      `/workstreams/${encodeURIComponent(id)}/hypersight/blocks/${encodeURIComponent(blockId)}/socket`,
+      { schema: socketTicketSchema },
+    );
+  }
+
   getTranscriptionSocketTicket(): Promise<SocketTicket> {
     return this.request('/realtime/transcription/socket', { schema: socketTicketSchema });
   }

@@ -53,12 +53,13 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
-  description: "workspace identity and one-time command socket tickets",
+  description: "workspace control-plane authority and realtime synchronization",
   statements: [
     `CREATE TABLE workspace_identity (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       workspace_id TEXT NOT NULL UNIQUE,
       region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
+      placement_affinity TEXT NOT NULL CHECK (placement_affinity IN ('wnam', 'enam', 'weur', 'eeur')),
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     ) STRICT`,
@@ -72,11 +73,6 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ) STRICT`,
     `CREATE INDEX socket_ticket_receipts_expiry_idx
       ON socket_ticket_receipts(expires_at, ticket_id)`,
-  ],
-}, {
-  version: 2,
-  description: "workspace-wide sync feed and workspace-scoped socket tickets",
-  statements: [
     `CREATE TABLE workspace_sync_events (
       version INTEGER PRIMARY KEY AUTOINCREMENT,
       topics_json TEXT NOT NULL CHECK (json_valid(topics_json) AND length(topics_json) <= 4096),
@@ -90,13 +86,6 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ) STRICT`,
     `CREATE INDEX workspace_socket_ticket_receipts_expiry_idx
       ON workspace_socket_ticket_receipts(expires_at, ticket_id)`,
-  ],
-}, {
-  version: 3,
-  description: "immutable workspace Durable Object placement affinity",
-  statements: [
-    `ALTER TABLE workspace_identity ADD COLUMN placement_affinity TEXT
-      CHECK (placement_affinity IN ('wnam', 'enam', 'weur', 'eeur'))`,
     `CREATE TRIGGER workspace_identity_placement_valid_insert
       BEFORE INSERT ON workspace_identity
       WHEN NEW.placement_affinity IS NULL

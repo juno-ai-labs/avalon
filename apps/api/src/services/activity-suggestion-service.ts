@@ -43,19 +43,10 @@ export async function publishSubstreamAgentEvent(
     workspaceId,
     substreamAgentName(region, workspaceId, workstreamId),
   );
-  const response = await agent.fetch(
-    "https://substream-agent/internal/events",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-avalon-workspace-id": workspaceId,
-        "x-avalon-workstream-id": workstreamId,
-      },
-      body: JSON.stringify({ event }),
-    },
-  );
-  if (!response.ok) throw new Error(`workstream_event_rejected:${response.status}`);
+  const response = await agent.publishEvent({ workspaceId, workstreamId, event });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`workstream_event_rejected:${response.status}`);
+  }
 }
 
 export async function createActivitySuggestion(

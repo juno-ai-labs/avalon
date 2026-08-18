@@ -31,7 +31,7 @@ import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
-import { messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
+import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -51,6 +51,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
+import { useHyperSightBlockSockets } from '../lib/use-hypersight-block-sockets';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   insertMessage,
@@ -61,8 +62,8 @@ import {
 } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
-import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
@@ -658,6 +659,44 @@ export function initialTranscriptAnchorIndex(
   return firstUnreadIndex < 0 ? null : Math.max(0, firstUnreadIndex - 1);
 }
 
+export function shouldLoadEarlierFromScroll(
+  scrollTop: number,
+  hasEarlierCursor: boolean,
+  loading: boolean,
+): boolean {
+  return scrollTop < 160 && hasEarlierCursor && !loading;
+}
+
+export function preservedPrependScrollTop(
+  previousScrollTop: number,
+  previousScrollHeight: number,
+  nextScrollHeight: number,
+): number {
+  return previousScrollTop + Math.max(0, nextScrollHeight - previousScrollHeight);
+}
+
+export function transcriptPageCursor(
+  page: MessagePage,
+  requestedCursor: string,
+  direction: 'before' | 'after',
+): string | null {
+  const nextCursor = direction === 'before' ? page.nextCursor : page.newerCursor;
+  if (nextCursor === requestedCursor) {
+    throw new Error('Avalon received a repeated transcript cursor.');
+  }
+  return nextCursor;
+}
+
+export function mergeTranscriptPage(
+  current: Message[] | undefined,
+  page: MessagePage,
+): Message[] {
+  return visibleTranscriptMessages(page.items).reduce(
+    (merged, message) => insertMessage(merged, message),
+    current ?? [],
+  );
+}
+
 export function highestVisibleAttentionSequence(
   transcript: Message[],
   visibleIndexes: number[],
@@ -735,6 +774,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
   const loadingOlderRef = useRef(false);
   const loadingNewerRef = useRef(false);
+  const pendingOlderAfterReconnectRef = useRef(false);
+  const pendingNewerAfterReconnectRef = useRef(false);
+  const pendingJumpAfterReconnectRef = useRef(false);
   const initialPositionedWorkstreamRef = useRef<string | null>(null);
   const readAckTimerRef = useRef<number | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
@@ -766,6 +808,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     activeWorkstreamIdRef.current = id;
     loadingOlderRef.current = false;
     loadingNewerRef.current = false;
+    pendingOlderAfterReconnectRef.current = false;
+    pendingNewerAfterReconnectRef.current = false;
+    pendingJumpAfterReconnectRef.current = false;
     initialPositionedWorkstreamRef.current = null;
     readAckInFlightRef.current = null;
     if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
@@ -902,6 +947,12 @@ export function WorkstreamScreen(): React.JSX.Element {
       blockCount: telemetryCountBucket(hypersight.data.blocks.length),
     });
   }, [hypersight.data, hypersightOpen, id]);
+  const hypersightConnectionStates = useHyperSightBlockSockets(
+    api,
+    id,
+    hypersight.data?.blocks.map((block) => block.id) ?? [],
+    Boolean(api && id && hypersightOpen && hypersight.isSuccess),
+  );
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -927,6 +978,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     workstream.isSuccess && messages.isSuccess,
   );
   const socketState = socketConnection.state;
+  const loadSocketMessagePage = socketConnection.loadMessagePage;
   const transcript = messages.data ?? [];
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
@@ -951,6 +1003,12 @@ export function WorkstreamScreen(): React.JSX.Element {
   const loadOlderMessages = useCallback(async (): Promise<void> => {
     const before = queryClient.getQueryData<string | null>(['messages-cursor', id]);
     if (!api || !before || loadingOlderRef.current) return;
+    if (socketState !== 'connected') {
+      pendingOlderAfterReconnectRef.current = true;
+      setOlderMessagesError(undefined);
+      return;
+    }
+    pendingOlderAfterReconnectRef.current = false;
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     setOlderMessagesError(undefined);
@@ -958,60 +1016,81 @@ export function WorkstreamScreen(): React.JSX.Element {
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
     try {
-      const page = await api.getMessagePage(id, { before });
+      const page = await loadSocketMessagePage({ before });
       if (activeWorkstreamIdRef.current !== id) return;
-      if (page.nextCursor === before) throw new Error('Avalon received a repeated transcript cursor.');
-      const visibleItems = visibleTranscriptMessages(page.items);
+      const nextCursor = transcriptPageCursor(page, before, 'before');
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
-      queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
+        mergeTranscriptPage(current, page));
+      queryClient.setQueryData(['messages-cursor', id], nextCursor);
       window.requestAnimationFrame(() => {
         const element = transcriptRef.current;
         if (!element) return;
-        element.scrollTop = previousScrollTop + Math.max(0, element.scrollHeight - previousScrollHeight);
+        element.scrollTop = preservedPrependScrollTop(
+          previousScrollTop,
+          previousScrollHeight,
+          element.scrollHeight,
+        );
       });
     } catch (error) {
+      if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
+        pendingOlderAfterReconnectRef.current = true;
+        return;
+      }
       setOlderMessagesError(error instanceof Error ? error.message : 'Earlier messages could not be loaded.');
     } finally {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
-  }, [api, id, queryClient]);
+  }, [api, id, loadSocketMessagePage, queryClient, socketState]);
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
     const after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
     if (!api || !after || loadingNewerRef.current) return;
+    if (socketState !== 'connected') {
+      pendingNewerAfterReconnectRef.current = true;
+      setOlderMessagesError(undefined);
+      return;
+    }
+    pendingNewerAfterReconnectRef.current = false;
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
-      const page = await api.getMessagePage(id, { after });
+      const page = await loadSocketMessagePage({ after });
       if (activeWorkstreamIdRef.current !== id) return;
-      if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
-      const visibleItems = visibleTranscriptMessages(page.items);
+      const newerCursor = transcriptPageCursor(page, after, 'after');
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
-      queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
+        mergeTranscriptPage(current, page));
+      queryClient.setQueryData(['messages-newer-cursor', id], newerCursor);
     } catch (error) {
+      if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
+        pendingNewerAfterReconnectRef.current = true;
+        return;
+      }
       setOlderMessagesError(error instanceof Error ? error.message : 'Newer messages could not be loaded.');
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, queryClient]);
+  }, [api, id, loadSocketMessagePage, queryClient, socketState]);
 
   const jumpToLatest = useCallback(async (): Promise<void> => {
     if (!api || loadingNewerRef.current) return;
+    if (socketState !== 'connected') {
+      pendingJumpAfterReconnectRef.current = true;
+      setOlderMessagesError(undefined);
+      return;
+    }
+    pendingJumpAfterReconnectRef.current = false;
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
       let after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
       while (after) {
-        const page = await api.getMessagePage(id, { after });
+        const page = await loadSocketMessagePage({ after });
         if (activeWorkstreamIdRef.current !== id) return;
-        if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
-        const visibleItems = visibleTranscriptMessages(page.items);
+        const newerCursor = transcriptPageCursor(page, after, 'after');
         queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-          visibleItems.reduce((merged, message) => insertMessage(merged, message), current ?? []));
-        after = page.newerCursor;
+          mergeTranscriptPage(current, page));
+        after = newerCursor;
         queryClient.setQueryData(['messages-newer-cursor', id], after);
       }
       setAtBottom(true);
@@ -1020,11 +1099,32 @@ export function WorkstreamScreen(): React.JSX.Element {
         transcriptVirtualizer.scrollToIndex(Math.max(0, current.length - 1), { align: 'end', behavior: 'smooth' });
       });
     } catch (error) {
+      if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
+        pendingJumpAfterReconnectRef.current = true;
+        return;
+      }
       setOlderMessagesError(error instanceof Error ? error.message : 'The latest messages could not be loaded.');
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, queryClient, transcriptVirtualizer]);
+  }, [api, id, loadSocketMessagePage, queryClient, socketState, transcriptVirtualizer]);
+
+  useEffect(() => {
+    if (socketState !== 'connected') return;
+    if (pendingJumpAfterReconnectRef.current) {
+      pendingJumpAfterReconnectRef.current = false;
+      void jumpToLatest();
+      return;
+    }
+    if (pendingNewerAfterReconnectRef.current) {
+      pendingNewerAfterReconnectRef.current = false;
+      void loadNewerMessages();
+    }
+    if (pendingOlderAfterReconnectRef.current) {
+      pendingOlderAfterReconnectRef.current = false;
+      void loadOlderMessages();
+    }
+  }, [jumpToLatest, loadNewerMessages, loadOlderMessages, socketState]);
 
   const addParticipant = useMutation({
     mutationFn: (member: WorkspaceMember) => api!.addParticipant(id, member.id),
@@ -1434,6 +1534,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         >
           {hypersight.data ? (
             <HyperSightPanel
+              connectionStates={hypersightConnectionStates}
               error={updateHyperSight.error?.message ?? hypersight.error?.message}
               hypersight={hypersight.data}
               onChange={(blocks) => updateHyperSight.mutateAsync(blocks).then(() => undefined)}
@@ -1461,7 +1562,11 @@ export function WorkstreamScreen(): React.JSX.Element {
           const element = event.currentTarget;
           const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
           setAtBottom(nearBottom && newerMessageCursor.data === null);
-          if (element.scrollTop < 160 && messageCursor.data && !loadingOlderRef.current) {
+          if (shouldLoadEarlierFromScroll(
+            element.scrollTop,
+            Boolean(messageCursor.data),
+            loadingOlderRef.current,
+          )) {
             void loadOlderMessages();
           }
           if (nearBottom && newerMessageCursor.data && !loadingNewerRef.current) {
@@ -1474,9 +1579,15 @@ export function WorkstreamScreen(): React.JSX.Element {
         <div className="transcript-column">
           {messageCursor.data && (
             <div className="transcript-history-control">
-              <Button disabled={loadingOlder} onClick={() => void loadOlderMessages()}>
-                {loadingOlder ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <ArrowUp aria-hidden="true" size={14} />}
-                {loadingOlder ? 'Loading earlier messages…' : 'Load earlier messages'}
+              <Button disabled={loadingOlder || socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
+                {loadingOlder || socketState !== 'connected'
+                  ? <LoaderCircle aria-hidden="true" className="spin" size={14} />
+                  : <ArrowUp aria-hidden="true" size={14} />}
+                {loadingOlder
+                  ? 'Loading earlier messages…'
+                  : socketState !== 'connected'
+                    ? 'Waiting to reconnect…'
+                    : 'Load earlier messages'}
               </Button>
             </div>
           )}
@@ -1526,7 +1637,11 @@ export function WorkstreamScreen(): React.JSX.Element {
               })}
             </div>
           )}
-          {runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
+          {socketConnection.activeCompaction
+            && detail.harnessStatus === 'running'
+            && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
+            ? <AgentCompactionIndicator />
+            : runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}

@@ -1,7 +1,9 @@
 import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  SubstreamDirectSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type WorkspaceSocketClientEvent,
   type PersonalSocketEvent,
@@ -32,8 +34,9 @@ import {
   isSameLogicalMessage,
   removeTranscriptMessage,
   upsertTranscriptMessage,
+  visibleTranscriptMessages,
 } from './transcript';
-import type { HarnessStatus, HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HarnessStatus, HyperSight, HyperSightPreference, Message, MessagePage, WorkstreamDetail, WorkstreamSummary } from './types';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkspaceSocket } from './workspace-socket';
@@ -59,14 +62,21 @@ export interface CreateWorkstreamMessageInput {
 
 export interface WorkstreamSocketConnection {
   state: SocketState;
+  activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<Message>;
+  loadMessagePage(input: LoadWorkstreamMessagePageInput): Promise<MessagePage>;
 }
+
+export type LoadWorkstreamMessagePageInput =
+  | { before: string; limit?: number }
+  | { after: string; limit?: number };
 
 type CreateMessageSocketCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 
 const HEARTBEAT_BASE_MS = 45_000;
 const HEARTBEAT_JITTER_MS = 10_000;
 const PONG_TIMEOUT_MS = 15_000;
+const MESSAGE_PAGE_TIMEOUT_MS = 15_000;
 export const SOCKET_STABLE_CONNECTION_MS = 30_000;
 
 export function socketHeartbeatDelay(random = Math.random): number {
@@ -518,6 +528,7 @@ export function useWorkstreamSocket(
   useWorkstreamControlSocket(api, workstreamId, enabled);
   const resumeState = useWorkstreamSocketResumeState(workstreamId);
   const [state, setState] = useState<SocketState>('idle');
+  const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
   const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<Message>>(
     () => Promise.reject(new ApiError(
@@ -530,13 +541,30 @@ export function useWorkstreamSocket(
     (input: CreateWorkstreamMessageInput): Promise<Message> => createMessageRef.current(input),
     [],
   );
+  const loadMessagePageRef = useRef<(input: LoadWorkstreamMessagePageInput) => Promise<MessagePage>>(
+    () => Promise.reject(new ApiError(
+      'The work stream is not ready to load messages.',
+      409,
+      'workstream_socket_unavailable',
+    )),
+  );
+  const loadMessagePage = useCallback(
+    (input: LoadWorkstreamMessagePageInput): Promise<MessagePage> => loadMessagePageRef.current(input),
+    [],
+  );
 
   useEffect(() => {
     attempts.current = 0;
+    setActiveCompaction(null);
     if (!api || !enabled) {
       setState('idle');
       createMessageRef.current = () => Promise.reject(new ApiError(
         'The work stream is not ready to receive messages.',
+        409,
+        'workstream_socket_unavailable',
+      ));
+      loadMessagePageRef.current = () => Promise.reject(new ApiError(
+        'The work stream is not ready to load messages.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -558,6 +586,11 @@ export function useWorkstreamSocket(
     let canonicalResyncTarget: number | null = null;
     let canonicalResyncActiveStreams: readonly ActiveStreamCheckpoint[] = [];
     let canonicalReconcileGeneration = 0;
+    const pendingMessagePages = new Map<string, {
+      timeout: number;
+      resolve: (page: MessagePage) => void;
+      reject: (error: Error) => void;
+    }>();
     const streamCursors = resumeState.streamCursors;
     const isOffline = (): boolean => navigator.onLine === false;
 
@@ -592,6 +625,51 @@ export function useWorkstreamSocket(
       return createWorkspaceMessage(command);
     };
 
+    const rejectPendingMessagePages = (error: Error): void => {
+      for (const pending of pendingMessagePages.values()) {
+        window.clearTimeout(pending.timeout);
+        pending.reject(error);
+      }
+      pendingMessagePages.clear();
+    };
+
+    loadMessagePageRef.current = (input): Promise<MessagePage> => {
+      if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new ApiError(
+          'The work stream connection is not ready to load messages.',
+          409,
+          'workstream_socket_unavailable',
+        ));
+      }
+      const requestId = uuidV7();
+      const cursor = 'before' in input
+        ? { direction: 'before' as const, value: input.before }
+        : { direction: 'after' as const, value: input.after };
+      return new Promise<MessagePage>((resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+          pendingMessagePages.delete(requestId);
+          reject(new ApiError(
+            'The message page request timed out.',
+            503,
+            'message_page_timeout',
+          ));
+        }, MESSAGE_PAGE_TIMEOUT_MS);
+        pendingMessagePages.set(requestId, { timeout, resolve, reject });
+        try {
+          socket!.send(JSON.stringify({
+            type: 'load_message_page',
+            requestId,
+            limit: input.limit ?? 200,
+            cursor,
+          }));
+        } catch (error) {
+          window.clearTimeout(timeout);
+          pendingMessagePages.delete(requestId);
+          reject(error instanceof Error ? error : new Error('The message page request could not be sent.'));
+        }
+      });
+    };
+
     const syncHyperSightQueries = (): Promise<unknown> => Promise.all([
       queryClient.invalidateQueries({ queryKey: ['hypersight', workstreamId], exact: true }),
       queryClient.invalidateQueries({ queryKey: ['hypersight-preference', workstreamId], exact: true }),
@@ -618,6 +696,10 @@ export function useWorkstreamSocket(
           return;
         }
         const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
+        setActiveCompaction((current) => mayStillEmitRealtime
+          && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
+          ? current
+          : null);
         queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
           mayStillEmitRealtime
@@ -647,6 +729,7 @@ export function useWorkstreamSocket(
 
     const applyEvent = (event: ServerSocketEvent): void => {
       if (event.type === 'resync_required') {
+        setActiveCompaction(event.activeCompaction);
         canonicalResyncActiveStreams = event.reason === 'history_unavailable'
           ? event.activeStreams
           : [];
@@ -677,10 +760,13 @@ export function useWorkstreamSocket(
       }
 
       if (event.type === 'snapshot') {
+        setActiveCompaction(event.activeCompaction);
         queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
         const downloaded = event.messageFeed.items.map(mapMessage);
         queryClient.setQueryData<Message[]>(['messages', workstreamId],
           applyActiveStreamCheckpoints(downloaded, event.activeStreams, workstreamId, streamCursors));
+        queryClient.setQueryData(['messages-cursor', workstreamId], event.messageFeed.nextCursor);
+        queryClient.setQueryData(['messages-newer-cursor', workstreamId], event.messageFeed.newerCursor);
         // The direct socket snapshot is canonical for the newest page. REST is
         // now used only to page older history or recover after resync_required.
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
@@ -748,6 +834,7 @@ export function useWorkstreamSocket(
           applyStreamingSocketEvent(current, event, workstreamId, streamCursors));
       } else if (event.type === 'harness_status_changed') {
         applyHarnessStatus(queryClient, workstreamId, normalizeHarnessStatus(event.status));
+        if (event.status !== 'running') setActiveCompaction(null);
         if (
           event.status === 'running'
           || event.status === 'needs_input'
@@ -757,6 +844,15 @@ export function useWorkstreamSocket(
         ) {
           void reconcileCanonicalState();
         }
+      } else if (event.type === 'compaction_started') {
+        setActiveCompaction(event.compaction);
+      } else if (event.type === 'compaction_finished') {
+        setActiveCompaction((current) => current
+          && current.harnessRunId === event.harnessRunId
+          && current.attemptId === event.attemptId
+          && current.compactionIndex === event.compactionIndex
+          ? null
+          : current);
       } else if (event.type === 'tool_started' || event.type === 'tool_completed' || event.type === 'tool_failed') {
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
           const messageId = `tool-${event.invocation.id}`;
@@ -897,7 +993,13 @@ export function useWorkstreamSocket(
       accessRevoked = true;
       resumeState.lastSequence = 0;
       streamCursors.clear();
+      setActiveCompaction(null);
       clearReconnectTimer();
+      rejectPendingMessagePages(new ApiError(
+        'The work stream is no longer available.',
+        404,
+        'workstream_access_revoked',
+      ));
       setState('unavailable');
       queryClient.removeQueries({ queryKey: ['messages', workstreamId], exact: true });
       setCachedWorkstreams(queryClient, (current) =>
@@ -946,6 +1048,10 @@ export function useWorkstreamSocket(
           if (closedByEffect) return;
           queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
           const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
+          setActiveCompaction((current) => mayStillEmitRealtime
+            && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
+            ? current
+            : null);
           const validatedActiveStreams = mayStillEmitRealtime
             ? canonicalResyncActiveStreams.filter((checkpoint) =>
                 checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
@@ -1012,6 +1118,27 @@ export function useWorkstreamSocket(
           }
           try {
             const parsed: unknown = JSON.parse(String(messageEvent.data));
+            const directEvent = SubstreamDirectSocketEventSchema.safeParse(parsed);
+            if (directEvent.success) {
+              const pending = pendingMessagePages.get(directEvent.data.requestId);
+              if (!pending) return;
+              pendingMessagePages.delete(directEvent.data.requestId);
+              window.clearTimeout(pending.timeout);
+              if (directEvent.data.type === 'message_page_error') {
+                pending.reject(new ApiError(
+                  directEvent.data.message,
+                  503,
+                  directEvent.data.code,
+                ));
+              } else {
+                pending.resolve({
+                  items: visibleTranscriptMessages(directEvent.data.page.items.map(mapMessage)),
+                  nextCursor: directEvent.data.page.nextCursor,
+                  newerCursor: directEvent.data.page.newerCursor,
+                });
+              }
+              return;
+            }
             const event = ServerSocketEventSchema.safeParse(parsed);
             if (event.success) {
               applyEvent(event.data);
@@ -1023,13 +1150,19 @@ export function useWorkstreamSocket(
               return;
             }
           } catch {
-            // Invalid frames are ignored; canonical REST state remains authoritative.
+            // Invalid frames are ignored; the next object snapshot or requested
+            // page remains authoritative and can replace this transport gap.
           }
         });
         nextSocket.addEventListener('close', (closeEvent) => {
           if (socket !== nextSocket) return;
           clearHeartbeat();
           clearStabilityTimer();
+          rejectPendingMessagePages(new ApiError(
+            'The work stream connection closed while loading messages.',
+            503,
+            'workstream_socket_closed',
+          ));
           socket = null;
           if (closeEvent.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             handleAccessRevoked();
@@ -1079,6 +1212,16 @@ export function useWorkstreamSocket(
         409,
         'workstream_socket_unavailable',
       ));
+      loadMessagePageRef.current = () => Promise.reject(new ApiError(
+        'The work stream is no longer available.',
+        409,
+        'workstream_socket_unavailable',
+      ));
+      rejectPendingMessagePages(new ApiError(
+        'The work stream changed while loading messages.',
+        409,
+        'workstream_socket_unavailable',
+      ));
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       clearReconnectTimer();
@@ -1088,5 +1231,5 @@ export function useWorkstreamSocket(
     };
   }, [api, createWorkspaceMessage, enabled, queryClient, resumeState, workstreamId]);
 
-  return { state, createMessage };
+  return { state, activeCompaction, createMessage, loadMessagePage };
 }

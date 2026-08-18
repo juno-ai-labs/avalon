@@ -25,12 +25,15 @@ const RUN_ID = "00000000-0000-7000-8000-0000000000a3";
 const MESSAGE_ID = "00000000-0000-7000-8000-0000000000a4";
 const RECIPIENT_ID = "00000000-0000-7000-8000-0000000000a6";
 const AUTHOR_ID = "00000000-0000-7000-8000-0000000000a7";
+const ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a8";
+const RECOVERED_ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a9";
 
 const EXPECTED_TABLES = [
   "_data_migrations",
   "_migration_command_receipts",
   "_runtime_statement_changes",
   "_sql_schema_migrations",
+  "active_agent_compaction",
   "active_output_chunks",
   "active_output_turns",
   "activity_delivery_receipts",
@@ -103,6 +106,9 @@ describe("the Workstream Durable Object relational schema", () => {
     try {
       applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
       applyWorkstreamObjectSchema(storage, "worker-two", 2_000);
+
+      expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS).toHaveLength(1);
+      expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS[0]?.version).toBe(1);
 
       const tables = database.prepare(
         `SELECT name FROM sqlite_schema
@@ -570,6 +576,51 @@ describe("the Workstream Durable Object relational schema", () => {
         `SELECT MAX(byte_length) AS bytes FROM active_output_chunks`,
       ).get()).toEqual({ bytes: 60 * 1024 });
 
+      store.commitRealtimeEvent(ServerSocketEventSchema.parse({
+        type: "compaction_started",
+        sequence: 0,
+        occurredAt: at,
+        compaction: {
+          harnessRunId: RUN_ID,
+          attemptId: ATTEMPT_ID,
+          compactionIndex: 1,
+          trigger: "auto",
+          startedAt: at,
+        },
+      }));
+      expect(store.activeCompaction()).toEqual({
+        harnessRunId: RUN_ID,
+        attemptId: ATTEMPT_ID,
+        compactionIndex: 1,
+        trigger: "auto",
+        startedAt: at,
+      });
+      store.commitRealtimeEvent(ServerSocketEventSchema.parse({
+        type: "compaction_started",
+        sequence: 0,
+        occurredAt: at,
+        compaction: {
+          harnessRunId: RUN_ID,
+          attemptId: RECOVERED_ATTEMPT_ID,
+          compactionIndex: 1,
+          trigger: "manual",
+          startedAt: at,
+        },
+      }));
+      store.commitRealtimeEvent(ServerSocketEventSchema.parse({
+        type: "compaction_finished",
+        sequence: 0,
+        occurredAt: at,
+        harnessRunId: RUN_ID,
+        attemptId: ATTEMPT_ID,
+        compactionIndex: 1,
+        outcome: "completed",
+      }));
+      expect(store.activeCompaction()).toMatchObject({
+        attemptId: RECOVERED_ATTEMPT_ID,
+        compactionIndex: 1,
+      });
+
       // One model response can finish before the agent loop. Its active turn is
       // therefore gone when the later run-level terminal status arrives.
       database.prepare("DELETE FROM active_output_turns").run();
@@ -580,6 +631,7 @@ describe("the Workstream Durable Object relational schema", () => {
         status: "completed",
       }));
       expect(store.activeStreamCheckpoints()).toEqual([]);
+      expect(store.activeCompaction()).toBeNull();
       expect(database.prepare("SELECT status FROM runs WHERE run_id = ?").get(RUN_ID))
         .toEqual({ status: "completed" });
     } finally {

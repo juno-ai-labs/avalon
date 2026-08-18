@@ -454,14 +454,10 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           input.substreamId,
         ),
       );
-      await agent.fetch("https://substream-agent/internal/events", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-avalon-workspace-id": input.workspaceId,
-          "x-avalon-workstream-id": input.workstreamId,
-        },
-        body: JSON.stringify({ event }),
+      await agent.publishEvent({
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        event,
       });
     } catch {
       // Realtime display is best-effort. D1 terminal state and lifecycle events

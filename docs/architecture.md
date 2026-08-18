@@ -80,6 +80,7 @@ flowchart LR
   E <-->|"workspace sync + command WebSocket"| WD["WorkspaceDO"]
   E <-->|"aggregate metadata WebSocket"| WS["WorkstreamDO (no agent)"]
   E <-->|"direct feed WebSocket"| SA["SubstreamAgent"]
+  E <-->|"derived block WebSocket"| HB["HyperSightBlockAgent"]
   WS -->|"durable HyperSight fan-out"| HB["HyperSightBlockAgent"]
   HB -->|"fenced transcript/runtime SQL"| SA
   HB -->|"versioned block result"| WS
@@ -245,10 +246,12 @@ HyperSight follows the same control/data split without pretending a derived
 block is a conversation. Main `SubstreamAgent("0")` sends one debounced trigger
 and transcript fence to WorkstreamDO. The parent durably fans out the current
 configuration to stable block agents. Each block agent runs Bind and directly
-RPCs source runtime SQL in `SubstreamAgent("0")`; versioned results return to
-WorkstreamDO and reach Electron over its existing metadata socket. The source
-agent therefore talks to blocks as their canonical data authority, but does not
-duplicate the parent's block registry or dispatch outbox.
+RPCs source runtime SQL in `SubstreamAgent("0")`. Live queued/running state and
+derived output travel on a hibernating socket from that block agent directly to
+Electron, while versioned terminal results settle into WorkstreamDO as product
+metadata. The source agent therefore talks to blocks as their canonical data
+authority, but does not duplicate the parent's block registry or dispatch
+outbox, and the model-free parent never relays token traffic.
 
 An authoritative child mutation that changes workspace/user surfaces writes a
 versioned effect to the child's local outbox in the same SQLite transaction.
@@ -265,91 +268,72 @@ object therefore owns the fact that a mention or state change occurred without
 acquiring workspace credentials, placing product text in Queue storage, or
 turning a failed network call into a lost sidebar update.
 
-The room authorizes every connection against D1 itself rather than trusting the
-one-minute ticket, using the same rule the REST reads apply — see
-[`data-model.md`](data-model.md). That check happens once per socket, so anything
-that retracts it has to reach the connections already inside. Before broadcasting
-an event that narrows who may read — a work stream becoming `personal`, or a
-participant being removed — the room sweeps its connected set against that same
-rule and closes the sockets that fail it, marking each unsubscribed first so the
-broadcast filter, not the runtime's closed-socket behavior, is what withholds the
-frame. A revocation closes with `1008`, which the desktop treats as final: it
-stops reconnecting and drops the cached work stream, because the ticket behind a
-retry now answers 404.
+All four object roles accept Cloudflare hibernating sockets with purpose-scoped,
+single-use tickets and serialized connection attachments. The ticket establishes
+the intended object/audience; admission and later commands still resolve current
+regional session, membership, and object-local visibility. An explicit
+retraction sweeps already connected readers, and a policy close (`1008`) tells
+Electron to stop retrying; each role then marks, reconciles, or removes its
+surface according to that role's product contract. Periodic
+revalidation bounds a missed retraction without putting an authorization query
+on every token frame. The complete role-specific protocol lives in
+[`realtime-sockets.md`](realtime-sockets.md).
 
-Publishing is best-effort and swallows its own failures, which is right for every
-event except a retraction. `publishWorkstreamEvent` reports whether the room
-accepted the event so a retraction can be logged when it did not, and the room
-does not rely on having been told at all: on any event other than a
-`stream_delta`, if its last check is older than 30 seconds it re-asks before
-delivering. A retraction that never arrived is applied before the next thing the
-room would have sent, and the same sweep catches the retractions nothing publishes
-— a workspace membership going inactive. When the sweep's own query fails while
-resolving a retraction, the room closes every socket with `1011` instead: a failed
-query is not evidence that any particular reader lost access, and a reconnect
-re-authorizes against D1, so legitimate readers return in under a second rather
-than dead-ending on `1008`.
+The socket responsibilities are deliberately not interchangeable:
 
-An eviction refreshes presence, after the event rather than with it. Both carry
-room sequence numbers and the client drops anything at or below the sequence it
-last applied, so a roster broadcast emitted first — with the higher sequence —
-would make the client discard the very event that closed the work stream.
+- `WorkspaceDO` accepts idempotent user commands, including new work-stream and
+  message creation, and publishes versioned workspace-topic invalidations.
+- `WorkstreamDO` publishes complete increasing-revision metadata/viewer
+  snapshots and HyperSight configuration, but carries neither transcript parts
+  nor model tokens.
+- `SubstreamAgent` is a read-only direct conversation feed plus correlated
+  transcript-page download. Its object-local SQL owns canonical parts, tool
+  calls/results, active compaction, and the accumulated output checkpoint.
+- `HyperSightBlockAgent` is a read-only direct derived-output channel. It
+  publishes queued/running/terminal state and a replaceable durable stream
+  checkpoint for exactly one configured block.
 
-The room accepts sockets with Cloudflare's hibernation API and stores connection
-identity in serialized attachments. After opening, the client sends `subscribe`
-with its last applied `afterSequence`. Sequence zero receives a snapshot; a
-reconnect within the bounded in-memory event window receives only newer events.
-The foreground composer sends `create_message` over this same socket, not over a
-parallel desktop REST mutation. The command has a stable client message ID and
-an operation ID. Its private success/failure receipt is deliberately outside the
-room sequence; the resulting `message_created` remains the canonical sequenced,
-broadcast event. If the connection drops before the receipt, the desktop
-reconnects and resends the same command for idempotent replay. Every command
-revalidates the regional session and workspace membership, while the persistence
-service rechecks work-stream visibility, so a long-lived socket is not a
-long-lived mutation grant. REST creation remains for compatibility and
-non-desktop ingress.
+The WorkspaceDO command receipt is private and outside the published version
+sequence. If a connection drops before that receipt, Electron reconnects and
+resends the stable client message/operation ID; object-local command receipts
+make the retry idempotent. Feed sockets never accept `create_message`, so a
+long-lived child subscription is not a mutation grant.
 
-An active assistant response is the exception to REST-only snapshots: the room
-atomically checkpoints its accumulated text and Bind cursor with each sequenced,
-batched stream frame, and includes that checkpoint in both an initial snapshot
-and a `history_unavailable` resync. This lets a first-time or post-hibernation
-subscriber cross into catch-up and live delivery without a missing or duplicated
-chunk. The checkpoint is removed at terminal state; D1 still stores only the
-complete final assistant message.
+SubstreamAgent sequences replayable events and keeps a bounded in-memory replay
+window. Its SQLite transaction commits accumulated text and Bind cursor before a
+batched stream frame is eligible for publication. Initial snapshots and
+`history_unavailable` carry that full checkpoint, allowing a cold or
+post-hibernation subscriber to replace its partial text and continue without a
+gap or duplicate. Terminal persistence writes one canonical local-SQL part and
+removes the checkpoint; D1 receives only semantic regional projections, never
+token-cadence writes. If the replay gap cannot be proved complete, Electron
+reloads the agent's canonical page API rather than guessing.
 
-If hibernation discarded the replay window or the gap cannot be proved complete,
-the server sends `resync_required` and the client refreshes its canonical REST
-queries while retaining any active checkpoint carried by that frame. A cursor
-ahead of the room takes the same REST path without trusting the checkpoint. The
-replay cache itself remains memory-only and bounded to 256 events or 512 KB.
-
-Room `sequence` orders replayable socket events. Model streaming has a second
+SubstreamAgent `sequence` orders replayable feed events. Model streaming has a second
 cursor domain: stable `turnId`, retry `epoch`, and per-epoch `streamSeq`; `reset`
 replaces only the active turn's partial text from an abandoned route, preserving
 completed text from earlier tool turns. Deltas are batched without crossing
 turn/epoch boundaries, and reset frames are emitted alone. The desktop retains
-room and stream cursors across socket and route handoffs, keeps background
+feed and stream cursors across socket and route handoffs, keeps background
 subscribers only for listed running work streams, drops duplicate or stale
-frames, and still treats the final D1 message and terminal REST state as
-canonical.
+frames, and reconciles to the agent's final local-SQL transcript page plus the
+matching terminal metadata revision. D1 projection queries can refresh regional
+lists, but never override canonical child transcript content.
 
-The desktop holds a work stream's harness status in two caches: the detail query
-behind the open work stream's header, and the list query behind every sidebar row.
-A `harness_status_changed` frame writes both in one update rather than writing the
-detail and invalidating the list, so the header and the sidebar dot cannot
-disagree across a refetch that is still in flight. Polling the list remains the
-backstop, and is the only refresh for a work stream whose room this client holds
-no socket to; when a poll returns a status the detail cache was written before,
-the detail is re-read from REST. Nothing else refreshes it on a timer, so without
-that a frame lost while connected would strand the header pulsing "Running" over a
-sidebar row that had already moved on.
+The desktop applies each complete increasing-revision WorkstreamDO viewer
+snapshot to both the open detail and sidebar caches, so the header and status dot
+cannot disagree across a stale fetch. WorkspaceDO topic invalidations and the
+regional projection query remain the backstop for work streams without a live
+child socket. A lower revision never rolls either cache backward, and no list
+response becomes transcript authority.
 
 Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong`
-without waking a hibernated object. The desktop sends jittered keepalives, closes
-an unresponsive socket, and reconnects with equal-jitter exponential backoff
-capped at 30 seconds; it pauses retry while offline and resumes with the last
-room-sequence cursor.
+without waking a hibernated object. The SubstreamAgent feed jitters its heartbeat
+across 45–55 seconds; WorkspaceDO, WorkstreamDO, and HyperSightBlockAgent use a
+fixed 50-second interval. Every role closes after 15 seconds without `pong`,
+reconnects with equal-jitter exponential backoff capped at 30 seconds, pauses
+while offline, and resumes from its own topic version, metadata revision, feed
+sequence/stream cursor, or full block checkpoint.
 
 Viewing is presence only. Participant persistence occurs only through explicit
 addition or an authored work-stream action.
@@ -367,6 +351,10 @@ The durable child dispatch row, attempt lease, receipts, and checkpoints recover
 Cloudflare Workflows remain available for non-workstream loops and legacy drain.
 HyperSight uses the same Bind harness in a stable `HyperSightBlockAgent` per
 block; WorkstreamDO coordinates it and no Workflow or Agents SDK loop is added.
+Each block agent streams revisioned full checkpoints directly to Electron while
+its panel is visible. The parent socket remains the authority for shared block
+configuration and viewer preference; terminal results settle into WorkstreamDO
+while the direct socket supplies queued/running progress and derived output.
 
 Supported regional work-stream runtimes may discover the deferred Terminal
 plugin. Loading it changes only Bind's prompt/tool surface; the first file,
@@ -620,17 +608,17 @@ it.
 
 ## Failure modes and limits
 
-- **A socket that cannot prove its replay gap is complete is resynced, not
+- **A SubstreamAgent feed that cannot prove its replay gap is complete is resynced, not
   guessed.** If hibernation discarded the in-memory window, the client's cursor is
-  ahead, or the gap cannot be proved complete, the room sends `resync_required` and
-  the client refreshes its canonical REST queries. A history-gap frame also
+  ahead, or the gap cannot be proved complete, the agent sends `resync_required` and
+  the client refreshes its canonical transcript page. A history-gap frame also
   carries the accumulated active stream; a sequence-ahead frame does not trust it.
-- **The replay cache is bounded to 256 events or 512 KB**, and is memory-only by
+- **The SubstreamAgent replay cache is bounded to 256 events or 512 KB**, and is memory-only by
   design. The active-stream checkpoint is a separate logical value whose text is
   segmented across bounded Durable Object values and updated once per batched
   delta; it is not an event log and cannot replay
   non-stream mutations.
-- **Publishing to a room is best-effort** and swallows its own failures. The one
+- **Publishing to a SubstreamAgent feed is best-effort** and swallows its own failures. The one
   exception is a retraction: `publishWorkstreamEvent` reports whether the room
   accepted it, and the room re-asks D1 before delivering anything other than a
   `stream_delta` when its last check is older than 30 seconds.
@@ -640,7 +628,7 @@ it.
   query is not evidence that any particular reader lost access; those clients
   reconnect and re-authorize in under a second.
 - **Reconnect uses equal-jitter exponential backoff capped at 30 seconds**, pauses
-  while offline, and resumes from the last room-sequence cursor.
+  while offline, and resumes from the last cursor/version for that socket role.
 - **Dictation sessions are capped at five minutes**, with a one-minute single-use
   ticket, a bounded regional session count, and rate- and size-limited audio
   events. Raw microphone audio and transcripts are not persisted by that bridge.
@@ -708,6 +696,29 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-18 — Every agent owns a direct resumable output socket
+
+**What changed:** `HyperSightBlockAgent` joins `SubstreamAgent` as a direct
+Electron streaming authority. Both publish the shared full-checkpoint contract;
+WorkstreamDO continues to own block configuration, dispatch coordination, and
+published terminal results rather than relaying token traffic.
+
+**Why:** Independent agent loops need visible progress and exact reconnect
+semantics, while a model-free parent should not become a high-frequency stream
+proxy.
+
+**Considered and rejected:** A WorkstreamDO-only block channel, polling, and
+delta-only recovery. They concentrate stream load, reduce progress fidelity, or
+produce duplicate/missing text after reconnect.
+
+**Consequences:** This decision supersedes the earlier no-fourth-socket
+consequence below. Electron has a fourth socket role and opens one block socket
+per configured block only while HyperSight is visible. Idle sockets hibernate;
+committed checkpoints survive eviction; shared metadata remains on the parent.
+User commands enter WorkspaceDO, while the SubstreamAgent and block-agent
+sockets are read-only data-plane feeds rather than remnants of the legacy
+single-room mutation protocol.
 
 ### 2026-08-18 — HyperSight execution shards by stable block
 

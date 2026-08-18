@@ -109,9 +109,16 @@ function fixture(): {
     }
     return Response.json({ runs: [run] });
   });
+  const controlHyperSight = vi.fn(async (body: Record<string, unknown>) => {
+    const response = await fetch("https://workstream.internal/hypersight", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, bodyJson: await response.text() };
+  });
   const namespace = {
     idFromName: vi.fn(() => ({ toString: () => "workstream-do-id" })),
-    get: vi.fn(() => ({ fetch })),
+    get: vi.fn(() => ({ controlHyperSight })),
   };
   const env = createTestEnv({
     APP_ENV: "test",

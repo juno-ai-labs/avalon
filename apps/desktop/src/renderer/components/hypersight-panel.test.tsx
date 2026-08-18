@@ -139,6 +139,29 @@ describe('HyperSightPanel', () => {
     expect(screen.getByText('Refreshing…')).toBeVisible();
   });
 
+  it('keeps partial Markdown visible while its block socket reconnects', () => {
+    const runningBlock = hypersight.blocks[1]!;
+    render(
+      <Tooltip.Provider>
+        <HyperSightPanel
+          connectionStates={{ [runningBlock.id]: 'reconnecting' }}
+          hypersight={{
+            ...hypersight,
+            blocks: hypersight.blocks.map((block) => block.id === runningBlock.id
+              ? { ...block, latestRun: { ...runningBlock.latestRun!, markdown: 'Partial **answer**' } }
+              : block),
+          }}
+          onChange={vi.fn(async () => {})}
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText('Partial')).toBeVisible();
+    expect(screen.getByText('answer')).toBeVisible();
+    expect(screen.getByText('Reconnecting live updates…')).toBeVisible();
+  });
+
   it('edits a block prompt through the sparkle modal', async () => {
     const { onChange } = renderPanel();
 

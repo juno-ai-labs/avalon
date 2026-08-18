@@ -46,7 +46,12 @@ import {
 } from "./integrations";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
-import { issueSocketTicket, issueWorkstreamControlSocketTicket } from "./socket-service";
+import {
+  issueHyperSightBlockSocketTicket,
+  issueSocketTicket,
+  issueWorkstreamControlSocketTicket,
+} from "./socket-service";
+import { loadHyperSight } from "./hypersight-service";
 import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import {
@@ -95,6 +100,7 @@ import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { workstreamExecutionEnvironment } from "./workstream-runtime-database";
+import { rpcResultBody } from "../durable-objects/rpc-result";
 
 /**
  * `descriptionSource` is the caller's assertion, never inferred from whether
@@ -367,13 +373,9 @@ export async function launchWorkstreamHarness(
           input.workstreamId,
         ),
       );
-      const response = await agent.fetch("https://substream-agent/internal/run-dispatch", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...workflowInput, substreamId: "0" }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+      const response = await agent.dispatchRun({ ...workflowInput, substreamId: "0" });
+      if (response.status < 200 || response.status >= 300) {
+        const body = rpcResultBody(response) as { error?: unknown } | null;
         throw new Error(typeof body?.error === "string" ? body.error : "substream_agent_unavailable");
       }
     } else {
@@ -2316,6 +2318,22 @@ export class WorkstreamService {
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}`;
     url.search = new URLSearchParams({ ticket }).toString();
+    return { url: url.toString(), ticket };
+  }
+
+  async hyperSightBlockSocketTicket(id: string, blockId: string) {
+    await this.requireWorkstream(id);
+    const hypersight = await loadHyperSight(this.env, this.auth.workspaceId, id);
+    if (!hypersight.blocks.some((block) => block.id === blockId)) {
+      throw new ApiError(404, "hypersight_block_not_found", "HyperSight block not found");
+    }
+    const ticket = await issueHyperSightBlockSocketTicket(this.env, this.auth, id, blockId);
+    const url = new URL(this.env.PUBLIC_API_BASE_URL);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = `/socket/workstreams/${id}/hypersight/blocks/${blockId}`;
+    // This endpoint has no legacy desktop consumer. Unlike the older socket
+    // issuers, it never puts the bearer in a URL that Cloudflare may log.
+    url.search = "";
     return { url: url.toString(), ticket };
   }
 

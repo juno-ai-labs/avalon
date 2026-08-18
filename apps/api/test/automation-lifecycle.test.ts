@@ -41,8 +41,8 @@ function serviceFor(database: DatabaseSync): AutomationService {
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
-      jurisdiction: () => ({ idFromName: () => createTestDurableObjectId("scheduler"), get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) }),
+      get: () => ({ refresh: async () => undefined }),
+      jurisdiction: () => ({ idFromName: () => createTestDurableObjectId("scheduler"), get: () => ({ refresh: async () => undefined }) }),
     },
   });
   return new AutomationService(env, auth);
@@ -57,7 +57,7 @@ function serviceWithBrokenScheduler(database: DatabaseSync): AutomationService {
     APP_ENV: "test",
     WORKSPACE_SCHEDULERS: {
       idFromName: () => createTestDurableObjectId("scheduler"),
-      get: () => ({ fetch: async () => { throw new Error("scheduler unreachable"); } }),
+      get: () => ({ refresh: async () => { throw new Error("scheduler unreachable"); } }),
     },
   });
   return new AutomationService(env, auth);

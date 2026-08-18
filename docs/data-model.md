@@ -33,7 +33,7 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts` | SQL schemas for workspace sync/command routing, bounded invalidation replay, non-agent child projection aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
-| `apps/api/src/durable-objects/hypersight-block-agent.ts` | Per-block SQL identity and durable execution/retry/result-settlement ledger. |
+| `apps/api/src/durable-objects/hypersight-block-agent.ts` | Per-block SQL identity, socket receipt, durable execution/retry/result-settlement ledger, and full active-output checkpoint. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
@@ -79,7 +79,11 @@ HyperSight is intentionally split by responsibility. WorkstreamDO's
 `hypersight_configuration_versions`, `hypersight_block_runs`, preferences,
 dispatch outbox, and result receipts are the product/control authority. A
 `HyperSightBlockAgent.agent_run_dispatches` row owns the long-running executor.
-The main substream's runtime compatibility rows hold the Bind run/tool state
+Its singleton `agent_stream_checkpoint` stores the complete currently visible
+derived output, revision, epoch, and sequence;
+`hypersight_socket_ticket_receipts` provides one-time admission for the block's
+direct socket. It stores neither a copy of the source transcript nor one row per
+token. The main substream's runtime compatibility rows hold the Bind run/tool state
 that references its fenced transcript. These are connected by typed,
 hash-checked RPCs rather than cross-object SQL joins.
 
@@ -300,6 +304,11 @@ the object outbox, not mirrors to read when an object is unavailable.
   version. Current authorized totals are regenerated on apply and replay and
   are intentionally absent from the principal-scoped row. A final conditional
   insert rejects a summary when the inventory revision changed after rendering.
+- Object-local `active_agent_compaction` is the owning SubstreamAgent's
+  singleton reconnect checkpoint for an in-progress compaction indicator. It
+  stores only run/attempt/index/trigger/start time, is cleared by the matching
+  finish or terminal run state, and is not checkpoint history or model-visible
+  content.
 - `schedules` is canonical. One workspace Durable Object alarm reads due rows and
   advances them transactionally/idempotently. Exactly one of
   `automation_subscription_id`, `connector_connection_id`, and `digest_schedule_id`
@@ -594,6 +603,13 @@ has a document, and the column notes above point at it rather than restating it:
 - `packages/db/test/workstreams.test.ts` drives the repositories over that same
   migrated SQLite database through a `D1DatabaseLike` shim.
 
+Durable Object-local schemas are covered separately by
+`apps/api/test/workstream-object-schema.test.ts`; the real-workerd suite in
+`apps/api/test-workers/durable-object-runtime.test.ts` covers constructor
+migration, object isolation, eviction, compaction state, pagination, and agent
+checkpoint behavior. These tests are required because the regional D1 suite
+cannot validate object-local SQLite lifecycle semantics.
+
 The trap is that the migration tests execute the SQL through `node:sqlite`, not
 through D1. Syntax D1 rejects but SQLite accepts passes here and fails at deploy;
 the Wrangler dry-run builds in CI and an actual `pnpm db:migrate` against the local
@@ -601,6 +617,43 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-18 — Active compaction is operational state, not conversation
+
+**What changed:** The work-stream object map now names
+`active_agent_compaction` separately from immutable compaction jobs/checkpoints
+and from transcript `parts`.
+
+**Why:** The desktop needs a durable phase indicator across reconnect, but a
+progress marker has neither the semantics nor the retention of a model message
+or completed context checkpoint.
+
+**Considered and rejected:** Inferring the phase from missing token deltas and
+authoring synthetic compaction parts. Both confuse presentation with durable
+conversation semantics.
+
+**Consequences:** The singleton may be rebuilt/cleared from ordered lifecycle
+events; a finish must match run, attempt, and index. Completed summaries retain
+their existing immutable fences and canonical messages remain unchanged.
+
+### 2026-08-18 — Derived agent output gains a reconnect-safe SQL checkpoint
+
+**What changed:** Each `HyperSightBlockAgent` now stores one full active-output
+checkpoint and its own one-time socket receipts beside the existing dispatch
+ledger. Its source transcript and Bind tool rows remain in main
+`SubstreamAgent("0")`; the checkpoint contains only the block's derived output.
+
+**Why:** A block loop must resume a visible in-progress stream after socket
+reconnect or object eviction without duplicating deltas, losing text, or
+writing token-sized rows.
+
+**Considered and rejected:** Copying source messages into the block object,
+per-token rows, and transient in-memory text. They create a second transcript
+authority, amplify writes, or lose the recovery boundary.
+
+**Consequences:** The agent commits a complete revisioned checkpoint before
+broadcast, Electron replaces rather than appends on resume, and completion
+collapses the transient checkpoint into the terminal result authority.
 
 ### 2026-08-18 — Conversation arrays and operational overlays stay separate
 

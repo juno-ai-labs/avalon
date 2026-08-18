@@ -45,7 +45,9 @@ function daysAgo(days: number): string {
 function roomNamespace(): DurableObjectNamespace {
   const namespace = {
     idFromName: (name: string) => createTestDurableObjectId(name),
-    get: () => ({ fetch: async () => new Response(null, { status: 200 }) }),
+    get: () => ({
+      publishEvent: async () => ({ status: 200, bodyJson: "null" }),
+    }),
     jurisdiction: () => namespace,
   };
   return createCloudflareTestBinding<DurableObjectNamespace>(namespace);

@@ -23,6 +23,11 @@ import { z } from "zod";
 
 import { substreamAgentName } from "../durable-objects/names";
 import type {
+  SubstreamAgent,
+  SubstreamProductRequest,
+} from "../durable-objects/substream-agent";
+import { rpcResultBody, type DurableObjectRpcResult } from "../durable-objects/rpc-result";
+import type {
   InitializeWorkstreamObjectInput,
   WorkstreamObjectCreateMessageInput,
 } from "../durable-objects/workstream-object-product";
@@ -66,7 +71,7 @@ async function objectStub(
   workspaceId: string,
   workstreamId: string,
   substreamId = "0",
-): Promise<DurableObjectStub> {
+): Promise<DurableObjectStub<SubstreamAgent>> {
   return durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
@@ -101,16 +106,10 @@ export async function attachWorkstreamRuntimeResource(
     ).run();
     return;
   }
-  const response = await (await objectStub(env, input.workspaceId, input.workstreamId)).fetch(
-    "https://workstream-object/internal/runtime-resource",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-    },
-  );
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+  const response = await (await objectStub(env, input.workspaceId, input.workstreamId))
+    .attachRuntimeResource(input);
+  if (response.status < 200 || response.status >= 300) {
+    const body = rpcResultBody(response) as { error?: unknown } | null;
     throw new Error(typeof body?.error === "string" ? body.error : "runtime_resource_attach_failed");
   }
 }
@@ -123,32 +122,26 @@ export async function createWorkstreamRuntimeSuggestion(
     suggestion: WorkstreamObjectCreateSuggestionInput;
   },
 ): Promise<{ suggestion: z.infer<typeof ActivitySuggestionSchema>; inserted: boolean }> {
-  const response = await (await objectStub(env, input.workspaceId, input.workstreamId)).fetch(
-    "https://workstream-object/internal/runtime-suggestion",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        input: input.suggestion,
-      }),
-    },
-  );
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+  const response = await (await objectStub(env, input.workspaceId, input.workstreamId))
+    .createRuntimeSuggestion({
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      input: input.suggestion,
+    });
+  if (response.status < 200 || response.status >= 300) {
+    const body = rpcResultBody(response) as { error?: unknown } | null;
     throw new Error(typeof body?.error === "string" ? body.error : "runtime_suggestion_create_failed");
   }
-  return CreatedSuggestionSchema.parse(await response.json());
+  return CreatedSuggestionSchema.parse(rpcResultBody(response));
 }
 
-async function decode(response: Response): Promise<unknown> {
-  const body = await response.json().catch(() => null) as {
+function decode(response: DurableObjectRpcResult): unknown {
+  const body = rpcResultBody(response) as {
     error?: unknown;
     message?: unknown;
     details?: unknown;
   } | null;
-  if (response.ok) return body;
+  if (response.status >= 200 && response.status < 300) return body;
   throw new ApiError(
     apiStatus(response.status),
     typeof body?.error === "string" ? body.error : "workstream_object_request_failed",
@@ -182,11 +175,7 @@ export class WorkstreamObjectClient {
       this.auth.workspaceId,
       this.workstreamId,
       this.substreamId,
-    )).fetch("https://workstream-object/internal/product", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...body, auth: this.auth }),
-    });
+    )).handleProductRequest({ ...body, auth: this.auth } as SubstreamProductRequest);
     return decode(response);
   }
 

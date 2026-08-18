@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { substreamAgentName } from "../durable-objects/names";
+import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -190,21 +191,17 @@ class WorkstreamRuntimeDatabase implements D1Database {
         this.substreamId,
       ),
     );
-    const response = await stub.fetch("https://workstream-object/internal/runtime-sql", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workspaceId: this.workspaceId,
-        workstreamId: this.workstreamId,
-        requestId: crypto.randomUUID(),
-        statements: statements.map(({ sql, params }) => ({ sql, params })),
-      }),
+    const response = await stub.executeRuntimeSql({
+      workspaceId: this.workspaceId,
+      workstreamId: this.workstreamId,
+      requestId: crypto.randomUUID(),
+      statements: statements.map(({ sql, params }) => ({ sql, params })),
     });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    if (response.status < 200 || response.status >= 300) {
+      const body = rpcResultBody(response) as { error?: unknown } | null;
       throw new Error(typeof body?.error === "string" ? body.error : "workstream_runtime_sql_failed");
     }
-    return responseSchema.parse(await response.json()).results;
+    return responseSchema.parse(rpcResultBody(response)).results;
   }
 
   async exec(query: string): Promise<D1ExecResult> {
@@ -321,13 +318,13 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
     workspaceId,
     substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
   );
-  const response = await stub.fetch("https://workstream-object/internal/runtime-bootstrap", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workspaceId, workstreamId, generation: authority.generation }),
+  const response = await stub.bootstrapRuntime({
+    workspaceId,
+    workstreamId,
+    generation: authority.generation,
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as { error?: unknown } | null;
+  if (response.status < 200 || response.status >= 300) {
+    const body = rpcResultBody(response) as { error?: unknown } | null;
     throw new Error(typeof body?.error === "string" ? body.error : "workstream_runtime_bootstrap_failed");
   }
   return withWorkstreamRuntimeDatabase(env, workspaceId, workstreamId);

@@ -83,6 +83,7 @@ import {
 } from "@avalon/connectors";
 import { z } from "zod";
 import { substreamAgentName } from "../durable-objects/names";
+import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { Env } from "../env";
 import { countEnv, numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
@@ -1669,18 +1670,13 @@ export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflo
         substreamId,
       ),
     );
-    const response = await agent.fetch("https://substream-agent/internal/runtime-dispatch", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...input, substreamId }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null) as { error?: unknown } | null;
+    const response = await agent.dispatchRun({ ...input, substreamId });
+    if (response.status < 200 || response.status >= 300) {
+      const body = rpcResultBody(response) as { error?: unknown } | null;
       throw new Error(typeof body?.error === "string"
         ? body.error
         : `substream_agent_dispatch_failed:${response.status}`);
     }
-    await response.arrayBuffer();
   } else {
     try {
       await env.WORKSTREAM_LOOP_WORKFLOW.create({ id: instanceId, params: input });
@@ -1821,19 +1817,11 @@ export async function publishWorkstreamEvent(
       workspaceId,
       substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
     );
-    const response = await agent.fetch("https://room.internal/internal/events", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-avalon-workspace-id": workspaceId,
-        "x-avalon-workstream-id": workstreamId,
-      },
-      body: JSON.stringify(event),
-    });
+    const response = await agent.publishEvent({ workspaceId, workstreamId, event });
     // A room that answered `409 room_identity_mismatch` or rejected the frame
     // as `invalid_event` did not deliver it, and says so in the status rather
     // than by throwing.
-    return response.ok;
+    return response.status >= 200 && response.status < 300;
   } catch {
     return false;
   }
@@ -1854,15 +1842,7 @@ export async function publishPersonalWorkstreamEvent(
       workspaceId,
       substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
     );
-    await agent.fetch("https://room.internal/internal/events", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-avalon-workspace-id": workspaceId,
-        "x-avalon-workstream-id": workstreamId,
-      },
-      body: JSON.stringify({ event, audienceUserId: userId }),
-    });
+    await agent.publishEvent({ workspaceId, workstreamId, event, audienceUserId: userId });
   } catch {
     // Personal realtime delivery is recoverable from the canonical preference endpoint.
   }
@@ -2615,6 +2595,27 @@ export async function runWorkstreamHarness(
         }
       }
       switch (event.type) {
+        case "compaction_started":
+          await emit({
+            type: "compaction_started",
+            compaction: {
+              harnessRunId: input.harnessRunId,
+              attemptId: liveness.lease.attemptId,
+              compactionIndex: event.compactionIndex,
+              trigger: event.trigger,
+              startedAt: new Date().toISOString(),
+            },
+          });
+          break;
+        case "compaction_finished":
+          await emit({
+            type: "compaction_finished",
+            harnessRunId: input.harnessRunId,
+            attemptId: liveness.lease.attemptId,
+            compactionIndex: event.compactionIndex,
+            outcome: event.outcome,
+          });
+          break;
         case "stream_started":
           modelName = event.model;
           streamStarted = true;

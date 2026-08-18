@@ -6,7 +6,12 @@ import {
 } from "@avalon/contracts/socket-tickets";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { substreamAgentName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import {
+  hyperSightBlockAgentName,
+  substreamAgentName,
+  workspaceDOName,
+  workstreamDOName,
+} from "../durable-objects/names";
 import {
   durableObjectStubForWorkspace,
   workspacePlacementAffinity,
@@ -36,6 +41,10 @@ interface WorkspaceSocketClaims {
 
 interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
   workstreamId: string;
+}
+
+interface HyperSightBlockSocketClaims extends WorkstreamControlSocketClaims {
+  blockId: string;
 }
 
 export interface TranscriptionSocketClaims {
@@ -175,6 +184,61 @@ export async function issueWorkstreamControlSocketTicket(
     .setIssuedAt(now)
     .setExpirationTime(now + 60)
     .sign(signingKey(env));
+}
+
+export async function issueHyperSightBlockSocketTicket(
+  env: Env,
+  auth: AuthContext,
+  workstreamId: string,
+  blockId: string,
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1_000);
+  return new SignJWT({
+    purpose: "hypersight_block_socket",
+    sid: auth.sessionId,
+    wid: auth.workspaceId,
+    wsid: workstreamId,
+    bid: blockId,
+    region: auth.region,
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(auth.userId)
+    .setJti(crypto.randomUUID())
+    .setIssuer("avalon-api")
+    .setAudience("avalon-hypersight-block-socket")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 60)
+    .sign(signingKey(env));
+}
+
+export async function verifyHyperSightBlockSocketTicket(
+  env: Env,
+  ticket: string,
+): Promise<HyperSightBlockSocketClaims> {
+  try {
+    const { payload } = await jwtVerify(ticket, signingKey(env), {
+      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-hypersight-block-socket",
+    });
+    if (
+      payload.purpose !== "hypersight_block_socket" || typeof payload.sub !== "string" ||
+      typeof payload.sid !== "string" || typeof payload.wid !== "string" ||
+      typeof payload.wsid !== "string" || typeof payload.bid !== "string" ||
+      typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
+      (payload.region !== "global" && payload.region !== "eu")
+    ) throw new Error("Incomplete HyperSight block socket claims");
+    return {
+      sessionId: payload.sid,
+      userId: payload.sub,
+      workspaceId: payload.wid,
+      workstreamId: payload.wsid,
+      blockId: payload.bid,
+      region: payload.region,
+      ticketId: payload.jti,
+      expiresAt: payload.exp,
+    };
+  } catch {
+    throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
+  }
 }
 
 export async function verifyWorkstreamControlSocketTicket(
@@ -434,6 +498,68 @@ export class WorkstreamControlSocketService {
     const response = await stub.fetch(
       new Request("https://workstream.internal/socket", { method: "GET", headers }),
     );
+    return withNegotiatedSubprotocol(request, response);
+  }
+}
+
+/** Edge authentication and regional routing for one HyperSight block agent socket. */
+export class HyperSightBlockSocketService {
+  constructor(private readonly env: Env) {}
+
+  async upgrade(
+    workstreamId: string,
+    blockId: string,
+    queryTicket: string | undefined,
+    request: Request,
+  ): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
+    }
+    if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
+      throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
+    }
+    const claims = await verifyHyperSightBlockSocketTicket(
+      this.env,
+      socketTicketFromRequest(request, queryTicket),
+    );
+    if (
+      claims.region !== this.env.AVALON_REGION
+      || claims.workstreamId !== workstreamId
+      || claims.blockId !== blockId
+    ) {
+      throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this HyperSight block");
+    }
+    const stub = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.HYPERSIGHT_BLOCK_AGENTS,
+      claims.workspaceId,
+      hyperSightBlockAgentName(
+        claims.region,
+        claims.workspaceId,
+        claims.workstreamId,
+        claims.blockId,
+      ),
+    );
+    await stub.initializeBlock({
+      region: claims.region,
+      workspaceId: claims.workspaceId,
+      workstreamId: claims.workstreamId,
+      blockId: claims.blockId,
+    });
+    const headers = new Headers(request.headers);
+    headers.delete("sec-websocket-protocol");
+    headers.set("x-avalon-region", claims.region);
+    headers.set("x-avalon-workspace-id", claims.workspaceId);
+    headers.set("x-avalon-workstream-id", claims.workstreamId);
+    headers.set("x-avalon-hypersight-block-id", claims.blockId);
+    headers.set("x-avalon-session-id", claims.sessionId);
+    headers.set("x-avalon-user-id", claims.userId);
+    headers.set("x-avalon-socket-ticket-id", claims.ticketId);
+    headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
+    const response = await stub.fetch(new Request(
+      "https://hypersight-block.internal/socket",
+      { method: "GET", headers },
+    ));
     return withNegotiatedSubprotocol(request, response);
   }
 }

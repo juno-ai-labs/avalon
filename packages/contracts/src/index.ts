@@ -1393,8 +1393,28 @@ export const CreateWebhookConnectionRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(120).optional()
 });
 
+export const MessageFeedPageSchema = z.object({
+  items: z.array(MessageSchema).max(250),
+  nextCursor: z.string().nullable(),
+  newerCursor: z.string().nullable(),
+}).strict();
+
+const MessageFeedCursorSchema = z.string().regex(/^\d+$/u).max(16).refine((value) =>
+  Number.isSafeInteger(Number(value)), "Cursor must be a safe integer");
+const PositiveMessageFeedCursorSchema = MessageFeedCursorSchema.refine((value) =>
+  Number(value) > 0, "Cursor must be positive");
+
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subscribe"), afterSequence: z.number().int().nonnegative() }),
+  z.object({
+    type: z.literal("load_message_page"),
+    requestId: IdSchema,
+    limit: z.number().int().min(1).max(250).default(200),
+    cursor: z.discriminatedUnion("direction", [
+      z.object({ direction: z.literal("before"), value: PositiveMessageFeedCursorSchema }).strict(),
+      z.object({ direction: z.literal("after"), value: MessageFeedCursorSchema }).strict(),
+    ]),
+  }).strict(),
   z.object({
     type: z.literal("create_message"),
     operationId: IdSchema,
@@ -1519,11 +1539,6 @@ export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
     hypersight: HyperSightSchema,
   }).strict(),
   z.object({
-    type: z.literal("hypersight_block_run_updated"),
-    occurredAt: TimestampSchema,
-    run: HyperSightBlockRunSchema,
-  }).strict(),
-  z.object({
     type: z.literal("hypersight_preference_updated"),
     occurredAt: TimestampSchema,
     preference: HyperSightPreferenceSchema,
@@ -1598,6 +1613,70 @@ export const ActiveStreamCheckpointSchema = z.object({
   path: ["turnStartOffset"],
 });
 export const ActiveStreamCheckpointsSchema = z.array(ActiveStreamCheckpointSchema).max(1);
+
+/** The one context-compaction operation currently owned by an agent DO. */
+export const AgentCompactionStateSchema = z.object({
+  harnessRunId: IdSchema,
+  attemptId: IdSchema,
+  compactionIndex: z.number().int().positive(),
+  trigger: z.enum(["manual", "auto"]),
+  startedAt: TimestampSchema,
+}).strict();
+export type AgentCompactionState = z.infer<typeof AgentCompactionStateSchema>;
+
+/** Correlated, viewer-specific reads that never consume the shared room cursor. */
+export const SubstreamDirectSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("message_page"),
+    requestId: IdSchema,
+    occurredAt: TimestampSchema,
+    page: MessageFeedPageSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("message_page_error"),
+    requestId: IdSchema,
+    occurredAt: TimestampSchema,
+    code: z.string().min(1).max(160),
+    message: z.string().min(1).max(1_000),
+  }).strict(),
+]);
+export type SubstreamDirectSocketEvent = z.infer<typeof SubstreamDirectSocketEventSchema>;
+/**
+ * Each HyperSight block is an independent agent authority, so its live run
+ * state is delivered by that block's own hibernating socket rather than being
+ * copied through the WorkstreamDO control socket. It reuses the same durable
+ * stream checkpoint shape as SubstreamAgent so reconnect replacement semantics
+ * stay identical across all agent sockets.
+ */
+export const HyperSightBlockSocketClientEventSchema = z.object({
+  type: z.literal("subscribe"),
+}).strict();
+
+export const HyperSightBlockSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("hypersight_block_snapshot"),
+    occurredAt: TimestampSchema,
+    blockId: IdSchema,
+    run: HyperSightBlockRunSchema.nullable(),
+    streamCheckpoint: ActiveStreamCheckpointSchema.nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("hypersight_block_run_updated"),
+    occurredAt: TimestampSchema,
+    blockId: IdSchema,
+    run: HyperSightBlockRunSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("hypersight_block_stream_checkpoint"),
+    occurredAt: TimestampSchema,
+    blockId: IdSchema,
+    blockRunId: IdSchema,
+    streamCheckpoint: ActiveStreamCheckpointSchema.nullable(),
+  }).strict(),
+]);
+
+export type HyperSightBlockSocketClientEvent = z.infer<typeof HyperSightBlockSocketClientEventSchema>;
+export type HyperSightBlockSocketEvent = z.infer<typeof HyperSightBlockSocketEventSchema>;
 /**
  * The close code the work-stream room uses when it disconnects a socket whose
  * reader may no longer see the work stream.
@@ -1618,12 +1697,9 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     type: z.literal("snapshot"),
     workstream: WorkstreamDetailSchema,
     /** Newest canonical transcript page, downloaded over the SubstreamAgent socket. */
-    messageFeed: z.object({
-      items: z.array(MessageSchema).max(250),
-      nextCursor: z.string().nullable(),
-      newerCursor: z.string().nullable(),
-    }).default({ items: [], nextCursor: null, newerCursor: null }),
+    messageFeed: MessageFeedPageSchema.default({ items: [], nextCursor: null, newerCursor: null }),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
+    activeCompaction: AgentCompactionStateSchema.nullable().default(null),
   }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
   ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
@@ -1660,6 +1736,17 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   }),
   ServerEventBaseSchema.extend({ type: z.literal("stream_completed"), message: MessageSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("harness_status_changed"), status: HarnessStatusSchema }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("compaction_started"),
+    compaction: AgentCompactionStateSchema,
+  }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("compaction_finished"),
+    harnessRunId: IdSchema,
+    attemptId: IdSchema,
+    compactionIndex: z.number().int().positive(),
+    outcome: z.enum(["completed", "failed"]),
+  }),
   ServerEventBaseSchema.extend({ type: z.literal("tool_started"), invocation: ToolInvocationSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("tool_completed"), invocation: ToolInvocationSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("tool_failed"), invocation: ToolInvocationSchema }),
@@ -1679,6 +1766,8 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     latestSequence: z.number().int().nonnegative(),
     /** Preserves an in-flight response while canonical REST state is refreshed. */
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
+    /** Preserves the explicit compaction indicator across replay-window loss. */
+    activeCompaction: AgentCompactionStateSchema.nullable().default(null),
   }),
   ServerEventBaseSchema.extend({ type: z.literal("error"), code: z.string(), message: z.string() })
 ]);

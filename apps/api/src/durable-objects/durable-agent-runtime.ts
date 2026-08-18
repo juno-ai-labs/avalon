@@ -64,6 +64,69 @@ export class DurableAgentDrain {
   }
 }
 
+interface PendingAgentPublication {
+  kind: "barrier" | "checkpoint";
+  phase: string;
+  publish: () => Promise<void>;
+}
+
+/**
+ * Serializes observer publications without allowing cumulative stream snapshots
+ * to queue once per model delta. Checkpoints coalesce within the interval
+ * between low-volume control barriers; barriers themselves are never replaced.
+ */
+export class DurableAgentPublicationQueue {
+  private readonly pending: PendingAgentPublication[] = [];
+  private activeDrain: Promise<void> | null = null;
+
+  constructor(
+    private readonly onError: (phase: string, error: unknown) => void,
+    private readonly onDrainStarted: (drain: Promise<void>) => void,
+  ) {}
+
+  enqueueBarrier(phase: string, publish: () => Promise<void>): void {
+    this.pending.push({ kind: "barrier", phase, publish });
+    this.resume();
+  }
+
+  enqueueCheckpoint(phase: string, publish: () => Promise<void>): void {
+    const tail = this.pending.at(-1);
+    if (tail?.kind === "checkpoint") {
+      tail.phase = phase;
+      tail.publish = publish;
+    } else {
+      this.pending.push({ kind: "checkpoint", phase, publish });
+    }
+    this.resume();
+  }
+
+  private resume(): void {
+    if (this.activeDrain) return;
+    // Defer entry so the active guard is installed before a publisher can
+    // synchronously enqueue more work of its own.
+    const drain = Promise.resolve().then(() => this.drain());
+    this.activeDrain = drain;
+    this.onDrainStarted(drain);
+    void drain.catch(() => undefined);
+  }
+
+  private async drain(): Promise<void> {
+    try {
+      let publication: PendingAgentPublication | undefined;
+      while ((publication = this.pending.shift())) {
+        try {
+          await publication.publish();
+        } catch (error) {
+          this.onError(publication.phase, error);
+        }
+      }
+    } finally {
+      this.activeDrain = null;
+      if (this.pending.length > 0) this.resume();
+    }
+  }
+}
+
 export function durableAgentRetryDelay(attempt: number): number {
   return Math.min(5 * 60_000, 5_000 * 2 ** Math.min(Math.max(attempt - 1, 0), 6));
 }

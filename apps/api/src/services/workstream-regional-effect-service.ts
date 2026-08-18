@@ -626,15 +626,10 @@ export async function acknowledgeWorkstreamRegionalEffect(
     message.workspaceId,
     objectName,
   );
-  const response = await workstream.fetch(
-    "https://workstream.internal/internal/regional-effect-ack",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messageId: message.messageId, payloadHash: message.payloadHash }),
-    },
-  );
-  if (!response.ok) throw new Error(`workstream_effect_ack_failed:${response.status}`);
+  await workstream.acknowledgeRegionalEffect({
+    messageId: message.messageId,
+    payloadHash: message.payloadHash,
+  });
   await markWorkstreamRegionalEffectAcknowledged(env, message.messageId, message.payloadHash);
 }
 
@@ -691,20 +686,15 @@ export async function loadWorkstreamRegionalEffect(
     wake.workspaceId,
     objectName,
   );
-  const response = await workstream.fetch(
-    "https://workstream.internal/internal/regional-effect-delivery",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messageId: wake.messageId, payloadHash: wake.payloadHash }),
-    },
-  );
+  const loaded = await workstream.loadRegionalEffect({
+    messageId: wake.messageId,
+    payloadHash: wake.payloadHash,
+  });
   // A newer coalesced sidebar version or a prior acknowledgement may have
   // removed this row after the wake-up was queued. There is nothing left for
   // this delivery to do, and retrying it cannot recreate the superseded row.
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`workstream_effect_fetch_failed:${response.status}`);
-  const envelope = WorkstreamRegionalEffectEnvelopeSchema.parse(await response.json());
+  if (!loaded) return null;
+  const envelope = WorkstreamRegionalEffectEnvelopeSchema.parse(loaded);
   if (
     envelope.region !== wake.region
     || envelope.workspaceId !== wake.workspaceId
