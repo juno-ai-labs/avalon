@@ -9,7 +9,7 @@ import { truncateUtf16Safe } from "../lib/text";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { encryptString, sha256Hex } from "../lib/crypto";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import {
   materializeAttachmentDerivative,
@@ -646,9 +646,13 @@ export class ResourceService {
   }
 
   private async refreshScheduler(): Promise<void> {
-    const schedulers = durableObjectNamespaceForRegion(this.env.WORKSPACE_SCHEDULERS, this.env.AVALON_REGION, this.env.APP_ENV);
-    const id = schedulers.idFromName(`${this.env.AVALON_REGION}:${this.auth.workspaceId}`);
-    await schedulers.get(id).fetch("https://scheduler.internal/refresh", {
+    const scheduler = durableObjectStubForRegion(
+      this.env.WORKSPACE_SCHEDULERS,
+      this.env.AVALON_REGION,
+      `${this.env.AVALON_REGION}:${this.auth.workspaceId}`,
+      this.env.APP_ENV,
+    );
+    await scheduler.fetch("https://scheduler.internal/refresh", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspaceId: this.auth.workspaceId, region: this.env.AVALON_REGION }),
     });

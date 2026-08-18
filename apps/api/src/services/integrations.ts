@@ -87,7 +87,7 @@ import { countEnv, numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
 import { markWorkflowInstanceCreated } from "../lib/workflow-launch-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
 import { ApiError } from "../lib/api-error";
 import {
@@ -1609,17 +1609,18 @@ export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflo
     ? `substream-agent:${substreamId}:${input.harnessRunId}`
     : `workstream-${input.harnessRunId}`;
   if (authority.phase === "durable_object_open") {
-    const namespace = durableObjectNamespaceForRegion(
+    const agent = durableObjectStubForRegion(
       env.SUBSTREAM_AGENTS,
       input.region,
+      substreamAgentName(
+        input.region,
+        input.workspaceId,
+        input.workstreamId,
+        substreamId,
+      ),
       env.APP_ENV,
     );
-    const response = await namespace.get(namespace.idFromName(substreamAgentName(
-      input.region,
-      input.workspaceId,
-      input.workstreamId,
-      substreamId,
-    ))).fetch("https://substream-agent/internal/runtime-dispatch", {
+    const response = await agent.fetch("https://substream-agent/internal/runtime-dispatch", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...input, substreamId }),
@@ -1765,9 +1766,13 @@ export async function publishWorkstreamEvent(
   event: Omit<ServerSocketEvent, "sequence" | "occurredAt"> | Record<string, unknown>,
 ): Promise<boolean> {
   try {
-    const rooms = durableObjectNamespaceForRegion(env.SUBSTREAM_AGENTS, env.AVALON_REGION, env.APP_ENV);
-    const id = rooms.idFromName(`${env.AVALON_REGION}:${workspaceId}:${workstreamId}`);
-    const response = await rooms.get(id).fetch("https://room.internal/internal/events", {
+    const agent = durableObjectStubForRegion(
+      env.SUBSTREAM_AGENTS,
+      env.AVALON_REGION,
+      substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
+      env.APP_ENV,
+    );
+    const response = await agent.fetch("https://room.internal/internal/events", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1794,9 +1799,13 @@ export async function publishPersonalWorkstreamEvent(
   event: Omit<PersonalSocketEvent, "occurredAt"> | Record<string, unknown>,
 ): Promise<void> {
   try {
-    const rooms = durableObjectNamespaceForRegion(env.SUBSTREAM_AGENTS, env.AVALON_REGION, env.APP_ENV);
-    const id = rooms.idFromName(`${env.AVALON_REGION}:${workspaceId}:${workstreamId}`);
-    await rooms.get(id).fetch("https://room.internal/internal/events", {
+    const agent = durableObjectStubForRegion(
+      env.SUBSTREAM_AGENTS,
+      env.AVALON_REGION,
+      substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
+      env.APP_ENV,
+    );
+    await agent.fetch("https://room.internal/internal/events", {
       method: "POST",
       headers: {
         "content-type": "application/json",

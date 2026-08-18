@@ -7,7 +7,7 @@ import {
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 
 const encoder = new TextEncoder();
 
@@ -254,13 +254,17 @@ export class SocketService {
     ) {
       throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket does not authorize this substream");
     }
-    const rooms = durableObjectNamespaceForRegion(this.env.SUBSTREAM_AGENTS, claims.region, this.env.APP_ENV);
-    const durableId = rooms.idFromName(substreamAgentName(
+    const stub = durableObjectStubForRegion(
+      this.env.SUBSTREAM_AGENTS,
       claims.region,
-      claims.workspaceId,
-      claims.workstreamId,
-      claims.substreamId,
-    ));
+      substreamAgentName(
+        claims.region,
+        claims.workspaceId,
+        claims.workstreamId,
+        claims.substreamId,
+      ),
+      this.env.APP_ENV,
+    );
     const headers = new Headers(request.headers);
     // The ticket has been verified; the room has no use for it and should not
     // receive a live credential on a subrequest it does not authenticate with.
@@ -272,7 +276,7 @@ export class SocketService {
     headers.set("x-avalon-user-id", claims.userId);
     headers.set("x-avalon-socket-ticket-id", claims.ticketId);
     headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
-    const response = await rooms.get(durableId)
+    const response = await stub
       .fetch(new Request("https://room.internal/socket", { method: "GET", headers }));
     // The room answers the upgrade; the subprotocol is negotiated out here so
     // it stays a transport concern the room never has to know about.
@@ -309,12 +313,12 @@ export class WorkspaceSocketService {
     ) {
       throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this workspace command path");
     }
-    const namespace = durableObjectNamespaceForRegion(
+    const stub = durableObjectStubForRegion(
       this.env.WORKSPACE_DOS,
       claims.region,
+      workspaceDOName(claims.region, claims.workspaceId),
       this.env.APP_ENV,
     );
-    const durableId = namespace.idFromName(workspaceDOName(claims.region, claims.workspaceId));
     const headers = new Headers(request.headers);
     headers.delete("sec-websocket-protocol");
     headers.set("x-avalon-workspace-id", claims.workspaceId);
@@ -324,7 +328,7 @@ export class WorkspaceSocketService {
     headers.set("x-avalon-user-id", claims.userId);
     headers.set("x-avalon-socket-ticket-id", claims.ticketId);
     headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
-    const response = await namespace.get(durableId).fetch(
+    const response = await stub.fetch(
       new Request("https://workspace.internal/socket", { method: "GET", headers }),
     );
     return withNegotiatedSubprotocol(request, response);

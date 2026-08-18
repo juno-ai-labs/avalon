@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import {
   WORKSTREAM_AUTHORITY_IMPORT_BUNDLE_STAGE_LIMIT,
   WORKSTREAM_AUTHORITY_CAMPAIGN_PREFIX,
@@ -564,9 +564,13 @@ async function postImport(
   route: RouteRow,
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const rooms = durableObjectNamespaceForRegion(env.SUBSTREAM_AGENTS, env.AVALON_REGION, env.APP_ENV);
-  const id = rooms.idFromName(substreamAgentName(env.AVALON_REGION, route.workspace_id, route.workstream_id));
-  const response = await rooms.get(id).fetch("https://substream-agent/internal/authority-import", {
+  const agent = durableObjectStubForRegion(
+    env.SUBSTREAM_AGENTS,
+    env.AVALON_REGION,
+    substreamAgentName(env.AVALON_REGION, route.workspace_id, route.workstream_id),
+    env.APP_ENV,
+  );
+  const response = await agent.fetch("https://substream-agent/internal/authority-import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

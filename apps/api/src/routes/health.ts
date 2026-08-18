@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
@@ -79,9 +79,13 @@ healthRoutes.get("/", async (c) => {
     checks.r2 = { ok: false, message: "unavailable" };
   }
   try {
-    const rooms = durableObjectNamespaceForRegion(c.env.SUBSTREAM_AGENTS, c.env.AVALON_REGION, c.env.APP_ENV);
-    const id = rooms.idFromName(`health:${c.env.AVALON_REGION}`);
-    const response = await rooms.get(id).fetch("https://room.internal/health");
+    const agent = durableObjectStubForRegion(
+      c.env.SUBSTREAM_AGENTS,
+      c.env.AVALON_REGION,
+      `health:${c.env.AVALON_REGION}`,
+      c.env.APP_ENV,
+    );
+    const response = await agent.fetch("https://room.internal/health");
     checks.durableObjects = { ok: response.ok, message: response.ok ? "available" : `returned ${response.status}` };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown Durable Object error";

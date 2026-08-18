@@ -8,6 +8,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import {
   acceptsNewWorkstreamWork,
@@ -93,6 +94,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     env: Env,
   ) {
     super(state, env);
+    assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.initialized = state.blockConcurrencyWhile(async () => {
       applyDurableObjectSqliteMigrations({
@@ -186,8 +188,11 @@ export class WorkspaceDO extends DurableObject<Env> {
       connectionId: crypto.randomUUID(),
       connectedAt: new Date().toISOString(),
     };
-    server.serializeAttachment(attachment);
     this.state.acceptWebSocket(server, [attachment.userId]);
+    // Register the server end with the hibernation API before attaching the
+    // state that handlers will recover after an isolate wake. Both operations
+    // are synchronous, so no client event can interleave between them.
+    server.serializeAttachment(attachment);
     return new Response(null, { status: 101, webSocket: client });
   }
 

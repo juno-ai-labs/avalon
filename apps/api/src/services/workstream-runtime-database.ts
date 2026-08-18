@@ -3,7 +3,7 @@ import { z } from "zod";
 import { substreamAgentName } from "../durable-objects/names";
 import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
 import type { Env } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 type RuntimeValue = string | number | null;
@@ -179,17 +179,17 @@ class WorkstreamRuntimeDatabase implements D1Database {
     if (this.localExecutor) {
       return this.localExecutor(statements.map(({ sql, params }) => ({ sql, params })));
     }
-    const namespace = durableObjectNamespaceForRegion(
+    const stub = durableObjectStubForRegion(
       this.env.SUBSTREAM_AGENTS,
       this.env.AVALON_REGION,
+      substreamAgentName(
+        this.env.AVALON_REGION,
+        this.workspaceId,
+        this.workstreamId,
+        this.substreamId,
+      ),
       this.env.APP_ENV,
     );
-    const stub = namespace.get(namespace.idFromName(substreamAgentName(
-      this.env.AVALON_REGION,
-      this.workspaceId,
-      this.workstreamId,
-      this.substreamId,
-    )));
     const response = await stub.fetch("https://workstream-object/internal/runtime-sql", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -315,16 +315,12 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
       at,
     ),
   ]);
-  const namespace = durableObjectNamespaceForRegion(
+  const stub = durableObjectStubForRegion(
     env.SUBSTREAM_AGENTS,
     env.AVALON_REGION,
+    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
     env.APP_ENV,
   );
-  const stub = namespace.get(namespace.idFromName(substreamAgentName(
-    env.AVALON_REGION,
-    workspaceId,
-    workstreamId,
-  )));
   const response = await stub.fetch("https://workstream-object/internal/runtime-bootstrap", {
     method: "POST",
     headers: { "content-type": "application/json" },

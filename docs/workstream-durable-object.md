@@ -25,10 +25,12 @@ projections; it is not a transcript fallback after cutover.
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/workstream-runtime-sql.ts` | Restricted D1-compatible SQL adapter used by the Bind harness against object-local tables. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
+| `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, first-placement hint, and runtime jurisdiction validation. |
 | `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-`SubstreamAgent` product RPCs. |
 | `apps/api/src/services/workstream-regional-effect-service.ts` | Regional D1 inbox, sidebar/activity projections, and notification delivery. |
 | `apps/api/src/durable-objects/workspace-scheduler.ts` | One SQLite-backed alarm coordinator per workspace. |
 | `scripts/eslint-rules/durable-object-sql-storage.mjs` | Rejects Durable Object `get`, `put`, `delete`, `list`, and async `transaction` KV calls, including aliases. |
+| `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct and aliased namespace ID/stub construction outside the regional resolver. |
 | `packages/db/migrations/0077_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, projections, and legacy D1 writer fences. |
 | `packages/db/migrations/0078_workstream_do_regional_effects.sql` | Regional effect inbox and causally fenced notification intents. |
 
@@ -36,7 +38,7 @@ projections; it is not a transcript fallback after cutover.
 
 ### Object hierarchy and identity
 
-Names include region so Global and EU object graphs never share an identity:
+Names include region for operator clarity and deterministic routing:
 
 ```text
 WorkspaceDO       <region>:<workspace-id>                    in WORKSPACE_DOS
@@ -45,12 +47,20 @@ SubstreamAgent 0  <region>:<workspace-id>:<workstream-id>    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<workstream-id>:<substream-id>
 ```
 
+The name is not a residency boundary. Staging and production first restrict the
+namespace to `us` or `eu`, derive the ID from that restricted namespace, and
+only then call `get()` with a first-placement hint. The same name identifies a
+different object in an unrestricted, US, and EU namespace. `WorkstreamDO` has
+the same logical suffix in a different binding; binding, jurisdiction, and name
+together determine the Durable Object identity.
+
 The main child deliberately retains the historical object name in the renamed
-`SUBSTREAM_AGENTS` namespace. Wrangler's `renamed_classes` migration changes
-`WorkstreamRoom` to `SubstreamAgent`, so the already-populated SQLite database
-is preserved during the maintenance deployment. `WorkstreamDO` has the same
-logical suffix in a different namespace; namespace plus name, not the suffix
-alone, is the Durable Object identity.
+`SUBSTREAM_AGENTS` binding. Wrangler's `renamed_classes` migration preserves the
+class/storage namespace relationship, but it does not make an unrestricted
+Global ID equal the new US-jurisdiction ID. The maintenance import therefore
+populates the locked target graph from frozen D1 and never serves an
+unrestricted predecessor as fallback. An already-EU-restricted predecessor can
+retain its jurisdictional identity through the class rename.
 
 `WorkspaceDO` is command/control only. `WorkstreamDO` owns aggregate metadata
 only and never runs a model. `SubstreamAgent` owns the transcript and its full
@@ -60,8 +70,30 @@ agent loop. An external substream ID is immutable once recorded in
 Existing product data migrates into main child `0`. The current product exposes
 only that main context. A future feature may provision another child only when
 it needs a genuinely independent ordered message array and agent loop; it must
+reserve its deterministic identity in the `WorkstreamDO` control plane and
 initialize the child before issuing a socket ticket. The route shape alone is
 not permission to create an empty child.
+
+### Control plane and data plane
+
+`WorkspaceDO` and `WorkstreamDO` are the low-volume control plane. They admit
+workspace commands, own resource metadata/directory aggregation, and provide
+the one parent outbox for list, sidebar, notification, and regional delivery
+effects. Each `SubstreamAgent` is a fine-grained data-plane shard for one ordered
+conversation and agent loop.
+
+The Worker routes feed WebSockets, transcript reads, stream checkpoints, and
+other high-volume substream operations directly to the named child. It never
+proxies those operations through either parent, so one busy workspace or work
+stream cannot serialize unrelated child data planes. Parent updates travel in
+the other direction as versioned, idempotent child effects.
+
+Avalon uses deterministic `idFromName` identities, so a separate opaque
+child-ID mapping is unnecessary. The active main child is recorded by the D1
+authority route and converges into `WorkstreamDO.substream_directory` with its
+first common projection. When product creation for non-main children is added,
+the parent must record the child identity before direct access is issued so
+listing and deletion never depend on discovering objects by namespace scan.
 
 ### When substreams are appropriate
 
@@ -299,7 +331,10 @@ dual-write or fallback serving path.
 ## Invariants
 
 - **Exactly one object name owns each region/workspace/work-stream/substream tuple.** A second naming formula forks ordering and storage.
+- **Every stub is resolved through `durableObjectStubForRegion`.** A direct namespace call can derive an unrestricted ID or let a background path win first placement; ESLint rejects that bypass.
+- **The object jurisdiction matches the immutable workspace region.** Product-object constructors fail closed when `ctx.id.jurisdiction` is not `us` for Global or `eu` for EU.
 - **`WorkstreamDO` runs no model and owns no transcript.** Putting an agent there recreates one serialization bottleneck across substreams.
+- **High-volume child reads and streams never proxy through a parent.** Doing so would turn the control plane into the throughput and availability ceiling for every child.
 - **User messages enter through `WorkspaceDO`; feeds stream directly from `SubstreamAgent`.** Accepting writes on both sockets creates two authorization and ordering boundaries.
 - **Every Durable Object persists through explicit SQL.** KV calls create invisible schema and bypass migration, constraints, inspection, and lint.
 - **Room sequence and active text commit atomically.** Advancing only the cursor loses streamed text after eviction.
@@ -327,6 +362,8 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Condition | Behavior |
 | --- | --- |
 | Migration hash mismatch/schema ahead/foreign-key violation | Constructor activation fails; no request observes a partially migrated schema. |
+| Object ID has the wrong/no jurisdiction in staging or production | Constructor activation fails before serving state; callers cannot silently use the unrestricted graph. |
+| Location hint cannot be honored | Cloudflare selects the nearest available location inside the jurisdiction; correctness and residency do not depend on the best-effort hint. |
 | Workspace command socket hibernates | Runtime restores attachments; replayed command ticket is rejected from SQL. |
 | Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
 | Feed replay window lost | Child sends `resync_required`; desktop reloads canonical parts and active output checkpoint. |
@@ -359,6 +396,10 @@ alarms, `WorkstreamDO` aggregation, hibernating workspace command sockets,
 ticket replay, and the read-only child socket. Node tests cover migration
 rollback/hash drift/ahead versions, normalized product SQL, authorization,
 effect idempotency, streaming checkpoints, and renderer socket switching.
+`test/runtime-components.test.ts` covers US/EU resolution, location-hint
+arguments, local workerd behavior, and jurisdiction mismatch rejection.
+`pnpm test:scripts` covers the ESLint rule's direct, computed, optional, aliased,
+destructured, and typed-namespace bypass cases.
 
 Do not replace workerd lifecycle tests with hand-made state objects. Focused
 Node repository tests may use `node:sqlite`, but their `DurableObjectState`
@@ -434,11 +475,15 @@ projects only the next due timestamp required for workspace coordination.
 
 ## Regional impact
 
-Every object is selected through the workspace's immutable region. Production
-EU namespaces use the EU jurisdiction namespace, and EU D1/R2/Queues process EU
-workspace data. The global registry carries only routing/identity metadata; no
-transcript, token frame, connector payload, notification body, or full Workflow
-input crosses it.
+Every object is selected through the workspace's immutable region. Staging and
+production Global objects use the US jurisdiction with a `wnam` placement
+default; EU objects use the EU jurisdiction with a `weur` placement default.
+Jurisdiction is a storage/execution guarantee; the hint is best effort and only
+affects the first `get()`. Product constructors verify the actual jurisdiction.
+Local workerd omits both options because it does not implement jurisdictional
+namespaces. EU D1/R2/Queues process EU workspace data. The global registry
+carries only routing/identity metadata; no transcript, token frame, connector
+payload, notification body, or full Workflow input crosses it.
 
 ## Security and trust model
 
@@ -457,7 +502,10 @@ include component/version reason. Inspect `_sql_schema_migrations`,
 `agent_run_dispatches`, attempt leases, child and parent `durable_outbox`,
 regional effect receipts, and authority route/generation before retrying a
 quarantined object. The maintenance control plane can quarantine a failed route;
-operators must never reopen legacy D1 writers as recovery.
+operators must never reopen legacy D1 writers or an unrestricted predecessor as
+recovery. Cloudflare does not move an existing object when a hint changes; a
+placement/jurisdiction change requires the same explicit maintenance export,
+import, verification, and authority switch used here.
 
 ## Performance and cost
 
@@ -475,6 +523,33 @@ writes, while workspace sidebar/D1 traffic is bounded by semantic metadata
 changes rather than token rate or number of connected viewers.
 
 ## Changelog
+
+### 2026-08-17 — Control/data planes use jurisdictional IDs and hinted first placement
+
+**What changed:** All workspace, work-stream, substream, scheduler, and crash
+processor lookups use one resolver that selects `jurisdiction("us")` or
+`jurisdiction("eu")`, derives the name-based ID there, and supplies a `wnam` or
+`weur` location hint on every possible first `get()`. Product object constructors
+validate `ctx.id.jurisdiction`, and ESLint rejects direct or aliased namespace
+operations. The architecture now explicitly defines parent objects as the
+control plane and direct `SubstreamAgent` traffic as the data plane.
+
+**Why:** The previous EU-only helper left Global objects unrestricted, and three
+effect-delivery paths bypassed it. Cloudflare maps the same name to different
+jurisdictional IDs and honors a hint only on the first lookup, so partial use is
+not a safety boundary. Routing data-plane streams through parents would also
+undo the sharding benefit of one agent object per substream.
+
+**Considered and rejected:** Region-prefixed names without jurisdiction locks,
+hints only on creation endpoints, and parent-proxied feed traffic. They
+respectively provide no placement guarantee, miss background first lookups, and
+make a control object the shared throughput bottleneck.
+
+**Consequences:** The maintenance import creates/populates the US/EU locked
+target graph. A preexisting unrestricted Global object is a different identity
+and cannot be a serving fallback. Hints improve initial latency but remain best
+effort; future moves require an explicit migration. Local tests validate
+arguments and invariants while skipping unsupported workerd jurisdictions.
 
 ### 2026-08-17 — Per-substream agent objects replace the one-room agent boundary
 
@@ -498,7 +573,8 @@ keep-alive lifecycle idea was ported.
 
 **Consequences:** New context boundaries require explicit child provisioning and
 parent aggregation. `WorkstreamDO` must remain model-free. Main child `0`
-preserves the renamed historical SQLite object during the maintenance cutover.
+preserves the historical name; the later jurisdiction-lock change above defines
+when maintenance imports that name into a distinct ID.
 
 ### 2026-08-17 — Durable Object persistence becomes SQL-only and constructor-gated
 
