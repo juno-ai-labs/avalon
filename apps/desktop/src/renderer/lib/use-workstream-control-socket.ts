@@ -1,8 +1,8 @@
 import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamControlSocketEventSchema,
-  type HyperSight,
-  type HyperSightPreference,
+  type BlockDashboard,
+  type BlockDashboardPreference,
   type WorkstreamControlMetadata,
 } from '@avalon/contracts';
 import { useQueryClient } from '@tanstack/react-query';
@@ -144,11 +144,11 @@ export function useWorkstreamControlSocket(
             if (!event.success) return;
             if (event.data.type === 'workstream_metadata') {
               applyMetadata(event.data.metadata);
-            } else if (event.data.type === 'hypersight_configuration_updated') {
-              queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], event.data.hypersight);
-            } else if (event.data.type === 'hypersight_preference_updated') {
-              queryClient.setQueryData<HyperSightPreference>(
-                ['hypersight-preference', workstreamId],
+            } else if (event.data.type === 'block_dashboard_configuration_updated') {
+              queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.data.blockDashboard);
+            } else if (event.data.type === 'block_dashboard_preference_updated') {
+              queryClient.setQueryData<BlockDashboardPreference>(
+                ['block-dashboard-preference', workstreamId],
                 event.data.preference,
               );
             }

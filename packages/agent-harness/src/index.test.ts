@@ -2538,7 +2538,7 @@ describe("agent harness", () => {
         rejectToolModesBeforeCall(
           ["write"],
           "Writes are not currently allowed",
-          "hypersight_writes_not_allowed",
+          "block_dashboard_writes_not_allowed",
         ),
       ),
       findCompletedToolResult,
@@ -2565,7 +2565,7 @@ describe("agent harness", () => {
       .toContain("Writes are not currently allowed");
     expect(onToolCallRejected).toHaveBeenCalledWith({
       toolCallId: "run-1:turn:1:tool:0",
-      code: "hypersight_writes_not_allowed",
+      code: "block_dashboard_writes_not_allowed",
     });
   });
 

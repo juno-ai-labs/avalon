@@ -147,7 +147,7 @@
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
-      { "name": "HYPERSIGHT_BLOCK_AGENTS", "class_name": "HyperSightBlockAgent" },
+      { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" },
@@ -160,7 +160,7 @@
     { "tag": "v3", "renamed_classes": [{ "from": "WorkstreamRoom", "to": "SubstreamAgent" }] },
     { "tag": "v4", "new_sqlite_classes": ["WorkstreamDO"] },
     { "tag": "v5", "new_sqlite_classes": ["WorkspaceDO"] },
-    { "tag": "v6", "new_sqlite_classes": ["HyperSightBlockAgent"] }
+    { "tag": "v6", "new_sqlite_classes": ["BlockDashboardAgent"] }
   ],
   "queues": {
     "producers": [

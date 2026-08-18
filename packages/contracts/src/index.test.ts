@@ -21,8 +21,8 @@ import {
   ConnectorManifestSchema,
   HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
-  HyperSightPreferenceSchema,
-  HyperSightBlockSocketEventSchema,
+  BlockDashboardPreferenceSchema,
+  BlockDashboardBlockSocketEventSchema,
   MessageSchema,
   MentionSchema,
   NoteDetailSchema,
@@ -31,8 +31,8 @@ import {
   ServerSocketEventSchema,
   StartWorkOpportunityRequestSchema,
   SubstreamDirectSocketEventSchema,
-  UpdateHyperSightPreferenceRequestSchema,
-  UpdateHyperSightRequestSchema,
+  UpdateBlockDashboardPreferenceRequestSchema,
+  UpdateBlockDashboardRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   WorkstreamContextSchema,
@@ -529,18 +529,18 @@ describe("boundary contracts", () => {
   });
 
   it("bounds HyperSight configuration and preserves unique block identities", () => {
-    expect(UpdateHyperSightRequestSchema.parse({
+    expect(UpdateBlockDashboardRequestSchema.parse({
       expectedVersionNumber: 3,
       blocks: [{ id, prompt: "Give me the last five to-do items" }],
     })).toEqual({
       expectedVersionNumber: 3,
       blocks: [{ id, prompt: "Give me the last five to-do items" }],
     });
-    expect(UpdateHyperSightRequestSchema.safeParse({
+    expect(UpdateBlockDashboardRequestSchema.safeParse({
       expectedVersionNumber: 3,
       blocks: [{ id, prompt: "First" }, { id, prompt: "Duplicate" }],
     }).success).toBe(false);
-    expect(UpdateHyperSightRequestSchema.safeParse({
+    expect(UpdateBlockDashboardRequestSchema.safeParse({
       expectedVersionNumber: 3,
       blocks: Array.from({ length: 25 }, (_, index) => ({
         id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
@@ -550,19 +550,19 @@ describe("boundary contracts", () => {
   });
 
   it("validates personal HyperSight visibility preferences and their realtime updates", () => {
-    expect(UpdateHyperSightPreferenceRequestSchema.parse({ visible: true })).toEqual({ visible: true });
-    expect(UpdateHyperSightPreferenceRequestSchema.safeParse({ visible: true, shared: true }).success).toBe(false);
-    const preference = HyperSightPreferenceSchema.parse({
+    expect(UpdateBlockDashboardPreferenceRequestSchema.parse({ visible: true })).toEqual({ visible: true });
+    expect(UpdateBlockDashboardPreferenceRequestSchema.safeParse({ visible: true, shared: true }).success).toBe(false);
+    const preference = BlockDashboardPreferenceSchema.parse({
       visible: true,
       updatedAt: "2026-08-07T20:00:00.000Z",
     });
     expect(PersonalSocketEventSchema.parse({
-      type: "hypersight_preference_updated",
+      type: "block_dashboard_preference_updated",
       occurredAt: "2026-08-07T20:00:00.000Z",
       preference,
-    })).toMatchObject({ type: "hypersight_preference_updated", preference });
+    })).toMatchObject({ type: "block_dashboard_preference_updated", preference });
     expect(ServerSocketEventSchema.safeParse({
-      type: "hypersight_preference_updated",
+      type: "block_dashboard_preference_updated",
       sequence: 44,
       occurredAt: "2026-08-07T20:00:00.000Z",
       preference,
@@ -582,14 +582,14 @@ describe("boundary contracts", () => {
       roomSequence: 8,
       createdAt: "2026-08-18T20:00:00.000Z",
     });
-    expect(HyperSightBlockSocketEventSchema.parse({
-      type: "hypersight_block_stream_checkpoint",
+    expect(BlockDashboardBlockSocketEventSchema.parse({
+      type: "block_dashboard_block_stream_checkpoint",
       occurredAt: "2026-08-18T20:00:01.000Z",
       blockId: id,
       blockRunId: id,
       streamCheckpoint: checkpoint,
     })).toMatchObject({
-      type: "hypersight_block_stream_checkpoint",
+      type: "block_dashboard_block_stream_checkpoint",
       streamCheckpoint: { roomSequence: 8, text: "A partially streamed block" },
     });
   });

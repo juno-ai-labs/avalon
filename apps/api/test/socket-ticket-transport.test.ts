@@ -2,15 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@avalon/contracts/socket-tickets";
 import { ApiError } from "../src/lib/api-error";
 import {
-  HyperSightBlockSocketService,
-  issueHyperSightBlockSocketTicket,
+  BlockDashboardBlockSocketService,
+  issueBlockDashboardBlockSocketTicket,
   issueSocketTicket,
   issueWorkstreamControlSocketTicket,
   issueWorkspaceSocketTicket,
   SocketService,
   socketTicketFromRequest,
   verifySocketTicket,
-  verifyHyperSightBlockSocketTicket,
+  verifyBlockDashboardBlockSocketTicket,
   verifyWorkstreamControlSocketTicket,
   verifyWorkspaceSocketTicket,
   withNegotiatedSubprotocol,
@@ -200,7 +200,7 @@ describe("socket ticket transport", () => {
       .rejects.toMatchObject({ code: "invalid_socket_ticket" });
   });
 
-  it("routes a purpose-scoped block ticket only to its HyperSightBlockAgent", async () => {
+  it("routes a purpose-scoped block ticket only to its BlockDashboardAgent", async () => {
     const sessionId = "00000000-0000-7000-8000-000000000731";
     const userId = "00000000-0000-7000-8000-000000000732";
     const workspaceId = "00000000-0000-7000-8000-000000000733";
@@ -208,7 +208,7 @@ describe("socket ticket transport", () => {
     const blockId = "00000000-0000-7000-8000-000000000735";
     const initializeBlock = vi.fn(async () => undefined);
     const blockFetch = vi.fn(async (request: Request) => {
-      expect(request.headers.get("x-avalon-hypersight-block-id")).toBe(blockId);
+      expect(request.headers.get("x-avalon-block-dashboard-block-id")).toBe(blockId);
       expect(request.headers.get("x-avalon-session-id")).toBe(sessionId);
       expect(request.headers.get("sec-websocket-protocol")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
@@ -218,15 +218,15 @@ describe("socket ticket transport", () => {
       AVALON_REGION: "global",
       ALLOWED_ORIGINS: "app://avalon",
       SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
-      HYPERSIGHT_BLOCK_AGENTS: createCloudflareTestBinding<Env["HYPERSIGHT_BLOCK_AGENTS"]>({
-        idFromName: () => createTestDurableObjectId("hypersight-block-do-id"),
+      BLOCK_DASHBOARD_AGENTS: createCloudflareTestBinding<Env["BLOCK_DASHBOARD_AGENTS"]>({
+        idFromName: () => createTestDurableObjectId("block-dashboard-block-do-id"),
         get: () => ({ fetch: blockFetch, initializeBlock }),
       }),
     });
     const auth = { sessionId, userId, workspaceId, region: "global", role: "member" } as const;
-    const ticket = await issueHyperSightBlockSocketTicket(env, auth, workstreamId, blockId);
+    const ticket = await issueBlockDashboardBlockSocketTicket(env, auth, workstreamId, blockId);
     const request = new Request(
-      `https://api.avalon.test/workstreams/${workstreamId}/hypersight/blocks/${blockId}`,
+      `https://api.avalon.test/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       {
         headers: {
           Origin: "app://avalon",
@@ -236,7 +236,7 @@ describe("socket ticket transport", () => {
       },
     );
 
-    const response = await new HyperSightBlockSocketService(env).upgrade(
+    const response = await new BlockDashboardBlockSocketService(env).upgrade(
       workstreamId,
       blockId,
       undefined,
@@ -251,7 +251,7 @@ describe("socket ticket transport", () => {
       blockId,
     });
     expect(blockFetch).toHaveBeenCalledOnce();
-    await expect(verifyHyperSightBlockSocketTicket(env, ticket)).resolves.toMatchObject({
+    await expect(verifyBlockDashboardBlockSocketTicket(env, ticket)).resolves.toMatchObject({
       workspaceId,
       workstreamId,
       blockId,

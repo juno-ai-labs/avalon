@@ -109,7 +109,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
   ): Promise<HarnessWorkflowOutcome> {
     const input = WorkstreamWorkflowInputSchema.parse(event.payload);
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
-    if (input.reason === "hypersight_block") throw new Error("hypersight_runs_require_block_agent");
+    if (input.reason === "block_dashboard_block") throw new Error("block_dashboard_runs_require_block_agent");
 
     const authority = await step.do("check-workstream-authority-fence", async () => {
       const authority = await readWorkstreamAuthorityControl(this.env);

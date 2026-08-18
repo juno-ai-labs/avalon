@@ -12,8 +12,8 @@ import {
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
   ElicitationSchema as WireElicitationSchema,
-  HyperSightPreferenceSchema as WireHyperSightPreferenceSchema,
-  HyperSightSchema as WireHyperSightSchema,
+  BlockDashboardPreferenceSchema as WireBlockDashboardPreferenceSchema,
+  BlockDashboardSchema as WireBlockDashboardSchema,
   NoteDetailSchema as WireNoteDetailSchema,
   NoteSummarySchema as WireNoteSummarySchema,
   NoteTranscriptSegmentSchema as WireNoteTranscriptSegmentSchema,
@@ -74,8 +74,8 @@ import type {
   DigestSchedule,
   ElicitationData,
   HarnessStatus,
-  HyperSight,
-  HyperSightPreference,
+  BlockDashboard,
+  BlockDashboardPreference,
   Message,
   MessagePage,
   NoteDetail,
@@ -1310,36 +1310,36 @@ export class AvalonApi {
     });
   }
 
-  async getHyperSight(id: string, signal?: AbortSignal): Promise<HyperSight> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight`, {
-      schema: WireHyperSightSchema,
+  async getBlockDashboard(id: string, signal?: AbortSignal): Promise<BlockDashboard> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard`, {
+      schema: WireBlockDashboardSchema,
       signal,
     });
   }
 
-  async getHyperSightPreference(id: string, signal?: AbortSignal): Promise<HyperSightPreference> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight/preference`, {
-      schema: WireHyperSightPreferenceSchema,
+  async getBlockDashboardPreference(id: string, signal?: AbortSignal): Promise<BlockDashboardPreference> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard/preference`, {
+      schema: WireBlockDashboardPreferenceSchema,
       signal,
     });
   }
 
-  async updateHyperSightPreference(id: string, visible: boolean): Promise<HyperSightPreference> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight/preference`, {
+  async updateBlockDashboardPreference(id: string, visible: boolean): Promise<BlockDashboardPreference> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard/preference`, {
       method: 'PUT',
       body: { visible },
-      schema: WireHyperSightPreferenceSchema,
+      schema: WireBlockDashboardPreferenceSchema,
     });
   }
 
-  async updateHyperSight(
+  async updateBlockDashboard(
     id: string,
     input: { expectedVersionNumber: number; blocks: Array<{ id: string; prompt: string }> },
-  ): Promise<HyperSight> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight`, {
+  ): Promise<BlockDashboard> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/block-dashboard`, {
       method: 'PUT',
       body: input,
-      schema: WireHyperSightSchema,
+      schema: WireBlockDashboardSchema,
     });
   }
 
@@ -1665,9 +1665,9 @@ export class AvalonApi {
     });
   }
 
-  getHyperSightBlockSocketTicket(id: string, blockId: string): Promise<SocketTicket> {
+  getBlockDashboardBlockSocketTicket(id: string, blockId: string): Promise<SocketTicket> {
     return this.request(
-      `/workstreams/${encodeURIComponent(id)}/hypersight/blocks/${encodeURIComponent(blockId)}/socket`,
+      `/workstreams/${encodeURIComponent(id)}/block-dashboard/blocks/${encodeURIComponent(blockId)}/socket`,
       { schema: socketTicketSchema },
     );
   }

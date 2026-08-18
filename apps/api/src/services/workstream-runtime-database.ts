@@ -58,10 +58,10 @@ const LOCAL_TABLES = [
   "workstream_plugin_activation_hints",
   "workstream_resource_inventory_revisions",
   "workstream_description_refreshes",
-  "hypersight_configuration_versions",
-  "hypersight_user_preferences",
+  "block_dashboard_configuration_versions",
+  "block_dashboard_user_preferences",
   "workstream_resources",
-  "hypersight_block_runs",
+  "block_dashboard_block_runs",
 ] as const;
 
 function localStatement(sql: string): boolean {

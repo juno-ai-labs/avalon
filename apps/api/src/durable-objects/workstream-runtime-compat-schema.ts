@@ -1091,37 +1091,37 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
        UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
      END`,
 
-  `CREATE VIEW IF NOT EXISTS _runtime_hypersight_configurations AS
+  `CREATE VIEW IF NOT EXISTS _runtime_block_dashboard_configurations AS
      SELECT configuration.configuration_version_id AS id,
             root.parent_workspace_key AS workspace_id, root.workstream_key AS workstream_id,
             configuration.version_number, configuration.blocks_json,
             configuration.created_by_user_id,
             strftime('%Y-%m-%dT%H:%M:%fZ', configuration.created_at / 1000.0, 'unixepoch') AS created_at
-       FROM hypersight_configuration_versions configuration CROSS JOIN workstream root
+       FROM block_dashboard_configuration_versions configuration CROSS JOIN workstream root
       WHERE root.id = 1`,
-  `CREATE TRIGGER IF NOT EXISTS _runtime_hypersight_configurations_insert
-     INSTEAD OF INSERT ON _runtime_hypersight_configurations BEGIN
-       INSERT INTO hypersight_configuration_versions
+  `CREATE TRIGGER IF NOT EXISTS _runtime_block_dashboard_configurations_insert
+     INSTEAD OF INSERT ON _runtime_block_dashboard_configurations BEGIN
+       INSERT INTO block_dashboard_configuration_versions
          (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
        VALUES (NEW.id, NEW.version_number, NEW.blocks_json, NEW.created_by_user_id,
           CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER));
        UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
      END`,
-  `CREATE VIEW IF NOT EXISTS _runtime_hypersight_preferences AS
+  `CREATE VIEW IF NOT EXISTS _runtime_block_dashboard_preferences AS
      SELECT root.parent_workspace_key AS workspace_id, root.workstream_key AS workstream_id,
             preference.user_id, preference.visible,
             strftime('%Y-%m-%dT%H:%M:%fZ', preference.updated_at / 1000.0, 'unixepoch') AS updated_at
-       FROM hypersight_user_preferences preference CROSS JOIN workstream root WHERE root.id = 1`,
-  `CREATE TRIGGER IF NOT EXISTS _runtime_hypersight_preferences_insert
-     INSTEAD OF INSERT ON _runtime_hypersight_preferences BEGIN
-       INSERT INTO hypersight_user_preferences(user_id, visible, updated_at)
+       FROM block_dashboard_user_preferences preference CROSS JOIN workstream root WHERE root.id = 1`,
+  `CREATE TRIGGER IF NOT EXISTS _runtime_block_dashboard_preferences_insert
+     INSTEAD OF INSERT ON _runtime_block_dashboard_preferences BEGIN
+       INSERT INTO block_dashboard_user_preferences(user_id, visible, updated_at)
        VALUES (NEW.user_id, NEW.visible,
           CAST((julianday(NEW.updated_at) - 2440587.5) * 86400000 AS INTEGER))
        ON CONFLICT(user_id) DO UPDATE SET visible = excluded.visible, updated_at = excluded.updated_at;
        UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
      END`,
 
-  `CREATE VIEW IF NOT EXISTS _runtime_hypersight_runs AS
+  `CREATE VIEW IF NOT EXISTS _runtime_block_dashboard_runs AS
      SELECT block.block_run_id AS id, root.parent_workspace_key AS workspace_id,
             root.workstream_key AS workstream_id, block.configuration_version_id,
             block.block_id, block.prompt, block.trigger_sequence, block.run_id AS harness_run_id,
@@ -1129,10 +1129,10 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
             strftime('%Y-%m-%dT%H:%M:%fZ', block.created_at / 1000.0, 'unixepoch') AS created_at,
             CASE WHEN block.started_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%fZ', block.started_at / 1000.0, 'unixepoch') END AS started_at,
             CASE WHEN block.completed_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%fZ', block.completed_at / 1000.0, 'unixepoch') END AS completed_at
-       FROM hypersight_block_runs block CROSS JOIN workstream root WHERE root.id = 1`,
-  `CREATE TRIGGER IF NOT EXISTS _runtime_hypersight_runs_insert
-     INSTEAD OF INSERT ON _runtime_hypersight_runs BEGIN
-       INSERT OR IGNORE INTO hypersight_block_runs
+       FROM block_dashboard_block_runs block CROSS JOIN workstream root WHERE root.id = 1`,
+  `CREATE TRIGGER IF NOT EXISTS _runtime_block_dashboard_runs_insert
+     INSTEAD OF INSERT ON _runtime_block_dashboard_runs BEGIN
+       INSERT OR IGNORE INTO block_dashboard_block_runs
          (block_run_id, configuration_version_id, block_id, prompt, trigger_sequence,
           run_id, status, markdown, error_json, created_at, started_at, completed_at)
        VALUES (NEW.id, NEW.configuration_version_id, NEW.block_id, NEW.prompt,
@@ -1143,9 +1143,9 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
           CASE WHEN NEW.completed_at IS NULL THEN NULL ELSE CAST((julianday(NEW.completed_at) - 2440587.5) * 86400000 AS INTEGER) END);
        UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
      END`,
-  `CREATE TRIGGER IF NOT EXISTS _runtime_hypersight_runs_update
-     INSTEAD OF UPDATE ON _runtime_hypersight_runs BEGIN
-       UPDATE hypersight_block_runs SET status = NEW.status, markdown = NEW.markdown,
+  `CREATE TRIGGER IF NOT EXISTS _runtime_block_dashboard_runs_update
+     INSTEAD OF UPDATE ON _runtime_block_dashboard_runs BEGIN
+       UPDATE block_dashboard_block_runs SET status = NEW.status, markdown = NEW.markdown,
          error_json = NEW.error_json,
          started_at = CASE WHEN NEW.started_at IS NULL THEN NULL ELSE CAST((julianday(NEW.started_at) - 2440587.5) * 86400000 AS INTEGER) END,
          completed_at = CASE WHEN NEW.completed_at IS NULL THEN NULL ELSE CAST((julianday(NEW.completed_at) - 2440587.5) * 86400000 AS INTEGER) END

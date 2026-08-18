@@ -401,64 +401,64 @@ BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_block_runs_reject_do_authority_insert
-BEFORE INSERT ON hypersight_block_runs
+CREATE TRIGGER block_dashboard_block_runs_reject_do_authority_insert
+BEFORE INSERT ON block_dashboard_block_runs
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_block_runs_reject_do_authority_update
-BEFORE UPDATE ON hypersight_block_runs
+CREATE TRIGGER block_dashboard_block_runs_reject_do_authority_update
+BEFORE UPDATE ON block_dashboard_block_runs
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_block_runs_reject_do_authority_delete
-BEFORE DELETE ON hypersight_block_runs
+CREATE TRIGGER block_dashboard_block_runs_reject_do_authority_delete
+BEFORE DELETE ON block_dashboard_block_runs
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_configuration_versions_reject_do_authority_insert
-BEFORE INSERT ON hypersight_configuration_versions
+CREATE TRIGGER block_dashboard_configuration_versions_reject_do_authority_insert
+BEFORE INSERT ON block_dashboard_configuration_versions
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_configuration_versions_reject_do_authority_update
-BEFORE UPDATE ON hypersight_configuration_versions
+CREATE TRIGGER block_dashboard_configuration_versions_reject_do_authority_update
+BEFORE UPDATE ON block_dashboard_configuration_versions
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_configuration_versions_reject_do_authority_delete
-BEFORE DELETE ON hypersight_configuration_versions
+CREATE TRIGGER block_dashboard_configuration_versions_reject_do_authority_delete
+BEFORE DELETE ON block_dashboard_configuration_versions
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_user_preferences_reject_do_authority_insert
-BEFORE INSERT ON hypersight_user_preferences
+CREATE TRIGGER block_dashboard_user_preferences_reject_do_authority_insert
+BEFORE INSERT ON block_dashboard_user_preferences
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_user_preferences_reject_do_authority_update
-BEFORE UPDATE ON hypersight_user_preferences
+CREATE TRIGGER block_dashboard_user_preferences_reject_do_authority_update
+BEFORE UPDATE ON block_dashboard_user_preferences
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');
 END;
 
-CREATE TRIGGER hypersight_user_preferences_reject_do_authority_delete
-BEFORE DELETE ON hypersight_user_preferences
+CREATE TRIGGER block_dashboard_user_preferences_reject_do_authority_delete
+BEFORE DELETE ON block_dashboard_user_preferences
 WHEN (SELECT phase FROM workstream_authority_control WHERE id = 1) NOT IN ('legacy_open', 'maintenance_draining')
 BEGIN
   SELECT RAISE(ABORT, 'workstream_do_authoritative');

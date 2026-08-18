@@ -809,7 +809,7 @@ export class WorkstreamObjectProductService {
       error_json: string | null; started_at: number; completed_at: number | null; created_at: number;
     }>(
       `SELECT run_id, origin, status, model, error_json, started_at, completed_at, created_at
-         FROM runs WHERE parent_tool_call_id IS NULL AND origin != 'hypersight_block'
+         FROM runs WHERE parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
         ORDER BY created_at DESC, run_id DESC LIMIT 1`,
     ));
     return WorkstreamDetailSchema.parse({
@@ -1608,7 +1608,7 @@ export class WorkstreamObjectProductService {
       started_at: number; completed_at: number | null; created_at: number; final_part_id: string | null;
     }>(
       `SELECT run_id, origin, status, usage_json, started_at, completed_at, created_at, final_part_id
-         FROM runs WHERE origin != 'hypersight_block'
+         FROM runs WHERE origin != 'block_dashboard_block'
         ORDER BY started_at DESC LIMIT 250`,
     ).toArray().map((row) => {
       const usage = parseJson<Record<string, unknown>>(row.usage_json, {});
@@ -2010,7 +2010,7 @@ export class WorkstreamObjectProductService {
           if (input.expectedLatestHarnessRunId) {
             const latest = first(sql.exec<{ run_id: string }>(
               `SELECT run_id FROM runs WHERE parent_tool_call_id IS NULL
-                AND origin != 'hypersight_block' ORDER BY created_at DESC, run_id DESC LIMIT 1`,
+                AND origin != 'block_dashboard_block' ORDER BY created_at DESC, run_id DESC LIMIT 1`,
             ));
             if (latest?.run_id !== input.expectedLatestHarnessRunId) {
               throw new ApiError(409, "terminal_repository_request_stale", "The work stream changed before this message was admitted");
@@ -2019,7 +2019,7 @@ export class WorkstreamObjectProductService {
           if ((input.runMode ?? "steer") === "steer") {
             const inFlight = first(sql.exec<{ run_id: string }>(
               `SELECT run_id FROM runs
-                WHERE substream_id = '0' AND origin != 'hypersight_block'
+                WHERE substream_id = '0' AND origin != 'block_dashboard_block'
                   AND status = 'running' AND terminalized_at IS NULL
                 ORDER BY started_at, run_id LIMIT 1`,
             ));
@@ -2360,7 +2360,7 @@ export class WorkstreamObjectProductService {
       `UPDATE runs SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
               cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user'),
               revision = revision + 1, updated_at = ?
-        WHERE substream_id = '0' AND origin != 'hypersight_block'
+        WHERE substream_id = '0' AND origin != 'block_dashboard_block'
           AND status IN ('admitted', 'running', 'waiting', 'steering')
           AND terminalized_at IS NULL`,
       now, now,
@@ -2379,7 +2379,7 @@ export class WorkstreamObjectProductService {
       status: string; trigger_part_id: string | null;
     }>(
       `SELECT status, trigger_part_id FROM runs
-        WHERE substream_id = '0' AND parent_tool_call_id IS NULL AND origin != 'hypersight_block'
+        WHERE substream_id = '0' AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
         ORDER BY created_at DESC LIMIT 1`,
     ));
     if (!latest || !["failed", "cancelled"].includes(latest.status)) {

@@ -36,7 +36,7 @@ import {
   upsertTranscriptMessage,
   visibleTranscriptMessages,
 } from './transcript';
-import type { HarnessStatus, HyperSight, HyperSightPreference, Message, MessagePage, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkstreamDetail, WorkstreamSummary } from './types';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkspaceSocket } from './workspace-socket';
@@ -670,9 +670,9 @@ export function useWorkstreamSocket(
       });
     };
 
-    const syncHyperSightQueries = (): Promise<unknown> => Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['hypersight', workstreamId], exact: true }),
-      queryClient.invalidateQueries({ queryKey: ['hypersight-preference', workstreamId], exact: true }),
+    const syncBlockDashboardQueries = (): Promise<unknown> => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['block-dashboard', workstreamId], exact: true }),
+      queryClient.invalidateQueries({ queryKey: ['block-dashboard-preference', workstreamId], exact: true }),
     ]);
 
     const reconcileCanonicalState = async (): Promise<void> => {
@@ -709,7 +709,7 @@ export function useWorkstreamSocket(
         void Promise.all([
           queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-          syncHyperSightQueries(),
+          syncBlockDashboardQueries(),
         ]);
         if (!mayStillEmitRealtime) streamCursors.clear();
       } catch {
@@ -719,9 +719,9 @@ export function useWorkstreamSocket(
     };
 
     const applyPersonalEvent = (event: PersonalSocketEvent): void => {
-      if (event.type === 'hypersight_preference_updated') {
-        queryClient.setQueryData<HyperSightPreference>(
-          ['hypersight-preference', workstreamId],
+      if (event.type === 'block_dashboard_preference_updated') {
+        queryClient.setQueryData<BlockDashboardPreference>(
+          ['block-dashboard-preference', workstreamId],
           event.preference,
         );
       }
@@ -770,7 +770,7 @@ export function useWorkstreamSocket(
         // The direct socket snapshot is canonical for the newest page. REST is
         // now used only to page older history or recover after resync_required.
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-        void syncHyperSightQueries();
+        void syncBlockDashboardQueries();
       } else if (event.type === 'presence_changed') {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, viewers: event.viewers.map(mapViewer) } : current,
@@ -916,10 +916,10 @@ export function useWorkstreamSocket(
               : [...current.resources, resource],
           };
         });
-      } else if (event.type === 'hypersight_configuration_updated') {
-        queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], event.hypersight);
-      } else if (event.type === 'hypersight_block_run_updated') {
-        queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], (current) => {
+      } else if (event.type === 'block_dashboard_configuration_updated') {
+        queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.blockDashboard);
+      } else if (event.type === 'block_dashboard_block_run_updated') {
+        queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], (current) => {
           if (!current || current.versionId !== event.run.configurationVersionId) return current;
           return {
             ...current,
@@ -1070,7 +1070,7 @@ export function useWorkstreamSocket(
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-            syncHyperSightQueries(),
+            syncBlockDashboardQueries(),
           ]);
           resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
           if (canonicalResyncTarget === targetSequence) {

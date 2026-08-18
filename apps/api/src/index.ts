@@ -95,7 +95,7 @@ async function processTelemetry(env: Env): Promise<void> {
 }
 
 export { SubstreamAgent } from "./durable-objects/substream-agent";
-export { HyperSightBlockAgent } from "./durable-objects/hypersight-block-agent";
+export { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
 export { WorkstreamDO } from "./durable-objects/workstream-do";
 export { WorkspaceDO } from "./durable-objects/workspace-do";
 export { WorkspaceScheduler } from "./durable-objects/workspace-scheduler";

@@ -611,70 +611,70 @@ describe("database migrations", () => {
       INSERT INTO users
         (id, google_subject, email, name, created_at, updated_at)
       VALUES
-        ('user-hypersight', 'google-hypersight', 'hypersight@example.com',
+        ('user-block-dashboard', 'google-block-dashboard', 'block-dashboard@example.com',
          'HyperSight Owner', '2026-01-01', '2026-01-01'),
-        ('user-hypersight-two', 'google-hypersight-two', 'hypersight-two@example.com',
+        ('user-block-dashboard-two', 'google-block-dashboard-two', 'block-dashboard-two@example.com',
          'HyperSight Member', '2026-01-01', '2026-01-01');
       INSERT INTO workspaces
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-hypersight', 'HyperSight', 'hypersight', 'global',
-              'user-hypersight', '2026-01-01', '2026-01-01');
+      VALUES ('workspace-block-dashboard', 'HyperSight', 'block-dashboard', 'global',
+              'user-block-dashboard', '2026-01-01', '2026-01-01');
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-hypersight', 'workspace-hypersight', 'Shared dashboard',
-              'Test append-only configuration', 'ad_hoc', 'user-hypersight', 'idle',
+      VALUES ('workstream-block-dashboard', 'workspace-block-dashboard', 'Shared dashboard',
+              'Test append-only configuration', 'ad_hoc', 'user-block-dashboard', 'idle',
               '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO hypersight_configuration_versions
+      INSERT INTO block_dashboard_configuration_versions
         (id, workspace_id, workstream_id, version_number, blocks_json,
          created_by_user_id, created_at)
       VALUES
-        ('hypersight-version-1', 'workspace-hypersight', 'workstream-hypersight', 1,
-         '[{"id":"block-1","prompt":"Summarize"}]', 'user-hypersight', '2026-01-01'),
-        ('hypersight-version-2', 'workspace-hypersight', 'workstream-hypersight', 2,
-         '[{"id":"block-1","prompt":"List five tasks"}]', 'user-hypersight', '2026-01-02');
-      INSERT INTO hypersight_user_preferences
+        ('block-dashboard-version-1', 'workspace-block-dashboard', 'workstream-block-dashboard', 1,
+         '[{"id":"block-1","prompt":"Summarize"}]', 'user-block-dashboard', '2026-01-01'),
+        ('block-dashboard-version-2', 'workspace-block-dashboard', 'workstream-block-dashboard', 2,
+         '[{"id":"block-1","prompt":"List five tasks"}]', 'user-block-dashboard', '2026-01-02');
+      INSERT INTO block_dashboard_user_preferences
         (workspace_id, workstream_id, user_id, visible, updated_at)
       VALUES
-        ('workspace-hypersight', 'workstream-hypersight', 'user-hypersight', 1, '2026-01-02'),
-        ('workspace-hypersight', 'workstream-hypersight', 'user-hypersight-two', 0, '2026-01-02');
+        ('workspace-block-dashboard', 'workstream-block-dashboard', 'user-block-dashboard', 1, '2026-01-02'),
+        ('workspace-block-dashboard', 'workstream-block-dashboard', 'user-block-dashboard-two', 0, '2026-01-02');
       INSERT INTO harness_runs
         (id, workspace_id, workstream_id, origin, execution_principal_json,
          status, model, created_at)
-      VALUES ('hypersight-harness-1', 'workspace-hypersight', 'workstream-hypersight',
-              'hypersight_block', '{"type":"workspace","workspaceId":"workspace-hypersight"}',
+      VALUES ('block-dashboard-harness-1', 'workspace-block-dashboard', 'workstream-block-dashboard',
+              'block_dashboard_block', '{"type":"workspace","workspaceId":"workspace-block-dashboard"}',
               'scheduled', 'x-ai/grok-4.3', '2026-01-02');
-      INSERT INTO hypersight_block_runs
+      INSERT INTO block_dashboard_block_runs
         (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
          trigger_sequence, harness_run_id, status, created_at)
-      VALUES ('hypersight-run-1', 'workspace-hypersight', 'workstream-hypersight',
-              'hypersight-version-2', 'block-1', 'List five tasks', 7,
-              'hypersight-harness-1', 'queued', '2026-01-02');
+      VALUES ('block-dashboard-run-1', 'workspace-block-dashboard', 'workstream-block-dashboard',
+              'block-dashboard-version-2', 'block-1', 'List five tasks', 7,
+              'block-dashboard-harness-1', 'queued', '2026-01-02');
     `);
 
     expect(database.prepare(
-      `SELECT version_number, blocks_json FROM hypersight_configuration_versions
-       WHERE workstream_id = 'workstream-hypersight' ORDER BY version_number`,
+      `SELECT version_number, blocks_json FROM block_dashboard_configuration_versions
+       WHERE workstream_id = 'workstream-block-dashboard' ORDER BY version_number`,
     ).all()).toEqual([
       { version_number: 1, blocks_json: '[{"id":"block-1","prompt":"Summarize"}]' },
       { version_number: 2, blocks_json: '[{"id":"block-1","prompt":"List five tasks"}]' },
     ]);
     expect(() => database.exec(
-      "UPDATE hypersight_configuration_versions SET blocks_json = '[]' WHERE id = 'hypersight-version-1'",
-    )).toThrow(/hypersight_configuration_version_immutable/u);
+      "UPDATE block_dashboard_configuration_versions SET blocks_json = '[]' WHERE id = 'block-dashboard-version-1'",
+    )).toThrow(/block_dashboard_configuration_version_immutable/u);
     expect(() => database.exec(`
-      INSERT INTO hypersight_configuration_versions
+      INSERT INTO block_dashboard_configuration_versions
         (id, workspace_id, workstream_id, version_number, blocks_json,
          created_by_user_id, created_at)
-      VALUES ('hypersight-version-duplicate', 'workspace-hypersight', 'workstream-hypersight',
-              2, '[]', 'user-hypersight', '2026-01-03');
+      VALUES ('block-dashboard-version-duplicate', 'workspace-block-dashboard', 'workstream-block-dashboard',
+              2, '[]', 'user-block-dashboard', '2026-01-03');
     `)).toThrow(/UNIQUE constraint failed/u);
     expect(database.prepare(
-      `SELECT user_id, visible FROM hypersight_user_preferences
-       WHERE workstream_id = 'workstream-hypersight' ORDER BY user_id`,
+      `SELECT user_id, visible FROM block_dashboard_user_preferences
+       WHERE workstream_id = 'workstream-block-dashboard' ORDER BY user_id`,
     ).all()).toEqual([
-      { user_id: 'user-hypersight', visible: 1 },
-      { user_id: 'user-hypersight-two', visible: 0 },
+      { user_id: 'user-block-dashboard', visible: 1 },
+      { user_id: 'user-block-dashboard-two', visible: 0 },
     ]);
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();

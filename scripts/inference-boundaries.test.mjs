@@ -72,7 +72,7 @@ test("requires renderer WebSockets to consume an authenticated ticket URL", () =
     const metadataSocket = new WebSocket(workstreamTicket.url, workstreamTicket.protocols);
   `, "require-websocket-ticket").length, 0);
   assert.equal(lint(`
-    const blockTicket = await api.getHyperSightBlockSocketTicket(workstreamId, blockId);
+    const blockTicket = await api.getBlockDashboardBlockSocketTicket(workstreamId, blockId);
     const blockSocket = new WebSocket(blockTicket.url, blockTicket.protocols);
   `, "require-websocket-ticket").length, 0);
   assert.equal(lint("const socket = new WebSocket(url);", "require-websocket-ticket").length, 1);

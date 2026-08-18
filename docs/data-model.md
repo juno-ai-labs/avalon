@@ -6,7 +6,7 @@ contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
 its non-agent `WorkstreamDO` parent owns aggregate work-stream metadata and the
 regional effect outbox plus HyperSight configuration/published results. Each
-stable HyperSight block has a separate `HyperSightBlockAgent` execution ledger,
+stable HyperSight block has a separate `BlockDashboardAgent` execution ledger,
 while its fenced transcript and Bind runtime rows remain in main
 `SubstreamAgent("0")`. Frozen
 legacy D1 product rows are migration input and writer tripwires, never a serving
@@ -16,6 +16,10 @@ rather than duplicating their DDL. Application
 contracts expose camel-cased TypeScript values; storage uses explicit
 snake-cased columns, and JSON only where provider- or model-shaped data is not
 relationally queried.
+
+The database vocabulary is intentionally `block_dashboard_*`; **HyperSight**
+is the product label rendered to users. No authoritative or compatibility table
+uses the product name after this unshipped cutover.
 
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
@@ -33,7 +37,7 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts` | SQL schemas for workspace sync/command routing, bounded invalidation replay, non-agent child projection aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
-| `apps/api/src/durable-objects/hypersight-block-agent.ts` | Per-block SQL identity, socket receipt, durable execution/retry/result-settlement ledger, and full active-output checkpoint. |
+| `apps/api/src/durable-objects/block-dashboard-agent.ts` | Per-block SQL identity, socket receipt, durable execution/retry/result-settlement ledger, and full active-output checkpoint. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
@@ -76,12 +80,12 @@ plan, archive/system marker, or schedule rather than accidentally retain it.
 frames are never database joins or metadata patches.
 
 HyperSight is intentionally split by responsibility. WorkstreamDO's
-`hypersight_configuration_versions`, `hypersight_block_runs`, preferences,
+`block_dashboard_configuration_versions`, `block_dashboard_block_runs`, preferences,
 dispatch outbox, and result receipts are the product/control authority. A
-`HyperSightBlockAgent.agent_run_dispatches` row owns the long-running executor.
+`BlockDashboardAgent.agent_run_dispatches` row owns the long-running executor.
 Its singleton `agent_stream_checkpoint` stores the complete currently visible
 derived output, revision, epoch, and sequence;
-`hypersight_socket_ticket_receipts` provides one-time admission for the block's
+`block_dashboard_socket_ticket_receipts` provides one-time admission for the block's
 direct socket. It stores neither a copy of the source transcript nor one row per
 token. The main substream's runtime compatibility rows hold the Bind run/tool state
 that references its fenced transcript. These are connected by typed,
@@ -618,6 +622,25 @@ service's suite under `apps/api`, not here.
 
 ## Changelog
 
+### 2026-08-18 — HyperSight persistence adopts BlockDashboard identifiers
+
+**What changed:** Regional D1 and object-local SQLite tables, indexes, triggers,
+origins, errors, and import mappings now use `block_dashboard_*`. The
+per-block execution owner is `BlockDashboardAgent`; API shapes use
+`BlockDashboard` types.
+
+**Why:** Persistence should name the authority it implements rather than a
+product label. The common prefix now joins configuration, dispatch, execution,
+socket receipts, and publication state in schema inspection and telemetry.
+
+**Considered and rejected:** Keeping old physical table names while renaming
+only TypeScript. The schema has not shipped, so that would preserve misleading
+names without avoiding a data migration.
+
+**Consequences:** The initial D1/DO baselines are renamed in place and tests
+assert the new schema. Visible dashboard text still says HyperSight and is not
+derived from storage identifiers.
+
 ### 2026-08-18 — Active compaction is operational state, not conversation
 
 **What changed:** The work-stream object map now names
@@ -638,7 +661,7 @@ their existing immutable fences and canonical messages remain unchanged.
 
 ### 2026-08-18 — Derived agent output gains a reconnect-safe SQL checkpoint
 
-**What changed:** Each `HyperSightBlockAgent` now stores one full active-output
+**What changed:** Each `BlockDashboardAgent` now stores one full active-output
 checkpoint and its own one-time socket receipts beside the existing dispatch
 ledger. Its source transcript and Bind tool rows remain in main
 `SubstreamAgent("0")`; the checkpoint contains only the block's derived output.
@@ -678,7 +701,7 @@ use one timestamp representation.
 ### 2026-08-18 — HyperSight separates product and execution authority
 
 **What changed:** WorkstreamDO now stores configured/published HyperSight state,
-one `HyperSightBlockAgent` stores each stable block's execution ledger, and main
+one `BlockDashboardAgent` stores each stable block's execution ledger, and main
 `SubstreamAgent("0")` stores the fenced Bind runtime rows used during execution.
 
 **Why:** Configuration and results are work-stream metadata, execution recovery

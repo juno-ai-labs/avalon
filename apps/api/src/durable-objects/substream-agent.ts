@@ -34,8 +34,8 @@ import {
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
 import {
-  launchHyperSightRefresh,
-} from "../services/hypersight-service";
+  launchBlockDashboardRefresh,
+} from "../services/block-dashboard-service";
 import { logWarn } from "../observability/logger";
 import {
   claimHarnessAttempt,
@@ -70,13 +70,13 @@ import {
 } from "./workstream-regional-effect";
 import { workstreamDOName } from "./names";
 import {
-  HyperSightControlRequestSchema,
-  HyperSightSourceRefreshRequestSchema,
-  type HyperSightContextFence,
-} from "./hypersight-protocol";
+  BlockDashboardControlRequestSchema,
+  BlockDashboardSourceRefreshRequestSchema,
+  type BlockDashboardContextFence,
+} from "./block-dashboard-protocol";
 import {
   WorkstreamObjectStore,
-  type PendingHyperSightRefresh,
+  type PendingBlockDashboardRefresh,
 } from "./workstream-object-storage";
 import {
   InitializeWorkstreamObjectInputSchema,
@@ -208,12 +208,12 @@ const MAX_SOCKET_MESSAGE_PAGE_BYTES = 900_000;
  * in the same turn by a `stream_started` that is not skipped.
  */
 const AUTHORIZATION_REVALIDATE_MS = 30_000;
-const HYPERSIGHT_DEBOUNCE_MS = 1_200;
-const HYPERSIGHT_MAX_DEBOUNCE_MS = 5_000;
+const BLOCK_DASHBOARD_DEBOUNCE_MS = 1_200;
+const BLOCK_DASHBOARD_MAX_DEBOUNCE_MS = 5_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 /** Matches the Agents SDK default, while keeping Avalon independent of it. */
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
-const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
+const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
   "message_created",
   "stream_completed",
   "participant_added",
@@ -224,7 +224,7 @@ const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
   "elicitation_answered",
   "activity_suggestion_created",
   "activity_suggestion_resolved",
-  "hypersight_configuration_updated",
+  "block_dashboard_configuration_updated",
 ]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
@@ -411,8 +411,8 @@ export class SubstreamAgent extends DurableObject<Env> {
       // its first scoped request and may never change it afterward.
       if (this.objectStore.identity()) this.ensureSubstreamIdentity("0");
       const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
-      const nextHyperSightAt = this.objectStore.nextHyperSightDueAt();
-      const nextAlarmAt = minimumTimestamp(nextEffectAt, nextHyperSightAt);
+      const nextBlockDashboardAt = this.objectStore.nextBlockDashboardDueAt();
+      const nextAlarmAt = minimumTimestamp(nextEffectAt, nextBlockDashboardAt);
       if (nextAlarmAt !== null) await this.ensureAlarmNoLaterThan(nextAlarmAt);
       this.resumeRunDrain();
     });
@@ -515,8 +515,8 @@ export class SubstreamAgent extends DurableObject<Env> {
       return this.acceptRunDispatch(request);
     }
 
-    if (request.method === "POST" && url.pathname === "/internal/hypersight-refresh-request") {
-      const parsed = HyperSightSourceRefreshRequestSchema.safeParse(
+    if (request.method === "POST" && url.pathname === "/internal/block-dashboard-refresh-request") {
+      const parsed = BlockDashboardSourceRefreshRequestSchema.safeParse(
         await request.json().catch(() => null),
       );
       const identity = this.objectStore.identity();
@@ -524,9 +524,9 @@ export class SubstreamAgent extends DurableObject<Env> {
         || identity.workspaceId !== parsed.data.workspaceId
         || identity.workstreamId !== parsed.data.workstreamId
         || this.externalSubstreamId() !== "0") {
-        return jsonResponse({ error: "hypersight_source_identity_mismatch" }, 409);
+        return jsonResponse({ error: "block_dashboard_source_identity_mismatch" }, 409);
       }
-      await this.scheduleHyperSightRefresh(parsed.data.triggerSequence);
+      await this.scheduleBlockDashboardRefresh(parsed.data.triggerSequence);
       return jsonResponse({ ok: true });
     }
 
@@ -626,19 +626,19 @@ export class SubstreamAgent extends DurableObject<Env> {
     )));
   }
 
-  async requestHyperSightRefresh(
-    input: z.input<typeof HyperSightSourceRefreshRequestSchema>,
+  async requestBlockDashboardRefresh(
+    input: z.input<typeof BlockDashboardSourceRefreshRequestSchema>,
   ): Promise<{ accepted: boolean; error?: string }> {
     await this.initialized;
-    const parsed = HyperSightSourceRefreshRequestSchema.parse(input);
+    const parsed = BlockDashboardSourceRefreshRequestSchema.parse(input);
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== parsed.workspaceId
       || identity.workstreamId !== parsed.workstreamId
       || this.externalSubstreamId() !== "0") {
-      return { accepted: false, error: "hypersight_source_identity_mismatch" };
+      return { accepted: false, error: "block_dashboard_source_identity_mismatch" };
     }
-    await this.scheduleHyperSightRefresh(parsed.triggerSequence);
+    await this.scheduleBlockDashboardRefresh(parsed.triggerSequence);
     return { accepted: true };
   }
 
@@ -753,8 +753,8 @@ export class SubstreamAgent extends DurableObject<Env> {
   private async acceptRunDispatch(request: Request): Promise<Response> {
     const parsed = RuntimeDispatchRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_substream_run_dispatch" }, 400);
-    if (parsed.data.reason === "hypersight_block") {
-      return jsonResponse({ error: "hypersight_runs_require_block_agent" }, 409);
+    if (parsed.data.reason === "block_dashboard_block") {
+      return jsonResponse({ error: "block_dashboard_runs_require_block_agent" }, 409);
     }
     const identity = this.objectStore.identity();
     if (!identity
@@ -1309,7 +1309,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
         harnessRunId: input.harnessRunId,
-        source: input.reason === "hypersight_block" ? "hypersight" : "workstream",
+        source: input.reason === "block_dashboard_block" ? "block_dashboard" : "workstream",
         status: outcome.status,
         ...(outcome.error ? { failureCode: outcome.error.code } : {}),
         metrics: outcome.metrics,
@@ -1478,8 +1478,8 @@ export class SubstreamAgent extends DurableObject<Env> {
     const sequenced = await this.commitRealtimeEvent(parsed);
     this.recordRecentEvent(sequenced);
     this.broadcast(sequenced);
-    if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(sequenced.type)) {
-      await this.scheduleHyperSightRefresh(sequenced.sequence);
+    if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(sequenced.type)) {
+      await this.scheduleBlockDashboardRefresh(sequenced.sequence);
     }
   }
 
@@ -1519,8 +1519,8 @@ export class SubstreamAgent extends DurableObject<Env> {
           }
         }
         const activatedIdentity = this.objectStore.identity();
-        if (!activatedIdentity) throw new Error("hypersight_authority_import_identity_missing");
-        await this.forwardImportedHyperSightAuthority(
+        if (!activatedIdentity) throw new Error("block_dashboard_authority_import_identity_missing");
+        await this.forwardImportedBlockDashboardAuthority(
           activatedIdentity.workspaceId,
           activatedIdentity.workstreamId,
           parsed.data.generation,
@@ -1755,8 +1755,8 @@ export class SubstreamAgent extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     await this.initialized;
-    const pending = this.objectStore.pendingHyperSightRefresh();
-    const nextHyperSightAt = this.objectStore.nextHyperSightDueAt();
+    const pending = this.objectStore.pendingBlockDashboardRefresh();
+    const nextBlockDashboardAt = this.objectStore.nextBlockDashboardDueAt();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     const nextAgentTimerAt = this.nextAgentTimerAt();
     const hasRunDispatch = this.nextRunDispatchAt() !== null;
@@ -1790,14 +1790,14 @@ export class SubstreamAgent extends DurableObject<Env> {
       await this.fireNextAgentTimer();
     }
 
-    if (!pending || nextHyperSightAt === null || nextHyperSightAt > Date.now()) {
+    if (!pending || nextBlockDashboardAt === null || nextBlockDashboardAt > Date.now()) {
       this.resumeRunDrain();
       await this.scheduleNextAlarm();
       return;
     }
-    this.objectStore.deletePendingHyperSightRefresh();
+    this.objectStore.deletePendingBlockDashboardRefresh();
     try {
-      await launchHyperSightRefresh(
+      await launchBlockDashboardRefresh(
         this.env,
         pending.workspaceId,
         pending.workstreamId,
@@ -1805,8 +1805,8 @@ export class SubstreamAgent extends DurableObject<Env> {
         pending.contextFence,
       );
     } catch {
-      const retryAt = Date.now() + HYPERSIGHT_DEBOUNCE_MS;
-      this.objectStore.failPendingHyperSightRefresh(pending, retryAt);
+      const retryAt = Date.now() + BLOCK_DASHBOARD_DEBOUNCE_MS;
+      this.objectStore.failPendingBlockDashboardRefresh(pending, retryAt);
       await this.ensureAlarmNoLaterThan(retryAt);
     }
     this.resumeRunDrain();
@@ -1846,7 +1846,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
   }
 
-  private async forwardImportedHyperSightAuthority(
+  private async forwardImportedBlockDashboardAuthority(
     workspaceId: string,
     workstreamId: string,
     generation: number,
@@ -1858,10 +1858,10 @@ export class SubstreamAgent extends DurableObject<Env> {
       workstreamDOName(this.env.AVALON_REGION, workspaceId, workstreamId),
     );
     const pageSize = 250;
-    const send = async (body: z.input<typeof HyperSightControlRequestSchema>): Promise<void> => {
-      const response = await stub.controlHyperSight(HyperSightControlRequestSchema.parse(body));
+    const send = async (body: z.input<typeof BlockDashboardControlRequestSchema>): Promise<void> => {
+      const response = await stub.controlBlockDashboard(BlockDashboardControlRequestSchema.parse(body));
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(`hypersight_authority_import_rejected:${response.status}`);
+        throw new Error(`block_dashboard_authority_import_rejected:${response.status}`);
       }
     };
     for (let offset = 0; ; offset += pageSize) {
@@ -1874,7 +1874,7 @@ export class SubstreamAgent extends DurableObject<Env> {
       }>(
         `SELECT configuration_version_id, version_number, blocks_json,
                 created_by_user_id, created_at
-           FROM hypersight_configuration_versions
+           FROM block_dashboard_configuration_versions
           ORDER BY version_number LIMIT ? OFFSET ?`,
         pageSize,
         offset,
@@ -1915,7 +1915,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         `SELECT block_run_id, configuration_version_id, block_id, prompt,
                 trigger_sequence, run_id, status, markdown, error_json,
                 created_at, started_at, completed_at
-           FROM hypersight_block_runs
+           FROM block_dashboard_block_runs
           ORDER BY created_at, block_run_id LIMIT ? OFFSET ?`,
         pageSize,
         offset,
@@ -1951,7 +1951,7 @@ export class SubstreamAgent extends DurableObject<Env> {
         visible: number;
         updated_at: number;
       }>(
-        `SELECT user_id, visible, updated_at FROM hypersight_user_preferences
+        `SELECT user_id, visible, updated_at FROM block_dashboard_user_preferences
           ORDER BY user_id LIMIT ? OFFSET ?`,
         pageSize,
         offset,
@@ -2244,8 +2244,8 @@ export class SubstreamAgent extends DurableObject<Env> {
         await this.broadcastPresence(identity.workspaceId, identity.workstreamId);
       }
     }
-    if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(event.type)) {
-      await this.scheduleHyperSightRefresh(event.sequence);
+    if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(event.type)) {
+      await this.scheduleBlockDashboardRefresh(event.sequence);
     }
     return jsonResponse({ accepted: true, sequence: event.sequence }, 202);
   }
@@ -2348,13 +2348,13 @@ export class SubstreamAgent extends DurableObject<Env> {
     for (const socket of sockets) disconnect(socket, 1011, "Reconnect to continue reading this work stream");
   }
 
-  private async scheduleHyperSightRefresh(triggerSequence: number): Promise<void> {
+  private async scheduleBlockDashboardRefresh(triggerSequence: number): Promise<void> {
     const identity = this.objectStore.identity();
     if (!identity) return;
     const now = Date.now();
-    const existing = this.objectStore.pendingHyperSightRefresh();
-    const contextFence = this.hyperSightContextFence(identity.workspaceId);
-    const pending: PendingHyperSightRefresh = {
+    const existing = this.objectStore.pendingBlockDashboardRefresh();
+    const contextFence = this.blockDashboardContextFence(identity.workspaceId);
+    const pending: PendingBlockDashboardRefresh = {
       ...identity,
       triggerSequence: Math.max(existing?.triggerSequence ?? 0, triggerSequence),
       contextFence: existing && existing.contextFence.throughSequence > contextFence.throughSequence
@@ -2363,10 +2363,10 @@ export class SubstreamAgent extends DurableObject<Env> {
       firstQueuedAt: existing?.firstQueuedAt ?? now,
     };
     const dueAt = Math.min(
-      now + HYPERSIGHT_DEBOUNCE_MS,
-      pending.firstQueuedAt + HYPERSIGHT_MAX_DEBOUNCE_MS,
+      now + BLOCK_DASHBOARD_DEBOUNCE_MS,
+      pending.firstQueuedAt + BLOCK_DASHBOARD_MAX_DEBOUNCE_MS,
     );
-    this.objectStore.putPendingHyperSightRefresh(pending, dueAt);
+    this.objectStore.putPendingBlockDashboardRefresh(pending, dueAt);
     await this.ensureAlarmNoLaterThan(dueAt);
   }
 
@@ -2379,7 +2379,7 @@ export class SubstreamAgent extends DurableObject<Env> {
    * boundary because model projection recreates the assistant call and its
    * tool result as one inseparable provider-valid pair.
    */
-  private hyperSightContextFence(workspaceId: string): HyperSightContextFence {
+  private blockDashboardContextFence(workspaceId: string): BlockDashboardContextFence {
     const pendingTool = this.state.storage.sql.exec<{ sequence_number: number | null }>(
       `SELECT MIN(sequence_number) AS sequence_number
          FROM parts
@@ -2458,7 +2458,7 @@ export class SubstreamAgent extends DurableObject<Env> {
   private async scheduleNextAlarm(): Promise<void> {
     const durableDueAt = minimumTimestamp(
       this.objectStore.nextRegionalEffectDueAt(),
-      this.objectStore.nextHyperSightDueAt(),
+      this.objectStore.nextBlockDashboardDueAt(),
       this.nextAgentTimerAt(),
       this.nextRunDispatchAt(),
     );

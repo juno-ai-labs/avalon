@@ -11,6 +11,12 @@ deployment surface or a package, and before assuming where a rule is enforced.
 It stays a map: a subsystem described here in a paragraph has its own document,
 and the map points at it rather than absorbing it.
 
+One naming boundary is deliberate: users see **HyperSight**, while the internal
+per-block execution subsystem is `BlockDashboard` and its Durable Object is
+`BlockDashboardAgent`. Internal URLs, bindings, tables, protocol events, and
+telemetry use BlockDashboard so the product label does not double as an
+infrastructure role.
+
 ## Where the code lives
 
 ```text
@@ -33,7 +39,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `HyperSightBlockAgent`, `WorkspaceScheduler`, and their SQL-only migration/storage layers. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `BlockDashboardAgent`, `WorkspaceScheduler`, and their SQL-only migration/storage layers. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
@@ -80,8 +86,8 @@ flowchart LR
   E <-->|"workspace sync + command WebSocket"| WD["WorkspaceDO"]
   E <-->|"aggregate metadata WebSocket"| WS["WorkstreamDO (no agent)"]
   E <-->|"direct feed WebSocket"| SA["SubstreamAgent"]
-  E <-->|"derived block WebSocket"| HB["HyperSightBlockAgent"]
-  WS -->|"durable HyperSight fan-out"| HB["HyperSightBlockAgent"]
+  E <-->|"derived block WebSocket"| HB["BlockDashboardAgent"]
+  WS -->|"durable HyperSight fan-out"| HB["BlockDashboardAgent"]
   HB -->|"fenced transcript/runtime SQL"| SA
   HB -->|"versioned block result"| WS
   H --> D[("Regional D1")]
@@ -111,7 +117,7 @@ flowchart LR
 Authority follows the data boundary. Regional D1 owns workspace, membership,
 connector, automation, routing, schedule, activity-ingestion, and cross-work-stream
 projection state. After cutover, `SubstreamAgent` SQLite owns substream product
-state and the full conversation agent loop; each `HyperSightBlockAgent` owns
+state and the full conversation agent loop; each `BlockDashboardAgent` owns
 one derived block's execution lifecycle; `WorkstreamDO` owns aggregate metadata,
 HyperSight configuration/published results, and its outboxes. Large activity
 payloads, uploads, and snapshots live in R2.
@@ -214,7 +220,7 @@ Within each regional workspace, one `WorkspaceDO` synchronizes workspace
 surfaces and routes user commands, every
 work stream maps to one model-free `WorkstreamDO`, and every independent model
 context maps to one `SubstreamAgent`. Every stable configured HyperSight block
-maps to one `HyperSightBlockAgent`. Main external substream `0` retains the
+maps to one `BlockDashboardAgent`. Main external substream `0` retains the
 historical room name during class rename; additional children append
 their substream ID. Every staging/production lookup resolves through a restricted
 namespace: `jurisdiction("us")` for Global and `jurisdiction("eu")` for EU,
@@ -289,7 +295,7 @@ The socket responsibilities are deliberately not interchangeable:
 - `SubstreamAgent` is a read-only direct conversation feed plus correlated
   transcript-page download. Its object-local SQL owns canonical parts, tool
   calls/results, active compaction, and the accumulated output checkpoint.
-- `HyperSightBlockAgent` is a read-only direct derived-output channel. It
+- `BlockDashboardAgent` is a read-only direct derived-output channel. It
   publishes queued/running/terminal state and a replaceable durable stream
   checkpoint for exactly one configured block.
 
@@ -329,7 +335,7 @@ response becomes transcript authority.
 
 Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong`
 without waking a hibernated object. The SubstreamAgent feed jitters its heartbeat
-across 45–55 seconds; WorkspaceDO, WorkstreamDO, and HyperSightBlockAgent use a
+across 45–55 seconds; WorkspaceDO, WorkstreamDO, and BlockDashboardAgent use a
 fixed 50-second interval. Every role closes after 15 seconds without `pong`,
 reconnects with equal-jitter exponential backoff capped at 30 seconds, pauses
 while offline, and resumes from its own topic version, metadata revision, feed
@@ -349,7 +355,7 @@ work-stream messages admit one complete Bind loop into their `SubstreamAgent`.
 The durable child dispatch row, attempt lease, receipts, and checkpoints recover
 2–30 minute loops and rare two-hour-plus coding sessions across eviction. Generic
 Cloudflare Workflows remain available for non-workstream loops and legacy drain.
-HyperSight uses the same Bind harness in a stable `HyperSightBlockAgent` per
+HyperSight uses the same Bind harness in a stable `BlockDashboardAgent` per
 block; WorkstreamDO coordinates it and no Workflow or Agents SDK loop is added.
 Each block agent streams revisioned full checkpoints directly to Electron while
 its panel is visible. The parent socket remains the authority for shared block
@@ -697,9 +703,27 @@ access and no-egress symbolication.
 
 ## Changelog
 
+### 2026-08-18 — BlockDashboard names the internal HyperSight subsystem
+
+**What changed:** The per-block agent class, binding, deterministic address,
+SQLite/D1 schema, HTTP/WebSocket routes, contracts, model role, and desktop
+implementation now use BlockDashboard. The visible product remains HyperSight.
+
+**Why:** HyperSight is a product concept; the implementation is a dashboard of
+independently owned blocks. Separating those names makes object ownership and
+operational data legible while preserving the established language in the UI.
+
+**Considered and rejected:** Keeping HyperSight in transport/storage for
+compatibility. These surfaces have not shipped, and internal dogfooding can use
+the coordinated cutover without permanent aliases.
+
+**Consequences:** Worker and Electron must use the new contracts together.
+Future internal symbols use BlockDashboard, and future user-visible copy uses
+HyperSight unless product naming itself changes.
+
 ### 2026-08-18 — Every agent owns a direct resumable output socket
 
-**What changed:** `HyperSightBlockAgent` joins `SubstreamAgent` as a direct
+**What changed:** `BlockDashboardAgent` joins `SubstreamAgent` as a direct
 Electron streaming authority. Both publish the shared full-checkpoint contract;
 WorkstreamDO continues to own block configuration, dispatch coordination, and
 published terminal results rather than relaying token traffic.
@@ -723,7 +747,7 @@ single-room mutation protocol.
 ### 2026-08-18 — HyperSight execution shards by stable block
 
 **What changed:** WorkstreamDO now owns HyperSight configuration and durable
-fan-out, while each block ID resolves to a `HyperSightBlockAgent`. The block
+fan-out, while each block ID resolves to a `BlockDashboardAgent`. The block
 agent executes Bind, directly uses main `SubstreamAgent("0")` for fenced source
 runtime SQL, and settles versioned results into WorkstreamDO for its socket.
 

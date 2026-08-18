@@ -9,14 +9,14 @@ import {
   CreateWorkstreamRequestSchema,
   ElicitationSchema,
   IdSchema,
-  HyperSightPreferenceSchema,
-  HyperSightSchema,
+  BlockDashboardPreferenceSchema,
+  BlockDashboardSchema,
   MessageSchema,
   ParticipantSchema,
   ReorderWorkstreamPinsRequestSchema,
   ResourceSchema,
-  UpdateHyperSightPreferenceRequestSchema,
-  UpdateHyperSightRequestSchema,
+  UpdateBlockDashboardPreferenceRequestSchema,
+  UpdateBlockDashboardRequestSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamContextSchema,
   WorkstreamDetailSchema,
@@ -32,7 +32,7 @@ import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { WorkstreamDirectoryService } from "../services/workstream-directory-service";
 import { WorkstreamObjectCreationService } from "../services/workstream-object-creation-service";
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
-import { HyperSightService } from "../services/hypersight-service";
+import { BlockDashboardService } from "../services/block-dashboard-service";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
@@ -194,27 +194,27 @@ workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) => 
     ? await client.context()
     : await new WorkstreamService(c.env, getAuth(c)).context(id)));
 });
-workstreamRoutes.get("/:id/hypersight", zValidator("param", idParam), async (c) =>
-  c.json(HyperSightSchema.parse(await new HyperSightService(c.env, getAuth(c)).get(c.req.valid("param").id))),
+workstreamRoutes.get("/:id/block-dashboard", zValidator("param", idParam), async (c) =>
+  c.json(BlockDashboardSchema.parse(await new BlockDashboardService(c.env, getAuth(c)).get(c.req.valid("param").id))),
 );
-workstreamRoutes.get("/:id/hypersight/preference", zValidator("param", idParam), async (c) =>
-  c.json(HyperSightPreferenceSchema.parse(
-    await new HyperSightService(c.env, getAuth(c)).getPreference(c.req.valid("param").id),
+workstreamRoutes.get("/:id/block-dashboard/preference", zValidator("param", idParam), async (c) =>
+  c.json(BlockDashboardPreferenceSchema.parse(
+    await new BlockDashboardService(c.env, getAuth(c)).getPreference(c.req.valid("param").id),
   )),
 );
 workstreamRoutes.put(
-  "/:id/hypersight/preference",
+  "/:id/block-dashboard/preference",
   zValidator("param", idParam),
-  zValidator("json", UpdateHyperSightPreferenceRequestSchema),
-  async (c) => c.json(HyperSightPreferenceSchema.parse(
-    await new HyperSightService(c.env, getAuth(c)).updatePreference(
+  zValidator("json", UpdateBlockDashboardPreferenceRequestSchema),
+  async (c) => c.json(BlockDashboardPreferenceSchema.parse(
+    await new BlockDashboardService(c.env, getAuth(c)).updatePreference(
       c.req.valid("param").id,
       c.req.valid("json"),
     ),
   )),
 );
-workstreamRoutes.put("/:id/hypersight", zValidator("param", idParam), zValidator("json", UpdateHyperSightRequestSchema), async (c) =>
-  c.json(HyperSightSchema.parse(await new HyperSightService(c.env, getAuth(c)).update(
+workstreamRoutes.put("/:id/block-dashboard", zValidator("param", idParam), zValidator("json", UpdateBlockDashboardRequestSchema), async (c) =>
+  c.json(BlockDashboardSchema.parse(await new BlockDashboardService(c.env, getAuth(c)).update(
     c.req.valid("param").id,
     c.req.valid("json"),
   ))),
@@ -360,10 +360,10 @@ workstreamRoutes.get("/:id/control-socket", zValidator("param", idParam), async 
     .workstreamControlSocketTicket(c.req.valid("param").id))),
 );
 workstreamRoutes.get(
-  "/:id/hypersight/blocks/:blockId/socket",
+  "/:id/block-dashboard/blocks/:blockId/socket",
   zValidator("param", idParam.extend({ blockId: IdSchema })),
   async (c) => c.json(SocketTicketSchema.parse(
-    await new WorkstreamService(c.env, getAuth(c)).hyperSightBlockSocketTicket(
+    await new WorkstreamService(c.env, getAuth(c)).blockDashboardBlockSocketTicket(
       c.req.valid("param").id,
       c.req.valid("param").blockId,
     ),
