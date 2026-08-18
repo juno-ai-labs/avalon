@@ -1,13 +1,16 @@
 # Workspace, work-stream, and substream Durable Objects
 
 Avalon's regional stateful hierarchy is `WorkspaceDO -> WorkstreamDO ->
-SubstreamAgent`. There is one `WorkspaceDO` per workspace, one non-agent
-`WorkstreamDO` per work stream, and one `SubstreamAgent` per independently
-addressable model context. The main conversation is external substream `0`.
+{SubstreamAgent, HyperSightBlockAgent}`. There is one `WorkspaceDO` per
+workspace, one non-agent `WorkstreamDO` per work stream, one `SubstreamAgent`
+per independently addressable model context, and one `HyperSightBlockAgent`
+per stable configured HyperSight block. The main conversation is external
+substream `0`.
 
-All four Durable Object classes in this subsystem (`WorkspaceDO`,
-`WorkstreamDO`, `SubstreamAgent`, and `WorkspaceScheduler`) use SQLite-backed
-namespaces and explicit SQL only. Durable Object key/value persistence is
+All five Durable Object classes in this subsystem (`WorkspaceDO`,
+`WorkstreamDO`, `SubstreamAgent`, `HyperSightBlockAgent`, and
+`WorkspaceScheduler`) use SQLite-backed namespaces and explicit SQL only.
+Durable Object key/value persistence is
 forbidden by lint. Regional D1 remains the authority for workspace membership,
 connector and automation control state, routing, and cross-work-stream query
 projections; it is not a transcript fallback after cutover.
@@ -17,22 +20,26 @@ projections; it is not a transcript fallback after cutover.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/names.ts` | The only constructors for deterministic workspace, work-stream, and substream object names. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Hibernating workspace command socket and one-time command-ticket receipts. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects and the regional delivery outbox. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Hibernating workspace synchronization/command socket, bounded topic replay, and one-time workspace-ticket receipts. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects, HyperSight configuration and refresh fan-out, complete metadata WebSocket snapshots, and the regional delivery outbox. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed socket, streaming checkpoints, timers, steering, and child-to-parent effect RPC. |
+| `apps/api/src/durable-objects/hypersight-block-agent.ts` | One durable Bind execution owner per stable HyperSight block, including dispatch recovery, keep-alive, fenced source-runtime access, and result settlement. |
+| `apps/api/src/durable-objects/durable-agent-runtime.ts` | Shared reference-counted keep-alive and single-flight drain primitives used by both agent Durable Objects. |
+| `apps/api/src/durable-objects/hypersight-protocol.ts` | Runtime-validated WorkstreamDO control, block dispatch, result, and maintenance-import contracts. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Normalized `SubstreamAgent` schema and append-only schema versions. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Product transactions, message/run admission, read waterlines, compaction inputs, and local regional-effect creation. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/workstream-runtime-sql.ts` | Restricted D1-compatible SQL adapter used by the Bind harness against object-local tables. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
-| `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, first-placement hint, and runtime jurisdiction validation. |
+| `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, persisted workspace affinity, explicit singleton fallback, and runtime jurisdiction validation. |
 | `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-`SubstreamAgent` product RPCs. |
 | `apps/api/src/services/workstream-regional-effect-service.ts` | Regional D1 inbox, sidebar/activity projections, and notification delivery. |
 | `apps/api/src/durable-objects/workspace-scheduler.ts` | One SQLite-backed alarm coordinator per workspace. |
 | `scripts/eslint-rules/durable-object-sql-storage.mjs` | Rejects Durable Object `get`, `put`, `delete`, `list`, and async `transaction` KV calls, including aliases. |
-| `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct and aliased namespace ID/stub construction outside the regional resolver. |
+| `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct/aliased namespace construction and use of the low-level region-only resolver. |
 | `packages/db/migrations/0077_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, projections, and legacy D1 writer fences. |
 | `packages/db/migrations/0078_workstream_do_regional_effects.sql` | Regional effect inbox and causally fenced notification intents. |
+| `packages/db/migrations/0080_workspace_durable_object_placement_affinity.sql` | Immutable Global/regional workspace affinity projection and migration/background fallbacks. |
 
 ## How it works
 
@@ -45,11 +52,17 @@ WorkspaceDO       <region>:<workspace-id>                    in WORKSPACE_DOS
 WorkstreamDO      <region>:<workspace-id>:<workstream-id>    in WORKSTREAM_DOS
 SubstreamAgent 0  <region>:<workspace-id>:<workstream-id>    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<workstream-id>:<substream-id>
+HyperSight block  <region>:<workspace-id>:<workstream-id>:hypersight:<block-id>
+                                                              in HYPERSIGHT_BLOCK_AGENTS
 ```
 
 The name is not a residency boundary. Staging and production first restrict the
 namespace to `us` or `eu`, derive the ID from that restricted namespace, and
-only then call `get()` with a first-placement hint. The same name identifies a
+only then call `get()` with the workspace's persisted first-placement affinity.
+At workspace creation, request longitude selects `wnam`/`enam` within the US
+jurisdiction or `weur`/`eeur` within the EU jurisdiction. The Global binding,
+regional workspace row, and `WorkspaceDO.workspace_identity` retain that value;
+every descendant lookup reads the regional immutable projection. The same name identifies a
 different object in an unrestricted, US, and EU namespace. `WorkstreamDO` has
 the same logical suffix in a different binding; binding, jurisdiction, and name
 together determine the Durable Object identity.
@@ -62,9 +75,12 @@ populates the locked target graph from frozen D1 and never serves an
 unrestricted predecessor as fallback. An already-EU-restricted predecessor can
 retain its jurisdictional identity through the class rename.
 
-`WorkspaceDO` is command/control only. `WorkstreamDO` owns aggregate metadata
-only and never runs a model. `SubstreamAgent` owns the transcript and its full
-agent loop. An external substream ID is immutable once recorded in
+`WorkspaceDO` is workspace synchronization/command control only. `WorkstreamDO`
+owns aggregate metadata plus HyperSight configuration, refresh fan-out, and
+published block state; it never runs a model. `SubstreamAgent` owns its
+transcript and full conversation loop. Each `HyperSightBlockAgent` owns the
+durable execution lifecycle for one stable dashboard block. An external
+substream ID is immutable once recorded in
 `substream_agent_identity`; an object addressed under another ID fails closed.
 
 Existing product data migrates into main child `0`. The current product exposes
@@ -77,10 +93,12 @@ not permission to create an empty child.
 ### Control plane and data plane
 
 `WorkspaceDO` and `WorkstreamDO` are the low-volume control plane. They admit
-workspace commands, own resource metadata/directory aggregation, and provide
-the one parent outbox for list, sidebar, notification, and regional delivery
-effects. Each `SubstreamAgent` is a fine-grained data-plane shard for one ordered
-conversation and agent loop.
+workspace commands, own resource metadata/directory aggregation, coordinate
+HyperSight refreshes, and provide the one parent outbox for list, sidebar,
+notification, and regional delivery effects. `SubstreamAgent` is the
+fine-grained data-plane shard for one ordered conversation and agent loop;
+`HyperSightBlockAgent` is the independent execution shard for one derived
+dashboard block.
 
 The Worker routes feed WebSockets, transcript reads, stream checkpoints, and
 other high-volume substream operations directly to the named child. It never
@@ -111,33 +129,78 @@ owning child. Excessive substreams multiply sockets, SQLite databases, alarms,
 projection traffic, and authorization surfaces without creating a useful
 context boundary.
 
-### User command and feed paths
+HyperSight blocks are not substreams. They do not own a user-visible ordered
+message array, accept user messages, compact independently visible history, or
+open a desktop feed socket. They are stable derived views over a fenced source
+transcript. Making one a `SubstreamAgent` would invent a second conversation and
+blur user-authored history with unattended dashboard computation.
 
-The desktop holds two hibernating WebSockets while a work stream is open:
+### Desktop synchronization and command paths
+
+The desktop holds three independent hibernating WebSocket roles:
 
 ```text
-user create_message
-  -> WorkspaceDO command socket
+one persistent workspace connection
+  <-> WorkspaceDO synchronization/command socket
+  <- versioned workspace query-topic invalidations
+  -> create_message naming the target work stream/substream
+
+one connection per selected or background-running work stream
+  <- WorkstreamDO complete revisioned common + viewer metadata
+
+one connection per selected or background-running substream
+  <- SubstreamAgent snapshot / stream frames / product events
+  <- direct download and reconnect feed for exactly one substream
+
+user create_message after creation
+  -> persistent WorkspaceDO socket
   -> per-command D1 session + membership recheck
   -> WorkstreamObjectClient for the selected SubstreamAgent
   -> local SQLite message/run transaction
-
-SubstreamAgent feed socket
-  <- snapshot / stream frames / product events
-  <- direct download and reconnect feed for exactly one substream
 ```
 
-The workspace command socket is lazy and shared by commands within that
-workspace. A user message is never accepted on the feed socket; a
+The workspace socket is opened once per authenticated Electron renderer after
+regional session/workspace activation and survives work-stream navigation. Its
+SQL event log contains monotonically
+versioned topic invalidations, not duplicate workspace rows. A reconnect replays
+the bounded log when available and otherwise invalidates every workspace query
+surface. A user message is never accepted on either read socket; a
 `create_message` sent there receives `workspace_socket_required`. This keeps
 workspace authorization and routing at the parent boundary while keeping the
 high-volume read/stream path direct to its child.
 
-Both sockets use short-lived, audience-specific, single-use tickets. The edge
-Worker verifies the signed ticket and passes only verified headers to the
-object. `WorkspaceDO` consumes command tickets in `socket_ticket_receipts`;
-`SubstreamAgent` consumes feed tickets in `durable_inbox_receipts`. A ticket for
-one purpose cannot be replayed or used for the other.
+All three sockets use short-lived, audience-specific, single-use tickets. The
+edge Worker verifies the signed ticket and passes only verified headers to the
+object. `WorkspaceDO` consumes tickets in `workspace_socket_ticket_receipts`,
+`WorkstreamDO` uses `workstream_socket_ticket_receipts`, and `SubstreamAgent`
+uses `durable_inbox_receipts`. A ticket for one purpose cannot be replayed or
+used for another.
+
+New work-stream creation is deliberately not a client-side create-then-send
+sequence. The desktop's idempotent `POST /workstreams` includes the opening
+message. The regional creation coordinator reserves the D1 route/receipt and
+email address, then initializes WorkstreamDO and main `SubstreamAgent("0")` with
+metadata, audience, attachments, the opening message, and first run. Only later
+messages use the already-open WorkspaceDO socket, so a broken second client
+request cannot leave an accidental empty work stream.
+
+The WorkspaceDO invalidation catalog covers workspace profile/timezone and
+inference logging; member/user directory; invitations; connector identities,
+capabilities and health; Terminal access/network policy; digest settings;
+automations/drafts/subscriptions; notes; resources and watches; connector
+activity; work opportunities/suggested actions; work-stream directory and its
+Active/In Progress/Completed, pinned, unread and You Are Mentioned views;
+viewer preferences; and effective feature gates. Regional D1 remains authority
+for those rows. Producers publish the affected topic only after their mutation,
+and Electron refetches using its existing authenticated REST contract.
+
+The WorkstreamDO snapshot covers ID/workspace, title/title state, description,
+preview, email, origin, creator, automation IDs, planned time, exact/normalized
+state, attention baseline, activity/completion/archive/create/update times,
+scope/system kind, next wakeup and Terminal action. The viewer overlay covers
+participation/listability, unread count, mention state, read-through and manual
+unread waterlines, and latest mention sequence. It is always a full snapshot;
+nullable values clear cached fields rather than behaving like absent patches.
 
 ### Full agent-loop execution
 
@@ -166,13 +229,61 @@ the maintenance authority opens. New work-stream loops do not create a Workflow
 after the switch. Non-workstream agent loops may continue using their generic
 Workflow abstraction; this cutover changes only the work-stream-down runtime.
 
+### HyperSight block agents
+
+A refresh starts in main `SubstreamAgent("0")`, which debounces transcript
+changes and freezes a provider-valid model-array interval. Its lower boundary is
+the exact completed compaction checkpoint identity and content hash, or array
+start when no eligible checkpoint exists. Its upper boundary is the highest
+canonical semantic sequence before any pending tool call; a completed tool row
+is a legal upper fence because projection emits its assistant call and tool
+result together. The source sends this complete fence in one `schedule_refresh`
+control RPC to `WorkstreamDO`; it does not enumerate blocks itself. The parent
+owns the configuration version and therefore atomically creates one block run
+and durable dispatch-outbox row per non-empty configured block.
+
+Each outbox row resolves a stable `HyperSightBlockAgent` name using the
+workspace's jurisdiction and placement affinity. That object runs the complete
+read-only Bind loop directly. It does not use the Agents SDK or a Cloudflare
+Workflow. `HyperSightBlockAgent` talks directly to `SubstreamAgent("0")` through
+the internal runtime-SQL port: it resolves the transcript fence there and
+stores the harness attempt, scope, inference attempts, tool receipts, and
+terminal runtime record beside the source data they reference. The block DO's
+own SQL dispatch row is the durable execution and recovery boundary, so an
+eviction does not require the parent or source to retain an in-memory promise.
+
+Results travel in the opposite direction to `WorkstreamDO`, not to the source
+feed. The parent accepts only increasing, hash-consistent result versions,
+updates its authoritative dashboard run, and broadcasts the new state on the
+existing WorkstreamDO socket. Thus the exact paths are:
+
+```text
+SubstreamAgent("0") -- trigger + transcript fence --> WorkstreamDO
+WorkstreamDO -- versioned durable fan-out --> HyperSightBlockAgent(block-id)
+HyperSightBlockAgent -- fenced runtime SQL --> SubstreamAgent("0")
+HyperSightBlockAgent -- versioned result --> WorkstreamDO --> Electron
+```
+
+This is intentionally not a direct source-to-block dispatch. The source owns
+message order, not block configuration, user preference, block status, or
+workstream-level WebSocket state. Giving it the fan-out would duplicate the
+parent's configuration and outbox or make refresh correctness depend on a hot
+transcript object. The direct source/block relationship is the high-volume
+data path; the parent remains the low-volume control and publication plane.
+Saving a new block configuration follows the same rule: WorkstreamDO commits a
+singleton, coalescing `hypersight_source_refresh_outbox` row before contacting
+main `SubstreamAgent("0")`. A crash after configuration commit therefore delays
+the refresh but cannot silently lose it.
+
 ### Keep-alive without the Agents SDK
 
-`SubstreamAgent.keepAlive()` and `keepAliveWhile()` are a narrow custom port of
-the useful Agents SDK lifecycle behavior. The first reference ensures an alarm
-no later than 30 seconds; nested long operations share it; the final idempotent
-disposer recomputes the alarm only from durable work. Runtime ping/pong is
-handled by WebSocket auto-response and does not wake the object.
+`DurableAgentKeepAlive.keepAlive()` and `.while()` are a narrow custom port of
+the useful Agents SDK lifecycle behavior shared by `SubstreamAgent` and
+`HyperSightBlockAgent`. The first reference ensures an alarm no later than 30
+seconds; nested long operations share it; the final idempotent disposer
+recomputes the alarm only from durable work. `DurableAgentDrain` similarly
+ensures one in-isolate dispatcher drain at a time. Runtime ping/pong is handled
+by WebSocket auto-response and does not wake the object.
 
 The keep-alive alarm lowers the chance of eviction during a long model request,
 external API wait, or computation. It is not correctness state. If an isolate
@@ -229,13 +340,26 @@ checkpoint becomes a synthetic context prefix for later projection while the
 canonical `parts` rows remain available for product history. Substreams are not
 created to hide or archive compacted history.
 
+Completed checkpoints are retained as immutable event identities by projection
+key, run, and compacted-through sequence. Ordinary runs choose the latest
+eligible authorized checkpoint. A derived HyperSight run instead carries one
+exact checkpoint identity plus hash and fails closed if that event is absent or
+changed. It receives exact tool calls and exact tool results from the raw suffix
+after that checkpoint; tools before it survive only through the intentionally
+lossy summary. Messages committed during compaction remain above the frozen
+waterline and join a later projection only when the run's upper fence admits
+them.
+
 ### Timers and Daytona
 
 Agent-created one-shot timers live in `workstream_wakeups` inside the exact
 `SubstreamAgent` that created them. `due_work` contains child-local derived jobs
-such as HyperSight refresh. One alarm is set to the earliest regional effect,
-HyperSight refresh, run dispatch, agent timer, or keep-alive heartbeat. A due
-timer admits work into that same child, preserving its transcript and authority.
+such as the debounced HyperSight refresh signal. One source alarm is set to the
+earliest regional effect, refresh signal, run dispatch, agent timer, or
+keep-alive heartbeat. WorkstreamDO separately alarms for block-dispatch outbox
+retry, and each block agent alarms for its own run/recovery heartbeat. A due
+timer admits work into the same agent that created it, preserving its transcript
+and authority.
 
 Terminal remains a Bind plugin backed by Daytona. The child stores the terminal
 workspace, command/task receipts, imports, repository selection, publication
@@ -331,25 +455,25 @@ dual-write or fallback serving path.
 ## Invariants
 
 - **Exactly one object name owns each region/workspace/work-stream/substream tuple.** A second naming formula forks ordering and storage.
-- **Every stub is resolved through `durableObjectStubForRegion`.** A direct namespace call can derive an unrestricted ID or let a background path win first placement; ESLint rejects that bypass.
+- **Every workspace-scoped stub is resolved through `durableObjectStubForWorkspace`.** It combines the hard jurisdiction lock with the parent's immutable affinity; only non-workspace regional singletons use the fallback resolver. ESLint rejects direct namespace and low-level resolver bypasses.
 - **The object jurisdiction matches the immutable workspace region.** Product-object constructors fail closed when `ctx.id.jurisdiction` is not `us` for Global or `eu` for EU.
 - **`WorkstreamDO` runs no model and owns no transcript.** Putting an agent there recreates one serialization bottleneck across substreams.
 - **High-volume child reads and streams never proxy through a parent.** Doing so would turn the control plane into the throughput and availability ceiling for every child.
-- **User messages enter through `WorkspaceDO`; feeds stream directly from `SubstreamAgent`.** Accepting writes on both sockets creates two authorization and ordering boundaries.
+- **User messages enter through `WorkspaceDO`; aggregate metadata streams from `WorkstreamDO`; transcript/token feeds stream directly from `SubstreamAgent`.** Accepting writes on either read socket creates another authorization and ordering boundary.
 - **Every Durable Object persists through explicit SQL.** KV calls create invisible schema and bypass migration, constraints, inspection, and lint.
 - **Room sequence and active text commit atomically.** Advancing only the cursor loses streamed text after eviction.
 - **One unexpired attempt lease owns a child run.** Two owners can duplicate an external tool effect or terminal assistant message.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-region effects are hash-deduplicated and versioned.** Queue ordering and delivery uniqueness are not trusted.
-- **D1 workspace membership is rechecked for every workspace-socket command and feed admission.** A long-lived ticket or socket attachment is not continuing authorization for a new write.
+- **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent admission.** A long-lived ticket or socket attachment is not continuing authorization for a new write.
 - **Legacy D1 product rows are never a fallback after activation.** Fallback would silently split authority after an object failure.
 
 ## Boundary
 
 This module owns work-stream-down Durable Object identity, SQL, message/run
 ordering, sockets, local agent execution, and cross-object projection delivery.
-It exposes typed product RPCs, two ticketed sockets, and hash-checked regional
+It exposes typed product RPCs, three ticketed socket roles, and hash-checked regional
 effects.
 
 It does not own workspace identity/membership, connector credentials, automation
@@ -364,7 +488,8 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Migration hash mismatch/schema ahead/foreign-key violation | Constructor activation fails; no request observes a partially migrated schema. |
 | Object ID has the wrong/no jurisdiction in staging or production | Constructor activation fails before serving state; callers cannot silently use the unrestricted graph. |
 | Location hint cannot be honored | Cloudflare selects the nearest available location inside the jurisdiction; correctness and residency do not depend on the best-effort hint. |
-| Workspace command socket hibernates | Runtime restores attachments; replayed command ticket is rejected from SQL. |
+| Workspace socket hibernates | Runtime restores attachments; replayed tickets are rejected, topic versions resume, and pending commands resend under the same client message ID. |
+| Workstream metadata socket hibernates | Runtime restores identity; subscribe returns a complete authoritative viewer snapshot and later effects push newer revisions. |
 | Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
 | Feed replay window lost | Child sends `resync_required`; desktop reloads canonical parts and active output checkpoint. |
 | Queue duplicates or reorders effects | Stable IDs/hashes deduplicate immutable effects; generation/version orders projections. |
@@ -392,8 +517,9 @@ pnpm typecheck
 `runInDurableObject`, `runDurableObjectAlarm`, `listDurableObjectIds`, and
 `evictDurableObject`. `test-workers/durable-object-runtime.test.ts` exercises
 constructor migrations, per-object SQL isolation across eviction, keep-alive
-alarms, `WorkstreamDO` aggregation, hibernating workspace command sockets,
-ticket replay, and the read-only child socket. Node tests cover migration
+alarms, `WorkstreamDO` aggregation and metadata snapshots, hibernating workspace
+and work-stream control sockets, ticket replay, and the read-only child socket.
+Node tests cover migration
 rollback/hash drift/ahead versions, normalized product SQL, authorization,
 effect idempotency, streaming checkpoints, and renderer socket switching.
 `test/runtime-components.test.ts` covers US/EU resolution, location-hint
@@ -409,35 +535,59 @@ is under test.
 ## Data model
 
 The DDL in source is authoritative. This catalog defines ownership and joins.
+All Durable Object tables are SQLite `STRICT` tables, use integer Unix
+milliseconds internally, bound inline/JSON payloads, and keep external object
+identity in one singleton rather than repeating it on every child row. Live
+WebSockets use hibernation attachments and therefore have no `sockets` table.
+No RPC happens inside a local SQL transaction: the source commits a fact plus
+an outbox intent, and the receiver commits its mutation plus a hash-checked
+receipt. Only an unsent complete replacement may be coalesced; an inflight row
+is retained because it may already have committed across the object boundary.
 
 ### `WorkspaceDO`
 
 | Table | Key and relationship |
 | --- | --- |
 | `_sql_schema_migrations` | One row per immutable schema version; shared runner metadata. |
-| `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace and region. |
-| `socket_ticket_receipts` | One consumed command ticket, including user, work stream, substream, expiry, and consumption time; expiry index supports bounded cleanup. |
+| `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
+| `socket_ticket_receipts` | Historical v1 per-target ticket receipts retained by append-only migration; no new socket writes this table. |
+| `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
+| `workspace_sync_events` | Monotonic version, JSON topic set, and occurrence time for the bounded 1,024-event replay window. Rows are invalidations only, never workspace data copies. |
 
 `WorkspaceDO` stores no sidebar copy and no transcript. Its socket attachment
-contains routing identity; each command revalidates D1 and invokes the selected
-child through the Worker-side client.
+contains workspace/session identity plus the last delivered topic version; each
+subscribe/command revalidates D1, and each command invokes the selected child
+through the Worker-side client.
 
 ### `WorkstreamDO`
 
 | Table | Key and relationship |
 | --- | --- |
 | `_sql_schema_migrations` | Immutable parent schema history. |
-| `workstream_metadata` | Singleton aggregate identity, authority generation, common metadata, state, and activity/completion timestamps. |
+| `workstream_metadata` | Singleton aggregate identity/generation and revisioned complete common metadata: title/description/preview/email/origin/creator/automation/planning/state/attention/activity/completion/archive/schedule timestamps. |
 | `substream_directory` | Latest common envelope per child, keyed by external substream ID. |
 | `substream_user_directory` | Latest viewer envelope per child/user pair. |
 | `child_effect_receipts` | Child/message/hash inbox proving idempotent RPC acceptance. |
 | `projection_keys` | Next version and last hash for parent aggregate partitions such as `common` and `user:<id>`. |
 | `durable_outbox` | Hash-checked aggregate or immutable effect waiting for regional Queue delivery/ack. |
+| `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
+| `hypersight_configuration_versions` | Append-only shared block definitions and optimistic configuration version. This is the product authority for which stable block agents exist. |
+| `hypersight_block_runs` | Parent-visible queued/running/terminal block state keyed by block run, configuration, block, and transcript trigger. |
+| `hypersight_user_preferences` | Viewer-specific dashboard visibility, kept with the WorkstreamDO socket authority that publishes it. |
+| `hypersight_dispatch_outbox` | One retryable, affinity-routed dispatch per block run; deletion means the named block agent durably accepted it. |
+| `hypersight_block_result_receipts` | Highest accepted result version and hash per block run, preventing a stale retry from rolling back terminal state. |
+| `hypersight_source_refresh_outbox` | Singleton coalescing configuration-to-main-substream refresh intent; its retry deadline participates in WorkstreamDO's one native alarm. |
 
 The child tables are inputs to `workstream_metadata` and the aggregate
 projection. No SQL crosses object databases; the child sends an authenticated
 envelope RPC, and the parent commits receipt, child value, aggregate, and outbox
 inside its own transaction.
+
+HyperSight uses a second parent-owned relationship: the source child sends one
+fenced refresh signal, the parent fans out stable block dispatches, each block
+agent reads and writes its Bind runtime ledger through the source child's typed
+internal SQL port, and versioned results settle back into the parent. No SQL
+join crosses an object boundary.
 
 ### `SubstreamAgent`
 
@@ -446,20 +596,36 @@ inside its own transaction.
 | `_sql_schema_migrations`, `_data_migrations`, `_migration_command_receipts`, `object_versions` | Schema/data/import versions and resumable maintenance receipts. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. Existing main data uses local context `0`. |
 | `participants`, `grant_sessions`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
-| `parts`, `part_attachments`, `part_mentions`, `content_refs` | Ordered LLM-shaped message parts and exact joins to attachments, mentions, and large content. |
+| `parts`, `part_attachments`, `part_mentions`, `content_refs` | One provider-neutral semantic order plus exact attachment, mention, and large-content joins. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
 | `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts`, `run_events` | Full-loop admission/recovery, targeted steering, frozen authority/context, provider attempts, and durable events. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. |
 | `active_output_turns`, `active_output_chunks`, `realtime_state`, `workstream_events` | Reconnect-safe partial output, room sequence, and bounded/personal event replay. |
-| `compaction_jobs`, `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. |
+| `compaction_jobs`, `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints are immutable per projection/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
-| `workstream_resource_links`, `resource_inventory_revision`, `activity_delivery_receipts`, `suggested_actions`, `legacy_artifacts` | Links to workspace resources, authorization revision, connector admission receipts, local actions, and intentionally preserved import artifacts. |
-| `hypersight_configuration_versions`, `hypersight_block_runs`, `hypersight_user_preferences` | Child-local HyperSight configuration, execution, and viewer preference state. |
+| `workstream_resource_links`, `resource_inventory_revision`, `activity_delivery_receipts`, `suggested_actions`, `legacy_artifacts` | Links to workspace resources, authorization revision, connector admission receipts, operational suggestion overlays, and intentionally preserved import artifacts. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
+| `hypersight_configuration_versions`, `hypersight_block_runs`, `hypersight_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
 | `terminal_workspace`, `terminal_commands`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Avalon state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
 Compatibility views named `_runtime_*` map established D1-shaped repository SQL
 onto these normalized tables. They are not duplicate storage or a second
 authority.
+
+### `HyperSightBlockAgent`
+
+| Table | Key and relationship |
+| --- | --- |
+| `_sql_schema_migrations` | Immutable block-agent schema history. |
+| `hypersight_block_identity` | Singleton immutable region/workspace/work-stream/block identity. A mismatched dispatch fails closed. |
+| `agent_run_dispatches` | One durable dispatch per block run with payload hash, queued/running/terminal state, attempt count, retry deadline, and terminal result waiting to settle into WorkstreamDO. |
+
+The block agent stores no transcript or user preference. Its dispatch identity
+points to the source main substream and parent WorkstreamDO by stable names; the
+workspace route supplies the same jurisdiction and affinity to all three. Bind
+runtime rows live in main `SubstreamAgent("0")` because they reference its
+transcript, resources, compaction scope, and tool receipts. The local dispatch
+row is what makes the block agent—not the source or parent—the active execution
+owner and recovery coordinator.
 
 ### `WorkspaceScheduler`
 
@@ -475,9 +641,11 @@ projects only the next due timestamp required for workspace coordination.
 
 ## Regional impact
 
-Every object is selected through the workspace's immutable region. Staging and
-production Global objects use the US jurisdiction with a `wnam` placement
-default; EU objects use the EU jurisdiction with a `weur` placement default.
+Every object is selected through the workspace's immutable region and affinity.
+Staging and production Global objects use the US jurisdiction with `wnam` or
+`enam`; EU objects use the EU jurisdiction with `weur` or `eeur`. Creation uses
+the initiating request longitude. `wnam` and `weur` are defaults only for
+preexisting migrations, background creation, or missing Cloudflare metadata.
 Jurisdiction is a storage/execution guarantee; the hint is best effort and only
 affects the first `get()`. Product constructors verify the actual jurisdiction.
 Local workerd omits both options because it does not implement jurisdictional
@@ -523,6 +691,106 @@ writes, while workspace sidebar/D1 traffic is bounded by semantic metadata
 changes rather than token rate or number of connected viewers.
 
 ## Changelog
+
+### 2026-08-18 — SQL fences model arrays and cross-object delivery explicitly
+
+**What changed:** Core child rows now enforce provider-neutral part, tool,
+control-part, suggestion-lifecycle, payload-size, and timestamp shapes in
+SQLite. Compaction checkpoints retain immutable run/sequence identities;
+HyperSight freezes an exact checkpoint hash plus a tool-safe upper sequence.
+WorkstreamDO persists configuration refresh intent and no longer coalesces an
+inflight regional projection.
+
+**Why:** The object hierarchy is safe only if a frozen derived run cannot slide
+to a newer summary, split a tool call from its result, or mistake an optional
+suggestion for conversation. Likewise, an RPC timeout cannot prove that the
+destination did not commit.
+
+**Considered and rejected:** Reading “latest checkpoint” when the block starts,
+persisting tool presentation rows as model messages, adding suggestions to the
+message array, and deleting all older outbox rows on coalescing. Each loses a
+different boundary: reproducibility, provider validity, audience semantics, or
+cross-object delivery certainty.
+
+**Consequences:** A HyperSight dispatch is reproducible or fails closed; exact
+post-compaction tools remain available while pre-compaction tools are summary
+only; terminal suggestion state cannot reopen; and inflight replacements may
+briefly coexist until idempotent acknowledgement.
+
+### 2026-08-18 — HyperSight blocks become independently durable agents
+
+**What changed:** Every stable configured HyperSight block now maps to one
+`HyperSightBlockAgent`. WorkstreamDO owns configuration, refresh fan-out,
+result receipts, and publication; main `SubstreamAgent("0")` emits fenced
+refresh signals and serves the canonical runtime SQL used by each block agent.
+Both agent classes share custom keep-alive and single-flight drain primitives.
+
+**Why:** A complete unattended HyperSight Bind loop has the same eviction and
+retry pressures as a conversation loop, but it has neither its own user-visible
+message array nor a desktop feed. It needs an independent durable execution
+owner without turning dashboard blocks into substreams or serializing them
+through the transcript agent.
+
+**Considered and rejected:** Running blocks in WorkstreamDO, dispatching them
+directly from main SubstreamAgent, one Workflow per refresh, one agent for all
+blocks, and replacing Bind with the Agents SDK. These respectively put models
+in the control plane, duplicate configuration/fan-out state, retain a second
+orchestration state machine, serialize unrelated blocks, or discard the
+existing harness for lifecycle helpers Avalon can implement narrowly.
+
+**Consequences:** HyperSight refreshes fan out in parallel by stable block ID;
+each block recovers independently after eviction; source runtime access is a
+direct child-to-child internal RPC; results converge through WorkstreamDO's
+existing socket; and tests must cover dispatch/result idempotency plus SQL
+isolation across block-agent eviction.
+
+### 2026-08-17 — Workspace affinity colocates the complete object hierarchy
+
+**What changed:** Workspace creation now derives a west/east affinity from
+Cloudflare request longitude, persists it in the Global binding, regional D1
+workspace projection, and WorkspaceDO SQL, and supplies it to every
+WorkstreamDO, SubstreamAgent, and workspace scheduler lookup. The US/EU
+jurisdiction remains the hard boundary. The routing ESLint rule rejects both
+direct namespace calls and the low-level region-only resolver.
+
+**Why:** A fixed western hint satisfies residency but needlessly penalizes an
+eastern workspace, while deriving placement on each request can scatter new
+children away from their parent. Cloudflare honors a hint only on an object's
+first lookup, so affinity must be selected once and carried by every possible
+creator.
+
+**Considered and rejected:** Using the current request location for each child,
+proxying child creation through WorkspaceDO, and retaining fixed western hints.
+Those options split the hierarchy, make the parent a provisioning bottleneck,
+or preserve avoidable coast-to-coast latency.
+
+**Consequences:** Affinity is immutable because changing the routing row cannot
+move an existing object. Existing/missing-metadata/background-created rows use
+`wnam` or `weur`; moving a live hierarchy still requires maintenance export and
+import.
+
+### 2026-08-17 — Workspace and work-stream control sockets become live synchronization planes
+
+**What changed:** WorkspaceDO now keeps one persistent Electron socket with a
+bounded SQL topic-version log and workspace-scoped message commands.
+WorkstreamDO now serves complete revisioned common/viewer metadata over its own
+hibernating socket. Selected and background-running work streams retain this
+control socket alongside the direct SubstreamAgent feed.
+
+**Why:** Settings/directories can change without a work stream being open, and
+aggregate title/state/unread data can change independently of transcript token
+traffic. The prior lazy, child-targeted workspace command connection provided
+neither live workspace convergence nor an authoritative metadata channel.
+
+**Considered and rejected:** Copying all D1 workspace rows into WorkspaceDO,
+proxying child feeds through parent objects, and inferring sidebar metadata from
+agent frames. They introduce a second workspace authority, a shared throughput
+bottleneck, or a dependency on an active agent where none should exist.
+
+**Consequences:** Every workspace mutation producer maps to a typed invalidation
+topic; every WorkstreamDO nullable field participates in a full snapshot;
+socket audiences and SQL receipts stay separate; and real-workerd tests must
+force eviction for both control objects.
 
 ### 2026-08-17 — Control/data planes use jurisdictional IDs and hinted first placement
 

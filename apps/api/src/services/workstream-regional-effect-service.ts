@@ -2,7 +2,7 @@ import { nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -17,6 +17,19 @@ import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
 import { enqueueMentionOpportunitySnapshot } from "./work-opportunity-batching";
+import { publishWorkspaceSync } from "./workspace-realtime-service";
+
+function workspaceTopicsForEffect(
+  effect: WorkstreamRegionalEffectEnvelope["effect"],
+) {
+  if (effect.kind === "directory_common" || effect.kind === "directory_user") {
+    return ["workstream_directory"] as const;
+  }
+  if (effect.kind === "activity_event" || effect.kind === "suggestion_feedback") {
+    return ["activity", "work_opportunities"] as const;
+  }
+  return ["activity", "workstream_directory"] as const;
+}
 
 interface EffectReceiptRow {
   payload_hash: string;
@@ -79,6 +92,7 @@ export async function applyWorkstreamRegionalEffect(
     if (message.effect.kind === "directory_common" && env.WORKSPACE_SCHEDULERS) {
       await refreshWorkspaceSchedulerAlarm(env, message.workspaceId);
     }
+    await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
     return {
       replayed: true,
       notificationIntentId: message.effect.kind === "mention_notification"
@@ -224,6 +238,7 @@ export async function applyWorkstreamRegionalEffect(
       if (env.WORKSPACE_SCHEDULERS) {
         await refreshWorkspaceSchedulerAlarm(env, message.workspaceId);
       }
+      await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
       return { replayed: false, notificationIntentId: null };
     }
     case "directory_user": {
@@ -240,6 +255,7 @@ export async function applyWorkstreamRegionalEffect(
           ).bind(message.workspaceId, message.workstreamId, effect.userId),
           receiptStatement,
         ]);
+        await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
         return { replayed: false, notificationIntentId: null };
       }
       await env.DB.batch([
@@ -287,6 +303,7 @@ export async function applyWorkstreamRegionalEffect(
         ),
         receiptStatement,
       ]);
+      await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
       return { replayed: false, notificationIntentId: null };
     }
     case "activity_event": {
@@ -357,6 +374,7 @@ export async function applyWorkstreamRegionalEffect(
         });
       }
       await env.DB.batch(statements);
+      await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
       return { replayed: false, notificationIntentId: null };
     }
     case "suggestion_feedback": {
@@ -391,6 +409,7 @@ export async function applyWorkstreamRegionalEffect(
         ),
         receiptStatement,
       ]);
+      await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
       return { replayed: false, notificationIntentId: null };
     }
     case "mention_notification": {
@@ -401,6 +420,7 @@ export async function applyWorkstreamRegionalEffect(
       ).bind(message.workspaceId, effect.recipientUserId).first();
       if (!activeMember) {
         await env.DB.batch([receiptStatement]);
+        await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
         return { replayed: false, notificationIntentId: null };
       }
       const existing = await env.DB.prepare(
@@ -445,6 +465,7 @@ export async function applyWorkstreamRegionalEffect(
         ),
         receiptStatement,
       ]);
+      await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
       return { replayed: false, notificationIntentId: effect.intentId };
     }
   }
@@ -599,11 +620,11 @@ export async function acknowledgeWorkstreamRegionalEffect(
   message: WorkstreamRegionalEffectEnvelope,
 ): Promise<void> {
   const objectName = workstreamDOName(message.region, message.workspaceId, message.workstreamId);
-  const workstream = durableObjectStubForRegion(
+  const workstream = await durableObjectStubForWorkspace(
+    env,
     env.WORKSTREAM_DOS,
-    message.region,
+    message.workspaceId,
     objectName,
-    env.APP_ENV,
   );
   const response = await workstream.fetch(
     "https://workstream.internal/internal/regional-effect-ack",
@@ -664,11 +685,11 @@ export async function loadWorkstreamRegionalEffect(
 ): Promise<WorkstreamRegionalEffectEnvelope | null> {
   const wake = WorkstreamRegionalEffectQueueMessageSchema.parse(input);
   const objectName = workstreamDOName(wake.region, wake.workspaceId, wake.workstreamId);
-  const workstream = durableObjectStubForRegion(
+  const workstream = await durableObjectStubForWorkspace(
+    env,
     env.WORKSTREAM_DOS,
-    wake.region,
+    wake.workspaceId,
     objectName,
-    env.APP_ENV,
   );
   const response = await workstream.fetch(
     "https://workstream.internal/internal/regional-effect-delivery",

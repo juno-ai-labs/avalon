@@ -19,6 +19,7 @@ import {
   uuidV7,
 } from './lib/telemetry';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
+import { WorkspaceSocketProvider } from './lib/workspace-socket';
 import { AutomationOverviewScreen } from './screens/automation-overview';
 import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NoteDetailScreen } from './screens/note-detail';
@@ -183,47 +184,53 @@ function WorkspaceApp(): React.JSX.Element {
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {
     return (
-      <HashRouter>
-        <TelemetryRouteObserver />
-        <Routes>
-          <Route element={<WorkspaceSettingsScreen standaloneWindow workspace={workspace.data} />} path="/settings" />
-          <Route element={<Navigate replace to="/settings" />} path="*" />
-        </Routes>
-      </HashRouter>
+      <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
+        <HashRouter>
+          <TelemetryRouteObserver />
+          <Routes>
+            <Route element={<WorkspaceSettingsScreen standaloneWindow workspace={workspace.data} />} path="/settings" />
+            <Route element={<Navigate replace to="/settings" />} path="*" />
+          </Routes>
+        </HashRouter>
+      </WorkspaceSocketProvider>
     );
   }
 
   const meetingSurface = new URLSearchParams(window.location.search).get('surface') === 'meeting';
   if (meetingSurface) {
     return (
-      <HashRouter>
-        <TelemetryRouteObserver />
-        <Routes>
-          <Route element={<MeetingNotesScreen />} path="/meeting" />
-          <Route element={<Navigate replace to="/meeting" />} path="*" />
-        </Routes>
-      </HashRouter>
+      <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
+        <HashRouter>
+          <TelemetryRouteObserver />
+          <Routes>
+            <Route element={<MeetingNotesScreen />} path="/meeting" />
+            <Route element={<Navigate replace to="/meeting" />} path="*" />
+          </Routes>
+        </HashRouter>
+      </WorkspaceSocketProvider>
     );
   }
 
   return (
-    <HashRouter>
-      <TelemetryRouteObserver />
-      <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
-        <AppShell workspace={workspace.data}>
-          <Routes>
-            <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
-            <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
-            <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
-            <Route element={<NoteDetailScreen />} path="/notes/:id" />
-            <Route element={<NewAutomationScreen workspace={workspace.data} />} path="/automations/new" />
-            <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
-            <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
-            <Route element={<NotFoundScreen />} path="*" />
-          </Routes>
-        </AppShell>
-      </WorkstreamSocketResumeProvider>
-    </HashRouter>
+    <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
+      <HashRouter>
+        <TelemetryRouteObserver />
+        <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
+          <AppShell workspace={workspace.data}>
+            <Routes>
+              <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
+              <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
+              <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+              <Route element={<NoteDetailScreen />} path="/notes/:id" />
+              <Route element={<NewAutomationScreen workspace={workspace.data} />} path="/automations/new" />
+              <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
+              <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
+              <Route element={<NotFoundScreen />} path="*" />
+            </Routes>
+          </AppShell>
+        </WorkstreamSocketResumeProvider>
+      </HashRouter>
+    </WorkspaceSocketProvider>
   );
 }
 

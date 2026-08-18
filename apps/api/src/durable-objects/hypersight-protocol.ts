@@ -1,0 +1,125 @@
+import {
+  HyperSightBlockRunSchema,
+  IdSchema,
+  RegionSchema,
+  UpdateHyperSightRequestSchema,
+  WorkstreamCompactionFenceSchema,
+} from "@avalon/contracts";
+import { z } from "zod";
+
+const CoordinatesSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+}).strict();
+
+export const HyperSightSourceRefreshRequestSchema = CoordinatesSchema.extend({
+  triggerSequence: z.number().int().nonnegative(),
+}).strict();
+
+export const HyperSightContextFenceSchema = z.object({
+  /** Inclusive upper bound that is a complete provider-valid boundary. */
+  throughSequence: z.number().int().nonnegative(),
+  /** Exact compacted prefix, or null to begin at the start of the array. */
+  compaction: WorkstreamCompactionFenceSchema.nullable(),
+}).strict();
+
+export const HyperSightControlRequestSchema = z.discriminatedUnion("operation", [
+  CoordinatesSchema.extend({ operation: z.literal("get") }).strict(),
+  CoordinatesSchema.extend({
+    operation: z.literal("get_preference"),
+    userId: IdSchema,
+  }).strict(),
+  CoordinatesSchema.extend({
+    operation: z.literal("update_preference"),
+    userId: IdSchema,
+    visible: z.boolean(),
+    updatedAt: z.string().datetime({ offset: true }),
+  }).strict(),
+  CoordinatesSchema.extend({
+    operation: z.literal("update_configuration"),
+    userId: IdSchema,
+    input: UpdateHyperSightRequestSchema,
+    configurationVersionId: IdSchema,
+    createdAt: z.string().datetime({ offset: true }),
+  }).strict(),
+  CoordinatesSchema.extend({
+    operation: z.literal("schedule_refresh"),
+    triggerSequence: z.number().int().nonnegative(),
+    contextFence: HyperSightContextFenceSchema,
+  }).strict(),
+  CoordinatesSchema.extend({
+    operation: z.literal("block_result"),
+    blockId: IdSchema,
+    sourceVersion: z.number().int().positive(),
+    payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
+    run: HyperSightBlockRunSchema,
+  }).strict(),
+  CoordinatesSchema.extend({
+    operation: z.literal("import_authority_rows"),
+    generation: z.number().int().positive(),
+    configurations: z.array(z.object({
+      configurationVersionId: IdSchema,
+      versionNumber: z.number().int().positive(),
+      blocksJson: z.string().refine((value) => {
+        try { return Array.isArray(JSON.parse(value)); } catch { return false; }
+      }),
+      createdByUserId: IdSchema,
+      createdAt: z.number().int().nonnegative(),
+    }).strict()).max(250),
+    runs: z.array(z.object({
+      blockRunId: IdSchema,
+      configurationVersionId: IdSchema,
+      blockId: IdSchema,
+      prompt: z.string().max(12_000),
+      triggerSequence: z.number().int().nonnegative(),
+      harnessRunId: IdSchema,
+      status: z.enum(["queued", "running", "completed", "failed", "stopped"]),
+      markdown: z.string().nullable(),
+      errorJson: z.string().nullable(),
+      createdAt: z.number().int().nonnegative(),
+      startedAt: z.number().int().nonnegative().nullable(),
+      completedAt: z.number().int().nonnegative().nullable(),
+    }).strict()).max(250),
+    preferences: z.array(z.object({
+      userId: IdSchema,
+      visible: z.boolean(),
+      updatedAt: z.number().int().nonnegative(),
+    }).strict()).max(250),
+  }).strict(),
+]);
+
+export const HyperSightBlockDispatchSchema = z.object({
+  region: RegionSchema,
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  blockId: IdSchema,
+  blockRunId: IdSchema,
+  harnessRunId: IdSchema,
+  configurationVersionId: IdSchema,
+  configurationVersionNumber: z.number().int().positive(),
+  prompt: z.string().min(1).max(12_000),
+  triggerSequence: z.number().int().nonnegative(),
+  contextFence: HyperSightContextFenceSchema,
+  createdAt: z.string().datetime({ offset: true }),
+}).strict();
+
+export type HyperSightBlockDispatch = z.infer<typeof HyperSightBlockDispatchSchema>;
+export type HyperSightContextFence = z.infer<typeof HyperSightContextFenceSchema>;
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => (
+    `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+  )).join(",")}}`;
+}
+
+export function hyperSightBlockResultHash(run: z.infer<typeof HyperSightBlockRunSchema>): string {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(canonicalJson(run))) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return `fnv1a64:${hash.toString(16).padStart(16, "0")}`;
+}

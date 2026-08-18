@@ -7,6 +7,7 @@ import {
 import { z } from "zod";
 
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
+import { HyperSightContextFenceSchema } from "./hypersight-protocol";
 import {
   WorkstreamRegionalEffectSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -29,6 +30,7 @@ const RoomIdentitySchema = z.object({
 
 const PendingHyperSightRefreshSchema = RoomIdentitySchema.extend({
   triggerSequence: z.number().int().nonnegative(),
+  contextFence: HyperSightContextFenceSchema,
   firstQueuedAt: z.number().int().nonnegative(),
 });
 

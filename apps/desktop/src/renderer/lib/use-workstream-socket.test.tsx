@@ -22,6 +22,12 @@ import {
 } from './use-workstream-socket';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
 
+const workspaceCreateMessage = vi.hoisted(() => vi.fn());
+vi.mock('./workspace-socket', () => ({
+  useWorkspaceSocket: () => ({ state: 'connected', createMessage: workspaceCreateMessage }),
+}));
+vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
+
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
@@ -91,7 +97,7 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
   return {
     getMessages: vi.fn(unexpected),
     getSocketTicket: vi.fn(unexpected),
-    getWorkspaceSocketTicket: vi.fn(unexpected),
+    getWorkstreamControlSocketTicket: vi.fn(unexpected),
     getWorkstream: vi.fn(unexpected),
     getWorkstreams: vi.fn(unexpected),
     messageMentionPayload: vi.fn(async () => []),
@@ -137,29 +143,34 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  workspaceCreateMessage.mockReset();
   FakeWebSocket.instances = [];
 });
 
 describe('useWorkstreamSocket', () => {
-  it('retries an unconfirmed message command after reconnect and resolves its private receipt', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
+  it('routes a message command through the shared workspace connection', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000601';
-    const workspaceId = '00000000-0000-7000-8000-000000000602';
-    const userId = '00000000-0000-7000-8000-000000000603';
     const messageId = '00000000-0000-7000-8000-000000000604';
     const clientMessageId = 'client-message-reconnect';
+    const savedMessage: Message = {
+      id: messageId,
+      clientMessageId,
+      workstreamId,
+      sequenceNumber: 9,
+      authorType: 'human',
+      messageType: 'text',
+      text: 'Please continue.',
+      mentions: [],
+      attachments: [],
+      createdAt: '2026-08-17T12:00:01.000Z',
+    };
+    workspaceCreateMessage.mockResolvedValue(savedMessage);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
-      })),
-      getWorkspaceSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workspaces/${workspaceId}/workstreams/${workstreamId}/substreams/0`,
-        ticket: 'workspace-socket-ticket',
-        protocols: socketTicketProtocols('workspace-socket-ticket'),
       })),
       messageMentionPayload: vi.fn(async () => []),
     });
@@ -168,25 +179,14 @@ describe('useWorkstreamSocket', () => {
     });
 
     await flushPromises();
-    const feed = FakeWebSocket.instances[0]!;
-    act(() => feed.open());
-    let submitted!: Promise<Message>;
-    await act(async () => {
-      submitted = result.current.createMessage({
+    await expect(result.current.createMessage({
         text: 'Please continue.',
         clientId: clientMessageId,
-      });
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    const first = FakeWebSocket.instances[1]!;
-    expect(first.url).toContain(`/workspaces/${workspaceId}/workstreams/${workstreamId}/substreams/0`);
-    act(() => first.open());
-    const firstCommand = first.send.mock.calls
-      .map(([frame]) => JSON.parse(String(frame)) as { type: string; clientMessageId?: string })
-      .find((frame) => frame.type === 'create_message');
-    expect(firstCommand).toMatchObject({
+      })).resolves.toEqual(savedMessage);
+    expect(workspaceCreateMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: 'create_message',
+      workstreamId,
+      substreamId: '0',
       payload: {
         text: 'Please continue.',
         clientMessageId,
@@ -194,55 +194,7 @@ describe('useWorkstreamSocket', () => {
         confirmedParticipantUserIds: [],
         attachmentIds: [],
       },
-    });
-
-    act(() => first.close());
-    await act(async () => { await vi.advanceTimersByTimeAsync(750); });
-    const second = FakeWebSocket.instances[2]!;
-    act(() => second.open());
-    const secondCommand = second.send.mock.calls
-      .map(([frame]) => JSON.parse(String(frame)) as { type: string })
-      .find((frame) => frame.type === 'create_message');
-    expect(secondCommand).toEqual(firstCommand);
-
-    act(() => second.message({
-      type: 'client_command_succeeded',
-      command: 'create_message',
-      clientMessageId,
-      message: {
-        id: messageId,
-        clientMessageId,
-        workspaceId,
-        workstreamId,
-        author: {
-          type: 'human',
-          user: {
-            id: userId,
-            email: 'adam@example.com',
-            name: 'Adam',
-            avatarUrl: null,
-            timezone: 'America/Los_Angeles',
-            createdAt: '2026-08-17T12:00:00.000Z',
-          },
-        },
-        messageType: 'text',
-        textContent: 'Please continue.',
-        structuredContent: null,
-        mentions: [],
-        attachments: [],
-        sequenceNumber: 9,
-        createdAt: '2026-08-17T12:00:01.000Z',
-        editedAt: null,
-      },
-      agentInvoked: true,
-      harnessRunId: null,
     }));
-
-    await expect(submitted).resolves.toMatchObject({
-      id: messageId,
-      clientMessageId,
-      text: 'Please continue.',
-    });
   });
 
   it('applies personal and shared HyperSight updates without letting stale runs win', async () => {

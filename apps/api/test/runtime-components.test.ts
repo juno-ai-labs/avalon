@@ -20,11 +20,17 @@ import {
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import {
   assertDurableObjectJurisdiction,
+  deriveWorkspacePlacementAffinity,
   durableObjectStubForRegion,
+  durableObjectStubForWorkspace,
 } from "../src/lib/durable-object-namespace";
+import type { Env } from "../src/env";
 import {
   createCloudflareTestBinding,
+  createTestD1Database,
+  createTestD1PreparedStatement,
   createTestDurableObjectId,
+  createTestEnv,
   createTestJurisdictionalDurableObjectId,
 } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
@@ -46,6 +52,32 @@ afterEach(() => {
 });
 
 describe("runtime component invariants", () => {
+  it.each([
+    ["global", "-122.4194", "wnam"],
+    ["global", "-73.9857", "enam"],
+    ["eu", "-0.1276", "weur"],
+    ["eu", "30.5234", "eeur"],
+  ] as const)("derives %s workspace affinity from request longitude %s", (region, longitude, expected) => {
+    expect(deriveWorkspacePlacementAffinity(region, { longitude })).toEqual({
+      affinity: expected,
+      source: "request_longitude",
+    });
+  });
+
+  it.each([
+    ["global", undefined, "wnam"],
+    ["eu", { longitude: "not-a-coordinate" }, "weur"],
+  ] as const)("uses the %s migration/background fallback when request metadata is absent", (
+    region,
+    metadata,
+    expected,
+  ) => {
+    expect(deriveWorkspacePlacementAffinity(region, metadata)).toEqual({
+      affinity: expected,
+      source: "missing_request_metadata",
+    });
+  });
+
   it("uses a region/workspace/work-stream stable room name", () => {
     expect(substreamAgentName("eu", "workspace-id", "workstream-id")).toBe(
       "eu:workspace-id:workstream-id"
@@ -80,13 +112,56 @@ describe("runtime component invariants", () => {
     ));
     const namespace = createCloudflareTestBinding<DurableObjectNamespace>({ jurisdiction });
 
-    expect(durableObjectStubForRegion(namespace, "global", "workspace-one", "production")).toBe(usStub);
-    expect(durableObjectStubForRegion(namespace, "eu", "workspace-two", "production")).toBe(euStub);
+    expect(durableObjectStubForRegion(
+      namespace,
+      "global",
+      "workspace-one",
+      "production",
+      "wnam",
+    )).toBe(usStub);
+    expect(durableObjectStubForRegion(
+      namespace,
+      "eu",
+      "workspace-two",
+      "production",
+      "weur",
+    )).toBe(euStub);
     expect(jurisdiction.mock.calls).toEqual([["us"], ["eu"]]);
     expect(usIdFromName).toHaveBeenCalledWith("workspace-one");
     expect(euIdFromName).toHaveBeenCalledWith("workspace-two");
     expect(usGet).toHaveBeenCalledWith(usId, { locationHint: "wnam" });
     expect(euGet).toHaveBeenCalledWith(euId, { locationHint: "weur" });
+  });
+
+  it("uses one persisted workspace affinity for every child lookup", async () => {
+    const first = vi.fn(async () => ({ placement_affinity: "enam" }));
+    const bind = vi.fn();
+    const statement = createTestD1PreparedStatement({
+      bind,
+      first,
+    });
+    bind.mockReturnValue(statement);
+    const database = createTestD1Database({ prepare: vi.fn(() => statement) });
+    const get = vi.fn(() => ({}));
+    const regionalNamespace = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get,
+    });
+    const namespace = createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
+      jurisdiction: vi.fn(() => regionalNamespace),
+    });
+    const env = createTestEnv({
+      APP_ENV: "production",
+      AVALON_REGION: "global",
+      DB: database,
+    });
+
+    await durableObjectStubForWorkspace(env, namespace, "workspace-east", "child-one");
+    await durableObjectStubForWorkspace(env, namespace, "workspace-east", "child-two");
+
+    expect(first).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenNthCalledWith(1, expect.anything(), { locationHint: "enam" });
+    expect(get).toHaveBeenNthCalledWith(2, expect.anything(), { locationHint: "enam" });
   });
 
   it("omits unsupported jurisdiction and location options in local workerd", () => {
@@ -101,7 +176,7 @@ describe("runtime component invariants", () => {
       jurisdiction,
     });
 
-    expect(durableObjectStubForRegion(namespace, "eu", "local", "test")).toBe(stub);
+    expect(durableObjectStubForRegion(namespace, "eu", "local", "test", "eeur")).toBe(stub);
     expect(jurisdiction).not.toHaveBeenCalled();
     expect(get).toHaveBeenCalledWith(id);
   });

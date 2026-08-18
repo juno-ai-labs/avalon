@@ -4,6 +4,7 @@ import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requireAuth, requireIdentityAuth } from "./middleware/auth";
 import { requestContext, securityMiddleware } from "./middleware/request-context";
 import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
+import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
 import { authRoutes } from "./routes/auth";
 import { automationRoutes, subscriptionRoutes, templateRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
@@ -126,6 +127,7 @@ export function createApp(): Hono<HonoAppEnv> {
 
   const protectedApi = new Hono<HonoAppEnv>();
   protectedApi.use("*", requireAuth);
+  protectedApi.use("*", workspaceRealtimeInvalidation);
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);

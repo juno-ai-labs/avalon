@@ -355,9 +355,7 @@ workstreamRoutes.get("/:id/substreams/:substreamId/socket", zValidator("param", 
     c.req.valid("param").substreamId,
   ))),
 );
-workstreamRoutes.get("/:id/substreams/:substreamId/workspace-socket", zValidator("param", substreamSocketParam), async (c) =>
-  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).workspaceSocketTicket(
-    c.req.valid("param").id,
-    c.req.valid("param").substreamId,
-  ))),
+workstreamRoutes.get("/:id/control-socket", zValidator("param", idParam), async (c) =>
+  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c))
+    .workstreamControlSocketTicket(c.req.valid("param").id))),
 );

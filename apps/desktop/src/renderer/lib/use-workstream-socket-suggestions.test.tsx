@@ -6,6 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamDetail } from './types';
 import { type WorkstreamSocketApi, useWorkstreamSocket } from './use-workstream-socket';
 
+vi.mock('./workspace-socket', () => ({
+  useWorkspaceSocket: () => ({ state: 'connected', createMessage: vi.fn() }),
+}));
+vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
+
 const workstreamId = '00000000-0000-7000-8000-000000000210';
 const suggestionId = '00000000-0000-7000-8000-000000000211';
 
@@ -97,11 +102,9 @@ describe('paused activity suggestions over the work-stream socket', () => {
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkspaceSocketTicket: vi.fn(async () => ({
-        url: `wss://api.avalon.test/workspaces/commands/${workstreamId}`,
-        ticket: 'workspace-socket-ticket',
-        protocols: socketTicketProtocols('workspace-socket-ticket'),
-      })),
+      getWorkstreamControlSocketTicket: vi.fn(async () => {
+        throw new Error('Workstream control socket is mocked in this test.');
+      }),
       getMessages: vi.fn(async () => []),
       messageMentionPayload: vi.fn(async () => []),
       getWorkstream: vi.fn(async () => detail()),

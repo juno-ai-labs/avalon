@@ -250,7 +250,12 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
   `CREATE VIEW IF NOT EXISTS _runtime_messages AS
      SELECT part.id, part.client_message_id, root.parent_workspace_key AS workspace_id,
             root.workstream_key AS workstream_id,
-            CASE part.author_type WHEN 'member' THEN 'human' WHEN 'agent' THEN 'agent' ELSE 'system' END AS author_type,
+            CASE part.author_type
+              WHEN 'member' THEN 'human'
+              WHEN 'agent' THEN 'agent'
+              WHEN 'external' THEN 'external'
+              ELSE 'system'
+            END AS author_type,
             part.author_user_id, part.message_type,
             COALESCE(part.content, '') AS text_content, part.structured_content_json,
             part.sequence_number,
@@ -272,16 +277,31 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
        VALUES (
          NEW.id, '0', NEW.sequence_number,
          CASE WHEN NEW.message_type = 'tool' THEN NULL ELSE (SELECT next_attention_ordinal FROM workstream WHERE id = 1) END,
-         CASE NEW.author_type WHEN 'human' THEN 'user' WHEN 'agent' THEN 'assistant' ELSE 'system' END,
+         CASE NEW.author_type
+           WHEN 'human' THEN 'user'
+           WHEN 'agent' THEN 'assistant'
+           WHEN 'external' THEN 'user'
+           ELSE 'system'
+         END,
          CASE WHEN NEW.message_type = 'tool' THEN 'tool_call' ELSE 'text' END,
-         CASE NEW.author_type WHEN 'human' THEN 'member' WHEN 'agent' THEN 'agent' ELSE 'system' END,
+         CASE NEW.author_type
+           WHEN 'human' THEN 'member'
+           WHEN 'agent' THEN 'agent'
+           WHEN 'external' THEN 'external'
+           ELSE 'system'
+         END,
          NEW.author_user_id, NEW.external_actor_json, COALESCE(NEW.text_content, ''),
          NEW.client_message_id, CASE WHEN NEW.message_type = 'tool' THEN NEW.id ELSE NULL END,
          NEW.harness_run_id,
          (SELECT attempt_epoch FROM runs WHERE run_id = NEW.harness_run_id),
          CASE WHEN NEW.message_type = 'tool' THEN json_extract(NEW.structured_content_json, '$.invocation.toolName') ELSE NULL END,
          CASE WHEN NEW.message_type = 'tool' THEN 'read' ELSE NULL END,
-         CASE WHEN NEW.message_type = 'tool' THEN 'completed' ELSE NULL END,
+         CASE WHEN NEW.message_type = 'tool' THEN CASE
+           WHEN json_extract(NEW.structured_content_json, '$.invocation.status') = 'pending' THEN 'pending'
+           WHEN json_extract(NEW.structured_content_json, '$.invocation.status') = 'started' THEN 'pending'
+           WHEN json_extract(NEW.structured_content_json, '$.invocation.status') = 'ambiguous' THEN 'ambiguous'
+           WHEN json_extract(NEW.structured_content_json, '$.invocation.status') = 'failed' THEN 'failed'
+           ELSE 'completed' END ELSE NULL END,
          CASE WHEN NEW.message_type IN ('text', 'elicitation') THEN 'both' ELSE 'people' END,
          0, NEW.message_type, NEW.structured_content_json,
          CASE WHEN NEW.edited_at IS NULL THEN NULL ELSE CAST((julianday(NEW.edited_at) - 2440587.5) * 86400000 AS INTEGER) END,
@@ -289,6 +309,7 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
          CAST((julianday(COALESCE(NEW.edited_at, NEW.created_at)) - 2440587.5) * 86400000 AS INTEGER))
        ON CONFLICT(id) DO UPDATE SET
          structured_content_json = excluded.structured_content_json,
+         tool_status = excluded.tool_status,
          edited_at = excluded.edited_at,
          updated_at = excluded.updated_at
        WHERE parts.message_type = 'tool';
@@ -549,19 +570,14 @@ export const WORKSTREAM_RUNTIME_COMPAT_SCHEMA = [
           NEW.context_window_tokens, NEW.input_tokens, NEW.output_tokens, NEW.cost_microusd,
           CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER),
           CAST((julianday(NEW.updated_at) - 2440587.5) * 86400000 AS INTEGER))
-       ON CONFLICT(projection_key) DO UPDATE SET
-          run_id = excluded.run_id,
-          compacted_through_sequence = excluded.compacted_through_sequence,
+       ON CONFLICT(projection_key, run_id, compacted_through_sequence) DO UPDATE SET
           messages_json = excluded.messages_json, summary = excluded.summary,
           resource_visibility_fingerprint = excluded.resource_visibility_fingerprint,
           model = excluded.model,
           context_tokens_before_compaction = excluded.context_tokens_before_compaction,
           context_window_tokens = excluded.context_window_tokens,
           input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
-          cost_micros = excluded.cost_micros, updated_at = excluded.updated_at
-       WHERE excluded.compacted_through_sequence > compaction_checkpoints.compacted_through_sequence
-          OR excluded.run_id = compaction_checkpoints.run_id
-          OR excluded.resource_visibility_fingerprint != compaction_checkpoints.resource_visibility_fingerprint;
+          cost_micros = excluded.cost_micros, updated_at = excluded.updated_at;
        UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
      END`,
 

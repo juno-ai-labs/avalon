@@ -33,7 +33,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, `WorkspaceScheduler`, and their SQL-only migration/storage layers. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `HyperSightBlockAgent`, `WorkspaceScheduler`, and their SQL-only migration/storage layers. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
 | `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
@@ -77,14 +77,18 @@ docs/                      Product, architecture, security, setup, runbooks
 ```mermaid
 flowchart LR
   E["Electron renderer"] -->|"typed HTTPS"| H["Hono API"]
-  E -->|"user-command WebSocket"| WD["WorkspaceDO"]
+  E <-->|"workspace sync + command WebSocket"| WD["WorkspaceDO"]
+  E <-->|"aggregate metadata WebSocket"| WS["WorkstreamDO (no agent)"]
   E <-->|"direct feed WebSocket"| SA["SubstreamAgent"]
+  WS -->|"durable HyperSight fan-out"| HB["HyperSightBlockAgent"]
+  HB -->|"fenced transcript/runtime SQL"| SA
+  HB -->|"versioned block result"| WS
   H --> D[("Regional D1")]
   H --> B[("Regional R2")]
   H --> WD
   H --> SA
   WD --> SA
-  SA --> WS["WorkstreamDO (no agent)"]
+  SA --> WS
   WS --> Q
   H --> Q["Activity Queue"]
   GH["GitHub App"] -->|"signed webhook"| GI["Smart GitHub ingress"]
@@ -106,8 +110,10 @@ flowchart LR
 Authority follows the data boundary. Regional D1 owns workspace, membership,
 connector, automation, routing, schedule, activity-ingestion, and cross-work-stream
 projection state. After cutover, `SubstreamAgent` SQLite owns substream product
-state and the full work-stream agent loop; `WorkstreamDO` owns its aggregate
-metadata/outbox. Large activity payloads, uploads, and snapshots live in R2.
+state and the full conversation agent loop; each `HyperSightBlockAgent` owns
+one derived block's execution lifecycle; `WorkstreamDO` owns aggregate metadata,
+HyperSight configuration/published results, and its outboxes. Large activity
+payloads, uploads, and snapshots live in R2.
 
 Users and workspaces each own a validated IANA timezone. The desktop detects the
 local system timezone during native authentication, while browser or unavailable
@@ -203,13 +209,18 @@ identity, crash, and restricted operator flow.
 
 ### Work streams and live updates
 
-Within each regional workspace, one `WorkspaceDO` routes user commands, every
+Within each regional workspace, one `WorkspaceDO` synchronizes workspace
+surfaces and routes user commands, every
 work stream maps to one model-free `WorkstreamDO`, and every independent model
-context maps to one `SubstreamAgent`. Main external substream `0` retains the
+context maps to one `SubstreamAgent`. Every stable configured HyperSight block
+maps to one `HyperSightBlockAgent`. Main external substream `0` retains the
 historical room name during class rename; additional children append
 their substream ID. Every staging/production lookup resolves through a restricted
 namespace: `jurisdiction("us")` for Global and `jurisdiction("eu")` for EU,
-with a best-effort `wnam` or `weur` hint on every possible first `get()`. The
+with the workspace's best-effort persisted affinity (`wnam`/`enam` or
+`weur`/`eeur`) on every possible first `get()`. Creation derives west/east from
+the initiating Cloudflare request longitude; fixed western values remain only
+fallbacks for migrations, background creation, or missing metadata. The
 maintenance import creates the restricted target graph; an unrestricted Global
 predecessor is a different ID and is not a serving fallback. All namespaces are
 SQLite-backed and use explicit SQL only. Before guarded maintenance cutover, D1
@@ -220,11 +231,24 @@ metadata. D1 retains workspace authority/routing and versioned query
 projections. The normalized schemas, fleet import, and authority states are in
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
-`WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for command
-admission, metadata, directory aggregation, and regional effects. Feed sockets,
+`WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for workspace
+sync/command admission, metadata, directory aggregation, HyperSight fan-out,
+and regional effects.
+Each authenticated Electron renderer maintains one WorkspaceDO socket for the active workspace and one
+WorkstreamDO metadata socket for each selected or background-running work
+stream. Feed sockets,
 transcript reads, streaming checkpoints, and loop execution route directly to
 the selected `SubstreamAgent` data plane. Parents therefore never become the
 throughput ceiling for their children.
+
+HyperSight follows the same control/data split without pretending a derived
+block is a conversation. Main `SubstreamAgent("0")` sends one debounced trigger
+and transcript fence to WorkstreamDO. The parent durably fans out the current
+configuration to stable block agents. Each block agent runs Bind and directly
+RPCs source runtime SQL in `SubstreamAgent("0")`; versioned results return to
+WorkstreamDO and reach Electron over its existing metadata socket. The source
+agent therefore talks to blocks as their canonical data authority, but does not
+duplicate the parent's block registry or dispatch outbox.
 
 An authoritative child mutation that changes workspace/user surfaces writes a
 versioned effect to the child's local outbox in the same SQLite transaction.
@@ -341,6 +365,8 @@ work-stream messages admit one complete Bind loop into their `SubstreamAgent`.
 The durable child dispatch row, attempt lease, receipts, and checkpoints recover
 2–30 minute loops and rare two-hour-plus coding sessions across eviction. Generic
 Cloudflare Workflows remain available for non-workstream loops and legacy drain.
+HyperSight uses the same Bind harness in a stable `HyperSightBlockAgent` per
+block; WorkstreamDO coordinates it and no Workflow or Agents SDK loop is added.
 
 Supported regional work-stream runtimes may discover the deferred Terminal
 plugin. Loading it changes only Bind's prompt/tool surface; the first file,
@@ -358,7 +384,7 @@ activation, turn/tool iteration, completion-defect recovery, epoch-aware
 streaming, and classified route traversal. Avalon owns authorization, regional
 persistence, admission, accounting, and terminal state.
 
-Each Workflow attempt holds a renewable D1 lease; run-scope, plugin-activation,
+Each durable agent attempt holds a renewable SQL lease; run-scope, plugin-activation,
 tool receipt-plan/completion, checkpoint, and terminal commits are fenced by
 attempt and lease ownership. The run freezes its principal, eligible
 connections/capabilities, trigger policy, routing/prompt versions, tool-surface
@@ -384,7 +410,9 @@ ambiguous external write.
 
 Run limits are caller-specific. Root ordinary work-stream and HyperSight runs
 enforce a 1,000-turn cap but no aggregate tool-call, model-cost, or task-scale
-wall-time ceiling; their Workflow step retains a one-year platform deadline.
+wall-time ceiling. Their Durable Object execution owners combine a 30-second
+alarm keep-alive with durable dispatch and lease recovery rather than relying
+on a Workflow deadline.
 Inline children and other deliberately bounded one-shot harness callers keep
 smaller explicit ceilings. Context, token, and per-operation streaming
 watchdogs still apply, and classified provider attempts append to an immutable
@@ -680,6 +708,69 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-18 — HyperSight execution shards by stable block
+
+**What changed:** WorkstreamDO now owns HyperSight configuration and durable
+fan-out, while each block ID resolves to a `HyperSightBlockAgent`. The block
+agent executes Bind, directly uses main `SubstreamAgent("0")` for fenced source
+runtime SQL, and settles versioned results into WorkstreamDO for its socket.
+
+**Why:** Dashboard blocks need independent long-running recovery but are not
+independent conversations. Keeping configuration/publication in the parent and
+source data in the transcript agent preserves both authorities while allowing
+blocks to run in parallel.
+
+**Considered and rejected:** Model execution in WorkstreamDO, fan-out owned by
+the source agent, using substreams for derived blocks, one shared HyperSight
+agent, Workflows, and replacing Bind with the Agents SDK.
+
+**Consequences:** The hierarchy has two agent child types with shared lifecycle
+primitives. Operators must distinguish low-volume parent dispatch/result RPCs
+from direct block-to-source runtime SQL, and Electron needs no fourth socket.
+
+### 2026-08-17 — Workspace creation pins west/east hierarchy affinity
+
+**What changed:** The Global onboarding reservation, regional workspace row,
+and WorkspaceDO SQL now persist one immutable affinity. Every workspace-scoped
+object resolver reads that projection and combines it with the existing US/EU
+jurisdiction lock.
+
+**Why:** Fixed western placement made eastern users pay avoidable latency, but
+using each caller's current location would scatter a single workspace's parent
+and children. First placement is a one-time decision, so it belongs to the
+workspace routing record.
+
+**Considered and rejected:** Per-request child placement and a mandatory
+WorkspaceDO provisioning hop. The former breaks colocation; the latter puts a
+parent on every child-creation path.
+
+**Consequences:** Global hierarchies use `wnam` or `enam`; EU hierarchies use
+`weur` or `eeur`. Selecting the western cell solely from jurisdiction is a
+fallback only; affinity is cached per Worker isolate because it is immutable,
+and changing it requires a fleet move.
+
+### 2026-08-17 — Electron connects to all three authority levels
+
+**What changed:** Each authenticated renderer for the active workspace has one persistent WorkspaceDO
+synchronization/command socket. Each selected or running work stream has a
+WorkstreamDO complete-metadata socket and a SubstreamAgent transcript/stream
+socket. Workspace changes invalidate typed D1 query surfaces; work-stream
+snapshots update aggregate/sidebar caches directly.
+
+**Why:** Workspace settings/directories, aggregate work-stream metadata, and
+ordered agent output are independent consistency domains. A lazy command-only
+workspace connection and token-only child feed left the first two without a
+live multi-client synchronization path.
+
+**Considered and rejected:** Multiplexing all tokens through WorkspaceDO,
+polling REST for metadata, and copying authoritative D1 workspace rows into the
+object. Those choices create a throughput hotspot, background request churn, or
+a split authority.
+
+**Consequences:** New workspace surfaces need a typed invalidation topic; new
+aggregate fields need complete WorkstreamDO snapshots; and user writes remain
+exclusive to WorkspaceDO while both child-scoped sockets stay read-only.
 
 ### 2026-08-17 — Durable Object routing becomes a locked placement boundary
 

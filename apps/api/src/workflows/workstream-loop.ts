@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
@@ -21,11 +21,6 @@ import {
   type AttemptLease,
 } from "../runtime/harness-run-runtime";
 import { runWorkstreamHarness } from "../services/integrations";
-import {
-  hyperSightBlockRunFromRow,
-  publishHyperSightRun,
-  type HyperSightBlockRunRow,
-} from "../services/hypersight-service";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
@@ -106,42 +101,6 @@ function slackSafeFailureText(outcome: HarnessWorkflowOutcome): string {
     " — if it keeps happening, the work stream has the details for support.",
   );
 }
-
-async function updateHyperSightRun(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  status: HyperSightBlockRunRow["status"],
-  error?: { code: string; message: string },
-): Promise<void> {
-  const at = new Date().toISOString();
-  await env.DB.prepare(
-    `UPDATE hypersight_block_runs
-        SET status = ?,
-            started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END,
-            completed_at = CASE WHEN ? IN ('completed', 'failed', 'stopped') THEN COALESCE(completed_at, ?) ELSE completed_at END,
-            error_json = CASE WHEN ? IS NULL THEN error_json ELSE ? END
-      WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?
-        AND status NOT IN ('completed', 'failed', 'stopped')`,
-  ).bind(
-    status,
-    status,
-    at,
-    status,
-    at,
-    error ? JSON.stringify(error) : null,
-    error ? JSON.stringify(error) : null,
-    input.harnessRunId,
-    input.workspaceId,
-    input.workstreamId,
-  ).run();
-  const row = await env.DB.prepare(
-    `SELECT id, block_id, configuration_version_id, trigger_sequence, status, markdown, error_json, created_at, started_at, completed_at
-       FROM hypersight_block_runs
-      WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
-  ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<HyperSightBlockRunRow>();
-  if (row) await publishHyperSightRun(env, input.workspaceId, input.workstreamId, hyperSightBlockRunFromRow(row));
-}
-
 /** Static workflow definition used by every ad-hoc and automated harness run. */
 export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWorkflowInput> {
   override async run(
@@ -150,7 +109,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
   ): Promise<HarnessWorkflowOutcome> {
     const input = WorkstreamWorkflowInputSchema.parse(event.payload);
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
-    const hyperSightRun = input.reason === "hypersight_block";
+    if (input.reason === "hypersight_block") throw new Error("hypersight_runs_require_block_agent");
 
     const authority = await step.do("check-workstream-authority-fence", async () => {
       const authority = await readWorkstreamAuthorityControl(this.env);
@@ -209,12 +168,6 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         await step.do("emit-cancelled-run-outcome-telemetry", async () => {
           await this.emitRunOutcomeBestEffort(executionEnv, input);
         });
-        if (hyperSightRun) {
-          await step.do("publish-hypersight-cancelled-before-start", async () => {
-            await updateHyperSightRun(executionEnv, input, "stopped");
-          });
-          return outcome;
-        }
         const cancellationReason = await step.do("load-queued-cancellation-reason", async () => {
           const row = await runtimeDb.prepare(
             "SELECT cancellation_reason FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
@@ -246,25 +199,13 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       await step.do("emit-timeout-run-outcome-telemetry", async () => {
         await this.emitRunOutcomeBestEffort(executionEnv, input);
       });
-      if (hyperSightRun) {
-        await step.do("publish-hypersight-admission-timeout", async () => {
-          await updateHyperSightRun(executionEnv, input, "failed", outcome.error);
-        });
-        return outcome;
-      }
       await step.do("deliver-slack-admission-timeout", SlackDeliveryRetryConfig, async () => {
         await this.deliverResultsDurably(runtimeDb, input, outcome);
       });
       return outcome;
     }
 
-    if (hyperSightRun) {
-      await step.do("publish-hypersight-running", async () => {
-        await updateHyperSightRun(executionEnv, input, "running");
-      });
-    } else {
-      await this.publishBestEffort(input, { type: "harness_status_changed", status: "running" });
-    }
+    await this.publishBestEffort(input, { type: "harness_status_changed", status: "running" });
 
     let outcome: HarnessWorkflowOutcome;
     try {
@@ -306,7 +247,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           ? { code: effectiveOutcome.error.code }
           : {},
       });
-      if (!hyperSightRun) await this.finalizeAutomation(runtimeDb, input, effectiveOutcome, lease!);
+      await this.finalizeAutomation(runtimeDb, input, effectiveOutcome, lease!);
     });
     await step.do("emit-run-outcome-telemetry", async () => {
       await this.emitRunOutcomeBestEffort(executionEnv, input);
@@ -319,26 +260,12 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
           harnessRunId: input.harnessRunId,
-          source: hyperSightRun ? "hypersight" : "workstream",
+          source: "workstream",
           status: effectiveOutcome.status,
           ...(effectiveOutcome.error ? { failureCode: effectiveOutcome.error.code } : {}),
           metrics: runMetrics,
         });
       });
-    }
-
-    if (hyperSightRun) {
-      await step.do("publish-hypersight-terminal", async () => {
-        await updateHyperSightRun(
-          executionEnv,
-          input,
-          effectiveOutcome.status === "completed"
-            ? "completed"
-            : effectiveOutcome.status === "stopped" ? "stopped" : "failed",
-          effectiveOutcome.error,
-        );
-      });
-      return effectiveOutcome;
     }
 
     if (effectiveOutcome.messageId) {
@@ -516,16 +443,16 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
 
   private async publishBestEffort(input: WorkstreamWorkflowInput, event: unknown): Promise<void> {
     try {
-      const agent = durableObjectStubForRegion(
+      const agent = await durableObjectStubForWorkspace(
+        this.env,
         this.env.SUBSTREAM_AGENTS,
-        input.region,
+        input.workspaceId,
         substreamAgentName(
           input.region,
           input.workspaceId,
           input.workstreamId,
           input.substreamId,
         ),
-        this.env.APP_ENV,
       );
       await agent.fetch("https://substream-agent/internal/events", {
         method: "POST",

@@ -1,6 +1,8 @@
 import type { Region } from "@avalon/contracts";
 import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
 
+import type { Env } from "../env";
+
 type AvalonEnvironment = "development" | "test" | "staging" | "production";
 
 const JURISDICTION_BY_REGION = {
@@ -13,10 +15,83 @@ const JURISDICTION_BY_REGION = {
  * jurisdiction above is the guarantee; the hint only keeps a background job
  * from accidentally placing a new object near the job's execution location.
  */
-const LOCATION_HINT_BY_REGION = {
+const FALLBACK_LOCATION_HINT_BY_REGION = {
   global: "wnam",
   eu: "weur",
 } as const satisfies Record<Region, DurableObjectLocationHint>;
+
+export const WORKSPACE_PLACEMENT_AFFINITIES = ["wnam", "enam", "weur", "eeur"] as const;
+export type WorkspacePlacementAffinity = (typeof WORKSPACE_PLACEMENT_AFFINITIES)[number];
+
+export interface WorkspacePlacementDecision {
+  affinity: WorkspacePlacementAffinity;
+  source: "request_longitude" | "missing_request_metadata";
+}
+
+const WEST_EAST_LONGITUDE_SPLIT = {
+  // The 100th meridian is the conventional coarse split between western and
+  // eastern North America for a two-cell latency affinity.
+  global: -100,
+  // 15°E keeps the UK, Ireland, France, Benelux, Iberia, Italy, and most of
+  // Germany in WEUR while routing the eastern half of Europe toward EEUR.
+  eu: 15,
+} as const satisfies Record<Region, number>;
+
+const AFFINITIES_BY_REGION = {
+  global: ["wnam", "enam"],
+  eu: ["weur", "eeur"],
+} as const satisfies Record<Region, readonly WorkspacePlacementAffinity[]>;
+
+const placementCache = new WeakMap<D1Database, Map<string, Promise<WorkspacePlacementAffinity>>>();
+const WORKSPACE_PLACEMENT_CACHE_LIMIT = 1_024;
+
+export function fallbackWorkspacePlacementAffinity(region: Region): WorkspacePlacementAffinity {
+  return FALLBACK_LOCATION_HINT_BY_REGION[region];
+}
+
+export function isWorkspacePlacementAffinity(value: unknown): value is WorkspacePlacementAffinity {
+  return typeof value === "string"
+    && (WORKSPACE_PLACEMENT_AFFINITIES as readonly string[]).includes(value);
+}
+
+export function isWorkspacePlacementAffinityForRegion(
+  region: Region,
+  value: unknown,
+): value is WorkspacePlacementAffinity {
+  return isWorkspacePlacementAffinity(value)
+    && (AFFINITIES_BY_REGION[region] as readonly string[]).includes(value);
+}
+
+/** Select the immutable workspace affinity once, from the initiating request. */
+export function deriveWorkspacePlacementAffinity(
+  region: Region,
+  cf: unknown,
+): WorkspacePlacementDecision {
+  const rawLongitude = cf && typeof cf === "object" && "longitude" in cf
+    ? cf.longitude
+    : undefined;
+  const longitude = typeof rawLongitude === "number"
+    ? rawLongitude
+    : typeof rawLongitude === "string" && rawLongitude.trim() !== ""
+      ? Number(rawLongitude)
+      : Number.NaN;
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    return {
+      affinity: fallbackWorkspacePlacementAffinity(region),
+      source: "missing_request_metadata",
+    };
+  }
+  if (region === "global") {
+    return {
+      affinity: longitude < WEST_EAST_LONGITUDE_SPLIT.global ? "wnam" : "enam",
+      source: "request_longitude",
+    };
+  }
+  return {
+    affinity: longitude < WEST_EAST_LONGITUDE_SPLIT.eu ? "weur" : "eeur",
+    source: "request_longitude",
+  };
+}
 
 function isLocalEnvironment(environment: AvalonEnvironment | undefined): boolean {
   // Real entrypoints validate APP_ENV before dispatch. Treat an omitted value
@@ -50,13 +125,107 @@ export function durableObjectStubForRegion<T extends RpcDurableObject | undefine
   region: Region,
   name: string,
   environment: AvalonEnvironment,
-  locationHint: DurableObjectLocationHint = LOCATION_HINT_BY_REGION[region],
+  locationHint: DurableObjectLocationHint,
 ): DurableObjectStub<T> {
   const regionalNamespace = durableObjectNamespaceForRegion(namespace, region, environment);
   const id = regionalNamespace.idFromName(name);
   return isLocalEnvironment(environment)
     ? regionalNamespace.get(id)
     : regionalNamespace.get(id, { locationHint });
+}
+
+/** Resolve a regional singleton that has no parent workspace affinity. */
+export function durableObjectStubForRegionalSingleton<
+  T extends RpcDurableObject | undefined = undefined,
+>(
+  env: Pick<Env, "APP_ENV" | "AVALON_REGION">,
+  namespace: DurableObjectNamespace<T>,
+  name: string,
+): DurableObjectStub<T> {
+  return durableObjectStubForRegion(
+    namespace,
+    env.AVALON_REGION,
+    name,
+    env.APP_ENV,
+    fallbackWorkspacePlacementAffinity(env.AVALON_REGION),
+  );
+}
+
+/**
+ * Resolve a workspace-scoped object with the affinity selected when its parent
+ * workspace was created. The regional D1 row is an immutable routing
+ * projection; a per-isolate cache removes repeated reads without introducing a
+ * second mutable authority.
+ */
+export async function workspacePlacementAffinity(
+  env: Pick<Env, "APP_ENV" | "AVALON_REGION" | "DB">,
+  workspaceId: string,
+): Promise<WorkspacePlacementAffinity> {
+  if (!env.DB || (typeof env.DB !== "object" && typeof env.DB !== "function")) {
+    if (env.APP_ENV === "production" || env.APP_ENV === "staging") {
+      throw new Error("workspace_placement_database_unavailable");
+    }
+    return fallbackWorkspacePlacementAffinity(env.AVALON_REGION);
+  }
+  let databaseCache = placementCache.get(env.DB);
+  if (!databaseCache) {
+    databaseCache = new Map();
+    placementCache.set(env.DB, databaseCache);
+  }
+  const key = `${env.AVALON_REGION}:${workspaceId}`;
+  const cached = databaseCache.get(key);
+  if (cached) return cached;
+
+  const pending = (async () => {
+    try {
+      const row = await env.DB.prepare(
+        "SELECT placement_affinity FROM workspaces WHERE id = ? AND region = ?",
+      ).bind(workspaceId, env.AVALON_REGION).first<{ placement_affinity: string }>();
+      if (!row || !isWorkspacePlacementAffinityForRegion(env.AVALON_REGION, row.placement_affinity)) {
+        throw new Error("workspace_placement_affinity_unavailable");
+      }
+      return row.placement_affinity;
+    } catch (error) {
+      // Focused unit doubles and pre-migration local databases do not always
+      // expose the routing column. Production and staging fail closed so an
+      // orphan child can never win first placement from an arbitrary caller.
+      if (env.APP_ENV === "production" || env.APP_ENV === "staging") throw error;
+      return fallbackWorkspacePlacementAffinity(env.AVALON_REGION);
+    }
+  })();
+  if (databaseCache.size >= WORKSPACE_PLACEMENT_CACHE_LIMIT) {
+    const oldest = databaseCache.keys().next().value;
+    if (oldest) databaseCache.delete(oldest);
+  }
+  databaseCache.set(key, pending);
+  try {
+    return await pending;
+  } catch (error) {
+    databaseCache.delete(key);
+    throw error;
+  }
+}
+
+export async function durableObjectStubForWorkspace<
+  T extends RpcDurableObject | undefined = undefined,
+>(
+  env: Pick<Env, "APP_ENV" | "AVALON_REGION" | "DB">,
+  namespace: DurableObjectNamespace<T>,
+  workspaceId: string,
+  name: string,
+  affinity?: WorkspacePlacementAffinity,
+): Promise<DurableObjectStub<T>> {
+  const selected = affinity ?? await workspacePlacementAffinity(env, workspaceId);
+  if (!isWorkspacePlacementAffinityForRegion(env.AVALON_REGION, selected)) {
+    throw new Error(`workspace_placement_affinity_mismatch:${env.AVALON_REGION}:${selected}`);
+  }
+  return durableObjectStubForRegion(
+    namespace,
+    env.AVALON_REGION,
+    name,
+    env.APP_ENV,
+    selected,
+  );
 }
 
 /**

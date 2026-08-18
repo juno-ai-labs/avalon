@@ -88,15 +88,18 @@ statement. An attachment revocation or visibility change therefore cannot race
 with checkpoint creation without repeating the grouped aggregation.
 
 The base checkpoint is persisted without its system message or authorized
-appendix, keyed by execution principal in the owning WorkstreamDO's
-`compaction_checkpoints`, together
+appendix, keyed by projection, run, and compacted-through sequence in the owning
+`SubstreamAgent`'s `compaction_checkpoints`, together
 with that scope, the raw summary, checkpoint-template version, model,
-before/window token counts, and the compaction's own usage and cost. The upsert
-advances a row only when `compacted_through_sequence` moves forward, or when the
-same `harness_run_id` rewrites its own checkpoint.
+before/window token counts, and the compaction's own usage and cost. Rewriting
+the exact same run/sequence event is idempotent; a later compaction appends a new
+identity instead of destroying a fence an already-dispatched derived run holds.
 
-A later run loads only that principal's row and compares its recorded inventory
-revision. When the authorized resource set changed, it ignores the checkpoint
+A normal later run loads the latest eligible row for that principal and compares
+its recorded inventory revision. A derived HyperSight run carries the exact
+checkpoint run, sequence, and content hash selected by main
+`SubstreamAgent("0")`; missing or changed state fails closed rather than sliding
+to “latest.” When the authorized resource set changed, it ignores the checkpoint
 and replays the uncompacted transcript instead of exposing a stale summary. That
 fallback is capped at 2,000 messages and 4 MiB of serialized protocol content;
 larger history fails with `context_limit_exceeded` before a provider request.
@@ -107,6 +110,11 @@ the durable transcript backward from its trigger's sequence number down to
 `[...checkpoint messages, ...projected transcript, ...run prompt context]`. The
 checkpoint is therefore the prefix of the next run's conversation — which is why
 it must be derived state and nothing else (see the first invariant).
+
+The model-visible suffix begins strictly after that compaction waterline. Exact
+tool calls and exact tool results in the suffix are reconstructed as inseparable
+provider pairs. Tool activity before the waterline is not replayed verbatim; it
+survives only to the extent captured by the lossy continuation summary.
 
 ## Invariants
 
@@ -235,10 +243,30 @@ results.
 
 ## Changelog
 
+### 2026-08-18 — Derived runs bind an immutable compaction event
+
+**What changed:** `SubstreamAgent` retains checkpoint events per projection,
+run, and compacted-through sequence. HyperSight freezes the exact event hash and
+a complete tool-safe upper sequence; normal runs continue to select the latest
+eligible authorized checkpoint.
+
+**Why:** A block can start after another compaction completes. A mutable
+one-row “latest” cache either changes the block's promised input or makes the
+old fence impossible to validate.
+
+**Considered and rejected:** Copying the whole projected message array into the
+block dispatch and resolving whatever checkpoint is latest at execution time.
+The former duplicates potentially large context across Durable Objects; the
+latter is not reproducible.
+
+**Consequences:** Post-checkpoint tool calls/results stay exact, pre-checkpoint
+tools remain summary-only, and a missing or hash-mismatched checkpoint aborts
+before inference.
+
 ### 2026-08-17 — Compaction and its revision fence are object-local
 
 **What changed:** Compaction jobs, checkpoints, and the resource-inventory
-revision now persist in the owning WorkstreamDO. A message arriving during
+revision now persist in the owning `SubstreamAgent`. A message arriving during
 summarization receives a later immutable part sequence; conditional persistence
 still fences the captured transcript and resource revision.
 

@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import {
+  durableObjectStubForRegionalSingleton,
+} from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
@@ -79,11 +81,10 @@ healthRoutes.get("/", async (c) => {
     checks.r2 = { ok: false, message: "unavailable" };
   }
   try {
-    const agent = durableObjectStubForRegion(
+    const agent = durableObjectStubForRegionalSingleton(
+      c.env,
       c.env.SUBSTREAM_AGENTS,
-      c.env.AVALON_REGION,
       `health:${c.env.AVALON_REGION}`,
-      c.env.APP_ENV,
     );
     const response = await agent.fetch("https://room.internal/health");
     checks.durableObjects = { ok: response.ok, message: response.ok ? "available" : `returned ${response.status}` };

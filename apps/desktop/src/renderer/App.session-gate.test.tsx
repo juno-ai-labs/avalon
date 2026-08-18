@@ -23,6 +23,9 @@ vi.mock('./lib/app-session', () => ({
   AppSessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useAppSession: () => sessionState,
 }));
+vi.mock('./lib/workspace-socket', () => ({
+  WorkspaceSocketProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
 vi.mock('./screens/onboarding', () => ({
   BootScreen: () => <div>boot screen</div>,
   InvitationOnboarding: ({ invitations }: { invitations: unknown[] }) => <div>invitations {invitations.length}</div>,

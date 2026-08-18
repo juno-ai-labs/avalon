@@ -20,7 +20,7 @@ import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import { ApiError } from "../lib/api-error";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
@@ -46,7 +46,7 @@ import {
 } from "./integrations";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
-import { issueSocketTicket, issueWorkspaceSocketTicket } from "./socket-service";
+import { issueSocketTicket, issueWorkstreamControlSocketTicket } from "./socket-service";
 import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import {
@@ -357,15 +357,15 @@ export async function launchWorkstreamHarness(
   try {
     const authority = await readWorkstreamAuthorityControl(env);
     if (authority.phase === "durable_object_open") {
-      const agent = durableObjectStubForRegion(
+      const agent = await durableObjectStubForWorkspace(
+        env,
         env.SUBSTREAM_AGENTS,
-        env.AVALON_REGION,
+        input.workspaceId,
         substreamAgentName(
           env.AVALON_REGION,
           input.workspaceId,
           input.workstreamId,
         ),
-        env.APP_ENV,
       );
       const response = await agent.fetch("https://substream-agent/internal/run-dispatch", {
         method: "POST",
@@ -2309,12 +2309,12 @@ export class WorkstreamService {
     return { url: url.toString(), ticket };
   }
 
-  async workspaceSocketTicket(id: string, substreamId = "0") {
+  async workstreamControlSocketTicket(id: string) {
     await this.requireWorkstream(id);
-    const ticket = await issueWorkspaceSocketTicket(this.env, this.auth, id, substreamId);
+    const ticket = await issueWorkstreamControlSocketTicket(this.env, this.auth, id);
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = `/socket/workspaces/${this.auth.workspaceId}/workstreams/${id}/substreams/${substreamId}`;
+    url.pathname = `/socket/workstreams/${id}`;
     url.search = new URLSearchParams({ ticket }).toString();
     return { url: url.toString(), ticket };
   }

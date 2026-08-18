@@ -82,6 +82,16 @@ function message(
   };
 }
 
+function workspaceSyncNamespace() {
+  return createCloudflareTestBinding<DurableObjectNamespace>({
+    idFromName: () => createTestDurableObjectId("workspace-sync"),
+    get: () => ({
+      initializeWorkspace: vi.fn(async () => undefined),
+      publishSync: vi.fn(async () => 1),
+    }),
+  });
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("the WorkstreamDO regional effect inbox", () => {
@@ -110,7 +120,11 @@ describe("the WorkstreamDO regional effect inbox", () => {
       idFromName: vi.fn(() => objectId),
       get: vi.fn(() => ({ fetch })),
     });
-    const env = createTestEnv({ WORKSTREAM_DOS: rooms });
+    const env = createTestEnv({
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      WORKSTREAM_DOS: rooms,
+    });
 
     expect(wake).not.toHaveProperty("effect");
     await expect(loadWorkstreamRegionalEffect(env, wake)).resolves.toEqual(envelope);
@@ -119,7 +133,11 @@ describe("the WorkstreamDO regional effect inbox", () => {
 
   it("keeps the newest common and user sidebar projections under unordered replay", async () => {
     const database = seedAuthority();
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspaceSyncNamespace(),
+    });
     try {
       const older: WorkstreamRegionalEffect = {
         kind: "directory_common",
@@ -227,6 +245,8 @@ describe("the WorkstreamDO regional effect inbox", () => {
         get: vi.fn(() => ({ fetch: vi.fn(async () => Response.json({ ok: true })) })),
       });
       await acknowledgeWorkstreamRegionalEffect(createTestEnv({
+        APP_ENV: "test",
+        AVALON_REGION: "global",
         DB: sqliteD1(database),
         WORKSTREAM_DOS: rooms,
       }), newerMessage);
@@ -244,6 +264,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
+      WORKSPACE_DOS: workspaceSyncNamespace(),
       APP_ENV: "test",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     });

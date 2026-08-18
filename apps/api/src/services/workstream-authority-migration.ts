@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   WORKSTREAM_AUTHORITY_IMPORT_BUNDLE_STAGE_LIMIT,
   WORKSTREAM_AUTHORITY_CAMPAIGN_PREFIX,
@@ -485,7 +485,12 @@ export function normalizeWorkstreamAuthoritySourceRow(
         display_body: text(row, "activity_summary", text(row, "reason")),
         status, created_at: created, expires_at: NEVER_EXPIRES_MS,
         resolved_at: nullableEpoch(row, "resolved_at"), retracted_at: null,
-        resolved_by_user_id: nullableText(row, "resolved_by_user_id"), resolution_client_id: null,
+        resolved_by_user_id: status === "accepted" || status === "dismissed"
+          ? nullableText(row, "resolved_by_user_id") ?? "legacy-resolution"
+          : null,
+        resolution_client_id: status === "accepted" || status === "dismissed"
+          ? `legacy:${text(row, "id")}:${status}`
+          : null,
         share_intent_json: JSON.stringify({ confidence: row.confidence, matchedEntities: JSON.parse(json(row, "matched_entities_json", "[]")), source: row.source }),
         authored_part_id: null, feedback_message_id: null };
     }
@@ -564,11 +569,11 @@ async function postImport(
   route: RouteRow,
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const agent = durableObjectStubForRegion(
+  const agent = await durableObjectStubForWorkspace(
+    env,
     env.SUBSTREAM_AGENTS,
-    env.AVALON_REGION,
+    route.workspace_id,
     substreamAgentName(env.AVALON_REGION, route.workspace_id, route.workstream_id),
-    env.APP_ENV,
   );
   const response = await agent.fetch("https://substream-agent/internal/authority-import", {
     method: "POST",

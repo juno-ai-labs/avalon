@@ -127,6 +127,7 @@ export const requireInferenceDiagnosticsRule = requiredInferenceOptionRule(
 const TICKET_METHODS = new Set([
   "getSocketTicket",
   "getWorkspaceSocketTicket",
+  "getWorkstreamControlSocketTicket",
   "getRealtimeTranscriptionTicket",
   "getTranscriptionSocketTicket",
 ]);
@@ -141,7 +142,7 @@ export const requireWebSocketTicketRule = {
     docs: { description: "Require renderer WebSockets to use a URL returned by an authenticated ticket endpoint." },
     schema: [],
     messages: {
-      ticket: "Renderer WebSockets must use `<ticket>.url`, where the ticket comes from getSocketTicket(), getWorkspaceSocketTicket(), or getRealtimeTranscriptionTicket().",
+      ticket: "Renderer WebSockets must use `<ticket>.url`, where the ticket comes from an approved API socket-ticket method.",
     },
   },
   create(context) {

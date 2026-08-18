@@ -1,7 +1,7 @@
 import { newId, nowIso } from "@avalon/db";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { createWorkstreamRuntimeSuggestion } from "./workstream-object-client";
@@ -37,11 +37,11 @@ export async function publishSubstreamAgentEvent(
   workstreamId: string,
   event: unknown,
 ): Promise<void> {
-  const agent = durableObjectStubForRegion(
+  const agent = await durableObjectStubForWorkspace(
+    env,
     env.SUBSTREAM_AGENTS,
-    region,
+    workspaceId,
     substreamAgentName(region, workspaceId, workstreamId),
-    env.APP_ENV,
   );
   const response = await agent.fetch(
     "https://substream-agent/internal/events",

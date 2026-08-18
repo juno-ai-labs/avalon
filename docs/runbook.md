@@ -541,7 +541,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 
 ## Realtime operations and cost controls
 
-- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, and append the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
+- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, append the external substream ID for each independently provisioned `SubstreamAgent`, and append `hypersight:<stable-block-id>` for each configured `HyperSightBlockAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
 - Respect the authority phase. Before `durable_object_open`, REST reads the
   legacy D1 source; afterward REST reads the selected `SubstreamAgent`, its
   parent holds aggregate metadata/outbox, and D1 contains only directory/control
@@ -552,19 +552,38 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 - Every object constructor applies only bounded, append-only SQL migrations under `blockConcurrencyWhile()`. Diagnose failures through `_sql_schema_migrations`; a hash mismatch means history was edited, `schema_ahead` means the Worker is older than the object, and a foreign-key violation requires quarantine. Product data moves only through the maintenance import, never a hidden KV importer.
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The client heartbeat is jittered across 45–55 seconds, waits 15 seconds for `pong`, and reconnects with equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not perform application work.
-- Verify foreground message ingress on the workspace command socket: drop
+- Expect one WorkspaceDO socket per signed-in Electron renderer/workspace, plus one
+  WorkstreamDO metadata socket and one SubstreamAgent feed for every selected or
+  background-running work stream. Navigation must not reopen the WorkspaceDO
+  socket. An idle, non-running work stream should retain neither child socket.
+  HyperSight block agents never add Electron sockets; their results arrive on
+  the WorkstreamDO connection.
+- Verify foreground message ingress on the workspace socket: drop
   the connection after `create_message` but before its private receipt, confirm
   reconnect resends the same `clientMessageId`, and confirm exactly one
   sequenced `message_created` row/event exists. A socket attachment from before
   the session-claim deployment should receive `socket_reconnect_required` and a
   1012 close on its first attempted write.
+- Verify workspace convergence by mutating timezone, Terminal policy,
+  membership/invitations, and connector health from another client. The
+  WorkspaceDO socket must advance its topic version and refetch only the mapped
+  query roots. Force a replay-window miss and confirm the desktop invalidates
+  every workspace surface once rather than polling indefinitely.
+- Verify aggregate convergence by changing title/description/state/read and
+  mention metadata, evicting WorkstreamDO, then subscribing again. The complete
+  snapshot must clear nullable stale fields, ignore lower revisions, and remove
+  the row on authorization revocation.
 - Batch model `stream_delta` broadcasts. The direct child loop may use its reference-counted 30-second keep-alive alarm only while active work exists; avoid per-connection alarms and periodic room health polling.
-- Resolve every product and crash-processing object through
-  `durableObjectStubForRegion`: Global must derive IDs from
-  `jurisdiction("us")` and EU from `jurisdiction("eu")`; the resolver also
-  supplies the `wnam`/`weur` first-placement hint. A direct namespace lookup is
-  a linted regionalization defect. The hint is best effort and never evidence
-  of residency; inspect `ctx.id.jurisdiction`/constructor failures for the lock.
+- Resolve every workspace-scoped object through
+  `durableObjectStubForWorkspace`: Global must derive IDs from
+  `jurisdiction("us")`, EU from `jurisdiction("eu")`, and every child must use
+  the affinity stored in `workspaces`, the Global binding, and WorkspaceDO.
+  Expect `wnam`/`enam` for Global or `weur`/`eeur` for EU; selecting the western
+  value solely from jurisdiction is reserved for migration, background creation,
+  or missing request metadata.
+  Direct namespace and low-level resolver calls are linted regionalization
+  defects. A hint remains best effort and never proves residency; inspect
+  `ctx.id.jurisdiction`/constructor failures for the hard lock.
 - Monitor reconnect rate, `resync_required` rate, rejected socket origins, active connections, and messages per room. A rise in reconnects or resyncs is an availability signal, not a reason to retain unbounded replay state.
 - Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Avalon ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
 - The renderer captures mono PCM16 in a 24 kHz `AudioWorklet`, sends bounded chunks, and explicitly commits when the user stops. Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.

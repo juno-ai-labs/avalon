@@ -66,6 +66,7 @@ import {
   type ServerSocketEvent,
   type ToolInvocation,
   type ToolDefinition,
+  type WorkstreamCompactionFence,
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { createDatabase, newId, nowIso } from "@avalon/db";
@@ -87,9 +88,13 @@ import { countEnv, numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
 import { markWorkflowInstanceCreated } from "../lib/workflow-launch-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
-import { durableObjectStubForRegion } from "../lib/durable-object-namespace";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
 import { ApiError } from "../lib/api-error";
+import {
+  contextCompactionCheckpointHash,
+  type ContextCompactionCheckpointIdentity,
+} from "../lib/context-compaction-fence";
 import {
   CHECKPOINT_TEMPLATE_VERSION,
   renderWorkstreamResourceInventoryAggregate,
@@ -591,21 +596,43 @@ async function loadWorkstreamContextCompaction(
   workstreamId: string,
   principal: ExecutionPrincipal,
   asOf?: string,
+  fence?: WorkstreamCompactionFence | null,
 ): Promise<WorkstreamContextCompaction | null> {
+  if (fence === null) return null;
+  const principalKey = executionPrincipalKey(principal);
+  const exactFence = fence === undefined ? "" : `
+        AND harness_run_id = ? AND compacted_through_sequence = ?`;
+  const ordering = fence === undefined
+    ? " ORDER BY compacted_through_sequence DESC, updated_at DESC LIMIT 1"
+    : " LIMIT 1";
   const row = await database.prepare(
-    `SELECT compacted_through_sequence, messages_json, summary, checkpoint_template_version,
-            execution_principal_key, resource_visibility_fingerprint
+    `SELECT harness_run_id, compacted_through_sequence, messages_json, summary,
+            checkpoint_template_version, execution_principal_key,
+            resource_visibility_fingerprint, model
       FROM workstream_context_compactions
-      WHERE workspace_id = ? AND workstream_id = ? AND execution_principal_key = ?`,
-  ).bind(workspaceId, workstreamId, executionPrincipalKey(principal)).first<{
+      WHERE workspace_id = ? AND workstream_id = ? AND execution_principal_key = ?
+      ${exactFence}${ordering}`,
+  ).bind(
+    workspaceId,
+    workstreamId,
+    principalKey,
+    ...(fence === undefined ? [] : [fence.checkpointRunId, fence.compactedThroughSequence]),
+  ).first<{
+    harness_run_id: string;
     compacted_through_sequence: number;
     messages_json: string;
     summary: string;
     checkpoint_template_version: number;
     execution_principal_key: string;
     resource_visibility_fingerprint: string;
+    model: string;
   }>();
   if (!row || !Number.isSafeInteger(row.compacted_through_sequence) || row.compacted_through_sequence < 0) {
+    if (fence !== undefined) {
+      throw Object.assign(new Error("The frozen compaction checkpoint is no longer available"), {
+        code: "compaction_fence_not_found",
+      });
+    }
     return null;
   }
   const visible = await loadVisibleWorkstreamResourceInventory(database, {
@@ -613,9 +640,31 @@ async function loadWorkstreamContextCompaction(
     workstreamId,
     principal,
   });
-  if (row.execution_principal_key !== executionPrincipalKey(principal)
+  if (row.execution_principal_key !== principalKey
     || row.resource_visibility_fingerprint !== visible.fingerprint) {
+    if (fence !== undefined) {
+      throw Object.assign(new Error("The frozen compaction checkpoint is no longer authorized"), {
+        code: "compaction_fence_not_authorized",
+      });
+    }
     return null;
+  }
+  if (fence !== undefined) {
+    const identity: ContextCompactionCheckpointIdentity = {
+      executionPrincipalKey: row.execution_principal_key,
+      resourceVisibilityFingerprint: row.resource_visibility_fingerprint,
+      checkpointTemplateVersion: row.checkpoint_template_version,
+      checkpointRunId: row.harness_run_id,
+      compactedThroughSequence: row.compacted_through_sequence,
+      messagesJson: row.messages_json,
+      summary: row.summary,
+      model: row.model,
+    };
+    if (contextCompactionCheckpointHash(identity) !== fence.checkpointHash) {
+      throw Object.assign(new Error("The frozen compaction checkpoint changed"), {
+        code: "compaction_fence_changed",
+      });
+    }
   }
   if (row.checkpoint_template_version === CHECKPOINT_TEMPLATE_VERSION) {
     const appendix = renderWorkstreamResourceInventoryAggregate({
@@ -1609,16 +1658,16 @@ export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflo
     ? `substream-agent:${substreamId}:${input.harnessRunId}`
     : `workstream-${input.harnessRunId}`;
   if (authority.phase === "durable_object_open") {
-    const agent = durableObjectStubForRegion(
+    const agent = await durableObjectStubForWorkspace(
+      env,
       env.SUBSTREAM_AGENTS,
-      input.region,
+      input.workspaceId,
       substreamAgentName(
         input.region,
         input.workspaceId,
         input.workstreamId,
         substreamId,
       ),
-      env.APP_ENV,
     );
     const response = await agent.fetch("https://substream-agent/internal/runtime-dispatch", {
       method: "POST",
@@ -1766,11 +1815,11 @@ export async function publishWorkstreamEvent(
   event: Omit<ServerSocketEvent, "sequence" | "occurredAt"> | Record<string, unknown>,
 ): Promise<boolean> {
   try {
-    const agent = durableObjectStubForRegion(
+    const agent = await durableObjectStubForWorkspace(
+      env,
       env.SUBSTREAM_AGENTS,
-      env.AVALON_REGION,
+      workspaceId,
       substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
-      env.APP_ENV,
     );
     const response = await agent.fetch("https://room.internal/internal/events", {
       method: "POST",
@@ -1799,11 +1848,11 @@ export async function publishPersonalWorkstreamEvent(
   event: Omit<PersonalSocketEvent, "occurredAt"> | Record<string, unknown>,
 ): Promise<void> {
   try {
-    const agent = durableObjectStubForRegion(
+    const agent = await durableObjectStubForWorkspace(
+      env,
       env.SUBSTREAM_AGENTS,
-      env.AVALON_REGION,
+      workspaceId,
       substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
-      env.APP_ENV,
     );
     await agent.fetch("https://room.internal/internal/events", {
       method: "POST",
@@ -1884,6 +1933,8 @@ export async function runWorkstreamHarness(
     input.workspaceId,
     input.workstreamId,
     input.executionPrincipal,
+    undefined,
+    input.compactionFence,
   );
   const storedMessages = await loadTriggerFencedTranscriptMessages(
     env,

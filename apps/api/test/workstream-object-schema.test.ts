@@ -110,6 +110,11 @@ describe("the Workstream Durable Object relational schema", () => {
           ORDER BY name`,
       ).all().map((row) => String(row.name));
       expect(tables).toEqual(EXPECTED_TABLES);
+      const strictness = database.prepare("PRAGMA table_list").all()
+        .filter((row) => row.schema === "main" && EXPECTED_TABLES.includes(String(row.name) as never))
+        .map((row) => ({ name: String(row.name), strict: Number(row.strict) }));
+      expect(strictness).toHaveLength(EXPECTED_TABLES.length);
+      expect(strictness.every((table) => table.strict === 1)).toBe(true);
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
       expect(database.prepare(
         `SELECT worker_version_id, contract_version, schema_version
@@ -132,6 +137,80 @@ describe("the Workstream Durable Object relational schema", () => {
           expect(new TextEncoder().encode(statement).byteLength).toBeLessThanOrEqual(100_000);
         }
       }
+    } finally {
+      database.close();
+    }
+  });
+
+  it("enforces substream, semantic-part, and suggested-action shapes in SQLite", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
+      database.prepare(
+        `INSERT INTO workstream
+           (id, workstream_key, parent_workspace_key, region, authority_mode,
+            authority_generation, title, description, scope, exact_state,
+            state_reason_code, next_sequence_number, next_attention_ordinal,
+            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
+            deletion_epoch, run_revision, created_at, last_people_activity_at,
+            state_changed_at, updated_at)
+         VALUES (1, ?, ?, 'global', 'authoritative', 1, '', '', 'workspace', 'idle',
+                 'test', 1, 1, 1, 0, 0, 1, 0, 1, 1000, 1000, 1000, 1000)`,
+      ).run(WORKSTREAM_ID, WORKSPACE_ID);
+      database.prepare(
+        `INSERT INTO substreams
+           (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
+            depth, return_mode, origin_part_id, owner_user_id, audience,
+            tool_policy, status, created_at, closed_at)
+         VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
+                 'workspace', 'full', 'open', 1000, NULL)`,
+      ).run();
+
+      expect(() => database.prepare(
+        `INSERT INTO substreams
+           (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
+            depth, return_mode, origin_part_id, owner_user_id, audience,
+            tool_policy, status, created_at, closed_at)
+         VALUES ('not-main', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
+                 'workspace', 'full', 'open', 1000, NULL)`,
+      ).run()).toThrow();
+      expect(() => database.prepare(
+        `INSERT INTO parts
+           (id, substream_id, sequence_number, role, kind, author_type, content,
+            visibility, pinned, created_at, updated_at)
+         VALUES (?, '0', 1, 'assistant', 'tool_call', 'agent', '',
+                 'people', 0, 1000, 1000)`,
+      ).run(MESSAGE_ID)).toThrow();
+      expect(() => database.prepare(
+        `INSERT INTO suggested_actions
+           (action_id, version, source_activity_id, delivery_id, audience_kind,
+            audience_user_id, provenance_ref, authorization_selector_hash,
+            source_revisions_json, source_authorization_epoch, display_title,
+            display_body, status, created_at, expires_at)
+         VALUES (?, 1, 'activity', 'delivery', 'workstream', NULL, 'activity:1',
+                 'selector', '[]', 0, 'Title', 'Body', 'accepted', 1000, 2000)`,
+      ).run(RECIPIENT_ID)).toThrow();
+
+      database.prepare(
+        `INSERT INTO suggested_actions
+           (action_id, version, source_activity_id, delivery_id, audience_kind,
+            audience_user_id, provenance_ref, authorization_selector_hash,
+            source_revisions_json, source_authorization_epoch, display_title,
+            display_body, status, created_at, expires_at)
+         VALUES (?, 1, 'activity', 'delivery-valid', 'workstream', NULL, 'activity:1',
+                 'selector', '[]', 0, 'Title', 'Body', 'pending', 1000, 2000)`,
+      ).run(RECIPIENT_ID);
+      database.prepare(
+        `UPDATE suggested_actions SET status = 'accepted', resolved_at = 1500,
+                resolved_by_user_id = ?, resolution_client_id = 'accept-once'
+          WHERE action_id = ?`,
+      ).run(AUTHOR_ID, RECIPIENT_ID);
+      expect(() => database.prepare(
+        `UPDATE suggested_actions SET status = 'pending', resolved_at = NULL,
+                resolved_by_user_id = NULL, resolution_client_id = NULL
+          WHERE action_id = ?`,
+      ).run(RECIPIENT_ID)).toThrow("suggested_action_terminal_status_immutable");
     } finally {
       database.close();
     }
@@ -193,6 +272,27 @@ describe("the Workstream Durable Object relational schema", () => {
             message_type, text_content, sequence_number, harness_run_id, created_at)
          VALUES (?, 'runtime-message', ?, ?, 'agent', 'text', 'hello', 1, ?, ?)`,
       )).run(MESSAGE_ID, WORKSPACE_ID, WORKSTREAM_ID, RUN_ID, "2026-08-17T12:00:01.000Z");
+      for (const compactedThroughSequence of [1, 2]) {
+        database.prepare(rewriteWorkstreamRuntimeSql(
+          `INSERT INTO workstream_context_compactions
+             (workstream_id, workspace_id, harness_run_id, compacted_through_sequence,
+              messages_json, summary, checkpoint_template_version, execution_principal_key,
+              resource_visibility_fingerprint, model, context_tokens_before_compaction,
+              context_window_tokens, input_tokens, output_tokens, cost_microusd,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, '[]', ?, 1, ?, 'inventory:0', 'test-model',
+                   100, 200000, 80, 20, 1, ?, ?)`,
+        )).run(
+          WORKSTREAM_ID,
+          WORKSPACE_ID,
+          RUN_ID,
+          compactedThroughSequence,
+          `summary-${compactedThroughSequence}`,
+          `workspace:${WORKSPACE_ID}`,
+          `2026-08-17T12:00:0${compactedThroughSequence}.000Z`,
+          `2026-08-17T12:00:0${compactedThroughSequence}.000Z`,
+        );
+      }
       database.prepare(rewriteWorkstreamRuntimeSql(
         `INSERT INTO workstream_sandboxes
            (workspace_id, workstream_id, state, stable_name, provider_sandbox_id,
@@ -215,6 +315,8 @@ describe("the Workstream Durable Object relational schema", () => {
         id: MESSAGE_ID,
         content: "hello",
       });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM compaction_checkpoints").get())
+        .toEqual({ count: 2 });
       expect(database.prepare(
         "SELECT sandbox_id, lifecycle_state FROM terminal_workspace WHERE id = 1",
       ).get()).toEqual({ sandbox_id: "daytona-1", lifecycle_state: "running" });

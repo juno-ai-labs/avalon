@@ -5,7 +5,10 @@ identity, connector, routing, schedule, audit, and projection state. Serving
 contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
 its non-agent `WorkstreamDO` parent owns aggregate work-stream metadata and the
-regional effect outbox. Frozen
+regional effect outbox plus HyperSight configuration/published results. Each
+stable HyperSight block has a separate `HyperSightBlockAgent` execution ledger,
+while its fenced transcript and Bind runtime rows remain in main
+`SubstreamAgent("0")`. Frozen
 legacy D1 product rows are migration input and writer tripwires, never a serving
 fallback. The checked-in migrations are the authoritative D1 schema and the
 object schema registry is the authoritative DO schema. This document maps both
@@ -29,7 +32,8 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/mappers/connection.ts`, `apps/api/src/mappers/workstream.ts` | Row schemas parsed at the read — the pattern the remaining hand-coercing readers are converging on. |
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts` | SQL schemas for workspace command routing and non-agent child projection aggregation. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts` | SQL schemas for workspace sync/command routing, bounded invalidation replay, non-agent child projection aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
+| `apps/api/src/durable-objects/hypersight-block-agent.ts` | Per-block SQL identity and durable execution/retry/result-settlement ledger. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
@@ -37,15 +41,47 @@ knowing an object's ID is enough to read it — it never is.
 ### Identity and tenancy
 
 - `users` stores Google identity subjects and display information.
-- `workspaces` pins an immutable `global` or `eu` region.
+- `workspaces` pins an immutable `global` or `eu` region plus its immutable
+  west/east Durable Object placement affinity. The Global
+  `platform_workspace_bindings` row carries the same opaque route; `wnam` and
+  `weur` are migration/background/missing-request-metadata defaults only.
 - `workspace_members` authorizes users as owner, admin, or member.
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
   sessions, PKCE, and single-use Electron deep-link completion.
 - `workspace_invitations` supports explicit membership growth without introducing
   a workspace switcher in V1.
 
-Every tenant-owned table carries `workspace_id`, and every repository lookup
-includes it. Knowing an object ID is never sufficient authorization.
+Every regional D1 tenant table carries `workspace_id`, and every D1 repository
+lookup includes it. A Durable Object instead stores its external workspace/work
+stream/substream identity once in a singleton and omits those repeated keys from
+local child rows; every request is checked against that identity before local
+SQL runs. Knowing either a D1 row ID or a Durable Object ID is never sufficient
+authorization.
+
+### Realtime synchronization records
+
+Workspace product rows remain relational D1 authority. `WorkspaceDO` stores only
+`workspace_identity`, consumed workspace socket tickets, and a bounded monotonic
+`workspace_sync_events` invalidation log. A log row names typed query topics; it
+never embeds members, invitations, connector state, policies, notes, resources,
+activities, opportunities, or other workspace records. This avoids a second
+workspace database while allowing every open Electron client to converge.
+
+`WorkstreamDO.workstream_metadata` is different: it is the authoritative
+cross-substream aggregate. Its revision covers complete common metadata and its
+`substream_user_directory` inputs produce the viewer overlay. A WebSocket
+snapshot includes nulls so a client can delete a former email, automation link,
+plan, archive/system marker, or schedule rather than accidentally retain it.
+`SubstreamAgent` continues to own ordered parts, active output, and replay; token
+frames are never database joins or metadata patches.
+
+HyperSight is intentionally split by responsibility. WorkstreamDO's
+`hypersight_configuration_versions`, `hypersight_block_runs`, preferences,
+dispatch outbox, and result receipts are the product/control authority. A
+`HyperSightBlockAgent.agent_run_dispatches` row owns the long-running executor.
+The main substream's runtime compatibility rows hold the Bind run/tool state
+that references its fenced transcript. These are connected by typed,
+hash-checked RPCs rather than cross-object SQL joins.
 
 ### Work streams
 
@@ -190,7 +226,11 @@ includes it. Knowing an object ID is never sufficient authorization.
   attachment/watch behavior; its `relationship_type` distinguishes an ordinary
   `attachment` from the `origin` a work stream was created from — see
   [work-stream origin attachments](workstream-origin-attachments.md).
-- `elicitation_requests` and `suggested_actions` are first-class transcript blocks.
+- `elicitation_requests` is operational human-input state tied to a run.
+  `suggested_actions` is an audience-scoped operational overlay and is never
+  model or shared transcript input merely because it exists. Acceptance may
+  explicitly author a new audience-safe `parts` row; that new part, not the
+  private card body, enters conversation history.
 
 D1 retains a `workstreams` identity anchor because workspace/control tables have
 foreign keys to the stable ID. A post-cutover row has `do_identity_anchor = 1`;
@@ -255,7 +295,7 @@ the object outbox, not mirrors to read when an object is unavailable.
 - Object-local `runs` records each bounded model loop. `tool_effects` is unique on
   `(run_id, provider_tool_call_id)` and stores input hashes plus side-effect state.
 - `compaction_jobs` and `compaction_checkpoints` store the raw LLM continuation
-  summary per execution principal, with its
+  summary per execution principal and immutable run/sequence event, with its
   sequence boundary, resource-inventory revision, and deterministic template
   version. Current authorized totals are regenerated on apply and replay and
   are intentionally absent from the principal-scoped row. A final conditional
@@ -445,9 +485,11 @@ collection, opt-out, and destination behavior.
 
 ## Invariants
 
-1. **Every tenant-owned table carries `workspace_id`, and every repository lookup
-   includes it.** Knowing an object ID is never sufficient authorization; a query
-   that omits the column is a cross-tenant read waiting for an ID to leak.
+1. **Every regional D1 tenant table carries `workspace_id`, and every repository
+   lookup includes it. Each Durable Object stores the external route once in its
+   singleton identity row and validates requests against it.** Repeating the same
+   key on every local child row adds no isolation; omitting the D1 predicate or
+   the object-level identity check is a cross-tenant read waiting for an ID leak.
 2. A personal connection must have an owner; a workspace connection must not.
 3. Passive viewing never creates `workstream_participants` rows.
 4. A human authoring a message or elicitation answer is upserted as a participant
@@ -456,10 +498,11 @@ collection, opt-out, and destination behavior.
 6. Repeated provider events, Queue deliveries, alarms, workflow steps, client
    messages, and tool calls converge on unique keys. Without that, at-least-once
    delivery becomes at-least-twice side effects.
-7. Canonical timestamps are UTC ISO-8601 strings. Every user and workspace retains
-   a validated IANA timezone. Calendar intent separately retains its explicit IANA
-   timezone; omitted automation timezones resolve in the order explicit trigger,
-   personal user, then workspace.
+7. D1/API timestamps are UTC ISO-8601 strings; Durable Object SQL stores Unix
+   milliseconds and converts only at the boundary. Every user and workspace
+   retains a validated IANA timezone. Calendar intent separately retains its
+   explicit IANA timezone; omitted automation timezones resolve in the order
+   explicit trigger, personal user, then workspace.
 8. R2 objects are addressed through opaque references; raw provider payloads do not
    enter Queue or Workflow inputs — a payload in a Queue message is a payload
    outside the region's storage guarantees.
@@ -558,6 +601,87 @@ database are what catch it. Behavior that depends on a column belongs in the own
 service's suite under `apps/api`, not here.
 
 ## Changelog
+
+### 2026-08-18 — Conversation arrays and operational overlays stay separate
+
+**What changed:** Object-local `parts` is documented as the provider-neutral
+semantic order, compaction rows retain immutable event identities, and
+`suggested_actions` is explicitly operational state rather than transcript.
+Durable Object timestamps are integer milliseconds even though D1/API values
+remain ISO strings.
+
+**Why:** A suggestion may be private or revoked and must not become shared model
+history by storage accident. A derived run also needs a stable lossy prefix and
+exact post-prefix tool pairs, not whichever summary is newest when it starts.
+
+**Considered and rejected:** Treating every UI block as a message and storing
+timestamps in mixed formats inside object SQL. Both make authorization and
+ordering rules implicit at read time.
+
+**Consequences:** Projectors have one explicit semantic source, operational
+cards require explicit authorship to enter it, and SQL range/order comparisons
+use one timestamp representation.
+
+### 2026-08-18 — HyperSight separates product and execution authority
+
+**What changed:** WorkstreamDO now stores configured/published HyperSight state,
+one `HyperSightBlockAgent` stores each stable block's execution ledger, and main
+`SubstreamAgent("0")` stores the fenced Bind runtime rows used during execution.
+
+**Why:** Configuration and results are work-stream metadata, execution recovery
+is block-local, and transcript-related receipts must stay beside the transcript
+authority they reference.
+
+**Considered and rejected:** Copying the transcript into block objects, putting
+model execution in WorkstreamDO, and treating a block as a conversation
+substream. Each either duplicates data, loads the control plane, or invents a
+false user-visible message authority.
+
+**Consequences:** Cross-object consistency is explicit: source refresh signal,
+parent dispatch, block-to-source runtime SQL, and block result receipt. The
+complete SQL catalog and failure rules are in
+[`workstream-durable-object.md`](workstream-durable-object.md).
+
+### 2026-08-17 — Workspace routes gain immutable Durable Object affinity
+
+**What changed:** `workspaces`, the Global `platform_workspace_bindings` route,
+and `WorkspaceDO.workspace_identity` now carry the same region-compatible
+`wnam`/`enam`/`weur`/`eeur` affinity. D1 triggers backfill region defaults and
+reject changes once a compatible value exists.
+
+**Why:** Every child creator needs a cheap regional route to the parent's
+one-time placement choice. Querying Global on each operation violates the data
+plane boundary, while recomputing from the current caller can split the object
+graph.
+
+**Considered and rejected:** Keeping affinity only in WorkspaceDO and treating
+it as mutable workspace settings. The former makes the parent a read bottleneck;
+the latter suggests a row update can move Durable Objects when it cannot.
+
+**Consequences:** Regional D1 is an immutable routing projection cached per
+Worker isolate, not a second placement authority. A true affinity change
+requires a maintenance migration of the complete hierarchy.
+
+### 2026-08-17 — Control-plane SQL supports three independent socket authorities
+
+**What changed:** WorkspaceDO gained workspace-scoped socket receipts and a
+bounded topic-version log; WorkstreamDO gained socket receipts plus a revisioned
+complete metadata projection. SubstreamAgent remains the transcript/stream
+authority.
+
+**Why:** Live multi-client workspace data needs durable change notification,
+while aggregate work-stream data needs a model-free authoritative snapshot.
+Neither requirement justifies copying relational workspace rows or token feeds
+into another database.
+
+**Considered and rejected:** Duplicating D1 workspace records in WorkspaceDO and
+deriving aggregate state from the current token stream. The first splits
+authority; the second fails whenever no model is running or a nullable field is
+cleared.
+
+**Consequences:** Workspace mutation paths publish topics after commit,
+WorkstreamDO sends full snapshots by revision, and cross-object updates remain
+typed RPC/outbox operations rather than cross-database SQL.
 
 ### 2026-08-17 — Work-stream authority is split across parent and substream SQL
 

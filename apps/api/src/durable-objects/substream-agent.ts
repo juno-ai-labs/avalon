@@ -20,8 +20,12 @@ import { DurableObject } from "cloudflare:workers";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
+  contextCompactionCheckpointHash,
+  type ContextCompactionCheckpointIdentity,
+} from "../lib/context-compaction-fence";
+import {
   assertDurableObjectJurisdiction,
-  durableObjectStubForRegion,
+  durableObjectStubForWorkspace,
 } from "../lib/durable-object-namespace";
 import { workstreamVisibilitySql } from "../lib/workstream-visibility";
 import {
@@ -29,10 +33,7 @@ import {
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
 import {
-  hyperSightBlockRunFromRow,
   launchHyperSightRefresh,
-  publishHyperSightRun,
-  type HyperSightBlockRunRow,
 } from "../services/hypersight-service";
 import { logWarn } from "../observability/logger";
 import {
@@ -68,6 +69,11 @@ import {
 } from "./workstream-regional-effect";
 import { workstreamDOName } from "./names";
 import {
+  HyperSightControlRequestSchema,
+  HyperSightSourceRefreshRequestSchema,
+  type HyperSightContextFence,
+} from "./hypersight-protocol";
+import {
   WorkstreamObjectStore,
   type PendingHyperSightRefresh,
 } from "./workstream-object-storage";
@@ -82,6 +88,7 @@ import {
   WorkstreamRuntimeSqlRequestSchema,
 } from "./workstream-runtime-sql";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
+import { DurableAgentDrain, DurableAgentKeepAlive } from "./durable-agent-runtime";
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
@@ -222,6 +229,17 @@ interface UserRow {
   created_at: string;
 }
 
+interface CompactionCheckpointRow extends Record<string, SqlStorageValue> {
+  execution_principal_key: string;
+  resource_visibility_fingerprint: string;
+  checkpoint_template_version: number;
+  run_id: string;
+  compacted_through_sequence: number;
+  messages_json: string;
+  summary: string;
+  model: string;
+}
+
 const textEncoder = new TextEncoder();
 
 function minimumTimestamp(...timestamps: Array<number | null>): number | null {
@@ -356,8 +374,8 @@ export class SubstreamAgent extends DurableObject<Env> {
   private readonly product: WorkstreamObjectProductService;
   private readonly authorityImporter: WorkstreamAuthorityImporter;
   private readonly initialized: Promise<void>;
-  private keepAliveRefs = 0;
-  private runDrain: Promise<void> | null = null;
+  private readonly keepAliveLease: DurableAgentKeepAlive;
+  private readonly agentDrain = new DurableAgentDrain();
 
   constructor(
     state: DurableObjectState,
@@ -373,6 +391,7 @@ export class SubstreamAgent extends DurableObject<Env> {
     );
     this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
     this.authorityImporter = new WorkstreamAuthorityImporter(state.storage);
+    this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
     this.initialized = state.blockConcurrencyWhile(async () => {
       await this.objectStore.waitUntilReady();
       // Existing one-room-per-workstream objects become the main child during
@@ -426,26 +445,11 @@ export class SubstreamAgent extends DurableObject<Env> {
    * ledger is what restarts that computation.
    */
   async keepAlive(): Promise<() => void> {
-    this.keepAliveRefs += 1;
-    if (this.keepAliveRefs === 1) await this.scheduleNextAlarm();
-    let disposed = false;
-    return () => {
-      if (disposed) return;
-      disposed = true;
-      this.keepAliveRefs = Math.max(0, this.keepAliveRefs - 1);
-      if (this.keepAliveRefs === 0) {
-        this.state.waitUntil(this.scheduleNextAlarm().catch(() => undefined));
-      }
-    };
+    return this.keepAliveLease.keepAlive();
   }
 
   async keepAliveWhile<T>(fn: () => Promise<T>): Promise<T> {
-    const dispose = await this.keepAlive();
-    try {
-      return await fn();
-    } finally {
-      dispose();
-    }
+    return this.keepAliveLease.while(fn);
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -497,6 +501,21 @@ export class SubstreamAgent extends DurableObject<Env> {
 
     if (request.method === "POST" && url.pathname === "/internal/run-dispatch") {
       return this.acceptRunDispatch(request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/hypersight-refresh-request") {
+      const parsed = HyperSightSourceRefreshRequestSchema.safeParse(
+        await request.json().catch(() => null),
+      );
+      const identity = this.objectStore.identity();
+      if (!parsed.success || !identity
+        || identity.workspaceId !== parsed.data.workspaceId
+        || identity.workstreamId !== parsed.data.workstreamId
+        || this.externalSubstreamId() !== "0") {
+        return jsonResponse({ error: "hypersight_source_identity_mismatch" }, 409);
+      }
+      await this.scheduleHyperSightRefresh(parsed.data.triggerSequence);
+      return jsonResponse({ ok: true });
     }
 
     if (request.method === "POST" && url.pathname === "/internal/refresh-agent-alarm") {
@@ -628,6 +647,9 @@ export class SubstreamAgent extends DurableObject<Env> {
   private async acceptRunDispatch(request: Request): Promise<Response> {
     const parsed = RuntimeDispatchRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_substream_run_dispatch" }, 400);
+    if (parsed.data.reason === "hypersight_block") {
+      return jsonResponse({ error: "hypersight_runs_require_block_agent" }, 409);
+    }
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== parsed.data.workspaceId
@@ -822,9 +844,9 @@ export class SubstreamAgent extends DurableObject<Env> {
   }
 
   private resumeRunDrain(): void {
-    if (this.runDrain) return;
-    const drain = Promise.resolve()
-      .then(() => this.drainRunQueue())
+    if (this.agentDrain.active) return;
+    const drain = this.agentDrain.resume(
+      () => this.drainRunQueue()
       .catch((error: unknown) => {
         logWarn(this.env, "substream_agent_drain_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
@@ -832,12 +854,9 @@ export class SubstreamAgent extends DurableObject<Env> {
           substream_id: this.externalSubstreamId(),
           reason: error instanceof Error ? error.message : "unknown",
         });
-      })
-      .finally(() => {
-        if (this.runDrain === drain) this.runDrain = null;
-        this.state.waitUntil(this.scheduleNextAlarm().catch(() => undefined));
-      });
-    this.runDrain = drain;
+      }),
+      () => this.scheduleNextAlarm().catch(() => undefined),
+    );
     this.state.waitUntil(drain);
   }
 
@@ -1010,10 +1029,6 @@ export class SubstreamAgent extends DurableObject<Env> {
         error: { code: "run_cancelled", message: "The run was stopped before it started" },
         cancellationReason: "run_cancelled",
       });
-    }
-
-    if (input.reason === "hypersight_block") {
-      await this.updateHyperSightRun(executionEnv, input, "running");
     }
 
     let outcome: WorkstreamHarnessResult;
@@ -1196,18 +1211,6 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
 
     await this.finalizeAutomation(executionEnv, input, outcome);
-    if (input.reason === "hypersight_block") {
-      await this.updateHyperSightRun(
-        executionEnv,
-        input,
-        outcome.status === "completed"
-          ? "completed"
-          : outcome.status === "stopped" ? "stopped" : "failed",
-        outcome.error,
-      );
-      return;
-    }
-
     if (outcome.cancellationReason !== "superseded_by_follow_up") {
       await this.deliverAgentRunResult(input, outcome);
     }
@@ -1314,47 +1317,6 @@ export class SubstreamAgent extends DurableObject<Env> {
     ).run();
   }
 
-  private async updateHyperSightRun(
-    executionEnv: Env,
-    input: WorkstreamWorkflowInput,
-    status: HyperSightBlockRunRow["status"],
-    error?: { code: string; message: string },
-  ): Promise<void> {
-    const now = new Date().toISOString();
-    await executionEnv.DB.prepare(
-      `UPDATE hypersight_block_runs
-          SET status = ?, error_json = ?,
-              started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END,
-              completed_at = CASE WHEN ? IN ('completed', 'failed', 'stopped') THEN ? ELSE completed_at END
-        WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(
-      status,
-      error ? JSON.stringify(error) : null,
-      status,
-      now,
-      status,
-      now,
-      input.harnessRunId,
-      input.workspaceId,
-      input.workstreamId,
-    ).run();
-    const row = await executionEnv.DB.prepare(
-      `SELECT id, block_id, configuration_version_id, trigger_sequence,
-              status, markdown, error_json, created_at, started_at, completed_at
-         FROM hypersight_block_runs
-        WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
-      .first<HyperSightBlockRunRow>();
-    if (row) {
-      await publishHyperSightRun(
-        executionEnv,
-        input.workspaceId,
-        input.workstreamId,
-        hyperSightBlockRunFromRow(row),
-      );
-    }
-  }
-
   private localRuntimeEnvironment(
     workspaceId: string,
     workstreamId: string,
@@ -1450,6 +1412,13 @@ export class SubstreamAgent extends DurableObject<Env> {
             this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
           }
         }
+        const activatedIdentity = this.objectStore.identity();
+        if (!activatedIdentity) throw new Error("hypersight_authority_import_identity_missing");
+        await this.forwardImportedHyperSightAuthority(
+          activatedIdentity.workspaceId,
+          activatedIdentity.workstreamId,
+          parsed.data.generation,
+        );
       }
       return jsonResponse(result);
     } catch (error) {
@@ -1645,22 +1614,13 @@ export class SubstreamAgent extends DurableObject<Env> {
     }
     this.objectStore.deletePendingHyperSightRefresh();
     try {
-      const runs = await launchHyperSightRefresh(
+      await launchHyperSightRefresh(
         this.env,
         pending.workspaceId,
         pending.workstreamId,
         pending.triggerSequence,
+        pending.contextFence,
       );
-      for (const run of runs) {
-        const event = ServerSocketEventSchema.parse({
-          type: "hypersight_block_run_updated",
-          sequence: await this.allocateSequence(),
-          occurredAt: new Date().toISOString(),
-          run,
-        });
-        this.recordRecentEvent(event);
-        this.broadcast(event);
-      }
     } catch {
       const retryAt = Date.now() + HYPERSIGHT_DEBOUNCE_MS;
       this.objectStore.failPendingHyperSightRefresh(pending, retryAt);
@@ -1681,15 +1641,15 @@ export class SubstreamAgent extends DurableObject<Env> {
       || effect.workstreamId !== firstEffect.workstreamId
       || effect.generation !== firstEffect.generation
     ))) throw new Error("substream_effect_batch_identity_mismatch");
-    const stub = durableObjectStubForRegion(
+    const stub = await durableObjectStubForWorkspace(
+      this.env,
       this.env.WORKSTREAM_DOS,
-      firstEffect.region,
+      firstEffect.workspaceId,
       workstreamDOName(
         firstEffect.region,
         firstEffect.workspaceId,
         firstEffect.workstreamId,
       ),
-      this.env.APP_ENV,
     );
     for (let offset = 0; offset < effects.length; offset += 25) {
       const response = await stub.fetch("https://workstream.internal/internal/substream-effects", {
@@ -1704,6 +1664,136 @@ export class SubstreamAgent extends DurableObject<Env> {
         const body = await response.json().catch(() => null) as { error?: unknown } | null;
         throw new Error(typeof body?.error === "string" ? body.error : "workstream_parent_effect_failed");
       }
+    }
+  }
+
+  private async forwardImportedHyperSightAuthority(
+    workspaceId: string,
+    workstreamId: string,
+    generation: number,
+  ): Promise<void> {
+    const stub = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSTREAM_DOS,
+      workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, workspaceId, workstreamId),
+    );
+    const pageSize = 250;
+    const send = async (body: z.input<typeof HyperSightControlRequestSchema>): Promise<void> => {
+      const response = await stub.fetch("https://workstream.internal/internal/hypersight", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(HyperSightControlRequestSchema.parse(body)),
+      });
+      if (!response.ok) throw new Error(`hypersight_authority_import_rejected:${response.status}`);
+    };
+    for (let offset = 0; ; offset += pageSize) {
+      const rows = this.state.storage.sql.exec<{
+        configuration_version_id: string;
+        version_number: number;
+        blocks_json: string;
+        created_by_user_id: string;
+        created_at: number;
+      }>(
+        `SELECT configuration_version_id, version_number, blocks_json,
+                created_by_user_id, created_at
+           FROM hypersight_configuration_versions
+          ORDER BY version_number LIMIT ? OFFSET ?`,
+        pageSize,
+        offset,
+      ).toArray();
+      if (rows.length === 0) break;
+      await send({
+        operation: "import_authority_rows",
+        workspaceId,
+        workstreamId,
+        generation,
+        configurations: rows.map((row) => ({
+          configurationVersionId: row.configuration_version_id,
+          versionNumber: row.version_number,
+          blocksJson: row.blocks_json,
+          createdByUserId: row.created_by_user_id,
+          createdAt: row.created_at,
+        })),
+        runs: [],
+        preferences: [],
+      });
+      if (rows.length < pageSize) break;
+    }
+    for (let offset = 0; ; offset += pageSize) {
+      const rows = this.state.storage.sql.exec<{
+        block_run_id: string;
+        configuration_version_id: string;
+        block_id: string;
+        prompt: string;
+        trigger_sequence: number;
+        run_id: string;
+        status: "queued" | "running" | "completed" | "failed" | "stopped";
+        markdown: string | null;
+        error_json: string | null;
+        created_at: number;
+        started_at: number | null;
+        completed_at: number | null;
+      }>(
+        `SELECT block_run_id, configuration_version_id, block_id, prompt,
+                trigger_sequence, run_id, status, markdown, error_json,
+                created_at, started_at, completed_at
+           FROM hypersight_block_runs
+          ORDER BY created_at, block_run_id LIMIT ? OFFSET ?`,
+        pageSize,
+        offset,
+      ).toArray();
+      if (rows.length === 0) break;
+      await send({
+        operation: "import_authority_rows",
+        workspaceId,
+        workstreamId,
+        generation,
+        configurations: [],
+        runs: rows.map((row) => ({
+          blockRunId: row.block_run_id,
+          configurationVersionId: row.configuration_version_id,
+          blockId: row.block_id,
+          prompt: row.prompt,
+          triggerSequence: row.trigger_sequence,
+          harnessRunId: row.run_id,
+          status: row.status,
+          markdown: row.markdown,
+          errorJson: row.error_json,
+          createdAt: row.created_at,
+          startedAt: row.started_at,
+          completedAt: row.completed_at,
+        })),
+        preferences: [],
+      });
+      if (rows.length < pageSize) break;
+    }
+    for (let offset = 0; ; offset += pageSize) {
+      const rows = this.state.storage.sql.exec<{
+        user_id: string;
+        visible: number;
+        updated_at: number;
+      }>(
+        `SELECT user_id, visible, updated_at FROM hypersight_user_preferences
+          ORDER BY user_id LIMIT ? OFFSET ?`,
+        pageSize,
+        offset,
+      ).toArray();
+      if (rows.length === 0) break;
+      await send({
+        operation: "import_authority_rows",
+        workspaceId,
+        workstreamId,
+        generation,
+        configurations: [],
+        runs: [],
+        preferences: rows.map((row) => ({
+          userId: row.user_id,
+          visible: row.visible === 1,
+          updatedAt: row.updated_at,
+        })),
+      });
+      if (rows.length < pageSize) break;
     }
   }
 
@@ -2086,9 +2176,13 @@ export class SubstreamAgent extends DurableObject<Env> {
     if (!identity) return;
     const now = Date.now();
     const existing = this.objectStore.pendingHyperSightRefresh();
+    const contextFence = this.hyperSightContextFence(identity.workspaceId);
     const pending: PendingHyperSightRefresh = {
       ...identity,
       triggerSequence: Math.max(existing?.triggerSequence ?? 0, triggerSequence),
+      contextFence: existing && existing.contextFence.throughSequence > contextFence.throughSequence
+        ? existing.contextFence
+        : contextFence,
       firstQueuedAt: existing?.firstQueuedAt ?? now,
     };
     const dueAt = Math.min(
@@ -2097,6 +2191,69 @@ export class SubstreamAgent extends DurableObject<Env> {
     );
     this.objectStore.putPendingHyperSightRefresh(pending, dueAt);
     await this.ensureAlarmNoLaterThan(dueAt);
+  }
+
+  /**
+   * Freeze a provider-valid main-feed window for every block in one refresh.
+   *
+   * A pending tool call is mutable operational state: its result can settle
+   * after the call's sequence was allocated. The upper waterline therefore
+   * stops before the earliest pending call. A completed tool row is a legal
+   * boundary because model projection recreates the assistant call and its
+   * tool result as one inseparable provider-valid pair.
+   */
+  private hyperSightContextFence(workspaceId: string): HyperSightContextFence {
+    const pendingTool = this.state.storage.sql.exec<{ sequence_number: number | null }>(
+      `SELECT MIN(sequence_number) AS sequence_number
+         FROM parts
+        WHERE substream_id = '0' AND kind = 'tool_call' AND tool_status = 'pending'`,
+    ).toArray()[0]?.sequence_number ?? null;
+    const throughSequence = this.state.storage.sql.exec<{ sequence_number: number | null }>(
+      `SELECT MAX(sequence_number) AS sequence_number
+         FROM parts
+        WHERE substream_id = '0'
+          AND kind IN ('text', 'tool_call', 'tool_result', 'attachment', 'terminal')
+          AND (? IS NULL OR sequence_number < ?)`,
+      pendingTool,
+      pendingTool,
+    ).toArray()[0]?.sequence_number ?? 0;
+    const revision = this.state.storage.sql.exec<{ revision: number }>(
+      `SELECT revision FROM resource_inventory_revision WHERE id = 1`,
+    ).toArray()[0]?.revision ?? 0;
+    const principalKey = `workspace:${workspaceId}`;
+    const fingerprint = `inventory:${revision}`;
+    const checkpoint = this.state.storage.sql.exec<CompactionCheckpointRow>(
+      `SELECT execution_principal_key, resource_visibility_fingerprint,
+              checkpoint_template_version, run_id, compacted_through_sequence,
+              messages_json, summary, model
+         FROM compaction_checkpoints
+        WHERE execution_principal_key = ?
+          AND resource_visibility_fingerprint = ?
+          AND compacted_through_sequence <= ?
+        ORDER BY compacted_through_sequence DESC, updated_at DESC LIMIT 1`,
+      principalKey,
+      fingerprint,
+      throughSequence,
+    ).toArray()[0];
+    if (!checkpoint) return { throughSequence, compaction: null };
+    const identity: ContextCompactionCheckpointIdentity = {
+      executionPrincipalKey: checkpoint.execution_principal_key,
+      resourceVisibilityFingerprint: checkpoint.resource_visibility_fingerprint,
+      checkpointTemplateVersion: checkpoint.checkpoint_template_version,
+      checkpointRunId: checkpoint.run_id,
+      compactedThroughSequence: checkpoint.compacted_through_sequence,
+      messagesJson: checkpoint.messages_json,
+      summary: checkpoint.summary,
+      model: checkpoint.model,
+    };
+    return {
+      throughSequence,
+      compaction: {
+        checkpointRunId: checkpoint.run_id,
+        compactedThroughSequence: checkpoint.compacted_through_sequence,
+        checkpointHash: contextCompactionCheckpointHash(identity),
+      },
+    };
   }
 
   private async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {
@@ -2117,7 +2274,7 @@ export class SubstreamAgent extends DurableObject<Env> {
   private nextRunDispatchAt(): number | null {
     return this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(available_at) AS due_at FROM agent_run_dispatches
-        WHERE state = 'queued' ${this.runDrain ? "" : "OR state = 'running'"}`,
+        WHERE state = 'queued' ${this.agentDrain.active ? "" : "OR state = 'running'"}`,
     ).toArray()[0]?.due_at ?? null;
   }
 
@@ -2128,9 +2285,11 @@ export class SubstreamAgent extends DurableObject<Env> {
       this.nextAgentTimerAt(),
       this.nextRunDispatchAt(),
     );
-    const dueAt = this.keepAliveRefs > 0
-      ? minimumTimestamp(durableDueAt, Date.now() + KEEP_ALIVE_INTERVAL_MS)
-      : durableDueAt;
+    const dueAt = this.keepAliveLease.alarmDueAt(
+      durableDueAt,
+      Date.now(),
+      KEEP_ALIVE_INTERVAL_MS,
+    );
     if (dueAt === null) {
       await this.state.storage.deleteAlarm();
       return;

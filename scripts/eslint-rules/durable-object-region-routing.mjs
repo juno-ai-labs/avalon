@@ -46,9 +46,9 @@ function referencesNamespaceType(node) {
  * Cloudflare considers a location hint only on an object's first `get()`, and
  * derives different IDs for the same name in unrestricted, US, and EU
  * namespaces. This rule prevents any source module from constructing an ID or
- * stub outside `durableObjectStubForRegion`, including through ordinary aliases
- * and destructured methods. The resolver module itself is excluded in the flat
- * ESLint configuration.
+ * stub outside the workspace-affinity or regional-singleton resolvers,
+ * including through ordinary aliases and destructured methods. The resolver
+ * module itself is excluded in the flat ESLint configuration.
  */
 export const durableObjectRegionRoutingRule = {
   meta: {
@@ -58,7 +58,7 @@ export const durableObjectRegionRoutingRule = {
     },
     schema: [],
     messages: {
-      bypass: "Resolve Avalon Durable Objects through durableObjectStubForRegion(). Direct DurableObjectNamespace.{{method}}() can bypass the US/EU jurisdiction lock or win the first-get location decision.",
+      bypass: "Resolve Avalon Durable Objects through durableObjectStubForWorkspace() or durableObjectStubForRegionalSingleton(). Direct {{method}} routing can bypass the US/EU jurisdiction lock or the workspace's immutable first-placement affinity.",
     },
   },
   create(context) {
@@ -131,6 +131,10 @@ export const durableObjectRegionRoutingRule = {
       CallExpression(node) {
         const callee = unwrap(node.callee);
         if (callee?.type === "Identifier") {
+          if (callee.name === "durableObjectStubForRegion") {
+            context.report({ node, messageId: "bypass", data: { method: callee.name } });
+            return;
+          }
           const method = methodAliases.get(callee.name);
           if (method) context.report({ node, messageId: "bypass", data: { method } });
           return;

@@ -2,9 +2,8 @@ import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-  WorkstreamSocketCommandResultSchema,
   type ActiveStreamCheckpoint,
-  type ClientSocketEvent,
+  type WorkspaceSocketClientEvent,
   type PersonalSocketEvent,
   type ServerSocketEvent,
 } from '@avalon/contracts';
@@ -37,6 +36,8 @@ import {
 import type { HarnessStatus, HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
+import { useWorkspaceSocket } from './workspace-socket';
+import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
 export type { StreamCursor } from './workstream-socket-resume';
 
@@ -45,7 +46,7 @@ export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' |
 /** The exact API capability the realtime cache reconciler is allowed to use. */
 export type WorkstreamSocketApi = Pick<
   AvalonApi,
-  'getMessages' | 'getSocketTicket' | 'getWorkspaceSocketTicket' | 'getWorkstream' | 'getWorkstreams' | 'messageMentionPayload'
+  'getMessages' | 'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getWorkstream' | 'getWorkstreams' | 'messageMentionPayload'
 >;
 
 export interface CreateWorkstreamMessageInput {
@@ -61,19 +62,11 @@ export interface WorkstreamSocketConnection {
   createMessage(input: CreateWorkstreamMessageInput): Promise<Message>;
 }
 
-type CreateMessageSocketCommand = Extract<ClientSocketEvent, { type: 'create_message' }>;
-
-interface PendingCreateMessageCommand {
-  command: CreateMessageSocketCommand;
-  resolve: (message: Message) => void;
-  reject: (error: Error) => void;
-  timeout: number;
-}
+type CreateMessageSocketCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 
 const HEARTBEAT_BASE_MS = 45_000;
 const HEARTBEAT_JITTER_MS = 10_000;
 const PONG_TIMEOUT_MS = 15_000;
-const COMMAND_TIMEOUT_MS = 120_000;
 export const SOCKET_STABLE_CONNECTION_MS = 30_000;
 
 export function socketHeartbeatDelay(random = Math.random): number {
@@ -521,6 +514,8 @@ export function useWorkstreamSocket(
   enabled: boolean,
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
+  const { createMessage: createWorkspaceMessage } = useWorkspaceSocket();
+  useWorkstreamControlSocket(api, workstreamId, enabled);
   const resumeState = useWorkstreamSocketResumeState(workstreamId);
   const [state, setState] = useState<SocketState>('idle');
   const attempts = useRef(0);
@@ -554,54 +549,17 @@ export function useWorkstreamSocket(
     // they can read.
     let accessRevoked = false;
     let socket: WebSocket | null = null;
-    let commandSocket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
-    let commandReconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
     let stabilityTimer: number | null = null;
     let ticketRequestInFlight = false;
-    let commandTicketRequestInFlight = false;
     let canonicalResyncInFlight = false;
     let canonicalResyncTarget: number | null = null;
     let canonicalResyncActiveStreams: readonly ActiveStreamCheckpoint[] = [];
     let canonicalReconcileGeneration = 0;
-    let commandReconnectAttempt = 0;
-    const pendingCommands = new Map<string, PendingCreateMessageCommand>();
     const streamCursors = resumeState.streamCursors;
     const isOffline = (): boolean => navigator.onLine === false;
-
-    const sendPendingCommand = (pending: PendingCreateMessageCommand): void => {
-      if (commandSocket?.readyState !== WebSocket.OPEN) return;
-      commandSocket.send(JSON.stringify(pending.command));
-    };
-
-    const rejectPendingCommands = (error: Error): void => {
-      for (const pending of pendingCommands.values()) {
-        window.clearTimeout(pending.timeout);
-        pending.reject(error);
-      }
-      pendingCommands.clear();
-    };
-
-    const handleCommandResult = (value: unknown): void => {
-      const commandResult = WorkstreamSocketCommandResultSchema.safeParse(value);
-      if (!commandResult.success) return;
-      const pending = pendingCommands.get(commandResult.data.clientMessageId);
-      if (!pending) return;
-      pendingCommands.delete(commandResult.data.clientMessageId);
-      window.clearTimeout(pending.timeout);
-      if (commandResult.data.type === 'client_command_succeeded') {
-        pending.resolve(mapMessage(commandResult.data.message));
-      } else {
-        pending.reject(new ApiError(
-          commandResult.data.error.message,
-          commandResult.data.error.status,
-          commandResult.data.error.code,
-          commandResult.data.error.details,
-        ));
-      }
-    };
 
     createMessageRef.current = async (input): Promise<Message> => {
       const mentions = await api.messageMentionPayload(
@@ -620,6 +578,8 @@ export function useWorkstreamSocket(
       reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
       const command: CreateMessageSocketCommand = {
         type: 'create_message',
+        workstreamId,
+        substreamId: '0',
         operationId,
         payload: {
           text: input.text,
@@ -629,20 +589,7 @@ export function useWorkstreamSocket(
           attachmentIds: input.attachmentIds ?? [],
         },
       };
-      return new Promise<Message>((resolve, reject) => {
-        const timeout = window.setTimeout(() => {
-          pendingCommands.delete(command.payload.clientMessageId);
-          reject(new ApiError(
-            'The message could not be confirmed. Try sending it again.',
-            0,
-            'workstream_socket_command_timeout',
-          ));
-        }, COMMAND_TIMEOUT_MS);
-        const pending = { command, resolve, reject, timeout } satisfies PendingCreateMessageCommand;
-        pendingCommands.set(command.payload.clientMessageId, pending);
-        sendPendingCommand(pending);
-        void connectCommandSocket();
-      });
+      return createWorkspaceMessage(command);
     };
 
     const syncHyperSightQueries = (): Promise<unknown> => Promise.all([
@@ -900,12 +847,6 @@ export function useWorkstreamSocket(
       reconnectTimer = null;
     };
 
-    const clearCommandReconnectTimer = (): void => {
-      if (commandReconnectTimer === null) return;
-      window.clearTimeout(commandReconnectTimer);
-      commandReconnectTimer = null;
-    };
-
     const clearHeartbeat = (): void => {
       if (heartbeatTimer !== null) window.clearTimeout(heartbeatTimer);
       if (pongTimer !== null) window.clearTimeout(pongTimer);
@@ -954,11 +895,6 @@ export function useWorkstreamSocket(
      */
     const handleAccessRevoked = (): void => {
       accessRevoked = true;
-      rejectPendingCommands(new ApiError(
-        'You can no longer access this work stream.',
-        403,
-        'workstream_access_revoked',
-      ));
       resumeState.lastSequence = 0;
       streamCursors.clear();
       clearReconnectTimer();
@@ -982,70 +918,6 @@ export function useWorkstreamSocket(
         reconnectTimer = null;
         void connect();
       }, socketReconnectDelay(attempts.current));
-    };
-
-    const scheduleCommandReconnect = (): void => {
-      if (closedByEffect || accessRevoked || pendingCommands.size === 0 || isOffline()) return;
-      clearCommandReconnectTimer();
-      commandReconnectAttempt += 1;
-      commandReconnectTimer = window.setTimeout(() => {
-        commandReconnectTimer = null;
-        void connectCommandSocket();
-      }, socketReconnectDelay(commandReconnectAttempt));
-    };
-
-    const connectCommandSocket = async (): Promise<void> => {
-      if (
-        closedByEffect
-        || accessRevoked
-        || pendingCommands.size === 0
-        || commandTicketRequestInFlight
-        || commandSocket?.readyState === WebSocket.CONNECTING
-        || commandSocket?.readyState === WebSocket.OPEN
-      ) return;
-      if (isOffline()) return;
-      clearCommandReconnectTimer();
-      commandTicketRequestInFlight = true;
-      try {
-        const socketTicket = await api.getWorkspaceSocketTicket(workstreamId);
-        if (closedByEffect || accessRevoked || pendingCommands.size === 0) return;
-        const nextSocket = new WebSocket(socketTicket.url, socketTicket.protocols);
-        commandSocket = nextSocket;
-        nextSocket.addEventListener('open', () => {
-          if (closedByEffect || commandSocket !== nextSocket) return;
-          commandReconnectAttempt = 0;
-          for (const pending of pendingCommands.values()) sendPendingCommand(pending);
-        });
-        nextSocket.addEventListener('message', (messageEvent) => {
-          if (closedByEffect || commandSocket !== nextSocket) return;
-          try {
-            handleCommandResult(JSON.parse(String(messageEvent.data)));
-          } catch {
-            // A malformed receipt cannot settle a command; its timeout remains.
-          }
-        });
-        nextSocket.addEventListener('close', (closeEvent) => {
-          if (commandSocket !== nextSocket) return;
-          commandSocket = null;
-          if (closeEvent.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
-            handleAccessRevoked();
-            return;
-          }
-          scheduleCommandReconnect();
-        });
-        nextSocket.addEventListener('error', () => {
-          try {
-            nextSocket.close();
-          } catch {
-            if (commandSocket === nextSocket) commandSocket = null;
-            scheduleCommandReconnect();
-          }
-        });
-      } catch {
-        scheduleCommandReconnect();
-      } finally {
-        commandTicketRequestInFlight = false;
-      }
     };
 
     const connect = async (): Promise<void> => {
@@ -1150,7 +1022,6 @@ export function useWorkstreamSocket(
               applyPersonalEvent(personalEvent.data);
               return;
             }
-            handleCommandResult(parsed);
           } catch {
             // Invalid frames are ignored; canonical REST state remains authoritative.
           }
@@ -1187,19 +1058,15 @@ export function useWorkstreamSocket(
       if (closedByEffect || accessRevoked) return;
       if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
       clearReconnectTimer();
-      clearCommandReconnectTimer();
       void connect();
-      if (pendingCommands.size > 0) void connectCommandSocket();
     };
 
     const handleOffline = (): void => {
       clearReconnectTimer();
-      clearCommandReconnectTimer();
       clearHeartbeat();
       clearStabilityTimer();
       setState('unavailable');
       socket?.close();
-      commandSocket?.close();
     };
 
     window.addEventListener('online', handleOnline);
@@ -1212,21 +1079,14 @@ export function useWorkstreamSocket(
         409,
         'workstream_socket_unavailable',
       ));
-      rejectPendingCommands(new ApiError(
-        'The work stream was closed before the message was confirmed.',
-        409,
-        'workstream_socket_closed',
-      ));
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       clearReconnectTimer();
-      clearCommandReconnectTimer();
       clearHeartbeat();
       clearStabilityTimer();
       socket?.close();
-      commandSocket?.close();
     };
-  }, [api, enabled, queryClient, resumeState, workstreamId]);
+  }, [api, createWorkspaceMessage, enabled, queryClient, resumeState, workstreamId]);
 
   return { state, createMessage };
 }

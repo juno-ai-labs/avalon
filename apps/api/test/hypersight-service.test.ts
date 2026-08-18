@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 
-import { HYPERSIGHT_MODEL, type Env } from "../src/env";
+import type { HyperSight, HyperSightBlockRun } from "@avalon/contracts";
+import type { Env } from "../src/env";
 import { HyperSightService, launchHyperSightRefresh } from "../src/services/hypersight-service";
 import { createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
@@ -16,23 +17,18 @@ const BLOCK_ID = "00000000-0000-4000-8000-000000000405";
 
 class SqliteD1Statement {
   private values: unknown[] = [];
-
   constructor(private readonly statement: StatementSync) {}
-
   bind(...values: unknown[]): SqliteD1Statement {
     this.values = values;
     return this;
   }
-
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
     return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
-
   async first<T>(): Promise<T | null> {
     return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null;
   }
-
   async all<T>(): Promise<D1Result<T>> {
     return createTestD1Result<T>({
       success: true,
@@ -45,8 +41,7 @@ class SqliteD1Statement {
 function fixture(): {
   database: DatabaseSync;
   env: Env;
-  publish: ReturnType<typeof vi.fn>;
-  startWorkflow: ReturnType<typeof vi.fn>;
+  requests: Array<Record<string, unknown>>;
 } {
   const database = new DatabaseSync(":memory:");
   for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
@@ -70,169 +65,112 @@ function fixture(): {
             'ad_hoc', '${OWNER_ID}', 'idle', '2026-01-01', '2026-01-01', '2026-01-01');
   `);
   const prepare = (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql)));
-  const batch = async (statements: D1PreparedStatement[]): Promise<D1Result<unknown>[]> => {
-    const results: D1Result<unknown>[] = [];
-    database.exec("BEGIN");
-    try {
-      for (const statement of statements) {
-        results.push(await (statement as unknown as SqliteD1Statement).run());
-      }
-      database.exec("COMMIT");
-      return results;
-    } catch (error) {
-      database.exec("ROLLBACK");
-      throw error;
-    }
+  const requests: Array<Record<string, unknown>> = [];
+  let hypersight: HyperSight = { versionId: null, versionNumber: 0, blocks: [], updatedAt: null };
+  const preferences = new Map<string, { visible: boolean; updatedAt: string | null }>();
+  const run: HyperSightBlockRun = {
+    id: "00000000-0000-4000-8000-000000000406",
+    blockId: BLOCK_ID,
+    configurationVersionId: "00000000-0000-4000-8000-000000000407",
+    triggerSequence: 42,
+    status: "queued",
+    markdown: null,
+    error: null,
+    createdAt: "2026-08-18T00:00:00.000Z",
+    startedAt: null,
+    completedAt: null,
   };
-  const publish = vi.fn(async () => new Response(null, { status: 202 }));
-  const startWorkflow = vi.fn(async () => ({ id: "workflow" }));
+  const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    requests.push(body);
+    if (body.operation === "get") return Response.json({ hypersight });
+    if (body.operation === "get_preference") {
+      return Response.json({
+        preference: preferences.get(String(body.userId)) ?? { visible: false, updatedAt: null },
+      });
+    }
+    if (body.operation === "update_preference") {
+      const preference = { visible: Boolean(body.visible), updatedAt: String(body.updatedAt) };
+      preferences.set(String(body.userId), preference);
+      return Response.json({ preference });
+    }
+    if (body.operation === "update_configuration") {
+      const input = body.input as { expectedVersionNumber: number; blocks: Array<{ id: string; prompt: string }> };
+      if (input.expectedVersionNumber !== hypersight.versionNumber) {
+        return Response.json({ error: "hypersight_version_conflict" }, { status: 409 });
+      }
+      hypersight = {
+        versionId: String(body.configurationVersionId),
+        versionNumber: hypersight.versionNumber + 1,
+        blocks: input.blocks.map((block) => ({ ...block, latestRun: null })),
+        updatedAt: String(body.createdAt),
+      };
+      return Response.json({ hypersight, runs: [] });
+    }
+    return Response.json({ runs: [run] });
+  });
   const namespace = {
-    idFromName: vi.fn(() => ({ toString: () => "room-id" })),
-    get: vi.fn(() => ({ fetch: publish })),
+    idFromName: vi.fn(() => ({ toString: () => "workstream-do-id" })),
+    get: vi.fn(() => ({ fetch })),
   };
   const env = createTestEnv({
     APP_ENV: "test",
     AVALON_REGION: "global",
-    DB: { prepare, batch },
-    SUBSTREAM_AGENTS: namespace,
-    WORKSTREAM_LOOP_WORKFLOW: { create: startWorkflow },
+    DB: { prepare },
+    WORKSTREAM_DOS: namespace,
   });
-  return { database, env, publish, startWorkflow };
+  return { database, env, requests };
 }
 
 describe("HyperSightService", () => {
-  it("stores one personal visibility preference per user and syncs updates", async () => {
-    const { database, env, publish } = fixture();
+  it("stores shared configuration and personal visibility through WorkstreamDO", async () => {
+    const { database, env, requests } = fixture();
     const owner = new HyperSightService(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID } as never);
     const member = new HyperSightService(env, { workspaceId: WORKSPACE_ID, userId: MEMBER_ID } as never);
 
-    await expect(owner.getPreference(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
-    await expect(member.getPreference(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
-    const visible = await owner.updatePreference(WORKSTREAM_ID, { visible: true });
-    expect(visible).toMatchObject({ visible: true, updatedAt: expect.any(String) });
-    await expect(owner.getPreference(WORKSTREAM_ID)).resolves.toEqual(visible);
-    await expect(member.getPreference(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
-
-    const hidden = await owner.updatePreference(WORKSTREAM_ID, { visible: false });
-    await expect(owner.getPreference(WORKSTREAM_ID)).resolves.toEqual(hidden);
-    expect(database.prepare(
-      "SELECT user_id, visible FROM hypersight_user_preferences WHERE workstream_id = ?",
-    ).all(WORKSTREAM_ID)).toEqual([{ user_id: OWNER_ID, visible: 0 }]);
-    expect(publish).toHaveBeenLastCalledWith(
-      "https://room.internal/internal/events",
-      expect.objectContaining({
-        body: JSON.stringify({
-          event: {
-            type: "hypersight_preference_updated",
-            preference: hidden,
-          },
-          audienceUserId: OWNER_ID,
-        }),
-      }),
-    );
-    database.close();
-  });
-
-  it("shares the latest configuration while retaining every prior version", async () => {
-    const { database, env, publish } = fixture();
-    const owner = new HyperSightService(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID } as never);
-    const member = new HyperSightService(env, { workspaceId: WORKSPACE_ID, userId: MEMBER_ID } as never);
-
-    await expect(member.get(WORKSTREAM_ID)).resolves.toEqual({
-      versionId: null,
-      versionNumber: 0,
-      blocks: [],
-      updatedAt: null,
-    });
+    await expect(owner.get(WORKSTREAM_ID)).resolves.toMatchObject({ versionNumber: 0 });
     const first = await owner.update(WORKSTREAM_ID, {
-      expectedVersionNumber: 0,
-      blocks: [{ id: BLOCK_ID, prompt: "Summarize the latest decision" }],
-    });
-    expect(first).toMatchObject({
-      versionNumber: 1,
-      blocks: [{ id: BLOCK_ID, prompt: "Summarize the latest decision", latestRun: null }],
-    });
-    const second = await member.update(WORKSTREAM_ID, {
-      expectedVersionNumber: 1,
-      blocks: [{ id: BLOCK_ID, prompt: "List the last five decisions" }],
-    });
-    expect(second.versionNumber).toBe(2);
-    await expect(owner.get(WORKSTREAM_ID)).resolves.toEqual(second);
-
-    const versions = database.prepare(
-      `SELECT version_number, blocks_json, created_by_user_id
-         FROM hypersight_configuration_versions
-        WHERE workstream_id = ? ORDER BY version_number`,
-    ).all(WORKSTREAM_ID);
-    expect(versions).toEqual([
-      {
-        version_number: 1,
-        blocks_json: `[{"id":"${BLOCK_ID}","prompt":"Summarize the latest decision"}]`,
-        created_by_user_id: OWNER_ID,
-      },
-      {
-        version_number: 2,
-        blocks_json: `[{"id":"${BLOCK_ID}","prompt":"List the last five decisions"}]`,
-        created_by_user_id: MEMBER_ID,
-      },
-    ]);
-    expect(publish).toHaveBeenCalledTimes(2);
-    database.close();
-  });
-
-  it("rejects an optimistic update against a stale version", async () => {
-    const { database, env } = fixture();
-    const service = new HyperSightService(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID } as never);
-    await service.update(WORKSTREAM_ID, {
       expectedVersionNumber: 0,
       blocks: [{ id: BLOCK_ID, prompt: "Summarize" }],
     });
-
-    await expect(service.update(WORKSTREAM_ID, {
+    await expect(member.get(WORKSTREAM_ID)).resolves.toEqual(first);
+    await expect(owner.update(WORKSTREAM_ID, {
       expectedVersionNumber: 0,
-      blocks: [{ id: BLOCK_ID, prompt: "Overwrite someone else's change" }],
+      blocks: [],
     })).rejects.toMatchObject({ status: 409, code: "hypersight_version_conflict" });
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM hypersight_configuration_versions WHERE workstream_id = ?",
-    ).get(WORKSTREAM_ID)).toEqual({ count: 1 });
+
+    await expect(owner.getPreference(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
+    const visible = await owner.updatePreference(WORKSTREAM_ID, { visible: true });
+    await expect(owner.getPreference(WORKSTREAM_ID)).resolves.toEqual(visible);
+    await expect(member.getPreference(WORKSTREAM_ID)).resolves.toEqual({ visible: false, updatedAt: null });
+    expect(requests.map((request) => request.operation)).toEqual(expect.arrayContaining([
+      "get",
+      "update_configuration",
+      "get_preference",
+      "update_preference",
+    ]));
     database.close();
   });
 
-  it("launches one debounced 4.3 agent run per prompted block and deduplicates a trigger", async () => {
-    const { database, env, startWorkflow } = fixture();
-    const service = new HyperSightService(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID } as never);
-    await service.update(WORKSTREAM_ID, {
-      expectedVersionNumber: 0,
-      blocks: [
-        { id: BLOCK_ID, prompt: "Summarize" },
-        { id: "00000000-0000-4000-8000-000000000406", prompt: "" },
-      ],
-    });
-
-    const launched = await launchHyperSightRefresh(env, WORKSPACE_ID, WORKSTREAM_ID, 42);
-    expect(launched).toEqual([
+  it("asks WorkstreamDO to fan out one fenced refresh", async () => {
+    const { database, env, requests } = fixture();
+    const contextFence = { throughSequence: 42, compaction: null } as const;
+    await expect(launchHyperSightRefresh(
+      env,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      51,
+      contextFence,
+    )).resolves.toEqual([
       expect.objectContaining({ blockId: BLOCK_ID, triggerSequence: 42, status: "queued" }),
     ]);
-    expect(startWorkflow).toHaveBeenCalledWith(expect.objectContaining({
-      params: expect.objectContaining({
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        reason: "hypersight_block",
-        executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
-      }),
-    }));
-    const link = database.prepare(
-      "SELECT harness_run_id FROM hypersight_block_runs WHERE id = ?",
-    ).get(launched[0]!.id) as { harness_run_id: string };
-    expect(database.prepare(
-      "SELECT origin, model, execution_principal_json FROM harness_runs WHERE id = ?",
-    ).get(link.harness_run_id)).toEqual({
-      origin: "hypersight_block",
-      model: HYPERSIGHT_MODEL,
-      execution_principal_json: `{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}`,
+    expect(requests.at(-1)).toMatchObject({
+      operation: "schedule_refresh",
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      triggerSequence: 51,
+      contextFence,
     });
-    await expect(launchHyperSightRefresh(env, WORKSPACE_ID, WORKSTREAM_ID, 42)).resolves.toEqual([]);
-    expect(startWorkflow).toHaveBeenCalledTimes(1);
     database.close();
   });
 });

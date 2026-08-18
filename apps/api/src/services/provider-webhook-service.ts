@@ -33,6 +33,8 @@ import { encryptString, sha256, timingSafeEqualText } from "../lib/crypto";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { connectorRegistryForEnv, linearConnectorConfig } from "../lib/connector-registry";
 import { decryptVersionedConnectorCredentials, decryptVersionedCredentialValue } from "./connector-credential-envelope";
+import { logWarn } from "../observability/logger";
+import { publishWorkspaceSync } from "./workspace-realtime-service";
 
 export type ProviderWebhookRawBody = string | Uint8Array | ArrayBuffer;
 export type ProviderWebhookHeaders = Headers | HeadersInit;
@@ -461,10 +463,12 @@ export class ProviderWebhookService {
       input.routingAccountIds,
       input.routingUserId,
     );
+    const matchedWorkspaceIds = [...new Set(connections.map((connection) => connection.workspaceId))];
     if (input.filterConnections) {
       connections = await input.filterConnections(connections);
     }
     if (connections.length === 0) {
+      await this.publishWorkspaceChanges(matchedWorkspaceIds, ["connector_connections"]);
       return { accepted: true, duplicate: false, activityCount: 0 };
     }
 
@@ -583,11 +587,33 @@ export class ProviderWebhookService {
       payloadRef,
       queueActivities,
     );
+    await this.publishWorkspaceChanges(matchedWorkspaceIds, [
+      "connector_connections",
+      "resources",
+      "activity",
+    ]);
     return {
       accepted: true,
       duplicate,
       activityCount: duplicate ? 0 : insertedActivityIds.length,
     };
+  }
+
+  private async publishWorkspaceChanges(
+    workspaceIds: readonly string[],
+    topics: Parameters<typeof publishWorkspaceSync>[2],
+  ): Promise<void> {
+    await Promise.all(workspaceIds.map(async (workspaceId) => {
+      try {
+        await publishWorkspaceSync(this.env, workspaceId, topics);
+      } catch (error) {
+        logWarn(this.env, "provider_webhook_workspace_sync_publish_failed", {
+          workspace_id: workspaceId,
+          topics,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }));
   }
 
   private async finishReceipt(

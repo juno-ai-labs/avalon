@@ -1,12 +1,14 @@
 # Realtime socket admission
 
-Every Avalon WebSocket — the workspace command socket, direct substream feed,
-and dictation bridge to Azure — is opened with a short-lived ticket rather than
+Every Avalon WebSocket — workspace synchronization/commands, work-stream
+metadata, the direct substream feed, and the dictation bridge to Azure — is
+opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
 issued, how it reaches the Worker, and how a handshake is accepted or refused.
-What happens *on* an open socket belongs elsewhere: workspace command routing
-is `WorkspaceDO`'s, feed fan-out/replay/presence is `SubstreamAgent`'s, and the
-dictation bridge's audio rules are in
+What happens *on* an open socket belongs elsewhere: workspace invalidation and
+command routing are `WorkspaceDO`'s, aggregate metadata is `WorkstreamDO`'s,
+feed fan-out/replay/presence is `SubstreamAgent`'s, and the dictation bridge's
+audio rules are in
 [`architecture.md`](architecture.md).
 
 The promise it makes is narrow and worth stating plainly: a socket is opened
@@ -19,12 +21,16 @@ is recorded.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the four helpers both sides share. The single source of the wire format. |
-| `apps/api/src/services/socket-service.ts` | Issues and verifies both ticket kinds, reads the presented ticket off a handshake, negotiates the response subprotocol, and admits a work-stream upgrade. |
+| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, and substream-feed ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its D1 replay receipt and session lease, and the Azure upgrade. |
-| `apps/api/src/routes/socket.ts` | Workspace-command, substream-feed, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the hibernating user-command socket and consumes its purpose-specific ticket in SQL. |
+| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
-| `apps/desktop/src/renderer/lib/api.ts` | Parses a ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, replays its version cursor, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete revisioned WorkstreamDO metadata snapshots to detail and sidebar caches. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
+| `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
 ## How it works
 
@@ -33,12 +39,13 @@ request: a browser sets no headers on one, so `Authorization` is unavailable. So
 admission is split in two.
 
 1. **Issue.** The desktop calls
-   `GET /workstreams/:id/substreams/:substreamId/socket` for the feed,
-   `GET /workstreams/:id/substreams/:substreamId/workspace-socket` for commands,
-   or `GET /realtime/transcription/socket`. The Worker checks the caller may
-   open that exact purpose and mints a 60-second HS256 JWT binding user,
-   workspace, region, one-time `jti`, audience, target work stream/substream,
-   and current regional session ID where later commands need it.
+   `GET /workspace/socket` for workspace sync/commands,
+   `GET /workstreams/:id/control-socket` for aggregate metadata,
+   `GET /workstreams/:id/substreams/:substreamId/socket` for the feed, or
+   `GET /realtime/transcription/socket`. The Worker checks the caller may open
+   that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
+   region, one-time `jti`, audience, only the target IDs that purpose requires,
+   and the current regional session ID.
 2. **Present.** The client opens the socket with the ticket as the second
    `WebSocket` constructor argument: `[avalon.ticket.v1, <ticket>]`. The browser
    sends those as `Sec-WebSocket-Protocol`, the one request header it will carry
@@ -49,10 +56,12 @@ admission is split in two.
    rejects a region or work-stream mismatch.
 4. **Admit.** A feed upgrade reaches the exact `SubstreamAgent`, which
    re-authorizes read visibility and atomically consumes its ticket id. A
-   command upgrade reaches the workspace's `WorkspaceDO`, which consumes a
-   separate audience ticket and serializes the verified session/route identity;
-   every later command rechecks the current D1 session and membership before
-   routing to the child. Neither object receives the signed bearer ticket.
+   metadata upgrade reaches the exact `WorkstreamDO`, which verifies D1
+   membership plus its local visibility projection. A workspace upgrade reaches
+   the workspace's `WorkspaceDO`, which consumes a separate audience ticket and
+   serializes the verified session identity; every subscribe or later command
+   rechecks the current D1 session and membership. Neither object receives the
+   signed bearer ticket.
    Dictation consumes its `jti` in D1 and reserves a session lease before
    opening Azure.
 5. **Negotiate.** If the client offered the sentinel, the accepted 101 answers
@@ -61,7 +70,7 @@ admission is split in two.
 
 ### Hibernation lifecycle
 
-The workspace and substream objects follow Cloudflare's [WebSocket Hibernation
+All three product objects follow Cloudflare's [WebSocket Hibernation
 server pattern](https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/):
 
 - The edge Worker validates the method, route, `Upgrade`, origin, ticket, and
@@ -71,7 +80,7 @@ server pattern](https://developers.cloudflare.com/durable-objects/examples/webso
   `server.accept()`, then immediately calls `server.serializeAttachment(...)`.
   Acceptance must precede attachment so the socket is registered with the
   hibernation API before recoverable connection state is associated with it.
-- Neither object relies on an in-memory session map. Event handlers enumerate
+- No object relies on an in-memory session map. Event handlers enumerate
   `state.getWebSockets()` when they need the connected set and validate
   `deserializeAttachment()` at every use, so eviction loses no required state.
 - Exact text `ping` frames receive `pong` through
@@ -84,6 +93,58 @@ server pattern](https://developers.cloudflare.com/durable-objects/examples/webso
 - Application timers exist only while a full agent loop is active. An idle
   socket has no interval or timeout in the object, so it can hibernate without
   accruing duration charges.
+
+### Electron connection topology
+
+Each authenticated Electron renderer window maintains exactly one WorkspaceDO
+socket for the active workspace. It is not recreated when the user changes work
+streams. Main, standalone Settings, and Meeting windows therefore converge
+independently without routing product data through main-process IPC. For
+each selected or still-running work stream, the desktop also maintains one
+WorkstreamDO metadata socket and one SubstreamAgent feed socket. Switching away
+from an idle work stream closes its two child-scoped sockets; background-running
+work streams keep them so state, completion, and output continue converging.
+
+The workspace socket carries durable topic invalidations rather than duplicate
+D1 rows. Its complete topic catalog is:
+
+| Topic | Refetched authoritative surfaces |
+| --- | --- |
+| `workspace_profile` | Workspace name, slug, immutable region, workspace timezone, current role, inference-log policy, creation metadata, and onboarding workspace view. |
+| `member_directory` | Active/invited/suspended members, user name/email/avatar/timezone/role/join time, and onboarding membership state. |
+| `invitation_directory` | Pending/accepted/expired/revoked invitations, role, inviter, expiry, acceptance, and delivery-visible state. |
+| `connector_connections` | Connection identity, type, scope/owner, account/display name, capabilities, health/reconnect/error state, catalog capabilities, GitHub repository access, and onboarding connector state. Credentials never enter this feed. |
+| `terminal_policy` | Workspace Terminal capability, Daytona configuration availability, network allow/deny policy, version, and validation/failure state. |
+| `digest_schedule` | Per-viewer digest enablement, cadence/timezone, destinations, and next run. |
+| `automations` | Automation definitions, drafts, subscriptions, pause/archive status, trigger schedules, next/last runs, and work-stream-producing changes. |
+| `notes` | Workspace/personal note directory, recording/import state, and note detail invalidation. |
+| `resources` | Resource directory, hydration/watch/content availability, work-stream context links, and connector-derived resource changes. |
+| `activity` | Connector activity ingestion that can change opportunity generation or activity-derived UI. |
+| `work_opportunities` | Suggested work/actions, audience, version, accepted/dismissed state, and resulting work-stream directory changes. |
+| `workstream_directory` | Sidebar membership/order plus global Active/In Progress/Completed groupings and per-viewer pinned, unread, and You Are Mentioned views. Row contents arrive directly from WorkstreamDO when that work stream is connected and from the D1 directory refetch otherwise. |
+| `viewer_preferences` | Telemetry, HyperSight, and other current-user workspace preference surfaces. |
+| `feature_flags` | Effective client feature gates when a workspace-scoped producer explicitly publishes a change. |
+
+`WorkstreamDO` always sends a complete revisioned snapshot, not a partial patch.
+Common fields are identity, workspace ID, title/title status, description,
+preview, email address, origin, creator, automation subscription/run, planned
+time, exact and normalized state, attention/unread baseline, last activity,
+completion/archive/create/update timestamps, scope/system kind, next wakeup and
+next Terminal action. Its viewer overlay is participation/listability, unread
+count, mention status, read-through waterline, manual-unread fence/generation,
+and latest mention sequence. Sending null clears a prior value.
+
+The same WorkstreamDO socket carries shared HyperSight configuration changes,
+versioned block-run state, and the current viewer's HyperSight preference.
+There is no `HyperSightBlockAgent` socket: a block agent has no user-visible
+message feed. It settles increasing hash-checked results into WorkstreamDO,
+which publishes them on the authority channel Electron already keeps for the
+selected or running work stream.
+
+`SubstreamAgent` remains the only socket for transcript parts, attachments,
+tool/elicitation/suggestion blocks, active token frames/checkpoints, presence,
+replay cursors, and resync/download. No workspace or work-stream metadata is
+inferred from token frames.
 
 ### The deprecated query transport
 
@@ -108,14 +169,14 @@ sends one.
   WebSocket attached, so rebuilding one of the room's JSON rejections throws a
   `RangeError` that no error-middleware branch matches — turning every
   deliberate 401, 403, or 409 into an unhandled 500.
-- **Neither Durable Object receives the signed bearer ticket.** It is verified
+- **No Durable Object receives the signed bearer ticket.** It is verified
   at the edge and stripped from the subrequest. The feed child consumes the JTI
-  in `durable_inbox_receipts`; the workspace command object consumes it in
-  `socket_ticket_receipts`. Workspace membership remains in D1 while personal
-  participation/revocation is owned by the selected child.
-- **Ticket audiences are not interchangeable.** A feed ticket cannot open the
-  command socket, and a command ticket cannot open a child feed. Otherwise a
-  read credential becomes a write credential.
+  in `durable_inbox_receipts`; WorkspaceDO and WorkstreamDO consume theirs in
+  their own socket receipt tables. Workspace membership remains in D1 while
+  work-stream participation/revocation is projected locally.
+- **Ticket audiences are not interchangeable.** Workspace, aggregate metadata,
+  and feed tickets cannot open one another's sockets. Otherwise a narrow read
+  credential could become a workspace write credential.
 - **Origin is checked before the ticket is read.** An exact match against
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
 - **A ticket is single-use.** Each target object and the dictation bridge consume
@@ -144,7 +205,7 @@ namespace helper.
 - **Bad signature, wrong audience, expired** — 401 `invalid_socket_ticket`. The
   ticket lives 60 seconds; a client that stalls between issue and open must ask
   for another.
-- **Wrong audience, region, work stream, or substream** — 403 `socket_ticket_scope_mismatch`.
+- **Wrong audience, region, workspace, work stream, or substream** — 403 `socket_ticket_scope_mismatch`.
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
 - **Object refusal** — the object's own JSON status reaches the client unchanged:
   426, 400 `invalid_socket_identity`, 403 `forbidden`, 401
@@ -164,8 +225,10 @@ keeping correct for whoever reads the logs.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @avalon/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating workspace-command attachments, eviction, ticket replay, and read-only child feeds on real workerd. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Separate lazy command/feed connections, reconnect, resync, and switching streams. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO and WorkstreamDO attachments/snapshots, eviction, ticket replay, and read-only child feeds on real workerd. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, full topic invalidation, version resume, and idempotent command resend. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale revision rejection, nullable-field clearing, revocation, and reconnect. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -197,6 +260,47 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-18 — HyperSight converges on the WorkstreamDO socket
+
+**What changed:** HyperSight configuration, per-block run status/results, and
+viewer preference now arrive as WorkstreamDO control events. Individual
+`HyperSightBlockAgent` instances expose no desktop socket.
+
+**Why:** A derived block is work-stream metadata, not an ordered conversation
+feed. Adding a socket per block would multiply background connections and
+duplicate authorization/reconnect state without improving token delivery.
+
+**Considered and rejected:** Broadcasting block results from main
+SubstreamAgent, opening a block-agent WebSocket, and REST polling. Those options
+misplace publication authority, increase idle sockets, or add avoidable churn.
+
+**Consequences:** The renderer applies block-result versions from the existing
+work-stream control connection; the source feed remains limited to canonical
+conversation data and active output.
+
+### 2026-08-17 — Electron uses separate workspace, work-stream, and substream sockets
+
+**What changed:** Each authenticated renderer now holds one persistent WorkspaceDO
+synchronization/command socket, a complete-metadata WorkstreamDO socket for each
+active/running work stream, and the direct SubstreamAgent transcript socket.
+Each has a distinct ticket audience and SQL replay/receipt boundary.
+
+**Why:** Workspace settings/directories, aggregate work-stream metadata, and a
+high-volume ordered model feed have different authorities and lifecycles. The
+previous per-message workspace socket could not keep settings or sibling clients
+live, while putting metadata on token frames would couple navigation state to an
+agent run.
+
+**Considered and rejected:** One multiplexed workspace socket for all token
+traffic, WorkstreamDO metadata inferred from the child feed, and periodic REST
+polling. They respectively recreate a workspace throughput bottleneck, lose
+model-free metadata updates, and spend resources while still adding sync delay.
+
+**Consequences:** New workspace surfaces must map to a typed sync topic and new
+WorkstreamDO fields must be included in its full snapshot. The renderer must
+clear nullable snapshot fields, preserve the workspace version cursor across
+reconnect, and keep child sockets only for selected or running work streams.
 
 ### 2026-08-17 — Socket acceptance follows the documented hibernation lifecycle
 
