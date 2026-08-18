@@ -541,7 +541,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 
 ## Realtime operations and cost controls
 
-- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, append the external substream ID for each independently provisioned `SubstreamAgent`, and append `hypersight:<stable-block-id>` for each configured `HyperSightBlockAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
+- Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, append the external substream ID for each independently provisioned `SubstreamAgent`, and append `block-dashboard:<stable-block-id>` for each configured `BlockDashboardAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
 - Respect the authority phase. Before `durable_object_open`, REST reads the
   legacy D1 source; afterward REST reads the selected `SubstreamAgent`, its
   parent holds aggregate metadata/outbox, and D1 contains only directory/control
@@ -553,7 +553,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The
   SubstreamAgent feed jitters its heartbeat across 45–55 seconds; WorkspaceDO,
-  WorkstreamDO control, and HyperSightBlockAgent sockets use a fixed 50-second
+  WorkstreamDO control, and BlockDashboardAgent sockets use a fixed 50-second
   heartbeat. Every role waits 15 seconds for `pong` and reconnects with
   equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
   perform application work.
@@ -562,7 +562,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so 
   background-running work stream. Navigation must not reopen the WorkspaceDO
   socket. An idle, non-running work stream should retain neither child socket.
   While the HyperSight panel is visible, Electron also opens one direct
-  hibernating socket per configured `HyperSightBlockAgent`; closing the panel
+  hibernating socket per configured `BlockDashboardAgent`; closing the panel
   closes those block sockets, and reopening replaces from durable checkpoints.
   WorkstreamDO remains the configuration/preference/terminal-result control
   plane and never relays block token frames. An open idle block socket uses
@@ -760,9 +760,9 @@ the schema grows:
 
 | Column | Meaning |
 | --- | --- |
-| `index1` | `<source>:<region>` sampling cohort, for example `hypersight:eu`; never a unique run ID |
+| `index1` | `<source>:<region>` sampling cohort, for example `block_dashboard:eu`; never a unique run ID |
 | `blob1` | schema version (`harness_run_v1`) |
-| `blob2` | source (`workstream` or `hypersight`) |
+| `blob2` | source (`workstream` or `block_dashboard`) |
 | `blob3` | terminal status |
 | `blob4` | final model ID |
 | `blob5` | terminal failure code or `none` |
@@ -816,8 +816,8 @@ For a dashboard, group the same weighted measures with
 `toStartOfInterval(timestamp, INTERVAL '1' HOUR)`. Use `count()` as a sample-size
 quality signal, not as the run count; `SUM(_sample_interval)` estimates events,
 and `quantileExactWeighted(..., _sample_interval)` is the supported percentile
-form. Filter on `index1 = 'hypersight:eu'` or
-`index1 = 'hypersight:global'` for the highest-resolution regional HyperSight
+form. Filter on `index1 = 'block_dashboard:eu'` or
+`index1 = 'block_dashboard:global'` for the highest-resolution regional HyperSight
 view. Do not use this dataset for exact billing, deduplication, run lookup, or
 crash recovery. End-to-end `double1`, calls, tokens, cost, and routed attempts
 remain usable on failed rows. Bind currently cannot return its detailed

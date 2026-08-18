@@ -47,11 +47,11 @@ import {
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import {
-  issueHyperSightBlockSocketTicket,
+  issueBlockDashboardBlockSocketTicket,
   issueSocketTicket,
   issueWorkstreamControlSocketTicket,
 } from "./socket-service";
-import { loadHyperSight } from "./hypersight-service";
+import { loadBlockDashboard } from "./block-dashboard-service";
 import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import {
@@ -192,7 +192,7 @@ const WORKSTREAM_HARNESS_TASKS_SQL = `SELECT hr.*,
     ON m.workstream_id = hr.workstream_id
    AND m.client_message_id = ('harness:' || hr.id)
   WHERE hr.workspace_id = ? AND hr.workstream_id = ?
-    AND hr.origin != 'hypersight_block'
+    AND hr.origin != 'block_dashboard_block'
   ORDER BY COALESCE(hr.started_at, hr.created_at) DESC
   LIMIT 250`;
 
@@ -200,7 +200,7 @@ const WORKSTREAM_TOOL_TASKS_SQL = `SELECT ti.*, hr.created_at AS harness_created
   FROM tool_invocations ti
   JOIN harness_runs hr ON hr.id = ti.harness_run_id
   WHERE ti.workspace_id = ? AND ti.workstream_id = ?
-    AND hr.origin != 'hypersight_block'
+    AND hr.origin != 'block_dashboard_block'
   ORDER BY COALESCE(ti.started_at, hr.created_at) DESC
   LIMIT 500`;
 
@@ -279,7 +279,7 @@ export async function launchWorkstreamHarness(
           SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
               cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up')
         WHERE workspace_id = ? AND workstream_id = ?
-          AND origin != 'hypersight_block'
+          AND origin != 'block_dashboard_block'
           AND parent_tool_call_id IS NULL
           AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
     ).bind(at, input.workspaceId, input.workstreamId)] : []),
@@ -292,7 +292,7 @@ export async function launchWorkstreamHarness(
           SELECT latest.id FROM harness_runs latest
            WHERE latest.workspace_id = ? AND latest.workstream_id = ?
              AND latest.parent_tool_call_id IS NULL
-             AND latest.origin != 'hypersight_block'
+             AND latest.origin != 'block_dashboard_block'
            ORDER BY latest.created_at DESC, latest.id DESC
            LIMIT 1
         )`,
@@ -1096,7 +1096,7 @@ export class WorkstreamService {
          FROM harness_runs
          WHERE workspace_id = ? AND workstream_id = ?
            AND parent_tool_call_id IS NULL
-           AND origin != 'hypersight_block'
+           AND origin != 'block_dashboard_block'
          ORDER BY created_at DESC LIMIT 1`,
       ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>(),
     ]);
@@ -2227,7 +2227,7 @@ export class WorkstreamService {
           SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
               cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user')
         WHERE workstream_id = ? AND workspace_id = ?
-          AND origin != 'hypersight_block'
+          AND origin != 'block_dashboard_block'
           AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
     ).bind(at, id, this.auth.workspaceId).run();
     if (active) this.deferTask(emitProductUsageTelemetry(this.env, {
@@ -2251,7 +2251,7 @@ export class WorkstreamService {
       `SELECT id, status, trigger_message_id FROM harness_runs
        WHERE workspace_id = ? AND workstream_id = ?
          AND parent_tool_call_id IS NULL
-         AND origin != 'hypersight_block'
+         AND origin != 'block_dashboard_block'
        ORDER BY created_at DESC LIMIT 1`,
     ).bind(this.auth.workspaceId, id).first<{ id: string; status: string; trigger_message_id: string | null }>();
     if (!latest || (latest.status !== "failed" && latest.status !== "stopped")) {
@@ -2321,16 +2321,16 @@ export class WorkstreamService {
     return { url: url.toString(), ticket };
   }
 
-  async hyperSightBlockSocketTicket(id: string, blockId: string) {
+  async blockDashboardBlockSocketTicket(id: string, blockId: string) {
     await this.requireWorkstream(id);
-    const hypersight = await loadHyperSight(this.env, this.auth.workspaceId, id);
-    if (!hypersight.blocks.some((block) => block.id === blockId)) {
-      throw new ApiError(404, "hypersight_block_not_found", "HyperSight block not found");
+    const blockDashboard = await loadBlockDashboard(this.env, this.auth.workspaceId, id);
+    if (!blockDashboard.blocks.some((block) => block.id === blockId)) {
+      throw new ApiError(404, "block_dashboard_block_not_found", "HyperSight block not found");
     }
-    const ticket = await issueHyperSightBlockSocketTicket(this.env, this.auth, id, blockId);
+    const ticket = await issueBlockDashboardBlockSocketTicket(this.env, this.auth, id, blockId);
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = `/socket/workstreams/${id}/hypersight/blocks/${blockId}`;
+    url.pathname = `/socket/workstreams/${id}/block-dashboard/blocks/${blockId}`;
     // This endpoint has no legacy desktop consumer. Unlike the older socket
     // issuers, it never puts the bearer in a URL that Cloudflare may log.
     url.search = "";
@@ -2427,7 +2427,7 @@ export class WorkstreamService {
                  WHERE latest.workspace_id = w.workspace_id
                    AND latest.workstream_id = w.id
                    AND latest.parent_tool_call_id IS NULL
-                   AND latest.origin != 'hypersight_block'
+                   AND latest.origin != 'block_dashboard_block'
                  ORDER BY latest.created_at DESC, latest.id DESC
                  LIMIT 1
               )

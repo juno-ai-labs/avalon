@@ -8,7 +8,7 @@ import { useUiStore } from '../lib/ui-store';
 import {
   AddResourceDialog,
   highestVisibleAttentionSequence,
-  hypersightHoldsSidebar,
+  blockDashboardHoldsSidebar,
   initialTranscriptAnchorIndex,
   JumpToLatestButton,
   manualElicitationResponse,
@@ -137,22 +137,22 @@ function stubElementWidths(widths: { clientWidth: number; scrollWidth: number })
 function headerElement(
   workstream = headerWorkstream,
   overrides: {
-    hypersightOpen?: boolean;
+    blockDashboardOpen?: boolean;
     onRename?: (title: string) => Promise<void>;
-    onToggleHyperSight?: () => void;
+    onToggleBlockDashboard?: () => void;
   } = {},
 ): React.JSX.Element {
   return (
     <Tooltip.Provider>
       <WorkstreamHeader
-        hypersightOpen={overrides.hypersightOpen ?? false}
-        hypersightPreferencePending={false}
+        blockDashboardOpen={overrides.blockDashboardOpen ?? false}
+        blockDashboardPreferencePending={false}
         onAddParticipant={vi.fn()}
         // The screen opens the rail through the same store action, after
         // giving up the right sidebar's other occupant.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
         onRename={overrides.onRename ?? (async () => undefined)}
-        onToggleHyperSight={overrides.onToggleHyperSight ?? vi.fn()}
+        onToggleBlockDashboard={overrides.onToggleBlockDashboard ?? vi.fn()}
         socketState="connected"
         workstream={workstream}
       />
@@ -238,16 +238,16 @@ describe('WorkstreamHeader origin affordances', () => {
   });
 
   it('shows HyperSight as the open panel while it holds the sidebar', () => {
-    const onToggleHyperSight = vi.fn();
-    renderWorkstreamHeader(headerWorkstream, { hypersightOpen: true, onToggleHyperSight });
+    const onToggleBlockDashboard = vi.fn();
+    renderWorkstreamHeader(headerWorkstream, { blockDashboardOpen: true, onToggleBlockDashboard });
 
-    const hypersight = screen.getByRole('button', { name: 'Hide HyperSight' });
-    expect(hypersight).toHaveAttribute('aria-pressed', 'true');
-    expect(hypersight).toHaveClass('is-active');
+    const blockDashboard = screen.getByRole('button', { name: 'Hide HyperSight' });
+    expect(blockDashboard).toHaveAttribute('aria-pressed', 'true');
+    expect(blockDashboard).toHaveClass('is-active');
     expect(screen.getByRole('button', { name: 'Work-stream context' })).toHaveAttribute('aria-pressed', 'false');
 
-    fireEvent.click(hypersight);
-    expect(onToggleHyperSight).toHaveBeenCalledTimes(1);
+    fireEvent.click(blockDashboard);
+    expect(onToggleBlockDashboard).toHaveBeenCalledTimes(1);
   });
 
   it('does not expose automation runs or an origin icon for ad-hoc work streams', async () => {
@@ -633,12 +633,12 @@ const transcript: Message[] = [
 
 describe('right sidebar occupancy', () => {
   it('gives the slot to the inspector, so a failed preference write cannot open both', () => {
-    expect(hypersightHoldsSidebar(true, false)).toBe(true);
-    expect(hypersightHoldsSidebar(false, false)).toBe(false);
-    expect(hypersightHoldsSidebar(false, true)).toBe(false);
+    expect(blockDashboardHoldsSidebar(true, false)).toBe(true);
+    expect(blockDashboardHoldsSidebar(false, false)).toBe(false);
+    expect(blockDashboardHoldsSidebar(false, true)).toBe(false);
     // The stored preference can still say "visible" after a rolled-back write;
     // the panel the person just opened keeps the slot regardless.
-    expect(hypersightHoldsSidebar(true, true)).toBe(false);
+    expect(blockDashboardHoldsSidebar(true, true)).toBe(false);
   });
 });
 

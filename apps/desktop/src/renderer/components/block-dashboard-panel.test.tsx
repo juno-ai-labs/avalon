@@ -2,11 +2,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { HyperSight } from '../lib/types';
+import type { BlockDashboard } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
-import { HyperSightPanel, HyperSightRail } from './hypersight-panel';
+import { BlockDashboardPanel, BlockDashboardRail } from './block-dashboard-panel';
 
-const hypersight: HyperSight = {
+const blockDashboard: BlockDashboard = {
   versionId: '11111111-1111-4111-8111-111111111111',
   versionNumber: 2,
   updatedAt: '2026-08-07T12:00:00.000Z',
@@ -51,22 +51,22 @@ function renderPanel(onChange = vi.fn(async () => {})) {
     onChange,
     ...render(
       <Tooltip.Provider>
-        <HyperSightPanel hypersight={hypersight} onChange={onChange} pending={false} />
+        <BlockDashboardPanel blockDashboard={blockDashboard} onChange={onChange} pending={false} />
       </Tooltip.Provider>,
     ),
   };
 }
 
-describe('HyperSightRail', () => {
+describe('BlockDashboardRail', () => {
   beforeEach(() => {
-    useUiStore.setState({ hypersightOpen: true, hypersightWidth: 360 });
+    useUiStore.setState({ blockDashboardOpen: true, blockDashboardWidth: 360 });
     window.innerWidth = 1_400;
   });
 
   it('tracks the pointer from wherever it was grabbed, clamps to 320–560, and stops after release', () => {
     render(
       <Tooltip.Provider>
-        <HyperSightRail blockCount={2} onClose={vi.fn()}>content</HyperSightRail>
+        <BlockDashboardRail blockCount={2} onClose={vi.fn()}>content</BlockDashboardRail>
       </Tooltip.Provider>,
     );
     const handle = screen.getByRole('separator', { name: 'Resize HyperSight' });
@@ -76,14 +76,14 @@ describe('HyperSightRail', () => {
     // pointer moves — 40 pixels — and not snap the edge under the pointer.
     fireEvent.pointerDown(handle, { clientX: 1_040, pointerId: 7 });
     fireEvent.pointerMove(handle, { clientX: 1_000, pointerId: 7 });
-    expect(useUiStore.getState().hypersightWidth).toBe(400);
+    expect(useUiStore.getState().blockDashboardWidth).toBe(400);
     fireEvent.pointerMove(handle, { clientX: 1_400, pointerId: 7 });
-    expect(useUiStore.getState().hypersightWidth).toBe(320);
+    expect(useUiStore.getState().blockDashboardWidth).toBe(320);
     fireEvent.pointerMove(handle, { clientX: 0, pointerId: 7 });
-    expect(useUiStore.getState().hypersightWidth).toBe(560);
+    expect(useUiStore.getState().blockDashboardWidth).toBe(560);
     fireEvent.pointerUp(handle, { pointerId: 7 });
     fireEvent.pointerMove(handle, { clientX: 1_100, pointerId: 7 });
-    expect(useUiStore.getState().hypersightWidth).toBe(560);
+    expect(useUiStore.getState().blockDashboardWidth).toBe(560);
     expect(document.body).not.toHaveClass('is-resizing-rail');
   });
 
@@ -91,12 +91,12 @@ describe('HyperSightRail', () => {
     const onClose = vi.fn();
     render(
       <Tooltip.Provider>
-        <HyperSightRail blockCount={1} onClose={onClose}>content</HyperSightRail>
+        <BlockDashboardRail blockCount={1} onClose={onClose}>content</BlockDashboardRail>
       </Tooltip.Provider>,
     );
 
     fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize HyperSight' }), { key: 'ArrowLeft' });
-    expect(useUiStore.getState().hypersightWidth).toBe(376);
+    expect(useUiStore.getState().blockDashboardWidth).toBe(376);
 
     expect(screen.getByText('1 block')).toBeVisible();
     fireEvent.keyDown(screen.getByRole('complementary', { name: 'HyperSight' }), { key: 'Escape' });
@@ -114,9 +114,9 @@ describe('HyperSightRail', () => {
     const onClose = vi.fn();
     render(
       <Tooltip.Provider>
-        <HyperSightRail blockCount={2} onClose={onClose}>
-          <HyperSightPanel hypersight={hypersight} onChange={vi.fn(async () => {})} pending={false} />
-        </HyperSightRail>
+        <BlockDashboardRail blockCount={2} onClose={onClose}>
+          <BlockDashboardPanel blockDashboard={blockDashboard} onChange={vi.fn(async () => {})} pending={false} />
+        </BlockDashboardRail>
       </Tooltip.Provider>,
     );
 
@@ -130,7 +130,7 @@ describe('HyperSightRail', () => {
   });
 });
 
-describe('HyperSightPanel', () => {
+describe('BlockDashboardPanel', () => {
   it('renders model Markdown and live refresh state inside separate blocks', () => {
     renderPanel();
 
@@ -140,14 +140,14 @@ describe('HyperSightPanel', () => {
   });
 
   it('keeps partial Markdown visible while its block socket reconnects', () => {
-    const runningBlock = hypersight.blocks[1]!;
+    const runningBlock = blockDashboard.blocks[1]!;
     render(
       <Tooltip.Provider>
-        <HyperSightPanel
+        <BlockDashboardPanel
           connectionStates={{ [runningBlock.id]: 'reconnecting' }}
-          hypersight={{
-            ...hypersight,
-            blocks: hypersight.blocks.map((block) => block.id === runningBlock.id
+          blockDashboard={{
+            ...blockDashboard,
+            blocks: blockDashboard.blocks.map((block) => block.id === runningBlock.id
               ? { ...block, latestRun: { ...runningBlock.latestRun!, markdown: 'Partial **answer**' } }
               : block),
           }}
@@ -246,10 +246,10 @@ describe('HyperSightPanel', () => {
     fireEvent.dragEnter(secondArticle!, { dataTransfer });
     rerender(
       <Tooltip.Provider>
-        <HyperSightPanel
-          hypersight={{
-            ...hypersight,
-            blocks: hypersight.blocks.map((block) => block.id === hypersight.blocks[1]!.id
+        <BlockDashboardPanel
+          blockDashboard={{
+            ...blockDashboard,
+            blocks: blockDashboard.blocks.map((block) => block.id === blockDashboard.blocks[1]!.id
               ? { ...block, latestRun: { ...block.latestRun!, status: 'completed', markdown: 'Fresh summary' } }
               : block),
           }}

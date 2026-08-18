@@ -58,14 +58,14 @@ const IMPORT_STAGES = [
     "input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "cost_micros",
     "response_bytes", "started_at", "completed_at", "created_at",
   ]],
-  ["hypersight_configuration_versions", "hypersight_configuration_versions", [
+  ["block_dashboard_configuration_versions", "block_dashboard_configuration_versions", [
     "configuration_version_id", "version_number", "blocks_json", "created_by_user_id", "created_at",
   ]],
-  ["hypersight_block_runs", "hypersight_block_runs", [
+  ["block_dashboard_block_runs", "block_dashboard_block_runs", [
     "block_run_id", "configuration_version_id", "block_id", "prompt", "trigger_sequence", "run_id",
     "status", "markdown", "error_json", "created_at", "started_at", "completed_at",
   ]],
-  ["hypersight_user_preferences", "hypersight_user_preferences", [
+  ["block_dashboard_user_preferences", "block_dashboard_user_preferences", [
     "user_id", "visible", "updated_at",
   ]],
   ["parts", "parts", [

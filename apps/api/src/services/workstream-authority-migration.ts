@@ -163,14 +163,14 @@ export function workstreamAuthoritySourceQuery(stage: WorkstreamAuthorityImportS
     case "inference_attempts":
       return `SELECT rowid AS source_rowid, * FROM inference_attempts
                WHERE workspace_id = ?1 AND workstream_id = ?2 AND rowid > ?3 ORDER BY rowid LIMIT ?4`;
-    case "hypersight_configuration_versions":
-      return `SELECT rowid AS source_rowid, * FROM hypersight_configuration_versions
+    case "block_dashboard_configuration_versions":
+      return `SELECT rowid AS source_rowid, * FROM block_dashboard_configuration_versions
                WHERE workspace_id = ?1 AND workstream_id = ?2 AND rowid > ?3 ORDER BY rowid LIMIT ?4`;
-    case "hypersight_block_runs":
-      return `SELECT rowid AS source_rowid, * FROM hypersight_block_runs
+    case "block_dashboard_block_runs":
+      return `SELECT rowid AS source_rowid, * FROM block_dashboard_block_runs
                WHERE workspace_id = ?1 AND workstream_id = ?2 AND rowid > ?3 ORDER BY rowid LIMIT ?4`;
-    case "hypersight_user_preferences":
-      return `SELECT rowid AS source_rowid, * FROM hypersight_user_preferences
+    case "block_dashboard_user_preferences":
+      return `SELECT rowid AS source_rowid, * FROM block_dashboard_user_preferences
                WHERE workspace_id = ?1 AND workstream_id = ?2 AND rowid > ?3 ORDER BY rowid LIMIT ?4`;
     case "parts":
       return `SELECT m.rowid AS source_rowid, m.*, r.attempt_number AS run_attempt_number,
@@ -377,15 +377,15 @@ export function normalizeWorkstreamAuthoritySourceRow(
       cached_tokens: nullableInteger(row, "cached_tokens"), cost_micros: nullableInteger(row, "cost_microusd"),
       response_bytes: nullableInteger(row, "response_bytes"), started_at: epoch(row, "started_at"),
       completed_at: epoch(row, "completed_at"), created_at: createdAt };
-    case "hypersight_configuration_versions": return { configuration_version_id: text(row, "id"),
+    case "block_dashboard_configuration_versions": return { configuration_version_id: text(row, "id"),
       version_number: integer(row, "version_number", 1), blocks_json: json(row, "blocks_json", "[]"),
       created_by_user_id: text(row, "created_by_user_id"), created_at: createdAt };
-    case "hypersight_block_runs": return { block_run_id: text(row, "id"),
+    case "block_dashboard_block_runs": return { block_run_id: text(row, "id"),
       configuration_version_id: text(row, "configuration_version_id"), block_id: text(row, "block_id"),
       prompt: text(row, "prompt"), trigger_sequence: integer(row, "trigger_sequence"), run_id: text(row, "harness_run_id"),
       status: text(row, "status"), markdown: nullableText(row, "markdown"), error_json: nullableText(row, "error_json"),
       created_at: createdAt, started_at: nullableEpoch(row, "started_at"), completed_at: nullableEpoch(row, "completed_at") };
-    case "hypersight_user_preferences": return { user_id: text(row, "user_id"), visible: integer(row, "visible"),
+    case "block_dashboard_user_preferences": return { user_id: text(row, "user_id"), visible: integer(row, "visible"),
       updated_at: updatedAt };
     case "parts": {
       const author = text(row, "author_type");

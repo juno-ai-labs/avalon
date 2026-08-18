@@ -7,7 +7,7 @@ import {
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
-  hyperSightBlockAgentName,
+  blockDashboardAgentName,
   substreamAgentName,
   workspaceDOName,
   workstreamDOName,
@@ -43,7 +43,7 @@ interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
   workstreamId: string;
 }
 
-interface HyperSightBlockSocketClaims extends WorkstreamControlSocketClaims {
+interface BlockDashboardBlockSocketClaims extends WorkstreamControlSocketClaims {
   blockId: string;
 }
 
@@ -186,7 +186,7 @@ export async function issueWorkstreamControlSocketTicket(
     .sign(signingKey(env));
 }
 
-export async function issueHyperSightBlockSocketTicket(
+export async function issueBlockDashboardBlockSocketTicket(
   env: Env,
   auth: AuthContext,
   workstreamId: string,
@@ -194,7 +194,7 @@ export async function issueHyperSightBlockSocketTicket(
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
-    purpose: "hypersight_block_socket",
+    purpose: "block_dashboard_block_socket",
     sid: auth.sessionId,
     wid: auth.workspaceId,
     wsid: workstreamId,
@@ -205,22 +205,22 @@ export async function issueHyperSightBlockSocketTicket(
     .setSubject(auth.userId)
     .setJti(crypto.randomUUID())
     .setIssuer("avalon-api")
-    .setAudience("avalon-hypersight-block-socket")
+    .setAudience("avalon-block-dashboard-block-socket")
     .setIssuedAt(now)
     .setExpirationTime(now + 60)
     .sign(signingKey(env));
 }
 
-export async function verifyHyperSightBlockSocketTicket(
+export async function verifyBlockDashboardBlockSocketTicket(
   env: Env,
   ticket: string,
-): Promise<HyperSightBlockSocketClaims> {
+): Promise<BlockDashboardBlockSocketClaims> {
   try {
     const { payload } = await jwtVerify(ticket, signingKey(env), {
-      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-hypersight-block-socket",
+      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-block-dashboard-block-socket",
     });
     if (
-      payload.purpose !== "hypersight_block_socket" || typeof payload.sub !== "string" ||
+      payload.purpose !== "block_dashboard_block_socket" || typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" || typeof payload.wid !== "string" ||
       typeof payload.wsid !== "string" || typeof payload.bid !== "string" ||
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
@@ -503,7 +503,7 @@ export class WorkstreamControlSocketService {
 }
 
 /** Edge authentication and regional routing for one HyperSight block agent socket. */
-export class HyperSightBlockSocketService {
+export class BlockDashboardBlockSocketService {
   constructor(private readonly env: Env) {}
 
   async upgrade(
@@ -518,7 +518,7 @@ export class HyperSightBlockSocketService {
     if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
       throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
     }
-    const claims = await verifyHyperSightBlockSocketTicket(
+    const claims = await verifyBlockDashboardBlockSocketTicket(
       this.env,
       socketTicketFromRequest(request, queryTicket),
     );
@@ -531,9 +531,9 @@ export class HyperSightBlockSocketService {
     }
     const stub = await durableObjectStubForWorkspace(
       this.env,
-      this.env.HYPERSIGHT_BLOCK_AGENTS,
+      this.env.BLOCK_DASHBOARD_AGENTS,
       claims.workspaceId,
-      hyperSightBlockAgentName(
+      blockDashboardAgentName(
         claims.region,
         claims.workspaceId,
         claims.workstreamId,
@@ -551,13 +551,13 @@ export class HyperSightBlockSocketService {
     headers.set("x-avalon-region", claims.region);
     headers.set("x-avalon-workspace-id", claims.workspaceId);
     headers.set("x-avalon-workstream-id", claims.workstreamId);
-    headers.set("x-avalon-hypersight-block-id", claims.blockId);
+    headers.set("x-avalon-block-dashboard-block-id", claims.blockId);
     headers.set("x-avalon-session-id", claims.sessionId);
     headers.set("x-avalon-user-id", claims.userId);
     headers.set("x-avalon-socket-ticket-id", claims.ticketId);
     headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
     const response = await stub.fetch(new Request(
-      "https://hypersight-block.internal/socket",
+      "https://block-dashboard.internal/socket",
       { method: "GET", headers },
     ));
     return withNegotiatedSubprotocol(request, response);

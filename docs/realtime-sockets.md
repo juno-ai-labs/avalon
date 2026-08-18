@@ -9,8 +9,12 @@ issued, how it reaches the Worker, and how a handshake is accepted or refused.
 What happens *on* an open socket belongs elsewhere: workspace invalidation and
 command routing are `WorkspaceDO`'s, aggregate metadata is `WorkstreamDO`'s,
 feed fan-out/replay/presence is `SubstreamAgent`'s, derived block streaming is
-`HyperSightBlockAgent`'s, and the dictation bridge's audio rules are in
+`BlockDashboardAgent`'s, and the dictation bridge's audio rules are in
 [`architecture.md`](architecture.md).
+
+The feature is still labelled **HyperSight** in the application. Its internal
+socket owner, ticket audience, event types, query keys, and URL path use
+`BlockDashboard` / `block-dashboard`; there is no legacy `/hypersight` route.
 
 The promise it makes is narrow and worth stating plainly: a socket is opened
 only by someone who just proved, over an authenticated HTTP request, that they
@@ -27,11 +31,11 @@ is recorded.
 | `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
-| `apps/api/src/durable-objects/hypersight-block-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
+| `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, replays its version cursor, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete revisioned WorkstreamDO metadata snapshots to detail and sidebar caches. |
-| `apps/desktop/src/renderer/lib/use-hypersight-block-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
+| `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
@@ -45,7 +49,7 @@ admission is split in two.
    `GET /workspace/socket` for workspace sync/commands,
    `GET /workstreams/:id/control-socket` for aggregate metadata,
    `GET /workstreams/:id/substreams/:substreamId/socket` for the feed, or
-   `GET /workstreams/:id/hypersight/blocks/:blockId/socket` for a block agent, or
+   `GET /workstreams/:id/block-dashboard/blocks/:blockId/socket` for a block agent, or
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
@@ -147,7 +151,7 @@ and latest mention sequence. Sending null clears a prior value.
 
 The WorkstreamDO socket carries shared HyperSight configuration and the current
 viewer's HyperSight preference. Each configured block has a direct
-`HyperSightBlockAgent` socket for queued/running/terminal state, token output,
+`BlockDashboardAgent` socket for queued/running/terminal state, token output,
 and reconnect snapshots. This is a block-result channel, not a conversation
 feed: it accepts no user messages and exposes no source transcript.
 
@@ -236,7 +240,7 @@ client sends one and no block-ticket bearer is ever issued in a URL.
 - **No Durable Object receives the signed bearer ticket.** It is verified
   at the edge and stripped from the subrequest. The feed child consumes the JTI
   in `durable_inbox_receipts`; WorkspaceDO, WorkstreamDO, and
-  HyperSightBlockAgent consume theirs in their own SQL receipt tables. Workspace membership remains in D1 while
+  BlockDashboardAgent consume theirs in their own SQL receipt tables. Workspace membership remains in D1 while
   work-stream participation/revocation is projected locally.
 - **Ticket audiences are not interchangeable.** Workspace, aggregate metadata,
   feed, and block-agent tickets cannot open one another's sockets. Otherwise a narrow read
@@ -289,10 +293,10 @@ keeping correct for whoever reads the logs.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @avalon/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @avalon/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and HyperSightBlockAgent attachments/snapshots; eviction; native-RPC envelopes; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; eviction; native-RPC envelopes; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | One persistent workspace connection, full topic invalidation, version resume, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @avalon/desktop test` | Complete aggregate snapshots, stale revision rejection, nullable-field clearing, revocation, and reconnect. |
-| `apps/desktop/src/renderer/lib/use-hypersight-block-sockets.test.tsx` | `pnpm --filter @avalon/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
+| `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @avalon/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @avalon/desktop test` | Direct SubstreamAgent feed reconnect/resync, streaming, switching streams, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
@@ -325,6 +329,25 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-18 — HyperSight sockets use the BlockDashboard protocol name
+
+**What changed:** Block-agent ticket audiences, headers, event discriminators,
+routes, desktop query keys, and hook names now use `block-dashboard`, backed by
+`BlockDashboardAgent`. The rendered panel and all accessibility labels remain
+HyperSight.
+
+**Why:** The direct socket is an implementation boundary, not the product
+surface. A single internal name makes route, binding, SQL, and replay telemetry
+searchable as one subsystem.
+
+**Considered and rejected:** Serving `/hypersight` aliases or accepting both
+event vocabularies. No external client has shipped against this protocol, so
+dual admission would add permanent ambiguity without a compatibility benefit.
+
+**Consequences:** Desktop and Worker must deploy together for this unshipped
+cutover. Product copy tests continue to assert HyperSight, while protocol tests
+assert only BlockDashboard paths and event names.
 
 ### 2026-08-18 — Transcript history pages come from SubstreamAgent on demand
 
@@ -369,7 +392,7 @@ its runs do not enable context compaction today.
 ### 2026-08-18 — Every agent socket streams and resumes from a durable checkpoint
 
 **What changed:** Each visible HyperSight block now opens a purpose-scoped,
-single-use, hibernating socket directly to its `HyperSightBlockAgent`. The block
+single-use, hibernating socket directly to its `BlockDashboardAgent`. The block
 agent commits and emits the same active-stream checkpoint contract as
 SubstreamAgent; WorkstreamDO continues to publish configuration/preferences but
 no longer relays per-block run output.
@@ -398,7 +421,7 @@ backlog.
 
 **What changed:** HyperSight configuration, per-block run status/results, and
 viewer preference now arrive as WorkstreamDO control events. Individual
-`HyperSightBlockAgent` instances expose no desktop socket.
+`BlockDashboardAgent` instances expose no desktop socket.
 
 **Why:** A derived block is work-stream metadata, not an ordered conversation
 feed. Adding a socket per block would multiply background connections and

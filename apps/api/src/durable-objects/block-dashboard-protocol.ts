@@ -1,8 +1,8 @@
 import {
-  HyperSightBlockRunSchema,
+  BlockDashboardBlockRunSchema,
   IdSchema,
   RegionSchema,
-  UpdateHyperSightRequestSchema,
+  UpdateBlockDashboardRequestSchema,
   WorkstreamCompactionFenceSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
@@ -12,18 +12,18 @@ const CoordinatesSchema = z.object({
   workstreamId: IdSchema,
 }).strict();
 
-export const HyperSightSourceRefreshRequestSchema = CoordinatesSchema.extend({
+export const BlockDashboardSourceRefreshRequestSchema = CoordinatesSchema.extend({
   triggerSequence: z.number().int().nonnegative(),
 }).strict();
 
-export const HyperSightContextFenceSchema = z.object({
+export const BlockDashboardContextFenceSchema = z.object({
   /** Inclusive upper bound that is a complete provider-valid boundary. */
   throughSequence: z.number().int().nonnegative(),
   /** Exact compacted prefix, or null to begin at the start of the array. */
   compaction: WorkstreamCompactionFenceSchema.nullable(),
 }).strict();
 
-export const HyperSightControlRequestSchema = z.discriminatedUnion("operation", [
+export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operation", [
   CoordinatesSchema.extend({ operation: z.literal("get") }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("get_preference"),
@@ -38,21 +38,21 @@ export const HyperSightControlRequestSchema = z.discriminatedUnion("operation", 
   CoordinatesSchema.extend({
     operation: z.literal("update_configuration"),
     userId: IdSchema,
-    input: UpdateHyperSightRequestSchema,
+    input: UpdateBlockDashboardRequestSchema,
     configurationVersionId: IdSchema,
     createdAt: z.string().datetime({ offset: true }),
   }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("schedule_refresh"),
     triggerSequence: z.number().int().nonnegative(),
-    contextFence: HyperSightContextFenceSchema,
+    contextFence: BlockDashboardContextFenceSchema,
   }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("block_result"),
     blockId: IdSchema,
     sourceVersion: z.number().int().positive(),
     payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
-    run: HyperSightBlockRunSchema,
+    run: BlockDashboardBlockRunSchema,
   }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("import_authority_rows"),
@@ -88,7 +88,7 @@ export const HyperSightControlRequestSchema = z.discriminatedUnion("operation", 
   }).strict(),
 ]);
 
-export const HyperSightBlockDispatchSchema = z.object({
+export const BlockDashboardBlockDispatchSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   workstreamId: IdSchema,
@@ -99,27 +99,27 @@ export const HyperSightBlockDispatchSchema = z.object({
   configurationVersionNumber: z.number().int().positive(),
   prompt: z.string().min(1).max(12_000),
   triggerSequence: z.number().int().nonnegative(),
-  contextFence: HyperSightContextFenceSchema,
+  contextFence: BlockDashboardContextFenceSchema,
   createdAt: z.string().datetime({ offset: true }),
 }).strict();
 
-export const HyperSightViewerAuthorizationRequestSchema = CoordinatesSchema.extend({
+export const BlockDashboardViewerAuthorizationRequestSchema = CoordinatesSchema.extend({
   blockId: IdSchema,
   userId: IdSchema,
 }).strict();
 
-export const HyperSightSocketRetractionRequestSchema = CoordinatesSchema.extend({
+export const BlockDashboardSocketRetractionRequestSchema = CoordinatesSchema.extend({
   blockId: IdSchema,
   region: RegionSchema,
   userId: IdSchema.optional(),
 }).strict();
 
-export type HyperSightBlockDispatch = z.infer<typeof HyperSightBlockDispatchSchema>;
-export type HyperSightContextFence = z.infer<typeof HyperSightContextFenceSchema>;
-export type HyperSightControlRequest = z.infer<typeof HyperSightControlRequestSchema>;
-export type HyperSightSourceRefreshRequest = z.infer<typeof HyperSightSourceRefreshRequestSchema>;
-export type HyperSightSocketRetractionRequest = z.infer<typeof HyperSightSocketRetractionRequestSchema>;
-export type HyperSightViewerAuthorizationRequest = z.infer<typeof HyperSightViewerAuthorizationRequestSchema>;
+export type BlockDashboardBlockDispatch = z.infer<typeof BlockDashboardBlockDispatchSchema>;
+export type BlockDashboardContextFence = z.infer<typeof BlockDashboardContextFenceSchema>;
+export type BlockDashboardControlRequest = z.infer<typeof BlockDashboardControlRequestSchema>;
+export type BlockDashboardSourceRefreshRequest = z.infer<typeof BlockDashboardSourceRefreshRequestSchema>;
+export type BlockDashboardSocketRetractionRequest = z.infer<typeof BlockDashboardSocketRetractionRequestSchema>;
+export type BlockDashboardViewerAuthorizationRequest = z.infer<typeof BlockDashboardViewerAuthorizationRequestSchema>;
 
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -130,7 +130,7 @@ function canonicalJson(value: unknown): string {
   )).join(",")}}`;
 }
 
-export function hyperSightBlockResultHash(run: z.infer<typeof HyperSightBlockRunSchema>): string {
+export function blockDashboardBlockResultHash(run: z.infer<typeof BlockDashboardBlockRunSchema>): string {
   let hash = 0xcbf29ce484222325n;
   for (const byte of new TextEncoder().encode(canonicalJson(run))) {
     hash ^= BigInt(byte);

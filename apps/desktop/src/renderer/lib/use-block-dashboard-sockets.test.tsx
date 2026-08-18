@@ -1,11 +1,11 @@
-import type { HyperSight } from '@avalon/contracts';
+import type { BlockDashboard } from '@avalon/contracts';
 import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { useHyperSightBlockSockets } from './use-hypersight-block-sockets';
+import { useBlockDashboardSockets } from './use-block-dashboard-sockets';
 
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
@@ -87,24 +87,24 @@ afterEach(() => {
   FakeWebSocket.instances = [];
 });
 
-describe('useHyperSightBlockSockets', () => {
+describe('useBlockDashboardSockets', () => {
   it('resumes from a full checkpoint and ignores stale updates without duplicating text', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
-    queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], {
+    queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], {
       versionId,
       versionNumber: 1,
       updatedAt: '2026-08-18T20:00:00.000Z',
       blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
     });
-    const getHyperSightBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/hypersight/blocks/${blockId}`,
+    const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));
-    const api = { getHyperSightBlockSocketTicket };
+    const api = { getBlockDashboardBlockSocketTicket };
     const rendered = renderHook(
-      () => useHyperSightBlockSockets(
+      () => useBlockDashboardSockets(
         api,
         workstreamId,
         [blockId],
@@ -118,33 +118,33 @@ describe('useHyperSightBlockSockets', () => {
     expect(first.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
 
     act(() => first.event({
-      type: 'hypersight_block_snapshot',
+      type: 'block_dashboard_block_snapshot',
       occurredAt: '2026-08-18T20:00:02.000Z',
       blockId,
       run: run(),
       streamCheckpoint: checkpoint(4, 'Hello'),
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId]))
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId]))
       .toMatchObject({ blocks: [{ latestRun: { markdown: 'Hello', status: 'running' } }] });
 
     act(() => first.event({
-      type: 'hypersight_block_stream_checkpoint',
+      type: 'block_dashboard_block_stream_checkpoint',
       occurredAt: '2026-08-18T20:00:03.000Z',
       blockId,
       blockRunId,
       streamCheckpoint: checkpoint(3, 'Hel'),
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId]))
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId]))
       .toMatchObject({ blocks: [{ latestRun: { markdown: 'Hello' } }] });
 
     act(() => first.event({
-      type: 'hypersight_block_stream_checkpoint',
+      type: 'block_dashboard_block_stream_checkpoint',
       occurredAt: '2026-08-18T20:00:04.000Z',
       blockId,
       blockRunId,
       streamCheckpoint: checkpoint(5, 'Hello world'),
     }));
-    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId]))
+    expect(queryClient.getQueryData<BlockDashboard>(['block-dashboard', workstreamId]))
       .toMatchObject({ blocks: [{ latestRun: { markdown: 'Hello world' } }] });
     expect(rendered.result.current[blockId]).toBe('connected');
 
@@ -156,23 +156,23 @@ describe('useHyperSightBlockSockets', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
-    queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], {
+    queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], {
       versionId,
       versionNumber: 1,
       updatedAt: '2026-08-18T20:00:00.000Z',
       blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
     });
     const ticket = {
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/hypersight/blocks/${blockId}`,
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     };
-    const getHyperSightBlockSocketTicket = vi.fn()
+    const getBlockDashboardBlockSocketTicket = vi.fn()
       .mockRejectedValueOnce(new Error('ticket service unavailable'))
       .mockResolvedValue(ticket);
-    const api = { getHyperSightBlockSocketTicket };
+    const api = { getBlockDashboardBlockSocketTicket };
     const rendered = renderHook(
-      () => useHyperSightBlockSockets(
+      () => useBlockDashboardSockets(
         api,
         workstreamId,
         [blockId],
@@ -188,7 +188,7 @@ describe('useHyperSightBlockSockets', () => {
     act(() => first.open());
     await act(async () => Promise.resolve());
     act(() => first.event({
-      type: 'hypersight_block_snapshot',
+      type: 'block_dashboard_block_snapshot',
       occurredAt: '2026-08-18T20:00:02.000Z',
       blockId,
       run: run(),
@@ -216,14 +216,14 @@ describe('useHyperSightBlockSockets', () => {
     let online = false;
     vi.spyOn(window.navigator, 'onLine', 'get').mockImplementation(() => online);
     const queryClient = new QueryClient();
-    const getHyperSightBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/hypersight/blocks/${blockId}`,
+    const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));
-    const api = { getHyperSightBlockSocketTicket };
+    const api = { getBlockDashboardBlockSocketTicket };
     const rendered = renderHook(
-      ({ blocks }) => useHyperSightBlockSockets(
+      ({ blocks }) => useBlockDashboardSockets(
         api,
         workstreamId,
         blocks,
@@ -233,7 +233,7 @@ describe('useHyperSightBlockSockets', () => {
     );
     await act(async () => Promise.resolve());
     expect(rendered.result.current[blockId]).toBe('offline');
-    expect(getHyperSightBlockSocketTicket).not.toHaveBeenCalled();
+    expect(getBlockDashboardBlockSocketTicket).not.toHaveBeenCalled();
 
     online = true;
     await act(async () => window.dispatchEvent(new Event('online')));
@@ -249,14 +249,14 @@ describe('useHyperSightBlockSockets', () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
-    const getHyperSightBlockSocketTicket = vi.fn(async () => ({
-      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/hypersight/blocks/${blockId}`,
+    const getBlockDashboardBlockSocketTicket = vi.fn(async () => ({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}/block-dashboard/blocks/${blockId}`,
       ticket: 'block-ticket',
       protocols: socketTicketProtocols('block-ticket'),
     }));
-    const api = { getHyperSightBlockSocketTicket };
+    const api = { getBlockDashboardBlockSocketTicket };
     const rendered = renderHook(
-      () => useHyperSightBlockSockets(api, workstreamId, [blockId], true),
+      () => useBlockDashboardSockets(api, workstreamId, [blockId], true),
       { wrapper: wrapper(queryClient) },
     );
     await act(async () => Promise.resolve());

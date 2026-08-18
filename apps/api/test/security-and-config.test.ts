@@ -638,7 +638,7 @@ describe("environment guardrails", () => {
 
   it("allows HyperSight PUT requests in CORS preflights", async () => {
     const response = await createApp().request(
-      "https://api.example.com/workstreams/00000000-0000-7000-8000-000000000001/hypersight/preference",
+      "https://api.example.com/workstreams/00000000-0000-7000-8000-000000000001/block-dashboard/preference",
       {
         method: "OPTIONS",
         headers: {

@@ -1,20 +1,20 @@
 import {
-  HyperSightBlockSocketEventSchema,
+  BlockDashboardBlockSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-  type HyperSight,
-  type HyperSightBlockRun,
+  type BlockDashboard,
+  type BlockDashboardBlockRun,
 } from '@avalon/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 import type { AvalonApi } from './api';
 
-type HyperSightBlockSocketApi = Pick<AvalonApi, 'getHyperSightBlockSocketTicket'>;
+type BlockDashboardBlockSocketApi = Pick<AvalonApi, 'getBlockDashboardBlockSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
 const PONG_TIMEOUT_MS = 15_000;
 const STABLE_CONNECTION_MS = 10_000;
 
-export type HyperSightBlockConnectionState =
+export type BlockDashboardBlockConnectionState =
   | 'connecting'
   | 'connected'
   | 'reconnecting'
@@ -42,14 +42,14 @@ function browserIsOffline(): boolean {
 }
 
 /** Connect the selected work stream directly to each configured HyperSight block agent. */
-export function useHyperSightBlockSockets(
-  api: HyperSightBlockSocketApi | null,
+export function useBlockDashboardSockets(
+  api: BlockDashboardBlockSocketApi | null,
   workstreamId: string,
   blockIds: readonly string[],
   enabled: boolean,
-): Readonly<Record<string, HyperSightBlockConnectionState>> {
+): Readonly<Record<string, BlockDashboardBlockConnectionState>> {
   const queryClient = useQueryClient();
-  const [connectionStates, setConnectionStates] = useState<Readonly<Record<string, HyperSightBlockConnectionState>>>({});
+  const [connectionStates, setConnectionStates] = useState<Readonly<Record<string, BlockDashboardBlockConnectionState>>>({});
   const blockKey = [...blockIds].sort().join('\u0000');
   useEffect(() => {
     if (!api || !enabled || blockKey.length === 0) {
@@ -59,14 +59,14 @@ export function useHyperSightBlockSockets(
     let stopped = false;
     const connections = new Map<string, BlockConnection>();
     const streamRevisions = new Map<string, { blockRunId: string; revision: number }>();
-    const updateConnectionState = (blockId: string, state: HyperSightBlockConnectionState): void => {
+    const updateConnectionState = (blockId: string, state: BlockDashboardBlockConnectionState): void => {
       setConnectionStates((current) => current[blockId] === state
         ? current
         : { ...current, [blockId]: state });
     };
 
-    const applyRun = (blockId: string, run: HyperSightBlockRun | null): void => {
-      queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], (current) => {
+    const applyRun = (blockId: string, run: BlockDashboardBlockRun | null): void => {
+      queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], (current) => {
         if (!current) return current;
         return {
           ...current,
@@ -94,7 +94,7 @@ export function useHyperSightBlockSockets(
       const previous = streamRevisions.get(blockId);
       if (previous?.blockRunId === blockRunId && previous.revision >= checkpoint.roomSequence) return;
       streamRevisions.set(blockId, { blockRunId, revision: checkpoint.roomSequence });
-      queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], (current) => {
+      queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], (current) => {
         if (!current) return current;
         return {
           ...current,
@@ -132,7 +132,7 @@ export function useHyperSightBlockSockets(
       if (connection.reconnectTimer !== null) window.clearTimeout(connection.reconnectTimer);
       connection.reconnectTimer = null;
       try {
-        const ticket = await api.getHyperSightBlockSocketTicket(workstreamId, blockId);
+        const ticket = await api.getBlockDashboardBlockSocketTicket(workstreamId, blockId);
         if (stopped || !connections.has(blockId)) return;
         const socket = new WebSocket(ticket.url, ticket.protocols);
         connection.socket = socket;
@@ -167,7 +167,7 @@ export function useHyperSightBlockSockets(
           if (connection.attempt > 0) {
             // Refresh the parent projection first, then let the block-agent
             // snapshot replace it with any newer in-flight checkpoint.
-            void queryClient.refetchQueries({ queryKey: ['hypersight', workstreamId], exact: true })
+            void queryClient.refetchQueries({ queryKey: ['block-dashboard', workstreamId], exact: true })
               .finally(subscribe);
           } else {
             subscribe();
@@ -187,14 +187,14 @@ export function useHyperSightBlockSockets(
             return;
           }
           try {
-            const event = HyperSightBlockSocketEventSchema.safeParse(JSON.parse(String(message.data)));
+            const event = BlockDashboardBlockSocketEventSchema.safeParse(JSON.parse(String(message.data)));
             if (!event.success || event.data.blockId !== blockId) return;
             updateConnectionState(blockId, 'connected');
-            if (event.data.type === 'hypersight_block_stream_checkpoint') {
+            if (event.data.type === 'block_dashboard_block_stream_checkpoint') {
               applyStreamCheckpoint(blockId, event.data.blockRunId, event.data.streamCheckpoint);
             } else {
               applyRun(blockId, event.data.run);
-              if (event.data.type === 'hypersight_block_snapshot' && event.data.run) {
+              if (event.data.type === 'block_dashboard_block_snapshot' && event.data.run) {
                 applyStreamCheckpoint(blockId, event.data.run.id, event.data.streamCheckpoint);
               }
             }

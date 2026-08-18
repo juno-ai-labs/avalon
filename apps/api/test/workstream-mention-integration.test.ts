@@ -72,7 +72,7 @@ describe("work-stream addressing", () => {
         ('00000000-0000-7000-8000-000000000091', '${workspaceId}', '${workstreamId}',
          'human_message', '{"type":"user","userId":"${authorId}"}', 'running', '2026-08-07T12:00:00.000Z'),
         ('00000000-0000-7000-8000-000000000092', '${workspaceId}', '${workstreamId}',
-         'hypersight_block', '{"type":"workspace","workspaceId":"${workspaceId}"}', 'running', '2026-08-07T12:00:00.000Z');
+         'block_dashboard_block', '{"type":"workspace","workspaceId":"${workspaceId}"}', 'running', '2026-08-07T12:00:00.000Z');
     `);
     const service = new WorkstreamService(environment(database), auth());
 
@@ -110,7 +110,7 @@ describe("work-stream addressing", () => {
         ('00000000-0000-7000-8000-000000000093', '${workspaceId}', '${workstreamId}',
          'human_message', '{"type":"user","userId":"${authorId}"}', 'running', '2026-08-07T12:00:00.000Z'),
         ('00000000-0000-7000-8000-000000000094', '${workspaceId}', '${workstreamId}',
-         'hypersight_block', '{"type":"workspace","workspaceId":"${workspaceId}"}', 'running', '2026-08-07T12:00:00.000Z');
+         'block_dashboard_block', '{"type":"workspace","workspaceId":"${workspaceId}"}', 'running', '2026-08-07T12:00:00.000Z');
     `);
     const service = new WorkstreamService(environment(database), auth());
 

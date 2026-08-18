@@ -1,14 +1,14 @@
 import {
   ActiveStreamCheckpointSchema,
-  HyperSightBlockSocketClientEventSchema,
-  HyperSightBlockSocketEventSchema,
-  HyperSightBlockRunSchema,
+  BlockDashboardBlockSocketClientEventSchema,
+  BlockDashboardBlockSocketEventSchema,
+  BlockDashboardBlockRunSchema,
   IdSchema,
   RegionSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   ServerSocketEventSchema,
   WorkstreamWorkflowInputSchema,
-  type HyperSightBlockRun,
+  type BlockDashboardBlockRun,
   type ActiveStreamCheckpoint,
   type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
@@ -38,13 +38,13 @@ import {
   durableAgentRetryDelay,
 } from "./durable-agent-runtime";
 import {
-  HyperSightBlockDispatchSchema,
-  HyperSightControlRequestSchema,
-  HyperSightSocketRetractionRequestSchema,
-  hyperSightBlockResultHash,
-  type HyperSightBlockDispatch,
-  type HyperSightSocketRetractionRequest,
-} from "./hypersight-protocol";
+  BlockDashboardBlockDispatchSchema,
+  BlockDashboardControlRequestSchema,
+  BlockDashboardSocketRetractionRequestSchema,
+  blockDashboardBlockResultHash,
+  type BlockDashboardBlockDispatch,
+  type BlockDashboardSocketRetractionRequest,
+} from "./block-dashboard-protocol";
 import { workstreamDOName } from "./names";
 import {
   applyDurableObjectSqliteMigrations,
@@ -56,31 +56,31 @@ const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 const SOCKET_AUTHORIZATION_REVALIDATE_MS = 60_000;
 
-const HyperSightBlockIdentityInputSchema = z.object({
+const BlockDashboardBlockIdentityInputSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   blockId: IdSchema,
   region: RegionSchema,
 }).strict();
-type HyperSightBlockIdentityInput = z.infer<typeof HyperSightBlockIdentityInputSchema>;
+type BlockDashboardBlockIdentityInput = z.infer<typeof BlockDashboardBlockIdentityInputSchema>;
 
-const HyperSightSocketIdentitySchema = HyperSightBlockIdentityInputSchema.extend({
+const BlockDashboardSocketIdentitySchema = BlockDashboardBlockIdentityInputSchema.extend({
   userId: IdSchema,
   sessionId: z.string().min(1).max(200),
   ticketId: z.string().uuid(),
   ticketExpiresAt: z.coerce.number().int().positive(),
 }).strict();
-type HyperSightSocketIdentity = z.infer<typeof HyperSightSocketIdentitySchema>;
-const HyperSightSocketAttachmentSchema = HyperSightSocketIdentitySchema.extend({
+type BlockDashboardSocketIdentity = z.infer<typeof BlockDashboardSocketIdentitySchema>;
+const BlockDashboardSocketAttachmentSchema = BlockDashboardSocketIdentitySchema.extend({
   connectionId: z.string().uuid(),
   connectedAt: z.string().datetime({ offset: true }),
   subscribed: z.boolean(),
   authorizedAt: z.number().int().nonnegative().default(0),
 }).strict();
-type HyperSightSocketAttachment = z.infer<typeof HyperSightSocketAttachmentSchema>;
+type BlockDashboardSocketAttachment = z.infer<typeof BlockDashboardSocketAttachmentSchema>;
 
 const TerminalOutcomeSchema = z.object({
-  run: HyperSightBlockRunSchema,
+  run: BlockDashboardBlockRunSchema,
 }).strict();
 type TerminalOutcome = z.infer<typeof TerminalOutcomeSchema>;
 
@@ -94,8 +94,8 @@ interface DispatchRow extends Record<string, SqlStorageValue> {
 }
 
 function compareDispatchFreshness(
-  left: HyperSightBlockDispatch,
-  right: HyperSightBlockDispatch,
+  left: BlockDashboardBlockDispatch,
+  right: BlockDashboardBlockDispatch,
 ): number {
   if (left.configurationVersionNumber !== right.configurationVersionNumber) {
     return left.configurationVersionNumber - right.configurationVersionNumber;
@@ -109,7 +109,7 @@ function compareDispatchFreshness(
 }
 
 function supersededOutcome(
-  dispatch: HyperSightBlockDispatch,
+  dispatch: BlockDashboardBlockDispatch,
   completedAt: number,
 ): TerminalOutcome {
   return TerminalOutcomeSchema.parse({
@@ -121,7 +121,7 @@ function supersededOutcome(
       status: "stopped",
       markdown: null,
       error: {
-        code: "hypersight_run_superseded",
+        code: "block_dashboard_run_superseded",
         message: "A newer refresh superseded this queued run.",
       },
       createdAt: dispatch.createdAt,
@@ -131,7 +131,7 @@ function supersededOutcome(
   });
 }
 
-function terminalDispatchState(run: HyperSightBlockRun): "completed" | "failed" {
+function terminalDispatchState(run: BlockDashboardBlockRun): "completed" | "failed" {
   return run.status === "failed" ? "failed" : "completed";
 }
 
@@ -140,7 +140,7 @@ interface RuntimeBlockRow {
   block_id: string;
   configuration_version_id: string;
   trigger_sequence: number;
-  status: HyperSightBlockRun["status"];
+  status: BlockDashboardBlockRun["status"];
   markdown: string | null;
   error_json: string | null;
   created_at: string;
@@ -148,12 +148,12 @@ interface RuntimeBlockRow {
   completed_at: string | null;
 }
 
-export const HYPERSIGHT_BLOCK_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
+export const BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
   description: "HyperSight block execution, resumable streaming, and causal dispatch authority",
   statements: [
     `PRAGMA foreign_keys = ON`,
-    `CREATE TABLE hypersight_block_identity (
+    `CREATE TABLE block_dashboard_block_identity (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       workspace_id TEXT NOT NULL,
       workstream_id TEXT NOT NULL,
@@ -179,14 +179,14 @@ export const HYPERSIGHT_BLOCK_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSql
     ) STRICT`,
     `CREATE INDEX agent_run_dispatches_ready_idx
       ON agent_run_dispatches(state, available_at, created_at, block_run_id)`,
-    `CREATE TABLE hypersight_socket_ticket_receipts (
+    `CREATE TABLE block_dashboard_socket_ticket_receipts (
       ticket_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
       consumed_at INTEGER NOT NULL
     ) STRICT`,
-    `CREATE INDEX hypersight_socket_ticket_receipts_expiry_idx
-      ON hypersight_socket_ticket_receipts(expires_at)`,
+    `CREATE INDEX block_dashboard_socket_ticket_receipts_expiry_idx
+      ON block_dashboard_socket_ticket_receipts(expires_at)`,
     `CREATE TABLE agent_stream_checkpoint (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       block_run_id TEXT NOT NULL REFERENCES agent_run_dispatches(block_run_id) ON DELETE CASCADE,
@@ -221,8 +221,8 @@ function parseError(value: string | null): { code: string; message: string } | n
   }
 }
 
-function blockRunFromRow(row: RuntimeBlockRow): HyperSightBlockRun {
-  return HyperSightBlockRunSchema.parse({
+function blockRunFromRow(row: RuntimeBlockRow): BlockDashboardBlockRun {
+  return BlockDashboardBlockRunSchema.parse({
     id: row.id,
     blockId: row.block_id,
     configurationVersionId: row.configuration_version_id,
@@ -237,7 +237,7 @@ function blockRunFromRow(row: RuntimeBlockRow): HyperSightBlockRun {
 }
 
 /** A stable, SQL-backed owner for one HyperSight block's complete Bind loops. */
-export class HyperSightBlockAgent extends DurableObject<Env> {
+export class BlockDashboardAgent extends DurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
@@ -251,7 +251,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     this.keepAliveLease = new DurableAgentKeepAlive(() => this.scheduleNextAlarm());
     this.publicationQueue = new DurableAgentPublicationQueue(
       (phase, error) => {
-        logWarn(this.env, "hypersight_block_agent_broadcast_failed", {
+        logWarn(this.env, "block_dashboard_block_agent_broadcast_failed", {
           phase,
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -261,8 +261,8 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     this.initialized = state.blockConcurrencyWhile(async () => {
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
-        migrations: HYPERSIGHT_BLOCK_AGENT_SCHEMA_MIGRATIONS,
-        component: "hypersight_block_agent",
+        migrations: BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
+        component: "block_dashboard_block_agent",
         workerVersionId: env.APP_VERSION ?? "unknown",
       });
       this.resumeRunDrain();
@@ -278,35 +278,35 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       return this.acceptSocket(request);
     }
     if (request.method === "POST" && path === "/internal/run-dispatch") {
-      const parsed = HyperSightBlockDispatchSchema.safeParse(await request.json().catch(() => null));
-      if (!parsed.success) return json({ error: "invalid_hypersight_block_dispatch" }, 400);
+      const parsed = BlockDashboardBlockDispatchSchema.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return json({ error: "invalid_block_dashboard_block_dispatch" }, 400);
       try {
         await this.dispatchRun(parsed.data);
         return json({ accepted: true }, 202);
       } catch (error) {
         return json({
-          error: error instanceof Error ? error.message : "hypersight_block_dispatch_failed",
+          error: error instanceof Error ? error.message : "block_dashboard_block_dispatch_failed",
         }, 409);
       }
     }
     if (request.method === "GET" && path === "/health") {
       return json({
         ok: true,
-        role: "hypersight-block-agent",
+        role: "block-dashboard-agent",
         databaseBytes: this.state.storage.sql.databaseSize,
       });
     }
     return json({ error: "not_found" }, 404);
   }
 
-  async initializeBlock(input: HyperSightBlockIdentityInput): Promise<void> {
+  async initializeBlock(input: BlockDashboardBlockIdentityInput): Promise<void> {
     await this.initialized;
-    this.ensureIdentity(HyperSightBlockIdentityInputSchema.parse(input));
+    this.ensureIdentity(BlockDashboardBlockIdentityInputSchema.parse(input));
   }
 
-  async dispatchRun(input: HyperSightBlockDispatch): Promise<void> {
+  async dispatchRun(input: BlockDashboardBlockDispatch): Promise<void> {
     await this.initialized;
-    const dispatch = HyperSightBlockDispatchSchema.parse(input);
+    const dispatch = BlockDashboardBlockDispatchSchema.parse(input);
     this.ensureIdentity(dispatch);
     this.enqueue(dispatch);
     this.queueBroadcast(() => this.broadcastLatestRun(dispatch.blockRunId), "dispatch");
@@ -315,9 +315,9 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
   }
 
   /** Applies an explicit parent access/configuration retraction to live sockets. */
-  async revalidateViewerAccess(input: HyperSightSocketRetractionRequest): Promise<void> {
+  async revalidateViewerAccess(input: BlockDashboardSocketRetractionRequest): Promise<void> {
     await this.initialized;
-    const request = HyperSightSocketRetractionRequestSchema.parse(input);
+    const request = BlockDashboardSocketRetractionRequestSchema.parse(input);
     this.ensureIdentity(request);
     await this.revalidateSockets(request.userId);
   }
@@ -337,15 +337,15 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       socket.close(1008, "HyperSight block events must be JSON");
       return;
     }
-    if (!HyperSightBlockSocketClientEventSchema.safeParse(decoded).success
+    if (!BlockDashboardBlockSocketClientEventSchema.safeParse(decoded).success
       || !await this.authorizeViewer(attachment)) {
       socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this HyperSight block");
       return;
     }
     socket.serializeAttachment({ ...attachment, subscribed: true, authorizedAt: Date.now() });
     const run = this.latestRun();
-    socket.send(JSON.stringify(HyperSightBlockSocketEventSchema.parse({
-      type: "hypersight_block_snapshot",
+    socket.send(JSON.stringify(BlockDashboardBlockSocketEventSchema.parse({
+      type: "block_dashboard_block_snapshot",
       occurredAt: new Date().toISOString(),
       blockId: attachment.blockId,
       run,
@@ -371,10 +371,10 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return json({ error: "websocket_upgrade_required" }, 426);
     }
-    const identity = HyperSightSocketIdentitySchema.safeParse({
+    const identity = BlockDashboardSocketIdentitySchema.safeParse({
       workspaceId: request.headers.get("x-avalon-workspace-id"),
       workstreamId: request.headers.get("x-avalon-workstream-id"),
-      blockId: request.headers.get("x-avalon-hypersight-block-id"),
+      blockId: request.headers.get("x-avalon-block-dashboard-block-id"),
       region: request.headers.get("x-avalon-region"),
       userId: request.headers.get("x-avalon-user-id"),
       sessionId: request.headers.get("x-avalon-session-id"),
@@ -385,14 +385,14 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     try {
       this.ensureIdentity(identity.data);
     } catch {
-      return json({ error: "hypersight_block_agent_identity_mismatch" }, 409);
+      return json({ error: "block_dashboard_block_agent_identity_mismatch" }, 409);
     }
     if (!this.consumeSocketTicket(identity.data)) return json({ error: "socket_ticket_replayed" }, 401);
     if (!await this.authorizeViewer(identity.data)) return json({ error: "forbidden" }, 403);
 
     const [client, server] = Object.values(new WebSocketPair());
     if (!client || !server) return json({ error: "websocket_unavailable" }, 500);
-    const attachment: HyperSightSocketAttachment = {
+    const attachment: BlockDashboardSocketAttachment = {
       ...identity.data,
       connectionId: crypto.randomUUID(),
       connectedAt: new Date().toISOString(),
@@ -409,16 +409,16 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  private consumeSocketTicket(identity: HyperSightSocketIdentity): boolean {
+  private consumeSocketTicket(identity: BlockDashboardSocketIdentity): boolean {
     const now = Math.floor(Date.now() / 1_000);
     if (identity.ticketExpiresAt <= now) return false;
     return this.state.storage.transactionSync(() => {
       this.state.storage.sql.exec(
-        `DELETE FROM hypersight_socket_ticket_receipts WHERE expires_at < ?`,
+        `DELETE FROM block_dashboard_socket_ticket_receipts WHERE expires_at < ?`,
         now - 300,
       );
       return this.state.storage.sql.exec<{ ticket_id: string }>(
-        `INSERT OR IGNORE INTO hypersight_socket_ticket_receipts
+        `INSERT OR IGNORE INTO block_dashboard_socket_ticket_receipts
            (ticket_id, user_id, expires_at, consumed_at)
          VALUES (?, ?, ?, ?) RETURNING ticket_id`,
         identity.ticketId,
@@ -429,9 +429,9 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     });
   }
 
-  private readSocketAttachment(socket: WebSocket): HyperSightSocketAttachment | null {
+  private readSocketAttachment(socket: WebSocket): BlockDashboardSocketAttachment | null {
     try {
-      const parsed = HyperSightSocketAttachmentSchema.safeParse(socket.deserializeAttachment());
+      const parsed = BlockDashboardSocketAttachmentSchema.safeParse(socket.deserializeAttachment());
       return parsed.success ? parsed.data : null;
     } catch {
       return null;
@@ -439,7 +439,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
   }
 
   private async authorizeViewer(
-    identity: Pick<HyperSightSocketIdentity, "sessionId" | "userId" | "workspaceId" | "workstreamId" | "blockId">,
+    identity: Pick<BlockDashboardSocketIdentity, "sessionId" | "userId" | "workspaceId" | "workstreamId" | "blockId">,
   ): Promise<boolean> {
     const session = await this.env.DB.prepare(
       `SELECT 1 FROM sessions session
@@ -471,7 +471,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       identity.workspaceId,
       workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, identity.workstreamId),
     );
-    return parent.authorizeHyperSightBlockViewer({
+    return parent.authorizeBlockDashboardBlockViewer({
       workspaceId: identity.workspaceId,
       workstreamId: identity.workstreamId,
       blockId: identity.blockId,
@@ -479,7 +479,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     });
   }
 
-  private latestRun(): HyperSightBlockRun | null {
+  private latestRun(): BlockDashboardBlockRun | null {
     const row = this.state.storage.sql.exec<{
       dispatch_json: string;
       state: "queued" | "running" | "completed" | "failed";
@@ -494,9 +494,9 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     if (row.terminal_outcome_json) {
       return TerminalOutcomeSchema.parse(JSON.parse(row.terminal_outcome_json)).run;
     }
-    const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+    const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
     const checkpoint = this.streamCheckpoint(dispatch.blockRunId);
-    return HyperSightBlockRunSchema.parse({
+    return BlockDashboardBlockRunSchema.parse({
       id: dispatch.blockRunId,
       blockId: dispatch.blockId,
       configurationVersionId: dispatch.configurationVersionId,
@@ -519,7 +519,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
   }
 
   private async recordStreamEvent(
-    dispatch: HyperSightBlockDispatch,
+    dispatch: BlockDashboardBlockDispatch,
     rawEvent: Record<string, unknown>,
   ): Promise<void> {
     const current = this.streamCheckpoint(dispatch.blockRunId);
@@ -559,11 +559,11 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
   }
 
   private async broadcastStreamCheckpoint(
-    dispatch: HyperSightBlockDispatch,
+    dispatch: BlockDashboardBlockDispatch,
     checkpoint: ActiveStreamCheckpoint | null,
   ): Promise<void> {
-    const payload = JSON.stringify(HyperSightBlockSocketEventSchema.parse({
-      type: "hypersight_block_stream_checkpoint",
+    const payload = JSON.stringify(BlockDashboardBlockSocketEventSchema.parse({
+      type: "block_dashboard_block_stream_checkpoint",
       occurredAt: new Date().toISOString(),
       blockId: dispatch.blockId,
       blockRunId: dispatch.blockRunId,
@@ -583,8 +583,8 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     if (!run || (expectedBlockRunId && run.id !== expectedBlockRunId)) return;
     const sockets = this.state.getWebSockets();
     if (sockets.length === 0) return;
-    const event = JSON.stringify(HyperSightBlockSocketEventSchema.parse({
-      type: "hypersight_block_run_updated",
+    const event = JSON.stringify(BlockDashboardBlockSocketEventSchema.parse({
+      type: "block_dashboard_block_run_updated",
       occurredAt: new Date().toISOString(),
       blockId: run.blockId,
       run,
@@ -634,7 +634,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     this.publicationQueue.enqueueCheckpoint(phase, broadcast);
   }
 
-  private ensureIdentity(dispatch: HyperSightBlockIdentityInput): void {
+  private ensureIdentity(dispatch: BlockDashboardBlockIdentityInput): void {
     const existing = this.state.storage.sql.exec<{
       workspace_id: string;
       workstream_id: string;
@@ -642,19 +642,19 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       region: string;
     }>(
       `SELECT workspace_id, workstream_id, block_id, region
-         FROM hypersight_block_identity WHERE id = 1`,
+         FROM block_dashboard_block_identity WHERE id = 1`,
     ).toArray()[0];
     if (existing) {
       if (existing.workspace_id !== dispatch.workspaceId
         || existing.workstream_id !== dispatch.workstreamId
         || existing.block_id !== dispatch.blockId
         || existing.region !== dispatch.region) {
-        throw new Error("hypersight_block_agent_identity_mismatch");
+        throw new Error("block_dashboard_block_agent_identity_mismatch");
       }
       return;
     }
     this.state.storage.sql.exec(
-      `INSERT INTO hypersight_block_identity
+      `INSERT INTO block_dashboard_block_identity
          (id, workspace_id, workstream_id, block_id, region, created_at)
        VALUES (1, ?, ?, ?, ?, ?)`,
       dispatch.workspaceId,
@@ -665,7 +665,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     );
   }
 
-  private enqueue(dispatch: HyperSightBlockDispatch): void {
+  private enqueue(dispatch: BlockDashboardBlockDispatch): void {
     const now = Date.now();
     const dispatchJson = JSON.stringify(dispatch);
     const existing = this.state.storage.sql.exec<{ dispatch_json: string }>(
@@ -674,7 +674,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     ).toArray()[0];
     if (existing) {
       if (existing.dispatch_json !== dispatchJson) {
-        throw new Error("hypersight_block_dispatch_idempotency_conflict");
+        throw new Error("block_dashboard_block_dispatch_idempotency_conflict");
       }
       return;
     }
@@ -687,7 +687,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
           WHERE freshness.id = 1`,
       ).toArray()[0];
       const freshestDispatch = freshestKnown
-        ? HyperSightBlockDispatchSchema.parse(JSON.parse(freshestKnown.dispatch_json))
+        ? BlockDashboardBlockDispatchSchema.parse(JSON.parse(freshestKnown.dispatch_json))
         : null;
       if (freshestDispatch && compareDispatchFreshness(dispatch, freshestDispatch) < 0) {
         const outcome = supersededOutcome(dispatch, now);
@@ -696,7 +696,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
              (block_run_id, dispatch_json, state, attempt, available_at, started_at,
               completed_at, last_error_code, terminal_outcome_json, settled_at,
               last_settlement_error_code, created_at, updated_at)
-           VALUES (?, ?, 'completed', 0, ?, NULL, ?, 'hypersight_run_superseded', ?,
+           VALUES (?, ?, 'completed', 0, ?, NULL, ?, 'block_dashboard_run_superseded', ?,
                    NULL, NULL, ?, ?)`,
           dispatch.blockRunId,
           dispatchJson,
@@ -714,12 +714,12 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
           ORDER BY created_at, block_run_id`,
       ).toArray();
       for (const row of obsolete) {
-        const previous = HyperSightBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+        const previous = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
         const outcome = supersededOutcome(previous, now);
         this.state.storage.sql.exec(
           `UPDATE agent_run_dispatches
               SET state = 'completed', terminal_outcome_json = ?, available_at = ?, completed_at = ?,
-                  last_error_code = 'hypersight_run_superseded', updated_at = ?
+                  last_error_code = 'block_dashboard_run_superseded', updated_at = ?
             WHERE block_run_id = ? AND state = 'queued' AND terminal_outcome_json IS NULL`,
           JSON.stringify(outcome),
           now,
@@ -761,7 +761,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     if (this.agentDrain.active) return;
     const drain = this.agentDrain.resume(
       () => this.drainRunQueue().catch((error: unknown) => {
-        logWarn(this.env, "hypersight_block_agent_drain_failed", {
+        logWarn(this.env, "block_dashboard_block_agent_drain_failed", {
           reason: error instanceof Error ? error.message : "unknown",
         });
       }),
@@ -793,7 +793,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
         Date.now(),
       ).toArray()[0];
       if (row) {
-        const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
+        const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(row.dispatch_json));
         this.state.storage.sql.exec(
           `UPDATE agent_run_dispatches SET state = 'running', attempt = attempt + 1,
              started_at = COALESCE(started_at, ?), updated_at = ?
@@ -810,7 +810,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
         } catch (error) {
           const code = error instanceof Error && "code" in error && typeof error.code === "string"
             ? error.code
-            : "hypersight_block_execution_failed";
+            : "block_dashboard_block_execution_failed";
           this.state.storage.sql.exec(
             `UPDATE agent_run_dispatches SET state = 'running', available_at = ?,
                last_error_code = ?, updated_at = ? WHERE block_run_id = ?
@@ -820,7 +820,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
             Date.now(),
             row.block_run_id,
           );
-          logWarn(this.env, "hypersight_block_agent_run_deferred", {
+          logWarn(this.env, "block_dashboard_block_agent_run_deferred", {
             workspace_id: dispatch.workspaceId,
             workstream_id: dispatch.workstreamId,
             block_id: dispatch.blockId,
@@ -867,7 +867,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
         Date.now(),
       ).toArray()[0];
       if (!settlement?.terminal_outcome_json) return;
-      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(settlement.dispatch_json));
+      const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(settlement.dispatch_json));
       this.state.storage.sql.exec(
         `UPDATE agent_run_dispatches SET attempt = attempt + 1, updated_at = ?
           WHERE block_run_id = ? AND terminal_outcome_json IS NOT NULL AND settled_at IS NULL`,
@@ -883,7 +883,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
   }
 
   private async execute(
-    dispatch: HyperSightBlockDispatch,
+    dispatch: BlockDashboardBlockDispatch,
     row: DispatchRow,
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
     if (row.terminal_outcome_json) {
@@ -905,7 +905,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       limit: 25,
     });
     const attemptId = crypto.randomUUID();
-    const owner = `hypersight-block-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;
+    const owner = `block-dashboard-agent:${dispatch.blockId}:${dispatch.blockRunId}:${attemptId}`;
     const claim = await claimHarnessAttempt(executionEnv.DB, input, {
       attemptId,
       owner,
@@ -964,7 +964,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       ? "completed"
       : outcome.status === "stopped" ? "stopped" : "failed";
     const error = outcome.error ?? (outcome.status === "needs_input"
-      ? { code: "hypersight_input_unavailable", message: "HyperSight cannot pause for input" }
+      ? { code: "block_dashboard_input_unavailable", message: "HyperSight cannot pause for input" }
       : undefined);
     await terminalizeHarnessAttempt(executionEnv.DB, input, claim.lease, {
       status,
@@ -975,7 +975,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     return this.persistAndSettle(dispatch, { run: terminal });
   }
 
-  private async initializeRuntimeRun(env: Env, dispatch: HyperSightBlockDispatch): Promise<WorkstreamWorkflowInput> {
+  private async initializeRuntimeRun(env: Env, dispatch: BlockDashboardBlockDispatch): Promise<WorkstreamWorkflowInput> {
     const fence = dispatch.contextFence.throughSequence > 0
       ? await env.DB.prepare(
         `SELECT id FROM messages WHERE workspace_id = ? AND workstream_id = ?
@@ -985,7 +985,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       : null;
     if (dispatch.contextFence.throughSequence > 0 && !fence) {
       throw Object.assign(new Error("The frozen HyperSight transcript boundary is unavailable"), {
-        code: "hypersight_context_fence_not_found",
+        code: "block_dashboard_context_fence_not_found",
       });
     }
     const input = WorkstreamWorkflowInputSchema.parse({
@@ -1000,16 +1000,16 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       automationSubscriptionId: null,
       activityId: null,
       executionPrincipal: { type: "workspace", workspaceId: dispatch.workspaceId },
-      reason: "hypersight_block",
+      reason: "block_dashboard_block",
     });
-    const { model } = await resolveAgentModelRouting(env, "hypersight", {
+    const { model } = await resolveAgentModelRouting(env, "block_dashboard", {
       workspaceId: dispatch.workspaceId,
       workstreamId: dispatch.workstreamId,
     });
     try {
       await env.DB.batch([
         env.DB.prepare(
-          `INSERT OR IGNORE INTO hypersight_configuration_versions
+          `INSERT OR IGNORE INTO block_dashboard_configuration_versions
              (id, workspace_id, workstream_id, version_number, blocks_json,
               created_by_user_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -1026,7 +1026,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
           `INSERT INTO harness_runs
              (id, workspace_id, workstream_id, origin, execution_principal_json,
               status, model, created_at)
-           VALUES (?, ?, ?, 'hypersight_block', ?, 'scheduled', ?, ?)`,
+           VALUES (?, ?, ?, 'block_dashboard_block', ?, 'scheduled', ?, ?)`,
         ).bind(
           dispatch.harnessRunId,
           dispatch.workspaceId,
@@ -1036,7 +1036,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
           dispatch.createdAt,
         ),
         env.DB.prepare(
-          `INSERT INTO hypersight_block_runs
+          `INSERT INTO block_dashboard_block_runs
              (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
               trigger_sequence, harness_run_id, status, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
@@ -1055,7 +1055,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     } catch (error) {
       if (!(error instanceof Error) || !/UNIQUE|constraint/iu.test(error.message)) throw error;
       const existing = await env.DB.prepare(
-        `SELECT id FROM hypersight_block_runs WHERE id = ? AND harness_run_id = ?
+        `SELECT id FROM block_dashboard_block_runs WHERE id = ? AND harness_run_id = ?
           AND workspace_id = ? AND workstream_id = ? AND block_id = ?`,
       ).bind(
         dispatch.blockRunId,
@@ -1064,20 +1064,20 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
         dispatch.workstreamId,
         dispatch.blockId,
       ).first<{ id: string }>();
-      if (!existing) throw new Error("hypersight_runtime_initialization_conflict", { cause: error });
+      if (!existing) throw new Error("block_dashboard_runtime_initialization_conflict", { cause: error });
     }
     return input;
   }
 
   private async updateRuntimeBlockRun(
     env: Env,
-    dispatch: HyperSightBlockDispatch,
-    status: HyperSightBlockRun["status"],
+    dispatch: BlockDashboardBlockDispatch,
+    status: BlockDashboardBlockRun["status"],
     error?: { code: string; message: string },
-  ): Promise<HyperSightBlockRun> {
+  ): Promise<BlockDashboardBlockRun> {
     const now = new Date().toISOString();
     await env.DB.prepare(
-      `UPDATE hypersight_block_runs SET status = ?, error_json = ?,
+      `UPDATE block_dashboard_block_runs SET status = ?, error_json = ?,
          started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END,
          completed_at = CASE WHEN ? IN ('completed', 'failed', 'stopped') THEN ? ELSE completed_at END
        WHERE id = ? AND harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
@@ -1096,11 +1096,11 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
     return this.readRuntimeBlockRun(env, dispatch);
   }
 
-  private async readRuntimeBlockRun(env: Env, dispatch: HyperSightBlockDispatch): Promise<HyperSightBlockRun> {
+  private async readRuntimeBlockRun(env: Env, dispatch: BlockDashboardBlockDispatch): Promise<BlockDashboardBlockRun> {
     const row = await env.DB.prepare(
       `SELECT id, block_id, configuration_version_id, trigger_sequence, status,
               markdown, error_json, created_at, started_at, completed_at
-         FROM hypersight_block_runs WHERE id = ? AND harness_run_id = ?
+         FROM block_dashboard_block_runs WHERE id = ? AND harness_run_id = ?
           AND workspace_id = ? AND workstream_id = ?`,
     ).bind(
       dispatch.blockRunId,
@@ -1108,12 +1108,12 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       dispatch.workspaceId,
       dispatch.workstreamId,
     ).first<RuntimeBlockRow>();
-    if (!row) throw new Error("hypersight_runtime_block_run_missing");
+    if (!row) throw new Error("block_dashboard_runtime_block_run_missing");
     return blockRunFromRow(row);
   }
 
   private async persistAndSettle(
-    dispatch: HyperSightBlockDispatch,
+    dispatch: BlockDashboardBlockDispatch,
     outcome: TerminalOutcome,
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
     const parsed = TerminalOutcomeSchema.parse(outcome);
@@ -1149,7 +1149,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
   }
 
   private async settleWithRetry(
-    dispatch: HyperSightBlockDispatch,
+    dispatch: BlockDashboardBlockDispatch,
     outcome: TerminalOutcome,
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }> {
     try {
@@ -1174,7 +1174,7 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
         `SELECT attempt FROM agent_run_dispatches WHERE block_run_id = ?`,
         dispatch.blockRunId,
       ).toArray()[0]?.attempt ?? 1;
-      const code = error instanceof Error ? error.message : "hypersight_result_settlement_failed";
+      const code = error instanceof Error ? error.message : "block_dashboard_result_settlement_failed";
       const retryAt = Date.now() + durableAgentRetryDelay(attempt);
       this.state.storage.sql.exec(
         `UPDATE agent_run_dispatches SET state = ?, available_at = ?,
@@ -1195,8 +1195,8 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
   }
 
   private async sendResult(
-    dispatch: HyperSightBlockDispatch,
-    run: HyperSightBlockRun,
+    dispatch: BlockDashboardBlockDispatch,
+    run: BlockDashboardBlockRun,
     sourceVersion: number,
   ): Promise<void> {
     const stub = await durableObjectStubForWorkspace(
@@ -1205,17 +1205,17 @@ export class HyperSightBlockAgent extends DurableObject<Env> {
       dispatch.workspaceId,
       workstreamDOName(dispatch.region, dispatch.workspaceId, dispatch.workstreamId),
     );
-    const response = await stub.controlHyperSight(HyperSightControlRequestSchema.parse({
+    const response = await stub.controlBlockDashboard(BlockDashboardControlRequestSchema.parse({
       operation: "block_result",
       workspaceId: dispatch.workspaceId,
       workstreamId: dispatch.workstreamId,
       blockId: dispatch.blockId,
       sourceVersion,
-      payloadHash: hyperSightBlockResultHash(run),
+      payloadHash: blockDashboardBlockResultHash(run),
       run,
     }));
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`hypersight_result_rejected:${response.status}`);
+      throw new Error(`block_dashboard_result_rejected:${response.status}`);
     }
   }
 

@@ -24,8 +24,8 @@ import { createTestEnv } from "./helpers/cloudflare-test";
  * recorded as one rather than stored as a completed empty block.
  */
 const {
-  hyperSightSubmissionPlugin,
-  hyperSightBlockOutcome,
+  blockDashboardSubmissionPlugin,
+  blockDashboardBlockOutcome,
   resolveHarnessToolReceiptPolicy,
   createAvalonTools,
   createWorkstreamCorePlugins,
@@ -60,7 +60,7 @@ function coreSurface(extra: HarnessPlugin[] = []) {
 }
 
 const submission = (state: { markdown: string | null }) =>
-  hyperSightSubmissionPlugin(state, async () => {});
+  blockDashboardSubmissionPlugin(state, async () => {});
 
 describe("root-run limits", () => {
   it("uses the expanded root policy for ordinary and HyperSight runs", () => {
@@ -118,9 +118,9 @@ describe("what the frozen surface will authorize", () => {
   it("registers the submission plugin in the frozen surface rather than only in Bind's list", () => {
     // Structural, because no test can start a real run: the assertion that
     // matters is which array the plugin is pushed into.
-    expect(integrationsSource).toContain("harnessTools.corePlugins.push(hyperSightSubmissionPlugin(");
+    expect(integrationsSource).toContain("harnessTools.corePlugins.push(blockDashboardSubmissionPlugin(");
     expect(integrationsSource).toContain("corePlugins: harnessTools.corePlugins,");
-    expect(integrationsSource).not.toContain("[...harnessTools.corePlugins, hyperSightSubmissionPlugin(");
+    expect(integrationsSource).not.toContain("[...harnessTools.corePlugins, blockDashboardSubmissionPlugin(");
   });
 });
 
@@ -128,7 +128,7 @@ describe("the HyperSight submission tool", () => {
   it("makes the Markdown durable before it acknowledges the call", async () => {
     const state: { markdown: string | null } = { markdown: null };
     const persisted: string[] = [];
-    const [tool] = hyperSightSubmissionPlugin(state, async (markdown) => {
+    const [tool] = blockDashboardSubmissionPlugin(state, async (markdown) => {
       // Ordering is the point: the in-memory copy is a convenience, the row is
       // the record, and a retried attempt only ever sees the row.
       expect(state.markdown).toBeNull();
@@ -144,8 +144,8 @@ describe("the HyperSight submission tool", () => {
 
   it("fails the call when the block cannot be persisted, instead of reporting success", async () => {
     const state: { markdown: string | null } = { markdown: null };
-    const [tool] = hyperSightSubmissionPlugin(state, async () => {
-      throw new Error("hypersight_block_ownership_lost");
+    const [tool] = blockDashboardSubmissionPlugin(state, async () => {
+      throw new Error("block_dashboard_block_ownership_lost");
     }).tools;
 
     await expect(tool!.execute({ markdown: "# Block" }, {} as never)).rejects.toThrow(/ownership_lost/u);
@@ -173,16 +173,16 @@ describe("the HyperSight submission tool", () => {
       plugin.shortWireName!,
       plugin.tools[0]!.definition.name,
     );
-    expect(wireName).toBe("hypersight_submit_block");
+    expect(wireName).toBe("block_dashboard_submit_block");
     // Both the standing instruction and the one-time nudge name that, not the
     // bare tool name — the nudge fires once, so naming a tool that is not on
     // the list spends the only retry.
     const prose = integrationsSource.slice(
-      integrationsSource.indexOf("const HYPERSIGHT_PLUGIN_ID"),
+      integrationsSource.indexOf("const BLOCK_DASHBOARD_PLUGIN_ID"),
       integrationsSource.indexOf("beforeToolCall: composeBeforeToolCallHooks("),
     );
-    expect(prose).not.toMatch(/\$\{HYPERSIGHT_SUBMIT_TOOL_NAME\}/u);
-    expect(prose).toContain("${HYPERSIGHT_SUBMIT_WIRE_NAME}");
+    expect(prose).not.toMatch(/\$\{BLOCK_DASHBOARD_SUBMIT_TOOL_NAME\}/u);
+    expect(prose).toContain("${BLOCK_DASHBOARD_SUBMIT_WIRE_NAME}");
   });
 });
 
@@ -191,30 +191,30 @@ describe("how a HyperSight run settles", () => {
     // Bind is satisfied — the model stopped of its own accord — but there is no
     // block. Recording this as `completed` leaves a panel that renders nothing
     // and explains nothing, which is the hardest failure to notice.
-    expect(hyperSightBlockOutcome({ status: "completed" }, null)).toEqual({
+    expect(blockDashboardBlockOutcome({ status: "completed" }, null)).toEqual({
       status: "failed",
       error: {
-        code: "hypersight_block_not_submitted",
+        code: "block_dashboard_block_not_submitted",
         message: "The run ended without submitting a block",
       },
     });
   });
 
   it("completes a run that submitted one", () => {
-    expect(hyperSightBlockOutcome({ status: "completed" }, "# Block")).toEqual({ status: "completed" });
+    expect(blockDashboardBlockOutcome({ status: "completed" }, "# Block")).toEqual({ status: "completed" });
   });
 
   it("fails a run that asked for input, which HyperSight cannot give", () => {
-    expect(hyperSightBlockOutcome({ status: "needs_input" }, null)).toEqual({
+    expect(blockDashboardBlockOutcome({ status: "needs_input" }, null)).toEqual({
       status: "failed",
-      error: { code: "hypersight_input_unavailable", message: "HyperSight cannot pause for input" },
+      error: { code: "block_dashboard_input_unavailable", message: "HyperSight cannot pause for input" },
     });
   });
 
   it("keeps a stopped run stopped and keeps its reason with it", () => {
-    expect(hyperSightBlockOutcome({ status: "stopped" }, null)).toEqual({ status: "stopped" });
+    expect(blockDashboardBlockOutcome({ status: "stopped" }, null)).toEqual({ status: "stopped" });
     expect(
-      hyperSightBlockOutcome(
+      blockDashboardBlockOutcome(
         { status: "stopped", error: { code: "stopped_by_user", message: "Stopped" } },
         null,
       ),
@@ -223,7 +223,7 @@ describe("how a HyperSight run settles", () => {
 
   it("carries a failure's own reason through", () => {
     expect(
-      hyperSightBlockOutcome(
+      blockDashboardBlockOutcome(
         { status: "failed", error: { code: "limit_reached", message: "Out of iterations" } },
         null,
       ),

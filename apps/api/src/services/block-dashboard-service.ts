@@ -1,18 +1,18 @@
 import {
-  HyperSightBlockRunSchema,
-  HyperSightPreferenceSchema,
-  HyperSightSchema,
-  type HyperSight,
-  type HyperSightBlockRun,
-  type HyperSightPreference,
-  type UpdateHyperSightPreferenceRequest,
-  type UpdateHyperSightRequest,
+  BlockDashboardBlockRunSchema,
+  BlockDashboardPreferenceSchema,
+  BlockDashboardSchema,
+  type BlockDashboard,
+  type BlockDashboardBlockRun,
+  type BlockDashboardPreference,
+  type UpdateBlockDashboardPreferenceRequest,
+  type UpdateBlockDashboardRequest,
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 
-import { HyperSightControlRequestSchema } from "../durable-objects/hypersight-protocol";
-import type { HyperSightContextFence } from "../durable-objects/hypersight-protocol";
+import { BlockDashboardControlRequestSchema } from "../durable-objects/block-dashboard-protocol";
+import type { BlockDashboardContextFence } from "../durable-objects/block-dashboard-protocol";
 import { workstreamDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -25,19 +25,19 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
-const HyperSightResponseSchema = z.object({ hypersight: HyperSightSchema }).passthrough();
-const HyperSightPreferenceResponseSchema = z.object({
-  preference: HyperSightPreferenceSchema,
+const BlockDashboardResponseSchema = z.object({ blockDashboard: BlockDashboardSchema }).passthrough();
+const BlockDashboardPreferenceResponseSchema = z.object({
+  preference: BlockDashboardPreferenceSchema,
 }).strict();
-const HyperSightRunsResponseSchema = z.object({
-  runs: z.array(HyperSightBlockRunSchema),
+const BlockDashboardRunsResponseSchema = z.object({
+  runs: z.array(BlockDashboardBlockRunSchema),
 }).strict();
 
-async function hypersightControl(
+async function blockDashboardControl(
   env: Env,
   workspaceId: string,
   workstreamId: string,
-  body: z.input<typeof HyperSightControlRequestSchema>,
+  body: z.input<typeof BlockDashboardControlRequestSchema>,
 ): Promise<unknown> {
   const stub = await durableObjectStubForWorkspace(
     env,
@@ -45,11 +45,11 @@ async function hypersightControl(
     workspaceId,
     workstreamDOName(env.AVALON_REGION, workspaceId, workstreamId),
   );
-  const response = await stub.controlHyperSight(HyperSightControlRequestSchema.parse(body));
+  const response = await stub.controlBlockDashboard(BlockDashboardControlRequestSchema.parse(body));
   const payload = rpcResultBody(response) as { error?: unknown } | null;
   if (response.status < 200 || response.status >= 300) {
-    const code = typeof payload?.error === "string" ? payload.error : "hypersight_control_unavailable";
-    if (response.status === 409 && code === "hypersight_version_conflict") {
+    const code = typeof payload?.error === "string" ? payload.error : "block_dashboard_control_unavailable";
+    if (response.status === 409 && code === "block_dashboard_version_conflict") {
       throw new ApiError(409, code, "HyperSight changed in another session. Reload and try again.");
     }
     const status = [400, 401, 403, 404, 409, 422, 429, 503].includes(response.status)
@@ -60,17 +60,17 @@ async function hypersightControl(
   return payload;
 }
 
-export async function loadHyperSight(
+export async function loadBlockDashboard(
   env: Env,
   workspaceId: string,
   workstreamId: string,
-): Promise<HyperSight> {
-  const payload = await hypersightControl(env, workspaceId, workstreamId, {
+): Promise<BlockDashboard> {
+  const payload = await blockDashboardControl(env, workspaceId, workstreamId, {
     operation: "get",
     workspaceId,
     workstreamId,
   });
-  return HyperSightResponseSchema.parse(payload).hypersight;
+  return BlockDashboardResponseSchema.parse(payload).blockDashboard;
 }
 
 /** Apply the same visibility rule as the work-stream product routes. */
@@ -90,31 +90,31 @@ async function requireVisibleWorkstream(env: Env, auth: AuthContext, workstreamI
   if (!visible) throw new ApiError(404, "workstream_not_found", "Work stream not found");
 }
 
-export class HyperSightService {
+export class BlockDashboardService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
 
-  async get(workstreamId: string): Promise<HyperSight> {
+  async get(workstreamId: string): Promise<BlockDashboard> {
     await requireVisibleWorkstream(this.env, this.auth, workstreamId);
-    return loadHyperSight(this.env, this.auth.workspaceId, workstreamId);
+    return loadBlockDashboard(this.env, this.auth.workspaceId, workstreamId);
   }
 
-  async getPreference(workstreamId: string): Promise<HyperSightPreference> {
+  async getPreference(workstreamId: string): Promise<BlockDashboardPreference> {
     await requireVisibleWorkstream(this.env, this.auth, workstreamId);
-    const payload = await hypersightControl(this.env, this.auth.workspaceId, workstreamId, {
+    const payload = await blockDashboardControl(this.env, this.auth.workspaceId, workstreamId, {
       operation: "get_preference",
       workspaceId: this.auth.workspaceId,
       workstreamId,
       userId: this.auth.userId,
     });
-    return HyperSightPreferenceResponseSchema.parse(payload).preference;
+    return BlockDashboardPreferenceResponseSchema.parse(payload).preference;
   }
 
   async updatePreference(
     workstreamId: string,
-    input: UpdateHyperSightPreferenceRequest,
-  ): Promise<HyperSightPreference> {
+    input: UpdateBlockDashboardPreferenceRequest,
+  ): Promise<BlockDashboardPreference> {
     await requireVisibleWorkstream(this.env, this.auth, workstreamId);
-    const payload = await hypersightControl(this.env, this.auth.workspaceId, workstreamId, {
+    const payload = await blockDashboardControl(this.env, this.auth.workspaceId, workstreamId, {
       operation: "update_preference",
       workspaceId: this.auth.workspaceId,
       workstreamId,
@@ -122,14 +122,14 @@ export class HyperSightService {
       visible: input.visible,
       updatedAt: nowIso(),
     });
-    return HyperSightPreferenceResponseSchema.parse(payload).preference;
+    return BlockDashboardPreferenceResponseSchema.parse(payload).preference;
   }
 
-  async update(workstreamId: string, input: UpdateHyperSightRequest): Promise<HyperSight> {
+  async update(workstreamId: string, input: UpdateBlockDashboardRequest): Promise<BlockDashboard> {
     await requireVisibleWorkstream(this.env, this.auth, workstreamId);
-    const current = await loadHyperSight(this.env, this.auth.workspaceId, workstreamId);
+    const current = await loadBlockDashboard(this.env, this.auth.workspaceId, workstreamId);
     const configurationVersionId = newId();
-    const payload = await hypersightControl(this.env, this.auth.workspaceId, workstreamId, {
+    const payload = await blockDashboardControl(this.env, this.auth.workspaceId, workstreamId, {
       operation: "update_configuration",
       workspaceId: this.auth.workspaceId,
       workstreamId,
@@ -138,7 +138,7 @@ export class HyperSightService {
       configurationVersionId,
       createdAt: nowIso(),
     });
-    const hypersight = HyperSightResponseSchema.parse(payload).hypersight;
+    const blockDashboard = BlockDashboardResponseSchema.parse(payload).blockDashboard;
     const previousBlocks = current.blocks;
     const previousIds = previousBlocks.map((block) => block.id);
     const nextIds = input.blocks.map((block) => block.id);
@@ -162,23 +162,23 @@ export class HyperSightService {
       operationId: configurationVersionId,
       eventId: configurationVersionId,
     }).catch(() => undefined);
-    return hypersight;
+    return blockDashboard;
   }
 }
 
-export async function launchHyperSightRefresh(
+export async function launchBlockDashboardRefresh(
   env: Env,
   workspaceId: string,
   workstreamId: string,
   triggerSequence: number,
-  contextFence: HyperSightContextFence,
-): Promise<HyperSightBlockRun[]> {
-  const payload = await hypersightControl(env, workspaceId, workstreamId, {
+  contextFence: BlockDashboardContextFence,
+): Promise<BlockDashboardBlockRun[]> {
+  const payload = await blockDashboardControl(env, workspaceId, workstreamId, {
     operation: "schedule_refresh",
     workspaceId,
     workstreamId,
     triggerSequence,
     contextFence,
   });
-  return HyperSightRunsResponseSchema.parse(payload).runs;
+  return BlockDashboardRunsResponseSchema.parse(payload).runs;
 }

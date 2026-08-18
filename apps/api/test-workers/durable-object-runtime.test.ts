@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { env } from "cloudflare:workers";
-import type { HyperSightBlockRun } from "@avalon/contracts";
+import type { BlockDashboardBlockRun } from "@avalon/contracts";
 import {
   evictDurableObject,
   listDurableObjectIds,
@@ -12,13 +12,13 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
-import { HyperSightBlockAgent } from "../src/durable-objects/hypersight-block-agent";
+import { BlockDashboardAgent } from "../src/durable-objects/block-dashboard-agent";
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import {
   substreamAgentName,
-  hyperSightBlockAgentName,
+  blockDashboardAgentName,
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
@@ -27,17 +27,17 @@ import {
   type WorkstreamRegionalEffect,
 } from "../src/durable-objects/workstream-regional-effect";
 import {
-  HyperSightBlockDispatchSchema,
-  hyperSightBlockResultHash,
-  type HyperSightBlockDispatch,
-} from "../src/durable-objects/hypersight-protocol";
+  BlockDashboardBlockDispatchSchema,
+  blockDashboardBlockResultHash,
+  type BlockDashboardBlockDispatch,
+} from "../src/durable-objects/block-dashboard-protocol";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000101";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-000000000102";
 const CHILD_SUBSTREAM_ID = "00000000-0000-7000-8000-000000000103";
 const USER_ID = "00000000-0000-7000-8000-000000000104";
 const SESSION_ID = "runtime-test-session";
-const HYPERSIGHT_BLOCK_ID = "00000000-0000-7000-8000-000000000109";
+const BLOCK_DASHBOARD_BLOCK_ID = "00000000-0000-7000-8000-000000000109";
 
 beforeEach(async () => {
   await reset();
@@ -133,14 +133,14 @@ function effectEnvelope(
   };
 }
 
-type TestableHyperSightBlockAgent = {
+type TestableBlockDashboardAgent = {
   recordStreamEvent(
-    dispatch: HyperSightBlockDispatch,
+    dispatch: BlockDashboardBlockDispatch,
     event: Record<string, unknown>,
   ): Promise<void>;
   persistAndSettle(
-    dispatch: HyperSightBlockDispatch,
-    outcome: { run: HyperSightBlockRun },
+    dispatch: BlockDashboardBlockDispatch,
+    outcome: { run: BlockDashboardBlockRun },
   ): Promise<{ failed: boolean; errorCode: string | null; retryAt: number | null }>;
 };
 
@@ -149,7 +149,7 @@ type TestableSubstreamAgent = {
 };
 
 type TestableWorkstreamDO = {
-  deliverHyperSightDispatches(limit?: number): Promise<void>;
+  deliverBlockDashboardDispatches(limit?: number): Promise<void>;
 };
 
 async function fetchAndDrain(
@@ -227,17 +227,17 @@ describe("Durable Objects in the Workers runtime", () => {
         ],
       },
       {
-        namespace: env.HYPERSIGHT_BLOCK_AGENTS,
-        name: hyperSightBlockAgentName(
+        namespace: env.BLOCK_DASHBOARD_AGENTS,
+        name: blockDashboardAgentName(
           "global",
           WORKSPACE_ID,
           WORKSTREAM_ID,
-          HYPERSIGHT_BLOCK_ID,
+          BLOCK_DASHBOARD_BLOCK_ID,
         ),
-        constructor: HyperSightBlockAgent,
+        constructor: BlockDashboardAgent,
         tables: [
           "_sql_schema_migrations",
-          "hypersight_block_identity",
+          "block_dashboard_block_identity",
           "agent_run_dispatches",
           "latest_dispatch_freshness",
         ],
@@ -251,9 +251,9 @@ describe("Durable Objects in the Workers runtime", () => {
           "substream_directory",
           "durable_outbox",
           "workstream_socket_ticket_receipts",
-          "hypersight_configuration_versions",
-          "hypersight_dispatch_outbox",
-          "hypersight_source_refresh_outbox",
+          "block_dashboard_configuration_versions",
+          "block_dashboard_dispatch_outbox",
+          "block_dashboard_source_refresh_outbox",
         ],
       },
       {
@@ -413,7 +413,7 @@ describe("Durable Objects in the Workers runtime", () => {
     const requestRefresh = async (triggerSequence: number): Promise<void> => {
       const response = await fetchAndDrain(
         stub,
-        "https://substream.test/internal/hypersight-refresh-request",
+        "https://substream.test/internal/block-dashboard-refresh-request",
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -425,7 +425,7 @@ describe("Durable Objects in the Workers runtime", () => {
     await requestRefresh(3);
     await runInDurableObject(stub, (_instance, state) => {
       const pending = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
-        `SELECT payload_json FROM due_work WHERE job_key = 'hypersight_refresh'`,
+        `SELECT payload_json FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
       ).one().payload_json) as { contextFence: { throughSequence: number } };
       expect(pending.contextFence.throughSequence).toBe(1);
       state.storage.sql.exec(
@@ -436,7 +436,7 @@ describe("Durable Objects in the Workers runtime", () => {
     await requestRefresh(4);
     await runInDurableObject(stub, (_instance, state) => {
       const pending = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
-        `SELECT payload_json FROM due_work WHERE job_key = 'hypersight_refresh'`,
+        `SELECT payload_json FROM due_work WHERE job_key = 'block_dashboard_refresh'`,
       ).one().payload_json) as { contextFence: { throughSequence: number } };
       expect(pending.contextFence.throughSequence).toBe(3);
     });
@@ -444,37 +444,37 @@ describe("Durable Objects in the Workers runtime", () => {
 
   it("gives each stable HyperSight block an isolated SQLite dispatch ledger that survives eviction", async () => {
     const secondBlockId = "00000000-0000-7000-8000-000000000110";
-    const first = env.HYPERSIGHT_BLOCK_AGENTS.get(env.HYPERSIGHT_BLOCK_AGENTS.idFromName(
-      hyperSightBlockAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, HYPERSIGHT_BLOCK_ID),
+    const first = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
+      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
     ));
-    const second = env.HYPERSIGHT_BLOCK_AGENTS.get(env.HYPERSIGHT_BLOCK_AGENTS.idFromName(
-      hyperSightBlockAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, secondBlockId),
+    const second = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
+      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, secondBlockId),
     ));
     await Promise.all([
-      fetchAndDrain(first, "https://hypersight.test/health"),
-      fetchAndDrain(second, "https://hypersight.test/health"),
+      fetchAndDrain(first, "https://block-dashboard.test/health"),
+      fetchAndDrain(second, "https://block-dashboard.test/health"),
     ]);
     await runInDurableObject(first, (_instance, state) => {
       state.storage.sql.exec(
-        `INSERT INTO hypersight_block_identity
+        `INSERT INTO block_dashboard_block_identity
            (id, workspace_id, workstream_id, block_id, region, created_at)
          VALUES (1, ?, ?, ?, 'global', 1)`,
         WORKSPACE_ID,
         WORKSTREAM_ID,
-        HYPERSIGHT_BLOCK_ID,
+        BLOCK_DASHBOARD_BLOCK_ID,
       );
     });
     await runInDurableObject(second, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM hypersight_block_identity`,
+        `SELECT COUNT(*) AS count FROM block_dashboard_block_identity`,
       ).one().count).toBe(0);
     });
     await evictDurableObject(first);
-    await fetchAndDrain(first, "https://hypersight.test/health");
+    await fetchAndDrain(first, "https://block-dashboard.test/health");
     await runInDurableObject(first, (_instance, state) => {
       expect(state.storage.sql.exec<{ block_id: string }>(
-        `SELECT block_id FROM hypersight_block_identity WHERE id = 1`,
-      ).one().block_id).toBe(HYPERSIGHT_BLOCK_ID);
+        `SELECT block_id FROM block_dashboard_block_identity WHERE id = 1`,
+      ).one().block_id).toBe(BLOCK_DASHBOARD_BLOCK_ID);
     });
   });
 
@@ -622,13 +622,13 @@ describe("Durable Objects in the Workers runtime", () => {
           completedAt: null,
           archivedAt: null,
           latestAttentionOrdinal: 9,
-        }, "hypersight-common")],
+        }, "block-dashboard-common")],
       }),
     });
     expect(initialized.status).toBe(200);
 
     const versionId = "00000000-0000-7000-8000-000000000111";
-    const updated = await fetchAndDrain(stub, "https://workstream.test/internal/hypersight", {
+    const updated = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -640,21 +640,21 @@ describe("Durable Objects in the Workers runtime", () => {
         createdAt: at,
         input: {
           expectedVersionNumber: 0,
-          blocks: [{ id: HYPERSIGHT_BLOCK_ID, prompt: "" }],
+          blocks: [{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: "" }],
         },
       }),
     });
     expect(updated.status).toBe(200);
     expect(await updated.json()).toMatchObject({
-      hypersight: {
+      blockDashboard: {
         versionId,
         versionNumber: 1,
-        blocks: [{ id: HYPERSIGHT_BLOCK_ID, prompt: "", latestRun: null }],
+        blocks: [{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: "", latestRun: null }],
       },
       runs: [],
     });
 
-    const conflict = await fetchAndDrain(stub, "https://workstream.test/internal/hypersight", {
+    const conflict = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -668,9 +668,9 @@ describe("Durable Objects in the Workers runtime", () => {
       }),
     });
     expect(conflict.status).toBe(409);
-    expect(await conflict.json()).toEqual({ error: "hypersight_version_conflict" });
+    expect(await conflict.json()).toEqual({ error: "block_dashboard_version_conflict" });
 
-    const preference = await fetchAndDrain(stub, "https://workstream.test/internal/hypersight", {
+    const preference = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -685,10 +685,10 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(await preference.json()).toEqual({ preference: { visible: true, updatedAt: at } });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM hypersight_configuration_versions`,
+        `SELECT COUNT(*) AS count FROM block_dashboard_configuration_versions`,
       ).one().count).toBe(1);
       expect(state.storage.sql.exec<{ visible: number }>(
-        `SELECT visible FROM hypersight_user_preferences WHERE user_id = ?`,
+        `SELECT visible FROM block_dashboard_user_preferences WHERE user_id = ?`,
         USER_ID,
       ).one().visible).toBe(1);
     });
@@ -717,11 +717,11 @@ describe("Durable Objects in the Workers runtime", () => {
           completedAt: null,
           archivedAt: null,
           latestAttentionOrdinal: 9,
-        }, "hypersight-dispatch-common")],
+        }, "block-dashboard-dispatch-common")],
       }),
     });
     const versionId = "00000000-0000-7000-8000-000000000113";
-    const updated = await fetchAndDrain(stub, "https://workstream.test/internal/hypersight", {
+    const updated = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -733,12 +733,12 @@ describe("Durable Objects in the Workers runtime", () => {
         createdAt: at,
         input: {
           expectedVersionNumber: 0,
-          blocks: [{ id: HYPERSIGHT_BLOCK_ID, prompt: "Summarize the current state" }],
+          blocks: [{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: "Summarize the current state" }],
         },
       }),
     });
     expect(await updated.json()).toMatchObject({ runs: [] });
-    const scheduled = await fetchAndDrain(stub, "https://workstream.test/internal/hypersight", {
+    const scheduled = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -749,19 +749,19 @@ describe("Durable Objects in the Workers runtime", () => {
         contextFence: { throughSequence: 0, compaction: null },
       }),
     });
-    const payload = await scheduled.json() as { runs: HyperSightBlockRun[] };
+    const payload = await scheduled.json() as { runs: BlockDashboardBlockRun[] };
     expect(payload.runs).toHaveLength(1);
     const queued = payload.runs[0]!;
     await runDurableObjectAlarm(stub);
 
-    const blockStub = env.HYPERSIGHT_BLOCK_AGENTS.get(env.HYPERSIGHT_BLOCK_AGENTS.idFromName(
-      hyperSightBlockAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, HYPERSIGHT_BLOCK_ID),
+    const blockStub = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
+      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
     ));
-    await fetchAndDrain(blockStub, "https://hypersight.test/health");
+    await fetchAndDrain(blockStub, "https://block-dashboard.test/health");
     await runInDurableObject(blockStub, (_instance, state) => {
       expect(state.storage.sql.exec<{ block_id: string }>(
-        `SELECT block_id FROM hypersight_block_identity WHERE id = 1`,
-      ).one().block_id).toBe(HYPERSIGHT_BLOCK_ID);
+        `SELECT block_id FROM block_dashboard_block_identity WHERE id = 1`,
+      ).one().block_id).toBe(BLOCK_DASHBOARD_BLOCK_ID);
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM agent_run_dispatches WHERE block_run_id = ?`,
         queued.id,
@@ -777,18 +777,18 @@ describe("Durable Objects in the Workers runtime", () => {
       operation: "block_result",
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      blockId: HYPERSIGHT_BLOCK_ID,
+      blockId: BLOCK_DASHBOARD_BLOCK_ID,
       sourceVersion: 1,
-      payloadHash: hyperSightBlockResultHash(running),
+      payloadHash: blockDashboardBlockResultHash(running),
       run: running,
     };
-    const first = await fetchAndDrain(stub, "https://workstream.test/internal/hypersight", {
+    const first = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(effect),
     });
     expect(await first.json()).toEqual({ accepted: true });
-    const duplicate = await fetchAndDrain(stub, "https://workstream.test/internal/hypersight", {
+    const duplicate = await fetchAndDrain(stub, "https://workstream.test/internal/block-dashboard", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(effect),
@@ -796,14 +796,14 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(await duplicate.json()).toEqual({ accepted: false });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ status: string; started_at: number }>(
-        `SELECT status, started_at FROM hypersight_block_runs WHERE block_run_id = ?`,
+        `SELECT status, started_at FROM block_dashboard_block_runs WHERE block_run_id = ?`,
         queued.id,
       ).one()).toEqual({ status: "running", started_at: Date.parse(running.startedAt) });
     });
 
     const checkpointText = "Streaming HyperSight output survives eviction";
     await runInDurableObject(blockStub, async (instance, state) => {
-      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(
+      const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(
         state.storage.sql.exec<{ dispatch_json: string }>(
           `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
           queued.id,
@@ -827,7 +827,7 @@ describe("Durable Objects in the Workers runtime", () => {
         Date.parse("2026-08-17T20:00:01.000Z"),
         queued.id,
       );
-      const testable = instance as unknown as TestableHyperSightBlockAgent;
+      const testable = instance as unknown as TestableBlockDashboardAgent;
       await testable.recordStreamEvent(dispatch, {
         type: "stream_started",
         messageId: checkpoint.messageId,
@@ -851,13 +851,13 @@ describe("Durable Objects in the Workers runtime", () => {
         `SELECT revision FROM agent_stream_checkpoint WHERE id = 1`,
       ).one().revision).toBe(2);
     });
-    const blockSocketResponse = await blockStub.fetch("https://hypersight.test/socket", {
+    const blockSocketResponse = await blockStub.fetch("https://block-dashboard.test/socket", {
       headers: {
         Upgrade: "websocket",
         "x-avalon-region": "global",
         "x-avalon-workspace-id": WORKSPACE_ID,
         "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-hypersight-block-id": HYPERSIGHT_BLOCK_ID,
+        "x-avalon-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
         "x-avalon-user-id": USER_ID,
         "x-avalon-session-id": SESSION_ID,
         "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
@@ -869,13 +869,13 @@ describe("Durable Objects in the Workers runtime", () => {
     }
     const blockSocket = blockSocketResponse.webSocket!;
     blockSocket.accept();
-    const replayed = await fetchAndDrain(blockStub, "https://hypersight.test/socket", {
+    const replayed = await fetchAndDrain(blockStub, "https://block-dashboard.test/socket", {
       headers: {
         Upgrade: "websocket",
         "x-avalon-region": "global",
         "x-avalon-workspace-id": WORKSPACE_ID,
         "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-hypersight-block-id": HYPERSIGHT_BLOCK_ID,
+        "x-avalon-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
         "x-avalon-user-id": USER_ID,
         "x-avalon-session-id": SESSION_ID,
         "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000117",
@@ -883,13 +883,13 @@ describe("Durable Objects in the Workers runtime", () => {
       },
     });
     expect(replayed.status).toBe(401);
-    const expired = await fetchAndDrain(blockStub, "https://hypersight.test/socket", {
+    const expired = await fetchAndDrain(blockStub, "https://block-dashboard.test/socket", {
       headers: {
         Upgrade: "websocket",
         "x-avalon-region": "global",
         "x-avalon-workspace-id": WORKSPACE_ID,
         "x-avalon-workstream-id": WORKSTREAM_ID,
-        "x-avalon-hypersight-block-id": HYPERSIGHT_BLOCK_ID,
+        "x-avalon-block-dashboard-block-id": BLOCK_DASHBOARD_BLOCK_ID,
         "x-avalon-user-id": USER_ID,
         "x-avalon-session-id": SESSION_ID,
         "x-avalon-socket-ticket-id": "00000000-0000-7000-8000-000000000118",
@@ -904,8 +904,8 @@ describe("Durable Objects in the Workers runtime", () => {
     const snapshot = nextMessage(blockSocket);
     blockSocket.send(JSON.stringify({ type: "subscribe" }));
     expect(JSON.parse(String((await snapshot).data))).toMatchObject({
-      type: "hypersight_block_snapshot",
-      blockId: HYPERSIGHT_BLOCK_ID,
+      type: "block_dashboard_block_snapshot",
+      blockId: BLOCK_DASHBOARD_BLOCK_ID,
       run: { id: queued.id, status: "running", markdown: checkpointText },
       streamCheckpoint: { roomSequence: 2, text: checkpointText },
     });
@@ -913,13 +913,13 @@ describe("Durable Objects in the Workers runtime", () => {
     const continuedText = " and continues without a visual reset";
     const continued = nextMessage(blockSocket);
     await runInDurableObject(blockStub, async (instance, state) => {
-      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(
+      const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(
         state.storage.sql.exec<{ dispatch_json: string }>(
           `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
           queued.id,
         ).one().dispatch_json,
       ));
-      await (instance as unknown as TestableHyperSightBlockAgent).recordStreamEvent(dispatch, {
+      await (instance as unknown as TestableBlockDashboardAgent).recordStreamEvent(dispatch, {
         type: "stream_delta",
         messageId: "00000000-0000-7000-8000-000000000116",
         harnessRunId: dispatch.harnessRunId,
@@ -938,14 +938,14 @@ describe("Durable Objects in the Workers runtime", () => {
       });
     });
     expect(JSON.parse(String((await continued).data))).toMatchObject({
-      type: "hypersight_block_stream_checkpoint",
+      type: "block_dashboard_block_stream_checkpoint",
       blockRunId: queued.id,
       streamCheckpoint: { roomSequence: 3, text: checkpointText + continuedText },
     });
 
     const terminalFrames = nextMessages(blockSocket, 2);
     await runInDurableObject(blockStub, async (instance, state) => {
-      const dispatch = HyperSightBlockDispatchSchema.parse(JSON.parse(
+      const dispatch = BlockDashboardBlockDispatchSchema.parse(JSON.parse(
         state.storage.sql.exec<{ dispatch_json: string }>(
           `SELECT dispatch_json FROM agent_run_dispatches WHERE block_run_id = ?`,
           queued.id,
@@ -957,7 +957,7 @@ describe("Durable Objects in the Workers runtime", () => {
         markdown: checkpointText + continuedText,
         completedAt: "2026-08-17T20:00:03.000Z",
       };
-      await (instance as unknown as TestableHyperSightBlockAgent).persistAndSettle(dispatch, {
+      await (instance as unknown as TestableBlockDashboardAgent).persistAndSettle(dispatch, {
         run: completed,
       });
       expect(state.storage.sql.exec<{ count: number }>(
@@ -965,9 +965,9 @@ describe("Durable Objects in the Workers runtime", () => {
       ).one().count).toBe(0);
     });
     const terminalEvents = (await terminalFrames).map((event) => JSON.parse(String(event.data)));
-    expect(terminalEvents.find((event) => event.type === "hypersight_block_stream_checkpoint"))
+    expect(terminalEvents.find((event) => event.type === "block_dashboard_block_stream_checkpoint"))
       .toMatchObject({
-      type: "hypersight_block_stream_checkpoint",
+      type: "block_dashboard_block_stream_checkpoint",
       blockRunId: queued.id,
       streamCheckpoint: null,
     });
@@ -978,7 +978,7 @@ describe("Durable Objects in the Workers runtime", () => {
       region: "global",
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      blockId: HYPERSIGHT_BLOCK_ID,
+      blockId: BLOCK_DASHBOARD_BLOCK_ID,
       userId: USER_ID,
     });
     expect((await blockClosed).code).toBe(1008);
@@ -989,15 +989,15 @@ describe("Durable Objects in the Workers runtime", () => {
     await env.DB.prepare(
       `UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1`,
     ).run();
-    const blockStub = env.HYPERSIGHT_BLOCK_AGENTS.get(env.HYPERSIGHT_BLOCK_AGENTS.idFromName(
-      hyperSightBlockAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, HYPERSIGHT_BLOCK_ID),
+    const blockStub = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
+      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
     ));
     const versionId = "00000000-0000-7000-8000-000000000131";
-    const dispatch = (ordinal: number) => HyperSightBlockDispatchSchema.parse({
+    const dispatch = (ordinal: number) => BlockDashboardBlockDispatchSchema.parse({
       region: "global",
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      blockId: HYPERSIGHT_BLOCK_ID,
+      blockId: BLOCK_DASHBOARD_BLOCK_ID,
       blockRunId: `00000000-0000-7000-8000-${String(132 + ordinal).padStart(12, "0")}`,
       harnessRunId: `00000000-0000-7000-8000-${String(142 + ordinal).padStart(12, "0")}`,
       configurationVersionId: versionId,
@@ -1032,12 +1032,12 @@ describe("Durable Objects in the Workers runtime", () => {
       });
       expect(JSON.parse(rows.find((row) =>
         row.block_run_id === staleRetry.blockRunId)!.terminal_outcome_json!)).toMatchObject({
-        run: { status: "stopped", error: { code: "hypersight_run_superseded" } },
+        run: { status: "stopped", error: { code: "block_dashboard_run_superseded" } },
       });
       for (const row of rows.filter((candidate) => candidate.block_run_id !== newest.blockRunId)) {
         if (row.terminal_outcome_json === null) expect(row.state).toBe("running");
         else expect(JSON.parse(row.terminal_outcome_json)).toMatchObject({
-          run: { status: "stopped", error: { code: "hypersight_run_superseded" } },
+          run: { status: "stopped", error: { code: "block_dashboard_run_superseded" } },
         });
       }
       expect(rows.filter((row) => row.block_run_id !== newest.blockRunId
@@ -1057,11 +1057,11 @@ describe("Durable Objects in the Workers runtime", () => {
     ));
     await fetchAndDrain(parent, "https://workstream.test/health");
     const configurationVersionId = "00000000-0000-7000-8000-000000000151";
-    const makeDispatch = (ordinal: number) => HyperSightBlockDispatchSchema.parse({
+    const makeDispatch = (ordinal: number) => BlockDashboardBlockDispatchSchema.parse({
       region: "global",
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
-      blockId: HYPERSIGHT_BLOCK_ID,
+      blockId: BLOCK_DASHBOARD_BLOCK_ID,
       blockRunId: `00000000-0000-7000-8000-${String(151 + ordinal).padStart(12, "0")}`,
       harnessRunId: `00000000-0000-7000-8000-${String(161 + ordinal).padStart(12, "0")}`,
       configurationVersionId,
@@ -1076,11 +1076,11 @@ describe("Durable Objects in the Workers runtime", () => {
     const notBefore = Date.now() + 60_000;
     await runInDurableObject(parent, async (instance, state) => {
       state.storage.sql.exec(
-        `INSERT INTO hypersight_configuration_versions
+        `INSERT INTO block_dashboard_configuration_versions
            (configuration_version_id, version_number, blocks_json, created_by_user_id, created_at)
          VALUES (?, 1, ?, ?, 1)`,
         configurationVersionId,
-        JSON.stringify([{ id: HYPERSIGHT_BLOCK_ID, prompt: older.prompt }]),
+        JSON.stringify([{ id: BLOCK_DASHBOARD_BLOCK_ID, prompt: older.prompt }]),
         USER_ID,
       );
       for (const [dispatch, createdAt, dueAt] of [
@@ -1088,51 +1088,51 @@ describe("Durable Objects in the Workers runtime", () => {
         [newer, 2, Date.now()],
       ] as const) {
         state.storage.sql.exec(
-          `INSERT INTO hypersight_block_runs
+          `INSERT INTO block_dashboard_block_runs
              (block_run_id, configuration_version_id, block_id, prompt, trigger_sequence,
               harness_run_id, status, created_at)
            VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
           dispatch.blockRunId,
           configurationVersionId,
-          HYPERSIGHT_BLOCK_ID,
+          BLOCK_DASHBOARD_BLOCK_ID,
           dispatch.prompt,
           dispatch.triggerSequence,
           dispatch.harnessRunId,
           createdAt,
         );
         state.storage.sql.exec(
-          `INSERT INTO hypersight_dispatch_outbox
+          `INSERT INTO block_dashboard_dispatch_outbox
              (block_run_id, block_id, dispatch_json, attempts, not_before, created_at)
            VALUES (?, ?, ?, 0, ?, ?)`,
           dispatch.blockRunId,
-          HYPERSIGHT_BLOCK_ID,
+          BLOCK_DASHBOARD_BLOCK_ID,
           JSON.stringify(dispatch),
           dueAt,
           createdAt,
         );
       }
-      await (instance as unknown as TestableWorkstreamDO).deliverHyperSightDispatches();
+      await (instance as unknown as TestableWorkstreamDO).deliverBlockDashboardDispatches();
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM hypersight_dispatch_outbox`,
+        `SELECT COUNT(*) AS count FROM block_dashboard_dispatch_outbox`,
       ).one().count).toBe(2);
     });
     await runInDurableObject(parent, async (instance, state) => {
       state.storage.sql.exec(
-        `UPDATE hypersight_dispatch_outbox SET not_before = 0 WHERE block_run_id = ?`,
+        `UPDATE block_dashboard_dispatch_outbox SET not_before = 0 WHERE block_run_id = ?`,
         older.blockRunId,
       );
       const testable = instance as unknown as TestableWorkstreamDO;
-      await testable.deliverHyperSightDispatches();
+      await testable.deliverBlockDashboardDispatches();
       expect(state.storage.sql.exec<{ block_run_id: string }>(
-        `SELECT block_run_id FROM hypersight_dispatch_outbox`,
+        `SELECT block_run_id FROM block_dashboard_dispatch_outbox`,
       ).one().block_run_id).toBe(newer.blockRunId);
-      await testable.deliverHyperSightDispatches();
+      await testable.deliverBlockDashboardDispatches();
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM hypersight_dispatch_outbox`,
+        `SELECT COUNT(*) AS count FROM block_dashboard_dispatch_outbox`,
       ).one().count).toBe(0);
     });
-    const child = env.HYPERSIGHT_BLOCK_AGENTS.get(env.HYPERSIGHT_BLOCK_AGENTS.idFromName(
-      hyperSightBlockAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, HYPERSIGHT_BLOCK_ID),
+    const child = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(
+      blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_DASHBOARD_BLOCK_ID),
     ));
     await runInDurableObject(child, (_instance, state) => {
       const rows = state.storage.sql.exec<{ block_run_id: string }>(
